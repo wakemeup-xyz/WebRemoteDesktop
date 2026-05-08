@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/macstudio1/.bun/bin/**)",
+      "Read(//Users/macstudio1/.homebrew/sbin/**)",
+      "Read(//Users/macstudio1/.local/bin/**)",
+      "Read(//Users/macstudio1/Library/Python/3.11/bin/**)",
+      "Read(//Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "mcp__plugin_claude-mem_mcp-search__search"
+    ]
+  }
+}
