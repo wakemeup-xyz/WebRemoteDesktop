@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web远程桌面 - 登录</title>
+  <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+  <div class="login-container">
+    <h1>Web远程桌面</h1>
+    <form id="loginForm">
+      <div class="input-group">
+        <label for="password">访问密码</label>
+        <input type="password" id="password" name="password" required
+               placeholder="请输入访问密码">
+      </div>
+      <button type="submit">连接</button>
+      <div id="error" class="error-message"></div>
+    </form>
+  </div>
+  
+  <script>
+    const API_BASE = 'http://localhost:8080';
+    
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const password = document.getElementById('password').value;
+      const errorDiv = document.getElementById('error');
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          localStorage.setItem('wrd_token', data.token);
+          window.location.href = 'viewer.html';
+        } else {
+          errorDiv.textContent = data.error || '登录失败';
+        }
+      } catch (err) {
+        errorDiv.textContent = '网络错误，请检查服务器连接';
+      }
+    });
+  </script>
+</body>
+</html>

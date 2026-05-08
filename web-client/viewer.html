@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web远程桌面 - 控制台</title>
+  <link rel="stylesheet" href="css/viewer.css">
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+  <div id="loading" class="loading-overlay">
+    <div class="spinner"></div>
+    <p id="loadingText">正在连接...</p>
+  </div>
+  
+  <div id="statusBar" class="status-bar">
+    <span id="connectionStatus" class="status connecting">连接中</span>
+    <span id="resolutionDisplay">-</span>
+    <span id="fpsDisplay">0 FPS</span>
+    <span id="latencyDisplay">0 ms</span>
+  </div>
+  
+  <div class="viewer-container">
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
+  
+  <div class="control-bar">
+    <button id="resolutionBtn" class="control-btn">
+      分辨率设置
+    </button>
+    <button id="pauseBtn" class="control-btn">
+      暂停
+    </button>
+    <button id="disconnectBtn" class="control-btn danger">
+      断开连接
+    </button>
+  </div>
+  
+  <div id="resolutionModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>选择分辨率</h3>
+      <div class="resolution-options">
+        <label class="resolution-option">
+          <input type="radio" name="resolution" value="540p" data-width="960" data-height="540">
+          <span>540p (低画质)</span>
+        </label>
+        <label class="resolution-option">
+          <input type="radio" name="resolution" value="720p" data-width="1280" data-height="720" checked>
+          <span>720p (标准)</span>
+        </label>
+        <label class="resolution-option">
+          <input type="radio" name="resolution" value="1080p" data-width="1920" data-height="1080">
+          <span>1080p (高清)</span>
+        </label>
+        <label class="resolution-option">
+          <input type="radio" name="resolution" value="1440p" data-width="2560" data-height="1440">
+          <span>1440p (超清)</span>
+        </label>
+      </div>
+      <button id="applyResolution" class="modal-btn primary">应用</button>
+      <button id="closeResolution" class="modal-btn">取消</button>
+    </div>
+  </div>
+  
+  <script src="js/auth.js"></script>
+  <script src="js/webrtc.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
