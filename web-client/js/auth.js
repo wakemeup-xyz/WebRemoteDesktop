@@ -1,5 +1,5 @@
 const Auth = {
-  API_BASE: 'http://localhost:8080',
+  API_BASE: 'https://stockhub.wiki',
   
   getToken() {
     return localStorage.getItem('wrd_token');

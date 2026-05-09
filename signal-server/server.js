@@ -22,8 +22,9 @@ console.log('Serving static files from:', webClientPath);
 
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: ['https://stockhub.wiki', 'https://*.stockhub.wiki', 'http://localhost:8080'],
     methods: ['GET', 'POST'],
+    credentials: true
   },
 });
 

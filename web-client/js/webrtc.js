@@ -17,8 +17,8 @@ const WebRTC = {
       return;
     }
 
-    // Connect to default namespace (server uses default now)
-    this.socket = io('http://localhost:8080', {
+    // Connect to production domain
+    this.socket = io('https://stockhub.wiki', {
       auth: { token, role: 'viewer' }
     });
 
@@ -79,8 +79,12 @@ const WebRTC = {
   
   createPeerConnection() {
     this.pc = new RTCPeerConnection(this.config);
-    
+
+    // Debug logging
+    console.log('Creating RTCPeerConnection with config:', this.config);
+
     this.pc.onicecandidate = (event) => {
+      console.log('Viewer ICE candidate:', event.candidate);
       if (event.candidate) {
         this.socket.emit('ice-candidate', {
           target: 'host',
@@ -88,27 +92,58 @@ const WebRTC = {
         });
       }
     };
-    
+
+    this.pc.onicegatheringstatechange = () => {
+      console.log('Viewer ICE gathering state:', this.pc.iceGatheringState);
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
+    };
+
+    this.pc.onconnectionstatechange = () => {
+      console.log('Viewer Connection state:', this.pc.connectionState);
+    };
+
+    this.pc.onsignalingstatechange = () => {
+      console.log('Viewer Signaling state:', this.pc.signalingState);
+    };
+
     this.pc.ontrack = (event) => {
-      console.log('Received remote stream');
+      console.log('Received remote track:', event.track.kind, 'streams:', event.streams.length);
       this.remoteStream = event.streams[0];
-      
+
       const videoElement = document.getElementById('remoteVideo');
       videoElement.srcObject = this.remoteStream;
-      
-      document.getElementById('loading').classList.add('hidden');
-      updateConnectionStatus('connected');
-      
-      this.startStats();
-    };
-    
-    this.pc.onconnectionstatechange = () => {
-      console.log('Connection state:', this.pc.connectionState);
-      if (this.pc.connectionState === 'connected') {
+
+      // 确保视频自动播放
+      videoElement.muted = true; // 静音才能自动播放
+      videoElement.play().then(() => {
+        console.log('Video playback started');
+      }).catch(err => {
+        console.error('Video play failed:', err);
+      });
+
+      // 监听视频元数据加载
+      videoElement.onloadedmetadata = () => {
+        console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+        document.getElementById('loading').classList.add('hidden');
         updateConnectionStatus('connected');
-      } else if (this.pc.connectionState === 'disconnected') {
-        updateConnectionStatus('disconnected');
-      }
+      };
+
+      // 监听视频开始播放
+      videoElement.onplaying = () => {
+        console.log('Video is now playing');
+        document.getElementById('loading').classList.add('hidden');
+        updateConnectionStatus('connected');
+      };
+
+      // Log video stats
+      this.remoteStream.getTracks().forEach(track => {
+        console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
+      });
+
+      this.startStats();
     };
   },
   
