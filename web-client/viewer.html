@@ -19,6 +19,8 @@
     <span id="resolutionDisplay">-</span>
     <span id="fpsDisplay">0 FPS</span>
     <span id="latencyDisplay">0 ms</span>
+    <span id="keyInputDisplay" class="key-input-display">-</span>
+    <button id="toggleControlsBtn" class="control-btn">隐藏控件</button>
   </div>
   
   <div class="viewer-container">
@@ -26,6 +28,9 @@
   </div>
   
   <div class="control-bar">
+    <button id="scaleBtn" class="control-btn">
+      缩放：自适应
+    </button>
     <button id="resolutionBtn" class="control-btn">
       分辨率设置
     </button>
@@ -35,6 +40,16 @@
     <button id="disconnectBtn" class="control-btn danger">
       断开连接
     </button>
+  </div>
+
+  <div class="action-bar">
+    <button class="action-btn" data-action="enter">回车</button>
+    <button class="action-btn" data-action="up">上</button>
+    <button class="action-btn" data-action="down">下</button>
+    <button class="action-btn" data-action="left">左</button>
+    <button class="action-btn" data-action="right">右</button>
+    <button class="action-btn" data-action="copy">复制</button>
+    <button class="action-btn" data-action="paste">粘贴</button>
   </div>
   
   <div id="resolutionModal" class="modal hidden">

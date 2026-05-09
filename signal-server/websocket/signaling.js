@@ -85,8 +85,12 @@ function setupSignaling(io) {
       }
     });
 
-    // Input relay
+    // Input relay (viewer -> host only)
     socket.on('input', (data) => {
+      if (role !== 'viewer') {
+        console.warn(`Input rejected: role=${role} from ${socket.id}`);
+        return;
+      }
       if (connections.host) {
         connections.host.emit('input', data);
       }

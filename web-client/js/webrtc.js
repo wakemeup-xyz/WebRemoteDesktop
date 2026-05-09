@@ -17,8 +17,7 @@ const WebRTC = {
       return;
     }
 
-    // Connect to production domain
-    this.socket = io('https://involves-oklahoma-monitored-admission.trycloudflare.com', {
+    this.socket = io('https://difference-centered-commonwealth-anthony.trycloudflare.com', {
       auth: { token, role: 'viewer' }
     });
 
@@ -74,13 +73,13 @@ const WebRTC = {
     this.socket.on('disconnect', () => {
       console.log('Signaling disconnected');
       updateConnectionStatus('disconnected');
+      document.getElementById('remoteVideo').classList.remove('connected');
     });
   },
   
   createPeerConnection() {
     this.pc = new RTCPeerConnection(this.config);
 
-    // Debug logging
     console.log('Creating RTCPeerConnection with config:', this.config);
 
     this.pc.onicecandidate = (event) => {
@@ -116,29 +115,31 @@ const WebRTC = {
       const videoElement = document.getElementById('remoteVideo');
       videoElement.srcObject = this.remoteStream;
 
-      // 确保视频自动播放
-      videoElement.muted = true; // 静音才能自动播放
+      videoElement.muted = true;
       videoElement.play().then(() => {
-        console.log('Video playback started');
+        console.log('Video playback started (promise)');
       }).catch(err => {
         console.error('Video play failed:', err);
       });
 
-      // 监听视频元数据加载
       videoElement.onloadedmetadata = () => {
         console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
         document.getElementById('loading').classList.add('hidden');
         updateConnectionStatus('connected');
+        videoElement.classList.add('connected');
       };
 
-      // 监听视频开始播放
       videoElement.onplaying = () => {
         console.log('Video is now playing');
         document.getElementById('loading').classList.add('hidden');
         updateConnectionStatus('connected');
+        videoElement.classList.add('connected');
+        if (typeof Input !== 'undefined' && !Input.socket) {
+          console.log('Initializing input control...');
+          Input.init();
+        }
       };
 
-      // Log video stats
       this.remoteStream.getTracks().forEach(track => {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
       });
@@ -170,14 +171,28 @@ const WebRTC = {
   startStats() {
     setInterval(async () => {
       if (!this.pc) return;
-      
+
       const stats = await this.pc.getStats();
+      let fps = 0;
+      let latencyMs = 0;
+
       stats.forEach((report) => {
         if (report.type === 'inbound-rtp' && report.kind === 'video') {
-          const fps = report.framesPerSecond || 0;
-          document.getElementById('fpsDisplay').textContent = `${Math.round(fps)} FPS`;
+          fps = report.framesPerSecond || 0;
+        }
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          const rtt = report.currentRoundTripTime;
+          if (typeof rtt === 'number') {
+            latencyMs = Math.round(rtt * 1000);
+          }
         }
       });
+
+      document.getElementById('fpsDisplay').textContent = `${Math.round(fps)} FPS`;
+      const latencyEl = document.getElementById('latencyDisplay');
+      if (latencyEl) {
+        latencyEl.textContent = latencyMs > 0 ? `${latencyMs} ms` : '- ms';
+      }
     }, 1000);
   },
   
@@ -190,6 +205,7 @@ const WebRTC = {
       this.socket.disconnect();
       this.socket = null;
     }
+    document.getElementById('remoteVideo').classList.remove('connected');
     Auth.logout();
   }
 };
