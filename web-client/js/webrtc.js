@@ -18,7 +18,7 @@ const WebRTC = {
     }
 
     // Connect to production domain
-    this.socket = io('https://stockhub.wiki', {
+    this.socket = io('https://involves-oklahoma-monitored-admission.trycloudflare.com', {
       auth: { token, role: 'viewer' }
     });
 

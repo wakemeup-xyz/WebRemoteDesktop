@@ -1,5 +1,5 @@
 const Auth = {
-  API_BASE: 'https://stockhub.wiki',
+  API_BASE: 'https://involves-oklahoma-monitored-admission.trycloudflare.com',
   
   getToken() {
     return localStorage.getItem('wrd_token');

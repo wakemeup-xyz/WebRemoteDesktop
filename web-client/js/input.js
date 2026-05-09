@@ -6,9 +6,9 @@ const Input = {
   init() {
     this.videoElement = document.getElementById('remoteVideo');
     if (!this.videoElement) return;
-    
+
     const token = Auth.getToken();
-    this.socket = io('http://localhost:8080/input', {
+    this.socket = io('https://involves-oklahoma-monitored-admission.trycloudflare.com/input', {
       auth: { token, role: 'viewer' }
     });
     
