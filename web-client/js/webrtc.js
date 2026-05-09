@@ -16,11 +16,12 @@ const WebRTC = {
       console.error('No token available');
       return;
     }
-    
-    this.socket = io('http://localhost:8080/signal', {
+
+    // Connect to default namespace (server uses default now)
+    this.socket = io('http://localhost:8080', {
       auth: { token, role: 'viewer' }
     });
-    
+
     this.setupSocketListeners();
     this.createPeerConnection();
   },
@@ -30,18 +31,19 @@ const WebRTC = {
       console.log('Signaling connected');
       updateConnectionStatus('connecting');
     });
-    
+
     this.socket.on('connected', (data) => {
       console.log('Server acknowledged:', data);
-      
+
       if (data.hostOnline) {
         this.createOffer();
       } else {
         updateLoadingText('等待Host上线...');
       }
     });
-    
+
     this.socket.on('host-status', (data) => {
+      console.log('Host status:', data);
       if (data.online) {
         updateLoadingText('Host已上线，正在连接...');
         this.createOffer();
@@ -50,7 +52,7 @@ const WebRTC = {
         updateLoadingText('Host已离线');
       }
     });
-    
+
     this.socket.on('answer', async (data) => {
       console.log('Received answer');
       try {
@@ -59,15 +61,16 @@ const WebRTC = {
         console.error('Failed to set remote description:', err);
       }
     });
-    
+
     this.socket.on('ice-candidate', async (data) => {
+      console.log('Received ICE candidate');
       try {
         await this.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } catch (err) {
         console.error('Failed to add ICE candidate:', err);
       }
     });
-    
+
     this.socket.on('disconnect', () => {
       console.log('Signaling disconnected');
       updateConnectionStatus('disconnected');
@@ -173,9 +176,14 @@ function updateLoadingText(text) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    if (Auth.isLoggedIn()) {
-      WebRTC.init();
-    }
-  }, 500);
+  const startBtn = document.getElementById('startBtn');
+  if (startBtn) {
+    startBtn.addEventListener('click', () => {
+      if (Auth.isLoggedIn()) {
+        WebRTC.init();
+        startBtn.style.display = 'none';
+        document.getElementById('loadingText').textContent = '正在连接...';
+      }
+    });
+  }
 });

@@ -1,0 +1,11 @@
+asyncio-mqtt>=0.11.0
+aiortc>=1.4.0
+aiohttp>=3.8.0
+python-socketio>=5.7.0
+websockets>=10.0
+av>=9.0.0
+mss>=7.0.0
+numpy>=1.21.0
+pynput>=1.7.0
+screeninfo>=0.8.0
+requests>=2.25.0

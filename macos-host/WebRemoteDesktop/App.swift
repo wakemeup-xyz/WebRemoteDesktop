@@ -67,18 +67,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         captureManager = ScreenCaptureManager()
         webRTCManager = WebRTCManager()
         inputController = InputController()
-        
+
         signalClient = SignalClient(
             serverURL: URL(string: "http://localhost:8080")!,
-            token: "PLACEHOLDER_TOKEN"
+            password: "admin123"
         )
-        
+
         setupSignalHandlers()
-        
-        signalClient?.connect()
+
+        signalClient?.authenticateAndConnect()
         updateStatusMenu(running: true)
     }
-    
+
     func setupSignalHandlers() {
         signalClient?.onOfferReceived = { [weak self] offer, viewerId in
             self?.webRTCManager?.handleOffer(offer) { result in
@@ -90,13 +90,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        
+
         signalClient?.onInputReceived = { [weak self] command in
             self?.inputController?.execute(command: command)
         }
-        
+
+        // 连接屏幕捕获和 WebRTC
+        captureManager?.onFrameCaptured = { [weak self] sampleBuffer in
+            self?.webRTCManager?.pushFrame(sampleBuffer)
+        }
+
+        // 开始屏幕捕获
+        captureManager?.start()
+
+        // 发送 ICE candidate 给 viewer
         webRTCManager?.onIceCandidate = { [weak self] candidate in
             print("Generated ICE candidate")
+            if let viewerId = self?.signalClient?.getViewerId() {
+                self?.signalClient?.sendIceCandidate(candidate, to: viewerId)
+            }
         }
     }
     
