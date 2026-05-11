@@ -360,6 +360,15 @@ const Input = {
       timestamp: Date.now()
     };
 
+    // Generate inputId for latency tracking
+    const inputId = `inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    data.inputId = inputId;
+
+    // Record input send time for latency measurement
+    if (typeof LatencyMonitor !== 'undefined') {
+      LatencyMonitor.recordInputSend(inputId);
+    }
+
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput && WebRTC.sendInput(data)) {
       if (type === 'keyboard' || action !== 'move') {
         console.log(`[SEND:dc] ${type} ${action}`, payload);
