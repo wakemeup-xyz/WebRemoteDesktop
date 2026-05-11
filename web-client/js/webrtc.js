@@ -270,9 +270,27 @@ const WebRTC = {
           Input.init();
           Input.setActive(true);
         }
+        // Start latency clock sync after connection is stable
+        setTimeout(() => {
+          if (typeof LatencyMonitor !== 'undefined') {
+            LatencyMonitor.requestClockSync();
+            // Re-sync every 30 seconds
+            if (!this._latencySyncInterval) {
+              this._latencySyncInterval = setInterval(() => {
+                if (typeof LatencyMonitor !== 'undefined') {
+                  LatencyMonitor.requestClockSync();
+                }
+              }, 30000);
+            }
+          }
+        }, 2000);
       } else if (['failed', 'disconnected', 'closed'].includes(this.pc.connectionState)) {
         if (typeof Input !== 'undefined') {
           Input.setActive(false);
+        }
+        if (this._latencySyncInterval) {
+          clearInterval(this._latencySyncInterval);
+          this._latencySyncInterval = null;
         }
         this.updateNetworkUI('媒体链路失败，请按浮窗建议切换网络模式', 'danger');
         this.scheduleReconnect(`pc-${this.pc.connectionState}`);
@@ -361,6 +379,27 @@ const WebRTC = {
     };
     this.inputChannel.onerror = (event) => {
       console.warn('[INPUT-DC] DataChannel error:', event);
+    };
+    this.inputChannel.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Latency measurement messages
+        if (data.type === 'frame_timing') {
+          if (typeof LatencyMonitor !== 'undefined') {
+            LatencyMonitor.onFrameTiming(data);
+          }
+          return;
+        }
+        if (data.type === 'clock_sync_resp') {
+          if (typeof LatencyMonitor !== 'undefined') {
+            LatencyMonitor.handleClockSyncResponse(data);
+          }
+          return;
+        }
+      } catch (e) {
+        // Silently ignore non-JSON or unexpected messages
+      }
     };
     this.inputMoveChannel.onopen = () => {
       console.log('[INPUT-DC] Move DataChannel open');
