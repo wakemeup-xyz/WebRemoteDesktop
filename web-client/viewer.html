@@ -3,28 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web远程桌面 - 控制台</title>
+  <title>CodeHarness学习助手 - 控制台</title>
   <link rel="stylesheet" href="css/viewer.css">
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
-  <div id="loading" class="loading-overlay">
-    <div class="spinner"></div>
-    <p id="loadingText">点击屏幕开始连接...</p>
-    <button id="startBtn" class="start-btn">开始远程桌面</button>
-  </div>
-  
   <div id="statusBar" class="status-bar">
     <span id="connectionStatus" class="status connecting">连接中</span>
     <span id="resolutionDisplay">-</span>
     <span id="fpsDisplay">0 FPS</span>
     <span id="latencyDisplay">0 ms</span>
+    <span id="candidateDisplay">链路 -</span>
     <span id="keyInputDisplay" class="key-input-display">-</span>
+    <button id="refreshBtn" class="control-btn">刷新画面</button>
+    <button id="diagBtn" class="control-btn">诊断日志</button>
     <button id="toggleControlsBtn" class="control-btn">隐藏控件</button>
   </div>
   
   <div class="viewer-container">
     <video id="remoteVideo" autoplay playsinline></video>
+    <img id="relayImage" class="relay-image hidden" alt="Tunnel relay stream">
+    <div id="loading" class="stream-placeholder">
+      <div class="spinner"></div>
+      <p id="loadingText">点击开始连接，基础控制已就绪</p>
+      <button id="startBtn" class="start-btn">开始学习助手</button>
+    </div>
   </div>
   
   <div class="control-bar">
@@ -33,6 +36,12 @@
     </button>
     <button id="resolutionBtn" class="control-btn">
       分辨率设置
+    </button>
+    <button id="fullscreenBtn" class="control-btn">
+      全屏
+    </button>
+    <button id="networkModeBtn" class="control-btn">
+      网络：自动
     </button>
     <button id="pauseBtn" class="control-btn">
       暂停
@@ -48,8 +57,15 @@
     <button class="action-btn" data-action="down">下</button>
     <button class="action-btn" data-action="left">左</button>
     <button class="action-btn" data-action="right">右</button>
+    <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射">键盘：-</button>
     <button class="action-btn" data-action="copy">复制</button>
     <button class="action-btn" data-action="paste">粘贴</button>
+    <button class="action-btn" data-action="cut">剪切</button>
+    <button class="action-btn" data-action="undo">撤销</button>
+    <button class="action-btn" data-action="selectAll">全选</button>
+    <button class="action-btn" data-action="save">保存</button>
+    <button class="action-btn" data-action="find">查找</button>
+    <button class="action-btn" data-action="closeTab">关闭标签</button>
   </div>
   
   <div id="resolutionModal" class="modal hidden">
@@ -77,10 +93,78 @@
       <button id="closeResolution" class="modal-btn">取消</button>
     </div>
   </div>
+
+  <div id="networkAdvisor" class="network-advisor" aria-live="polite">
+    <div class="network-advisor__top">
+      <span id="networkAdvisorTitle">网络模式：自动</span>
+      <span id="networkAdvisorState" class="network-advisor__state">检测中</span>
+    </div>
+    <p id="networkAdvisorText">自动优先直连，失败时使用可用中继。</p>
+  </div>
+
+  <div id="networkModal" class="modal hidden">
+    <div class="modal-content network-modal-content">
+      <h3>网络模式</h3>
+      <div class="network-options">
+        <label class="network-option">
+          <input type="radio" name="networkMode" value="lan">
+          <span>
+            <strong>本地直连</strong>
+            <small>访问电脑和这台 Mac 在同一局域网时使用，延迟最低。</small>
+          </span>
+        </label>
+        <label class="network-option">
+          <input type="radio" name="networkMode" value="auto" checked>
+          <span>
+            <strong>自动穿透</strong>
+            <small>默认模式。先尝试直连和 STUN，有 TURN 时自动兜底。</small>
+          </span>
+        </label>
+        <label class="network-option">
+          <input type="radio" name="networkMode" value="stun">
+          <span>
+            <strong>外网直连</strong>
+            <small>外网但 UDP 未被限制时使用；失败时需要切换中继。</small>
+          </span>
+        </label>
+        <label class="network-option">
+          <input type="radio" name="networkMode" value="relay">
+          <span>
+            <strong>外网中继</strong>
+            <small>公司网、校园网、跨运营商或画面一直为 0 FPS 时使用；需要配置 TURN。</small>
+          </span>
+        </label>
+        <label class="network-option">
+          <input type="radio" name="networkMode" value="tunnel">
+          <span>
+            <strong>隧道中继</strong>
+            <small>TURN 也失败时使用，视频通过 Cloudflare/Socket.IO 转发，FPS 较低但最稳。</small>
+          </span>
+        </label>
+      </div>
+      <p id="networkTurnStatus" class="network-turn-status">正在读取 TURN 配置...</p>
+      <button id="applyNetworkMode" class="modal-btn primary">应用并重连</button>
+      <button id="closeNetworkMode" class="modal-btn">取消</button>
+    </div>
+  </div>
   
+  <div id="diagModal" class="modal hidden">
+    <div class="modal-content" style="min-width: 600px; max-width: 90vw;">
+      <h3>前端诊断日志</h3>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">最近捕获的浏览器控制台日志，点击发送可将日志传给服务端分析。</p>
+      <textarea id="diagLogArea" readonly style="width: 100%; height: 320px; background: rgba(0,0,0,0.4); color: #c3e88d; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
+      <div style="display: flex; gap: 10px; margin-top: 16px;">
+        <button id="sendDiagBtn" class="modal-btn primary">发送日志到服务端</button>
+        <button id="clearDiagBtn" class="modal-btn">清空日志</button>
+        <button id="closeDiagBtn" class="modal-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/auth.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/diagnostic.js"></script>
 </body>
 </html>

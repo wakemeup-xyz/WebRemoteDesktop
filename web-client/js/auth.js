@@ -1,5 +1,5 @@
 const Auth = {
-  API_BASE: 'https://difference-centered-commonwealth-anthony.trycloudflare.com',
+  API_BASE: window.location.origin,
   
   getToken() {
     return localStorage.getItem('wrd_token');

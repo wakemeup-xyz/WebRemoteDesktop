@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """macOS Input Controller using Quartz"""
 import asyncio
+import ctypes
 import logging
+import subprocess
+import time
 from Quartz import (
     CGEventCreateMouseEvent, CGEventPost, CGEventCreateKeyboardEvent,
     CGEventSetFlags, kCGHIDEventTap, kCGMouseButtonLeft,
@@ -10,7 +13,10 @@ from Quartz import (
     kCGEventRightMouseDown, kCGEventRightMouseUp,
     kCGEventOtherMouseDown, kCGEventOtherMouseUp,
     kCGEventScrollWheel,
-    CGEventSourceCreate, kCGEventSourceStateHIDSystemState
+    CGEventSourceCreate, kCGEventSourceStateHIDSystemState,
+    kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
+    kCGEventFlagMaskAlternate, kCGEventFlagMaskControl,
+    CGEventCreateScrollWheelEvent, kCGScrollEventUnitLine
 )
 import screeninfo
 
@@ -25,10 +31,20 @@ class InputHandler:
         self._running = False
         self.monitor = None
         self.source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
+        self._input_lock = asyncio.Lock()
+        self._modifier_flags = 0
+        self._pressed_modifier_key_codes = set()
+        self._pressed_key_codes = set()
+        self._last_modifier_event_time = 0.0
+        self._last_key_event_time = 0.0
+        self._modifier_stale_seconds = 3.0
+        self._key_stale_seconds = 3.0
 
     def start(self):
         """Start the input handler"""
         self._running = True
+        # Disable macOS Press-and-Hold accent picker and switch to ABC keyboard
+        self._setup_macos_input()
         # Get primary monitor
         try:
             monitors = screeninfo.get_monitors()
@@ -40,6 +56,82 @@ class InputHandler:
         except Exception as e:
             logger.error(f"Failed to get monitor info: {e}")
             self.monitor = None
+
+    def _setup_macos_input(self):
+        """Disable Press-and-Hold and switch to ABC keyboard to prevent IME interference."""
+        # 1. Disable Press-and-Hold (accent character picker)
+        try:
+            subprocess.run(
+                ['defaults', 'write', '-g', 'ApplePressAndHoldEnabled', '-bool', 'false'],
+                check=True, capture_output=True
+            )
+            logger.info("Disabled macOS Press-and-Hold (ApplePressAndHoldEnabled=false)")
+        except Exception as e:
+            logger.warning(f"Failed to disable Press-and-Hold: {e}")
+
+        # 2. Switch input source to ABC (English) keyboard to bypass Chinese IME
+        try:
+            self._switch_to_abc_keyboard()
+        except Exception as e:
+            logger.warning(f"Failed to switch input source: {e}")
+
+    def _switch_to_abc_keyboard(self):
+        """Switch macOS input source to ABC English keyboard using Carbon TIS API."""
+        carbon = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/Carbon.framework/Carbon'
+        )
+        cf = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
+        )
+
+        kCFStringEncodingUTF8 = 0x08000100
+
+        CFStringCreateWithCString = cf.CFStringCreateWithCString
+        CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        CFStringCreateWithCString.restype = ctypes.c_void_p
+
+        CFStringGetCString = cf.CFStringGetCString
+        CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+        CFStringGetCString.restype = ctypes.c_bool
+
+        TISCreateInputSourceList = carbon.TISCreateInputSourceList
+        TISCreateInputSourceList.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+        TISCreateInputSourceList.restype = ctypes.c_void_p
+
+        TISGetInputSourceProperty = carbon.TISGetInputSourceProperty
+        TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        TISGetInputSourceProperty.restype = ctypes.c_void_p
+
+        TISSelectInputSource = carbon.TISSelectInputSource
+        TISSelectInputSource.argtypes = [ctypes.c_void_p]
+        TISSelectInputSource.restype = ctypes.c_int32
+
+        CFArrayGetCount = cf.CFArrayGetCount
+        CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        CFArrayGetCount.restype = ctypes.c_long
+
+        CFArrayGetValueAtIndex = cf.CFArrayGetValueAtIndex
+        CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+
+        id_key = CFStringCreateWithCString(None, b'TISPropertyInputSourceID', kCFStringEncodingUTF8)
+        sources = TISCreateInputSourceList(None, False)
+        count = CFArrayGetCount(sources)
+
+        for i in range(count):
+            src = CFArrayGetValueAtIndex(sources, i)
+            prop = TISGetInputSourceProperty(src, id_key)
+            if not prop:
+                continue
+            buf = ctypes.create_string_buffer(256)
+            if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
+                src_id = buf.value.decode()
+                if src_id == 'com.apple.keylayout.ABC':
+                    result = TISSelectInputSource(src)
+                    logger.info(f"Switched input source to ABC (result={result})")
+                    return
+
+        logger.warning("ABC keyboard layout not found, keeping current input source")
 
     def stop(self):
         """Stop the input handler"""
@@ -56,15 +148,24 @@ class InputHandler:
             action = data.get('action')
             payload = data.get('payload', {})
 
-            logger.info(f"Input: {input_type} {action}")
+            if input_type == 'keyboard' or action != 'move':
+                logger.info(f"Input: {input_type} {action}")
+            else:
+                logger.debug(f"Input: {input_type} {action}")
 
-            if input_type == 'mouse':
-                await asyncio.to_thread(self._handle_mouse, action, payload)
-            elif input_type == 'keyboard':
-                # Keyboard events must be processed serially with small delays
-                # so macOS Quartz can correctly recognize combo keys.
-                self._handle_keyboard(action, payload)
-                await asyncio.sleep(0.02)
+            async with self._input_lock:
+                if input_type == 'mouse':
+                    self._release_stale_keys()
+                if input_type == 'mouse':
+                    await asyncio.to_thread(self._handle_mouse, action, payload)
+                elif input_type == 'keyboard':
+                    if action == 'reset':
+                        self.release_all_keys(reason=payload.get("reason", "remote-reset"))
+                        return
+                    # Keyboard events must be processed serially with small delays
+                    # so macOS Quartz can correctly recognize combo keys.
+                    self._handle_keyboard(action, payload)
+                    await asyncio.sleep(0.02)
 
         except Exception as e:
             logger.error(f"Error handling input: {e}")
@@ -83,11 +184,12 @@ class InputHandler:
         x = self.monitor.x + rel_x * self.monitor.width
         y = self.monitor.y + rel_y * self.monitor.height
 
-        logger.info(
-            f"Mouse {action}: screen=({x:.0f}, {y:.0f}) "
-            f"rel=({rel_x:.4f}, {rel_y:.4f}) "
-            f"monitor=({self.monitor.x},{self.monitor.y},{self.monitor.width},{self.monitor.height})"
-        )
+        if action != 'move':
+            logger.info(
+                f"Mouse {action}: screen=({x:.0f}, {y:.0f}) "
+                f"rel=({rel_x:.4f}, {rel_y:.4f}) "
+                f"monitor=({self.monitor.x},{self.monitor.y},{self.monitor.width},{self.monitor.height})"
+            )
 
         button = payload.get('button', 'left')
         button_type = self._get_mouse_button(button)
@@ -121,26 +223,10 @@ class InputHandler:
             CGEventPost(kCGHIDEventTap, event)
 
         elif action == 'click':
-            # Down
-            down_type = {
-                'left': kCGEventLeftMouseDown,
-                'right': kCGEventRightMouseDown,
-                'middle': kCGEventOtherMouseDown
-            }.get(button, kCGEventLeftMouseDown)
-            down_event = CGEventCreateMouseEvent(
-                self.source, down_type, (x, y), button_type
-            )
-            CGEventPost(kCGHIDEventTap, down_event)
-            # Up
-            up_type = {
-                'left': kCGEventLeftMouseUp,
-                'right': kCGEventRightMouseUp,
-                'middle': kCGEventOtherMouseUp
-            }.get(button, kCGEventLeftMouseUp)
-            up_event = CGEventCreateMouseEvent(
-                self.source, up_type, (x, y), button_type
-            )
-            CGEventPost(kCGHIDEventTap, up_event)
+            # click is now a no-op: viewer sends mousedown + mouseup which
+            # already constitute a complete click.  Processing click again
+            # would double-fire, cancelling toggles / checkboxes.
+            pass
 
         elif action == 'dblclick':
             # Two clicks
@@ -157,14 +243,30 @@ class InputHandler:
         elif action == 'wheel':
             delta_x = payload.get('deltaX', 0)
             delta_y = payload.get('deltaY', 0)
-            event = CGEventCreateMouseEvent(
-                self.source, kCGEventScrollWheel, (x, y), 0
+            scroll_x, scroll_y = self._normalize_scroll_delta(delta_x, delta_y)
+            event = CGEventCreateScrollWheelEvent(
+                self.source,
+                kCGScrollEventUnitLine,
+                2,
+                scroll_y,
+                scroll_x,
             )
-            # Set scroll wheel deltas
-            from Quartz import CGEventSetIntegerValueField, kCGScrollWheelEventDeltaAxis1, kCGScrollWheelEventDeltaAxis2
-            CGEventSetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1, int(delta_y))
-            CGEventSetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2, int(delta_x))
             CGEventPost(kCGHIDEventTap, event)
+
+    def _normalize_scroll_delta(self, delta_x, delta_y):
+        """Convert browser wheel deltas to compact Quartz line scroll units."""
+        def convert(value):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return 0
+            if value == 0:
+                return 0
+            magnitude = max(1, min(12, round(abs(value) / 40)))
+            # Browser deltaY > 0 means scroll down. Quartz positive axis1 scrolls up.
+            return -magnitude if value > 0 else magnitude
+
+        return convert(delta_x), convert(delta_y)
 
     def _get_mouse_button(self, button_name):
         """Get Quartz mouse button constant"""
@@ -179,6 +281,7 @@ class InputHandler:
         """Handle keyboard events using Quartz"""
         key_code = payload.get('keyCode', 0)
         key_char = payload.get('key', '')
+        code = payload.get('code', '')
 
         # Map common keys to macOS key codes
         key_map = {
@@ -212,10 +315,42 @@ class InputHandler:
             'F9': 101, 'F10': 109, 'F11': 103, 'F12': 111,
         }
 
-        # Handle modifiers from payload
+        # Single-char fallback (lowercase + uppercase + shifted symbols)
+        char_to_code = {
+            'a': 0, 'b': 11, 'c': 8, 'd': 2, 'e': 14, 'f': 3, 'g': 5,
+            'h': 4, 'i': 34, 'j': 38, 'k': 40, 'l': 37, 'm': 46,
+            'n': 45, 'o': 31, 'p': 35, 'q': 12, 'r': 15, 's': 1,
+            't': 17, 'u': 32, 'v': 9, 'w': 13, 'x': 7, 'y': 16, 'z': 6,
+            'A': 0, 'B': 11, 'C': 8, 'D': 2, 'E': 14, 'F': 3, 'G': 5,
+            'H': 4, 'I': 34, 'J': 38, 'K': 40, 'L': 37, 'M': 46,
+            'N': 45, 'O': 31, 'P': 35, 'Q': 12, 'R': 15, 'S': 1,
+            'T': 17, 'U': 32, 'V': 9, 'W': 13, 'X': 7, 'Y': 16, 'Z': 6,
+            '0': 29, '1': 18, '2': 19, '3': 20, '4': 21, '5': 23,
+            '6': 22, '7': 26, '8': 28, '9': 25,
+            '.': 47, ',': 43, ';': 41, "'": 39, '/': 44, '\\': 42,
+            '[': 33, ']': 30, '`': 50, '-': 27, '=': 24,
+            '!': 18, '@': 19, '#': 20, '$': 21, '%': 23,
+            '^': 22, '&': 26, '*': 28, '(': 25, ')': 29,
+            '_': 27, '+': 24, '{': 33, '}': 30, '|': 42,
+            ':': 41, '"': 39, '<': 43, '>': 47, '?': 44,
+            '~': 50,
+        }
+
+        modifier_key_flags = {
+            55: kCGEventFlagMaskCommand,
+            56: kCGEventFlagMaskShift,
+            58: kCGEventFlagMaskAlternate,
+            59: kCGEventFlagMaskControl,
+            60: kCGEventFlagMaskShift,
+            61: kCGEventFlagMaskAlternate,
+            62: kCGEventFlagMaskControl,
+        }
+
+        # Handle modifiers from payload. Prefer explicit browser state for
+        # non-modifier keys, but also keep a host-side modifier state so
+        # Windows keyboard remaps and Shift/Command chords remain stable.
         modifiers = payload.get('modifiers', {})
         flags = 0
-        from Quartz import kCGEventFlagMaskCommand, kCGEventFlagMaskShift, kCGEventFlagMaskAlternate, kCGEventFlagMaskControl
         if modifiers.get('meta'):  # Command
             flags |= kCGEventFlagMaskCommand
         if modifiers.get('shift'):
@@ -229,7 +364,6 @@ class InputHandler:
         # This is more reliable than keyCode or key values because 'code'
         # represents the physical key location (USB HID Usage) which is
         # consistent across platforms.
-        code = payload.get('code', '')
         code_map = {
             # Letters
             'KeyA': 0, 'KeyB': 11, 'KeyC': 8, 'KeyD': 2, 'KeyE': 14,
@@ -280,49 +414,135 @@ class InputHandler:
 
         # Determine key code: prefer 'code' (physical key), then 'key' name,
         # then single-char fallback.
+        mapped = False
         if code in code_map:
             key_code = code_map[code]
+            mapped = True
         elif key_char in key_map:
             key_code = key_map[key_char]
-        elif len(key_char) == 1:
-            char_to_code = {
-                'a': 0, 'b': 11, 'c': 8, 'd': 2, 'e': 14, 'f': 3, 'g': 5,
-                'h': 4, 'i': 34, 'j': 38, 'k': 40, 'l': 37, 'm': 46,
-                'n': 45, 'o': 31, 'p': 35, 'q': 12, 'r': 15, 's': 1,
-                't': 17, 'u': 32, 'v': 9, 'w': 13, 'x': 7, 'y': 16, 'z': 6,
-                '0': 29, '1': 18, '2': 19, '3': 20, '4': 21, '5': 23,
-                '6': 22, '7': 26, '8': 28, '9': 25,
-                '.': 47, ',': 43, ';': 41, "'": 39, '/': 44, '\\': 42,
-                '[': 33, ']': 30, '`': 50, '-': 27, '=': 24,
-                '!': 18, '@': 19, '#': 20, '$': 21, '%': 23,
-                '^': 22, '&': 26, '*': 28, '(': 25, ')': 29,
-                '_': 27, '+': 24, '{': 33, '}': 30, '|': 42,
-                ':': 41, '"': 39, '<': 43, '>': 47, '?': 44,
-                '~': 50,
-            }
-            key_code = char_to_code.get(key_char, 0)
+            mapped = True
+        elif len(key_char) == 1 and key_char in char_to_code:
+            key_code = char_to_code[key_char]
+            mapped = True
 
-        if not key_code:
+        if not mapped:
             logger.warning(f"Unhandled key: key='{key_char}', code='{code}', keyCode={payload.get('keyCode')}")
             return
 
-        logger.info(f"Keyboard {action}: key='{key_char}', code='{code}', mac_code={key_code}")
-
-        # Modifier keys (Control, Shift, Alt, Command) should not carry their own
-        # flag on keydown, otherwise macOS cannot form proper combos.
+        # Detect modifier keys: do not attach modifier flags to the modifier key itself
         is_modifier = key_code in (55, 56, 58, 59, 60, 61, 62, 57)
+        modifier_flag = modifier_key_flags.get(key_code, 0)
+
+        logger.info(f"Keyboard {action}: key='{key_char}', code='{code}', mac_code={key_code}, flags=0x{flags:08x}, is_modifier={is_modifier}")
+
+        if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0:
+            self.release_all_modifiers(reason="plain-key-reset")
 
         # Create and post event
         if action == 'keydown':
+            if modifier_flag:
+                self._modifier_flags |= modifier_flag
+                self._pressed_modifier_key_codes.add(key_code)
+                self._last_modifier_event_time = time.monotonic()
+                flags = self._modifier_flags
+            elif flags:
+                self._modifier_flags |= flags
+            elif self._modifier_flags:
+                flags = self._modifier_flags
+            self._pressed_key_codes.add(key_code)
+            self._last_key_event_time = time.monotonic()
+
             event = CGEventCreateKeyboardEvent(self.source, key_code, True)
-            if flags and not is_modifier:
+            if flags and key_code != 57:
                 CGEventSetFlags(event, flags)
+                logger.info(f"  -> CGEventSetFlags(0x{flags:08x}) on keydown")
             CGEventPost(kCGHIDEventTap, event)
+            logger.info(f"  -> CGEventPost keydown mac_code={key_code}")
         elif action == 'keyup':
+            if modifier_flag:
+                self._modifier_flags &= ~modifier_flag
+                self._pressed_modifier_key_codes.discard(key_code)
+                self._last_modifier_event_time = time.monotonic()
+                flags = self._modifier_flags
+            elif flags:
+                self._modifier_flags |= flags
+            elif self._modifier_flags:
+                flags = self._modifier_flags
+            self._pressed_key_codes.discard(key_code)
+            self._last_key_event_time = time.monotonic()
+
             event = CGEventCreateKeyboardEvent(self.source, key_code, False)
-            if flags:
+            if flags and key_code != 57:
                 CGEventSetFlags(event, flags)
+                logger.info(f"  -> CGEventSetFlags(0x{flags:08x}) on keyup")
             CGEventPost(kCGHIDEventTap, event)
+            logger.info(f"  -> CGEventPost keyup mac_code={key_code}")
+
+    def _release_stale_keys(self):
+        if not self._last_key_event_time:
+            return
+        age = time.monotonic() - self._last_key_event_time
+        if age >= self._key_stale_seconds:
+            self.release_all_keys(reason=f"stale-{age:.1f}s")
+
+    def release_all_modifiers(self, reason="manual"):
+        """Release host-side modifier state when a browser keyup is lost."""
+        if not self._modifier_flags and not self._pressed_modifier_key_codes:
+            return
+
+        modifier_order = [
+            (55, kCGEventFlagMaskCommand),
+            (56, kCGEventFlagMaskShift),
+            (60, kCGEventFlagMaskShift),
+            (58, kCGEventFlagMaskAlternate),
+            (61, kCGEventFlagMaskAlternate),
+            (59, kCGEventFlagMaskControl),
+            (62, kCGEventFlagMaskControl),
+        ]
+
+        pressed = set(self._pressed_modifier_key_codes)
+        if self._modifier_flags & kCGEventFlagMaskCommand:
+            pressed.add(55)
+        if self._modifier_flags & kCGEventFlagMaskShift:
+            pressed.add(56)
+        if self._modifier_flags & kCGEventFlagMaskAlternate:
+            pressed.add(58)
+        if self._modifier_flags & kCGEventFlagMaskControl:
+            pressed.add(59)
+
+        logger.warning("Releasing stuck modifiers reason=%s flags=0x%08x keys=%s", reason, self._modifier_flags, sorted(pressed))
+        self._modifier_flags = 0
+        self._pressed_modifier_key_codes.clear()
+        self._pressed_key_codes.difference_update(pressed)
+        self._last_modifier_event_time = 0.0
+
+        for key_code, _flag in modifier_order:
+            if key_code not in pressed:
+                continue
+            event = CGEventCreateKeyboardEvent(self.source, key_code, False)
+            CGEventSetFlags(event, self._modifier_flags)
+            CGEventPost(kCGHIDEventTap, event)
+            logger.info("  -> Released modifier keyup mac_code=%s", key_code)
+
+    def release_all_keys(self, reason="manual"):
+        """Release every host-side pressed key to recover from dropped keyup events."""
+        if not self._pressed_key_codes and not self._modifier_flags and not self._pressed_modifier_key_codes:
+            return
+
+        pressed = set(self._pressed_key_codes)
+        modifier_keys = set(self._pressed_modifier_key_codes)
+        logger.warning("Releasing stuck keys reason=%s keys=%s flags=0x%08x", reason, sorted(pressed), self._modifier_flags)
+
+        non_modifiers = sorted(pressed - modifier_keys)
+        for key_code in non_modifiers:
+            event = CGEventCreateKeyboardEvent(self.source, key_code, False)
+            CGEventSetFlags(event, 0)
+            CGEventPost(kCGHIDEventTap, event)
+            logger.info("  -> Released keyup mac_code=%s", key_code)
+
+        self.release_all_modifiers(reason=reason)
+        self._pressed_key_codes.clear()
+        self._last_key_event_time = 0.0
 
 
 if __name__ == "__main__":

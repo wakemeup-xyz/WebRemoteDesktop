@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web远程桌面 - 登录</title>
+  <title>CodeHarness学习助手 - 登录</title>
   <link rel="stylesheet" href="css/login.css">
 </head>
 <body>
   <div class="login-container">
-    <h1>Web远程桌面</h1>
+    <h1>CodeHarness学习助手</h1>
     <form id="loginForm">
       <div class="input-group">
         <label for="password">访问密码</label>
@@ -21,7 +21,7 @@
   </div>
   
   <script>
-    const API_BASE = 'https://difference-centered-commonwealth-anthony.trycloudflare.com';
+    const API_BASE = window.location.origin;
     
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();

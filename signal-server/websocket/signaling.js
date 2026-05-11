@@ -5,8 +5,34 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-producti
 // Store connections
 const connections = {
   host: null,
-  viewers: new Map()
+  viewers: new Map(),
+  relayViewers: new Map()
 };
+
+function getViewerSnapshot() {
+  return Array.from(connections.viewers.values()).map((viewerSocket) => ({
+    id: viewerSocket.id,
+    ip: viewerSocket.handshake.address || 'unknown',
+    userAgent: viewerSocket.handshake.headers['user-agent'] || 'unknown'
+  }));
+}
+
+function emitViewerStatus(reason, viewerSocket = null) {
+  const payload = {
+    reason,
+    onlineCount: connections.viewers.size,
+    viewers: getViewerSnapshot(),
+    changedViewer: viewerSocket ? {
+      id: viewerSocket.id,
+      ip: viewerSocket.handshake.address || 'unknown',
+      userAgent: viewerSocket.handshake.headers['user-agent'] || 'unknown'
+    } : null
+  };
+
+  if (connections.host) {
+    connections.host.emit('viewer-status', payload);
+  }
+}
 
 function verifyToken(token) {
   try {
@@ -36,8 +62,14 @@ function setupSignaling(io) {
     console.log(`Connection: ${role} - ${socket.id}`);
 
     if (role === 'host') {
+      const previousHost = connections.host;
       connections.host = socket;
+      if (previousHost && previousHost.id !== socket.id) {
+        console.warn(`Replacing stale host connection: ${previousHost.id} -> ${socket.id}`);
+        previousHost.disconnect(true);
+      }
       socket.emit('connected', { role: 'host', status: 'ok' });
+      emitViewerStatus('host-connected');
       // Notify all viewers that host is online
       connections.viewers.forEach((viewerSocket) => {
         viewerSocket.emit('host-status', { online: true });
@@ -46,6 +78,14 @@ function setupSignaling(io) {
       connections.viewers.set(socket.id, socket);
       socket.emit('connected', {
         role: 'viewer',
+        status: 'ok',
+        hostOnline: connections.host !== null
+      });
+      emitViewerStatus('viewer-connected', socket);
+    } else if (role === 'relay-viewer') {
+      connections.relayViewers.set(socket.id, socket);
+      socket.emit('connected', {
+        role: 'relay-viewer',
         status: 'ok',
         hostOnline: connections.host !== null
       });
@@ -91,20 +131,119 @@ function setupSignaling(io) {
         console.warn(`Input rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if (data.type !== 'mouse' || data.action !== 'move') {
+        console.log(`[INPUT] Relaying from viewer ${socket.id}:`, JSON.stringify(data));
+      }
       if (connections.host) {
-        connections.host.emit('input', data);
+        connections.host.emit('input', {
+          ...data,
+          viewerId: socket.id
+        });
+      } else {
+        console.warn('[INPUT] No host connected, dropping input');
+      }
+    });
+
+    // Diagnostic logs relay (viewer -> host)
+    socket.on('diagnostic', (data) => {
+      if (role !== 'viewer') {
+        console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      console.log(`[DIAGNOSTIC] Relaying ${data.logs?.length || 0} lines from viewer ${socket.id}`);
+      if (connections.host) {
+        connections.host.emit('diagnostic', data);
+      } else {
+        console.warn('[DIAGNOSTIC] No host connected, dropping logs');
+      }
+    });
+
+    socket.on('viewer-stats', (data) => {
+      if (role !== 'viewer') {
+        console.warn(`Viewer stats rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      if (connections.host) {
+        connections.host.emit('viewer-stats', {
+          ...data,
+          viewerId: socket.id
+        });
+      }
+    });
+
+    socket.on('relay-stream-control', (data) => {
+      if (role !== 'viewer' && role !== 'relay-viewer') {
+        console.warn(`Relay stream control rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      if (connections.host) {
+        connections.host.emit('relay-stream-control', {
+          ...data,
+          viewerId: socket.id
+        });
+      }
+    });
+
+    socket.on('relay-frame', (data) => {
+      if (role !== 'host') {
+        console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      const viewerSocket = connections.relayViewers.get(data.viewerId) || connections.viewers.get(data.viewerId);
+      if (viewerSocket) {
+        viewerSocket.volatile.emit('relay-frame', data);
+      }
+    });
+
+    socket.on('relay-frame-ack', (data) => {
+      if (role !== 'viewer' && role !== 'relay-viewer') {
+        return;
+      }
+      if (connections.host) {
+        connections.host.emit('relay-frame-ack', {
+          ...data,
+          viewerId: socket.id
+        });
+      }
+    });
+
+    socket.on('resolution-change', (data) => {
+      if (role !== 'viewer') {
+        console.warn(`Resolution change rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      const width = Number(data.width);
+      const height = Number(data.height);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 320 || height < 180) {
+        console.warn(`[RESOLUTION] Invalid request from ${socket.id}:`, data);
+        return;
+      }
+      if (connections.host) {
+        connections.host.emit('resolution-change', {
+          width: Math.round(width),
+          height: Math.round(height),
+          viewerId: socket.id
+        });
       }
     });
 
     socket.on('disconnect', () => {
       console.log(`Disconnected: ${role} - ${socket.id}`);
       if (role === 'host') {
-        connections.host = null;
-        connections.viewers.forEach((viewerSocket) => {
-          viewerSocket.emit('host-status', { online: false });
-        });
-      } else {
+        if (connections.host && connections.host.id === socket.id) {
+          connections.host = null;
+          connections.viewers.forEach((viewerSocket) => {
+            viewerSocket.emit('host-status', { online: false });
+          });
+          emitViewerStatus('host-disconnected');
+        } else {
+          console.log(`Ignoring stale host disconnect: ${socket.id}`);
+        }
+      } else if (role === 'viewer') {
         connections.viewers.delete(socket.id);
+        emitViewerStatus('viewer-disconnected', socket);
+      } else if (role === 'relay-viewer') {
+        connections.relayViewers.delete(socket.id);
       }
     });
   });
@@ -112,4 +251,14 @@ function setupSignaling(io) {
   return connections;
 }
 
-module.exports = { setupSignaling, connections };
+function getConnectionStatus() {
+  return {
+    hostOnline: Boolean(connections.host),
+    hostId: connections.host ? connections.host.id : null,
+    viewerCount: connections.viewers.size,
+    relayViewerCount: connections.relayViewers.size,
+    viewers: getViewerSnapshot()
+  };
+}
+
+module.exports = { setupSignaling, connections, getConnectionStatus };

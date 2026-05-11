@@ -46,7 +46,10 @@ const UI = {
     const pauseBtn = document.getElementById('pauseBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
     const scaleBtn = document.getElementById('scaleBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
     const video = document.getElementById('remoteVideo');
+    const relayImage = document.getElementById('relayImage');
+    const viewerContainer = document.querySelector('.viewer-container');
 
     let isPaused = false;
     const scaleModes = ['contain', 'cover', 'fill'];
@@ -76,13 +79,36 @@ const UI = {
       scaleBtn.addEventListener('click', () => {
         scaleIndex = (scaleIndex + 1) % scaleModes.length;
         const mode = scaleModes[scaleIndex];
-        video.classList.remove('scale-cover', 'scale-fill');
+        [video, relayImage].forEach((el) => el?.classList.remove('scale-cover', 'scale-fill'));
         if (mode === 'cover') {
-          video.classList.add('scale-cover');
+          [video, relayImage].forEach((el) => el?.classList.add('scale-cover'));
         } else if (mode === 'fill') {
-          video.classList.add('scale-fill');
+          [video, relayImage].forEach((el) => el?.classList.add('scale-fill'));
         }
         scaleBtn.textContent = `缩放：${scaleLabels[scaleIndex]}`;
+      });
+    }
+
+    if (fullscreenBtn && viewerContainer) {
+      fullscreenBtn.addEventListener('click', async () => {
+        try {
+          if (!document.fullscreenElement) {
+            await viewerContainer.requestFullscreen();
+          } else {
+            await document.exitFullscreen();
+          }
+        } catch (err) {
+          console.error('Fullscreen toggle failed:', err);
+        }
+      });
+
+      document.addEventListener('fullscreenchange', () => {
+        const isFullscreen = document.fullscreenElement === viewerContainer;
+        fullscreenBtn.textContent = isFullscreen ? '退出全屏' : '全屏';
+        document.body.classList.toggle('fullscreen-active', isFullscreen);
+        if (isFullscreen) {
+          video.focus();
+        }
       });
     }
 
