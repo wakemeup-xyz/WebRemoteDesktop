@@ -143,6 +143,7 @@ class InputHandler:
         if not self._running:
             return
 
+        i1 = time.time()
         try:
             input_type = data.get('type')
             action = data.get('action')
@@ -161,11 +162,23 @@ class InputHandler:
                 elif input_type == 'keyboard':
                     if action == 'reset':
                         self.release_all_keys(reason=payload.get("reason", "remote-reset"))
-                        return
+                        i2 = time.time()
+                        return {
+                            "inputIds": data.get("inputIds", []),
+                            "receiveTime": i1,
+                            "executeTime": i2,
+                        }
                     # Keyboard events must be processed serially with small delays
                     # so macOS Quartz can correctly recognize combo keys.
                     self._handle_keyboard(action, payload)
                     await asyncio.sleep(0.02)
+
+            i2 = time.time()
+            return {
+                "inputIds": data.get("inputIds", []),
+                "receiveTime": i1,
+                "executeTime": i2,
+            }
 
         except Exception as e:
             logger.error(f"Error handling input: {e}")
