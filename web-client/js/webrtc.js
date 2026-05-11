@@ -270,6 +270,25 @@ const WebRTC = {
           Input.init();
           Input.setActive(true);
         }
+        // Hook requestVideoFrameCallback for latency measurement
+        const video = document.getElementById('remoteVideo');
+        if (video && typeof video.requestVideoFrameCallback === 'function') {
+          const onFrame = (now, metadata) => {
+            if (typeof LatencyMonitor !== 'undefined') {
+              LatencyMonitor.onVideoFrame(now, metadata);
+            }
+            video.requestVideoFrameCallback(onFrame);
+          };
+          video.requestVideoFrameCallback(onFrame);
+        }
+        // Estimate playout buffer periodically
+        if (!this._playoutEstimateInterval) {
+          this._playoutEstimateInterval = setInterval(() => {
+            if (typeof LatencyMonitor !== 'undefined') {
+              LatencyMonitor._estimatePlayoutBuffer();
+            }
+          }, 2000);
+        }
         // Start latency clock sync after connection is stable
         setTimeout(() => {
           if (typeof LatencyMonitor !== 'undefined') {
@@ -291,6 +310,10 @@ const WebRTC = {
         if (this._latencySyncInterval) {
           clearInterval(this._latencySyncInterval);
           this._latencySyncInterval = null;
+        }
+        if (this._playoutEstimateInterval) {
+          clearInterval(this._playoutEstimateInterval);
+          this._playoutEstimateInterval = null;
         }
         this.updateNetworkUI('媒体链路失败，请按浮窗建议切换网络模式', 'danger');
         this.scheduleReconnect(`pc-${this.pc.connectionState}`);

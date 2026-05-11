@@ -362,7 +362,7 @@ const Input = {
 
     // Generate inputId for latency tracking
     const inputId = `inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    data.inputId = inputId;
+    data.inputIds = [inputId];
 
     // Record input send time for latency measurement
     if (typeof LatencyMonitor !== 'undefined') {

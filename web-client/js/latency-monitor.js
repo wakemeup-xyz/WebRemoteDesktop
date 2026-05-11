@@ -105,6 +105,43 @@ const LatencyMonitor = {
     }
   },
 
+  // ─── Video Frame / Playout Buffer ───
+
+  onVideoFrame(now, metadata) {
+    // T6: frame decoded and ready to render
+    const t6 = now;
+    // T5 is approximated by when the frame timing data arrived
+    // We use the most recent network stat as T5 proxy
+    const networkStats = this._stats.network;
+    if (networkStats.length > 0) {
+      const lastNetwork = networkStats[networkStats.length - 1].value;
+      // Estimate T5 = T6 - playoutBuffer
+      // We don't have exact T5, so we estimate playout buffer from getStats
+      this._estimatePlayoutBuffer();
+    }
+  },
+
+  async _estimatePlayoutBuffer() {
+    if (typeof WebRTC === 'undefined' || !WebRTC.pc) return;
+    try {
+      const stats = await WebRTC.pc.getStats();
+      let jitterBufferDelay = 0;
+      let jitterBufferEmittedCount = 0;
+      stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          jitterBufferDelay = report.jitterBufferDelay || 0;
+          jitterBufferEmittedCount = report.jitterBufferEmittedCount || 1;
+        }
+      });
+      if (jitterBufferEmittedCount > 0) {
+        const avgPlayoutMs = (jitterBufferDelay / jitterBufferEmittedCount) * 1000;
+        this._pushStat('playout', avgPlayoutMs);
+      }
+    } catch (e) {
+      // ignore
+    }
+  },
+
   // ─── Statistics ───
 
   _pushStat(key, value) {
