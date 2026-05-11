@@ -152,6 +152,17 @@
     <div class="modal-content" style="min-width: 600px; max-width: 90vw;">
       <h3>前端诊断日志</h3>
       <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">最近捕获的浏览器控制台日志，点击发送可将日志传给服务端分析。</p>
+      <div id="latencyPanel" style="margin-bottom: 16px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: var(--radius-md); font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+        <h4 style="margin: 0 0 8px 0; color: var(--text-primary); font-size: 13px;">延迟分析 (5秒窗口)</h4>
+        <div id="latencyStats" style="display: grid; grid-template-columns: 80px 1fr 80px; gap: 4px 8px; color: var(--text-secondary);">
+          <span>采集:</span> <div class="latency-bar"><div id="barCapture" style="width:0%"></div></div> <span id="valCapture">-</span>
+          <span>编码:</span> <div class="latency-bar"><div id="barEncode" style="width:0%"></div></div> <span id="valEncode">-</span>
+          <span>网络:</span> <div class="latency-bar"><div id="barNetwork" style="width:0%"></div></div> <span id="valNetwork">-</span>
+          <span>缓冲:</span> <div class="latency-bar"><div id="barPlayout" style="width:0%"></div></div> <span id="valPlayout">-</span>
+          <span>输入→画面:</span> <div class="latency-bar"><div id="barInput" style="width:0%"></div></div> <span id="valInput">-</span>
+        </div>
+        <div id="latencySync" style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">时钟同步: 未同步</div>
+      </div>
       <textarea id="diagLogArea" readonly style="width: 100%; height: 320px; background: rgba(0,0,0,0.4); color: #c3e88d; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
       <div style="display: flex; gap: 10px; margin-top: 16px;">
         <button id="sendDiagBtn" class="modal-btn primary">发送日志到服务端</button>
@@ -165,6 +176,7 @@
   <script src="js/webrtc.js"></script>
   <script src="js/input.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/latency-monitor.js"></script>
   <script src="js/diagnostic.js"></script>
 </body>
 </html>

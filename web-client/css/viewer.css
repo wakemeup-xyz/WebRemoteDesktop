@@ -636,3 +636,17 @@ body:not(.stream-connected) .action-bar {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.35);
 }
+
+.latency-bar {
+  background: rgba(255,255,255,0.1);
+  height: 12px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.latency-bar > div {
+  height: 100%;
+  background: #4ade80;
+  transition: width 0.3s ease;
+}
+.latency-bar > div.warning { background: #facc15; }
+.latency-bar > div.danger { background: #f87171; }

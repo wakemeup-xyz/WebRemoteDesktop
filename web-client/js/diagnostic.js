@@ -119,3 +119,41 @@ const Diagnostic = {
 };
 
 Diagnostic.init();
+
+function updateLatencyPanel() {
+  if (typeof LatencyMonitor === 'undefined') return;
+  const stats = LatencyMonitor.getStats();
+  const maxScale = 500; // ms, for bar width scaling
+
+  function setBar(id, value, warn, danger) {
+    const bar = document.getElementById('bar' + id);
+    const val = document.getElementById('val' + id);
+    if (!bar || !val) return;
+    const w = Math.min(100, (value / maxScale) * 100);
+    bar.style.width = w + '%';
+    bar.className = '';
+    if (value > danger) bar.classList.add('danger');
+    else if (value > warn) bar.classList.add('warning');
+    val.textContent = value > 0 ? value.toFixed(0) + 'ms' : '-';
+  }
+
+  setBar('Capture', stats.capture.p50, 50, 100);
+  setBar('Encode', stats.encode.p50, 100, 200);
+  setBar('Network', stats.network.p50, 100, 300);
+  setBar('Playout', stats.playout.p50, 200, 400);
+  setBar('Input', stats.inputRtt.p50, 300, 800);
+
+  const syncEl = document.getElementById('latencySync');
+  if (syncEl) {
+    if (stats.sync.state === 'synced') {
+      syncEl.textContent = `时钟同步: RTT=${stats.sync.rtt.toFixed(1)}ms offset=${stats.sync.offset.toFixed(1)}ms`;
+      syncEl.style.color = '#4ade80';
+    } else {
+      syncEl.textContent = '时钟同步: 未同步';
+      syncEl.style.color = 'var(--text-muted)';
+    }
+  }
+}
+
+// Update every 2 seconds
+setInterval(updateLatencyPanel, 2000);
