@@ -568,7 +568,7 @@ const Input = {
       selectAll: { key: 'a',          code: 'KeyA',       keyCode: 0,  modifiers: { meta: 1 } },
       save:      { key: 's',          code: 'KeyS',       keyCode: 1,  modifiers: { meta: 1 } },
       find:      { key: 'f',          code: 'KeyF',       keyCode: 3,  modifiers: { meta: 1 } },
-      closeTab:  { key: 'w',          code: 'KeyW',       keyCode: 13, modifiers: { meta: 1 } },
+      showDock:  { type: 'command',  action: 'showDock' },
     };
 
     document.querySelectorAll('.action-btn').forEach((btn) => {
@@ -579,6 +579,12 @@ const Input = {
         if (!cfg) return;
 
         console.log(`Action button: ${action}`);
+
+        if (cfg.type === 'command') {
+          this.sendInput(cfg.type, cfg.action, {});
+          return;
+        }
+
         const mods = cfg.modifiers || {};
         this.sendKey(cfg.key, cfg.code, cfg.keyCode, {
           ctrl: mods.ctrl || 0,

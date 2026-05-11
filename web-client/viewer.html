@@ -65,7 +65,7 @@
     <button class="action-btn" data-action="selectAll">全选</button>
     <button class="action-btn" data-action="save">保存</button>
     <button class="action-btn" data-action="find">查找</button>
-    <button class="action-btn" data-action="closeTab">关闭标签</button>
+    <button class="action-btn" data-action="showDock">显示程序坞</button>
   </div>
   
   <div id="resolutionModal" class="modal hidden">
@@ -157,6 +157,7 @@
         <div id="latencyStats" style="display: grid; grid-template-columns: 80px 1fr 80px; gap: 4px 8px; color: var(--text-secondary);">
           <span>采集:</span> <div class="latency-bar"><div id="barCapture" style="width:0%"></div></div> <span id="valCapture">-</span>
           <span>编码:</span> <div class="latency-bar"><div id="barEncode" style="width:0%"></div></div> <span id="valEncode">-</span>
+          <span>执行:</span> <div class="latency-bar"><div id="barExecute" style="width:0%"></div></div> <span id="valExecute">-</span>
           <span>网络:</span> <div class="latency-bar"><div id="barNetwork" style="width:0%"></div></div> <span id="valNetwork">-</span>
           <span>缓冲:</span> <div class="latency-bar"><div id="barPlayout" style="width:0%"></div></div> <span id="valPlayout">-</span>
           <span>输入→画面:</span> <div class="latency-bar"><div id="barInput" style="width:0%"></div></div> <span id="valInput">-</span>

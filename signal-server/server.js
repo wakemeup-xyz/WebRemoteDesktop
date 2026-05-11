@@ -86,6 +86,6 @@ app.get('/api/webrtc-config', (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 
-server.listen(PORT, () => {
-  console.log(`Signal server listening on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Signal server listening on 0.0.0.0:${PORT}`);
 });

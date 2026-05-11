@@ -9,6 +9,10 @@ const LatencyMonitor = {
   // Input tracking
   _inputMap: new Map(), // inputId -> { i0, ts }
 
+  // Playout buffer tracking (delta calculation)
+  _lastJitterDelay: 0,
+  _lastJitterEmitted: 0,
+
   // Statistics (5-second sliding window)
   _windowMs: 5000,
   _stats: {
@@ -18,6 +22,7 @@ const LatencyMonitor = {
     network: [],
     playout: [],
     inputRtt: [],
+    executeTime: [],
   },
 
   init() {
@@ -83,6 +88,17 @@ const LatencyMonitor = {
     this._pushStat('encode', t3v - t2v);
     this._pushStat('network', t5v - t4v);
 
+    // Process input timing data from host (receiveTime, executeTime)
+    const inputs = data.inputs;
+    if (inputs && inputs.length > 0) {
+      for (const inp of inputs) {
+        if (inp.receiveTime != null && inp.executeTime != null) {
+          this._pushStat('executeTime', (inp.executeTime - inp.receiveTime) * 1000);
+        }
+      }
+    }
+
+    // Compute input RTT for each inputId bound to this frame
     if (data.inputIds && data.inputIds.length > 0) {
       for (const inputId of data.inputIds) {
         const inputRecord = this._inputMap.get(inputId);
@@ -92,6 +108,8 @@ const LatencyMonitor = {
         }
       }
     }
+
+    this._estimatePlayoutBuffer();
   },
 
   // ─── Input Tracking ───
@@ -108,37 +126,35 @@ const LatencyMonitor = {
   // ─── Video Frame / Playout Buffer ───
 
   onVideoFrame(now, metadata) {
-    // T6: frame decoded and ready to render
-    const t6 = now;
-    // T5 is approximated by when the frame timing data arrived
-    // We use the most recent network stat as T5 proxy
-    const networkStats = this._stats.network;
-    if (networkStats.length > 0) {
-      const lastNetwork = networkStats[networkStats.length - 1].value;
-      // Estimate T5 = T6 - playoutBuffer
-      // We don't have exact T5, so we estimate playout buffer from getStats
-      this._estimatePlayoutBuffer();
-    }
+    // Trigger playout estimation on each rendered frame
+    this._estimatePlayoutBuffer();
   },
 
   async _estimatePlayoutBuffer() {
     if (typeof WebRTC === 'undefined' || !WebRTC.pc) return;
     try {
       const stats = await WebRTC.pc.getStats();
-      let jitterBufferDelay = 0;
-      let jitterBufferEmittedCount = 0;
-      stats.forEach((report) => {
+      let currDelay = 0;
+      let currEmitted = 0;
+      for (const report of stats.values()) {
         if (report.type === 'inbound-rtp' && report.kind === 'video') {
-          jitterBufferDelay = report.jitterBufferDelay || 0;
-          jitterBufferEmittedCount = report.jitterBufferEmittedCount || 1;
+          currDelay = report.jitterBufferDelay || 0;
+          currEmitted = report.jitterBufferEmittedCount || 0;
+          break;
         }
-      });
-      if (jitterBufferEmittedCount > 0) {
-        const avgPlayoutMs = (jitterBufferDelay / jitterBufferEmittedCount) * 1000;
-        this._pushStat('playout', avgPlayoutMs);
       }
+      if (currEmitted > 0 && currEmitted > this._lastJitterEmitted) {
+        const deltaDelay = currDelay - this._lastJitterDelay;
+        const deltaEmitted = currEmitted - this._lastJitterEmitted;
+        const currentPlayoutMs = (deltaDelay / deltaEmitted) * 1000;
+        if (currentPlayoutMs >= 0 && currentPlayoutMs < 5000) {
+          this._pushStat('playout', currentPlayoutMs);
+        }
+      }
+      this._lastJitterDelay = currDelay;
+      this._lastJitterEmitted = currEmitted;
     } catch (e) {
-      // ignore
+      // ignore getStats errors
     }
   },
 
@@ -170,6 +186,7 @@ const LatencyMonitor = {
       network: calc(this._stats.network),
       playout: calc(this._stats.playout),
       inputRtt: calc(this._stats.inputRtt),
+      executeTime: calc(this._stats.executeTime),
       sync: {
         state: this._syncState,
         rtt: this._rttMs,

@@ -16,7 +16,8 @@ from Quartz import (
     CGEventSourceCreate, kCGEventSourceStateHIDSystemState,
     kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
     kCGEventFlagMaskAlternate, kCGEventFlagMaskControl,
-    CGEventCreateScrollWheelEvent, kCGScrollEventUnitLine
+    CGEventCreateScrollWheelEvent, kCGScrollEventUnitLine,
+    CGEventCreate, CGEventGetLocation
 )
 import screeninfo
 
@@ -143,7 +144,7 @@ class InputHandler:
         if not self._running:
             return
 
-        i1 = time.time()
+        i1 = time.perf_counter()
         try:
             input_type = data.get('type')
             action = data.get('action')
@@ -159,10 +160,12 @@ class InputHandler:
                     self._release_stale_keys()
                 if input_type == 'mouse':
                     await asyncio.to_thread(self._handle_mouse, action, payload)
+                elif input_type == 'command':
+                    await asyncio.to_thread(self._handle_command, action, payload)
                 elif input_type == 'keyboard':
                     if action == 'reset':
                         self.release_all_keys(reason=payload.get("reason", "remote-reset"))
-                        i2 = time.time()
+                        i2 = time.perf_counter()
                         return {
                             "inputIds": data.get("inputIds", []),
                             "receiveTime": i1,
@@ -171,9 +174,15 @@ class InputHandler:
                     # Keyboard events must be processed serially with small delays
                     # so macOS Quartz can correctly recognize combo keys.
                     self._handle_keyboard(action, payload)
+                    i2 = time.perf_counter()
                     await asyncio.sleep(0.02)
+                    return {
+                        "inputIds": data.get("inputIds", []),
+                        "receiveTime": i1,
+                        "executeTime": i2,
+                    }
 
-            i2 = time.time()
+            i2 = time.perf_counter()
             return {
                 "inputIds": data.get("inputIds", []),
                 "receiveTime": i1,
@@ -182,6 +191,44 @@ class InputHandler:
 
         except Exception as e:
             logger.error(f"Error handling input: {e}")
+
+    def _handle_command(self, action, payload):
+        """Handle special command actions."""
+        if action == 'showDock':
+            self._show_dock()
+
+    def _show_dock(self):
+        """Move mouse to screen bottom to trigger Dock autohide, then restore position."""
+        if not self.monitor:
+            return
+
+        current_x = current_y = None
+        try:
+            event = CGEventCreate(None)
+            current_pos = CGEventGetLocation(event)
+            current_x = current_pos.x
+            current_y = current_pos.y
+        except Exception as e:
+            logger.warning(f"Failed to get mouse location: {e}")
+
+        target_x = self.monitor.x + self.monitor.width / 2
+        target_y = self.monitor.y + self.monitor.height - 1
+
+        logger.info(f"Show dock: moving mouse to ({target_x:.0f}, {target_y:.0f})")
+
+        move_event = CGEventCreateMouseEvent(
+            self.source, kCGEventMouseMoved, (target_x, target_y), kCGMouseButtonLeft
+        )
+        CGEventPost(kCGHIDEventTap, move_event)
+
+        time.sleep(0.3)
+
+        if current_x is not None:
+            restore_event = CGEventCreateMouseEvent(
+                self.source, kCGEventMouseMoved, (current_x, current_y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, restore_event)
+            logger.info(f"Show dock: restored mouse to ({current_x:.0f}, {current_y:.0f})")
 
     def _handle_mouse(self, action, payload):
         """Handle mouse events using Quartz"""

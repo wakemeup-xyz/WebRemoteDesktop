@@ -139,6 +139,7 @@ function updateLatencyPanel() {
 
   setBar('Capture', stats.capture.p50, 50, 100);
   setBar('Encode', stats.encode.p50, 100, 200);
+  setBar('Execute', stats.executeTime.p50, 20, 50);
   setBar('Network', stats.network.p50, 100, 300);
   setBar('Playout', stats.playout.p50, 200, 400);
   setBar('Input', stats.inputRtt.p50, 300, 800);
