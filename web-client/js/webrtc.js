@@ -1138,4 +1138,40 @@ document.addEventListener('DOMContentLoaded', () => {
       WebRTC.refresh();
     });
   }
+
+  // Resolution modal
+  const resolutionBtn = document.getElementById('resolutionBtn');
+  const resolutionModal = document.getElementById('resolutionModal');
+  const applyResolution = document.getElementById('applyResolution');
+  const closeResolution = document.getElementById('closeResolution');
+
+  if (resolutionBtn && resolutionModal) {
+    resolutionBtn.addEventListener('click', () => {
+      resolutionModal.classList.remove('hidden');
+    });
+  }
+  if (closeResolution && resolutionModal) {
+    closeResolution.addEventListener('click', () => {
+      resolutionModal.classList.add('hidden');
+    });
+  }
+  if (applyResolution && resolutionModal) {
+    applyResolution.addEventListener('click', () => {
+      const selected = document.querySelector('input[name="resolution"]:checked');
+      if (selected) {
+        const width = parseInt(selected.dataset.width, 10);
+        const height = parseInt(selected.dataset.height, 10);
+        WebRTC.requestResolution(width, height);
+        document.getElementById('resolutionDisplay').textContent = `${width}x${height}`;
+      }
+      resolutionModal.classList.add('hidden');
+    });
+  }
+  if (resolutionModal) {
+    resolutionModal.addEventListener('click', (event) => {
+      if (event.target === resolutionModal) {
+        resolutionModal.classList.add('hidden');
+      }
+    });
+  }
 });

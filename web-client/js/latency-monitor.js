@@ -35,7 +35,7 @@ const LatencyMonitor = {
     if (this._syncState === 'syncing') return;
     this._syncState = 'syncing';
 
-    const v0 = performance.now();
+    const v0 = Date.now();
     this._syncV0 = v0;
 
     if (typeof WebRTC !== 'undefined' && WebRTC.inputChannel && WebRTC.inputChannel.readyState === 'open') {
@@ -49,7 +49,7 @@ const LatencyMonitor = {
   },
 
   handleClockSyncResponse(data) {
-    const v1 = performance.now();
+    const v1 = Date.now();
     const v0 = this._syncV0;
     const h0 = data.h0;
     const h1 = data.h1;
@@ -58,7 +58,7 @@ const LatencyMonitor = {
     const h1ms = h1 * 1000;
 
     const rtt = (v1 - v0) - (h1ms - h0ms);
-    const offset = ((v0 - h0ms) + (v1 - h1ms)) / 2;
+    const offset = (v0 + v1) / 2 - (h0ms + h1ms) / 2;
 
     this._rttMs = rtt;
     this._offsetMs = offset;
@@ -71,7 +71,7 @@ const LatencyMonitor = {
   // ─── Frame Timing ───
 
   onFrameTiming(data) {
-    const now = performance.now();
+    const now = Date.now();
     const timings = data.timings;
 
     const hostToViewer = (hostSec) => hostSec * 1000 + this._offsetMs;
@@ -115,7 +115,7 @@ const LatencyMonitor = {
   // ─── Input Tracking ───
 
   recordInputSend(inputId) {
-    this._inputMap.set(inputId, { i0: performance.now(), ts: Date.now() });
+    this._inputMap.set(inputId, { i0: Date.now(), ts: Date.now() });
     // Cleanup old entries
     const cutoff = Date.now() - 10000;
     for (const [id, rec] of this._inputMap) {
