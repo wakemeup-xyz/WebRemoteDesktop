@@ -4,7 +4,9 @@ import asyncio
 import ctypes
 import logging
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from Quartz import (
     CGEventCreateMouseEvent, CGEventPost, CGEventCreateKeyboardEvent,
     CGEventSetFlags, kCGHIDEventTap, kCGMouseButtonLeft,
@@ -12,6 +14,8 @@ from Quartz import (
     kCGEventMouseMoved, kCGEventLeftMouseDown, kCGEventLeftMouseUp,
     kCGEventRightMouseDown, kCGEventRightMouseUp,
     kCGEventOtherMouseDown, kCGEventOtherMouseUp,
+    kCGEventLeftMouseDragged, kCGEventRightMouseDragged,
+    kCGEventOtherMouseDragged,
     kCGEventScrollWheel,
     CGEventSourceCreate, kCGEventSourceStateHIDSystemState,
     kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
@@ -33,6 +37,7 @@ class InputHandler:
         self.monitor = None
         self.source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
         self._input_lock = asyncio.Lock()
+        self._input_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="input")
         self._modifier_flags = 0
         self._pressed_modifier_key_codes = set()
         self._pressed_key_codes = set()
@@ -40,6 +45,9 @@ class InputHandler:
         self._last_key_event_time = 0.0
         self._modifier_stale_seconds = 3.0
         self._key_stale_seconds = 3.0
+        self._lock_waiters = 0
+        self._lock_contention_logged = False
+        self._pressed_mouse_button = None  # Track pressed button for drag events
 
     def start(self):
         """Start the input handler"""
@@ -134,6 +142,100 @@ class InputHandler:
 
         logger.warning("ABC keyboard layout not found, keeping current input source")
 
+    def _switch_input_method(self):
+        """Toggle input method between ABC (English) and Chinese Pinyin keyboard on macOS."""
+        carbon = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/Carbon.framework/Carbon'
+        )
+        cf = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
+        )
+
+        kCFStringEncodingUTF8 = 0x08000100
+
+        CFStringCreateWithCString = cf.CFStringCreateWithCString
+        CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        CFStringCreateWithCString.restype = ctypes.c_void_p
+
+        CFStringGetCString = cf.CFStringGetCString
+        CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+        CFStringGetCString.restype = ctypes.c_bool
+
+        TISCreateInputSourceList = carbon.TISCreateInputSourceList
+        TISCreateInputSourceList.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+        TISCreateInputSourceList.restype = ctypes.c_void_p
+
+        TISGetInputSourceProperty = carbon.TISGetInputSourceProperty
+        TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        TISGetInputSourceProperty.restype = ctypes.c_void_p
+
+        TISSelectInputSource = carbon.TISSelectInputSource
+        TISSelectInputSource.argtypes = [ctypes.c_void_p]
+        TISSelectInputSource.restype = ctypes.c_int32
+
+        TISCopyCurrentKeyboardInputSource = carbon.TISCopyCurrentKeyboardInputSource
+        TISCopyCurrentKeyboardInputSource.argtypes = []
+        TISCopyCurrentKeyboardInputSource.restype = ctypes.c_void_p
+
+        CFArrayGetCount = cf.CFArrayGetCount
+        CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        CFArrayGetCount.restype = ctypes.c_long
+
+        CFArrayGetValueAtIndex = cf.CFArrayGetValueAtIndex
+        CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+
+        CFRelease = cf.CFRelease
+        CFRelease.argtypes = [ctypes.c_void_p]
+        CFRelease.restype = None
+
+        id_key = CFStringCreateWithCString(None, b'TISPropertyInputSourceID', kCFStringEncodingUTF8)
+
+        # Get current input source to know which way to toggle
+        current_id = None
+        current_src = TISCopyCurrentKeyboardInputSource()
+        if current_src:
+            prop = TISGetInputSourceProperty(current_src, id_key)
+            if prop:
+                buf = ctypes.create_string_buffer(256)
+                if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
+                    current_id = buf.value.decode()
+            CFRelease(current_src)
+
+        logger.info("Switch input method: current=%s", current_id)
+
+        # Chinese input source IDs to try (Simplified Chinese first, then Traditional)
+        chinese_ids = [
+            'com.apple.inputmethod.SCIM.ITABC',     # Pinyin - Simplified
+            'com.apple.inputmethod.SCIM.Shuangpin',  # Shuangpin
+            'com.apple.inputmethod.TCIM.Pinyin',     # Pinyin - Traditional
+        ]
+
+        if current_id == 'com.apple.keylayout.ABC':
+            # Currently ABC → switch to Chinese
+            sources = TISCreateInputSourceList(None, False)
+            count = CFArrayGetCount(sources)
+            target_src = None
+            for i in range(count):
+                src = CFArrayGetValueAtIndex(sources, i)
+                prop = TISGetInputSourceProperty(src, id_key)
+                if not prop:
+                    continue
+                buf = ctypes.create_string_buffer(256)
+                if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
+                    src_id = buf.value.decode()
+                    if src_id in chinese_ids:
+                        target_src = src
+                        logger.info("Switch input: ABC → %s", src_id)
+                        break
+            if target_src:
+                TISSelectInputSource(target_src)
+            else:
+                logger.warning("No Chinese input source found to switch to")
+        else:
+            # Currently not ABC → switch to ABC
+            self._switch_to_abc_keyboard()
+
     def stop(self):
         """Stop the input handler"""
         self._running = False
@@ -150,18 +252,38 @@ class InputHandler:
             action = data.get('action')
             payload = data.get('payload', {})
 
-            if input_type == 'keyboard' or action != 'move':
-                logger.info(f"Input: {input_type} {action}")
-            else:
-                logger.debug(f"Input: {input_type} {action}")
+            # Track lock contention
+            self._lock_waiters += 1
+            waiters_before = self._lock_waiters
 
+            lock_start = time.perf_counter()
             async with self._input_lock:
+                lock_acquired = time.perf_counter()
+                lock_wait_ms = (lock_acquired - lock_start) * 1000
+                self._lock_waiters -= 1
+
+                # Log lock contention: if > 3 waiters or wait > 10ms
+                if waiters_before > 3 or lock_wait_ms > 10:
+                    if not self._lock_contention_logged or lock_wait_ms > 50:
+                        logger.warning(
+                            "Input lock contention: waiters_before=%d lock_wait=%.1fms type=%s action=%s",
+                            waiters_before, lock_wait_ms, input_type, action
+                        )
+                        self._lock_contention_logged = True
+                elif lock_wait_ms < 10:
+                    self._lock_contention_logged = False
+
                 if input_type == 'mouse':
                     self._release_stale_keys()
-                if input_type == 'mouse':
-                    await asyncio.to_thread(self._handle_mouse, action, payload)
+                    to_thread_start = time.perf_counter()
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(self._input_thread_pool, self._handle_mouse, action, payload)
+                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                 elif input_type == 'command':
-                    await asyncio.to_thread(self._handle_command, action, payload)
+                    to_thread_start = time.perf_counter()
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(self._input_thread_pool, self._handle_command, action, payload)
+                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                 elif input_type == 'keyboard':
                     if action == 'reset':
                         self.release_all_keys(reason=payload.get("reason", "remote-reset"))
@@ -171,8 +293,6 @@ class InputHandler:
                             "receiveTime": i1,
                             "executeTime": i2,
                         }
-                    # Keyboard events must be processed serially with small delays
-                    # so macOS Quartz can correctly recognize combo keys.
                     self._handle_keyboard(action, payload)
                     i2 = time.perf_counter()
                     await asyncio.sleep(0.02)
@@ -181,8 +301,19 @@ class InputHandler:
                         "receiveTime": i1,
                         "executeTime": i2,
                     }
+                else:
+                    to_thread_ms = 0
 
             i2 = time.perf_counter()
+            total_ms = (i2 - i1) * 1000
+
+            # Log timing for non-move events or if total > 50ms
+            if action != 'move' or total_ms > 50:
+                logger.info(
+                    "Input timing: type=%s action=%s total=%.1fms lock_wait=%.1fms to_thread=%.1fms",
+                    input_type, action, total_ms, lock_wait_ms, to_thread_ms
+                )
+
             return {
                 "inputIds": data.get("inputIds", []),
                 "receiveTime": i1,
@@ -191,44 +322,58 @@ class InputHandler:
 
         except Exception as e:
             logger.error(f"Error handling input: {e}")
+            self._lock_waiters = max(0, self._lock_waiters - 1)
 
     def _handle_command(self, action, payload):
         """Handle special command actions."""
         if action == 'showDock':
             self._show_dock()
+        elif action == 'switchInputMethod':
+            self._switch_input_method()
 
     def _show_dock(self):
-        """Move mouse to screen bottom to trigger Dock autohide, then restore position."""
+        """Push mouse past screen bottom edge to trigger auto-hidden Dock, then restore."""
         if not self.monitor:
+            logger.warning("Show dock failed: no monitor info")
             return
 
-        current_x = current_y = None
         try:
-            event = CGEventCreate(None)
+            # Use self.source to create event for getting current position (thread-safe)
+            event = CGEventCreate(self.source)
+            if event is None:
+                logger.warning("Show dock: CGEventCreate returned None")
+                return
             current_pos = CGEventGetLocation(event)
             current_x = current_pos.x
             current_y = current_pos.y
-        except Exception as e:
-            logger.warning(f"Failed to get mouse location: {e}")
 
-        target_x = self.monitor.x + self.monitor.width / 2
-        target_y = self.monitor.y + self.monitor.height - 1
+            target_x = self.monitor.x + self.monitor.width / 2
+            edge_y = self.monitor.y + self.monitor.height - 1
+            push_y = self.monitor.y + self.monitor.height + 10
 
-        logger.info(f"Show dock: moving mouse to ({target_x:.0f}, {target_y:.0f})")
+            logger.info("Show dock: current=(%.0f,%.0f) pushing past edge (%.0f, %.0f -> %.0f)",
+                        current_x, current_y, target_x, edge_y, push_y)
 
-        move_event = CGEventCreateMouseEvent(
-            self.source, kCGEventMouseMoved, (target_x, target_y), kCGMouseButtonLeft
-        )
-        CGEventPost(kCGHIDEventTap, move_event)
+            move_event = CGEventCreateMouseEvent(
+                self.source, kCGEventMouseMoved, (target_x, edge_y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, move_event)
 
-        time.sleep(0.3)
+            time.sleep(0.05)
+            push_event = CGEventCreateMouseEvent(
+                self.source, kCGEventMouseMoved, (target_x, push_y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, push_event)
 
-        if current_x is not None:
+            time.sleep(0.6)
+
             restore_event = CGEventCreateMouseEvent(
                 self.source, kCGEventMouseMoved, (current_x, current_y), kCGMouseButtonLeft
             )
             CGEventPost(kCGHIDEventTap, restore_event)
-            logger.info(f"Show dock: restored mouse to ({current_x:.0f}, {current_y:.0f})")
+            logger.info("Show dock: restored mouse to (%.0f, %.0f)", current_x, current_y)
+        except Exception as e:
+            logger.error("Show dock failed: %s", e, exc_info=True)
 
     def _handle_mouse(self, action, payload):
         """Handle mouse events using Quartz"""
@@ -255,8 +400,18 @@ class InputHandler:
         button_type = self._get_mouse_button(button)
 
         if action == 'move':
+            # Use dragged event type when a button is held (critical for drag to work)
+            drag_map = {
+                'left': kCGEventLeftMouseDragged,
+                'right': kCGEventRightMouseDragged,
+                'middle': kCGEventOtherMouseDragged,
+            }
+            if self._pressed_mouse_button and self._pressed_mouse_button in drag_map:
+                move_type = drag_map[self._pressed_mouse_button]
+            else:
+                move_type = kCGEventMouseMoved
             event = CGEventCreateMouseEvent(
-                self.source, kCGEventMouseMoved, (x, y), button_type
+                self.source, move_type, (x, y), button_type
             )
             CGEventPost(kCGHIDEventTap, event)
 
@@ -266,6 +421,7 @@ class InputHandler:
                 'right': kCGEventRightMouseDown,
                 'middle': kCGEventOtherMouseDown
             }.get(button, kCGEventLeftMouseDown)
+            self._pressed_mouse_button = button
             event = CGEventCreateMouseEvent(
                 self.source, event_type, (x, y), button_type
             )
@@ -277,6 +433,7 @@ class InputHandler:
                 'right': kCGEventRightMouseUp,
                 'middle': kCGEventOtherMouseUp
             }.get(button, kCGEventLeftMouseUp)
+            self._pressed_mouse_button = None
             event = CGEventCreateMouseEvent(
                 self.source, event_type, (x, y), button_type
             )
@@ -289,16 +446,27 @@ class InputHandler:
             pass
 
         elif action == 'dblclick':
-            # Two clicks
-            for _ in range(2):
-                down_event = CGEventCreateMouseEvent(
-                    self.source, kCGEventLeftMouseDown, (x, y), kCGMouseButtonLeft
-                )
-                CGEventPost(kCGHIDEventTap, down_event)
-                up_event = CGEventCreateMouseEvent(
-                    self.source, kCGEventLeftMouseUp, (x, y), kCGMouseButtonLeft
-                )
-                CGEventPost(kCGHIDEventTap, up_event)
+            # Simulate a proper double-click at the target position.
+            # The viewer already sent individual mousedown/mouseup events;
+            # this ensures a clean double-click rhythm regardless of network jitter.
+            down1 = CGEventCreateMouseEvent(
+                self.source, kCGEventLeftMouseDown, (x, y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, down1)
+            up1 = CGEventCreateMouseEvent(
+                self.source, kCGEventLeftMouseUp, (x, y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, up1)
+            # macOS double-click interval is ~0.3s; 0.08s gap reliably triggers it
+            time.sleep(0.08)
+            down2 = CGEventCreateMouseEvent(
+                self.source, kCGEventLeftMouseDown, (x, y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, down2)
+            up2 = CGEventCreateMouseEvent(
+                self.source, kCGEventLeftMouseUp, (x, y), kCGMouseButtonLeft
+            )
+            CGEventPost(kCGHIDEventTap, up2)
 
         elif action == 'wheel':
             delta_x = payload.get('deltaX', 0)

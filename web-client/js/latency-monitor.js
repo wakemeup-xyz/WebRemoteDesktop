@@ -58,7 +58,7 @@ const LatencyMonitor = {
     const h1ms = h1 * 1000;
 
     const rtt = (v1 - v0) - (h1ms - h0ms);
-    const offset = ((h0ms - v0) + (h1ms - v1)) / 2;
+    const offset = ((v0 - h0ms) + (v1 - h1ms)) / 2;
 
     this._rttMs = rtt;
     this._offsetMs = offset;

@@ -272,17 +272,20 @@ body.tunnel-relay-active #remoteVideo {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
   z-index: 100;
   opacity: 0;
   transition: opacity 0.35s var(--transition-base), transform 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  padding: 8px;
+  padding: 6px 10px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-md);
+  max-width: calc(100vw - 32px);
 }
 
 body:hover .control-bar,
@@ -575,17 +578,20 @@ body.controls-hidden .action-bar {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
   z-index: 100;
   opacity: 0;
   transition: opacity 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  padding: 8px;
+  padding: 6px 10px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-md);
+  max-width: calc(100vw - 32px);
 }
 
 body:hover .action-bar,
@@ -595,18 +601,19 @@ body:not(.stream-connected) .action-bar {
 }
 
 .action-btn {
-  padding: 8px 14px;
+  padding: 6px 10px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .action-btn:hover {

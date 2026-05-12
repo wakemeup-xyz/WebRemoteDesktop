@@ -1,6 +1,10 @@
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+const DIAG_DIR = path.join(__dirname, '..', '..', 'diag-logs');
 
 // Store connections
 const connections = {
@@ -144,17 +148,40 @@ function setupSignaling(io) {
       }
     });
 
-    // Diagnostic logs relay (viewer -> host)
+    // Diagnostic logs relay (viewer -> host) + persist to disk
     socket.on('diagnostic', (data) => {
       if (role !== 'viewer') {
         console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
         return;
       }
-      console.log(`[DIAGNOSTIC] Relaying ${data.logs?.length || 0} lines from viewer ${socket.id}`);
+      const logCount = data.logs?.length || 0;
+      console.log(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
+
+      // Write to diag-logs/ for agent analysis
+      try {
+        if (!fs.existsSync(DIAG_DIR)) {
+          fs.mkdirSync(DIAG_DIR, { recursive: true });
+        }
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `${ts}_${socket.id}.json`;
+        const report = {
+          receivedAt: new Date().toISOString(),
+          viewerId: socket.id,
+          userAgent: data.userAgent || 'unknown',
+          screen: data.screen || 'unknown',
+          logCount,
+          latency: data.latency || null,
+          logs: data.logs || [],
+        };
+        fs.writeFileSync(path.join(DIAG_DIR, filename), JSON.stringify(report, null, 2), 'utf-8');
+        console.log(`[DIAGNOSTIC] Saved → diag-logs/${filename}`);
+      } catch (err) {
+        console.error('[DIAGNOSTIC] Failed to write log file:', err.message);
+      }
+
+      // Also relay to host for real-time analysis
       if (connections.host) {
         connections.host.emit('diagnostic', data);
-      } else {
-        console.warn('[DIAGNOSTIC] No host connected, dropping logs');
       }
     });
 

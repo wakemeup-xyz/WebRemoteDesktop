@@ -225,6 +225,7 @@ const WebRTC = {
     this.config = this.buildPeerConfig();
     this.noMediaTicks = 0;
     this.lastCandidateType = '';
+    if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
     this.pc = new RTCPeerConnection(this.config);
     this.videoTransceiver = null;
     this.inputChannel = null;
@@ -261,6 +262,17 @@ const WebRTC = {
         console.log('WebRTC connected, initializing input...');
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
+
+        // Safety net: hide loading spinner (primary hide is in ontrack via video events)
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl && !loadingEl.classList.contains('hidden')) {
+          console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
+          loadingEl.classList.add('hidden');
+          document.body.classList.add('stream-connected');
+          updateConnectionStatus('connected');
+          const videoEl = document.getElementById('remoteVideo');
+          if (videoEl) videoEl.classList.add('connected');
+        }
         // Stop tunnel relay if it was running (auto fallback case)
         if (this.tunnelRelayActive) {
           console.log('[NETWORK] WebRTC connected, stopping tunnel relay');
@@ -331,16 +343,19 @@ const WebRTC = {
       const videoElement = document.getElementById('remoteVideo');
       videoElement.srcObject = this.remoteStream;
 
-      // Reduce jitter buffer target to minimize latency (Chrome/Edge only)
+      // Reduce jitter buffer aggressively for remote desktop (Chrome/Edge only)
       const receivers = this.pc.getReceivers ? this.pc.getReceivers() : [];
       receivers.forEach(receiver => {
         if (receiver.track && receiver.track.kind === 'video') {
+          // playoutDelayHint (Chrome 129+): explicit min/max in seconds
+          if (typeof receiver.playoutDelayHint !== 'undefined') {
+            receiver.playoutDelayHint = { min: 0, max: 0.1 };
+            console.log('[LATENCY] Set playoutDelayHint = {min:0, max:0.1}');
+          }
+          // jitterBufferTarget: hint in ms (older API, still useful as fallback)
           if (typeof receiver.jitterBufferTarget !== 'undefined') {
-            receiver.jitterBufferTarget = 0;
-            console.log('[LATENCY] Set jitterBufferTarget = 0');
-          } else if (typeof receiver.playoutDelayHint !== 'undefined') {
-            receiver.playoutDelayHint = 0;
-            console.log('[LATENCY] Set playoutDelayHint = 0');
+            receiver.jitterBufferTarget = 1;
+            console.log('[LATENCY] Set jitterBufferTarget = 1');
           }
         }
       });
@@ -352,25 +367,57 @@ const WebRTC = {
         console.error('Video play failed:', err);
       });
 
-      videoElement.onloadedmetadata = () => {
-        console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-        document.getElementById('loading').classList.add('hidden');
-        document.body.classList.add('stream-connected');
-        updateConnectionStatus('connected');
-        videoElement.classList.add('connected');
+      const hideLoading = () => {
+        const el = document.getElementById('loading');
+        const state = `readyState=${videoElement.readyState} paused=${videoElement.paused} hasHidden=${el ? el.classList.contains('hidden') : 'no-el'}`;
+        console.log('[LOADING] hideLoading called:', state);
+        if (el && !el.classList.contains('hidden')) {
+          console.log('Hiding loading spinner');
+          el.classList.add('hidden');
+          document.body.classList.add('stream-connected');
+          updateConnectionStatus('connected');
+          videoElement.classList.add('connected');
+        } else if (el && el.classList.contains('hidden')) {
+          console.log('[LOADING] Already hidden, skipping');
+        }
       };
 
+      // If metadata already loaded, hide loading immediately (race condition fix)
+      if (videoElement.readyState >= 1) {
+        hideLoading();
+      } else {
+        videoElement.onloadedmetadata = () => {
+          console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+          hideLoading();
+        };
+      }
+
+      // If already playing, hide immediately; otherwise wait for playing event
+      if (!videoElement.paused) {
+        hideLoading();
+      }
       videoElement.onplaying = () => {
         console.log('Video is now playing');
-        document.getElementById('loading').classList.add('hidden');
-        document.body.classList.add('stream-connected');
-        updateConnectionStatus('connected');
-        videoElement.classList.add('connected');
+        hideLoading();
       };
 
       this.remoteStream.getTracks().forEach(track => {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
       });
+
+      // Last-resort fallback: if loading still visible after 8s, force hide
+      setTimeout(() => {
+        const el = document.getElementById('loading');
+        const video = document.getElementById('remoteVideo');
+        if (el && !el.classList.contains('hidden')) {
+          console.warn('[LOADING] Fallback timeout triggered: force-hiding spinner. Video readyState=%s paused=%s',
+            video ? video.readyState : 'no-video', video ? video.paused : 'no-video');
+          el.classList.add('hidden');
+          document.body.classList.add('stream-connected');
+          updateConnectionStatus('connected');
+          if (video) video.classList.add('connected');
+        }
+      }, 8000);
 
       this.startStats();
     };
@@ -391,14 +438,24 @@ const WebRTC = {
     });
     this.inputMoveChannel.bufferedAmountLowThreshold = 4 * 1024;
 
+    // Timeout detection: if DataChannel doesn't open within 8s, trigger reconnect
+    this._dcTimeout = setTimeout(() => {
+      if (this.inputChannel && this.inputChannel.readyState !== 'open') {
+        console.warn('[INPUT-DC] DataChannel stuck in state:', this.inputChannel.readyState, '- forcing reconnect');
+        this.scheduleReconnect('dc-stuck');
+      }
+    }, 8000);
+
     this.inputChannel.onopen = () => {
       console.log('[INPUT-DC] DataChannel open');
+      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
       if (typeof Input !== 'undefined') {
         Input.updateKeyDisplayRaw('输入直连已就绪');
       }
     };
     this.inputChannel.onclose = () => {
       console.log('[INPUT-DC] DataChannel closed');
+      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
     };
     this.inputChannel.onerror = (event) => {
       console.warn('[INPUT-DC] DataChannel error:', event);

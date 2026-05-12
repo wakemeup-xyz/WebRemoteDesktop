@@ -369,6 +369,7 @@ const Input = {
       LatencyMonitor.recordInputSend(inputId);
     }
 
+    // Prefer DataChannel for lowest latency
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput && WebRTC.sendInput(data)) {
       if (type === 'keyboard' || action !== 'move') {
         console.log(`[SEND:dc] ${type} ${action}`, payload);
@@ -376,18 +377,29 @@ const Input = {
       return;
     }
 
-    if (!this.socket || !this.socket.connected) {
-      console.warn('Input: Socket not connected');
+    // Fallback: try Socket.IO
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('input', {
+        ...data,
+        transport: 'socket'
+      });
+
+      if (type === 'keyboard' || action !== 'move') {
+        console.log(`[SEND:socket] ${type} ${action}`, payload);
+      }
       return;
     }
 
-    this.socket.emit('input', {
-      ...data,
-      transport: 'socket'
-    });
+    // Both failed — log and attempt recovery
+    const dcState = (typeof WebRTC !== 'undefined' && WebRTC.inputChannel)
+      ? WebRTC.inputChannel.readyState : 'null';
+    console.warn(`Input: No transport available (dc=${dcState}, socket=disconnected)`);
 
-    if (type === 'keyboard' || action !== 'move') {
-      console.log(`[SEND:socket] ${type} ${action}`, payload);
+    // If WebRTC is connected but DataChannel is stuck, try reconnecting
+    if (typeof WebRTC !== 'undefined' && WebRTC.pc
+        && WebRTC.pc.connectionState === 'connected'
+        && dcState !== 'open') {
+      WebRTC.scheduleReconnect('dc-missing');
     }
   },
 
@@ -569,6 +581,8 @@ const Input = {
       save:      { key: 's',          code: 'KeyS',       keyCode: 1,  modifiers: { meta: 1 } },
       find:      { key: 'f',          code: 'KeyF',       keyCode: 3,  modifiers: { meta: 1 } },
       showDock:  { type: 'command',  action: 'showDock' },
+      screenshot: { key: 'a', code: 'KeyA', keyCode: 0, modifiers: { meta: 1, shift: 1 } },
+      switchInputMethod: { type: 'command', action: 'switchInputMethod' },
     };
 
     document.querySelectorAll('.action-btn').forEach((btn) => {

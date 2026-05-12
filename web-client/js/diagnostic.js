@@ -83,11 +83,16 @@ const Diagnostic = {
   },
 
   sendLogs() {
+    const latencyStats = (typeof LatencyMonitor !== 'undefined')
+      ? LatencyMonitor.getStats()
+      : null;
+
     const payload = {
       type: 'diagnostic',
       timestamp: Date.now(),
       userAgent: navigator.userAgent,
       screen: `${window.screen.width}x${window.screen.height}`,
+      latency: latencyStats,
       logs: this.logs.slice(-300) // send last 300 lines
     };
 
