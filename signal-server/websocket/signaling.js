@@ -97,11 +97,16 @@ function setupSignaling(io) {
 
     // WebRTC signaling
     socket.on('offer', (data) => {
+      console.log(`[OFFER] Received from ${role}=${socket.id} epoch=${data.epoch} hostConnected=${Boolean(connections.host)}`);
       if (connections.host) {
+        console.log(`[OFFER] Forwarding to host ${connections.host.id} epoch=${data.epoch}`);
         connections.host.emit('offer', {
           offer: data.offer,
-          viewerId: socket.id
+          viewerId: socket.id,
+          epoch: data.epoch
         });
+      } else {
+        console.warn(`[OFFER] No host connected, dropping offer from ${socket.id} epoch=${data.epoch}`);
       }
     });
 

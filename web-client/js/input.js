@@ -7,7 +7,7 @@ const Input = {
   _pendingMouseMove: null,
   _mouseMoveScheduled: false,
   _keyReleaseTimer: null,
-  _keyStaleMs: 3000,
+  _keyStaleMs: 8000,
   keyboardMode: null,
 
   init() {
@@ -77,10 +77,9 @@ const Input = {
       const isModKey = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key);
       const label = (!isModKey && modStr.length > 0) ? `${modStr.join('+')}+${normalized.key}` : normalized.key;
       this.updateKeyDisplayRaw(`${status}: ↓${label}`);
-      console.log(`[KEYBOARD] keydown: key=${e.key}, code=${e.code}, keyCode=${e.keyCode}, mode=${this.keyboardMode}, normalized=${normalized.key}/${normalized.code}, isActive=${this.isActive}, socketConnected=${this.socket?.connected}`);
 
       if (!this.isActive) {
-        console.warn('[KEYBOARD] Ignored: isActive=false');
+        console.warn(`[KEYBOARD] Ignored keydown: keyId=${this.getKeyId(normalized)} key=${e.key} code=${e.code} (isActive=false)`);
         return;
       }
       e.preventDefault();
@@ -98,12 +97,13 @@ const Input = {
       });
       this.scheduleKeyWatchdog();
 
-      this.sendInput('keyboard', 'keydown', {
+      const downId = this.sendInput('keyboard', 'keydown', {
         key: normalized.key,
         code: normalized.code,
         keyCode: normalized.keyCode,
         modifiers: mods
       });
+      console.log(`[KEYBOARD] keydown: keyId=${keyId} inputId=${downId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
     });
 
     document.addEventListener('keyup', (e) => {
@@ -112,14 +112,16 @@ const Input = {
       if (!this.isActive) return;
       e.preventDefault();
       const normalized = this.normalizeKeyboardEvent(e);
-      this._pressedKeys.delete(this.getKeyId(normalized));
+      const keyId = this.getKeyId(normalized);
+      this._pressedKeys.delete(keyId);
       this.scheduleKeyWatchdog();
-      this.sendInput('keyboard', 'keyup', {
+      const upId = this.sendInput('keyboard', 'keyup', {
         key: normalized.key,
         code: normalized.code,
         keyCode: normalized.keyCode,
         modifiers: normalized.modifiers
       });
+      console.log(`[KEYBOARD] keyup:   keyId=${keyId} inputId=${upId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
     });
 
     // 点击获得焦点（不再发送冗余 click 事件，mousedown+mouseup 已构成完整点击）
@@ -186,6 +188,9 @@ const Input = {
   shouldIgnoreKeyboardEvent(e) {
     const target = e.target;
     if (!target) return false;
+    // Ignore form controls and any element inside a modal dialog.
+    // Modal buttons (like "发送日志") should not leak keystrokes to the remote host.
+    if (target.closest('.modal')) return true;
     const tag = target.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
   },
@@ -372,9 +377,9 @@ const Input = {
     // Prefer DataChannel for lowest latency
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput && WebRTC.sendInput(data)) {
       if (type === 'keyboard' || action !== 'move') {
-        console.log(`[SEND:dc] ${type} ${action}`, payload);
+        console.log(`[SEND:dc] ${type} ${action} id=${inputId}`, payload);
       }
-      return;
+      return inputId;
     }
 
     // Fallback: try Socket.IO
@@ -385,15 +390,15 @@ const Input = {
       });
 
       if (type === 'keyboard' || action !== 'move') {
-        console.log(`[SEND:socket] ${type} ${action}`, payload);
+        console.log(`[SEND:socket] ${type} ${action} id=${inputId}`, payload);
       }
-      return;
+      return inputId;
     }
 
     // Both failed — log and attempt recovery
     const dcState = (typeof WebRTC !== 'undefined' && WebRTC.inputChannel)
       ? WebRTC.inputChannel.readyState : 'null';
-    console.warn(`Input: No transport available (dc=${dcState}, socket=disconnected)`);
+    console.warn(`Input: No transport available (dc=${dcState}, socket=disconnected) id=${inputId}`);
 
     // If WebRTC is connected but DataChannel is stuck, try reconnecting
     if (typeof WebRTC !== 'undefined' && WebRTC.pc
@@ -401,6 +406,7 @@ const Input = {
         && dcState !== 'open') {
       WebRTC.scheduleReconnect('dc-missing');
     }
+    return inputId;
   },
 
   updateKeyDisplay(payload, action) {
@@ -458,8 +464,9 @@ const Input = {
       this._keyReleaseTimer = null;
     }
 
+    // Skip if nothing is pressed — avoids flooding the host with no-op resets
+    // on every blur/visibilitychange.
     if (this._pressedKeys.size === 0) {
-      this.sendKeyboardReset('release-empty');
       return;
     }
 
@@ -537,6 +544,7 @@ const Input = {
       if (!this.isActive) return;
       e.preventDefault();
       el.focus();
+      this.scheduleKeyWatchdog();  // Reset watchdog on user activity
       const coords = this.getRelativeCoords(e);
       this.sendInput('mouse', 'down', {
         ...coords,

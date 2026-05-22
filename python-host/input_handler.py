@@ -43,8 +43,8 @@ class InputHandler:
         self._pressed_key_codes = set()
         self._last_modifier_event_time = 0.0
         self._last_key_event_time = 0.0
-        self._modifier_stale_seconds = 3.0
-        self._key_stale_seconds = 3.0
+        self._modifier_stale_seconds = 8.0
+        self._key_stale_seconds = 8.0  # Must exceed longest normal key-hold (> 5s)
         self._lock_waiters = 0
         self._lock_contention_logged = False
         self._pressed_mouse_button = None  # Track pressed button for drag events
@@ -241,6 +241,13 @@ class InputHandler:
         self._running = False
         logger.info("Input handler stopped")
 
+    async def check_stale_keys(self):
+        """Periodically release stuck keys when no mouse activity occurs."""
+        if not self._running:
+            return
+        async with self._input_lock:
+            self._release_stale_keys()
+
     async def handle_input(self, data):
         """Handle incoming input commands"""
         if not self._running:
@@ -274,7 +281,8 @@ class InputHandler:
                     self._lock_contention_logged = False
 
                 if input_type == 'mouse':
-                    self._release_stale_keys()
+                    if action in ('down', 'up', 'click', 'dblclick'):
+                        self._release_stale_keys()
                     to_thread_start = time.perf_counter()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(self._input_thread_pool, self._handle_mouse, action, payload)
@@ -285,19 +293,25 @@ class InputHandler:
                     await loop.run_in_executor(self._input_thread_pool, self._handle_command, action, payload)
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                 elif input_type == 'keyboard':
+                    input_ids = data.get("inputIds", [])
                     if action == 'reset':
+                        logger.info("Keyboard reset: reason=%s ids=%s", payload.get("reason", "remote-reset"), input_ids)
                         self.release_all_keys(reason=payload.get("reason", "remote-reset"))
                         i2 = time.perf_counter()
                         return {
-                            "inputIds": data.get("inputIds", []),
+                            "inputIds": input_ids,
                             "receiveTime": i1,
                             "executeTime": i2,
                         }
-                    self._handle_keyboard(action, payload)
+                    to_thread_start = time.perf_counter()
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(self._input_thread_pool, self._handle_keyboard, action, payload)
+                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                     i2 = time.perf_counter()
                     await asyncio.sleep(0.02)
+                    logger.info("Keyboard executed: action=%s ids=%s thread_ms=%.1f", action, input_ids, to_thread_ms)
                     return {
-                        "inputIds": data.get("inputIds", []),
+                        "inputIds": input_ids,
                         "receiveTime": i1,
                         "executeTime": i2,
                     }
@@ -533,14 +547,17 @@ class InputHandler:
             'PageUp': 116,
             'PageDown': 121,
             'Insert': 114,
-            'PrintScreen': 92,
+            'PrintScreen': 105,
             'ScrollLock': 107,
             'Pause': 113,
             'NumLock': 71,
             'Clear': 71,
+            'ContextMenu': 119,
             'F1': 122, 'F2': 120, 'F3': 99, 'F4': 118,
             'F5': 96, 'F6': 97, 'F7': 98, 'F8': 100,
             'F9': 101, 'F10': 109, 'F11': 103, 'F12': 111,
+            'F13': 105, 'F14': 107, 'F15': 113, 'F16': 106,
+            'F17': 64, 'F18': 79, 'F19': 80, 'F20': 90,
         }
 
         # Single-char fallback (lowercase + uppercase + shifted symbols)
@@ -561,10 +578,11 @@ class InputHandler:
             '^': 22, '&': 26, '*': 28, '(': 25, ')': 29,
             '_': 27, '+': 24, '{': 33, '}': 30, '|': 42,
             ':': 41, '"': 39, '<': 43, '>': 47, '?': 44,
-            '~': 50,
+            '~': 50, ' ': 49,
         }
 
         modifier_key_flags = {
+            54: kCGEventFlagMaskCommand,  # Right Command
             55: kCGEventFlagMaskCommand,
             56: kCGEventFlagMaskShift,
             58: kCGEventFlagMaskAlternate,
@@ -608,6 +626,8 @@ class InputHandler:
             'F1': 122, 'F2': 120, 'F3': 99, 'F4': 118, 'F5': 96,
             'F6': 97, 'F7': 98, 'F8': 100, 'F9': 101, 'F10': 109,
             'F11': 103, 'F12': 111,
+            'F13': 105, 'F14': 107, 'F15': 113, 'F16': 106,
+            'F17': 64, 'F18': 79, 'F19': 80, 'F20': 90,
             # Control / navigation
             'Enter': 36, 'NumpadEnter': 36,
             'Escape': 53,
@@ -619,12 +639,13 @@ class InputHandler:
             'ControlLeft': 59, 'ControlRight': 62,
             'AltLeft': 58, 'AltRight': 61,
             'ShiftLeft': 56, 'ShiftRight': 60,
-            'MetaLeft': 55, 'MetaRight': 55,
+            'MetaLeft': 55, 'MetaRight': 54,
             'CapsLock': 57,
             'Delete': 117,
             'Home': 115, 'End': 119,
             'PageUp': 116, 'PageDown': 121,
             'Insert': 114,
+            'ContextMenu': 119,
             # Punctuation / symbols
             'Period': 47, 'Comma': 43, 'Semicolon': 41,
             'Quote': 39, 'Slash': 44, 'Backslash': 42,
@@ -638,6 +659,8 @@ class InputHandler:
             'NumpadMultiply': 67, 'NumpadAdd': 69,
             'NumpadSubtract': 78, 'NumpadDecimal': 65,
             'NumpadDivide': 75, 'NumpadEqual': 81,
+            'NumpadClear': 71, 'NumLock': 71,
+            'NumpadComma': 65,
         }
 
         # Determine key code: prefer 'code' (physical key), then 'key' name,
@@ -658,10 +681,16 @@ class InputHandler:
             return
 
         # Detect modifier keys: do not attach modifier flags to the modifier key itself
-        is_modifier = key_code in (55, 56, 58, 59, 60, 61, 62, 57)
+        is_modifier = key_code in (54, 55, 56, 58, 59, 60, 61, 62, 57)
         modifier_flag = modifier_key_flags.get(key_code, 0)
 
         logger.info(f"Keyboard {action}: key='{key_char}', code='{code}', mac_code={key_code}, flags=0x{flags:08x}, is_modifier={is_modifier}")
+
+        # Navigation keys that control IME (arrow keys, ESC) must always
+        # be sent clean — no stuck modifiers attached.  Otherwise macOS
+        # interprets e.g. Cmd+Arrow instead of Arrow and dismisses the
+        # Pinyin candidate window instead of navigating it.
+        _ime_nav_keys = {123, 124, 125, 126, 53}  # Left, Right, Down, Up, Escape
 
         if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0:
             self.release_all_modifiers(reason="plain-key-reset")
@@ -675,7 +704,7 @@ class InputHandler:
                 flags = self._modifier_flags
             elif flags:
                 self._modifier_flags |= flags
-            elif self._modifier_flags:
+            elif self._modifier_flags and key_code not in _ime_nav_keys:
                 flags = self._modifier_flags
             self._pressed_key_codes.add(key_code)
             self._last_key_event_time = time.monotonic()
@@ -692,9 +721,12 @@ class InputHandler:
                 self._pressed_modifier_key_codes.discard(key_code)
                 self._last_modifier_event_time = time.monotonic()
                 flags = self._modifier_flags
-            elif flags:
-                self._modifier_flags |= flags
-            elif self._modifier_flags:
+            # NOTE: keyup of a non-modifier key must never SET modifier
+            # flags.  A lost modifier-keydown would otherwise create a
+            # phantom flag that can never be cleared, corrupting every
+            # subsequent keystroke — especially arrow keys used for IME
+            # candidate navigation.
+            elif self._modifier_flags and key_code not in _ime_nav_keys:
                 flags = self._modifier_flags
             self._pressed_key_codes.discard(key_code)
             self._last_key_event_time = time.monotonic()
@@ -720,6 +752,7 @@ class InputHandler:
 
         modifier_order = [
             (55, kCGEventFlagMaskCommand),
+            (54, kCGEventFlagMaskCommand),
             (56, kCGEventFlagMaskShift),
             (60, kCGEventFlagMaskShift),
             (58, kCGEventFlagMaskAlternate),
@@ -731,12 +764,16 @@ class InputHandler:
         pressed = set(self._pressed_modifier_key_codes)
         if self._modifier_flags & kCGEventFlagMaskCommand:
             pressed.add(55)
+            pressed.add(54)
         if self._modifier_flags & kCGEventFlagMaskShift:
             pressed.add(56)
+            pressed.add(60)
         if self._modifier_flags & kCGEventFlagMaskAlternate:
             pressed.add(58)
+            pressed.add(61)
         if self._modifier_flags & kCGEventFlagMaskControl:
             pressed.add(59)
+            pressed.add(62)
 
         logger.warning("Releasing stuck modifiers reason=%s flags=0x%08x keys=%s", reason, self._modifier_flags, sorted(pressed))
         self._modifier_flags = 0

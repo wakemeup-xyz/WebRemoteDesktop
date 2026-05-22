@@ -9,6 +9,7 @@ const WebRTC = {
   videoTransceiver: null,
   reconnectTimer: null,
   manualDisconnect: false,
+  _refreshing: false,
   inputChannel: null,
   inputMoveChannel: null,
   serverConfig: null,
@@ -145,15 +146,23 @@ const WebRTC = {
   
   setupSocketListeners() {
     this.socket.on('connect', () => {
-      console.log('Signaling connected');
+      console.log('[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s',
+        this.offerInProgress, !!this.pc, this.pc?.connectionState);
       updateConnectionStatus('connecting');
+      // Reset offerInProgress on reconnect to prevent stuck state
+      if (this.offerInProgress) {
+        console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
+        this.offerInProgress = false;
+      }
       if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
         this.createPeerConnection();
+        console.log('[OFFER-DBG] Created new PC on reconnect, pcState=%s', this.pc?.connectionState);
       }
     });
 
     this.socket.on('connected', (data) => {
-      console.log('Server acknowledged:', data);
+      console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
+        data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
       if (data.hostOnline) {
         this.createOffer();
@@ -163,7 +172,8 @@ const WebRTC = {
     });
 
     this.socket.on('host-status', (data) => {
-      console.log('Host status:', data);
+      console.log('[OFFER-DBG] host-status event: online=%s offerInProgress=%s pc=%s',
+        data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
         updateLoadingText('Host已上线，正在连接...');
         if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
@@ -251,6 +261,7 @@ const WebRTC = {
 
     this.pc.oniceconnectionstatechange = () => {
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
+      if (this._refreshing) return;
       if (['failed', 'disconnected', 'closed'].includes(this.pc.iceConnectionState)) {
         this.scheduleReconnect(`ice-${this.pc.iceConnectionState}`);
       }
@@ -258,8 +269,11 @@ const WebRTC = {
 
     this.pc.onconnectionstatechange = () => {
       console.log('Viewer Connection state:', this.pc.connectionState);
+      if (this._refreshing) return;
       if (this.pc.connectionState === 'connected') {
         console.log('WebRTC connected, initializing input...');
+        // Start stats ASAP — before any other init that could throw
+        this.startStats();
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
 
@@ -418,8 +432,6 @@ const WebRTC = {
           if (video) video.classList.add('connected');
         }
       }, 8000);
-
-      this.startStats();
     };
   },
 
@@ -438,13 +450,24 @@ const WebRTC = {
     });
     this.inputMoveChannel.bufferedAmountLowThreshold = 4 * 1024;
 
-    // Timeout detection: if DataChannel doesn't open within 8s, trigger reconnect
-    this._dcTimeout = setTimeout(() => {
+    // Timeout detection: check PC state before forcing reconnect.
+    // If ICE/DTLS is still in progress, extend timeout instead of cascading.
+    this._dcTimeoutExtensions = 0;
+    const checkDcTimeout = () => {
       if (this.inputChannel && this.inputChannel.readyState !== 'open') {
-        console.warn('[INPUT-DC] DataChannel stuck in state:', this.inputChannel.readyState, '- forcing reconnect');
+        const pcState = this.pc ? this.pc.connectionState : 'closed';
+        const iceState = this.pc ? this.pc.iceConnectionState : 'closed';
+        console.warn('[INPUT-DC] DataChannel stuck state=%s pc=%s ice=%s ext=%d',
+          this.inputChannel.readyState, pcState, iceState, this._dcTimeoutExtensions);
+        if ((pcState === 'connecting' || iceState === 'checking') && this._dcTimeoutExtensions < 2) {
+          this._dcTimeoutExtensions += 1;
+          this._dcTimeout = setTimeout(checkDcTimeout, 10000);
+          return;
+        }
         this.scheduleReconnect('dc-stuck');
       }
-    }, 8000);
+    };
+    this._dcTimeout = setTimeout(checkDcTimeout, 10000);
 
     this.inputChannel.onopen = () => {
       console.log('[INPUT-DC] DataChannel open');
@@ -454,11 +477,26 @@ const WebRTC = {
       }
     };
     this.inputChannel.onclose = () => {
-      console.log('[INPUT-DC] DataChannel closed');
+      const sctpState = this.pc && this.pc.sctp ? this.pc.sctp.state : 'no-sctp';
+      console.log('[INPUT-DC] DataChannel closed, sctp=%s pc=%s ice=%s',
+        sctpState,
+        this.pc ? this.pc.connectionState : 'no-pc',
+        this.pc ? this.pc.iceConnectionState : 'no-pc');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      // Immediate reconnect on unexpected DC close — don't wait for ICE timeout
+      if (!this._refreshing && !this.manualDisconnect && this.pc &&
+          this.pc.connectionState === 'connected') {
+        console.warn('[INPUT-DC] Unexpected close while PC connected, scheduling reconnect');
+        this.scheduleReconnect('dc-closed');
+      }
     };
     this.inputChannel.onerror = (event) => {
       console.warn('[INPUT-DC] DataChannel error:', event);
+      // Error typically precedes close; if still connected, schedule reconnect
+      if (!this._refreshing && !this.manualDisconnect && this.pc &&
+          this.pc.connectionState === 'connected') {
+        this.scheduleReconnect('dc-error');
+      }
     };
     this.inputChannel.onmessage = (event) => {
       try {
@@ -474,6 +512,13 @@ const WebRTC = {
         if (data.type === 'clock_sync_resp') {
           if (typeof LatencyMonitor !== 'undefined') {
             LatencyMonitor.handleClockSyncResponse(data);
+          }
+          return;
+        }
+        // Host capture stats → update FPS display as fallback
+        if (data.type === 'capture_stats') {
+          if (data.fps !== undefined) {
+            document.getElementById('fpsDisplay').textContent = `${Math.round(data.fps)} FPS`;
           }
           return;
         }
@@ -675,11 +720,18 @@ const WebRTC = {
   },
   
   async createOffer() {
+    console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
+      this.networkMode, !!this.pc, this.offerInProgress);
     if (this.networkMode === 'tunnel') {
+      console.log('[OFFER-DBG] createOffer: tunnel mode, starting relay');
       this.startTunnelRelay();
       return;
     }
-    if (!this.pc || this.offerInProgress) return;
+    if (!this.pc || this.offerInProgress) {
+      console.warn('[OFFER-DBG] createOffer blocked: pc=%s offerInProgress=%s',
+        !!this.pc, this.offerInProgress);
+      return;
+    }
     this.offerInProgress = true;
     this._offerEpoch += 1;
     const epoch = this._offerEpoch;
@@ -703,7 +755,8 @@ const WebRTC = {
       }
       if (epoch !== this._offerEpoch) return;
 
-      this.socket.emit('offer', { offer: this.pc.localDescription });
+      console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
+      this.socket.emit('offer', { offer: this.pc.localDescription, epoch: epoch });
       console.log('Offer sent (epoch=%d)', epoch);
     } catch (err) {
       console.error('Failed to create offer:', err);
@@ -872,18 +925,26 @@ const WebRTC = {
   },
   
   startStats() {
+    console.log('[STATS] Timer started');
     if (this.statsTimer) {
       clearInterval(this.statsTimer);
     }
 
     this.statsTimer = setInterval(async () => {
-      if (!this.pc) return;
+      if (!this.pc) {
+        console.warn('[STATS] No PC, skipping');
+        return;
+      }
 
       let stats;
       try {
         stats = await this.pc.getStats();
       } catch (err) {
-        console.warn('Failed to get WebRTC stats:', err);
+        console.warn('[STATS] getStats failed:', err.message || err);
+        return;
+      }
+      if (!stats) {
+        console.warn('[STATS] getStats returned null/undefined');
         return;
       }
       let fps = 0;
@@ -989,11 +1050,15 @@ const WebRTC = {
 
   async refresh() {
     console.log('Refreshing WebRTC connection...');
-    this._offerEpoch += 1;
+    this._refreshing = true;
     this.manualDisconnect = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this._dcTimeout) {
+      clearTimeout(this._dcTimeout);
+      this._dcTimeout = null;
     }
     const videoElement = document.getElementById('remoteVideo');
     videoElement.classList.remove('connected');
@@ -1003,9 +1068,19 @@ const WebRTC = {
     this.stopTunnelRelay();
 
     if (this.pc) {
+      // Remove event handlers BEFORE closing to prevent spurious reconnect scheduling
+      this.pc.oniceconnectionstatechange = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.onsignalingstatechange = null;
+      this.pc.onicegatheringstatechange = null;
+      this.pc.onicecandidate = null;
+      this.pc.ontrack = null;
       this.pc.close();
       this.pc = null;
     }
+    // Explicitly clear DataChannel references
+    this.inputChannel = null;
+    this.inputMoveChannel = null;
     if (this.statsTimer) {
       clearInterval(this.statsTimer);
       this.statsTimer = null;
@@ -1013,6 +1088,8 @@ const WebRTC = {
     if (typeof Input !== 'undefined') {
       Input.setActive(false);
     }
+
+    this._refreshing = false;
 
     if (this.networkMode === 'tunnel') {
       this.startTunnelRelay();
@@ -1023,7 +1100,7 @@ const WebRTC = {
   },
 
   scheduleReconnect(reason) {
-    if (this.manualDisconnect || this.reconnectTimer) {
+    if (this.manualDisconnect || this.reconnectTimer || this._refreshing) {
       return;
     }
     console.warn(`[RECOVERY] Scheduling WebRTC reconnect after ${reason}`);
@@ -1134,7 +1211,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {
+    let lastRefreshTime = 0;
     refreshBtn.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastRefreshTime < 5000) {
+        console.log('[REFRESH] Debounced: too soon since last refresh');
+        return;
+      }
+      lastRefreshTime = now;
       WebRTC.refresh();
     });
   }
