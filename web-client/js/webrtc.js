@@ -39,12 +39,12 @@ const WebRTC = {
     auto: {
       label: '自动穿透',
       state: '推荐',
-      hint: '默认模式。先走低延迟直连，网络穿透失败时使用已配置的 TURN 中继。'
+      hint: '默认模式。优先低延迟直连；配置 TURN 时失败后自动改走中继，未配置 TURN 时会更快切到隧道兜底。'
     },
     stun: {
       label: '外网直连',
       state: '看网络',
-      hint: '适合外网但 UDP 未被限制的环境。若一直 0 FPS 或链路未知，请切换外网中继。'
+      hint: '适合外网但 UDP 未被限制的环境。连接失败 2 次后自动切换隧道中继兜底。'
     },
     relay: {
       label: '外网中继',
@@ -56,6 +56,10 @@ const WebRTC = {
       state: '兜底',
       hint: 'TURN 也失败时使用。视频通过 Cloudflare/Socket.IO 转发，FPS 较低但不依赖 UDP。'
     }
+  },
+
+  hasTurnConfigured() {
+    return this.getTurnServers().length > 0;
   },
   
   async init() {
@@ -262,7 +266,19 @@ const WebRTC = {
     this.pc.oniceconnectionstatechange = () => {
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
       if (this._refreshing) return;
-      if (['failed', 'disconnected', 'closed'].includes(this.pc.iceConnectionState)) {
+      if (this.pc.iceConnectionState === 'disconnected') {
+        // Disconnected is often temporary; wait 5s for auto-recovery before forcing reconnect
+        if (this._iceDisconnectedTimer) return;
+        console.warn('[RECOVERY] ICE disconnected, waiting 5s for auto-recovery...');
+        this._iceDisconnectedTimer = setTimeout(() => {
+          this._iceDisconnectedTimer = null;
+          if (this.pc && this.pc.iceConnectionState === 'connected') {
+            console.log('[RECOVERY] ICE recovered, skipping reconnect');
+            return;
+          }
+          this.scheduleReconnect('ice-disconnected');
+        }, 5000);
+      } else if (['failed', 'closed'].includes(this.pc.iceConnectionState)) {
         this.scheduleReconnect(`ice-${this.pc.iceConnectionState}`);
       }
     };
@@ -271,6 +287,17 @@ const WebRTC = {
       console.log('Viewer Connection state:', this.pc.connectionState);
       if (this._refreshing) return;
       if (this.pc.connectionState === 'connected') {
+        // Cancel any pending disconnected-recovery timers
+        if (this._disconnectedTimer) {
+          clearTimeout(this._disconnectedTimer);
+          this._disconnectedTimer = null;
+          console.log('[RECOVERY] PC recovered from disconnected, canceling scheduled reconnect');
+        }
+        if (this._iceDisconnectedTimer) {
+          clearTimeout(this._iceDisconnectedTimer);
+          this._iceDisconnectedTimer = null;
+          console.log('[RECOVERY] ICE recovered from disconnected, canceling scheduled reconnect');
+        }
         console.log('WebRTC connected, initializing input...');
         // Start stats ASAP — before any other init that could throw
         this.startStats();
@@ -307,14 +334,8 @@ const WebRTC = {
           };
           video.requestVideoFrameCallback(onFrame);
         }
-        // Estimate playout buffer periodically
-        if (!this._playoutEstimateInterval) {
-          this._playoutEstimateInterval = setInterval(() => {
-            if (typeof LatencyMonitor !== 'undefined') {
-              LatencyMonitor._estimatePlayoutBuffer();
-            }
-          }, 2000);
-        }
+        // Playout buffer is already estimated via requestVideoFrameCallback in LatencyMonitor.onVideoFrame
+        // No need for a redundant setInterval here
         // Start latency clock sync after connection is stable
         setTimeout(() => {
           if (typeof LatencyMonitor !== 'undefined') {
@@ -337,12 +358,22 @@ const WebRTC = {
           clearInterval(this._latencySyncInterval);
           this._latencySyncInterval = null;
         }
-        if (this._playoutEstimateInterval) {
-          clearInterval(this._playoutEstimateInterval);
-          this._playoutEstimateInterval = null;
-        }
+        // _playoutEstimateInterval removed: playout buffer is tracked via requestVideoFrameCallback only
         this.updateNetworkUI('媒体链路失败，请按浮窗建议切换网络模式', 'danger');
-        this.scheduleReconnect(`pc-${this.pc.connectionState}`);
+        if (this.pc.connectionState === 'disconnected') {
+          if (this._disconnectedTimer) return;
+          console.warn('[RECOVERY] PC disconnected, waiting 5s for auto-recovery...');
+          this._disconnectedTimer = setTimeout(() => {
+            this._disconnectedTimer = null;
+            if (this.pc && this.pc.connectionState === 'connected') {
+              console.log('[RECOVERY] PC recovered, skipping reconnect');
+              return;
+            }
+            this.scheduleReconnect('pc-disconnected');
+          }, 5000);
+        } else {
+          this.scheduleReconnect(`pc-${this.pc.connectionState}`);
+        }
       }
     };
 
@@ -483,19 +514,29 @@ const WebRTC = {
         this.pc ? this.pc.connectionState : 'no-pc',
         this.pc ? this.pc.iceConnectionState : 'no-pc');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
-      // Immediate reconnect on unexpected DC close — don't wait for ICE timeout
+      // Defer reconnect to avoid cascading on brief DC hiccups
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        console.warn('[INPUT-DC] Unexpected close while PC connected, scheduling reconnect');
-        this.scheduleReconnect('dc-closed');
+        if (this._dcReconnectTimer) return;
+        console.warn('[INPUT-DC] Unexpected close while PC connected, will reconnect in 3s if not recovered');
+        this._dcReconnectTimer = setTimeout(() => {
+          this._dcReconnectTimer = null;
+          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
+          this.scheduleReconnect('dc-closed');
+        }, 3000);
       }
     };
     this.inputChannel.onerror = (event) => {
       console.warn('[INPUT-DC] DataChannel error:', event);
-      // Error typically precedes close; if still connected, schedule reconnect
+      // Error typically precedes close; defer reconnect to avoid cascading
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        this.scheduleReconnect('dc-error');
+        if (this._dcReconnectTimer) return;
+        this._dcReconnectTimer = setTimeout(() => {
+          this._dcReconnectTimer = null;
+          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
+          this.scheduleReconnect('dc-error');
+        }, 3000);
       }
     };
     this.inputChannel.onmessage = (event) => {
@@ -762,7 +803,9 @@ const WebRTC = {
       console.error('Failed to create offer:', err);
       this.scheduleReconnect('offer-error');
     } finally {
-      this.offerInProgress = false;
+      if (epoch === this._offerEpoch) {
+        this.offerInProgress = false;
+      }
     }
   },
 
@@ -869,7 +912,7 @@ const WebRTC = {
     if (turnStatus) {
       turnStatus.textContent = this.serverConfig?.turnConfigured
         ? `TURN 已配置：${(this.serverConfig.turnUrls || []).join(', ')}`
-        : 'TURN 未配置：外网中继模式会退回 STUN，跨网络失败时需要配置 TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL。';
+        : 'TURN 未配置：当前只能做 STUN 直连；跨网络失败时会回退隧道中继。若要稳定外网中继，请配置 TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL。';
     }
     this.syncNetworkModal();
   },
@@ -911,9 +954,11 @@ const WebRTC = {
     }
 
     let detail = message || mode.hint;
-    if (this.networkMode === 'relay' && !this.getTurnServers().length) {
+    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
       severity = 'warning';
       detail = '外网中继需要 TURN。当前未配置 TURN，页面会退回 STUN，受限网络仍可能 0 FPS。';
+    } else if (this.networkMode === 'auto' && !this.hasTurnConfigured()) {
+      detail = message || '当前为 STUN-only 自动模式。若外网直连失败，页面会自动切换到隧道中继。';
     }
 
     title.textContent = `网络模式：${mode.label}`;
@@ -999,7 +1044,8 @@ const WebRTC = {
       }
       const candidateEl = document.getElementById('candidateDisplay');
       if (candidateEl) {
-        candidateEl.textContent = `链路 ${selectedCandidateType || '-'}`;
+        const linkLabel = selectedCandidateType === 'relay' ? 'TURN中继' : selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx' ? 'STUN直连' : selectedCandidateType === 'host' ? '本地直连' : selectedCandidateType || '-';
+        candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
       }
       this.lastCandidateType = selectedCandidateType || '';
 
@@ -1016,7 +1062,7 @@ const WebRTC = {
       } else if (selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx') {
         this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
       } else if (this.noMediaTicks >= 3) {
-        const hasTurn = this.getTurnServers().length > 0;
+        const hasTurn = this.hasTurnConfigured();
         this.updateNetworkUI(
           this.networkMode === 'relay'
             ? '外网中继仍未生成媒体链路。建议切换到“隧道中继”，它不依赖 UDP/TURN。'
@@ -1052,6 +1098,8 @@ const WebRTC = {
     console.log('Refreshing WebRTC connection...');
     this._refreshing = true;
     this.manualDisconnect = false;
+    this.offerInProgress = false;
+    this._offerEpoch += 1;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1059,6 +1107,18 @@ const WebRTC = {
     if (this._dcTimeout) {
       clearTimeout(this._dcTimeout);
       this._dcTimeout = null;
+    }
+    if (this._disconnectedTimer) {
+      clearTimeout(this._disconnectedTimer);
+      this._disconnectedTimer = null;
+    }
+    if (this._iceDisconnectedTimer) {
+      clearTimeout(this._iceDisconnectedTimer);
+      this._iceDisconnectedTimer = null;
+    }
+    if (this._dcReconnectTimer) {
+      clearTimeout(this._dcReconnectTimer);
+      this._dcReconnectTimer = null;
     }
     const videoElement = document.getElementById('remoteVideo');
     videoElement.classList.remove('connected');
@@ -1107,16 +1167,46 @@ const WebRTC = {
     updateConnectionStatus('disconnected');
     this._autoFailCount += 1;
 
-    if (this.networkMode === 'auto' && !this.useRelayFallback && this.getTurnServers().length) {
+    const hasTurn = this.hasTurnConfigured();
+
+    if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn) {
       this.useRelayFallback = true;
       this.updateNetworkUI('自动穿透失败，下一次重连将强制使用 TURN 中继。', 'warning');
       updateLoadingText('直连失败，正在切换中继...');
+    } else if (this.networkMode === 'auto' && !hasTurn && this._autoFailCount >= 1) {
+      console.warn('[RECOVERY] Auto mode has no TURN, falling to tunnel immediately');
+      this.useRelayFallback = false;
+      this._autoFailCount = 0;
+      this.updateNetworkUI('当前未配置 TURN，自动穿透失败后将直接切换到隧道中继。', 'warning');
+      updateLoadingText('直连失败，正在切换隧道中继...');
+      document.getElementById('loading').classList.remove('hidden');
+      document.body.classList.remove('stream-connected');
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
+        this.startTunnelRelay();
+      }, 800);
+      return;
     } else if (this.networkMode === 'auto' && (this.useRelayFallback || this._autoFailCount >= 2)) {
       // TURN relay failed or 2+ stun failures without TURN, fall back to tunnel
       console.warn('[RECOVERY] Auto mode exhausted (failCount=%d), falling to tunnel', this._autoFailCount);
       this.useRelayFallback = false;
       this._autoFailCount = 0;
       this.updateNetworkUI('WebRTC 连接失败，正在切换到隧道中继…', 'warning');
+      updateLoadingText('切换隧道中继…');
+      document.getElementById('loading').classList.remove('hidden');
+      document.body.classList.remove('stream-connected');
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
+        this.startTunnelRelay();
+      }, 1000);
+      return;
+    } else if (this.networkMode === 'stun' && this._autoFailCount >= 2) {
+      // STUN exhausted without TURN, fall back to tunnel
+      console.warn('[RECOVERY] STUN mode exhausted (failCount=%d), falling to tunnel', this._autoFailCount);
+      this._autoFailCount = 0;
+      this.updateNetworkUI('外网直连失败，正在切换到隧道中继…', 'warning');
       updateLoadingText('切换隧道中继…');
       document.getElementById('loading').classList.remove('hidden');
       document.body.classList.remove('stream-connected');
@@ -1147,9 +1237,23 @@ const WebRTC = {
 
   disconnect() {
     this.manualDisconnect = true;
+    this.offerInProgress = false;
+    this._offerEpoch += 1;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this._disconnectedTimer) {
+      clearTimeout(this._disconnectedTimer);
+      this._disconnectedTimer = null;
+    }
+    if (this._iceDisconnectedTimer) {
+      clearTimeout(this._iceDisconnectedTimer);
+      this._iceDisconnectedTimer = null;
+    }
+    if (this._dcReconnectTimer) {
+      clearTimeout(this._dcReconnectTimer);
+      this._dcReconnectTimer = null;
     }
     if (typeof Input !== 'undefined') {
       Input.setActive(false);

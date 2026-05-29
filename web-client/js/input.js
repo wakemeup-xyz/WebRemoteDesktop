@@ -9,12 +9,22 @@ const Input = {
   _keyReleaseTimer: null,
   _keyStaleMs: 8000,
   keyboardMode: null,
+  _keyboardDebugEntries: [],
+  _keyboardDebugMax: 80,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
     if (!this.videoElement) {
       console.error('Input: remoteVideo element not found');
       return;
+    }
+
+    // 防止重复绑定事件监听器
+    if (!this._listenersBound) {
+      this.setupEventListeners();
+      this.setupActionButtons();
+      this.setupKeyboardMode();
+      this._listenersBound = true;
     }
 
     // 使用 WebRTC 的 socket 实例（共享连接）
@@ -25,14 +35,6 @@ const Input = {
       console.error('Input: WebRTC socket not available');
       this.updateKeyDisplayRaw('未连接');
       return;
-    }
-
-    // 防止重复绑定事件监听器
-    if (!this._listenersBound) {
-      this.setupEventListeners();
-      this.setupActionButtons();
-      this.setupKeyboardMode();
-      this._listenersBound = true;
     }
 
     // 如果视频已经在播放，立即激活输入（playing 事件可能已错过）
@@ -68,7 +70,7 @@ const Input = {
 
       const normalized = this.normalizeKeyboardEvent(e);
       const status = !this.isActive ? '未激活' : (!this.socket || !this.socket.connected ? '未连接' : '发送中');
-      const mods = normalized.modifiers;
+      const mods = this.getEventModifiers(e);
       const modStr = [];
       if (mods.meta) modStr.push('Cmd');
       if (mods.ctrl) modStr.push('Ctrl');
@@ -103,6 +105,7 @@ const Input = {
         keyCode: normalized.keyCode,
         modifiers: mods
       });
+      this.recordKeyboardDebug('keydown', e, normalized, mods, downId);
       console.log(`[KEYBOARD] keydown: keyId=${keyId} inputId=${downId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
     });
 
@@ -113,14 +116,17 @@ const Input = {
       e.preventDefault();
       const normalized = this.normalizeKeyboardEvent(e);
       const keyId = this.getKeyId(normalized);
+      const stored = this._pressedKeys.get(keyId);
+      const modifiers = stored?.modifiers || normalized.modifiers;
       this._pressedKeys.delete(keyId);
       this.scheduleKeyWatchdog();
       const upId = this.sendInput('keyboard', 'keyup', {
         key: normalized.key,
         code: normalized.code,
         keyCode: normalized.keyCode,
-        modifiers: normalized.modifiers
+        modifiers
       });
+      this.recordKeyboardDebug('keyup', e, normalized, modifiers, upId);
       console.log(`[KEYBOARD] keyup:   keyId=${keyId} inputId=${upId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
     });
 
@@ -192,7 +198,9 @@ const Input = {
     // Modal buttons (like "发送日志") should not leak keystrokes to the remote host.
     if (target.closest('.modal')) return true;
     const tag = target.tagName;
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return true;
+    // Browser/IME composition keys are too unstable to mirror as remote hotkeys.
+    return e.isComposing || e.key === 'Process' || e.key === 'Dead' || e.key === 'Unidentified' || e.key === 'AltGraph';
   },
 
   getKeyId(e) {
@@ -316,6 +324,44 @@ const Input = {
       alt: e.altKey ? 1 : 0,
       meta: e.metaKey ? 1 : 0
     };
+  },
+
+  recordKeyboardDebug(eventType, originalEvent, normalized, modifiers, inputId) {
+    const modifierLabel = [
+      modifiers.meta ? 'Meta' : '',
+      modifiers.ctrl ? 'Ctrl' : '',
+      modifiers.alt ? 'Alt' : '',
+      modifiers.shift ? 'Shift' : ''
+    ].filter(Boolean).join('+') || '-';
+    const entry = [
+      new Date().toLocaleTimeString(),
+      eventType,
+      'raw=' + originalEvent.key + '/' + originalEvent.code,
+      'normalized=' + normalized.key + '/' + normalized.code,
+      'mods=' + modifierLabel,
+      'inputId=' + (inputId || '-')
+    ].join(' | ');
+
+    this._keyboardDebugEntries.push(entry);
+    if (this._keyboardDebugEntries.length > this._keyboardDebugMax) {
+      this._keyboardDebugEntries.shift();
+    }
+  },
+
+  getKeyboardDebugEntries() {
+    return this._keyboardDebugEntries.slice();
+  },
+
+  getEventModifiers(e) {
+    if (e.type === 'keyup') {
+      return this.getStoredModifiers(e);
+    }
+    return this.getModifiers(e);
+  },
+
+  getStoredModifiers(e) {
+    const stored = this._pressedKeys.get(this.getKeyId(this.normalizeKeyboardEvent(e)));
+    return stored?.modifiers || this.getModifiers(e);
   },
 
   isModifierKey(payload) {
@@ -447,7 +493,7 @@ const Input = {
 
   setActive(active) {
     if (!active) {
-      this.releaseAllKeys();
+      this.releaseAllKeys('deactivated', true);
     }
     this.isActive = active;
     if (active && this.videoElement) {
@@ -458,7 +504,7 @@ const Input = {
     this.updateKeyDisplayRaw(active ? '已激活' : '已暂停');
   },
 
-  releaseAllKeys() {
+  releaseAllKeys(reason = 'release-all', forceReset = false) {
     if (this._keyReleaseTimer) {
       clearTimeout(this._keyReleaseTimer);
       this._keyReleaseTimer = null;
@@ -467,6 +513,9 @@ const Input = {
     // Skip if nothing is pressed — avoids flooding the host with no-op resets
     // on every blur/visibilitychange.
     if (this._pressedKeys.size === 0) {
+      if (forceReset) {
+        this.sendKeyboardReset(reason);
+      }
       return;
     }
 
@@ -480,7 +529,7 @@ const Input = {
         modifiers: { ctrl: 0, shift: 0, alt: 0, meta: 0 }
       });
     });
-    this.sendKeyboardReset('release-all');
+    this.sendKeyboardReset(reason);
   },
 
   sendKeyboardReset(reason) {
@@ -618,5 +667,17 @@ const Input = {
     });
   }
 };
+
+document.addEventListener('DOMContentLoaded', () => {
+  const video = document.getElementById('remoteVideo');
+  if (!video) return;
+  Input.videoElement = video;
+  if (!Input._listenersBound) {
+    Input.setupEventListeners();
+    Input.setupActionButtons();
+    Input.setupKeyboardMode();
+    Input._listenersBound = true;
+  }
+});
 
 // Input.init() 现在由 webrtc.js 在连接成功后调用

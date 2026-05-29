@@ -1,4 +1,6 @@
 import input_handler
+import asyncio
+import pytest
 from input_handler import InputHandler
 
 
@@ -151,3 +153,71 @@ def test_plain_key_releases_stuck_modifier_before_posting(monkeypatch):
     assert posted[-1]["key_code"] == 1
     assert posted[-1]["is_down"] is True
     assert posted[-1]["flags"] in (None, 0)
+
+
+@pytest.mark.asyncio
+async def test_mouse_move_is_dropped_when_input_lock_is_busy(monkeypatch):
+    calls = []
+    handler = InputHandler()
+    handler._running = True
+    handler._handle_mouse = lambda action, payload: calls.append((action, payload))
+
+    await handler._input_lock.acquire()
+    try:
+        result = await asyncio.wait_for(
+            handler.handle_input({
+                "type": "mouse",
+                "action": "move",
+                "payload": {"relX": 0.5, "relY": 0.5},
+                "inputIds": ["move-1"],
+            }),
+            timeout=0.05,
+        )
+    finally:
+        handler._input_lock.release()
+
+    assert calls == []
+    assert result["inputIds"] == ["move-1"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_input_waiter_does_not_leave_stale_waiter_count(monkeypatch):
+    handler = InputHandler()
+    handler._running = True
+
+    await handler._input_lock.acquire()
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                handler.handle_input({
+                    "type": "keyboard",
+                    "action": "keydown",
+                    "payload": {"key": "a", "code": "KeyA"},
+                }),
+                timeout=0.01,
+            )
+    finally:
+        handler._input_lock.release()
+
+    assert handler._lock_waiters == 0
+
+
+@pytest.mark.asyncio
+async def test_keyboard_handler_does_not_sleep_while_input_lock_is_held(monkeypatch):
+    handler = InputHandler()
+    handler._running = True
+    handler._handle_keyboard = lambda action, payload: None
+    sleep_lock_states = []
+
+    async def fake_sleep(seconds):
+        sleep_lock_states.append(handler._input_lock.locked())
+
+    monkeypatch.setattr(input_handler.asyncio, "sleep", fake_sleep)
+
+    await handler.handle_input({
+        "type": "keyboard",
+        "action": "keydown",
+        "payload": {"key": "a", "code": "KeyA"},
+    })
+
+    assert True not in sleep_lock_states

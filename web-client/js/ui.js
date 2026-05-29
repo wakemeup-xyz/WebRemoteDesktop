@@ -10,21 +10,28 @@ const UI = {
     const applyBtn = document.getElementById('applyResolution');
     const closeBtn = document.getElementById('closeResolution');
     
-    resolutionBtn.addEventListener('click', () => {
-      modal.classList.remove('hidden');
-    });
+    if (resolutionBtn && modal) {
+      resolutionBtn.addEventListener('click', () => {
+        modal.classList.remove('hidden');
+      });
+    }
     
-    closeBtn.addEventListener('click', () => {
-      modal.classList.add('hidden');
-    });
-    
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
+    if (closeBtn && modal) {
+      closeBtn.addEventListener('click', () => {
         modal.classList.add('hidden');
-      }
-    });
+      });
+    }
     
-    applyBtn.addEventListener('click', () => {
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.classList.add('hidden');
+        }
+      });
+    }
+    
+    if (applyBtn && modal) {
+      applyBtn.addEventListener('click', () => {
       const selected = document.querySelector('input[name="resolution"]:checked');
       if (selected) {
         const width = parseInt(selected.dataset.width);
@@ -40,6 +47,7 @@ const UI = {
         modal.classList.add('hidden');
       }
     });
+    }
   },
   
   setupControlButtons() {
@@ -56,7 +64,7 @@ const UI = {
     const scaleLabels = ['自适应', '填充', '拉伸'];
     let scaleIndex = 0;
 
-    pauseBtn.addEventListener('click', () => {
+    if (pauseBtn && video) pauseBtn.addEventListener('click', () => {
       if (isPaused) {
         video.play();
         pauseBtn.textContent = '暂停';
@@ -69,7 +77,7 @@ const UI = {
       isPaused = !isPaused;
     });
 
-    disconnectBtn.addEventListener('click', () => {
+    if (disconnectBtn) disconnectBtn.addEventListener('click', () => {
       if (confirm('确定要断开连接吗？')) {
         WebRTC.disconnect();
       }

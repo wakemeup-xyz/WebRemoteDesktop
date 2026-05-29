@@ -43,6 +43,7 @@ class InputHandler:
         self._pressed_key_codes = set()
         self._last_modifier_event_time = 0.0
         self._last_key_event_time = 0.0
+        self._last_key_flags = {}
         self._modifier_stale_seconds = 8.0
         self._key_stale_seconds = 8.0  # Must exceed longest normal key-hold (> 5s)
         self._lock_waiters = 0
@@ -259,16 +260,31 @@ class InputHandler:
             action = data.get('action')
             payload = data.get('payload', {})
 
+            if input_type == 'mouse' and action == 'move' and (
+                self._input_lock.locked() or self._lock_waiters > 0
+            ):
+                return {
+                    "inputIds": data.get("inputIds", []),
+                    "receiveTime": i1,
+                    "executeTime": time.perf_counter(),
+                    "dropped": True,
+                }
+
             # Track lock contention
             self._lock_waiters += 1
             waiters_before = self._lock_waiters
 
             lock_start = time.perf_counter()
-            async with self._input_lock:
+            lock_acquired_flag = False
+            try:
+                await self._input_lock.acquire()
+                lock_acquired_flag = True
                 lock_acquired = time.perf_counter()
                 lock_wait_ms = (lock_acquired - lock_start) * 1000
-                self._lock_waiters -= 1
+            finally:
+                self._lock_waiters = max(0, self._lock_waiters - 1)
 
+            try:
                 # Log lock contention: if > 3 waiters or wait > 10ms
                 if waiters_before > 3 or lock_wait_ms > 10:
                     if not self._lock_contention_logged or lock_wait_ms > 50:
@@ -308,7 +324,6 @@ class InputHandler:
                     await loop.run_in_executor(self._input_thread_pool, self._handle_keyboard, action, payload)
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                     i2 = time.perf_counter()
-                    await asyncio.sleep(0.02)
                     logger.info("Keyboard executed: action=%s ids=%s thread_ms=%.1f", action, input_ids, to_thread_ms)
                     return {
                         "inputIds": input_ids,
@@ -317,6 +332,9 @@ class InputHandler:
                     }
                 else:
                     to_thread_ms = 0
+            finally:
+                if lock_acquired_flag:
+                    self._input_lock.release()
 
             i2 = time.perf_counter()
             total_ms = (i2 - i1) * 1000
@@ -336,7 +354,6 @@ class InputHandler:
 
         except Exception as e:
             logger.error(f"Error handling input: {e}")
-            self._lock_waiters = max(0, self._lock_waiters - 1)
 
     def _handle_command(self, action, payload):
         """Handle special command actions."""
@@ -605,6 +622,7 @@ class InputHandler:
             flags |= kCGEventFlagMaskAlternate
         if modifiers.get('ctrl'):
             flags |= kCGEventFlagMaskControl
+        payload_flags = flags
 
         # Map from Web KeyboardEvent.code (physical key) to macOS keyCode.
         # This is more reliable than keyCode or key values because 'code'
@@ -685,6 +703,17 @@ class InputHandler:
         modifier_flag = modifier_key_flags.get(key_code, 0)
 
         logger.info(f"Keyboard {action}: key='{key_char}', code='{code}', mac_code={key_code}, flags=0x{flags:08x}, is_modifier={is_modifier}")
+        logger.info(
+            "[KEYMAP] action=%s key=%r code=%r payload_flags=0x%08x host_flags=0x%08x mac_code=%s is_modifier=%s pressed_mods=%s",
+            action,
+            key_char,
+            code,
+            payload_flags,
+            self._modifier_flags,
+            key_code,
+            is_modifier,
+            sorted(self._pressed_modifier_key_codes),
+        )
 
         # Navigation keys that control IME (arrow keys, ESC) must always
         # be sent clean — no stuck modifiers attached.  Otherwise macOS
@@ -702,12 +731,13 @@ class InputHandler:
                 self._pressed_modifier_key_codes.add(key_code)
                 self._last_modifier_event_time = time.monotonic()
                 flags = self._modifier_flags
-            elif flags:
-                self._modifier_flags |= flags
+            elif payload_flags:
+                self._modifier_flags |= payload_flags
             elif self._modifier_flags and key_code not in _ime_nav_keys:
                 flags = self._modifier_flags
             self._pressed_key_codes.add(key_code)
             self._last_key_event_time = time.monotonic()
+            self._last_key_flags[key_code] = payload_flags
 
             event = CGEventCreateKeyboardEvent(self.source, key_code, True)
             if flags and key_code != 57:
@@ -726,10 +756,11 @@ class InputHandler:
             # phantom flag that can never be cleared, corrupting every
             # subsequent keystroke — especially arrow keys used for IME
             # candidate navigation.
-            elif self._modifier_flags and key_code not in _ime_nav_keys:
+            elif self._modifier_flags and key_code not in _ime_nav_keys and self._should_apply_sticky_flags(key_code, payload_flags, action):
                 flags = self._modifier_flags
             self._pressed_key_codes.discard(key_code)
             self._last_key_event_time = time.monotonic()
+            self._last_key_flags.pop(key_code, None)
 
             event = CGEventCreateKeyboardEvent(self.source, key_code, False)
             if flags and key_code != 57:
@@ -737,6 +768,12 @@ class InputHandler:
                 logger.info(f"  -> CGEventSetFlags(0x{flags:08x}) on keyup")
             CGEventPost(kCGHIDEventTap, event)
             logger.info(f"  -> CGEventPost keyup mac_code={key_code}")
+
+    def _should_apply_sticky_flags(self, key_code, payload_flags, action):
+        """Only preserve modifier flags when the browser explicitly sent them for this key."""
+        if action == 'keydown':
+            return bool(payload_flags)
+        return bool(payload_flags) and self._last_key_flags.get(key_code) == payload_flags
 
     def _release_stale_keys(self):
         if not self._last_key_event_time:
@@ -762,18 +799,15 @@ class InputHandler:
         ]
 
         pressed = set(self._pressed_modifier_key_codes)
-        if self._modifier_flags & kCGEventFlagMaskCommand:
-            pressed.add(55)
-            pressed.add(54)
-        if self._modifier_flags & kCGEventFlagMaskShift:
-            pressed.add(56)
-            pressed.add(60)
-        if self._modifier_flags & kCGEventFlagMaskAlternate:
-            pressed.add(58)
-            pressed.add(61)
-        if self._modifier_flags & kCGEventFlagMaskControl:
-            pressed.add(59)
-            pressed.add(62)
+        if not pressed:
+            if self._modifier_flags & kCGEventFlagMaskCommand:
+                pressed.add(55)
+            if self._modifier_flags & kCGEventFlagMaskShift:
+                pressed.add(56)
+            if self._modifier_flags & kCGEventFlagMaskAlternate:
+                pressed.add(58)
+            if self._modifier_flags & kCGEventFlagMaskControl:
+                pressed.add(59)
 
         logger.warning("Releasing stuck modifiers reason=%s flags=0x%08x keys=%s", reason, self._modifier_flags, sorted(pressed))
         self._modifier_flags = 0

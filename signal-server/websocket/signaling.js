@@ -5,6 +5,70 @@ const path = require('path');
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 const DIAG_DIR = path.join(__dirname, '..', '..', 'diag-logs');
+const DIAG_MAX_AGE_DAYS = 7;
+const DIAG_MAX_PER_VIEWER = 3;
+const DIAG_MAX_TOTAL = 50;
+
+function cleanupDiagLogs() {
+  try {
+    if (!fs.existsSync(DIAG_DIR)) return;
+    const files = fs.readdirSync(DIAG_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const p = path.join(DIAG_DIR, f);
+        const stat = fs.statSync(p);
+        return { name: f, path: p, mtime: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => a.mtime - b.mtime);
+
+    const now = Date.now();
+    const maxAgeMs = DIAG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+    // 1. 删除过期文件
+    for (const file of files) {
+      if (now - file.mtime > maxAgeMs) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
+    // 2. 重新读取并限制每个 viewer 的条数
+    const remaining = fs.readdirSync(DIAG_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const p = path.join(DIAG_DIR, f);
+        const stat = fs.statSync(p);
+        // 从文件名提取 viewerId: TIMESTAMP_viewerId.json
+        const viewerId = f.replace(/^.+_/, '').replace('.json', '');
+        return { name: f, path: p, mtime: stat.mtimeMs, viewerId };
+      })
+      .sort((a, b) => a.mtime - b.mtime);
+
+    const viewerCounts = {};
+    for (const file of remaining) {
+      viewerCounts[file.viewerId] = (viewerCounts[file.viewerId] || 0) + 1;
+      if (viewerCounts[file.viewerId] > DIAG_MAX_PER_VIEWER) {
+        fs.unlinkSync(file.path);
+        viewerCounts[file.viewerId]--;
+      }
+    }
+
+    // 3. 限制总文件数，删除最旧的
+    const finalFiles = fs.readdirSync(DIAG_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const p = path.join(DIAG_DIR, f);
+        return { path: p, mtime: fs.statSync(p).mtimeMs };
+      })
+      .sort((a, b) => a.mtime - b.mtime);
+
+    while (finalFiles.length > DIAG_MAX_TOTAL) {
+      const oldest = finalFiles.shift();
+      fs.unlinkSync(oldest.path);
+    }
+  } catch (err) {
+    console.error('[DIAGNOSTIC] cleanup failed:', err.message);
+  }
+}
 
 // Store connections
 const connections = {
@@ -44,6 +108,10 @@ function verifyToken(token) {
   } catch {
     return null;
   }
+}
+
+function isActiveViewerSocket(socket) {
+  return connections.viewers.get(socket.id) === socket;
 }
 
 function setupSignaling(io) {
@@ -97,6 +165,14 @@ function setupSignaling(io) {
 
     // WebRTC signaling
     socket.on('offer', (data) => {
+      if (role !== 'viewer') {
+        console.warn(`Offer rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Offer rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
       console.log(`[OFFER] Received from ${role}=${socket.id} epoch=${data.epoch} hostConnected=${Boolean(connections.host)}`);
       if (connections.host) {
         console.log(`[OFFER] Forwarding to host ${connections.host.id} epoch=${data.epoch}`);
@@ -119,6 +195,14 @@ function setupSignaling(io) {
 
     socket.on('ice-candidate', (data) => {
       if (data.target === 'host' && connections.host) {
+        if (role !== 'viewer') {
+          console.warn(`ICE candidate to host rejected: role=${role} from ${socket.id}`);
+          return;
+        }
+        if (!isActiveViewerSocket(socket)) {
+          console.warn(`ICE candidate to host rejected: disconnected viewer ${socket.id}`);
+          return;
+        }
         connections.host.emit('ice-candidate', {
           candidate: data.candidate,
           from: socket.id
@@ -140,6 +224,10 @@ function setupSignaling(io) {
         console.warn(`Input rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Input rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
       if (data.type !== 'mouse' || data.action !== 'move') {
         console.log(`[INPUT] Relaying from viewer ${socket.id}:`, JSON.stringify(data));
       }
@@ -159,6 +247,10 @@ function setupSignaling(io) {
         console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Diagnostic rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
       const logCount = data.logs?.length || 0;
       console.log(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
 
@@ -167,6 +259,7 @@ function setupSignaling(io) {
         if (!fs.existsSync(DIAG_DIR)) {
           fs.mkdirSync(DIAG_DIR, { recursive: true });
         }
+        cleanupDiagLogs();
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const filename = `${ts}_${socket.id}.json`;
         const report = {
@@ -195,6 +288,10 @@ function setupSignaling(io) {
         console.warn(`Viewer stats rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Viewer stats rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
       if (connections.host) {
         connections.host.emit('viewer-stats', {
           ...data,
@@ -206,6 +303,10 @@ function setupSignaling(io) {
     socket.on('relay-stream-control', (data) => {
       if (role !== 'viewer' && role !== 'relay-viewer') {
         console.warn(`Relay stream control rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      if (role === 'viewer' && !isActiveViewerSocket(socket)) {
+        console.warn(`Relay stream control rejected: disconnected viewer ${socket.id}`);
         return;
       }
       if (connections.host) {
@@ -244,6 +345,10 @@ function setupSignaling(io) {
         console.warn(`Resolution change rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Resolution change rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
       const width = Number(data.width);
       const height = Number(data.height);
       if (!Number.isFinite(width) || !Number.isFinite(height) || width < 320 || height < 180) {
@@ -276,6 +381,12 @@ function setupSignaling(io) {
         emitViewerStatus('viewer-disconnected', socket);
       } else if (role === 'relay-viewer') {
         connections.relayViewers.delete(socket.id);
+        if (connections.host) {
+          connections.host.emit('relay-stream-control', {
+            enabled: false,
+            viewerId: socket.id
+          });
+        }
       }
     });
   });

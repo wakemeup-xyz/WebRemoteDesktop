@@ -166,6 +166,10 @@
         </div>
         <div id="latencySync" style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">时钟同步: 未同步</div>
       </div>
+      <div id="keyboardDebugPanel" style="margin-bottom: 12px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: var(--radius-md);">
+        <h4 style="margin: 0 0 8px 0; color: var(--text-primary); font-size: 13px;">键盘链路视图</h4>
+        <textarea id="keyboardDebugArea" readonly style="width: 100%; height: 140px; background: rgba(0,0,0,0.4); color: #89ddff; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
+      </div>
       <textarea id="diagLogArea" readonly style="width: 100%; height: 320px; background: rgba(0,0,0,0.4); color: #c3e88d; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
       <div style="display: flex; gap: 10px; margin-top: 16px;">
         <button id="sendDiagBtn" class="modal-btn primary">发送日志到服务端</button>

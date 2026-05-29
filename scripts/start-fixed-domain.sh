@@ -1,87 +1,38 @@
 #!/bin/bash
-# Web Remote Desktop 启动脚本 - 固定域名版本
-# 需要先配置命名隧道和 DNS 记录
-# 使用方法：
-#   1. 登录 Cloudflare Dashboard: https://dash.cloudflare.com
-#   2. 进入 Zero Trust → Tunnels
-#   3. 找到隧道 wrd-tunnel (ID: 104d2ca6-7efe-4f7e-a0f3-8567aa1d4b94)
-#   4. 添加 Public Hostname: stockhub.wiki → http://localhost:8080
-#   5. 更新 DNS: stockhub.wiki CNAME 指向 104d2ca6-7efe-4f7e-a0f3-8567aa1d4b94.cfargotunnel.com
+set -euo pipefail
 
 DOMAIN="${DOMAIN:-stockhub.wiki}"
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLOUDFLARED="${CLOUDFLARED:-/Users/macstudio1/.homebrew/bin/cloudflared}"
+NODE_BIN="${NODE_BIN:-/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node}"
+PYTHON_BIN="${PYTHON_BIN:-/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3}"
 
-# 颜色
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-echo -e "${GREEN}=== Web Remote Desktop 启动器 (固定域名) ===${NC}"
-echo ""
-
-# 1. 检查并启动信令服务器
-echo -e "${YELLOW}[1/3] 检查信令服务器...${NC}"
-if ! curl -s http://localhost:8080/health > /dev/null 2>&1; then
-    echo "   启动信令服务器..."
-    cd "$PROJECT_DIR/signal-server"
-    nohup npm start > /tmp/signal.log 2>&1 &
-    sleep 2
-    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
-        echo -e "   ${GREEN}✓ 信令服务器已启动${NC}"
-    else
-        echo -e "   ${RED}✗ 信令服务器启动失败${NC}"
-        exit 1
-    fi
-else
-    echo -e "   ${GREEN}✓ 信令服务器已在运行${NC}"
+if [ ! -f "$HOME/.cloudflared/config.yml" ]; then
+  echo "Missing ~/.cloudflared/config.yml. Run scripts/setup-cloudflare.sh first."
+  exit 1
 fi
 
-# 2. 检查域名配置并启动命名隧道
-echo -e "${YELLOW}[2/3] 启动 Cloudflare 命名隧道...${NC}"
-echo "   域名: $DOMAIN"
-
-# 检查隧道是否已在运行
-if pgrep -f "cloudflared tunnel run" > /dev/null; then
-    echo -e "   ${GREEN}✓ 隧道已在运行${NC}"
-else
-    # 启动命名隧道（使用 token）
-    TOKEN="eyJhIjoiZTI4Mjk3ZTlkMWMwZjllZjA4Njk4NGNmNDg4ODU2NDAiLCJ0IjoiMTA0ZDJjYTYtN2VmZS00ZjdlLWEwZjMtODU2N2FhMWQ0Yjk0IiwicyI6Ik9HWmhZVEV5TXpRdFptSXhZeTAwWW1ZM0xXRXhNRGd0WlRZMk5XSmhOakl4TldOaiJ9"
-    cloudflared tunnel run --token "$TOKEN" > /tmp/tunnel.log 2>&1 &
-    sleep 5
-
-    if pgrep -f "cloudflared tunnel run" > /dev/null; then
-        echo -e "   ${GREEN}✓ 隧道已启动${NC}"
-    else
-        echo -e "   ${RED}✗ 隧道启动失败${NC}"
-        tail -20 /tmp/tunnel.log
-        exit 1
-    fi
-fi
-
-# 3. 重启 Python Host
-echo -e "${YELLOW}[3/3] 重启 Python Host...${NC}"
-pkill -f "python.*host.py" 2>/dev/null
-sleep 1
-
-cd "$PROJECT_DIR/python-host"
-nohup python3 host.py > /tmp/host.log 2>&1 &
+pkill -f 'node server.js' 2>/dev/null || true
+pkill -f 'cloudflared tunnel run' 2>/dev/null || true
+pkill -f 'python.*host.py' 2>/dev/null || true
 sleep 2
 
-if pgrep -f "python.*host.py" > /dev/null; then
-    echo -e "   ${GREEN}✓ Python Host 已启动${NC}"
-else
-    echo -e "   ${RED}✗ Python Host 启动失败${NC}"
-    tail -20 /tmp/host.log
-    exit 1
-fi
+(cd "$PROJECT_DIR/signal-server" && nohup "$NODE_BIN" server.js > /tmp/signal-server.log 2>&1 &)
+for _ in {1..20}; do
+  curl -s http://127.0.0.1:8080/health >/dev/null 2>&1 && break
+  sleep 1
+done
+curl -s http://127.0.0.1:8080/health >/dev/null 2>&1 || {
+  tail -n 80 /tmp/signal-server.log
+  exit 1
+}
 
-echo ""
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}部署完成！${NC}"
-echo ""
-echo -e "访问地址: ${YELLOW}https://$DOMAIN${NC}"
-echo "密码: admin123"
-echo ""
-echo -e "注意：确保域名 $DOMAIN 已正确配置 DNS 和隧道路由"
-echo -e "${GREEN}========================================${NC}"
+nohup "$CLOUDFLARED" tunnel run wrd-tunnel > /tmp/tunnel.log 2>&1 &
+sleep 5
+
+cd "$PROJECT_DIR"
+./scripts/restart-host.sh
+
+printf '\n=== ready ===\n'
+echo "Domain: https://$DOMAIN"
+curl -s http://127.0.0.1:8080/api/status || true

@@ -55,12 +55,17 @@ const Diagnostic = {
     const sendBtn = document.getElementById('sendDiagBtn');
     const clearBtn = document.getElementById('clearDiagBtn');
     const area = document.getElementById('diagLogArea');
+    const keyArea = document.getElementById('keyboardDebugArea');
 
     if (!diagBtn) return;
 
     diagBtn.addEventListener('click', () => {
       area.value = this.logs.join('\n');
       area.scrollTop = area.scrollHeight;
+      if (keyArea && typeof Input !== 'undefined') {
+        keyArea.value = Input.getKeyboardDebugEntries().join('\n');
+        keyArea.scrollTop = keyArea.scrollHeight;
+      }
       modal.classList.remove('hidden');
     });
 
@@ -93,7 +98,8 @@ const Diagnostic = {
       userAgent: navigator.userAgent,
       screen: `${window.screen.width}x${window.screen.height}`,
       latency: latencyStats,
-      logs: this.logs.slice(-300) // send last 300 lines
+      logs: this.logs.slice(-300), // send last 300 lines
+      keyboardDebug: (typeof Input !== 'undefined' ? Input.getKeyboardDebugEntries().slice(-120) : [])
     };
 
     // Use WebRTC socket if available, otherwise try to emit directly
@@ -123,7 +129,9 @@ const Diagnostic = {
   }
 };
 
-Diagnostic.init();
+document.addEventListener('DOMContentLoaded', () => {
+  Diagnostic.init();
+});
 
 function updateLatencyPanel() {
   if (typeof LatencyMonitor === 'undefined') return;

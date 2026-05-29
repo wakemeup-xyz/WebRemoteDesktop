@@ -115,11 +115,16 @@ const LatencyMonitor = {
   // ─── Input Tracking ───
 
   recordInputSend(inputId) {
-    this._inputMap.set(inputId, { i0: Date.now(), ts: Date.now() });
-    // Cleanup old entries
-    const cutoff = Date.now() - 10000;
-    for (const [id, rec] of this._inputMap) {
-      if (rec.ts < cutoff) this._inputMap.delete(id);
+    const now = Date.now();
+    this._inputMap.set(inputId, { i0: now, ts: now });
+    // Cleanup old entries every 10 calls instead of every call to avoid O(n) loop on hot path
+    this._inputCleanupCounter = (this._inputCleanupCounter || 0) + 1;
+    if (this._inputCleanupCounter >= 10) {
+      this._inputCleanupCounter = 0;
+      const cutoff = now - 10000;
+      for (const [id, rec] of this._inputMap) {
+        if (rec.ts < cutoff) this._inputMap.delete(id);
+      }
     }
   },
 
@@ -163,20 +168,36 @@ const LatencyMonitor = {
   _pushStat(key, value) {
     const arr = this._stats[key];
     if (!arr) return;
-    arr.push({ value, ts: Date.now() });
-    const cutoff = Date.now() - this._windowMs;
-    while (arr.length > 0 && arr[0].ts < cutoff) {
-      arr.shift();
+    const now = Date.now();
+    const cutoff = now - this._windowMs;
+
+    // Fast path: if head is fresh, skip cleanup entirely
+    if (arr.length === 0 || arr[0].ts >= cutoff) {
+      arr.push({ value, ts: now });
+      return;
     }
+
+    // Batch-remove expired entries with a single splice instead of O(n) shift loop
+    let start = 1;
+    const len = arr.length;
+    while (start < len && arr[start].ts < cutoff) {
+      start++;
+    }
+    arr.splice(0, start);
+    arr.push({ value, ts: now });
   },
 
   getStats() {
     const calc = (arr) => {
       if (!arr || arr.length === 0) return { p50: 0, p95: 0, count: 0 };
-      const sorted = arr.map(x => x.value).sort((a, b) => a - b);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)];
-      const p95 = sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1];
-      return { p50, p95, count: sorted.length };
+      // QuickSelect-style partition for p50/p95: O(n) instead of O(n log n) sort
+      const values = arr.map(x => x.value);
+      const n = values.length;
+      const p50Idx = Math.floor(n * 0.5);
+      const p95Idx = Math.floor(n * 0.95);
+      const p50 = this._quickSelect(values, p50Idx);
+      const p95 = p95Idx >= n ? values[this._quickSelect(values, n - 1, true)] : this._quickSelect(values, p95Idx);
+      return { p50, p95, count: n };
     };
 
     return {
@@ -193,5 +214,32 @@ const LatencyMonitor = {
         offset: this._offsetMs,
       },
     };
+  },
+
+  // QuickSelect: find k-th smallest element in O(n) average, O(n^2) worst.
+  // For our small arrays (n < 200) this is faster than sort() because it avoids
+  // the full O(n log n) overhead and temporary array creation.
+  _quickSelect(arr, k, returnIndex = false) {
+    let left = 0;
+    let right = arr.length - 1;
+    while (left < right) {
+      const pivot = arr[right];
+      let store = left;
+      for (let i = left; i < right; i++) {
+        if (arr[i] < pivot) {
+          const tmp = arr[i];
+          arr[i] = arr[store];
+          arr[store] = tmp;
+          store++;
+        }
+      }
+      const tmp = arr[store];
+      arr[store] = arr[right];
+      arr[right] = tmp;
+      if (store === k) break;
+      if (store < k) left = store + 1;
+      else right = store - 1;
+    }
+    return returnIndex ? left : arr[k];
   },
 };

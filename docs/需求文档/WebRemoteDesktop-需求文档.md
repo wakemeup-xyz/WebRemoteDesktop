@@ -158,6 +158,17 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ./scripts/start-with-tunnel.sh
 ```
 
+若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐改用：
+
+```bash
+./scripts/start-safe-wrd.sh
+```
+
+该脚本只会复用或启动当前仓库自己的 `signal-server`、`python-host`、safe quick tunnel。
+
+停止该安全链路时，使用：`./scripts/stop-safe-wrd.sh`。它只会停止安全启动脚本记录过的 PID，不会清理其他项目进程。
+查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 健康状态。
+
 当前 quick tunnel 地址会写入：
 
 ```bash
@@ -165,6 +176,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ```
 
 由于 trycloudflare quick tunnel 没有稳定性保证，`scripts/run-quicktunnel.sh` 会在检测到 `Unauthorized: Tunnel not found` 时重启 quick tunnel 并更新当前地址文件。
+
+若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；当 quick tunnel 过期时，也会自动重建并刷新安全地址文件。
 
 ### 4.3 目录结构
 
