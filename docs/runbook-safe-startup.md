@@ -6,7 +6,7 @@
 
 当前仓库推荐按下面优先级选择启动方式：
 
-1. **安全一键启动**：`./scripts/start-safe-wrd.sh`
+1. **默认推荐：安全一键启动**：`./scripts/start-safe-wrd.sh`
 2. **手动本地启动**：`signal-server` + `./scripts/restart-host.sh`
 3. **固定域名启动**：`./scripts/start-fixed-domain.sh`
 

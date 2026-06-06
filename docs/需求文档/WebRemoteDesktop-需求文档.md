@@ -159,19 +159,19 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 4. 启动 Python Host：`python host.py`（使用 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
 5. 浏览器访问页面，输入 Viewer 密码登录
 
-推荐使用：
-
-```bash
-./scripts/start-with-tunnel.sh
-```
-
-若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐改用：
+默认推荐使用：
 
 ```bash
 ./scripts/start-safe-wrd.sh
 ```
 
 该脚本只会复用或启动当前仓库自己的 `signal-server`、`python-host`、safe quick tunnel。
+
+若只需要本机访问、不需要公网入口，再改用：
+
+```bash
+./scripts/restart-host.sh
+```
 
 停止该安全链路时，使用：`./scripts/stop-safe-wrd.sh`。它只会停止安全启动脚本记录过的 PID，不会清理其他项目进程。
 查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 健康状态。

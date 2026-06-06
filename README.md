@@ -48,32 +48,9 @@
 
 > 当前仓库若准备正式公开发布，仍需先轮换历史上已实际使用过的密码、JWT secret、TURN 凭据和 tunnel 相关凭据。
 
-### 方式一：仅启动本地服务
+### 方式一：默认推荐启动（safe quick tunnel）
 
-适用于本机调试，不需要公网访问。
-
-```bash
-cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
-
-# 终端 1：启动信令服务（同时托管前端页面）
-cd signal-server
-npm start
-
-# 终端 2：启动 Python Host
-cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
-./scripts/restart-host.sh
-```
-
-- 前端**不单独运行** `npm run dev`
-- **不要打开**其他项目的 `5173` 页面；那个通常是别的 Vite 应用，不是当前远程桌面
-- `signal-server` 会通过 `express.static()` 直接托管 `web-client/`
-- 本地唯一正确入口：`http://127.0.0.1:8080`
-- 健康检查：`http://127.0.0.1:8080/health`
-- Host 状态：`http://127.0.0.1:8080/api/status`
-
-### 方式二：一键安全启动本地 + 公网临时地址
-
-适用于需要 trycloudflare 临时公网入口，并且希望**只操作当前仓库服务**的场景。推荐优先使用。
+默认推荐先用这一种：同时拉起本地服务和 safe quick tunnel 临时公网入口。
 
 ```bash
 cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
@@ -108,6 +85,29 @@ cat /tmp/wrd-safe-current-url.txt
 # 停止当前仓库安全链路
 ./scripts/stop-safe-wrd.sh
 ```
+
+### 方式二：仅启动本地服务
+
+适用于本机调试，不需要公网访问。
+
+```bash
+cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
+
+# 终端 1：启动信令服务（同时托管前端页面）
+cd signal-server
+npm start
+
+# 终端 2：启动 Python Host
+cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
+./scripts/restart-host.sh
+```
+
+- 前端**不单独运行** `npm run dev`
+- **不要打开**其他项目的 `5173` 页面；那个通常是别的 Vite 应用，不是当前远程桌面
+- `signal-server` 会通过 `express.static()` 直接托管 `web-client/`
+- 本地唯一正确入口：`http://127.0.0.1:8080`
+- 健康检查：`http://127.0.0.1:8080/health`
+- Host 状态：`http://127.0.0.1:8080/api/status`
 
 ### 方式三：固定域名启动
 
