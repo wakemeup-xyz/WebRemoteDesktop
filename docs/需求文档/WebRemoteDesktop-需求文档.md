@@ -240,6 +240,7 @@ WebRemoteDesktop/
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
+- **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 HTTP 可达性，不能仅凭“拿到 URL”就判断公网入口已经成功
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
 - **系统睡眠**：远程桌面依赖实时屏幕采集，Host 必须通过 `caffeinate -dims` 防止系统/显示/磁盘睡眠；手动睡眠、断电、合盖仍可能强制中断
@@ -256,3 +257,4 @@ WebRemoteDesktop/
 | 2026-05-11 | 新增 WebRTC 网络模式选择和右下角网络建议浮窗；Signal Server 提供 `/api/webrtc-config`；Host 与 Viewer 均支持 `STUN_URLS` / `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`；自动模式可在 TURN 已配置时从直连降级到中继 |
 | 2026-06-02 | 补充公网启动约束：trycloudflare URL 写入文件不等于公网已可用；safe quick tunnel 交付前需验证进程存活、DNS 解析和 HTTP 可达性；短生命周期自动化 shell 中需避免把临时后台进程误判为常驻服务 |
 | 2026-06-06 | 同步开源前安全加固现状：Viewer 与 Host 分离认证、`/api/webrtc-config` 需要 Bearer token、TLS 默认校验开启、诊断日志默认不落仓库，仅在显式开启时写入系统临时目录 |
+| 2026-06-06 | 明确 safe quick tunnel 重启语义：仅重启本地服务时默认复用现有 quick tunnel，公网地址通常不变；停止 safe 链路或 tunnel 失效重建时地址才变化 |
