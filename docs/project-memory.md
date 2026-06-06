@@ -36,6 +36,8 @@ This file captures long-lived project knowledge migrated from Claude memory file
 - Safe quick tunnel state is stored in `/tmp/wrd-safe-quicktunnel.pid`, `/tmp/wrd-safe-quicktunnel.log`, and `/tmp/wrd-safe-current-url.txt`.
 - When Cloudflare returns `Unauthorized: Tunnel not found`, the safe quick tunnel script should restart and refresh the safe URL file automatically.
 - Before starting a safe quick tunnel, verify the local origin with `http://127.0.0.1:8080/health`.
+- A generated trycloudflare URL is not sufficient proof of public reachability; verify process liveness, DNS resolution, and an HTTP response before handing the link to users.
+- In short-lived automation shells, background quick-tunnel child processes may be reaped when the parent shell exits; prefer a persistent terminal session or a fixed-domain tunnel for operator-facing handoff.
 - Use `scripts/stop-safe-wrd.sh` to stop the repo-scoped safe startup chain; it should only act on `/tmp/wrd-safe-*.pid` files and remove `/tmp/wrd-safe-current-url.txt`.
 - Use `scripts/status-safe-wrd.sh` for a read-only snapshot of repo-scoped safe PID files, safe URL state, and local `8080` health/status.
 - For step-by-step operator usage, prefer `docs/runbook-safe-startup.md` over ad-hoc terminal sequences.
