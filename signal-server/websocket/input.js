@@ -8,7 +8,7 @@ function setupInputRelay(io, connections) {
     }
     try {
       const jwt = require('jsonwebtoken');
-      const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+      const JWT_SECRET = process.env.JWT_SECRET;
       const decoded = jwt.verify(token, JWT_SECRET);
       socket.user = decoded;
       next();

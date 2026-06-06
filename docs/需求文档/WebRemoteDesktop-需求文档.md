@@ -114,16 +114,19 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ### 3.6 认证
 
-- [x] **密码登录**：bcrypt 哈希比对
-- [x] **JWT Token**：签发 24h 有效期的 token
-- [x] **Socket.IO 认证**：连接时校验 token 和 role
-- [x] **角色区分**：viewer 和 host 使用不同 role 连接
+- [x] **密码登录**：Viewer 通过网页登录，服务端使用 bcrypt 校验输入密码
+- [x] **JWT Token**：Viewer 登录后签发 24h token；Host 使用独立接口签发 15m host token
+- [x] **Socket.IO 认证**：连接时校验 Bearer token，服务端以 JWT 内的角色为准
+- [x] **角色区分**：Viewer 与 Host 使用不同认证入口和不同角色令牌
+- [x] **WebRTC 配置鉴权**：`/api/webrtc-config` 需要已登录的 Bearer token 才可访问
 
 **安全约束**：
-- JWT_SECRET 和 ACCESS_PASSWORD 必须通过环境变量配置，禁止硬编码 fallback
-- Host 端密码优先从 `HOST_PASSWORD` 环境变量读取，若未设置则使用代码中的默认密码（开发/测试场景）
-- Input relay 仅允许 viewer 角色发送输入事件
-- Diagnostic relay 仅允许 viewer 角色发送日志
+- `JWT_SECRET` 必须通过环境变量配置，禁止提交示例占位值或继续依赖仓库内泄露旧值
+- Viewer 登录密码读取 `VIEWER_ACCESS_PASSWORD`，兼容回退到 `ACCESS_PASSWORD`
+- Host 独立凭据读取 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`
+- Input relay 与 diagnostic relay 仅允许 viewer 派生角色发送
+- Host 端默认开启 TLS 校验；仅本地开发场景可通过 `WRD_INSECURE_SKIP_TLS_VERIFY=1` 放宽 localhost 校验
+- 诊断日志默认不落仓库；若开启 `WRD_ENABLE_DIAG_PERSIST=1`，仅写入系统临时目录并使用脱敏后的内容
 
 ---
 
@@ -134,11 +137,15 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | 变量 | 所属组件 | 说明 |
 |------|---------|------|
 | `JWT_SECRET` | signal-server | JWT 签名密钥 |
-| `ACCESS_PASSWORD` | signal-server | 登录密码 |
-| `HOST_PASSWORD` | python-host | Host 认证密码 |
+| `VIEWER_ACCESS_PASSWORD` | signal-server | Viewer 网页登录密码 |
+| `HOST_SHARED_SECRET` | signal-server / python-host | Host 登录 `/api/auth/login/host` 使用的共享密钥 |
+| `ACCESS_PASSWORD` | signal-server / python-host | 兼容回退密码，仅用于兼容旧配置，不建议继续作为正式开源配置 |
+| `HOST_PASSWORD` | signal-server / python-host | Host 凭据兼容回退项，仅用于旧环境迁移 |
 | `PORT` | signal-server | 服务端口，默认 8080 |
 | `SERVER_URL` | python-host | Host 连接 Signal Server 的地址，默认 `http://127.0.0.1:8080` |
 | `WRD_DISABLE_OVERLAY` | python-host | 设置为 `1` 时禁用 Host 本机浮动提示 |
+| `WRD_INSECURE_SKIP_TLS_VERIFY` | python-host | 仅本地开发时允许放宽 localhost 的 TLS 校验 |
+| `WRD_ENABLE_DIAG_PERSIST` | signal-server | 设置为 `1` 时把脱敏后的诊断日志写入系统临时目录 |
 | `STUN_URLS` | signal-server / python-host | 逗号分隔的 STUN URL，默认使用 Google STUN |
 | `TURN_URLS` | signal-server / python-host | 逗号分隔的 TURN/TURNS URL，用于外网中继 |
 | `TURN_USERNAME` | signal-server / python-host | TURN 用户名 |
@@ -149,8 +156,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 1. 启动防睡眠服务：`scripts/install-awake-keeper.sh`（一次性安装）或 `scripts/run-awake-keeper.sh`
 2. 启动 Signal Server：`node server.js`
 3. 启动 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）
-4. 启动 Python Host：`python host.py`（密码优先读取 `HOST_PASSWORD` 环境变量，否则使用默认密码）
-5. 浏览器访问 Cloudflare 地址，输入密码登录
+4. 启动 Python Host：`python host.py`（使用 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
+5. 浏览器访问页面，输入 Viewer 密码登录
 
 推荐使用：
 
@@ -169,15 +176,23 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 停止该安全链路时，使用：`./scripts/stop-safe-wrd.sh`。它只会停止安全启动脚本记录过的 PID，不会清理其他项目进程。
 查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 健康状态。
 
-当前 quick tunnel 地址会写入：
+当前 safe quick tunnel 地址会写入：
 
 ```bash
-/tmp/wrd-current-url.txt
+/tmp/wrd-safe-current-url.txt
 ```
 
-由于 trycloudflare quick tunnel 没有稳定性保证，`scripts/run-quicktunnel.sh` 会在检测到 `Unauthorized: Tunnel not found` 时重启 quick tunnel 并更新当前地址文件。
+由于 trycloudflare quick tunnel 没有稳定性保证，`scripts/run-safe-quicktunnel.sh` 会在检测到 `Unauthorized: Tunnel not found` 时重建 quick tunnel 并更新当前安全地址文件。
+
+需要特别说明：地址文件中已经写出 trycloudflare URL，只能说明 `cloudflared` 已拿到一个临时地址，**不能直接视为公网可用**。对外提供前仍应检查：
+
+1. tunnel 进程仍然存活
+2. trycloudflare 子域名已经可以解析
+3. 该 URL 能返回 HTTP 响应
 
 若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；当 quick tunnel 过期时，也会自动重建并刷新安全地址文件。
+
+若在短生命周期自动化 shell 中执行 safe quick tunnel，后台子进程可能在父 shell 结束后被回收；此时应改为在用户自己的常驻终端中执行，或改用固定域名隧道。
 
 ### 4.3 目录结构
 
@@ -224,7 +239,9 @@ WebRemoteDesktop/
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
-- **Cloudflare Tunnel**：trycloudflare 临时域名会过期，需读取 `/tmp/wrd-current-url.txt` 获取最新地址；生产应切换命名隧道和固定域名
+- **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
+- **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 HTTP 可达性，不能仅凭“拿到 URL”就判断公网入口已经成功
+- **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
 - **系统睡眠**：远程桌面依赖实时屏幕采集，Host 必须通过 `caffeinate -dims` 防止系统/显示/磁盘睡眠；手动睡眠、断电、合盖仍可能强制中断
 
 ---
@@ -237,3 +254,5 @@ WebRemoteDesktop/
 | 2026-05-10 | 修复键盘 `is_modifier` NameError 导致大量按键失效；新增诊断日志对话框和刷新画面按钮；优化视频延迟（jitterBufferTarget=0、GOP 1s）；HOST_PASSWORD 支持默认值 fallback；更新 Cloudflare Tunnel URL |
 | 2026-05-11 | 项目网页名称更新为 CodeHarness学习助手；新增 Host 本机浮动提示、全屏按钮、Windows 键盘兼容、WebRTC 自动重连；输入链路改为 WebRTC DataChannel 优先（可靠 `input` + 不可靠 `input-move`），Socket.IO 兜底；新增 Viewer WebRTC stats 回传；新增防睡眠 LaunchAgent（`caffeinate -dims`）；新增 quick tunnel 自恢复并将当前访问地址写入 `/tmp/wrd-current-url.txt` |
 | 2026-05-11 | 新增 WebRTC 网络模式选择和右下角网络建议浮窗；Signal Server 提供 `/api/webrtc-config`；Host 与 Viewer 均支持 `STUN_URLS` / `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`；自动模式可在 TURN 已配置时从直连降级到中继 |
+| 2026-06-02 | 补充公网启动约束：trycloudflare URL 写入文件不等于公网已可用；safe quick tunnel 交付前需验证进程存活、DNS 解析和 HTTP 可达性；短生命周期自动化 shell 中需避免把临时后台进程误判为常驻服务 |
+| 2026-06-06 | 同步开源前安全加固现状：Viewer 与 Host 分离认证、`/api/webrtc-config` 需要 Bearer token、TLS 默认校验开启、诊断日志默认不落仓库，仅在显式开启时写入系统临时目录 |

@@ -6,6 +6,9 @@ SAFE_TUNNEL_PID="/tmp/wrd-safe-quicktunnel.pid"
 SAFE_SIGNAL_PID="/tmp/wrd-safe-signal.pid"
 SAFE_HOST_PID="/tmp/wrd-safe-host.pid"
 SAFE_URL_FILE="/tmp/wrd-safe-current-url.txt"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 
 stop_pid_file() {
   local pid_file="$1"
@@ -24,15 +27,15 @@ stop_pid_file() {
     return 0
   fi
 
-  if kill -0 "$pid" 2>/dev/null; then
+  if wrd_safe_pid_is_running "$pid"; then
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 20); do
-      if ! kill -0 "$pid" 2>/dev/null; then
+      if ! wrd_safe_pid_is_running "$pid"; then
         break
       fi
       sleep 0.2
     done
-    if kill -0 "$pid" 2>/dev/null; then
+    if wrd_safe_pid_is_running "$pid"; then
       kill -9 "$pid" 2>/dev/null || true
     fi
     echo "stopped $label pid=$pid"

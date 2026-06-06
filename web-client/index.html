@@ -39,7 +39,8 @@
         const data = await response.json();
         
         if (response.ok) {
-          localStorage.setItem('wrd_token', data.token);
+          sessionStorage.setItem('wrd_token', data.token);
+          localStorage.removeItem('wrd_token');
           window.location.href = 'viewer.html';
         } else {
           errorDiv.textContent = data.error || '登录失败';

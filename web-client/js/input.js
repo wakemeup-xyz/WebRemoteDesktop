@@ -11,6 +11,12 @@ const Input = {
   keyboardMode: null,
   _keyboardDebugEntries: [],
   _keyboardDebugMax: 80,
+  _recentInputEvents: [],
+  _recentInputEventsMax: 40,
+  _lastReleaseAllReason: null,
+  _lastKeyboardResetReason: null,
+  _lastKeyboardResetAt: 0,
+  _keyboardResetDedupeMs: 250,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -87,7 +93,9 @@ const Input = {
       e.preventDefault();
 
       const keyId = this.getKeyId(normalized);
-      if (e.repeat || this._pressedKeys.has(keyId)) {
+      const existingPress = this._pressedKeys.get(keyId);
+      const allowRepeat = Boolean(e.repeat && existingPress && !this.isModifierKey(normalized));
+      if (existingPress && !allowRepeat) {
         return;
       }
       this._pressedKeys.set(keyId, {
@@ -224,15 +232,20 @@ const Input = {
         this.keyboardMode = this.keyboardMode === 'windows' ? 'mac' : 'windows';
         localStorage.setItem('wrd_keyboard_mode', this.keyboardMode);
         this.updateKeyboardModeButton();
-        this.releaseAllKeys();
+        this.releaseAllKeys('keyboard-mode-change', true);
+        this.updateKeyDisplayRaw(`键盘模式：${this.getKeyboardModeLabel()}`);
       });
     }
+  },
+
+  getKeyboardModeLabel() {
+    return this.keyboardMode === 'windows' ? 'Win(Ctrl→⌘)' : 'Mac';
   },
 
   updateKeyboardModeButton() {
     const modeBtn = document.getElementById('keyboardModeBtn');
     if (!modeBtn) return;
-    modeBtn.textContent = this.keyboardMode === 'windows' ? '键盘：Win(Ctrl→⌘)' : '键盘：Mac';
+    modeBtn.textContent = `键盘：${this.getKeyboardModeLabel()}`;
     modeBtn.title = this.keyboardMode === 'windows'
       ? 'Windows 访问模式：Ctrl 会映射为 macOS Command'
       : 'Mac 直通模式：按键修饰符保持原样';
@@ -350,6 +363,30 @@ const Input = {
 
   getKeyboardDebugEntries() {
     return this._keyboardDebugEntries.slice();
+  },
+
+  recordInputDiagnosticEvent(event) {
+    if (!event || !event.type) return;
+    const entry = {
+      at: new Date().toISOString(),
+      ...event
+    };
+    this._recentInputEvents.push(entry);
+    if (this._recentInputEvents.length > this._recentInputEventsMax) {
+      this._recentInputEvents.shift();
+    }
+  },
+
+  getDiagnosticState() {
+    return {
+      keyboardMode: this.keyboardMode || null,
+      isActive: this.isActive,
+      pressedKeyCount: this._pressedKeys.size,
+      lastReleaseAllReason: this._lastReleaseAllReason || null,
+      lastKeyboardResetReason: this._lastKeyboardResetReason || null,
+      lastKeyboardResetAt: this._lastKeyboardResetAt || 0,
+      recentInputEvents: this._recentInputEvents.slice(),
+    };
   },
 
   getEventModifiers(e) {
@@ -505,6 +542,8 @@ const Input = {
   },
 
   releaseAllKeys(reason = 'release-all', forceReset = false) {
+    this._lastReleaseAllReason = reason;
+    this.recordInputDiagnosticEvent({ type: 'release-all', reason, forceReset: Boolean(forceReset), pressedKeyCount: this._pressedKeys.size });
     if (this._keyReleaseTimer) {
       clearTimeout(this._keyReleaseTimer);
       this._keyReleaseTimer = null;
@@ -533,6 +572,14 @@ const Input = {
   },
 
   sendKeyboardReset(reason) {
+    const now = Date.now();
+    if (this._lastKeyboardResetReason === reason && now - this._lastKeyboardResetAt < this._keyboardResetDedupeMs) {
+      this.recordInputDiagnosticEvent({ type: 'keyboard-reset-skipped', reason, sinceLastMs: now - this._lastKeyboardResetAt });
+      return null;
+    }
+    this._lastKeyboardResetReason = reason;
+    this._lastKeyboardResetAt = now;
+    this.recordInputDiagnosticEvent({ type: 'keyboard-reset', reason });
     this.sendInput('keyboard', 'reset', {
       reason,
       modifiers: { ctrl: 0, shift: 0, alt: 0, meta: 0 }

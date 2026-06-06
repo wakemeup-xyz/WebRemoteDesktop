@@ -9,13 +9,14 @@ SAFE_TUNNEL_SUPERVISOR_PID="/tmp/wrd-safe-tunnel-supervisor.pid"
 SIGNAL_PID_FILE="/tmp/wrd-safe-signal.pid"
 HOST_PID_FILE="/tmp/wrd-safe-host.pid"
 
+source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
+
 cd "$PROJECT_DIR"
 
 start_signal() {
   local existing_pid=""
-  existing_pid=$(pgrep -f "$PROJECT_DIR/signal-server/server.js" | head -n 1 || true)
-  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-    echo "$existing_pid" > "$SIGNAL_PID_FILE"
+  existing_pid=$(wrd_safe_reconcile_pid_file "$SIGNAL_PID_FILE" signal "$PROJECT_DIR" || true)
+  if wrd_safe_pid_is_running "$existing_pid"; then
     echo "signal-server already running (pid=$existing_pid)"
     return 0
   fi
@@ -25,7 +26,7 @@ start_signal() {
     nohup "$NODE_BIN" server.js > /tmp/signal-server.log 2>&1 &
     local new_pid=$!
     disown "$new_pid" 2>/dev/null || true
-    echo "$new_pid" > "$SIGNAL_PID_FILE"
+    wrd_safe_write_pid_file "$SIGNAL_PID_FILE" "$new_pid"
     echo "started signal-server pid=$new_pid"
   )
 }
@@ -44,9 +45,8 @@ wait_signal() {
 
 start_host() {
   local existing_pid=""
-  existing_pid=$(pgrep -f "$PROJECT_DIR/python-host/host.py" | head -n 1 || true)
-  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-    echo "$existing_pid" > "$HOST_PID_FILE"
+  existing_pid=$(wrd_safe_reconcile_pid_file "$HOST_PID_FILE" host "$PROJECT_DIR" || true)
+  if wrd_safe_pid_is_running "$existing_pid"; then
     echo "host already running (pid=$existing_pid)"
     return 0
   fi
@@ -62,7 +62,7 @@ start_host() {
     nohup "$PYTHON_BIN" host.py >> "$PROJECT_DIR/back-debug.log" 2>&1 &
     local new_pid=$!
     disown "$new_pid" 2>/dev/null || true
-    echo "$new_pid" > "$HOST_PID_FILE"
+    wrd_safe_write_pid_file "$HOST_PID_FILE" "$new_pid"
     echo "started host pid=$new_pid"
   )
 }
@@ -81,11 +81,9 @@ wait_host() {
 
 start_safe_tunnel() {
   local supervisor_pid=""
-  if [ -f "$SAFE_TUNNEL_SUPERVISOR_PID" ]; then
-    supervisor_pid=$(cat "$SAFE_TUNNEL_SUPERVISOR_PID" 2>/dev/null || true)
-  fi
+  supervisor_pid=$(wrd_safe_reconcile_pid_file "$SAFE_TUNNEL_SUPERVISOR_PID" tunnel-supervisor "$PROJECT_DIR" || true)
 
-  if [ -n "$supervisor_pid" ] && kill -0 "$supervisor_pid" 2>/dev/null; then
+  if wrd_safe_pid_is_running "$supervisor_pid"; then
     echo "safe tunnel supervisor already running (pid=$supervisor_pid)"
     return 0
   fi
@@ -93,7 +91,7 @@ start_safe_tunnel() {
   nohup "$PROJECT_DIR/scripts/run-safe-quicktunnel.sh" >/tmp/wrd-safe-tunnel-supervisor.log 2>&1 &
   local new_pid=$!
   disown "$new_pid" 2>/dev/null || true
-  echo "$new_pid" > "$SAFE_TUNNEL_SUPERVISOR_PID"
+  wrd_safe_write_pid_file "$SAFE_TUNNEL_SUPERVISOR_PID" "$new_pid"
   echo "started safe tunnel supervisor pid=$new_pid"
 }
 
@@ -118,6 +116,9 @@ wait_safe_url
 
 echo
 echo '=== safe wrd ready ==='
+echo 'entrypoint: http://127.0.0.1:8080'
+echo 'warning: do not open 5173 / http://127.0.0.1:5173 or run npm run dev for this repo'
+echo 'use either the local 8080 page or the safe URL below'
 echo "safe url: $(cat "$SAFE_URL_FILE")"
 echo "status: $(curl -fsS http://127.0.0.1:8080/api/status)"
 echo "signal pid file: $SIGNAL_PID_FILE"

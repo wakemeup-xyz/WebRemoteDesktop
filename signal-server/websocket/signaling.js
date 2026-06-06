@@ -1,10 +1,10 @@
-const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const { loadConfig } = require('../lib/config');
+const { verifyAccessToken } = require('../lib/auth');
+const { redactDiagnosticPayload, getDiagDir, persistDiagnostic } = require('../lib/diagnostic');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-
-const DIAG_DIR = path.join(__dirname, '..', '..', 'diag-logs');
+const DIAG_DIR = getDiagDir();
 const DIAG_MAX_AGE_DAYS = 7;
 const DIAG_MAX_PER_VIEWER = 3;
 const DIAG_MAX_TOTAL = 50;
@@ -104,7 +104,7 @@ function emitViewerStatus(reason, viewerSocket = null) {
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    return verifyAccessToken(token);
   } catch {
     return null;
   }
@@ -117,7 +117,7 @@ function isActiveViewerSocket(socket) {
 function setupSignaling(io) {
   // Use default namespace for all connections
   io.use((socket, next) => {
-    const token = socket.handshake.auth.token;
+    const token = socket.handshake.auth?.token;
     if (!token) {
       return next(new Error('Authentication required'));
     }
@@ -126,11 +126,19 @@ function setupSignaling(io) {
       return next(new Error('Invalid token'));
     }
     socket.user = decoded;
+    const claimedRole = socket.handshake.auth?.role;
+    socket.userRole = decoded.role === 'viewer' && claimedRole === 'relay-viewer'
+      ? 'relay-viewer'
+      : decoded.role;
     next();
   });
 
   io.on('connection', (socket) => {
-    const role = socket.handshake.auth.role;
+    const role = socket.userRole || socket.user?.role || socket.handshake.auth?.role;
+    const claimedRole = socket.handshake.auth?.role;
+    if (claimedRole && claimedRole !== role) {
+      console.warn(`[AUTH] Ignoring client-declared role=${claimedRole}, using token role=${role}`);
+    }
     console.log(`Connection: ${role} - ${socket.id}`);
 
     if (role === 'host') {
@@ -254,32 +262,40 @@ function setupSignaling(io) {
       const logCount = data.logs?.length || 0;
       console.log(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
 
-      // Write to diag-logs/ for agent analysis
-      try {
-        if (!fs.existsSync(DIAG_DIR)) {
-          fs.mkdirSync(DIAG_DIR, { recursive: true });
+      const redacted = redactDiagnosticPayload(data);
+      const config = loadConfig();
+
+      if (config.enableDiagPersist) {
+        try {
+          if (!fs.existsSync(DIAG_DIR)) {
+            fs.mkdirSync(DIAG_DIR, { recursive: true });
+          }
+          cleanupDiagLogs();
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const filename = `${ts}_${socket.id}.json`;
+          const report = {
+            receivedAt: new Date().toISOString(),
+            viewerId: socket.id,
+            userAgent: redacted.userAgent || 'unknown',
+            screen: redacted.screen || 'unknown',
+            logCount,
+            latency: redacted.latency || null,
+            logs: redacted.logs || [],
+            keyboardDebug: redacted.keyboardDebug || [],
+            keyboardMode: redacted.keyboardMode || null,
+            inputState: redacted.inputState || null,
+            inputChannelTimeline: redacted.inputChannelTimeline || [],
+          };
+          persistDiagnostic(filename, report);
+          console.log(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
+        } catch (err) {
+          console.error('[DIAGNOSTIC] Failed to write log file:', err.message);
         }
-        cleanupDiagLogs();
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `${ts}_${socket.id}.json`;
-        const report = {
-          receivedAt: new Date().toISOString(),
-          viewerId: socket.id,
-          userAgent: data.userAgent || 'unknown',
-          screen: data.screen || 'unknown',
-          logCount,
-          latency: data.latency || null,
-          logs: data.logs || [],
-        };
-        fs.writeFileSync(path.join(DIAG_DIR, filename), JSON.stringify(report, null, 2), 'utf-8');
-        console.log(`[DIAGNOSTIC] Saved → diag-logs/${filename}`);
-      } catch (err) {
-        console.error('[DIAGNOSTIC] Failed to write log file:', err.message);
       }
 
       // Also relay to host for real-time analysis
       if (connections.host) {
-        connections.host.emit('diagnostic', data);
+        connections.host.emit('diagnostic', redacted);
       }
     });
 

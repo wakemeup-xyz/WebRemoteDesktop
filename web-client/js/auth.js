@@ -1,8 +1,15 @@
+const TOKEN_KEY = 'wrd_token';
+
 const Auth = {
   API_BASE: window.location.origin,
   
   getToken() {
-    return localStorage.getItem('wrd_token');
+    return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);
+  },
+
+  setToken(token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
   },
   
   isLoggedIn() {
@@ -26,7 +33,8 @@ const Auth = {
   },
   
   logout() {
-    localStorage.removeItem('wrd_token');
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
     window.location.href = 'index.html';
   },
   

@@ -83,7 +83,11 @@ const WebRTC = {
 
   async loadServerConfig() {
     try {
-      const response = await fetch('/api/webrtc-config', { cache: 'no-store' });
+      const token = Auth.getToken();
+      const response = await fetch('/api/webrtc-config', {
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

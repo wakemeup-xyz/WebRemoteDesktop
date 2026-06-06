@@ -87,9 +87,34 @@ const Diagnostic = {
     });
   },
 
+  getInputChannelTimeline() {
+    return this.logs
+      .filter((line) => line.includes('[INPUT-DC]'))
+      .slice(-40)
+      .map((line) => {
+        const match = line.match(/^\[([^\]]+)\] \[([^\]]+)\] (.*)$/);
+        const message = match ? match[3] : line;
+        let kind = 'info';
+        if (/error/i.test(message)) kind = 'error';
+        else if (/closed/i.test(message)) kind = 'close';
+        else if (/open/i.test(message)) kind = 'open';
+        else if (/stuck/i.test(message)) kind = 'stuck';
+        return {
+          at: match ? match[1] : null,
+          level: match ? match[2] : null,
+          kind,
+          message,
+        };
+      });
+  },
+
   sendLogs() {
     const latencyStats = (typeof LatencyMonitor !== 'undefined')
       ? LatencyMonitor.getStats()
+      : null;
+
+    const inputState = (typeof Input !== 'undefined' && typeof Input.getDiagnosticState === 'function')
+      ? Input.getDiagnosticState()
       : null;
 
     const payload = {
@@ -98,8 +123,17 @@ const Diagnostic = {
       userAgent: navigator.userAgent,
       screen: `${window.screen.width}x${window.screen.height}`,
       latency: latencyStats,
-      logs: this.logs.slice(-300), // send last 300 lines
-      keyboardDebug: (typeof Input !== 'undefined' ? Input.getKeyboardDebugEntries().slice(-120) : [])
+      logs: this.logs.slice(-120),
+      keyboardDebug: [],
+      keyboardMode: inputState?.keyboardMode || null,
+      inputState: inputState ? {
+        keyboardMode: inputState.keyboardMode || null,
+        pendingKeys: Array.isArray(inputState.pendingKeys) ? inputState.pendingKeys.length : 0,
+        lastReleaseAllReason: inputState.lastReleaseAllReason || null,
+        lastKeyboardResetReason: inputState.lastKeyboardResetReason || null,
+        recentInputEvents: Array.isArray(inputState.recentInputEvents) ? inputState.recentInputEvents.slice(-20) : [],
+      } : null,
+      inputChannelTimeline: this.getInputChannelTimeline()
     };
 
     // Use WebRTC socket if available, otherwise try to emit directly
@@ -110,7 +144,7 @@ const Diagnostic = {
     } else if (typeof io !== 'undefined') {
       // Fallback: create a temporary socket connection just to send logs
       const tempSocket = io(window.location.origin, {
-        auth: { token: localStorage.getItem('wrd_token'), role: 'viewer' }
+        auth: { token: Auth.getToken(), role: 'viewer' }
       });
       tempSocket.on('connect', () => {
         tempSocket.emit('diagnostic', payload);

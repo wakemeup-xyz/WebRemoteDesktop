@@ -60,3 +60,12 @@ Thumbs.db
 # Worktrees
 .worktrees/
 diag-logs/
+
+# Open-source release hygiene
+signal-server/.env
+signal-server/.env.*
+!signal-server/.env.example
+.claude/
+artifacts/
+*.pid
+*.pid.lock
