@@ -19,7 +19,7 @@ const server = http.createServer(app);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || config.corsOrigins.length === 0 || config.corsOrigins.includes(origin)) {
+    if (!origin || config.corsOrigins.length === 0 || config.corsOrigins.includes('*') || config.corsOrigins.includes(origin)) {
       return callback(null, true);
     }
     return callback(new Error('CORS origin denied'));
