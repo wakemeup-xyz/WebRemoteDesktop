@@ -65,6 +65,12 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 4. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
 5. 启动 safe quick tunnel，并把公网地址写入 `/tmp/wrd-safe-current-url.txt`
 
+补充约定：
+
+1. `./scripts/start-safe-wrd.sh` 会优先**复用**现有 safe quick tunnel，而不是每次重建
+2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
+3. 只有在显式停止 tunnel、quick tunnel 自身过期/退出，或切换网络入口模式时，地址才可能变化
+
 注意：脚本打印出 URL 只表示 `cloudflared` 已返回一个 trycloudflare 地址，**不等于该地址已经对外可访问**。对外提供前还需要额外确认：
 
 1. `./scripts/status-safe-wrd.sh` 中 `safe quick tunnel` 仍为 `running`
@@ -269,8 +275,9 @@ WebRemoteDesktop/
 1. 启动本仓库完整链路：`./scripts/start-safe-wrd.sh`
 2. 它会只复用或启动本仓库的 `signal-server`、`python-host`、safe quick tunnel
 3. 不会停止 `/Users/macstudio1/AI/Claude/StockHub` 的服务
-4. 成功后可从 `/tmp/wrd-safe-current-url.txt` 读取公网地址
-5. 读取到地址后，仍应继续执行 `./scripts/status-safe-wrd.sh` 和一次外部可达性校验，再把链接发给使用者
+4. 若 safe quick tunnel 已在运行，重启本地服务时会继续复用它，因此公网地址默认保持不变
+5. 成功后可从 `/tmp/wrd-safe-current-url.txt` 读取公网地址
+6. 读取到地址后，仍应继续执行 `./scripts/status-safe-wrd.sh` 和一次外部可达性校验，再把链接发给使用者
 
 ### 一键安全停止
 
@@ -340,7 +347,7 @@ TURN_CREDENTIAL=你的凭证
 
 1. **屏幕录制权限**: Python Host 需要屏幕录制权限，首次运行需要在系统设置中授权
 2. **辅助功能权限**: Python Host 需要辅助功能权限才能执行远程输入
-3. **临时 tunnel**: trycloudflare 地址会过期，需读取 `/tmp/wrd-current-url.txt`
+3. **临时 tunnel**: trycloudflare 地址在 quick tunnel 存活期间通常保持不变，但在进程退出、过期重建或显式停 tunnel 后会变化；safe 模式读取 `/tmp/wrd-safe-current-url.txt`
 4. **系统睡眠**: 已通过 `caffeinate -dims` 防止主动睡眠；手动睡眠、合盖、断电仍可能中断
 
 ## 下一步优化
