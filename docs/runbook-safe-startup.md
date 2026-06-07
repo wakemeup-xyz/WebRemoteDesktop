@@ -12,7 +12,7 @@
 
 区别如下：
 
-- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址，且不想影响其他仓库进程
+- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
 - 手动本地启动：适合只做本机调试，不需要公网地址
 - `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名
 
@@ -66,6 +66,12 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 4. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
 5. 复用或启动 `scripts/run-safe-quicktunnel.sh`
 6. 输出 safe quick tunnel 地址
+
+重启约定：
+
+- 若只是重启 `signal-server` 或 `python-host`，默认**不停止**现有 safe quick tunnel
+- 只要 `/tmp/wrd-safe-quicktunnel.pid` 对应进程仍存活，公网地址默认沿用，不需要重新通知一个新地址
+- 只有在显式执行 `./scripts/stop-safe-wrd.sh`、quick tunnel 失效重建，或切换到固定域名方案时，外部地址才视为变化
 
 启动成功后，优先读取：
 
@@ -125,6 +131,8 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 同时删除：
 
 - `/tmp/wrd-safe-current-url.txt`
+
+执行该命令后，safe quick tunnel 也会被停止；下一次再启动若重新创建 tunnel，trycloudflare 地址可能变化。
 
 ### 4. 固定域名启动
 
