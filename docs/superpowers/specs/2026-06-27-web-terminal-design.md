@@ -31,7 +31,7 @@ WebRemoteDesktop 当前通过 `signal-server` 暴露网页、认证接口、Sock
 3. 每个 terminal 会话连接服务端本机的一个独立 PTY 进程，默认 shell 为 macOS `/bin/zsh`。
 4. 本机 `http://localhost:5173/` 打开的网页也能通过部署映射访问同一 terminal 服务，适配 Vite 开发服务器、反向代理和 Cloudflare tunnel 三类入口。
 5. 功能轻量：不引入独立 WeTTY/ttyd 服务，不新增数据库，不改变现有 Python Host 媒体链路。
-6. 功能好用：终端自动 fit、支持 resize、断线状态清楚、会话列表可见、错误直接展示。
+6. 功能好用：终端自动 fit、支持 resize、断线自动重联、会话列表可见、错误直接展示。
 7. 功能安全：默认关闭，显式启用后仍要求 admin 级权限和审计日志。
 
 ## 非目标
@@ -206,9 +206,8 @@ WRD_TERMINAL_SHELL=/bin/zsh
 WRD_TERMINAL_CWD=/Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 # Limits.
-WRD_TERMINAL_MAX_SESSIONS=4
-WRD_TERMINAL_MAX_SESSIONS_PER_USER=4
-WRD_TERMINAL_IDLE_TIMEOUT_MS=900000
+WRD_TERMINAL_SOFT_WARN_SESSION_COUNT=4
+WRD_TERMINAL_IDLE_TIMEOUT_MS=0
 WRD_TERMINAL_STARTUP_TIMEOUT_MS=10000
 
 # Logging.
@@ -349,10 +348,12 @@ io('/terminal', {
 ```json
 {
   "sessionId": "term_abc123",
-  "error": "max_sessions_reached",
-  "message": "Terminal session limit reached"
+  "warning": "session_count_above_soft_threshold",
+  "message": "Terminal session count is high"
 }
 ```
+
+`terminal:warning` 是软提示，不会阻止继续创建会话。
 
 `terminal:snapshot`
 
@@ -394,14 +395,24 @@ io('/terminal', {
 规则：
 
 1. 每个 session 对应一个 PTY 子进程。
-2. 默认最多 4 个总 session，每个 admin 最多 4 个。
-3. session 和创建它的 socket 绑定；socket disconnect 后进入 30 秒 grace period。
-4. grace period 内同一 admin 重新连接，可以选择 reattach。
-5. grace period 超时后 kill PTY。
-6. 用户显式关闭 tab 时立即 kill PTY。
-7. `signal-server` 进程退出时不做恢复，PTY 跟随进程结束。
+2. session 数量不设硬上限，只做软提示和资源保护。
+3. session 和创建它的 browser session 绑定；socket disconnect 后 session 保持 detached，不自动销毁。
+4. 浏览器断网后自动重连成功时，前端按 sessionId 重新 attach 原来的 PTY，不新建会话。
+5. 用户显式关闭 tab 时立即 kill PTY。
+6. `signal-server` 进程退出时不做恢复，PTY 跟随进程结束。
+7. 只要用户没有显式关闭，terminal 会话就持续存在，直到手动关闭或服务重启。
 
-首期可以不实现完整 reattach，只要 disconnect 后明确提示“连接断开，terminal 已关闭”也可接受。但推荐保留 30 秒 grace period，体验更好，复杂度仍可控。
+会话恢复的关键点是：前端保存 sessionId 映射，socket 重连后调用 `terminal:attach`，服务端返回同一个 PTY 的输出流，不创建新 shell。
+
+## 资源保护
+
+terminal 不设硬上限，但必须有软提示和资源保护：
+
+1. 当同一浏览器会话下 terminal 数量超过 `WRD_TERMINAL_SOFT_WARN_SESSION_COUNT` 时，前端显示“会话较多，可能影响性能”。
+2. 后端不因会话数量直接拒绝创建；只有 PTY spawn 失败、系统资源不足或明确的安全保护触发时才返回错误。
+3. 输出通道必须有背压，避免单个终端持续刷屏拖垮页面。
+4. 输入事件和粘贴事件要限速，避免误操作把 shell 打爆。
+5. 如果机器资源告急，优先降级为 warning，不自动销毁用户会话。
 
 ## 安全设计
 
@@ -527,14 +538,18 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 | `terminal_disabled` | `WRD_ENABLE_TERMINAL!=1` | 终端功能未启用 |
 | `terminal_admin_password_required` | 未配置 admin password | 服务端未配置终端管理员密码 |
 | `terminal_unauthorized` | token 缺失、过期或非 admin | 需要管理员授权 |
-| `max_sessions_reached` | 超过总 session 上限 | 终端数量已达上限 |
-| `max_sessions_per_user_reached` | 超过用户上限 | 当前浏览器终端数量已达上限 |
 | `invalid_terminal_size` | cols/rows 越界 | 终端尺寸无效 |
 | `invalid_cwd` | cwd 不在允许目录 | 终端目录不允许访问 |
 | `shell_not_allowed` | shell 不在允许列表 | 服务端不允许该 shell |
 | `pty_spawn_failed` | node-pty spawn 失败 | 启动终端失败，查看服务端日志 |
 | `pty_exited` | PTY 已退出 | 终端进程已退出 |
 | `terminal_backpressure` | 输出过快 | 输出过快，已暂停刷新 |
+
+### 软提示
+
+| 事件 | 触发条件 | 用户提示 |
+|------|----------|----------|
+| `terminal:warning` | 会话数超过软阈值、输出过快、资源压力较高 | 终端会话较多或资源压力较高，建议关闭不用的会话 |
 
 错误必须同时：
 
@@ -551,7 +566,7 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 - `signal-server/test/terminal-config.test.js`
   - 默认 disabled。
   - enabled 但缺 admin password 时拒绝。
-  - session limits 和 timeout 解析正确。
+  - soft warning threshold、timeout 和 shell 解析正确。
 
 - `signal-server/test/terminal-session-manager.test.js`
   - 使用 fake PTY adapter，不启动真实 shell。
@@ -559,7 +574,7 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
   - 输入转发到 PTY。
   - resize 调用 PTY resize。
   - close 会 kill PTY。
-  - session 上限生效。
+  - session count 超过软阈值时发出 warning，但仍可继续创建。
 
 - `signal-server/test/terminal-auth.test.js`
   - viewer token 被拒。
@@ -580,13 +595,13 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 
 1. `WRD_ENABLE_TERMINAL=0`，登录 viewer，Terminal tab 显示未启用，不能创建 session。
 2. `WRD_ENABLE_TERMINAL=1` 但不设置 admin password，服务端启动后 terminal 创建返回明确错误。
-3. 设置 admin password，登录 admin 后创建 4 个 terminal，能独立运行 `pwd`、`ls`。
-4. 创建第 5 个 terminal 返回 `max_sessions_reached`。
+3. 设置 admin password，登录 admin 后创建多个 terminal，能独立运行 `pwd`、`ls`。
+4. 会话数超过软阈值后仍可继续创建，但 UI 会显示 warning。
 5. 切换到 `http://127.0.0.1:8080`，terminal 可用。
 6. 切换到 safe quick tunnel URL，terminal 可用，公网 URL 不因 terminal 操作变化。
 7. 使用 `localhost:5173` + Vite proxy，terminal 可用。
 8. 使用 `localhost:5173` + `WRD_API_BASE`，terminal 可用。
-9. 关闭浏览器 tab，30 秒后 PTY 被清理。
+9. 浏览器断网后重连，原有 PTY 仍在，tab 重新 attach 到同一个 session。
 10. 重启 `signal-server`，terminal 结束，safe tunnel 不重启。
 
 ## 实施分期
@@ -602,8 +617,8 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 ### Phase 2：多 terminal
 
 1. 前端会话栏支持新建、切换、关闭、重命名。
-2. 后端 session 上限、per-user 上限和 idle timeout。
-3. 断线清理和 30 秒 grace period。
+2. 后端会话保留、自动 attach 和资源保护。
+3. 断网重连后回到原 session，不新建 shell。
 
 ### Phase 3：部署映射和开发入口
 
@@ -618,11 +633,11 @@ CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 
 1. 默认配置下 terminal 不可用，UI 给出明确未启用状态。
 2. 配置 `WRD_ENABLE_TERMINAL=1` 和 `WRD_TERMINAL_ADMIN_PASSWORD` 后，admin 能进入 Terminal tab。
-3. 同一浏览器可以创建至少 4 个 terminal，并在它们之间切换。
+3. 同一浏览器可以创建多个 terminal，并在它们之间切换。
 4. 每个 terminal 有独立 PTY，当前目录、进程状态和输出互不串扰。
 5. 普通 viewer 不能创建或操作 terminal。
 6. 关闭 terminal tab 会结束对应 PTY。
-7. 浏览器断开后 PTY 会在约定时间内清理。
+7. 浏览器断网后 PTY 保持存在，重连后能回到原 session。
 8. `http://127.0.0.1:8080`、safe quick tunnel URL、固定域名入口都使用同一套 terminal 逻辑。
 9. `http://localhost:5173/` 通过 Vite proxy 或 Runtime API base 能连接 `8080` terminal 服务。
 10. terminal 操作不会重启 Cloudflare tunnel，不会改变 `/tmp/wrd-safe-current-url.txt`。
