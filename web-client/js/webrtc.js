@@ -25,6 +25,14 @@ const WebRTC = {
   noMediaTicks: 0,
   lastCandidateType: '',
   _autoFailCount: 0,
+  _iceRestartAttempts: 0,
+  _tunnelLockUntil: 0,
+  selectedCandidatePair: null,
+  candidateSummary: {
+    local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+    remote: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+    samples: { local: [], remote: [] }
+  },
   
   config: {
     iceServers: []
@@ -61,6 +69,47 @@ const WebRTC = {
   hasTurnConfigured() {
     return this.getTurnServers().length > 0;
   },
+
+  isPublicOrigin() {
+    let hostname = String(window.location?.hostname || '').toLowerCase();
+    if (!hostname) {
+      const origin = String(window.location?.origin || '').toLowerCase();
+      const match = origin.match(/^[a-z]+:\/\/([^/:?#]+)/);
+      hostname = match ? match[1] : '';
+    }
+    if (!hostname) {
+      return false;
+    }
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return false;
+    }
+    if (hostname.endsWith('.local')) {
+      return false;
+    }
+    return true;
+  },
+
+  shouldForceTunnelForCurrentContext() {
+    return this.networkMode === 'auto' && !this.hasTurnConfigured() && this.isPublicOrigin();
+  },
+
+  enforceSupportedNetworkMode(preferredMode = this.networkMode) {
+    if (preferredMode === 'relay' && !this.hasTurnConfigured()) {
+      console.warn('[NETWORK] Relay mode requested without TURN; forcing tunnel mode');
+      this.networkMode = 'tunnel';
+      localStorage.setItem('wrdNetworkMode', 'tunnel');
+      return {
+        effectiveMode: 'tunnel',
+        changed: true,
+        reason: this.serverConfig?.turnStatus === 'misconfigured'
+          ? 'TURN 配置不完整，无法使用外网中继，已切换到隧道中继。'
+          : '当前未配置 TURN，无法使用外网中继，已切换到隧道中继。',
+      };
+    }
+    this.networkMode = preferredMode;
+    localStorage.setItem('wrdNetworkMode', preferredMode);
+    return { effectiveMode: preferredMode, changed: false, reason: '' };
+  },
   
   async init() {
     const token = Auth.getToken();
@@ -70,21 +119,39 @@ const WebRTC = {
     }
     this.manualDisconnect = false;
     await this.loadServerConfig();
+    const modeState = this.enforceSupportedNetworkMode(this.networkMode);
     this.configureNetworkControls();
-    this.updateNetworkUI('网络模式已就绪');
+    this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
 
-    this.socket = io(window.location.origin, {
+    if (this.shouldForceTunnelForCurrentContext()) {
+      const reason = '当前是公网入口且未配置 TURN。为避免外网 WebRTC 反复失败，已直接切换到隧道中继。';
+      this.networkMode = 'tunnel';
+      localStorage.setItem('wrdNetworkMode', 'tunnel');
+      this.updateNetworkUI(reason, 'warning');
+    }
+
+    const socketBase = (typeof RuntimeConfig !== 'undefined')
+      ? RuntimeConfig.getSocketBase()
+      : window.location.origin;
+    this.socket = io(socketBase, {
       auth: { token, role: 'viewer' }
     });
 
     this.setupSocketListeners();
+    if (this.networkMode === 'tunnel') {
+      this.startTunnelRelay();
+      return;
+    }
     this.createPeerConnection();
   },
 
   async loadServerConfig() {
     try {
       const token = Auth.getToken();
-      const response = await fetch('/api/webrtc-config', {
+      const apiBase = (typeof RuntimeConfig !== 'undefined')
+        ? RuntimeConfig.getApiBase()
+        : '';
+      const response = await fetch(`${apiBase}/api/webrtc-config`, {
         cache: 'no-store',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -109,10 +176,19 @@ const WebRTC = {
   },
 
   getStunServers() {
+    const defaultUrls = [
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302',
+      'stun:stun2.l.google.com:19302',
+      'stun:stun.cloudflare.com:3478',
+    ];
     const stunUrls = this.serverConfig?.stunUrls?.length
       ? this.serverConfig.stunUrls
-      : ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'];
-    return stunUrls.length ? [{ urls: stunUrls }] : [];
+      : defaultUrls;
+    const deduped = [...new Set((stunUrls || [])
+      .map((url) => String(url || '').trim())
+      .filter(Boolean))];
+    return deduped.length ? [{ urls: deduped }] : [];
   },
 
   getTurnServers() {
@@ -137,11 +213,6 @@ const WebRTC = {
     } else if (this.networkMode === 'relay') {
       iceServers = turnServers;
       iceTransportPolicy = 'relay';
-      if (!turnServers.length) {
-        console.warn('[NETWORK] Relay mode selected but TURN is not configured; falling back to STUN');
-        iceServers = this.getStunServers();
-        iceTransportPolicy = 'all';
-      }
     } else if (this.useRelayFallback && turnServers.length) {
       iceServers = turnServers;
       iceTransportPolicy = 'relay';
@@ -149,7 +220,114 @@ const WebRTC = {
       iceServers = [...this.getStunServers(), ...turnServers];
     }
 
-    return { iceServers, iceTransportPolicy };
+    return {
+      iceServers,
+      iceTransportPolicy,
+      iceCandidatePoolSize: this.networkMode === 'lan' ? 0 : 4,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    };
+  },
+
+  resetCandidateSummary() {
+    this.candidateSummary = {
+      local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+      remote: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+      samples: { local: [], remote: [] }
+    };
+  },
+
+  parseCandidate(candidateLike) {
+    const candidateString = typeof candidateLike === 'string'
+      ? candidateLike
+      : candidateLike?.candidate || '';
+    if (!candidateString) {
+      return null;
+    }
+    const raw = candidateString.startsWith('candidate:')
+      ? candidateString.slice(10)
+      : candidateString;
+    const parts = raw.trim().split(/\s+/);
+    if (parts.length < 8) {
+      return null;
+    }
+    const typeIndex = parts.indexOf('typ');
+    const candidateType = typeIndex >= 0 && parts[typeIndex + 1] ? parts[typeIndex + 1] : 'other';
+    return {
+      type: candidateType,
+      protocol: (parts[2] || '').toLowerCase(),
+      address: `${parts[4] || '?'}:${parts[5] || '?'}`,
+    };
+  },
+
+  detectAddressFamily(address = '') {
+    const host = String(address).replace(/^\[/, '').split(']')[0].split(':')[0];
+    if (String(address).includes(':') && !/^\d+\.\d+\.\d+\.\d+/.test(String(address))) {
+      return 'ipv6';
+    }
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      return 'ipv4';
+    }
+    return address ? 'hostname' : '';
+  },
+
+  classifyCandidateHealth(snapshot = this.collectNetworkSnapshot()) {
+    const summary = snapshot.candidateSummary || {};
+    const local = summary.local || {};
+    const remote = summary.remote || {};
+    const hasRelay = Number(local.relay || 0) > 0 || Number(remote.relay || 0) > 0;
+    const hasSrflx = Number(local.srflx || 0) > 0 || Number(remote.srflx || 0) > 0;
+    const hasRemote = ['host', 'srflx', 'relay', 'prflx'].some((type) => Number(remote[type] || 0) > 0);
+    if (!snapshot.turnConfigured && !hasRelay && hasSrflx) {
+      return hasRemote ? 'stun-no-turn-no-relay' : 'stun-local-only-no-turn';
+    }
+    if (hasRelay) {
+      return 'relay-candidate-present';
+    }
+    if (!hasSrflx && !hasRemote) {
+      return 'no-usable-candidates';
+    }
+    return 'candidate-check-needed';
+  },
+
+  addCandidateSample(direction, candidateLike) {
+    const parsed = this.parseCandidate(candidateLike);
+    if (!parsed) {
+      return;
+    }
+    const bucket = ['host', 'srflx', 'relay', 'prflx'].includes(parsed.type) ? parsed.type : 'other';
+    const summary = this.candidateSummary?.[direction];
+    const samples = this.candidateSummary?.samples?.[direction];
+    if (!summary || !samples) {
+      return;
+    }
+    summary[bucket] = (summary[bucket] || 0) + 1;
+    if (samples.length < 6) {
+      samples.push(parsed);
+    }
+  },
+
+  collectNetworkSnapshot() {
+    return {
+      networkMode: this.networkMode || null,
+      useRelayFallback: Boolean(this.useRelayFallback),
+      tunnelRelayActive: Boolean(this.tunnelRelayActive),
+      tunnelLockUntil: Number(this._tunnelLockUntil || 0),
+      autoFailCount: Number(this._autoFailCount || 0),
+      iceRestartAttempts: Number(this._iceRestartAttempts || 0),
+      noMediaTicks: Number(this.noMediaTicks || 0),
+      lastCandidateType: this.lastCandidateType || '',
+      turnConfigured: Boolean(this.serverConfig?.turnConfigured),
+      turnStatus: this.serverConfig?.turnStatus || 'unknown',
+      selectedCandidatePair: this.selectedCandidatePair,
+      candidateSummary: this.candidateSummary,
+      pc: this.pc ? {
+        connectionState: this.pc.connectionState || null,
+        iceConnectionState: this.pc.iceConnectionState || null,
+        iceGatheringState: this.pc.iceGatheringState || null,
+        signalingState: this.pc.signalingState || null,
+      } : null,
+    };
   },
   
   setupSocketListeners() {
@@ -219,6 +397,7 @@ const WebRTC = {
         return;
       }
       try {
+        this.addCandidateSample('remote', data.candidate);
         await this.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } catch (err) {
         console.error('Failed to add ICE candidate:', err);
@@ -241,8 +420,10 @@ const WebRTC = {
       return;
     }
     this.config = this.buildPeerConfig();
+    this.resetCandidateSummary();
     this.noMediaTicks = 0;
     this.lastCandidateType = '';
+    this.selectedCandidatePair = null;
     if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
     this.pc = new RTCPeerConnection(this.config);
     this.videoTransceiver = null;
@@ -256,6 +437,7 @@ const WebRTC = {
     this.pc.onicecandidate = (event) => {
       console.log('Viewer ICE candidate:', event.candidate);
       if (event.candidate) {
+        this.addCandidateSample('local', event.candidate);
         this.socket.emit('ice-candidate', {
           target: 'host',
           candidate: event.candidate
@@ -307,6 +489,7 @@ const WebRTC = {
         this.startStats();
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
+        this._iceRestartAttempts = 0;
 
         // Safety net: hide loading spinner (primary hide is in ontrack via video events)
         const loadingEl = document.getElementById('loading');
@@ -620,6 +803,7 @@ const WebRTC = {
       clearInterval(this.statsTimer);
       this.statsTimer = null;
     }
+    this._tunnelLockUntil = Date.now() + 30000;
     this.tunnelRelayActive = true;
     this.tunnelFrameCount = 0;
     this.tunnelStartedAt = performance.now();
@@ -647,13 +831,16 @@ const WebRTC = {
       this.relaySocket = null;
     }
     const token = Auth.getToken();
-    this.relaySocket = io(window.location.origin, {
+    const socketBase = (typeof RuntimeConfig !== 'undefined')
+      ? RuntimeConfig.getSocketBase()
+      : window.location.origin;
+    this.relaySocket = io(socketBase, {
       auth: { token, role: 'relay-viewer' },
       transports: ['websocket', 'polling']
     });
     this.relaySocket.on('connect', () => {
       console.log('[TUNNEL] Relay socket connected');
-      if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {
+      if (this.tunnelRelayActive) {
         this.emitRelayStreamControl();
       }
     });
@@ -703,7 +890,7 @@ const WebRTC = {
   },
 
   handleRelayFrame(data) {
-    if (this.networkMode !== 'tunnel') {
+    if (!this.tunnelRelayActive) {
       return;
     }
     const relayImage = document.getElementById('relayImage');
@@ -769,6 +956,11 @@ const WebRTC = {
       this.networkMode, !!this.pc, this.offerInProgress);
     if (this.networkMode === 'tunnel') {
       console.log('[OFFER-DBG] createOffer: tunnel mode, starting relay');
+      this.startTunnelRelay();
+      return;
+    }
+    if (this._tunnelLockUntil > Date.now() && (this.networkMode === 'auto' || this.networkMode === 'stun')) {
+      console.warn('[NETWORK] Tunnel relay lock active, skipping WebRTC offer');
       this.startTunnelRelay();
       return;
     }
@@ -932,11 +1124,13 @@ const WebRTC = {
     if (!this.networkModes[mode]) {
       return;
     }
-    this.networkMode = mode;
+    const modeState = this.enforceSupportedNetworkMode(mode);
     this.useRelayFallback = false;
     this._autoFailCount = 0;
-    localStorage.setItem('wrdNetworkMode', mode);
-    this.updateNetworkUI('网络模式已切换，正在重连...');
+    this.updateNetworkUI(
+      modeState.changed ? modeState.reason : '网络模式已切换，正在重连...',
+      modeState.changed ? 'warning' : ''
+    );
     if (this.socket && this.socket.connected) {
       this.refresh();
     }
@@ -960,7 +1154,9 @@ const WebRTC = {
     let detail = message || mode.hint;
     if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
       severity = 'warning';
-      detail = '外网中继需要 TURN。当前未配置 TURN，页面会退回 STUN，受限网络仍可能 0 FPS。';
+      detail = this.serverConfig?.turnStatus === 'misconfigured'
+        ? 'TURN 配置不完整。当前无法建立真实外网中继，建议补全 TURN_USERNAME / TURN_CREDENTIAL，或先使用隧道中继。'
+        : '外网中继需要 TURN。当前未配置 TURN，页面会直接切换到隧道中继。';
     } else if (this.networkMode === 'auto' && !this.hasTurnConfigured()) {
       detail = message || '当前为 STUN-only 自动模式。若外网直连失败，页面会自动切换到隧道中继。';
     }
@@ -1007,6 +1203,7 @@ const WebRTC = {
       let selectedCandidateType = '';
       let codecId = '';
       let localCandidateId = '';
+      let remoteCandidateId = '';
 
       stats.forEach((report) => {
         if (report.type === 'inbound-rtp' && report.kind === 'video') {
@@ -1030,6 +1227,7 @@ const WebRTC = {
           }
           selectedCandidateType = report.localCandidateType || '';
           localCandidateId = report.localCandidateId || '';
+          remoteCandidateId = report.remoteCandidateId || '';
         }
       });
 
@@ -1040,6 +1238,18 @@ const WebRTC = {
       if (!selectedCandidateType && localCandidateId && stats.has(localCandidateId)) {
         selectedCandidateType = stats.get(localCandidateId).candidateType || '';
       }
+      const localCandidate = localCandidateId && stats.has(localCandidateId) ? stats.get(localCandidateId) : null;
+      const remoteCandidate = remoteCandidateId && stats.has(remoteCandidateId) ? stats.get(remoteCandidateId) : null;
+      this.selectedCandidatePair = {
+        localType: localCandidate?.candidateType || selectedCandidateType || '',
+        remoteType: remoteCandidate?.candidateType || '',
+        protocol: localCandidate?.protocol || remoteCandidate?.protocol || '',
+        localAddress: localCandidate?.address && localCandidate?.port ? `${localCandidate.address}:${localCandidate.port}` : '',
+        remoteAddress: remoteCandidate?.address && remoteCandidate?.port ? `${remoteCandidate.address}:${remoteCandidate.port}` : '',
+        localAddressFamily: this.detectAddressFamily(localCandidate?.address || ''),
+        remoteAddressFamily: this.detectAddressFamily(remoteCandidate?.address || ''),
+        rttMs: latencyMs || 0,
+      };
 
       document.getElementById('fpsDisplay').textContent = `${Math.round(fps)} FPS`;
       const latencyEl = document.getElementById('latencyDisplay');
@@ -1081,6 +1291,9 @@ const WebRTC = {
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
                   `Recv=${framesReceived}, Decoded=${framesDecoded}, Lost=${packetsLost}, ` +
                   `Bytes=${(bytesReceived/1024/1024).toFixed(2)}MB`);
+      if (this.selectedCandidatePair.localType || this.selectedCandidatePair.remoteType) {
+        console.log('[NETWORK] Selected candidate pair:', this.selectedCandidatePair);
+      }
 
       if (this.socket && this.socket.connected) {
         this.socket.emit('viewer-stats', {
@@ -1168,29 +1381,54 @@ const WebRTC = {
       return;
     }
     console.warn(`[RECOVERY] Scheduling WebRTC reconnect after ${reason}`);
+    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+      Diagnostic.autoSendFailure(reason);
+    }
     updateConnectionStatus('disconnected');
     this._autoFailCount += 1;
 
     const hasTurn = this.hasTurnConfigured();
+    const canRestartIce = this.pc
+      && typeof this.pc.restartIce === 'function'
+      && !this.tunnelRelayActive
+      && this.networkMode !== 'tunnel'
+      && this._iceRestartAttempts < 1
+      && ['ice-failed', 'ice-disconnected', 'pc-failed'].includes(reason);
+
+    if (this._tunnelLockUntil > Date.now() && (this.networkMode === 'auto' || this.networkMode === 'stun')) {
+      console.warn('[RECOVERY] Tunnel relay lock active, keeping tunnel path');
+      updateLoadingText('保持隧道中继，避免重复切回直连...');
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
+        this.startTunnelRelay();
+      }, 500);
+      return;
+    }
+
+    if (canRestartIce) {
+      this._iceRestartAttempts += 1;
+      console.warn('[RECOVERY] Trying ICE restart before full refresh');
+      updateLoadingText('媒体链路异常，正在尝试 ICE 重启...');
+      try {
+        this.pc.restartIce();
+      } catch (err) {
+        console.warn('[RECOVERY] restartIce failed, will fall back to full refresh', err);
+      }
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.manualDisconnect || !this.socket || !this.socket.connected) {
+          return;
+        }
+        this.refresh();
+      }, 1500);
+      return;
+    }
 
     if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn) {
       this.useRelayFallback = true;
       this.updateNetworkUI('自动穿透失败，下一次重连将强制使用 TURN 中继。', 'warning');
       updateLoadingText('直连失败，正在切换中继...');
-    } else if (this.networkMode === 'auto' && !hasTurn && this._autoFailCount >= 1) {
-      console.warn('[RECOVERY] Auto mode has no TURN, falling to tunnel immediately');
-      this.useRelayFallback = false;
-      this._autoFailCount = 0;
-      this.updateNetworkUI('当前未配置 TURN，自动穿透失败后将直接切换到隧道中继。', 'warning');
-      updateLoadingText('直连失败，正在切换隧道中继...');
-      document.getElementById('loading').classList.remove('hidden');
-      document.body.classList.remove('stream-connected');
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
-        this.startTunnelRelay();
-      }, 800);
-      return;
     } else if (this.networkMode === 'auto' && (this.useRelayFallback || this._autoFailCount >= 2)) {
       // TURN relay failed or 2+ stun failures without TURN, fall back to tunnel
       console.warn('[RECOVERY] Auto mode exhausted (failCount=%d), falling to tunnel', this._autoFailCount);

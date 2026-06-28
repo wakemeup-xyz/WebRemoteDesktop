@@ -1,7 +1,12 @@
 const TOKEN_KEY = 'wrd_token';
 
 const Auth = {
-  API_BASE: window.location.origin,
+  get API_BASE() {
+    if (typeof RuntimeConfig !== 'undefined') {
+      return RuntimeConfig.getApiBase();
+    }
+    return window.location.origin;
+  },
   
   getToken() {
     return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);

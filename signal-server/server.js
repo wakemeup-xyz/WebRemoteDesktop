@@ -8,9 +8,10 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth');
-const { loadConfig } = require('./lib/config');
+const { loadConfig, getTurnStatus } = require('./lib/config');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
 const { setupSignaling, getConnectionStatus } = require('./websocket/signaling');
+const { setupTerminal } = require('./websocket/terminal');
 
 const config = loadConfig();
 const app = express();
@@ -51,6 +52,7 @@ const io = new Server(server, {
 });
 
 const connections = setupSignaling(io);
+setupTerminal(io, { config });
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -78,13 +80,13 @@ function requireAccessToken(req, res, next) {
 }
 
 app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
-  const turnConfigured = Boolean(config.turnUrls.length > 0 && config.turnUsername && config.turnCredential);
+  const turnState = getTurnStatus(config);
 
   const iceServers = [];
   if (config.stunUrls.length) {
     iceServers.push({ urls: config.stunUrls });
   }
-  if (turnConfigured) {
+  if (turnState.turnConfigured) {
     iceServers.push({
       urls: config.turnUrls,
       username: config.turnUsername,
@@ -94,8 +96,10 @@ app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
 
   res.json({
     stunUrls: config.stunUrls,
-    turnConfigured,
-    turnUrls: turnConfigured ? config.turnUrls : [],
+    turnConfigured: turnState.turnConfigured,
+    turnMisconfigured: turnState.turnMisconfigured,
+    turnStatus: turnState.turnStatus,
+    turnUrls: turnState.turnConfigured ? config.turnUrls : [],
     iceServers,
   });
 });

@@ -61,21 +61,38 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 1. 启动或复用 `signal-server`
 2. 等待 `http://127.0.0.1:8080/health` 正常
-3. 启动或复用 `python-host`
-4. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
-5. 启动 safe quick tunnel，并把公网地址写入 `/tmp/wrd-safe-current-url.txt`
+3. 通过 LaunchAgent 注册并启动 `python-host`
+4. 在 `scripts/run-host-launchctl.sh` 内先等待 `/health` 成功，再预检 `/api/auth/login/host` 认证成功，最后才真正启动 `host.py`
+5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
+6. 启动 safe quick tunnel，并先做本机 `curl -I -L` 可达性校验，验证通过后才把公网地址写入 `/tmp/wrd-safe-current-url.txt`
 
 补充约定：
 
 1. `./scripts/start-safe-wrd.sh` 会优先**复用**现有 safe quick tunnel，而不是每次重建
 2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
 3. 只有在显式停止 tunnel、quick tunnel 自身过期/退出，或切换网络入口模式时，地址才可能变化
+4. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
+5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；除非用户明确要求，或现有 tunnel 已失效且必须恢复公网访问
+6. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
+7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端会直接切到 `隧道中继`，不再先白试一轮 WebRTC 外网直连
+8. 如果 `start-safe-wrd.sh` 发现当前 safe URL 在本机已经不可解析或不可访问，它现在会只重建 tunnel，不会顺带重启本地 `signal-server` 或 Host
 
 注意：脚本打印出 URL 只表示 `cloudflared` 已返回一个 trycloudflare 地址，**不等于该地址已经对外可访问**。对外提供前还需要额外确认：
 
 1. `./scripts/status-safe-wrd.sh` 中 `safe quick tunnel` 仍为 `running`
 2. trycloudflare 子域名已经可以解析
 3. `curl -I -L <safe-url>` 能拿到 HTTP 响应
+4. 如果 `safe quick tunnel` 进程仍在，但 `curl -I -L <safe-url>` 已失败，说明旧 tunnel 地址已经失效；此时应只重建 tunnel，不要先动本地服务
+5. `scripts/run-safe-quicktunnel.sh` 现在会在把 URL 写入文件前先做本机 200 校验；如果校验失败，说明这个 trycloudflare 地址暂时还不能交付
+6. 如果这台机器的系统 DNS 一时解析不到 `*.trycloudflare.com`，脚本会回退到公共 DNS 解析并用 `curl --resolve` 校验；避免把“本机 resolver 异常”误判成 tunnel 本身不可用
+
+补充判断：
+
+1. `DNS 可解析` 仍不等于入口可用；若 `curl -I -L` 返回超时、`Could not resolve host`、`HTTP 530` 等，都应视为当前公网入口无效
+2. `cloudflared` 进程仍在，也不等于这个 trycloudflare 地址仍然有效；状态判断必须以 `status-safe-wrd.sh` 加 `curl -I -L` 为准
+3. trycloudflare 本身没有稳定性保证；如果需要长期稳定地址，应切换到命名隧道和固定域名，而不是继续依赖临时 quick tunnel
+4. 如果你看到地址“变了”，以 `/tmp/wrd-safe-current-url.txt` 的最新内容为准；旧链接只要过了 reachability 校验就必须视为失效
+5. 现在 `status-safe-wrd.sh` / `run-safe-quicktunnel.sh` 的 reachability 判断会优先尝试普通 `curl`，仅在 `trycloudflare` 遇到本机 DNS 失败时才回退到公共 DNS 校验
 
 如果是在短生命周期的自动化 shell 中启动（例如一次性命令执行器），后台 `nohup` 子进程可能会在父 shell 结束后被回收；此时建议在用户自己的常驻终端中重新执行该脚本，或单独保持 `./scripts/run-safe-quicktunnel.sh` 运行。
 
@@ -108,12 +125,16 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 ./scripts/restart-host.sh
 ```
 
+这条手动本地路径同样会安装并启用 `com.webremotedesktop.host` LaunchAgent。当前设计就是通过 LaunchAgent 托管 Host，而不是用一次性前台进程。
+
 - 前端**不单独运行** `npm run dev`
 - **不要打开**其他项目的 `5173` 页面；那个通常是别的 Vite 应用，不是当前远程桌面
 - `signal-server` 会通过 `express.static()` 直接托管 `web-client/`
 - 本地唯一正确入口：`http://127.0.0.1:8080`
 - 健康检查：`http://127.0.0.1:8080/health`
 - Host 状态：`http://127.0.0.1:8080/api/status`
+- 若 `signal-server` 还没准备好，或 `HOST_SHARED_SECRET` 还不能通过 `/api/auth/login/host` 校验，LaunchAgent 只会让 wrapper 常驻等待，不会反复拉起 `host.py` 和浮窗
+- 若只重启本地 `signal-server` 或 Host，默认保持当前 tunnel 不动；当前有效公网地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
 
 ### 方式三：固定域名启动
 
@@ -150,6 +171,12 @@ curl http://127.0.0.1:8080/api/status
 
 - `/health` 返回 `status: ok`
 - `/api/status` 返回 `hostOnline: true`
+
+如需确认 LaunchAgent 守门逻辑是否生效，可看 `back-debug.log` 中是否出现以下顺序日志：
+
+- `=== LaunchAgent starting host ===`
+- `Signal server healthy: ...`
+- `Host auth preflight succeeded: ...`
 
 ### 防睡眠服务
 
@@ -190,6 +217,14 @@ http://127.0.0.1:8080
 - Viewer 登录密码来自 `VIEWER_ACCESS_PASSWORD`（兼容回退到 `ACCESS_PASSWORD`）
 - Host 使用独立凭据 `HOST_SHARED_SECRET`（兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
 - 连接成功后显示远程 macOS 桌面
+
+### Web Terminal
+
+- Viewer 仍然是默认入口，Terminal 需要在 Viewer 登录后再做一次 admin 二次授权
+- Terminal 支持多会话标签页，关闭标签页不会立刻销毁 PTY，直到手动关闭会话或服务重启
+- Terminal 只走浏览器会话内的 Socket.IO / HTTPS 通道，不接入 STUN / TURN / WebRTC 媒体链路
+- `http://localhost:5173/` 仅用于前端开发映射时的 API 代理，不是当前仓库的正式入口
+- 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
 
 
 ## 项目记忆
@@ -312,7 +347,8 @@ TURN_CREDENTIAL=你的凭证
 1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效
 2. `signal-server` 和 `python-host` 都会读取这些环境变量，因此重启后端和 Host 即可生效
 3. `auto` 模式：有 TURN 时会在直连失败后自动尝试中继；没有 TURN 时会更快退回 `隧道中继`
-4. `relay` 模式：没有 TURN 时并不会真正中继，只会退回 STUN / tunnel 提示
+4. `relay` 模式：只有 TURN 配置完整时才会启用；若未配置或配置不完整，页面会直接切换到 `隧道中继`
+5. 如果当前入口本身就是 trycloudflare / 外网域名，且 TURN 未配置，`auto` 模式会直接进入 `隧道中继`，因为这类公网场景下纯 STUN WebRTC 失败概率高，继续先试直连只会增加黑屏和等待时间
 5. 常见来源：自建 coturn，或使用 metered.ca / Twilio / Cloudflare Calls 等 TURN 服务
 
 验证方式：

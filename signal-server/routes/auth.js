@@ -50,6 +50,30 @@ router.post('/login/host', (req, res) => {
   });
 });
 
+router.post('/login/admin', (req, res) => {
+  const { enableTerminal, terminalAdminPassword } = loadConfig();
+  const password = String(req.body?.password || '');
+
+  if (!enableTerminal) {
+    return res.status(403).json({ error: 'Terminal disabled' });
+  }
+  if (!terminalAdminPassword) {
+    return res.status(500).json({ error: 'Terminal admin password not configured' });
+  }
+  if (!password) {
+    return res.status(400).json({ error: 'Password required' });
+  }
+  if (password !== terminalAdminPassword) {
+    return res.status(401).json({ error: 'Invalid password' });
+  }
+
+  return res.json({
+    token: signAccessToken('admin', 'terminal-admin-login'),
+    role: 'admin',
+    expiresIn: '2h',
+  });
+});
+
 router.get('/verify', (req, res) => {
   try {
     const token = readBearerToken(req.headers.authorization);

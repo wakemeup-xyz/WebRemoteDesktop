@@ -5,10 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CodeHarness学习助手 - 控制台</title>
   <link rel="stylesheet" href="css/viewer.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
 </head>
 <body>
   <div id="statusBar" class="status-bar">
+    <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
+      <button id="desktopTabBtn" class="view-tab-btn active" type="button">桌面</button>
+      <button id="terminalTabBtn" class="view-tab-btn" type="button">Terminal</button>
+    </div>
     <span id="connectionStatus" class="status connecting">连接中</span>
     <span id="resolutionDisplay">-</span>
     <span id="fpsDisplay">0 FPS</span>
@@ -20,55 +27,71 @@
     <button id="toggleControlsBtn" class="control-btn">隐藏控件</button>
   </div>
   
-  <div class="viewer-container">
-    <video id="remoteVideo" autoplay playsinline></video>
-    <img id="relayImage" class="relay-image hidden" alt="Tunnel relay stream">
-    <div id="loading" class="stream-placeholder">
-      <div class="spinner"></div>
-      <p id="loadingText">点击开始连接，基础控制已就绪</p>
-      <button id="startBtn" class="start-btn">开始学习助手</button>
+  <main id="desktopPanel">
+    <div class="viewer-container">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <img id="relayImage" class="relay-image hidden" alt="Tunnel relay stream">
+      <div id="loading" class="stream-placeholder">
+        <div class="spinner"></div>
+        <p id="loadingText">点击开始连接，基础控制已就绪</p>
+        <button id="startBtn" class="start-btn">开始学习助手</button>
+      </div>
     </div>
-  </div>
-  
-  <div class="control-bar">
-    <button id="scaleBtn" class="control-btn">
-      缩放：自适应
-    </button>
-    <button id="resolutionBtn" class="control-btn">
-      分辨率设置
-    </button>
-    <button id="fullscreenBtn" class="control-btn">
-      全屏
-    </button>
-    <button id="networkModeBtn" class="control-btn">
-      网络：自动
-    </button>
-    <button id="pauseBtn" class="control-btn">
-      暂停
-    </button>
-    <button id="disconnectBtn" class="control-btn danger">
-      断开连接
-    </button>
-  </div>
 
-  <div class="action-bar">
-    <button class="action-btn" data-action="enter">回车</button>
-    <button class="action-btn" data-action="up">上</button>
-    <button class="action-btn" data-action="down">下</button>
-    <button class="action-btn" data-action="left">左</button>
-    <button class="action-btn" data-action="right">右</button>
-    <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射">键盘：-</button>
-    <button class="action-btn" data-action="copy">复制</button>
-    <button class="action-btn" data-action="paste">粘贴</button>
-    <button class="action-btn" data-action="cut">剪切</button>
-    <button class="action-btn" data-action="undo">撤销</button>
-    <button class="action-btn" data-action="selectAll">全选</button>
-    <button class="action-btn" data-action="save">保存</button>
-    <button class="action-btn" data-action="find">查找</button>
-    <button class="action-btn" data-action="showDock">显示程序坞</button>
-    <button class="action-btn" data-action="screenshot">截屏</button>
-    <button class="action-btn" data-action="switchInputMethod">切换输入法</button>
-  </div>
+    <div class="control-bar">
+      <button id="scaleBtn" class="control-btn">
+        缩放：自适应
+      </button>
+      <button id="resolutionBtn" class="control-btn">
+        分辨率设置
+      </button>
+      <button id="fullscreenBtn" class="control-btn">
+        全屏
+      </button>
+      <button id="networkModeBtn" class="control-btn">
+        网络：自动
+      </button>
+      <button id="pauseBtn" class="control-btn">
+        暂停
+      </button>
+      <button id="disconnectBtn" class="control-btn danger">
+        断开连接
+      </button>
+    </div>
+
+    <div class="action-bar">
+      <button class="action-btn" data-action="enter">回车</button>
+      <button class="action-btn" data-action="up">上</button>
+      <button class="action-btn" data-action="down">下</button>
+      <button class="action-btn" data-action="left">左</button>
+      <button class="action-btn" data-action="right">右</button>
+      <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射">键盘：-</button>
+      <button class="action-btn" data-action="copy">复制</button>
+      <button class="action-btn" data-action="paste">粘贴</button>
+      <button class="action-btn" data-action="cut">剪切</button>
+      <button class="action-btn" data-action="undo">撤销</button>
+      <button class="action-btn" data-action="selectAll">全选</button>
+      <button class="action-btn" data-action="save">保存</button>
+      <button class="action-btn" data-action="find">查找</button>
+      <button class="action-btn" data-action="showDock">显示程序坞</button>
+      <button class="action-btn" data-action="screenshot">截屏</button>
+      <button class="action-btn" data-action="switchInputMethod">切换输入法</button>
+    </div>
+  </main>
+
+  <section id="terminalPanel" class="terminal-panel hidden" aria-label="Web terminal">
+    <form id="terminalAuthForm" class="terminal-auth-form">
+      <input id="terminalAdminPassword" type="password" autocomplete="current-password" placeholder="Admin password" aria-label="Admin password">
+      <button id="terminalAuthBtn" class="terminal-primary-btn" type="submit">授权</button>
+    </form>
+    <div class="terminal-toolbar">
+      <div id="terminalSessionTabs" class="terminal-session-tabs" role="tablist" aria-label="Terminal sessions"></div>
+      <button id="terminalNewBtn" class="terminal-primary-btn hidden" type="button">新建</button>
+    </div>
+    <div id="terminalStatus" class="terminal-status" data-state="warning">需要 admin 二次授权</div>
+    <div id="terminalWarning" class="terminal-warning hidden"></div>
+    <div id="terminalWorkspace" class="terminal-workspace"></div>
+  </section>
   
   <div id="resolutionModal" class="modal hidden">
     <div class="modal-content">
@@ -179,11 +202,13 @@
     </div>
   </div>
 
+  <script src="js/runtime-config.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/latency-monitor.js"></script>
   <script src="js/diagnostic.js"></script>
+  <script src="js/terminal.js"></script>
 </body>
 </html>

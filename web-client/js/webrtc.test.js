@@ -5,14 +5,31 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 function makeElement() {
+  const classes = new Set();
   return {
     textContent: '',
     style: {},
+    src: '',
     classList: {
-      add() {},
-      remove() {},
-      contains() { return false; },
-      toggle() {},
+      add(...tokens) { tokens.forEach((token) => classes.add(token)); },
+      remove(...tokens) { tokens.forEach((token) => classes.delete(token)); },
+      contains(token) { return classes.has(token); },
+      toggle(token, force) {
+        if (force === true) {
+          classes.add(token);
+          return true;
+        }
+        if (force === false) {
+          classes.delete(token);
+          return false;
+        }
+        if (classes.has(token)) {
+          classes.delete(token);
+          return false;
+        }
+        classes.add(token);
+        return true;
+      },
     },
     addEventListener() {},
     removeAttribute() {},
@@ -20,7 +37,7 @@ function makeElement() {
   };
 }
 
-function loadWebRTC() {
+function loadWebRTC(overrides = {}) {
   const elements = new Map();
   const context = {
     console,
@@ -58,15 +75,22 @@ function loadWebRTC() {
     },
     io: () => ({ on() {}, emit() {}, disconnect() {}, connected: true }),
   };
+  Object.assign(context, overrides);
+  if (overrides.document) {
+    context.document = overrides.document;
+  }
+  if (overrides.window) {
+    context.window = overrides.window;
+  }
   context.globalThis = context;
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
-  return context.__WebRTC;
+  return { WebRTC: context.__WebRTC, context, elements };
 }
 
 test('refresh clears stuck offer state before creating a new offer', async () => {
-  const WebRTC = loadWebRTC();
+  const { WebRTC } = loadWebRTC();
   const observed = [];
   let closed = false;
 
@@ -90,7 +114,7 @@ test('refresh clears stuck offer state before creating a new offer', async () =>
 });
 
 test('stale createOffer completion does not clear newer offer progress', async () => {
-  const WebRTC = loadWebRTC();
+  const { WebRTC } = loadWebRTC();
   let resolveOffer;
 
   WebRTC.socket = {
@@ -117,6 +141,279 @@ test('stale createOffer completion does not clear newer offer progress', async (
   await staleOffer;
 
   assert.equal(WebRTC.offerInProgress, true);
+});
+
+test('auto fallback handles relay frames while tunnel relay is active', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  const relayImage = elements.get('relayImage') || makeElement();
+  relayImage.classList.add('hidden');
+  elements.set('relayImage', relayImage);
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.tunnelRelayActive = true;
+
+  WebRTC.handleRelayFrame({
+    data: 'ZmFrZS1mcmFtZQ==',
+    mime: 'image/jpeg',
+    frameId: 1,
+    width: 960,
+    height: 540,
+    timestamp: Date.now(),
+  });
+
+  assert.equal(relayImage.classList.contains('hidden'), false);
+  assert.equal(elements.get('connectionStatus').textContent, '已连接');
+});
+
+test('relay socket connect emits start control during auto tunnel fallback', () => {
+  const handlers = new Map();
+  const emitted = [];
+  const relaySocket = {
+    connected: false,
+    on(event, callback) {
+      handlers.set(event, callback);
+    },
+    emit(...args) {
+      emitted.push(args);
+    },
+    disconnect() {},
+  };
+  const { WebRTC } = loadWebRTC({
+    io: () => relaySocket,
+  });
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.tunnelRelayActive = true;
+
+  WebRTC.ensureRelaySocket();
+  handlers.get('connect')();
+
+  assert.equal(
+    emitted.some(([event]) => event === 'relay-stream-control'),
+    true
+  );
+});
+
+test('relay mode without TURN does not fall back to STUN candidates', () => {
+  const { WebRTC } = loadWebRTC();
+
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnUrls: [],
+    iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+  };
+  WebRTC.networkMode = 'relay';
+
+  const config = WebRTC.buildPeerConfig();
+
+  assert.equal(config.iceTransportPolicy, 'relay');
+  assert.equal(Array.isArray(config.iceServers), true);
+  assert.equal(config.iceServers.length, 0);
+});
+
+test('stun mode builds deduplicated STUN config with candidate pool', () => {
+  const { WebRTC } = loadWebRTC();
+
+  WebRTC.serverConfig = {
+    stunUrls: [
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302',
+      'stun:stun.l.google.com:19302',
+    ],
+    turnConfigured: false,
+    turnUrls: [],
+    iceServers: [],
+  };
+  WebRTC.networkMode = 'stun';
+
+  const config = WebRTC.buildPeerConfig();
+
+  assert.equal(config.iceTransportPolicy, 'all');
+  assert.equal(config.iceCandidatePoolSize, 4);
+  assert.equal(config.bundlePolicy, 'max-bundle');
+  assert.equal(config.iceServers.length, 1);
+  assert.deepEqual(Array.from(config.iceServers[0].urls), [
+    'stun:stun.l.google.com:19302',
+    'stun:stun1.l.google.com:19302',
+  ]);
+});
+
+test('selecting relay without TURN switches to tunnel mode explicitly', () => {
+  let savedMode = null;
+  const { WebRTC } = loadWebRTC({
+    localStorage: {
+      getItem: () => null,
+      setItem: (_key, value) => {
+        savedMode = value;
+      },
+    },
+  });
+
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnUrls: [],
+    iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+  };
+  WebRTC.socket = { connected: false };
+
+  WebRTC.setNetworkMode('relay');
+
+  assert.equal(WebRTC.networkMode, 'tunnel');
+  assert.equal(savedMode, 'tunnel');
+});
+
+test('collectNetworkSnapshot summarizes candidate and state context', () => {
+  const { WebRTC } = loadWebRTC();
+
+  WebRTC.networkMode = 'stun';
+  WebRTC.useRelayFallback = false;
+  WebRTC.tunnelRelayActive = false;
+  WebRTC._autoFailCount = 2;
+  WebRTC.noMediaTicks = 3;
+  WebRTC.lastCandidateType = 'srflx';
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+  };
+  WebRTC.pc = {
+    connectionState: 'failed',
+    iceConnectionState: 'failed',
+    iceGatheringState: 'complete',
+    signalingState: 'stable',
+  };
+  WebRTC.candidateSummary = {
+    local: { host: 2, srflx: 1, relay: 0, prflx: 0, other: 0 },
+    remote: { host: 1, srflx: 1, relay: 0, prflx: 0, other: 0 },
+    samples: {
+      local: [{ type: 'srflx', protocol: 'udp', address: '203.0.113.1:5000' }],
+      remote: [{ type: 'host', protocol: 'udp', address: '192.168.0.2:6000' }],
+    },
+  };
+  WebRTC.selectedCandidatePair = {
+    localType: 'srflx',
+    remoteType: 'host',
+    protocol: 'udp',
+    localAddress: '203.0.113.1:5000',
+    remoteAddress: '192.168.0.2:6000',
+    rttMs: 42,
+  };
+
+  const snapshot = JSON.parse(JSON.stringify(WebRTC.collectNetworkSnapshot()));
+
+  assert.equal(snapshot.networkMode, 'stun');
+  assert.equal(snapshot.turnConfigured, false);
+  assert.equal(snapshot.turnStatus, 'missing');
+  assert.equal(snapshot.pc.connectionState, 'failed');
+  assert.equal(snapshot.candidateSummary.local.srflx, 1);
+  assert.equal(snapshot.candidateSummary.remote.host, 1);
+  assert.equal(snapshot.candidateSummary.samples.local[0].type, 'srflx');
+  assert.equal(snapshot.selectedCandidatePair.localType, 'srflx');
+  assert.equal(snapshot.selectedCandidatePair.rttMs, 42);
+});
+
+test('scheduleReconnect prefers ICE restart before full refresh in stun mode', () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+
+  WebRTC.networkMode = 'stun';
+  WebRTC.manualDisconnect = false;
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+  };
+  WebRTC.socket = { connected: true };
+  WebRTC.pc = {
+    restartIce() {
+      actions.push('restartIce');
+    },
+    close() {},
+  };
+  WebRTC.refresh = () => {
+    actions.push('refresh');
+  };
+
+  WebRTC.scheduleReconnect('ice-failed');
+
+  assert.equal(actions.includes('restartIce'), true);
+  assert.equal(actions.includes('refresh'), false);
+});
+
+test('auto without TURN keeps STUN recovery path active after first pc-failed', () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.manualDisconnect = false;
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+  };
+  WebRTC.socket = { connected: true };
+  WebRTC.startTunnelRelay = () => {
+    actions.push('tunnel');
+  };
+  WebRTC.refresh = () => {
+    actions.push('refresh');
+  };
+  WebRTC.pc = {
+    restartIce() {
+      actions.push('restartIce');
+    },
+    close() {},
+  };
+
+  WebRTC.scheduleReconnect('pc-failed');
+
+  assert.equal(WebRTC._tunnelLockUntil, 0);
+  assert.equal(WebRTC._autoFailCount, 1);
+  assert.equal(actions.includes('restartIce'), true);
+  assert.equal(actions.includes('tunnel'), false);
+});
+
+test('auto on public origin without TURN switches to tunnel before starting WebRTC', async () => {
+  let savedMode = null;
+  const { WebRTC } = loadWebRTC({
+    window: {
+      location: { origin: 'https://billing-lanes-metro-admissions.trycloudflare.com' },
+      RTCRtpReceiver: null,
+    },
+    localStorage: {
+      getItem: () => 'auto',
+      setItem: (_key, value) => {
+        savedMode = value;
+      },
+    },
+  });
+
+  WebRTC.loadServerConfig = async () => {
+    WebRTC.serverConfig = {
+      stunUrls: ['stun:stun.example.com:3478'],
+      turnConfigured: false,
+      turnStatus: 'missing',
+      turnUrls: [],
+      iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    };
+  };
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setupSocketListeners = () => {};
+  WebRTC.startTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => {
+    throw new Error('createPeerConnection should not run before tunnel fallback');
+  };
+
+  await WebRTC.init();
+
+  assert.equal(WebRTC.networkMode, 'tunnel');
+  assert.equal(savedMode, 'tunnel');
 });
 
 
