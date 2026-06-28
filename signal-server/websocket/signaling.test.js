@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
+const { setupTerminal } = require('./terminal');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
@@ -42,6 +43,7 @@ function makeIo() {
   return {
     connectionHandler: null,
     middleware: null,
+    namespaces: new Map(),
     use(handler) {
       this.middleware = handler;
     },
@@ -49,6 +51,23 @@ function makeIo() {
       if (event === 'connection') {
         this.connectionHandler = handler;
       }
+    },
+    of(name) {
+      if (!this.namespaces.has(name)) {
+        this.namespaces.set(name, {
+          middleware: null,
+          connectionHandler: null,
+          use(handler) {
+            this.middleware = handler;
+          },
+          on(event, handler) {
+            if (event === 'connection') {
+              this.connectionHandler = handler;
+            }
+          },
+        });
+      }
+      return this.namespaces.get(name);
     },
     connect(socket) {
       if (this.middleware) {
@@ -94,6 +113,72 @@ test('relay-viewer disconnect stops host tunnel relay stream', () => {
       },
     },
   );
+});
+
+test('terminal namespace wiring does not break viewer and host signaling', () => {
+  resetConnections();
+  const io = makeIo();
+  setupTerminal(io, {
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalAuditLog: '',
+      terminalRecordIo: false,
+    },
+    sessionManager: {
+      createSession() {
+        return {
+          sessionId: 'term_1',
+          ownerSub: 'admin-1',
+          title: 'Terminal 1',
+          cwd: '',
+          shell: '/bin/zsh',
+          cols: 80,
+          rows: 24,
+          status: 'attached',
+          createdAt: '2026-06-28T00:00:00.000Z',
+          lastActiveAt: '2026-06-28T00:00:00.000Z',
+          detachedReason: null,
+        };
+      },
+      attachSession() {
+        return {
+          sessionId: 'term_1',
+          ownerSub: 'admin-1',
+          title: 'Terminal 1',
+          cwd: '',
+          shell: '/bin/zsh',
+          cols: 80,
+          rows: 24,
+          status: 'attached',
+          createdAt: '2026-06-28T00:00:00.000Z',
+          lastActiveAt: '2026-06-28T00:00:00.000Z',
+          detachedReason: null,
+        };
+      },
+      detachSession() {},
+      closeSession() {},
+      listSessions() { return []; },
+      getSnapshot() { return { sessions: [] }; },
+      _getSession() { return null; },
+    },
+    logger: { info() {}, warn() {}, error() {} },
+  });
+
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  assert.equal(connections.host.id, 'host-1');
+  assert.equal(connections.viewers.has('viewer-1'), true);
 });
 
 test('viewer disconnect reports zero viewers so host can stop active relay stream', () => {
@@ -239,6 +324,21 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
     const payload = {
       logs: ['line-1'],
       keyboardDebug: ['dbg-1'],
+      trigger: 'auto-failure',
+      reason: 'pc-failed',
+      network: {
+        networkMode: 'stun',
+        turnConfigured: false,
+        turnStatus: 'missing',
+        candidateSummary: {
+          local: { host: 2, srflx: 1 },
+          remote: { host: 1, srflx: 1 },
+          samples: {
+            local: [{ type: 'srflx', address: '203.0.113.1:5000' }],
+            remote: [{ type: 'host', address: '192.168.0.2:6000' }],
+          },
+        },
+      },
       keyboardMode: 'windows',
       inputState: {
         keyboardMode: 'windows',
@@ -259,6 +359,21 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
     { event: 'diagnostic', data: {
       logs: ['line-1'],
       keyboardDebug: [],
+      trigger: 'auto-failure',
+      reason: 'pc-failed',
+      network: {
+        networkMode: 'stun',
+        turnConfigured: false,
+        turnStatus: 'missing',
+        candidateSummary: {
+          local: { host: 2, srflx: 1 },
+          remote: { host: 1, srflx: 1 },
+          samples: {
+            local: [{ type: 'srflx', address: '203.0.113.1:5000' }],
+            remote: [{ type: 'host', address: '192.168.0.2:6000' }],
+          },
+        },
+      },
       keyboardMode: 'windows',
       inputState: {
         keyboardMode: 'windows',

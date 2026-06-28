@@ -1,0 +1,8 @@
+{
+  "skills": {
+    "webremote-service": {
+      "source": "local",
+      "path": "skills/webremote-service"
+    }
+  }
+}

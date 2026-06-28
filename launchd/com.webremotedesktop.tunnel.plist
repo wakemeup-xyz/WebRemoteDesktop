@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.webremotedesktop.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/run-safe-quicktunnel.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/macstudio1/AI/Claude/WebRemoteDesktop</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/wrd-safe-tunnel-supervisor.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/wrd-safe-tunnel-supervisor.log</string>
+</dict>
+</plist>

@@ -119,6 +119,22 @@ def split_env_list(value):
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
+def is_strict_stun_policy():
+    media_policy = (os.environ.get("WRD_MEDIA_POLICY") or os.environ.get("MEDIA_POLICY") or "").strip().lower()
+    if not media_policy:
+        return True
+    return media_policy == "strict-stun"
+
+
+def format_diag_value(value):
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return str(value)
+    return str(value) if value is not None else "-"
+
+
 def build_ice_servers():
     """Build Host ICE config from env so external viewers can use TURN relay."""
     ice_servers = []
@@ -131,7 +147,12 @@ def build_ice_servers():
     turn_urls = split_env_list(os.environ.get("TURN_URLS"))
     turn_username = os.environ.get("TURN_USERNAME")
     turn_credential = os.environ.get("TURN_CREDENTIAL")
-    if turn_urls and turn_username and turn_credential:
+    if turn_urls and is_strict_stun_policy():
+        logger.warning(
+            "WRD_POLICY_WARNING turn_ignored_strict_stun turn_urls=%s",
+            ",".join(turn_urls),
+        )
+    elif turn_urls and turn_username and turn_credential:
         ice_servers.append(
             RTCIceServer(
                 urls=turn_urls,
@@ -144,6 +165,26 @@ def build_ice_servers():
         logger.warning("TURN_URLS is set but TURN_USERNAME/TURN_CREDENTIAL is missing; TURN disabled")
 
     return ice_servers
+
+
+def is_valid_monitor_region(monitor):
+    return bool(monitor) and int(monitor.get("width") or 0) > 0 and int(monitor.get("height") or 0) > 0
+
+
+def select_capture_monitor(monitors):
+    if not monitors:
+        raise RuntimeError("No monitors reported by MSS")
+
+    candidates = list(monitors[1:] if len(monitors) > 1 else monitors)
+    for monitor in candidates:
+      if is_valid_monitor_region(monitor):
+          return monitor
+
+    for monitor in monitors:
+      if is_valid_monitor_region(monitor):
+          return monitor
+
+    raise RuntimeError(f"No usable monitor reported by MSS: {monitors!r}")
 
 
 class OverlayNotifier:
@@ -208,6 +249,7 @@ class TunnelRelayStreamer:
         self.stats_acked = 0
         self.stats_bytes = 0
         self.stats_encode_ms = 0.0
+        self.max_in_flight_frames = 2
 
     async def start(self, viewer_id, width=960, height=540, fps=8):
         await self.stop()
@@ -253,11 +295,14 @@ class TunnelRelayStreamer:
             self.stats_acked += 1
             self.ack_event.set()
 
+    def should_wait_for_ack(self):
+        return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
+
     async def _run(self):
         frame_interval = 1 / self.fps
         ack_timeout = max(0.35, min(1.0, frame_interval * 4))
         with MSS() as sct:
-            monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+            monitor = select_capture_monitor(sct.monitors)
             while self.enabled and self.viewer_id:
                 started = time.time()
                 try:
@@ -295,7 +340,8 @@ class TunnelRelayStreamer:
                         "bytes": len(jpeg_bytes),
                         "data": jpeg_bytes,
                     })
-                    await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
+                    if self.should_wait_for_ack():
+                        await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
                 except asyncio.TimeoutError:
                     logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
                 except Exception as e:
@@ -414,7 +460,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def __init__(self, target_fps=20, max_width=1280, max_height=720):
         super().__init__()
         self.sct = MSS()
-        self.monitor = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
+        self.monitor = select_capture_monitor(self.sct.monitors)
         self.frame_count = 0
         self.last_time = time.time()
         self._start = time.time()
@@ -749,6 +795,7 @@ class WebRemoteHost:
         self._offer_lock = asyncio.Lock()
         self._offer_epoch = 0
         self._reconnecting = False
+        self._last_diag_network = None
 
     async def authenticate(self):
         try:
@@ -1172,9 +1219,52 @@ class WebRemoteHost:
             logs = data.get('logs', [])
             ua = data.get('userAgent', 'unknown')
             screen = data.get('screen', 'unknown')
+            trigger = data.get('trigger', 'manual')
+            reason = data.get('reason') or '-'
+            network = data.get('network') or {}
+            schema_version = int(data.get('schemaVersion') or 0)
+            self._last_diag_network = network
+            candidate_summary = network.get('candidateSummary') or {}
+            selected_candidate_pair = (
+                data.get('selectedCandidatePair')
+                or network.get('selectedCandidatePair')
+                or {}
+            )
+            pc_state = data.get('pc') or network.get('pc') or {}
+            ice_state = data.get('ice') or network.get('ice') or {}
+            candidate = (
+                data.get('candidate')
+                or network.get('lastCandidateType')
+                or data.get('selectedCandidateType')
+                or '-'
+            )
             logger.info(f"=== DIAGNOSTIC LOGS FROM VIEWER ===")
             logger.info(f"User-Agent: {ua}")
             logger.info(f"Screen: {screen}")
+            if schema_version == 2:
+                logger.info(
+                    "WRD_STUN_FAILURE connectionAttemptId=%s failureCategory=%s candidateSummary=%s selectedCandidatePair=%s pc=%s ice=%s candidate=%s",
+                    data.get('connectionAttemptId') or '-',
+                    data.get('failureCategory') or '-',
+                    format_diag_value(data.get('candidateSummary') or candidate_summary),
+                    format_diag_value(selected_candidate_pair),
+                    format_diag_value(pc_state),
+                    format_diag_value(ice_state),
+                    format_diag_value(candidate),
+                )
+            logger.info(
+                "WRD_FAILURE_DIAG trigger=%s reason=%s mode=%s turn=%s/%s pc=%s ice=%s candidate=%s local=%s remote=%s",
+                trigger,
+                reason,
+                network.get('networkMode', '-'),
+                network.get('turnConfigured', False),
+                network.get('turnStatus', 'unknown'),
+                (network.get('pc') or {}).get('connectionState', '-'),
+                (network.get('pc') or {}).get('iceConnectionState', '-'),
+                network.get('lastCandidateType', '-'),
+                candidate_summary.get('local', {}),
+                candidate_summary.get('remote', {}),
+            )
             for line in logs:
                 logger.info(f"[VIEWER] {line}")
             logger.info(f"=== END DIAGNOSTIC LOGS ({len(logs)} lines) ===")
@@ -1196,6 +1286,16 @@ class WebRemoteHost:
                 data.get("packetsLost", 0),
                 data.get("selectedCandidateType") or "unknown",
                 float(data.get("bytesReceived") or 0) / 1024 / 1024,
+            )
+            logger.info(
+                "WRD_VIEWER_SUMMARY viewer=%s candidate=%s fps=%.1f rtt=%s mode=%s turn=%s/%s",
+                data.get("viewerId", "-"),
+                data.get("selectedCandidateType") or "unknown",
+                float(data.get("fps") or 0),
+                data.get("rttMs", 0),
+                (self._last_diag_network or {}).get("networkMode", "-"),
+                (self._last_diag_network or {}).get("turnConfigured", False),
+                (self._last_diag_network or {}).get("turnStatus", "unknown"),
             )
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
@@ -1337,6 +1437,7 @@ class WebRemoteHost:
                 logger.info("SDP_%s ice_candidates=none", label)
             else:
                 logger.info("SDP_%s ice_candidate_summary=%s", label, summary)
+                logger.info("WRD_CANDIDATE_SUMMARY side=%s summary=%s", label, summary)
         except Exception as e:
             logger.warning(f"Failed to parse {label} ICE candidates: {e}")
 

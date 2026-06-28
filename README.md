@@ -70,19 +70,19 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 1. `./scripts/start-safe-wrd.sh` 会优先**复用**现有 safe quick tunnel，而不是每次重建
 2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
-3. 只有在显式停止 tunnel、quick tunnel 自身过期/退出，或切换网络入口模式时，地址才可能变化
+3. 只有在用户明确要求重建/停止 tunnel、或切换网络入口模式时，地址才允许变化
 4. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
-5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；除非用户明确要求，或现有 tunnel 已失效且必须恢复公网访问
+5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；即使现有 tunnel 已失效，也只能报告，不能自行重建
 6. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
-7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端会直接切到 `隧道中继`，不再先白试一轮 WebRTC 外网直连
-8. 如果 `start-safe-wrd.sh` 发现当前 safe URL 在本机已经不可解析或不可访问，它现在会只重建 tunnel，不会顺带重启本地 `signal-server` 或 Host
+7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端仍会按当前模式先尝试直连 / STUN；若后续失败，再按页面恢复逻辑决定是否切到 `隧道中继`
+8. 如果当前 safe URL 已经不可解析或不可访问，agent 只能报告“公网入口不可达”，不得自行调用会重建 tunnel 的脚本
 
 注意：脚本打印出 URL 只表示 `cloudflared` 已返回一个 trycloudflare 地址，**不等于该地址已经对外可访问**。对外提供前还需要额外确认：
 
 1. `./scripts/status-safe-wrd.sh` 中 `safe quick tunnel` 仍为 `running`
 2. trycloudflare 子域名已经可以解析
 3. `curl -I -L <safe-url>` 能拿到 HTTP 响应
-4. 如果 `safe quick tunnel` 进程仍在，但 `curl -I -L <safe-url>` 已失败，说明旧 tunnel 地址已经失效；此时应只重建 tunnel，不要先动本地服务
+4. 如果 `safe quick tunnel` 进程仍在，但 `curl -I -L <safe-url>` 已失败，说明旧 tunnel 地址可能已经失效；此时只能报告并等待用户明确授权是否重建 tunnel
 5. `scripts/run-safe-quicktunnel.sh` 现在会在把 URL 写入文件前先做本机 200 校验；如果校验失败，说明这个 trycloudflare 地址暂时还不能交付
 6. 如果这台机器的系统 DNS 一时解析不到 `*.trycloudflare.com`，脚本会回退到公共 DNS 解析并用 `curl --resolve` 校验；避免把“本机 resolver 异常”误判成 tunnel 本身不可用
 
@@ -346,9 +346,9 @@ TURN_CREDENTIAL=你的凭证
 
 1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效
 2. `signal-server` 和 `python-host` 都会读取这些环境变量，因此重启后端和 Host 即可生效
-3. `auto` 模式：有 TURN 时会在直连失败后自动尝试中继；没有 TURN 时会更快退回 `隧道中继`
+3. `auto` 模式：有 TURN 时会在直连失败后自动尝试中继；没有 TURN 时仍先尝试直连 / STUN，失败后再按页面恢复逻辑处理
 4. `relay` 模式：只有 TURN 配置完整时才会启用；若未配置或配置不完整，页面会直接切换到 `隧道中继`
-5. 如果当前入口本身就是 trycloudflare / 外网域名，且 TURN 未配置，`auto` 模式会直接进入 `隧道中继`，因为这类公网场景下纯 STUN WebRTC 失败概率高，继续先试直连只会增加黑屏和等待时间
+5. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件；是否进入 tunnel 由实际连接结果和用户手动模式决定
 5. 常见来源：自建 coturn，或使用 metered.ca / Twilio / Cloudflare Calls 等 TURN 服务
 
 验证方式：

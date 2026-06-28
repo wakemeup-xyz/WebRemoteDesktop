@@ -84,13 +84,32 @@ wrd_safe_find_quick_tunnel_pid() {
   return 1
 }
 
+wrd_safe_find_tunnel_manager_pid() {
+  local project_dir="$1"
+  local pid=""
+
+  pid=$(wrd_safe_find_tunnel_supervisor_pid "$project_dir" 2>/dev/null || true)
+  if wrd_safe_pid_is_running "$pid"; then
+    printf "%s\n" "$pid"
+    return 0
+  fi
+
+  pid=$(wrd_safe_find_quick_tunnel_pid "$project_dir" 2>/dev/null || true)
+  if wrd_safe_pid_is_running "$pid"; then
+    printf "%s\n" "$pid"
+    return 0
+  fi
+
+  return 1
+}
+
 wrd_safe_find_pid_by_kind() {
   local kind="$1"
   local project_dir="$2"
   case "$kind" in
     signal) wrd_safe_find_signal_pid "$project_dir" ;;
     host) wrd_safe_find_host_pid "$project_dir" ;;
-    tunnel-supervisor) wrd_safe_find_tunnel_supervisor_pid "$project_dir" ;;
+    tunnel-supervisor) wrd_safe_find_tunnel_manager_pid "$project_dir" ;;
     quick-tunnel) wrd_safe_find_quick_tunnel_pid "$project_dir" ;;
     *) return 1 ;;
   esac
@@ -116,4 +135,75 @@ wrd_safe_reconcile_pid_file() {
   fi
 
   return 1
+}
+
+wrd_safe_trycloudflare_ips() {
+  local host="$1"
+  [ -n "$host" ] || return 1
+
+  nslookup "$host" 8.8.8.8 2>/dev/null \
+    | sed -n 's/^Address: //p' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+    | tail -n +2 \
+    | awk '!seen[$0]++'
+}
+
+wrd_safe_trycloudflare_reachable() {
+  local url="$1"
+  local host="$2"
+  local ip=""
+
+  while IFS= read -r ip; do
+    [ -n "$ip" ] || continue
+    if curl --resolve "${host}:443:${ip}" -I -L --max-time 10 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+  done < <(wrd_safe_trycloudflare_ips "$host")
+
+  return 1
+}
+
+wrd_safe_url_reachability_state() {
+  local url="$1"
+  [ -n "$url" ] || return 1
+
+  if curl -I -L --max-time 10 "$url" >/dev/null 2>&1; then
+    printf '%s\n' reachable
+    return 0
+  fi
+
+  local host=""
+  host=$(printf '%s\n' "$url" | sed -E 's#^https?://([^/]+).*$#\1#')
+  if ! printf '%s\n' "$host" | grep -q '\.trycloudflare\.com$'; then
+    printf '%s\n' unreachable
+    return 1
+  fi
+
+  local ip=""
+  local resolved_ips=""
+  resolved_ips=$(wrd_safe_trycloudflare_ips "$host" 2>/dev/null || true)
+  if [ -z "$resolved_ips" ]; then
+    printf '%s\n' dns-unresolved
+    return 1
+  fi
+
+  while IFS= read -r ip; do
+    [ -n "$ip" ] || continue
+    if curl --resolve "${host}:443:${ip}" -I -L --max-time 10 "$url" >/dev/null 2>&1; then
+      printf '%s\n' reachable
+      return 0
+    fi
+  done <<EOF
+$resolved_ips
+EOF
+
+  printf '%s\n' origin-unreachable
+  return 1
+}
+
+wrd_safe_url_is_reachable() {
+  local url="$1"
+  local state=""
+  state=$(wrd_safe_url_reachability_state "$url" || true)
+  [ "$state" = reachable ]
 }

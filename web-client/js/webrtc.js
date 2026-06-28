@@ -47,7 +47,7 @@ const WebRTC = {
     auto: {
       label: '自动穿透',
       state: '推荐',
-      hint: '默认模式。优先低延迟直连；配置 TURN 时失败后自动改走中继，未配置 TURN 时会更快切到隧道兜底。'
+      hint: '默认模式。优先低延迟直连；配置 TURN 时失败后可自动改走中继；未配置 TURN 时仍先尝试直连，失败后按恢复逻辑处理。'
     },
     stun: {
       label: '外网直连',
@@ -89,10 +89,6 @@ const WebRTC = {
     return true;
   },
 
-  shouldForceTunnelForCurrentContext() {
-    return this.networkMode === 'auto' && !this.hasTurnConfigured() && this.isPublicOrigin();
-  },
-
   enforceSupportedNetworkMode(preferredMode = this.networkMode) {
     if (preferredMode === 'relay' && !this.hasTurnConfigured()) {
       console.warn('[NETWORK] Relay mode requested without TURN; forcing tunnel mode');
@@ -122,13 +118,6 @@ const WebRTC = {
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
     this.configureNetworkControls();
     this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
-
-    if (this.shouldForceTunnelForCurrentContext()) {
-      const reason = '当前是公网入口且未配置 TURN。为避免外网 WebRTC 反复失败，已直接切换到隧道中继。';
-      this.networkMode = 'tunnel';
-      localStorage.setItem('wrdNetworkMode', 'tunnel');
-      this.updateNetworkUI(reason, 'warning');
-    }
 
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()

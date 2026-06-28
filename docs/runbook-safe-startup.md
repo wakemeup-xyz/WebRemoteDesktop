@@ -29,7 +29,7 @@ Tunnel 操作语义：
 - 若只是重启本地 `signal-server` 或 `python-host`，必须优先复用现有 tunnel
 - 当前有效公网地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
 - `重启服务` 不得被解释为重建 quick tunnel；在 tunnel 仍存活时，重启本地服务不应改变 `/tmp/wrd-safe-current-url.txt`
-- 只有在用户明确要求，或现有 tunnel 已失效且必须恢复公网访问时，才允许重建 quick tunnel
+- 只有在用户明确要求“重建 tunnel / 重建 Cloudflare / 重启 tunnel / 重新生成公网地址”时，才允许重建 quick tunnel；tunnel 失效本身不是授权
 
 ## 目标
 
@@ -88,11 +88,12 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 - 若只是重启 `signal-server` 或 `python-host`，默认**不停止**现有 safe quick tunnel
 - 只要 `/tmp/wrd-safe-quicktunnel.pid` 对应进程仍存活，公网地址默认沿用，不需要重新通知一个新地址
-- 只有在显式执行 `./scripts/stop-safe-wrd.sh`、quick tunnel 失效重建，或切换到固定域名方案时，外部地址才视为变化
+- 只有在用户明确要求执行 `./scripts/stop-safe-wrd.sh`、明确要求重建 quick tunnel，或切换到固定域名方案时，外部地址才允许变化
 - 若 signal-server 尚未就绪或 Host 凭据校验失败，Host LaunchAgent 会停留在 wrapper 等待阶段，而不是反复失败重启
 - 若当前 quick tunnel 仍存活，排障时不要为了“保险”主动重启它；先检查本地 `8080`、`/api/status` 和 URL 文件
-- 若当前访问入口是 trycloudflare / 其他公网域名，且 TURN 未配置，Viewer 现在会直接走 `隧道中继`，不再先白试 STUN WebRTC；这属于当前产品设计，不是回退异常
-- 若当前 quick tunnel 进程仍在，但 safe URL 已经不可解析或 `curl -I -L` 失败，`./scripts/start-safe-wrd.sh` 现在会只重建 tunnel，不会顺带重启本地 `signal-server` 或 Host
+- 若当前访问入口是 trycloudflare / 其他公网域名，且 TURN 未配置，Viewer 仍会先按所选网络模式尝试直连 / STUN；是否进入 `隧道中继` 取决于后续连接结果，而不是入口 URL 本身
+- 若当前 quick tunnel 进程仍在，但 safe URL 已经不可解析或 `curl -I -L` 失败，只能报告“当前公网入口失效/不可达”；不得自行调用会重建 tunnel 的脚本
+- 每次启动或重启本地服务后，都要从本机运行配置读取并回报两项密码：Viewer 网页登录密码 `VIEWER_ACCESS_PASSWORD`，Terminal admin 密码 `WRD_TERMINAL_ADMIN_PASSWORD`
 
 启动成功后，优先读取：
 
@@ -112,10 +113,10 @@ cat /tmp/wrd-safe-current-url.txt
 
 进一步约束：
 
-1. 若 `curl -I -L <safe-url>` 返回 `Could not resolve host`，说明当前地址连 DNS 都不可用了，应只重建 tunnel
-2. 若 DNS 已恢复，但 `curl -I -L <safe-url>` 返回 `HTTP 530`、长时间超时，或没有拿到正常入口页，也应视为当前地址不可用，仍然只重建 tunnel
+1. 若 `curl -I -L <safe-url>` 返回 `Could not resolve host`，说明当前地址连 DNS 都不可用了，只能报告并等待用户明确是否重建 tunnel
+2. 若 DNS 已恢复，但 `curl -I -L <safe-url>` 返回 `HTTP 530`、长时间超时，或没有拿到正常入口页，也应视为当前地址不可用，只能报告并等待用户明确授权
 3. 不要把“quick tunnel 进程仍在”误判成“公网地址仍可访问”；公网可达性的最终依据始终是 `curl -I -L`
-4. 对本仓库来说，`HTTP 530` 和 `Could not resolve host` 都按“当前 trycloudflare 入口不可交付”处理；这一步先归类为 tunnel 侧故障，不要误判成 `signal-server` 或 Host 崩了
+4. 对本仓库来说，`HTTP 530` 和 `Could not resolve host` 都按“当前 trycloudflare 入口不可交付”处理；这一步先归类为 tunnel 侧故障，不要误判成 `signal-server` 或 Host 崩了，也不要自动重建 tunnel
 5. 如果只有本机默认 resolver 报 `Could not resolve host`，但公共 DNS 能解析且 `curl --resolve` 返回正常 HTTP，这应归类为本机 DNS 问题，不应让 `run-safe-quicktunnel.sh` 退出并清掉当前 tunnel
 
 如果是在短生命周期的自动化执行环境中启动（例如一次性 shell 命令执行器），`nohup` / `disown` 拉起的后台进程可能在父 shell 结束后被回收。此时应改为在用户自己的常驻终端里执行，或单独保持 `./scripts/run-safe-quicktunnel.sh` 持续运行。
@@ -219,9 +220,9 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 如果 `health` 通但 `hostOnline` 为 `false`：优先看 `back-debug.log`
 - 如果 `back-debug.log` 只看到 `Signal server healthy: ...` 但没有 `Host auth preflight succeeded: ...`：优先检查 `HOST_SHARED_SECRET`
 - 如果本地都通但公网不通：优先看 safe quick tunnel 日志
-- 如果本地都通、DNS 也能解析，但 `curl -I -L` 返回 `HTTP 530`：按“公网入口失效”处理，只重建 tunnel，不要先重启本地 `signal-server` 或 Host
-- 如果本地都通、DNS 直接不解析：这同样不是 origin 故障，优先按 quick tunnel 地址失效处理
-- 如果只是本地服务异常，但 `/tmp/wrd-safe-current-url.txt` 仍指向现有 tunnel：先修本地服务，不要先重建 tunnel
+- 如果本地都通、DNS 也能解析，但 `curl -I -L` 返回 `HTTP 530`：按“公网入口失效”处理，报告原因并等待用户明确是否重建 tunnel，不要先重启本地 `signal-server` 或 Host
+- 如果本地都通、DNS 直接不解析：这同样不是 origin 故障，优先按 quick tunnel 地址失效处理，但不得自动重建 tunnel
+- 如果只是本地服务异常，但 `/tmp/wrd-safe-current-url.txt` 仍指向现有 tunnel：只修本地服务，不得重建 tunnel
 - 如果 URL 文件里已经有 trycloudflare 地址，但状态脚本显示 `safe quick tunnel: stale`：说明地址文件已经写出，但实际公网进程没有存活，不能把这个链接当作有效入口
 - 如果状态脚本把原本 stale 的 PID 自动纠正为 live PID，会显示 `running pid=... (reconciled)`
 
@@ -234,7 +235,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 ### 场景 2：Cloudflare 地址失效
 
-`scripts/run-safe-quicktunnel.sh` 会在日志出现 `Unauthorized: Tunnel not found` 时自动重建 quick tunnel 并刷新：
+如果日志出现 `Unauthorized: Tunnel not found`，说明当前 quick tunnel 很可能已经在 Cloudflare 侧失效。Agent 只能报告该结论；除非用户明确要求重建 tunnel，否则不得自动重建或刷新：
 
 - `/tmp/wrd-safe-current-url.txt`
 
@@ -248,7 +249,7 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 如果日志中已经打印出 `Your quick Tunnel has been created`，但从外部仍无法访问，再继续区分两类情况：
 
 - 进程还活着，但域名暂时无法解析：优先等待几秒到几十秒，并重复 DNS / `curl` 验证
-- 进程已经退出：重新在常驻终端执行 `./scripts/run-safe-quicktunnel.sh`
+- 进程已经退出：报告状态，等待用户明确是否在常驻终端执行 `./scripts/run-safe-quicktunnel.sh`
 
 补充说明：
 
@@ -277,7 +278,7 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 1. `./scripts/status-safe-wrd.sh`
 2. `tail -100 /tmp/wrd-safe-quicktunnel.log`
 3. 确认本地源站仍正常：`curl http://127.0.0.1:8080/health`
-4. 若 `safe quick tunnel` 非 `running`，在常驻终端重新执行 `./scripts/run-safe-quicktunnel.sh`
+4. 若 `safe quick tunnel` 非 `running`，报告状态，等待用户明确是否重新执行 `./scripts/run-safe-quicktunnel.sh`
 5. 若 `safe quick tunnel` 为 `running` 但 DNS 仍长期不解析，改用固定域名方案 `./scripts/start-fixed-domain.sh`
 6. 若公共 DNS 已能解析、而只有本机 resolver 长期不解析，应优先修本机 DNS；当前脚本已会在这类情况下保留 tunnel，不再把它误判成不可交付
 

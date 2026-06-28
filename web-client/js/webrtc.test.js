@@ -378,8 +378,9 @@ test('auto without TURN keeps STUN recovery path active after first pc-failed', 
   assert.equal(actions.includes('tunnel'), false);
 });
 
-test('auto on public origin without TURN switches to tunnel before starting WebRTC', async () => {
+test('auto on public origin without TURN keeps auto mode and still starts WebRTC setup', async () => {
   let savedMode = null;
+  let createPeerConnectionCalled = false;
   const { WebRTC } = loadWebRTC({
     window: {
       location: { origin: 'https://billing-lanes-metro-admissions.trycloudflare.com' },
@@ -407,13 +408,50 @@ test('auto on public origin without TURN switches to tunnel before starting WebR
   WebRTC.setupSocketListeners = () => {};
   WebRTC.startTunnelRelay = () => {};
   WebRTC.createPeerConnection = () => {
-    throw new Error('createPeerConnection should not run before tunnel fallback');
+    createPeerConnectionCalled = true;
   };
 
   await WebRTC.init();
 
-  assert.equal(WebRTC.networkMode, 'tunnel');
-  assert.equal(savedMode, 'tunnel');
+  assert.equal(WebRTC.networkMode, 'auto');
+  assert.equal(savedMode, 'auto');
+  assert.equal(createPeerConnectionCalled, true);
+});
+
+test('public origin without TURN no longer forces tunnel mode during init', async () => {
+  const uiMessages = [];
+  const { WebRTC } = loadWebRTC({
+    window: {
+      location: { origin: 'https://billing-lanes-metro-admissions.trycloudflare.com' },
+      RTCRtpReceiver: null,
+    },
+    localStorage: {
+      getItem: () => 'auto',
+      setItem: () => {},
+    },
+  });
+
+  WebRTC.loadServerConfig = async () => {
+    WebRTC.serverConfig = {
+      stunUrls: ['stun:stun.example.com:3478'],
+      turnConfigured: false,
+      turnStatus: 'missing',
+      turnUrls: [],
+      iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    };
+  };
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.updateNetworkUI = (message) => {
+    uiMessages.push(message);
+  };
+  WebRTC.setupSocketListeners = () => {};
+  WebRTC.startTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => {};
+
+  await WebRTC.init();
+
+  assert.equal(WebRTC.networkMode, 'auto');
+  assert.ok(uiMessages.every((message) => !String(message).includes('当前是公网入口且未配置 TURN')));
 });
 
 

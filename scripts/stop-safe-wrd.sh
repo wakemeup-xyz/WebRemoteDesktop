@@ -9,6 +9,8 @@ SAFE_URL_FILE="/tmp/wrd-safe-current-url.txt"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
+source "$PROJECT_DIR/scripts/lib-host-launchctl.sh"
+source "$PROJECT_DIR/scripts/lib-tunnel-launchctl.sh"
 
 stop_pid_file() {
   local pid_file="$1"
@@ -46,8 +48,10 @@ stop_pid_file() {
   rm -f "$pid_file"
 }
 
+wrd_tunnel_launchctl_stop
 stop_pid_file "$SAFE_TUNNEL_SUPERVISOR_PID" "safe tunnel supervisor"
 stop_pid_file "$SAFE_TUNNEL_PID" "safe quick tunnel"
+wrd_host_launchctl_stop
 stop_pid_file "$SAFE_HOST_PID" "safe host"
 stop_pid_file "$SAFE_SIGNAL_PID" "safe signal-server"
 rm -f "$SAFE_URL_FILE"

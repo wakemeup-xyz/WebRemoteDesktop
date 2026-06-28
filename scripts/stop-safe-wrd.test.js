@@ -17,4 +17,6 @@ test('safe stop script only targets repo-owned pid files', () => {
   assert.doesNotMatch(source, /pkill\b/);
   assert.match(source, /lib-safe-wrd\.sh/);
   assert.match(source, /wrd_safe_pid_is_running/);
+  assert.match(source, /lib-host-launchctl\.sh/);
+  assert.match(source, /wrd_host_launchctl_stop/);
 });
