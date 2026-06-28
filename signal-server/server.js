@@ -12,8 +12,10 @@ const { loadConfig, getTurnStatus } = require('./lib/config');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
 const { setupSignaling, getConnectionStatus } = require('./websocket/signaling');
 const { setupTerminal } = require('./websocket/terminal');
+const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
 
 const config = loadConfig();
+ensureNodePtySpawnHelperExecutable(console);
 const app = express();
 const server = http.createServer(app);
 
