@@ -105,6 +105,14 @@ import os
 SERVER_URL = os.environ.get('SERVER_URL', "http://127.0.0.1:8080")
 HOST_SHARED_SECRET = os.environ.get('HOST_SHARED_SECRET') or os.environ.get('HOST_PASSWORD', '')
 
+MEDIA_PROFILE_DEFAULT = {
+    "profile": "high",
+    "width": 1280,
+    "height": 720,
+    "target_fps": 20,
+    "video_bitrate_kbps": 2500,
+}
+
 
 def should_verify_tls(server_url: str) -> bool:
     from urllib.parse import urlparse
@@ -133,6 +141,14 @@ def format_diag_value(value):
         except Exception:
             return str(value)
     return str(value) if value is not None else "-"
+
+
+def clamp_int(value, minimum, maximum, fallback):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(minimum, min(maximum, parsed))
 
 
 def build_ice_servers():
@@ -735,6 +751,17 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     width, height, ABSOLUTE_MAX_WIDTH, ABSOLUTE_MAX_HEIGHT,
                     self.monitor["width"], self.monitor["height"])
 
+    def set_target_fps(self, target_fps):
+        target_fps = max(5, min(int(target_fps), 30))
+        with self._target_lock:
+            self._target_fps = target_fps
+            self._frame_interval = 1.0 / target_fps
+        logger.info("Screen stream target FPS set to %s", target_fps)
+
+    def apply_media_profile(self, profile):
+        self.set_max_resolution(profile["width"], profile["height"])
+        self.set_target_fps(profile["target_fps"])
+
     def _scale_image_array(self, img):
         with self._target_lock:
             max_width = self._max_width
@@ -796,6 +823,7 @@ class WebRemoteHost:
         self._offer_epoch = 0
         self._reconnecting = False
         self._last_diag_network = None
+        self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
 
     async def authenticate(self):
         try:
@@ -836,6 +864,7 @@ class WebRemoteHost:
         sio.on('viewer-status', self.on_viewer_status)
         sio.on('viewer-stats', self.on_viewer_stats)
         sio.on('resolution-change', self.on_resolution_change)
+        sio.on('media-profile-change', self.on_media_profile_change)
         sio.on('relay-stream-control', self.on_relay_stream_control)
         sio.on('relay-frame-ack', self.on_relay_frame_ack)
         return sio
@@ -1102,7 +1131,11 @@ class WebRemoteHost:
                             logger.error(f"DataChannel input parse error: {e}")
 
                 # Add video track
-                self.screen_track = ScreenCaptureTrack()
+                self.screen_track = ScreenCaptureTrack(
+                    target_fps=self.media_profile["target_fps"],
+                    max_width=self.media_profile["width"],
+                    max_height=self.media_profile["height"],
+                )
                 self.screen_track._host_ref = self
                 self.pc.addTrack(self.screen_track)
                 self._prefer_h264_transceivers()
@@ -1315,6 +1348,36 @@ class WebRemoteHost:
                 self.screen_track.set_max_resolution(width, height)
         except Exception as e:
             logger.error(f"Error handling resolution change: {e}")
+
+    def on_media_profile_change(self, data):
+        """Apply adaptive media profile requested by the active viewer."""
+        try:
+            allowed_profiles = {"high", "medium", "low", "survival"}
+            profile = data.get("profile") if data.get("profile") in allowed_profiles else "medium"
+            next_profile = {
+                "profile": profile,
+                "width": clamp_int(data.get("width"), 320, 1920, 960),
+                "height": clamp_int(data.get("height"), 180, 1080, 540),
+                "target_fps": clamp_int(data.get("targetFps"), 5, 30, 15),
+                "video_bitrate_kbps": clamp_int(data.get("videoBitrateKbps"), 250, 5000, 1400),
+            }
+            self.media_profile = next_profile
+            viewer_id = data.get("viewerId", "-")
+            reason = str(data.get("reason", "quality"))[:80]
+            logger.info(
+                "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s",
+                viewer_id,
+                next_profile["profile"],
+                next_profile["width"],
+                next_profile["height"],
+                next_profile["target_fps"],
+                next_profile["video_bitrate_kbps"],
+                reason,
+            )
+            if self.screen_track and hasattr(self.screen_track, "apply_media_profile"):
+                self.screen_track.apply_media_profile(next_profile)
+        except Exception as e:
+            logger.error(f"Error handling media profile change: {e}")
 
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""

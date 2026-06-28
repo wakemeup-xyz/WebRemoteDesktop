@@ -327,13 +327,21 @@ WebRemoteDesktop/
 
 ### WebRTC 连接失败
 1. 检查浏览器控制台是否有 JavaScript 错误
-2. 在网页控制栏切换网络模式：本地同网优先“本地直连”，普通外网用“自动穿透”，公司网/校园网/跨运营商用“外网中继”
-3. 如果网页一直 `0 FPS` 且链路为 `-` / `unknown`，说明 ICE 没有选出媒体路径，需要配置 TURN
+2. 在网页控制栏切换网络模式：本地同网优先“本地直连”，普通外网用“自动穿透”或“外网直连”；TURN / 隧道中继作为用户手动模式使用
+3. 如果网页一直 `0 FPS` 且链路为 `-` / `unknown`，说明 ICE 没有选出媒体路径；Strict STUN 默认不会自动切 TURN 或媒体 tunnel
 4. TURN 环境变量：`TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL`；STUN 可通过 `STUN_URLS` 覆盖
+
+### Strict STUN 自适应优化
+
+`auto` / `stun` 模式会在直连媒体链路恶化时先自动降载：720p/20fps → 540p/15fps → 480p/12fps → 360p/8fps。触发信号包括连续 0 FPS、RTT/Jitter 异常和丢包突增。若降载后仍未恢复，Viewer 会主动尝试一次 ICE restart。
+
+该优化不会自动切 TURN，也不会自动走 Cloudflare/Socket.IO 媒体 tunnel。恢复预算耗尽后页面会明确显示 Strict STUN 失败，并自动发送诊断日志。用户仍可手动切换到 TURN 或 tunnel 对应模式。
+
+家庭路由器“虚拟服务器/端口转发”只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口，`RTCConfiguration` 不提供标准端口范围字段，因此不能只填一个端口就保证 Strict STUN 可达。后续如引入 `WRD_ICE_UDP_PORT_RANGE`，才适合配合路由器转发固定 UDP 范围。
 
 ### TURN 配置示例
 
-如果你希望 `auto` 在外网下更稳定，或希望 `外网中继` 模式真正可用，需要同时配置 TURN。当前项目支持从 `signal-server/.env` 读取：
+如果你希望手动 `外网中继` 模式真正可用，需要同时配置 TURN。当前项目支持从 `signal-server/.env` 读取：
 
 ```env
 STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
@@ -346,8 +354,8 @@ TURN_CREDENTIAL=你的凭证
 
 1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效
 2. `signal-server` 和 `python-host` 都会读取这些环境变量，因此重启后端和 Host 即可生效
-3. `auto` 模式：有 TURN 时会在直连失败后自动尝试中继；没有 TURN 时仍先尝试直连 / STUN，失败后再按页面恢复逻辑处理
-4. `relay` 模式：只有 TURN 配置完整时才会启用；若未配置或配置不完整，页面会直接切换到 `隧道中继`
+3. `auto` / `stun` 模式：保持 Strict STUN，失败时先降载和 ICE restart，恢复耗尽后明确失败，不自动切 TURN 或 tunnel
+4. `relay` 模式：只有 TURN 配置完整时才会启用；若未配置或配置不完整，页面会提示改用手动 tunnel 模式
 5. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件；是否进入 tunnel 由实际连接结果和用户手动模式决定
 5. 常见来源：自建 coturn，或使用 metered.ca / Twilio / Cloudflare Calls 等 TURN 服务
 

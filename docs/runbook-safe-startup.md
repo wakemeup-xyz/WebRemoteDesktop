@@ -233,6 +233,25 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 如果 fixed domain 不可用，先确认本地 `8080` 正常，再检查 `~/.cloudflared/config.yml` 和隧道配置
 - Web Terminal 走的是 Viewer 内部的 Socket.IO 二次授权，不会重启 quick tunnel，也不会占用 WebRTC 媒体链路
 
+### 场景 1b：网页可打开，但远程桌面媒体连接失败
+
+网页入口、登录、Socket.IO 信令和诊断上报可以通过 quick tunnel 正常工作，但这不代表 WebRTC 媒体路径可达。`auto` / `stun` 模式默认遵守 Strict STUN：
+
+- 先尝试 WebRTC direct ICE，允许 `host` / `srflx` / `prflx`
+- 媒体链路恶化时自动降载：720p/20fps → 540p/15fps → 480p/12fps → 360p/8fps
+- 降载仍失败时主动尝试一次 ICE restart
+- 恢复预算耗尽后明确失败并自动上传诊断
+- 不自动切 TURN，不自动走 Cloudflare/Socket.IO 媒体 tunnel
+
+排查顺序：
+
+1. 查看 Host 日志里的 `VIEWER_STATS`、`WRD_MEDIA_PROFILE`、`WRD_STUN_FAILURE`
+2. 如果出现 `WRD_MEDIA_PROFILE`，说明 Viewer 已检测到弱链路并尝试降载
+3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel
+4. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连可达
+
+家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
+
 ### 场景 2：Cloudflare 地址失效
 
 如果日志出现 `Unauthorized: Tunnel not found`，说明当前 quick tunnel 很可能已经在 Cloudflare 侧失效。Agent 只能报告该结论；除非用户明确要求重建 tunnel，否则不得自动重建或刷新：

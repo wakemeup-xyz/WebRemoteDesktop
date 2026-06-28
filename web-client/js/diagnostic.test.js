@@ -196,6 +196,28 @@ test('buildConnectionDiagnostic returns redacted schema v2 payload from current 
   assert.equal(payload.events[0].data.url, '[redacted-url]');
 });
 
+test('buildConnectionDiagnostic includes adaptive media summary from WebRTC', () => {
+  const { context } = createDiagnosticContext();
+  context.WebRTC.linkQualityController = {
+    snapshot() {
+      return {
+        enabled: true,
+        currentProfile: 'survival',
+        profileChanges: [{ from: 'high', to: 'medium', reason: 'packet-loss' }],
+        iceRestart: { proactiveAttempted: true, attempts: 1, reason: 'critical-media-quality' },
+      };
+    },
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'strict-stun-exhausted' });
+
+  assert.equal(payload.adaptiveMedia.enabled, true);
+  assert.equal(payload.adaptiveMedia.currentProfile, 'survival');
+  assert.equal(payload.adaptiveMedia.profileChanges.length, 1);
+  assert.equal(payload.adaptiveMedia.iceRestart.attempts, 1);
+});
+
 test('sendConnectionDiagnostic queues payload when socket and fetch fail', async () => {
   const { context, storage } = createDiagnosticContext({
     fetch: async () => ({ ok: false, status: 500 }),

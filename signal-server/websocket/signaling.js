@@ -114,6 +114,12 @@ function isActiveViewerSocket(socket) {
   return connections.viewers.get(socket.id) === socket;
 }
 
+function clampInt(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
 function setupSignaling(io) {
   // Use default namespace for all connections
   io.use((socket, next) => {
@@ -313,6 +319,32 @@ function setupSignaling(io) {
           ...data,
           viewerId: socket.id
         });
+      }
+    });
+
+    socket.on('media-profile-change', (data = {}) => {
+      if (role !== 'viewer') {
+        console.warn(`Media profile change rejected: role=${role} from ${socket.id}`);
+        return;
+      }
+      if (!isActiveViewerSocket(socket)) {
+        console.warn(`Media profile change rejected: disconnected viewer ${socket.id}`);
+        return;
+      }
+      const allowedProfiles = new Set(['high', 'medium', 'low', 'survival']);
+      const profile = allowedProfiles.has(data.profile) ? data.profile : 'medium';
+      const sanitized = {
+        viewerId: socket.id,
+        profile,
+        width: clampInt(data.width, 320, 1920, 960),
+        height: clampInt(data.height, 180, 1080, 540),
+        targetFps: clampInt(data.targetFps, 5, 30, 15),
+        videoBitrateKbps: clampInt(data.videoBitrateKbps, 250, 5000, 1400),
+        reason: String(data.reason || 'quality').slice(0, 80),
+        mediaPolicy: data.mediaPolicy === 'strict-stun' ? 'strict-stun' : 'unknown',
+      };
+      if (connections.host) {
+        connections.host.emit('media-profile-change', sanitized);
       }
     });
 

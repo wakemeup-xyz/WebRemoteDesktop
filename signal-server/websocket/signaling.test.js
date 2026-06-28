@@ -181,6 +181,51 @@ test('terminal namespace wiring does not break viewer and host signaling', () =>
   assert.equal(connections.viewers.has('viewer-1'), true);
 });
 
+test('viewer media-profile-change is sanitized and forwarded to host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('media-profile-change', {
+    profile: 'medium',
+    width: 960,
+    height: 540,
+    targetFps: 15,
+    videoBitrateKbps: 1400,
+    reason: 'packet-loss',
+    extra: 'drop-me',
+  });
+
+  const message = host.sent.find((entry) => entry.event === 'media-profile-change');
+  assert.equal(Boolean(message), true);
+  assert.equal(message.data.viewerId, 'viewer-1');
+  assert.equal(message.data.profile, 'medium');
+  assert.equal(message.data.width, 960);
+  assert.equal(message.data.height, 540);
+  assert.equal(message.data.targetFps, 15);
+  assert.equal(message.data.videoBitrateKbps, 1400);
+  assert.equal(message.data.reason, 'packet-loss');
+  assert.equal(message.data.extra, undefined);
+});
+
+test('non-viewer media-profile-change is ignored', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  io.connect(host);
+
+  host.trigger('media-profile-change', { profile: 'survival' });
+
+  assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
+});
+
 test('viewer disconnect reports zero viewers so host can stop active relay stream', () => {
   resetConnections();
   const io = makeIo();

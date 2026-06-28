@@ -226,12 +226,19 @@ const Diagnostic = {
       ? basePayload.events.map((event) => this.redactTraceEvent(event))
       : [];
 
+    const adaptiveMedia = (typeof WebRTC !== 'undefined'
+      && WebRTC.linkQualityController
+      && typeof WebRTC.linkQualityController.snapshot === 'function')
+      ? WebRTC.linkQualityController.snapshot()
+      : { enabled: false };
+
     return {
       type: 'connection-diagnostic',
       schemaVersion: 2,
       connectionAttemptId: basePayload.connectionAttemptId || snapshot.connectionAttemptId || `wrd-${Date.now()}`,
       events: redactedEvents,
       probeResults: Array.isArray(basePayload.probeResults) ? basePayload.probeResults.slice() : [],
+      adaptiveMedia,
       traceSummary: {
         ...(basePayload.traceSummary || snapshot.traceSummary || {}),
         trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',

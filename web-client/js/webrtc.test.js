@@ -69,6 +69,7 @@ function loadWebRTC(overrides = {}) {
     RTCSessionDescription: function RTCSessionDescription(value) { return value; },
     RTCIceCandidate: function RTCIceCandidate(value) { return value; },
     RTCRtpReceiver: null,
+    LinkQualityController: overrides.LinkQualityController,
     window: {
       location: { origin: 'http://127.0.0.1:8080' },
       RTCRtpReceiver: null,
@@ -88,6 +89,73 @@ function loadWebRTC(overrides = {}) {
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
   return { WebRTC: context.__WebRTC, context, elements };
 }
+
+function loadLinkQualityController() {
+  const context = { console, Date };
+  context.globalThis = context;
+  vm.createContext(context);
+  const source = fs.readFileSync(path.join(__dirname, 'link-quality-controller.js'), 'utf8');
+  vm.runInContext(`${source}\nglobalThis.__LQC = LinkQualityController;`, context);
+  return { LinkQualityController: context.__LQC, context };
+}
+
+test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create();
+
+  let result = controller.observe({
+    fps: 4,
+    rttMs: 92,
+    jitterBufferMs: 8,
+    packetsLost: 54,
+    framesDecoded: 121,
+    framesReceived: 121,
+    selectedCandidateType: 'prflx',
+  });
+  assert.equal(result.action, 'hold');
+  assert.equal(result.profile, 'high');
+
+  result = controller.observe({
+    fps: 4,
+    rttMs: 140,
+    jitterBufferMs: 180,
+    packetsLost: 80,
+    framesDecoded: 130,
+    framesReceived: 130,
+    selectedCandidateType: 'prflx',
+  });
+  assert.equal(result.action, 'degrade');
+  assert.equal(result.profile, 'medium');
+  assert.equal(result.reason, 'packet-loss');
+});
+
+test('LinkQualityController enters critical recovery after repeated zero fps with selected pair', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create();
+
+  controller.observe({
+    fps: 0,
+    rttMs: 90,
+    jitterBufferMs: 250,
+    packetsLost: 10,
+    framesDecoded: 199,
+    framesReceived: 199,
+    selectedCandidateType: 'prflx',
+  });
+  const result = controller.observe({
+    fps: 0,
+    rttMs: 95,
+    jitterBufferMs: 270,
+    packetsLost: 10,
+    framesDecoded: 199,
+    framesReceived: 199,
+    selectedCandidateType: 'prflx',
+  });
+
+  assert.equal(result.action, 'critical');
+  assert.equal(result.profile, 'survival');
+  assert.equal(result.shouldRestartIce, true);
+});
 
 test('refresh clears stuck offer state before creating a new offer', async () => {
   const { WebRTC } = loadWebRTC();
@@ -376,6 +444,142 @@ test('auto without TURN keeps STUN recovery path active after first pc-failed', 
   assert.equal(WebRTC._autoFailCount, 1);
   assert.equal(actions.includes('restartIce'), true);
   assert.equal(actions.includes('tunnel'), false);
+});
+
+test('auto with TURN does not automatically enable relay fallback under strict STUN', () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.manualDisconnect = false;
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example.com:3478'],
+    iceServers: [{ urls: ['turn:turn.example.com:3478'], username: 'u', credential: 'p' }],
+  };
+  WebRTC.socket = { connected: true };
+  WebRTC.startTunnelRelay = () => {
+    actions.push('tunnel');
+  };
+  WebRTC.refresh = () => {
+    actions.push('refresh');
+  };
+  WebRTC.pc = {
+    restartIce() {
+      actions.push('restartIce');
+    },
+    close() {},
+  };
+
+  WebRTC.scheduleReconnect('pc-failed');
+
+  assert.equal(WebRTC.useRelayFallback, false);
+  assert.equal(actions.includes('restartIce'), true);
+  assert.equal(actions.includes('tunnel'), false);
+});
+
+test('WebRTC applies degraded media profile without starting tunnel in auto mode', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC({
+    LinkQualityController: {
+      create() {
+        return {
+          observe() {
+            return {
+              action: 'degrade',
+              profile: 'medium',
+              reason: 'packet-loss',
+              profileConfig: { name: 'medium', width: 960, height: 540, fps: 15, bitrateKbps: 1400 },
+            };
+          },
+          snapshot() { return { currentProfile: 'medium', profileChanges: [] }; },
+        };
+      },
+    },
+  });
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  let tunnelStarted = false;
+  WebRTC.startTunnelRelay = () => { tunnelStarted = true; };
+  WebRTC.ensureLinkQualityController();
+
+  WebRTC.handleReceiverStats({
+    fps: 4,
+    rttMs: 140,
+    jitterBufferMs: 180,
+    packetsLost: 80,
+    framesDecoded: 130,
+    framesReceived: 130,
+    bytesReceived: 1000,
+    codec: 'video/H264',
+    selectedCandidateType: 'prflx',
+  });
+
+  const profileEvent = emitted.find((entry) => entry.event === 'media-profile-change');
+  assert.equal(tunnelStarted, false);
+  assert.equal(Boolean(profileEvent), true);
+  assert.equal(profileEvent.payload.profile, 'medium');
+  assert.equal(profileEvent.payload.targetFps, 15);
+  assert.equal(profileEvent.payload.videoBitrateKbps, 1400);
+});
+
+test('WebRTC proactive ICE restart happens once on critical media quality', () => {
+  const { WebRTC } = loadWebRTC({
+    LinkQualityController: {
+      create() {
+        return {
+          observe() {
+            return {
+              action: 'critical',
+              profile: 'survival',
+              reason: 'media-stalled',
+              shouldRestartIce: true,
+              profileConfig: { name: 'survival', width: 640, height: 360, fps: 8, bitrateKbps: 500 },
+            };
+          },
+          markIceRestartAttempted() {},
+          snapshot() { return { currentProfile: 'survival', iceRestart: { attempts: 1 } }; },
+        };
+      },
+    },
+  });
+
+  let restartCalls = 0;
+  let offerCalls = 0;
+  WebRTC.networkMode = 'stun';
+  WebRTC.socket = { connected: true, emit() {} };
+  WebRTC.pc = {
+    restartIce() { restartCalls += 1; },
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+  };
+  WebRTC.createOffer = () => { offerCalls += 1; };
+  WebRTC.ensureLinkQualityController();
+
+  WebRTC.handleReceiverStats({
+    fps: 0,
+    rttMs: 90,
+    jitterBufferMs: 270,
+    packetsLost: 10,
+    framesDecoded: 199,
+    framesReceived: 199,
+    selectedCandidateType: 'prflx',
+  });
+  WebRTC.handleReceiverStats({
+    fps: 0,
+    rttMs: 90,
+    jitterBufferMs: 270,
+    packetsLost: 10,
+    framesDecoded: 199,
+    framesReceived: 199,
+    selectedCandidateType: 'prflx',
+  });
+
+  assert.equal(restartCalls, 1);
+  assert.equal(offerCalls, 1);
 });
 
 test('auto on public origin without TURN keeps auto mode and still starts WebRTC setup', async () => {

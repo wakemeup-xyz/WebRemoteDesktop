@@ -52,7 +52,9 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **延迟优化**：浏览器端 `jitterBufferTarget = 0`，编码器 GOP 1 秒、禁用 B 帧
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
-- [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继四种 ICE 策略
+- [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继
+- [x] **Strict STUN 自适应降载**：Viewer 根据 FPS、RTT、jitter buffer 和丢包识别弱直连链路，自动降为 540p/15fps、480p/12fps、360p/8fps，并通知 Host 调整采集档位
+- [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；恢复耗尽后明确失败并自动上报诊断
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
 - [x] **缩放模式**：自适应(contain) / 填充(cover) / 拉伸(fill)
@@ -102,7 +104,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **诊断日志**：弹出模态框显示浏览器控制台捕获的日志，可一键发送到服务端；连接失败时自动附带网络环境和链路摘要上送一份诊断
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复
 - [x] **全屏控制**：网页端提供全屏按钮，Esc 使用浏览器原生 Fullscreen API 退出
-- [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动模式在配置 TURN 时可降级到 relay，未配置 TURN 时先尝试直连
+- [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel
 - [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明
 
 ### 3.5 Host 本机浮动提示

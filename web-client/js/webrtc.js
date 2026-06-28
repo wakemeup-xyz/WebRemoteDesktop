@@ -22,6 +22,8 @@ const WebRTC = {
   tunnelPendingObjectUrl: '',
   tunnelLastFrameId: 0,
   currentResolution: { width: 960, height: 540, label: '540p' },
+  linkQualityController: null,
+  adaptiveMediaEnabled: true,
   noMediaTicks: 0,
   lastCandidateType: '',
   _autoFailCount: 0,
@@ -52,7 +54,7 @@ const WebRTC = {
     stun: {
       label: '外网直连',
       state: '看网络',
-      hint: '适合外网但 UDP 未被限制的环境。连接失败 2 次后自动切换隧道中继兜底。'
+      hint: '适合外网但 UDP 未被限制的环境。失败时会自动降载并尝试 ICE 恢复，不自动切换中继。'
     },
     relay: {
       label: '外网中继',
@@ -68,6 +70,68 @@ const WebRTC = {
 
   hasTurnConfigured() {
     return this.getTurnServers().length > 0;
+  },
+
+  ensureLinkQualityController() {
+    if (!this.linkQualityController && typeof LinkQualityController !== 'undefined') {
+      this.linkQualityController = LinkQualityController.create();
+    }
+    return this.linkQualityController;
+  },
+
+  handleReceiverStats(stats) {
+    const controller = this.ensureLinkQualityController();
+    if (!controller || !this.adaptiveMediaEnabled) return;
+    if (this.networkMode === 'tunnel' || this.networkMode === 'relay') return;
+
+    const result = controller.observe({
+      ...stats,
+      selectedCandidatePair: this.selectedCandidatePair,
+    });
+    if (!result || result.action === 'hold') return;
+
+    if (result.profileConfig) {
+      this.applyMediaProfile(result.profileConfig, result.reason);
+    }
+
+    if (result.shouldRestartIce) {
+      this.proactiveIceRestart(result.reason);
+    }
+  },
+
+  applyMediaProfile(profile, reason) {
+    if (!profile) return;
+    console.warn(`[MEDIA] applying profile ${profile.name} size=${profile.width}x${profile.height} fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps reason=${reason}`);
+    this.currentResolution = { width: profile.width, height: profile.height, label: `${profile.width}x${profile.height}` };
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('media-profile-change', {
+        profile: profile.name,
+        width: profile.width,
+        height: profile.height,
+        targetFps: profile.fps,
+        videoBitrateKbps: profile.bitrateKbps,
+        reason,
+        mediaPolicy: 'strict-stun',
+      });
+    }
+    if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.record === 'function') {
+      ConnectionTrace.record('media-profile-change', { profile: profile.name, reason });
+    }
+  },
+
+  proactiveIceRestart(reason) {
+    if (!this.pc || typeof this.pc.restartIce !== 'function') return;
+    if (this._iceRestartAttempts >= 1) return;
+    this._iceRestartAttempts += 1;
+    if (this.linkQualityController?.markIceRestartAttempted) {
+      this.linkQualityController.markIceRestartAttempted();
+    }
+    console.warn(`[RECOVERY] proactive ICE restart reason=${reason}`);
+    if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.record === 'function') {
+      ConnectionTrace.record('ice-restart', { reason, proactive: true });
+    }
+    this.pc.restartIce();
+    this.createOffer();
   },
 
   isPublicOrigin() {
@@ -1284,6 +1348,18 @@ const WebRTC = {
         console.log('[NETWORK] Selected candidate pair:', this.selectedCandidatePair);
       }
 
+      this.handleReceiverStats({
+        fps,
+        rttMs: latencyMs,
+        jitterBufferMs: Number(jitterBufferDelay) || 0,
+        framesReceived,
+        framesDecoded,
+        packetsLost,
+        bytesReceived,
+        codec,
+        selectedCandidateType,
+      });
+
       if (this.socket && this.socket.connected) {
         this.socket.emit('viewer-stats', {
           fps,
@@ -1414,38 +1490,29 @@ const WebRTC = {
       return;
     }
 
-    if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn) {
-      this.useRelayFallback = true;
-      this.updateNetworkUI('自动穿透失败，下一次重连将强制使用 TURN 中继。', 'warning');
-      updateLoadingText('直连失败，正在切换中继...');
+    if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn && this._autoFailCount < 2) {
+      this.updateNetworkUI('自动穿透失败；Strict STUN 默认不自动切 TURN，可手动选择外网中继。', 'warning');
+      updateLoadingText('直连异常，正在尝试恢复...');
     } else if (this.networkMode === 'auto' && (this.useRelayFallback || this._autoFailCount >= 2)) {
-      // TURN relay failed or 2+ stun failures without TURN, fall back to tunnel
-      console.warn('[RECOVERY] Auto mode exhausted (failCount=%d), falling to tunnel', this._autoFailCount);
+      console.warn('[RECOVERY] Strict STUN auto exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.useRelayFallback = false;
-      this._autoFailCount = 0;
-      this.updateNetworkUI('WebRTC 连接失败，正在切换到隧道中继…', 'warning');
-      updateLoadingText('切换隧道中继…');
+      this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
+      updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
       document.body.classList.remove('stream-connected');
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
-        this.startTunnelRelay();
-      }, 1000);
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+        Diagnostic.autoSendFailure('strict-stun-exhausted');
+      }
       return;
     } else if (this.networkMode === 'stun' && this._autoFailCount >= 2) {
-      // STUN exhausted without TURN, fall back to tunnel
-      console.warn('[RECOVERY] STUN mode exhausted (failCount=%d), falling to tunnel', this._autoFailCount);
-      this._autoFailCount = 0;
-      this.updateNetworkUI('外网直连失败，正在切换到隧道中继…', 'warning');
-      updateLoadingText('切换隧道中继…');
+      console.warn('[RECOVERY] Strict STUN mode exhausted (failCount=%d), not using tunnel', this._autoFailCount);
+      this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
+      updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
       document.body.classList.remove('stream-connected');
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
-        this.startTunnelRelay();
-      }, 1000);
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+        Diagnostic.autoSendFailure('strict-stun-exhausted');
+      }
       return;
     } else if (this.networkMode === 'relay' && !this.getTurnServers().length) {
       // relay mode with no TURN configured, suggest tunnel
