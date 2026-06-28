@@ -1,0 +1,4 @@
+interface:
+  display_name: "WebRemote Service"
+  short_description: "Restart WebRemoteDesktop services without touching tunnel"
+  default_prompt: "Restart local WebRemoteDesktop signal-server and Host while preserving Cloudflare tunnel URL"
