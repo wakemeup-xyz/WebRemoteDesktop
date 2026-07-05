@@ -16,7 +16,15 @@ import time
 from pathlib import Path
 
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[3]
+def resolve_project_dir() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "scripts" / "restart-host.sh").exists() and (parent / "signal-server").is_dir():
+            return parent
+    raise RuntimeError(f"Unable to resolve project dir from {current}")
+
+
+DEFAULT_PROJECT_DIR = resolve_project_dir()
 SAFE_URL_FILE = Path("/tmp/wrd-safe-current-url.txt")
 SAFE_SIGNAL_PID = Path("/tmp/wrd-safe-signal.pid")
 SAFE_HOST_PID = Path("/tmp/wrd-safe-host.pid")

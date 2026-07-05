@@ -2,7 +2,7 @@
 
 ## 推荐部署方式
 
-- **固定域名**：使用 Cloudflare 命名隧道 + `stockhub.wiki`
+- **固定域名**：使用 Cloudflare 命名隧道 + `link.stockhub.wiki`
 - **本地调试**：`cd signal-server && npm start`，再运行 `./scripts/restart-host.sh`
 
 ## 固定域名启动
@@ -14,4 +14,4 @@
 ## 注意
 
 - 不要再依赖临时 `trycloudflare` 地址作为长期入口
-- 外网访问应以 `https://stockhub.wiki` 为准
+- 外网访问应以 `https://link.stockhub.wiki` 为准

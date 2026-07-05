@@ -151,14 +151,21 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 本机存在 `~/.cloudflared/config.yml`
 - `wrd-tunnel` 命名隧道已配置完成
 
-脚本成功后，固定域名入口默认为：`https://stockhub.wiki`
+如本地服务不是 `8080`，可在执行前覆盖：
+
+```bash
+LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
+LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
+```
+
+脚本成功后，固定域名入口默认为：`https://link.stockhub.wiki`
 
 ### 启动成功后的访问方式
 
 - 本地访问：`http://127.0.0.1:8080`
 - 安全脚本临时公网访问：`cat /tmp/wrd-safe-current-url.txt`
 - 旧版普通 quick tunnel 地址：`cat /tmp/wrd-current-url.txt`
-- 固定域名访问：`https://stockhub.wiki`
+- 固定域名访问：`https://link.stockhub.wiki`
 
 ### 启动后快速自检
 

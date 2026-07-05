@@ -38,6 +38,7 @@ function makeElement(id) {
     dataset: {},
     className: '',
     classList: makeClassList(),
+    focusCalls: 0,
     appendChild(child) {
       children.push(child);
       child.parentNode = this;
@@ -45,6 +46,9 @@ function makeElement(id) {
     },
     remove() {
       this.removed = true;
+    },
+    focus() {
+      this.focusCalls += 1;
     },
     addEventListener(type, handler) {
       this[`on${type}`] = handler;
@@ -59,6 +63,9 @@ function makeElement(id) {
       const match = selector.match(/\[data-session-id="([^"]+)"\]/);
       if (match) {
         return children.find((child) => child.dataset.sessionId === match[1]) || null;
+      }
+      if (selector === '.xterm-helper-textarea') {
+        return children.find((child) => child.className.includes('xterm-helper-textarea')) || null;
       }
       return null;
     },
@@ -103,6 +110,37 @@ function loadTerminal(overrides = {}) {
     },
   };
 
+  const createdTerms = [];
+  function FakeTerminal() {
+    const term = {
+      focusCalls: 0,
+      open(container) {
+        this.container = container;
+        const textarea = makeElement('textarea');
+        textarea.className = 'xterm-helper-textarea';
+        container.appendChild(textarea);
+      },
+      focus() {
+        this.focusCalls += 1;
+      },
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write() {},
+      dispose() {},
+    };
+    createdTerms.push(term);
+    return term;
+  }
+
+  function FakeFitAddon() {
+    this.fit = () => {};
+  }
+
   const context = {
     console,
     setTimeout,
@@ -133,6 +171,8 @@ function loadTerminal(overrides = {}) {
       getSocketBase: () => 'http://127.0.0.1:8080',
       url: (pathname) => `http://127.0.0.1:8080${pathname}`,
     },
+    Terminal: overrides.Terminal || FakeTerminal,
+    FitAddon: overrides.FitAddon || { FitAddon: FakeFitAddon },
     io: overrides.io || (() => fakeSocket),
     fetch: overrides.fetch,
   };
@@ -151,6 +191,7 @@ globalThis.__TERMINAL_ADMIN_TOKEN_KEY = TERMINAL_ADMIN_TOKEN_KEY;`, context);
     fakeSocket,
     socketHandlers,
     sessionStorageMap,
+    createdTerms,
     createTerminalState: context.__createTerminalState,
     TerminalUI: context.__TerminalUI,
     TerminalPanel: context.__TerminalPanel,
@@ -212,4 +253,39 @@ test('TerminalPanel reconnect reattaches existing sessions by original session i
     emitted.filter((item) => item.event === 'terminal:attach').map((item) => item.payload.sessionId),
     ['term_keep']
   );
+});
+
+test('TerminalPanel focuses the active terminal after create and attach', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
+  socketHandlers.get('terminal:created')(session);
+
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+  const textarea = node.querySelector('.xterm-helper-textarea');
+  assert.equal(textarea.focusCalls > 0, true);
+});
+
+test('TerminalPanel focuses an existing terminal when the terminal tab is shown', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.showTerminal();
+
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+  const textarea = node.querySelector('.xterm-helper-textarea');
+  assert.equal(textarea.focusCalls > 0, true);
 });

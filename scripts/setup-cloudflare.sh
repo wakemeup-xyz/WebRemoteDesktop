@@ -1,11 +1,14 @@
 #!/bin/bash
 # Cloudflare Tunnel 配置脚本
 
-DOMAIN="stockhub.wiki"
-TUNNEL_NAME="wrd-tunnel"
+DOMAIN="${DOMAIN:-link.stockhub.wiki}"
+TUNNEL_NAME="${TUNNEL_NAME:-wrd-tunnel}"
+LOCAL_PORT="${LOCAL_PORT:-8080}"
+LOCAL_ORIGIN="${LOCAL_ORIGIN:-http://127.0.0.1:${LOCAL_PORT}}"
 
 echo "=== Cloudflare Tunnel Setup ==="
 echo "Domain: $DOMAIN"
+echo "Local origin: $LOCAL_ORIGIN"
 echo ""
 
 # 检查 cloudflared
@@ -36,7 +39,7 @@ credentials-file: ~/.cloudflared/$TUNNEL_ID.json
 
 ingress:
   - hostname: $DOMAIN
-    service: http://localhost:8080
+    service: $LOCAL_ORIGIN
   - service: http_status:404
 EOF
 

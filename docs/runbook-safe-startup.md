@@ -181,7 +181,14 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 本机存在 `~/.cloudflared/config.yml`
 - 已创建 `wrd-tunnel` 命名隧道
 
-启动成功后，固定入口默认为：`https://stockhub.wiki`
+如本地服务不是默认 `8080`，可在执行前覆盖：
+
+```bash
+LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
+LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
+```
+
+启动成功后，固定入口默认为：`https://link.stockhub.wiki`
 
 ## 关键文件
 

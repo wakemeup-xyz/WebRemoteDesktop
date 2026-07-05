@@ -95,6 +95,7 @@ const TerminalPanel = {
   state: createTerminalState(),
   terms: new Map(),
   fitAddons: new Map(),
+  focusTimer: null,
   softWarnSessionCount: 4,
   isVisible: false,
 
@@ -155,6 +156,8 @@ const TerminalPanel = {
     }
     this.render();
     this.fitActiveTerminal();
+    this.focusActiveTerminal();
+    this.scheduleFocusActiveTerminal();
   },
 
   hasAdminToken() {
@@ -245,12 +248,16 @@ const TerminalPanel = {
       this.ensureSession(session);
       this.render();
       this.fitActiveTerminal();
+      this.focusActiveTerminal();
+      this.scheduleFocusActiveTerminal();
     });
     this.socket.on('terminal:attached', (session) => {
       this.ensureSession(session);
       this.state.updateStatus(session.sessionId, 'attached');
       this.render();
       this.fitActiveTerminal();
+      this.focusActiveTerminal();
+      this.scheduleFocusActiveTerminal();
     });
     this.socket.on('terminal:output', (payload) => {
       this.writeOutput(payload.sessionId, payload.data);
@@ -411,6 +418,39 @@ const TerminalPanel = {
         console.warn('[Terminal] fit failed:', err);
       }
     }
+  },
+
+  focusActiveTerminal() {
+    const active = this.state.activeSessionId();
+    if (!active) return;
+    const node = this.elements.workspace?.querySelector(`[data-session-id="${active}"]`);
+    const helper = node?.querySelector?.('.xterm-helper-textarea');
+    if (helper?.focus) {
+      try {
+        helper.focus();
+        return;
+      } catch (err) {
+        console.warn('[Terminal] helper focus failed:', err);
+      }
+    }
+    const term = this.terms.get(active);
+    if (term?.focus) {
+      try {
+        term.focus();
+      } catch (err) {
+        console.warn('[Terminal] focus failed:', err);
+      }
+    }
+  },
+
+  scheduleFocusActiveTerminal(delay = 50) {
+    if (this.focusTimer) {
+      clearTimeout(this.focusTimer);
+    }
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = null;
+      this.focusActiveTerminal();
+    }, delay);
   },
 
   render() {
