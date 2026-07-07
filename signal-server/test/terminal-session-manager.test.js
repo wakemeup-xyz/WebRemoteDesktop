@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
+const path = require('node:path');
+
+const { buildTerminalEnv, createTerminalSessionManager } = require('../lib/terminal/session-manager');
 
 function createFakePty() {
   const handlers = {
@@ -37,81 +39,16 @@ function createFakePty() {
   };
 }
 
-test('session manager creates, attaches, detaches, closes, and snapshots sessions', () => {
-  const ptyInstances = [];
-  const logger = {
-    warnCalls: [],
-    warn(message, meta) {
-      this.warnCalls.push({ message, meta });
-    },
-    info() {},
-    error() {},
-  };
+test('shared session manager stores sessions in the default pool and no longer exposes ownerSub ownership', () => {
   const manager = createTerminalSessionManager({
-    logger,
-    now: () => new Date('2026-06-28T00:00:00.000Z'),
-    ptyFactory: () => {
-      const pty = createFakePty();
-      ptyInstances.push(pty);
-      return pty;
-    },
+    ptyFactory: createFakePty,
+    logger: { warn() {}, info() {}, error() {} },
+    now: () => new Date('2026-07-07T00:00:00.000Z'),
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
       terminalShell: '/bin/zsh',
       terminalCwd: '/Users/macstudio1/AI/Claude/WebRemoteDesktop',
-      terminalSoftWarnSessionCount: 1,
-      terminalIdleTimeoutMs: 0,
-      terminalStartupTimeoutMs: 10000,
-      terminalRecordIo: false,
-    },
-  });
-
-  const created = manager.createSession({ ownerSub: 'admin-1', cols: 120, rows: 32 });
-  assert.equal(created.status, 'attached');
-  assert.equal(created.ownerSub, 'admin-1');
-  assert.equal(created.shell, '/bin/zsh');
-  assert.equal(created.cwd, '/Users/macstudio1/AI/Claude/WebRemoteDesktop');
-  assert.equal(created.cols, 120);
-  assert.equal(created.rows, 32);
-  assert.equal(created.sessionId.startsWith('term_'), true);
-  assert.equal(ptyInstances.length, 1);
-
-  const reattached = manager.attachSession(created.sessionId, { ownerSub: 'admin-1' });
-  assert.equal(reattached.sessionId, created.sessionId);
-  assert.equal(reattached.status, 'attached');
-
-  const detached = manager.detachSession(created.sessionId, 'socket-disconnect');
-  assert.equal(detached.status, 'detached');
-  assert.equal(detached.detachedReason, 'socket-disconnect');
-
-  const second = manager.createSession({ ownerSub: 'admin-1', cols: 100, rows: 30 });
-  assert.equal(second.status, 'attached');
-  assert.equal(logger.warnCalls.length, 1);
-  assert.equal(logger.warnCalls[0].meta.warning, 'session_count_above_soft_threshold');
-
-  const list = manager.listSessions({ ownerSub: 'admin-1' });
-  assert.equal(list.length, 2);
-  assert.equal(list[0].sessionId, created.sessionId);
-
-  const snapshot = manager.getSnapshot();
-  assert.equal(snapshot.sessions.length, 2);
-  assert.equal(snapshot.sessions[0].status, 'detached');
-
-  const closed = manager.closeSession(created.sessionId, 'user-close');
-  assert.equal(closed.status, 'closed');
-  assert.equal(ptyInstances[0].killCalls.length, 1);
-});
-
-test('session manager keeps detached sessions available for reattach', () => {
-  const manager = createTerminalSessionManager({
-    ptyFactory: createFakePty,
-    logger: { warn() {}, info() {}, error() {} },
-    config: {
-      enableTerminal: true,
-      terminalAdminPassword: 'test-terminal-admin-password',
-      terminalShell: '/bin/zsh',
-      terminalCwd: '',
       terminalSoftWarnSessionCount: 4,
       terminalIdleTimeoutMs: 0,
       terminalStartupTimeoutMs: 10000,
@@ -119,10 +56,156 @@ test('session manager keeps detached sessions available for reattach', () => {
     },
   });
 
-  const created = manager.createSession({ ownerSub: 'browser-1', cols: 80, rows: 24 });
-  manager.detachSession(created.sessionId, 'disconnect');
-  const snapshot = manager.getSnapshot();
-  assert.equal(snapshot.sessions[0].status, 'detached');
-  const reattached = manager.attachSession(created.sessionId, { ownerSub: 'browser-1' });
-  assert.equal(reattached.status, 'attached');
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    cols: 120,
+    rows: 32,
+    title: 'Shared shell',
+  });
+
+  assert.equal(created.poolId, 'default');
+  assert.equal(created.observerCount, 1);
+  assert.equal('ownerSub' in created, false);
+  assert.equal(manager.getPoolSnapshot().poolId, 'default');
+  assert.equal(manager.getPoolSnapshot().sessions[0].sessionId, created.sessionId);
+});
+
+test('shared session manager broadcasts PTY output to every attached observer and replays recent output on reattach', () => {
+  const pty = createFakePty();
+  const deliveredA = [];
+  const deliveredB = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    cols: 80,
+    rows: 24,
+    onData: (chunk) => deliveredA.push(chunk),
+  });
+  manager.attachSession(created.sessionId, {
+    clientId: 'browser-b',
+    onData: (chunk) => deliveredB.push(chunk),
+  });
+
+  pty.emitData('first line\r\n');
+  assert.deepEqual(deliveredA, ['first line\r\n']);
+  assert.deepEqual(deliveredB, ['first line\r\n']);
+
+  manager.detachObserver(created.sessionId, { clientId: 'browser-b' });
+  const replay = manager.attachSession(created.sessionId, {
+    clientId: 'browser-b',
+    onData: (chunk) => deliveredB.push(chunk),
+  });
+  assert.equal(replay.replay.length, 1);
+  assert.equal(replay.replay[0].data, 'first line\r\n');
+});
+
+test('shared session manager keeps PTY alive after last observer detaches and only kills on explicit close', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  manager.detachObserver(created.sessionId, { clientId: 'browser-a', reason: 'page-close' });
+
+  assert.equal(manager.getPoolSnapshot().sessions[0].observerCount, 0);
+  assert.equal(pty.killCalls.length, 0);
+
+  manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
+  assert.equal(pty.killCalls.length, 1);
+});
+
+test('only the active presenter may resize the shared PTY', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  manager.attachSession(created.sessionId, { clientId: 'browser-b' });
+  manager.setActivePresenter(created.sessionId, { clientId: 'browser-a' });
+  manager.resizeSession(created.sessionId, { clientId: 'browser-b', cols: 100, rows: 40 });
+  manager.resizeSession(created.sessionId, { clientId: 'browser-a', cols: 132, rows: 36 });
+
+  assert.deepEqual(pty.resizeCalls, [{ cols: 132, rows: 36 }]);
+});
+
+test('buildTerminalEnv prepends executable and user bin paths while preserving existing PATH entries', () => {
+  const env = buildTerminalEnv({
+    HOME: '/Users/tester',
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+  });
+
+  const entries = env.PATH.split(':');
+  assert.equal(entries.includes(path.dirname(process.execPath)), true);
+  assert.equal(entries.includes('/Users/tester/.bun/bin'), true);
+  assert.equal(entries.includes('/Users/tester/.homebrew/bin'), true);
+  assert.equal(entries.includes('/Users/tester/.homebrew/sbin'), true);
+  assert.equal(entries.includes('/Users/tester/.local/bin'), true);
+  assert.equal(entries.includes('/usr/local/bin'), true);
+  assert.equal(entries.includes('/usr/bin'), true);
+  assert.equal(entries.includes('/bin'), true);
+});
+
+test('session manager passes the normalized PATH into the pty factory', () => {
+  const spawnCalls = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: (shell, args, options) => {
+      spawnCalls.push({ shell, args, options });
+      return createFakePty();
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+
+  const envPath = spawnCalls[0].options.env.PATH;
+  assert.equal(envPath.includes(path.dirname(process.execPath)), true);
+  assert.equal(envPath.includes('/usr/bin'), true);
 });
