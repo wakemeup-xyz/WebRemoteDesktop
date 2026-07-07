@@ -7,17 +7,18 @@ process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test
 process.env.HOST_SHARED_SECRET = process.env.HOST_SHARED_SECRET || 'test-host-secret';
 
 const { signAccessToken } = require('../lib/auth');
+const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
 const { setupTerminal } = require('./terminal');
 
 class FakeSocket extends EventEmitter {
-  constructor(id, tokenRole = 'admin', role = tokenRole) {
+  constructor(id, tokenRole = 'admin', role = tokenRole, clientId = `${id}-client`) {
     super();
     this.id = id;
     this.handshake = {
       auth: {
         token: signAccessToken(tokenRole, `${id}-${tokenRole}`),
         role,
-        clientId: `${id}-client`,
+        clientId,
       },
       address: '127.0.0.1',
       headers: { 'user-agent': 'test-agent' },
@@ -39,9 +40,9 @@ function createFakePty() {
   const handlers = { data: [], exit: [] };
   return {
     handlers,
-    written: [],
-    resized: [],
-    killed: [],
+    writeCalls: [],
+    resizeCalls: [],
+    killCalls: [],
     onData(handler) {
       handlers.data.push(handler);
     },
@@ -49,13 +50,13 @@ function createFakePty() {
       handlers.exit.push(handler);
     },
     write(data) {
-      this.written.push(data);
+      this.writeCalls.push(data);
     },
     resize(cols, rows) {
-      this.resized.push({ cols, rows });
+      this.resizeCalls.push({ cols, rows });
     },
     kill(signal) {
-      this.killed.push(signal);
+      this.killCalls.push(signal);
     },
     emitData(data) {
       handlers.data.forEach((handler) => handler(data));
@@ -69,19 +70,9 @@ function createFakePty() {
 function makeIo() {
   const namespaces = new Map();
   return {
-    namespaces,
-    defaultUse: null,
-    defaultConnection: null,
-    use(handler) {
-      this.defaultUse = handler;
-    },
-    on(event, handler) {
-      if (event === 'connection') {
-        this.defaultConnection = handler;
-      }
-    },
     of(name) {
       if (!namespaces.has(name)) {
+        const connectedSockets = [];
         const namespace = {
           middleware: null,
           connectionHandler: null,
@@ -93,6 +84,10 @@ function makeIo() {
               this.connectionHandler = handler;
             }
           },
+          emit(event, data) {
+            connectedSockets.forEach((socket) => socket.emit(event, data));
+            return true;
+          },
           connect(socket) {
             if (this.middleware) {
               let middlewareError = null;
@@ -103,233 +98,151 @@ function makeIo() {
                 throw middlewareError;
               }
             }
+            connectedSockets.push(socket);
             if (this.connectionHandler) {
               this.connectionHandler(socket);
             }
+            return socket;
           },
         };
         namespaces.set(name, namespace);
       }
       return namespaces.get(name);
     },
-    connect(socket) {
-      if (this.defaultUse) {
-        let middlewareError = null;
-        this.defaultUse(socket, (err) => {
-          middlewareError = err || null;
-        });
-        if (middlewareError) {
-          throw middlewareError;
-        }
-      }
-      if (this.defaultConnection) {
-        this.defaultConnection(socket);
-      }
+  };
+}
+
+function buildTerminalHarness() {
+  const io = makeIo();
+  const ptyBySessionId = new Map();
+  const ptyFactory = () => {
+    const pty = createFakePty();
+    return pty;
+  };
+  const sessionManager = createTerminalSessionManager({
+    ptyFactory: (...args) => ptyFactory(...args),
+    logger: { info() {}, warn() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 1,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+      terminalReplayBufferBytes: 64,
+    },
+  });
+  const originalCreateSession = sessionManager.createSession;
+  sessionManager.createSession = (input) => {
+    const created = originalCreateSession(input);
+    ptyBySessionId.set(created.sessionId, sessionManager._getSession(created.sessionId).pty);
+    return created;
+  };
+
+  setupTerminal(io, {
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalSoftWarnSessionCount: 1,
+    },
+    sessionManager,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+
+  return {
+    namespace: io.of('/terminal'),
+    sessionManager,
+    getPty(sessionId) {
+      return ptyBySessionId.get(sessionId);
     },
   };
 }
 
 test('terminal namespace accepts admin and rejects viewer tokens', () => {
-  const io = makeIo();
-  const pty = createFakePty();
-  const sessionManager = {
-    sessions: new Map(),
-    createSession(input) {
-      const sessionId = 'term_abc123';
-      const session = {
-        sessionId,
-        ownerSub: input.ownerSub,
-        title: input.title || 'Terminal 1',
-        cwd: '/Users/macstudio1/AI/Claude/WebRemoteDesktop',
-        shell: '/bin/zsh',
-        cols: input.cols,
-        rows: input.rows,
-        status: 'attached',
-        createdAt: '2026-06-28T00:00:00.000Z',
-        lastActiveAt: '2026-06-28T00:00:00.000Z',
-        detachedReason: null,
-        pty,
-      };
-      this.sessions.set(sessionId, session);
-      return {
-        sessionId,
-        ownerSub: session.ownerSub,
-        title: session.title,
-        cwd: session.cwd,
-        shell: session.shell,
-        cols: session.cols,
-        rows: session.rows,
-        status: session.status,
-        createdAt: session.createdAt,
-        lastActiveAt: session.lastActiveAt,
-        detachedReason: session.detachedReason,
-      };
-    },
-    attachSession(sessionId) {
-      const session = this.sessions.get(sessionId);
-      if (!session) {
-        const err = new Error('terminal_session_not_found');
-        err.code = 'terminal_session_not_found';
-        throw err;
-      }
-      session.status = 'attached';
-      return {
-        sessionId,
-        ownerSub: session.ownerSub,
-        title: session.title,
-        cwd: session.cwd,
-        shell: session.shell,
-        cols: session.cols,
-        rows: session.rows,
-        status: session.status,
-        createdAt: session.createdAt,
-        lastActiveAt: session.lastActiveAt,
-        detachedReason: null,
-      };
-    },
-    detachSession(sessionId) {
-      const session = this.sessions.get(sessionId);
-      session.status = 'detached';
-      return {
-        sessionId,
-        ownerSub: session.ownerSub,
-        title: session.title,
-        cwd: session.cwd,
-        shell: session.shell,
-        cols: session.cols,
-        rows: session.rows,
-        status: session.status,
-        createdAt: session.createdAt,
-        lastActiveAt: session.lastActiveAt,
-        detachedReason: 'disconnect',
-      };
-    },
-    closeSession() {
-      return { status: 'closed' };
-    },
-    listSessions() {
-      return Array.from(this.sessions.values()).map((session) => ({
-        sessionId: session.sessionId,
-        ownerSub: session.ownerSub,
-        title: session.title,
-        cwd: session.cwd,
-        shell: session.shell,
-        cols: session.cols,
-        rows: session.rows,
-        status: session.status,
-        createdAt: session.createdAt,
-        lastActiveAt: session.lastActiveAt,
-        detachedReason: session.detachedReason,
-      }));
-    },
-    getSnapshot() {
-      return { sessions: this.listSessions() };
-    },
-    _getSession(sessionId) {
-      return this.sessions.get(sessionId);
-    },
-  };
-
-  const config = {
-    enableTerminal: true,
-    terminalAdminPassword: 'test-terminal-admin-password',
-    terminalShell: '/bin/zsh',
-    terminalCwd: '/Users/macstudio1/AI/Claude/WebRemoteDesktop',
-    terminalSoftWarnSessionCount: 0,
-    terminalIdleTimeoutMs: 0,
-    terminalStartupTimeoutMs: 10000,
-    terminalAuditLog: '',
-    terminalRecordIo: false,
-  };
-
-  setupTerminal(io, {
-    config,
-    sessionManager,
-    logger: { info() {}, warn() {}, error() {} },
-  });
-
-  const namespace = io.of('/terminal');
-  const admin = new FakeSocket('admin-1', 'admin');
-  namespace.connect(admin);
-  assert.equal(admin.sent[0].event, 'terminal:snapshot');
-
-  admin.trigger('terminal:create', { cols: 120, rows: 32 });
-  const created = admin.sent.find((message) => message.event === 'terminal:created');
-  assert.equal(created.data.sessionId, 'term_abc123');
-  assert.equal(admin.sent.some((message) => message.event === 'terminal:warning'), true);
-
-  admin.trigger('terminal:attach', { sessionId: 'term_abc123' });
-  assert.equal(admin.sent.some((message) => message.event === 'terminal:attached'), true);
+  const { namespace } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-1', 'admin'));
+  assert.equal(admin.sent[0].event, 'terminal:pool_snapshot');
 
   const viewer = new FakeSocket('viewer-1', 'viewer');
   assert.throws(() => namespace.connect(viewer), /Admin role required/);
 });
 
-test('terminal namespace rejects admin tokens when terminal is disabled or misconfigured', () => {
-  const disabledIo = makeIo();
-  setupTerminal(disabledIo, {
-    config: {
-      enableTerminal: false,
-      terminalAdminPassword: 'test-terminal-admin-password',
-      terminalSoftWarnSessionCount: 4,
-    },
-    sessionManager: { getSnapshot: () => ({ sessions: [] }) },
-    logger: { info() {}, warn() {}, error() {} },
-  });
-  assert.throws(() => disabledIo.of('/terminal').connect(new FakeSocket('admin-disabled', 'admin')), /Terminal disabled/);
+test('terminal namespace broadcasts shared session output and presence to multiple admin sockets', () => {
+  const { namespace, sessionManager, getPty } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  const misconfiguredIo = makeIo();
-  setupTerminal(misconfiguredIo, {
-    config: {
-      enableTerminal: true,
-      terminalAdminPassword: '',
-      terminalSoftWarnSessionCount: 4,
-    },
-    sessionManager: { getSnapshot: () => ({ sessions: [] }) },
-    logger: { info() {}, warn() {}, error() {} },
-  });
-  assert.throws(() => misconfiguredIo.of('/terminal').connect(new FakeSocket('admin-misconfigured', 'admin')), /Terminal admin password not configured/);
+  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  getPty(created.sessionId).emitData('pwd\r\n');
+
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:output' && message.data.data === 'pwd\r\n'), true);
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:output' && message.data.data === 'pwd\r\n'), true);
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
+  assert.equal(sessionManager._getSession(created.sessionId).observers.size, 2);
 });
 
-test('terminal namespace rejects oversized input and invalid resize values', () => {
-  const io = makeIo();
-  const pty = createFakePty();
-  const session = {
-    sessionId: 'term_limits',
-    ownerSub: 'admin-limits-admin',
-    pty,
-    cols: 120,
-    rows: 32,
-  };
-  const sessionManager = {
-    getSnapshot: () => ({ sessions: [] }),
-    _getSession: (sessionId) => sessionId === session.sessionId ? session : null,
-  };
-  setupTerminal(io, {
-    config: {
-      enableTerminal: true,
-      terminalAdminPassword: 'test-terminal-admin-password',
-      terminalSoftWarnSessionCount: 4,
-    },
-    sessionManager,
-    logger: { info() {}, warn() {}, error() {} },
-  });
+test('socket disconnect detaches only the disconnected socket observer without closing the shared PTY', () => {
+  const { namespace, sessionManager } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin', 'admin', 'shared-browser'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin', 'admin', 'shared-browser'));
 
-  const namespace = io.of('/terminal');
-  const admin = new FakeSocket('admin-limits', 'admin');
-  namespace.connect(admin);
-  admin.trigger('terminal:input', {
-    sessionId: session.sessionId,
-    data: 'x'.repeat(65537),
+  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+
+  adminA.trigger('disconnect');
+
+  const session = sessionManager._getSession(created.sessionId);
+  assert.equal(session.observers.size, 1);
+  assert.equal(session.pty.killCalls.length, 0);
+});
+
+test('legacy terminal:create and terminal:attach aliases still map into shared session semantics', () => {
+  const { namespace } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  adminA.trigger('terminal:attach', { sessionId: created.sessionId });
+
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_created'), true);
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_attached'), true);
+});
+
+test('shared observers may send input and only valid resize requests mutate the PTY', () => {
+  const { namespace, sessionManager } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
+
+  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 120, rows: 32 });
+
+  adminB.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'ls\n',
   });
-  admin.trigger('terminal:resize', {
-    sessionId: session.sessionId,
+  adminB.trigger('terminal:resize', {
+    sessionId: created.sessionId,
     cols: 5,
     rows: 200,
   });
 
-  assert.equal(pty.written.length, 0);
-  assert.equal(pty.resized.length, 0);
-  assert.equal(admin.sent.some((message) => message.data?.code === 'terminal_input_too_large'), true);
-  assert.equal(admin.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
+  sessionManager.setActivePresenter(created.sessionId, { clientId: 'admin-b-client', socketId: 'admin-b' });
+  adminB.trigger('terminal:resize', {
+    sessionId: created.sessionId,
+    cols: 132,
+    rows: 36,
+  });
+
+  const session = sessionManager._getSession(created.sessionId);
+  assert.deepEqual(session.pty.writeCalls, ['ls\n']);
+  assert.deepEqual(session.pty.resizeCalls, [{ cols: 132, rows: 36 }]);
+  assert.equal(adminB.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
 });

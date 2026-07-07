@@ -43,7 +43,7 @@ function createReplayBuffer(limitBytes = 262144) {
       const entry = { seq: ++seq, data: normalized };
       entries.push(entry);
       totalBytes += size;
-      while (totalBytes > limitBytes && entries.length) {
+      while (totalBytes > limitBytes && entries.length > 1) {
         const removed = entries.shift();
         totalBytes -= Buffer.byteLength(String(removed.data || ''), 'utf8');
       }
@@ -150,12 +150,19 @@ function createTerminalSessionManager(options = {}) {
 
   function addObserver(session, input = {}) {
     const clientId = String(input.clientId || '').trim();
+    const socketId = String(input.socketId || '').trim();
+    const observerId = String(input.observerId || socketId || clientId).trim();
     if (!clientId) {
       throw Object.assign(new Error('terminal_client_id_required'), { code: 'terminal_client_id_required' });
     }
-    const existing = session.observers.get(clientId) || {};
-    session.observers.set(clientId, {
+    if (!observerId) {
+      throw Object.assign(new Error('terminal_observer_id_required'), { code: 'terminal_observer_id_required' });
+    }
+    const existing = session.observers.get(observerId) || {};
+    session.observers.set(observerId, {
+      observerId,
       clientId,
+      socketId,
       onData: typeof input.onData === 'function' ? input.onData : existing.onData || null,
       onExit: typeof input.onExit === 'function' ? input.onExit : existing.onExit || null,
       attachedAt: existing.attachedAt || timestamp(),
@@ -276,12 +283,38 @@ function createTerminalSessionManager(options = {}) {
 
   function detachObserver(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    const observerId = String(input.observerId || '').trim();
+    const socketId = String(input.socketId || '').trim();
     const clientId = String(input.clientId || '').trim();
-    if (clientId) {
-      session.observers.delete(clientId);
-      if (session.activePresenterClientId === clientId) {
-        session.activePresenterClientId = session.observers.keys().next().value || null;
+    let removedClientId = '';
+
+    if (observerId && session.observers.has(observerId)) {
+      removedClientId = session.observers.get(observerId)?.clientId || '';
+      session.observers.delete(observerId);
+    } else if (socketId) {
+      for (const [key, observer] of session.observers.entries()) {
+        if (observer.socketId === socketId) {
+          removedClientId = observer.clientId || '';
+          session.observers.delete(key);
+          break;
+        }
       }
+    } else if (clientId) {
+      for (const [key, observer] of session.observers.entries()) {
+        if (observer.clientId === clientId) {
+          removedClientId = observer.clientId || '';
+          session.observers.delete(key);
+          break;
+        }
+      }
+    }
+
+    if (
+      removedClientId &&
+      session.activePresenterClientId === removedClientId &&
+      !Array.from(session.observers.values()).some((observer) => observer.clientId === removedClientId)
+    ) {
+      session.activePresenterClientId = session.observers.values().next().value?.clientId || null;
     }
     updatePresence(session, input.reason || 'detached');
     return snapshotSession(session);
@@ -298,7 +331,7 @@ function createTerminalSessionManager(options = {}) {
   function setActivePresenter(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     const clientId = String(input.clientId || '').trim();
-    if (!clientId || !session.observers.has(clientId)) {
+    if (!clientId || !Array.from(session.observers.values()).some((observer) => observer.clientId === clientId)) {
       return snapshotSession(session);
     }
     session.activePresenterClientId = clientId;
@@ -354,26 +387,63 @@ function createTerminalSessionManager(options = {}) {
     return Array.from(sessions.values()).map(snapshotSession);
   }
 
+  function getPresence(sessionId) {
+    const session = ensureSession(sessionId);
+    return {
+      poolId: pool.poolId,
+      sessionId: session.sessionId,
+      observerCount: session.observers.size,
+      activePresenterClientId: session.activePresenterClientId || null,
+      observers: Array.from(session.observers.values()).map((observer) => ({
+        observerId: observer.observerId,
+        clientId: observer.clientId,
+        socketId: observer.socketId || null,
+        attachedAt: observer.attachedAt,
+        lastAttachedAt: observer.lastAttachedAt,
+      })),
+    };
+  }
+
   function getSnapshot() {
     return {
       sessions: Array.from(sessions.values()).map(snapshotSession),
     };
   }
 
-  function handleSocketDisconnect(input = {}) {
-    const clientId = String(input.clientId || '').trim();
+  function handleSocketDisconnect(input = {}, maybeSocketId = '') {
+    const reason = typeof input === 'string'
+      ? 'socket-disconnect'
+      : (input.reason || 'socket-disconnect');
+    const clientId = typeof input === 'string'
+      ? String(input || '').trim()
+      : String(input.clientId || '').trim();
+    const socketId = typeof input === 'string'
+      ? String(maybeSocketId || '').trim()
+      : String(input.socketId || maybeSocketId || '').trim();
+    const affectedSessionIds = [];
     if (!clientId) {
-      return getPoolSnapshot();
+      return {
+        pool: getPoolSnapshot(),
+        affectedSessionIds,
+      };
     }
     for (const session of sessions.values()) {
-      if (session.observers.has(clientId)) {
+      const hasMatch = Array.from(session.observers.values()).some((observer) => (
+        socketId ? observer.socketId === socketId : observer.clientId === clientId
+      ));
+      if (hasMatch) {
         detachObserver(session.sessionId, {
           clientId,
-          reason: input.reason || 'socket-disconnect',
+          socketId,
+          reason,
         });
+        affectedSessionIds.push(session.sessionId);
       }
     }
-    return getPoolSnapshot();
+    return {
+      pool: getPoolSnapshot(),
+      affectedSessionIds,
+    };
   }
 
   return {
@@ -382,6 +452,7 @@ function createTerminalSessionManager(options = {}) {
     detachObserver,
     detachSession,
     closeSession,
+    getPresence,
     getPoolSnapshot,
     getSnapshot,
     listSessions,
