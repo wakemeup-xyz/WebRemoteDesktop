@@ -333,7 +333,7 @@ function createTerminalSessionManager(options = {}) {
     const clientId = String(input.clientId || '').trim();
     const socketId = String(input.socketId || '').trim();
     if (!clientId || !isObserverAttached(sessionId, { clientId, socketId })) {
-      return snapshotSession(session);
+      throw Object.assign(new Error('terminal_session_not_found'), { code: 'terminal_session_not_found' });
     }
     session.activePresenterClientId = clientId;
     session.lastActiveAt = timestamp();

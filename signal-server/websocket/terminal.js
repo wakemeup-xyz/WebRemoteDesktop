@@ -94,18 +94,6 @@ function setupTerminal(io, options = {}) {
       };
     }
 
-    function isAttachedObserver(session) {
-      if (!session || !session.observers) {
-        return false;
-      }
-      for (const observer of session.observers.values()) {
-        if (observer.socketId === socketId) {
-          return true;
-        }
-      }
-      return false;
-    }
-
     function handleCreate(payload = {}) {
       try {
         const sessionRef = { sessionId: null };

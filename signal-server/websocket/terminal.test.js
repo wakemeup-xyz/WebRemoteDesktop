@@ -294,3 +294,27 @@ test('shared observers may send input and must use the websocket active-presente
   assert.equal(adminB.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b-client'), true);
 });
+
+test('terminal:set_active_presenter rejects callers that are not attached observers', () => {
+  const { namespace } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
+
+  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  const successEventsBefore = adminB.sent.filter((message) => (
+    message.event === 'terminal:session_attached' || message.event === 'terminal:attached'
+  )).length;
+
+  adminB.trigger('terminal:set_active_presenter', {
+    sessionId: created.sessionId,
+  });
+
+  const successEventsAfter = adminB.sent.filter((message) => (
+    message.event === 'terminal:session_attached' || message.event === 'terminal:attached'
+  )).length;
+
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'terminal_session_not_found'), true);
+  assert.equal(successEventsAfter, successEventsBefore);
+});
