@@ -257,6 +257,26 @@ globalThis.__UI = UI;`, context);
   return context.__UI;
 }
 
+function createSocketDouble() {
+  const handlers = new Map();
+  return {
+    connected: false,
+    handlers,
+    emitted: [],
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+    emit(event, payload) {
+      this.emitted.push({ event, payload });
+    },
+    disconnectCalls: 0,
+    disconnect() {
+      this.disconnectCalls += 1;
+      this.connected = false;
+    },
+  };
+}
+
 test('TerminalUI tracks multiple tabs and active attachment', () => {
   const { TerminalUI } = loadTerminal();
   const ui = TerminalUI.create({ softWarnCount: 8 });
@@ -578,7 +598,31 @@ test('TerminalPanel keeps the terminal socket alive when the user switches back 
 });
 
 test('TerminalPanel restores replayed output after reattach using the last active shared session id', () => {
-  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  function BufferingTerminal() {
+    return {
+      buffer: '',
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write(data) {
+        this.buffer += String(data);
+      },
+      reset() {
+        this.buffer = '';
+      },
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal({
+    Terminal: BufferingTerminal,
+  });
   sessionStorageMap.set(tokenKey, 'admin-token');
   TerminalPanel.cacheElements();
   TerminalPanel.connectSocket();
@@ -593,6 +637,7 @@ test('TerminalPanel restores replayed output after reattach using the last activ
 
   const term = TerminalPanel.terms.get('term_keep');
   assert.ok(term, 'shared terminal instance should exist');
+  assert.equal(term.buffer, 'npm test\r\n');
   assert.equal(TerminalPanel.state.getSession('term_keep').status, 'attached');
 });
 
@@ -713,4 +758,67 @@ test('TerminalPanel replay restore replaces existing rendered output on same-pag
   });
 
   assert.equal(term.buffer, 'npm test\r\n');
+});
+
+test('foreign terminal:session_created must not steal active selection after this client clicks 新建', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_existing', title: 'Existing shared shell' });
+  TerminalPanel.activateSession('term_existing', { announce: false });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.createSession();
+
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:create_session'), true);
+
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_foreign',
+    title: 'Foreign shared shell',
+    creatorClientId: 'browser_other',
+  });
+
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_existing');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_existing');
+});
+
+test('stale token connect_error then reauthorize recreates the terminal socket with the new token', async () => {
+  const sockets = [];
+  const ioCalls = [];
+  const fetchCalls = [];
+  const { TerminalPanel, sessionStorageMap, tokenKey, elements } = loadTerminal({
+    io: (url, options) => {
+      ioCalls.push({ url, options });
+      const socket = createSocketDouble();
+      sockets.push(socket);
+      return socket;
+    },
+    fetch: async (_url, options) => {
+      fetchCalls.push(options);
+      return {
+        ok: true,
+        json: async () => ({ token: 'fresh-token' }),
+      };
+    },
+  });
+  sessionStorageMap.set(tokenKey, 'stale-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+
+  assert.equal(ioCalls.length, 1);
+  assert.equal(ioCalls[0].options.auth.token, 'stale-token');
+
+  sockets[0].handlers.get('connect_error')({ message: 'Unauthorized' });
+  elements.get('terminalAdminPassword').value = 'new-password';
+
+  await TerminalPanel.authorize();
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(sessionStorageMap.get(tokenKey), 'fresh-token');
+  assert.equal(ioCalls.length, 2);
+  assert.equal(sockets[0].disconnectCalls, 1);
+  assert.equal(ioCalls[1].options.auth.token, 'fresh-token');
 });

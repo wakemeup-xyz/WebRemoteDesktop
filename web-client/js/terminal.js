@@ -139,7 +139,9 @@ const TerminalPanel = {
   fitTimer: null,
   softWarnSessionCount: 4,
   isVisible: false,
-  pendingCreateSession: false,
+  pendingCreateClientId: null,
+  socketAuthToken: null,
+  socketState: 'idle',
 
   init() {
     this.cacheElements();
@@ -257,10 +259,14 @@ const TerminalPanel = {
   },
 
   connectSocket() {
-    if (this.socket) return;
-
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
+    const canReuseSocket = this.socket
+      && this.socket.connected
+      && this.socketAuthToken === token
+      && this.socketState !== 'error';
+    if (canReuseSocket) return;
+    this.destroySocket();
 
     this.socket = io(`${RuntimeConfig.getSocketBase()}/terminal`, {
       auth: {
@@ -269,19 +275,24 @@ const TerminalPanel = {
       },
       transports: ['websocket', 'polling'],
     });
+    this.socketAuthToken = token;
+    this.socketState = 'connecting';
 
     this.socket.on('connect', () => {
+      this.socketState = 'connected';
       this.setStatus('共享控制台已连接', 'connected');
       this.reattachSessions();
       this.socket.emit('terminal:list', {});
       this.render();
     });
     this.socket.on('disconnect', () => {
+      this.socketState = 'disconnected';
       this.setStatus('断线重连中', 'warning');
       this.state.getSessions().forEach((session) => this.state.updateStatus(session.sessionId, 'detached'));
       this.render();
     });
     this.socket.on('connect_error', (err) => {
+      this.socketState = 'error';
       this.setStatus(`连接失败：${err.message}`, 'error');
     });
     const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
@@ -339,7 +350,7 @@ const TerminalPanel = {
       this.setStatus('正在连接终端服务', 'warning');
       return;
     }
-    this.pendingCreateSession = true;
+    this.pendingCreateClientId = this.getBrowserSessionId();
     this.socket.emit('terminal:create_session', {
       cols: 120,
       rows: 32,
@@ -406,10 +417,13 @@ const TerminalPanel = {
 
   handleSessionCreated(session) {
     const lastActiveSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    const shouldActivate = this.pendingCreateSession
-      || !this.state.activeSessionId()
+    const createdByCurrentClient = this.didCurrentClientCreateSession(session);
+    const shouldActivate = createdByCurrentClient
+      || (!this.state.activeSessionId() && !this.pendingCreateClientId)
       || session.sessionId === lastActiveSessionId;
-    this.pendingCreateSession = false;
+    if (createdByCurrentClient) {
+      this.pendingCreateClientId = null;
+    }
     this.ensureSession(session, { activate: shouldActivate });
     if (shouldActivate) {
       this.persistActiveSessionId(session.sessionId);
@@ -425,14 +439,22 @@ const TerminalPanel = {
   },
 
   attachSessionState(session) {
+    const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
+      || Boolean(this.pendingCreateClientId);
     this.ensureSession(session, {
-      activate: session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
+      activate: shouldActivate,
     });
+    if (this.pendingCreateClientId) {
+      this.pendingCreateClientId = null;
+    }
     this.state.updateSession(session.sessionId, {
       status: session.status || 'attached',
       observerCount: Number(session.observerCount ?? this.state.getSession(session.sessionId)?.observerCount ?? 0),
       activePresenterClientId: session.activePresenterClientId ?? this.state.getSession(session.sessionId)?.activePresenterClientId ?? null,
     });
+    if (shouldActivate) {
+      this.persistActiveSessionId(session.sessionId);
+    }
     if (this.state.activeSessionId() === session.sessionId) {
       this.announceActivePresenter(session.sessionId);
     }
@@ -580,8 +602,25 @@ const TerminalPanel = {
     localStorage.setItem(LAST_ACTIVE_SESSION_KEY, sessionId);
   },
 
+  destroySocket() {
+    if (this.socket?.disconnect) {
+      this.socket.disconnect();
+    }
+    this.socket = null;
+    this.socketState = 'idle';
+    this.socketAuthToken = null;
+  },
+
   syncPersistedActiveSession() {
     this.persistActiveSessionId(this.state.activeSessionId() || '');
+  },
+
+  didCurrentClientCreateSession(session = {}) {
+    return Boolean(
+      session.creatorClientId
+      && this.pendingCreateClientId
+      && session.creatorClientId === this.pendingCreateClientId
+    );
   },
 
   resetRenderedTerm(sessionId) {
