@@ -321,6 +321,10 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 ## Web Terminal 约束
 
 - Terminal 只在 Viewer 里开启，前提是先完成 Viewer 登录，再做 admin 二次授权
-- Terminal 可开多个标签页，关闭标签页不会立刻销毁 PTY，直到手动关闭会话或服务重启
+- Terminal 是所有 admin 已授权用户共用的 shared shell session pool，而不是单浏览器私有会话
+- 多个浏览器可以同时附着到同一个共享 shell；输入是共享的，并会立即作用到同一个 PTY
+- 关闭某个 Terminal 标签页或整个 Viewer 页面，只会断开该浏览器，不会 kill 底层 PTY；会话会保留到显式关闭或服务重启
+- Viewer 的 `断开连接` 按钮以及网络模式切换只影响远程桌面链路，不会关闭 Terminal 会话
+- `signal-server` / Host 重启通常会保留当前 tunnel 地址，但共享 Terminal 会话在内存中维护，因此会随服务重启结束
 - Terminal 失败应直接报错并上送诊断日志，不要自动退回媒体 tunnel 或 TURN
 - `http://localhost:5173/` 只作为前端开发映射时的 API 入口，不是当前仓库的正式页面入口

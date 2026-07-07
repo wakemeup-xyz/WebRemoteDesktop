@@ -228,7 +228,11 @@ http://127.0.0.1:8080
 ### Web Terminal
 
 - Viewer 仍然是默认入口，Terminal 需要在 Viewer 登录后再做一次 admin 二次授权
-- Terminal 支持多会话标签页，关闭标签页不会立刻销毁 PTY，直到手动关闭会话或服务重启
+- Terminal 是所有完成 admin 二次授权用户共用的 shared shell session pool
+- 多个浏览器可同时附着到同一个共享会话；任一浏览器输入都会立即作用到同一个 shell
+- 关闭当前 Terminal 标签页或整个 Viewer 页面，只会让该浏览器断开附着，不会 kill 底层 PTY；会话会持续到显式关闭或服务重启
+- Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
+- `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
 - Terminal 只走浏览器会话内的 Socket.IO / HTTPS 通道，不接入 STUN / TURN / WebRTC 媒体链路
 - `http://localhost:5173/` 仅用于前端开发映射时的 API 代理，不是当前仓库的正式入口
 - 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
@@ -318,8 +322,9 @@ WebRemoteDesktop/
 2. 它会只复用或启动本仓库的 `signal-server`、`python-host`、safe quick tunnel
 3. 不会停止 `/Users/macstudio1/AI/Claude/StockHub` 的服务
 4. 若 safe quick tunnel 已在运行，重启本地服务时会继续复用它，因此公网地址默认保持不变
-5. 成功后可从 `/tmp/wrd-safe-current-url.txt` 读取公网地址
-6. 读取到地址后，仍应继续执行 `./scripts/status-safe-wrd.sh` 和一次外部可达性校验，再把链接发给使用者
+5. 每次启动或重启本地服务后，都要从运行配置回报 `VIEWER_ACCESS_PASSWORD` 和 `WRD_TERMINAL_ADMIN_PASSWORD`
+6. 成功后可从 `/tmp/wrd-safe-current-url.txt` 读取公网地址
+7. 读取到地址后，仍应继续执行 `./scripts/status-safe-wrd.sh` 和一次外部可达性校验，再把链接发给使用者
 
 ### 一键安全停止
 

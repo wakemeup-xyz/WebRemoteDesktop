@@ -126,11 +126,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 - [ ] **Terminal tab**：在现有 Viewer 页面中增加 Terminal tab，用户无需离开当前网页
 - [ ] **二次授权**：Viewer 登录后，Terminal 需要单独的 admin 二次授权
-- [ ] **浏览器会话级授权**：同一浏览器会话内，多个 Terminal tab 共享一次 admin 授权
+- [ ] **共享授权入口**：完成 Terminal admin 二次授权的浏览器可以接入共享 shell session pool，不把 PTY 绑定到单一浏览器
 - [ ] **完整 shell**：Terminal 直接连接本机完整 shell，不限制在项目目录
-- [ ] **多会话**：支持同时打开多个 Terminal，会话之间互不干扰
+- [ ] **共享会话附着**：多个浏览器可同时附着到同一个共享 Terminal 会话，输入立即作用到同一个 shell
 - [ ] **断网重连**：浏览器断网后自动重连到原来的 Terminal，会话和上下文保留
-- [ ] **手动关闭才销毁**：Terminal 会话默认一直保留，直到用户手动关闭或服务重启
+- [ ] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
+- [ ] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
 - [ ] **软提示**：不设硬上限，但当会话数量较多时给出明显性能提示
 - [ ] **开发映射**：本机 `http://localhost:5173/` 打开的网页也要能通过映射访问同一套 Terminal 服务
 - [ ] **审计日志**：记录 admin 登录、Terminal 创建、断开、重连、关闭和错误
@@ -139,7 +140,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 **Terminal 安全约束**：
 - Terminal 默认关闭，必须显式开启
 - Terminal 使用独立 admin 密码，不复用普通 Viewer 密码
-- admin 授权只保存在浏览器 session 内，不默认写入持久 localStorage
+- admin 授权只保存在浏览器 session 内，不默认写入持久 localStorage；已授权浏览器仅获得共享会话的附着权限，不拥有浏览器私有 PTY
 - Terminal 不走 STUN / TURN / WebRTC DataChannel，只走 HTTPS / WebSocket
 - 不默认记录完整命令和输出内容，避免泄露密钥
 - 如果 shell 启动失败、权限不足或资源压力过高，必须明确报错或提示，不允许静默降级
@@ -191,6 +192,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 3. 启动 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）
 4. 启动 Python Host：`python host.py`（使用 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
 5. 浏览器访问页面，输入 Viewer 密码登录
+6. 每次本地服务启动或重启后，运维侧必须从运行配置回报 `VIEWER_ACCESS_PASSWORD` 和 `WRD_TERMINAL_ADMIN_PASSWORD`
 
 默认推荐使用：
 
@@ -288,7 +290,7 @@ WebRemoteDesktop/
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
-- **Terminal 会话**：Terminal 默认不设硬上限，但会在会话数较多时提示性能风险；断网后会话保留并自动重连到原 session，直到用户手动关闭或服务重启
+- **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
 - **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化
 - **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准，只有用户明确要求或 tunnel 已失效时才重建
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 HTTP 可达性，不能仅凭“拿到 URL”就判断公网入口已经成功
