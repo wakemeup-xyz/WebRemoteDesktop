@@ -100,6 +100,24 @@ def find_signal_pid(project_dir: Path) -> str:
     return ""
 
 
+def stop_existing_signal(project_dir: Path) -> None:
+    old_pid = find_signal_pid(project_dir) or read_text(SAFE_SIGNAL_PID)
+    subprocess.run(["launchctl", "remove", "com.webremotedesktop.signal"], check=False)
+    if old_pid and pid_alive(old_pid):
+        subprocess.run(["kill", old_pid], check=False)
+        for _ in range(10):
+            if not pid_alive(old_pid):
+                break
+            time.sleep(0.5)
+        if pid_alive(old_pid):
+            subprocess.run(["kill", "-9", old_pid], check=False)
+            for _ in range(10):
+                if not pid_alive(old_pid):
+                    break
+                time.sleep(0.5)
+    SAFE_SIGNAL_PID.unlink(missing_ok=True)
+
+
 def wait_health() -> None:
     for _ in range(30):
         if subprocess.run(
@@ -129,6 +147,7 @@ def wait_host_online() -> None:
 
 def restart_signal(project_dir: Path) -> str:
     safe_url_before = current_safe_url()
+    stop_existing_signal(project_dir)
     pid = launchctl_submit_signal(project_dir)
     wait_health()
     safe_url_after = current_safe_url()
