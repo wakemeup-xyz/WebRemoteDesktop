@@ -629,3 +629,88 @@ test('TerminalPanel persists the last active shared session id and reattaches on
 
   assert.equal(emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_keep'), true);
 });
+
+test('TerminalPanel persists the replacement active session when the active shared session is closed', () => {
+  const { TerminalPanel, localStorageMap } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_1', title: 'Shared shell 1' });
+  TerminalPanel.ensureSession({ sessionId: 'term_2', title: 'Shared shell 2' });
+  TerminalPanel.activateSession('term_2', { announce: false });
+
+  TerminalPanel.handleSessionClosed({ sessionId: 'term_2' });
+
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_1');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_1');
+});
+
+test('TerminalPanel persists the replacement active session when a pool snapshot removes the active shared session', () => {
+  const { TerminalPanel, localStorageMap } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_1', title: 'Shared shell 1' });
+  TerminalPanel.ensureSession({ sessionId: 'term_2', title: 'Shared shell 2' });
+  TerminalPanel.activateSession('term_2', { announce: false });
+
+  TerminalPanel.applyPoolSnapshot({
+    sessions: [{ sessionId: 'term_1', title: 'Shared shell 1' }],
+  });
+
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_1');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_1');
+});
+
+test('TerminalPanel replay restore replaces existing rendered output on same-page reconnect', () => {
+  function BufferingTerminal() {
+    return {
+      buffer: '',
+      resetCalls: 0,
+      open(container) {
+        this.container = container;
+      },
+      focus() {},
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write(data) {
+        this.buffer += String(data);
+      },
+      reset() {
+        this.resetCalls += 1;
+        this.buffer = '';
+      },
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal({
+    Terminal: BufferingTerminal,
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Shared shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:replay')({
+    sessionId: 'term_keep',
+    replay: [{ seq: 1, data: 'npm test\r\n' }],
+  });
+  const term = TerminalPanel.terms.get('term_keep');
+  assert.equal(term.buffer, 'npm test\r\n');
+
+  fakeSocket.connected = false;
+  socketHandlers.get('disconnect')();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:replay')({
+    sessionId: 'term_keep',
+    replay: [{ seq: 1, data: 'npm test\r\n' }],
+  });
+
+  assert.equal(term.buffer, 'npm test\r\n');
+});

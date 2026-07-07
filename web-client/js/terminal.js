@@ -400,9 +400,7 @@ const TerminalPanel = {
       this.ensureSession(session);
     });
     previousIds.forEach((sessionId) => this.destroyTerm(sessionId));
-    if (!this.state.activeSessionId()) {
-      this.persistActiveSessionId('');
-    }
+    this.syncPersistedActiveSession();
     this.render();
   },
 
@@ -449,9 +447,7 @@ const TerminalPanel = {
   handleSessionClosed(session) {
     this.destroyTerm(session.sessionId);
     this.state.closeTab(session.sessionId);
-    if (!this.state.activeSessionId()) {
-      this.persistActiveSessionId('');
-    }
+    this.syncPersistedActiveSession();
     this.render();
   },
 
@@ -509,6 +505,10 @@ const TerminalPanel = {
           pre.textContent += data;
           pre.scrollTop = pre.scrollHeight;
         },
+        reset() {
+          pre.textContent = '';
+          pre.scrollTop = 0;
+        },
         dispose() {
           container.remove();
         },
@@ -533,9 +533,13 @@ const TerminalPanel = {
   },
 
   writeReplay(sessionId, replay = []) {
+    const hadExistingTerm = this.terms.has(sessionId);
     this.ensureSession({ sessionId }, {
       activate: sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
     });
+    if (hadExistingTerm) {
+      this.resetRenderedTerm(sessionId);
+    }
     replay.forEach((entry) => this.writeOutput(sessionId, entry?.data));
     this.state.updateStatus(sessionId, 'attached');
     this.render();
@@ -547,9 +551,7 @@ const TerminalPanel = {
     }
     this.destroyTerm(sessionId);
     this.state.closeTab(sessionId);
-    if (!this.state.activeSessionId()) {
-      this.persistActiveSessionId('');
-    }
+    this.syncPersistedActiveSession();
     this.render();
   },
 
@@ -576,6 +578,22 @@ const TerminalPanel = {
       return;
     }
     localStorage.setItem(LAST_ACTIVE_SESSION_KEY, sessionId);
+  },
+
+  syncPersistedActiveSession() {
+    this.persistActiveSessionId(this.state.activeSessionId() || '');
+  },
+
+  resetRenderedTerm(sessionId) {
+    const term = this.terms.get(sessionId);
+    if (!term) return;
+    if (typeof term.reset === 'function') {
+      term.reset();
+      return;
+    }
+    if (typeof term.clear === 'function') {
+      term.clear();
+    }
   },
 
   fitActiveTerminal() {
