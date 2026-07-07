@@ -178,6 +178,7 @@ test('terminal namespace broadcasts shared session output and presence to multip
   adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
 
+  assert.equal(created.creatorClientId, 'admin-a-client');
   adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
   getPty(created.sessionId).emitData('pwd\r\n');
 

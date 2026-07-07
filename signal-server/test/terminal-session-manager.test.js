@@ -65,9 +65,11 @@ test('shared session manager stores sessions in the default pool and no longer e
 
   assert.equal(created.poolId, 'default');
   assert.equal(created.observerCount, 1);
+  assert.equal(created.creatorClientId, 'browser-a');
   assert.equal('ownerSub' in created, false);
   assert.equal(manager.getPoolSnapshot().poolId, 'default');
   assert.equal(manager.getPoolSnapshot().sessions[0].sessionId, created.sessionId);
+  assert.equal(manager.getPoolSnapshot().sessions[0].creatorClientId, 'browser-a');
 });
 
 test('shared session manager broadcasts PTY output to every attached observer and replays recent output on reattach', () => {

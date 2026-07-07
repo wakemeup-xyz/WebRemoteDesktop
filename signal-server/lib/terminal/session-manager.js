@@ -107,6 +107,7 @@ function createTerminalSessionManager(options = {}) {
       detachedReason: session.detachedReason || null,
       observerCount: session.observers.size,
       activePresenterClientId: session.activePresenterClientId || null,
+      creatorClientId: session.creatorClientId || null,
       lastReplaySeq: session.replayBuffer.lastSeq(),
     };
   }
@@ -244,6 +245,7 @@ function createTerminalSessionManager(options = {}) {
       observers: new Map(),
       replayBuffer: createReplayBuffer(config.replayBufferBytes),
       activePresenterClientId: null,
+      creatorClientId: String(input.clientId || '').trim() || null,
     };
 
     wirePty(session, pty);
