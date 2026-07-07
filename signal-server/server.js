@@ -70,7 +70,11 @@ function createServerApp(options = {}) {
   });
 
   setupSignaling(io);
-  const terminal = setupTerminal(io, { config, logger });
+  const terminal = setupTerminal(io, {
+    config,
+    logger,
+    ...(options.terminal || {}),
+  });
 
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

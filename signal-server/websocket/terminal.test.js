@@ -215,6 +215,42 @@ test('legacy terminal:create and terminal:attach aliases still map into shared s
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_attached'), true);
 });
 
+test('terminal:detach_session detaches only the calling observer and terminal:close_session removes the shared session', () => {
+  const { namespace, sessionManager } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
+
+  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+
+  adminB.trigger('terminal:detach_session', { sessionId: created.sessionId });
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:session_detached'), true);
+  assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
+
+  adminA.trigger('terminal:close_session', { sessionId: created.sessionId });
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_closed' && message.data.sessionId === created.sessionId), true);
+  assert.equal(sessionManager._getSession(created.sessionId), null);
+});
+
+test('legacy terminal:detach and terminal:close aliases still map into shared session semantics', () => {
+  const { namespace, sessionManager } = buildTerminalHarness();
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
+
+  adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  adminB.trigger('terminal:attach', { sessionId: created.sessionId });
+
+  adminB.trigger('terminal:detach', { sessionId: created.sessionId });
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:session_detached'), true);
+  assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
+
+  adminA.trigger('terminal:close', { sessionId: created.sessionId });
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_closed' && message.data.sessionId === created.sessionId), true);
+  assert.equal(sessionManager._getSession(created.sessionId), null);
+});
+
 test('shared observers may send input and only valid resize requests mutate the PTY', () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
