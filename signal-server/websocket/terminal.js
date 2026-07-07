@@ -64,7 +64,9 @@ function setupTerminal(io, options = {}) {
     });
 
     function emitPoolSnapshot() {
-      terminalNamespace.emit('terminal:pool_snapshot', sessionManager.getPoolSnapshot());
+      const snapshot = sessionManager.getPoolSnapshot();
+      terminalNamespace.emit('terminal:pool_snapshot', snapshot);
+      terminalNamespace.emit('terminal:snapshot', snapshot);
     }
 
     function emitPresence(sessionId) {
@@ -129,6 +131,7 @@ function setupTerminal(io, options = {}) {
         });
         sessionRef.sessionId = created.sessionId;
         terminalNamespace.emit('terminal:session_created', created);
+        terminalNamespace.emit('terminal:created', created);
         emitPoolSnapshot();
         emitPresence(created.sessionId);
         if (sessionManager.getPoolSnapshot().sessions.length > config.terminalSoftWarnSessionCount) {
@@ -159,6 +162,7 @@ function setupTerminal(io, options = {}) {
           replay: attached.replay,
         });
         socket.emit('terminal:session_attached', attached);
+        socket.emit('terminal:attached', attached);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
@@ -177,6 +181,7 @@ function setupTerminal(io, options = {}) {
           reason: payload.reason || 'socket-detach',
         });
         socket.emit('terminal:session_detached', detached);
+        socket.emit('terminal:detached', detached);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
@@ -195,6 +200,7 @@ function setupTerminal(io, options = {}) {
           reason: payload.reason || 'user-close',
         });
         terminalNamespace.emit('terminal:session_closed', closed);
+        terminalNamespace.emit('terminal:closed', closed);
         emitPoolSnapshot();
       } catch (err) {
         socket.emit('terminal:error', {
@@ -204,24 +210,47 @@ function setupTerminal(io, options = {}) {
       }
     }
 
-    socket.emit('terminal:pool_snapshot', sessionManager.getPoolSnapshot());
+    function handleSetActivePresenter(payload = {}) {
+      try {
+        const updated = sessionManager.setActivePresenter(payload.sessionId, {
+          clientId,
+          socketId,
+        });
+        socket.emit('terminal:session_attached', updated);
+        socket.emit('terminal:attached', updated);
+        emitPresence(payload.sessionId);
+        emitPoolSnapshot();
+      } catch (err) {
+        socket.emit('terminal:error', {
+          code: err.code || 'terminal_set_active_presenter_failed',
+          message: err.message,
+        });
+      }
+    }
+
+    const initialSnapshot = sessionManager.getPoolSnapshot();
+    socket.emit('terminal:pool_snapshot', initialSnapshot);
+    socket.emit('terminal:snapshot', initialSnapshot);
 
     socket.on('terminal:list', () => {
-      socket.emit('terminal:pool_snapshot', sessionManager.getPoolSnapshot());
+      const snapshot = sessionManager.getPoolSnapshot();
+      socket.emit('terminal:pool_snapshot', snapshot);
+      socket.emit('terminal:snapshot', snapshot);
     });
 
     socket.on('terminal:create_session', handleCreate);
     socket.on('terminal:attach_session', handleAttach);
     socket.on('terminal:detach_session', handleDetach);
     socket.on('terminal:close_session', handleClose);
+    socket.on('terminal:set_active_presenter', handleSetActivePresenter);
+    socket.on('terminal:set_active_session', handleSetActivePresenter);
     socket.on('terminal:create', handleCreate);
     socket.on('terminal:attach', handleAttach);
     socket.on('terminal:detach', handleDetach);
     socket.on('terminal:close', handleClose);
 
     socket.on('terminal:input', (payload = {}) => {
-      const session = sessionManager._getSession ? sessionManager._getSession(payload.sessionId) : null;
-      if (!session || !isAttachedObserver(session)) {
+      if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
         socket.emit('terminal:error', {
           code: 'terminal_session_not_found',
           message: 'Terminal session not found',
@@ -236,14 +265,22 @@ function setupTerminal(io, options = {}) {
         });
         return;
       }
-      if (session.pty && typeof session.pty.write === 'function') {
-        session.pty.write(data);
+      try {
+        sessionManager.writeInput(payload.sessionId, {
+          clientId,
+          socketId,
+          data,
+        });
+      } catch (err) {
+        socket.emit('terminal:error', {
+          code: err.code || 'terminal_input_failed',
+          message: err.message,
+        });
       }
     });
 
     socket.on('terminal:resize', (payload = {}) => {
-      const session = sessionManager._getSession ? sessionManager._getSession(payload.sessionId) : null;
-      if (!session || !isAttachedObserver(session)) {
+      if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
         socket.emit('terminal:error', {
           code: 'terminal_session_not_found',
           message: 'Terminal session not found',

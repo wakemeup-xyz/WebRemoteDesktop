@@ -331,7 +331,8 @@ function createTerminalSessionManager(options = {}) {
   function setActivePresenter(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     const clientId = String(input.clientId || '').trim();
-    if (!clientId || !Array.from(session.observers.values()).some((observer) => observer.clientId === clientId)) {
+    const socketId = String(input.socketId || '').trim();
+    if (!clientId || !isObserverAttached(sessionId, { clientId, socketId })) {
       return snapshotSession(session);
     }
     session.activePresenterClientId = clientId;
@@ -339,13 +340,43 @@ function createTerminalSessionManager(options = {}) {
     return snapshotSession(session);
   }
 
+  function isObserverAttached(sessionId, input = {}) {
+    const session = ensureSession(sessionId);
+    const clientId = String(input.clientId || '').trim();
+    const socketId = String(input.socketId || '').trim();
+    if (!clientId && !socketId) {
+      return false;
+    }
+    return Array.from(session.observers.values()).some((observer) => {
+      if (socketId) {
+        return observer.socketId === socketId;
+      }
+      return observer.clientId === clientId;
+    });
+  }
+
+  function writeInput(sessionId, input = {}) {
+    const session = ensureSession(sessionId);
+    if (!isObserverAttached(sessionId, input)) {
+      throw Object.assign(new Error('terminal_session_not_found'), { code: 'terminal_session_not_found' });
+    }
+    const data = String(input.data || '');
+    if (session.pty && typeof session.pty.write === 'function') {
+      session.pty.write(data);
+    }
+    session.lastActiveAt = timestamp();
+    return snapshotSession(session);
+  }
+
   function resizeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     const clientId = String(input.clientId || '').trim();
+    const socketId = String(input.socketId || '').trim();
     const cols = Number(input.cols || 0);
     const rows = Number(input.rows || 0);
     if (
       !clientId ||
+      !isObserverAttached(sessionId, { clientId, socketId }) ||
       session.activePresenterClientId !== clientId ||
       !cols ||
       !rows
@@ -452,6 +483,8 @@ function createTerminalSessionManager(options = {}) {
     detachObserver,
     detachSession,
     closeSession,
+    isObserverAttached,
+    writeInput,
     getPresence,
     getPoolSnapshot,
     getSnapshot,

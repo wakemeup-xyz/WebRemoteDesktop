@@ -218,6 +218,48 @@ test('only the active presenter may resize the shared PTY', () => {
   assert.deepEqual(pty.resizeCalls, [{ cols: 132, rows: 36 }]);
 });
 
+test('session manager exposes public observer, input, presenter, and resize methods without requiring internal session access', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    cols: 80,
+    rows: 24,
+  });
+  manager.attachSession(created.sessionId, {
+    clientId: 'browser-b',
+    socketId: 'socket-b',
+  });
+
+  assert.equal(manager.isObserverAttached(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a' }), true);
+  assert.equal(manager.isObserverAttached(created.sessionId, { clientId: 'browser-c', socketId: 'socket-c' }), false);
+
+  manager.writeInput(created.sessionId, { clientId: 'browser-b', socketId: 'socket-b', data: 'pwd\n' });
+  manager.resizeSession(created.sessionId, { clientId: 'browser-b', socketId: 'socket-b', cols: 100, rows: 30 });
+  assert.deepEqual(pty.resizeCalls, []);
+
+  manager.setActivePresenter(created.sessionId, { clientId: 'browser-b', socketId: 'socket-b' });
+  manager.resizeSession(created.sessionId, { clientId: 'browser-b', socketId: 'socket-b', cols: 100, rows: 30 });
+
+  assert.deepEqual(pty.writeCalls, ['pwd\n']);
+  assert.deepEqual(pty.resizeCalls, [{ cols: 100, rows: 30 }]);
+});
+
 test('buildTerminalEnv prepends executable and user bin paths while preserving existing PATH entries', () => {
   const env = buildTerminalEnv({
     HOME: '/Users/tester',

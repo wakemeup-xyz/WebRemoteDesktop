@@ -164,6 +164,7 @@ test('terminal namespace accepts admin and rejects viewer tokens', () => {
   const { namespace } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-1', 'admin'));
   assert.equal(admin.sent[0].event, 'terminal:pool_snapshot');
+  assert.equal(admin.sent.some((message) => message.event === 'terminal:snapshot'), true);
 
   const viewer = new FakeSocket('viewer-1', 'viewer');
   assert.throws(() => namespace.connect(viewer), /Admin role required/);
@@ -212,7 +213,9 @@ test('legacy terminal:create and terminal:attach aliases still map into shared s
   adminA.trigger('terminal:attach', { sessionId: created.sessionId });
 
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_created'), true);
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:created'), true);
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_attached'), true);
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:attached'), true);
 });
 
 test('terminal:detach_session detaches only the calling observer and terminal:close_session removes the shared session', () => {
@@ -248,10 +251,11 @@ test('legacy terminal:detach and terminal:close aliases still map into shared se
 
   adminA.trigger('terminal:close', { sessionId: created.sessionId });
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_closed' && message.data.sessionId === created.sessionId), true);
+  assert.equal(adminA.sent.some((message) => message.event === 'terminal:closed' && message.data.sessionId === created.sessionId), true);
   assert.equal(sessionManager._getSession(created.sessionId), null);
 });
 
-test('shared observers may send input and only valid resize requests mutate the PTY', () => {
+test('shared observers may send input and must use the websocket active-presenter flow before resize mutates the PTY', () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
@@ -269,16 +273,24 @@ test('shared observers may send input and only valid resize requests mutate the 
     cols: 5,
     rows: 200,
   });
-
-  sessionManager.setActivePresenter(created.sessionId, { clientId: 'admin-b-client', socketId: 'admin-b' });
   adminB.trigger('terminal:resize', {
     sessionId: created.sessionId,
     cols: 132,
     rows: 36,
   });
 
+  adminB.trigger('terminal:set_active_presenter', {
+    sessionId: created.sessionId,
+  });
+  adminB.trigger('terminal:resize', {
+    sessionId: created.sessionId,
+    cols: 144,
+    rows: 40,
+  });
+
   const session = sessionManager._getSession(created.sessionId);
   assert.deepEqual(session.pty.writeCalls, ['ls\n']);
-  assert.deepEqual(session.pty.resizeCalls, [{ cols: 132, rows: 36 }]);
+  assert.deepEqual(session.pty.resizeCalls, [{ cols: 144, rows: 40 }]);
   assert.equal(adminB.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b-client'), true);
 });
