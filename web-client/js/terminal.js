@@ -1,4 +1,5 @@
 const TERMINAL_ADMIN_TOKEN_KEY = 'wrd_terminal_admin_token';
+const LAST_ACTIVE_SESSION_KEY = 'wrd_terminal_last_active_session_id';
 
 function createTerminalState(options = {}) {
   const softWarnCount = Number(options.softWarnCount || 4);
@@ -6,19 +7,51 @@ function createTerminalState(options = {}) {
   let activeSessionId = null;
   let warning = '';
 
-  function openTab(session) {
-    const normalized = {
+  function normalizeSession(session = {}, fallbackIndex = sessions.size + 1) {
+    const previous = sessions.get(session.sessionId) || {};
+    return {
+      ...previous,
+      ...session,
       sessionId: session.sessionId,
-      title: session.title || `Terminal ${sessions.size + 1}`,
-      status: session.status || 'running',
-      warning: session.warning || '',
+      title: session.title || previous.title || `Terminal ${fallbackIndex}`,
+      status: session.status || previous.status || 'running',
+      warning: session.warning || previous.warning || '',
+      observerCount: Number(session.observerCount ?? previous.observerCount ?? 0),
+      activePresenterClientId: session.activePresenterClientId ?? previous.activePresenterClientId ?? null,
     };
+  }
+
+  function upsertSession(session, options = {}) {
+    const normalized = normalizeSession(session);
     sessions.set(normalized.sessionId, normalized);
-    activeSessionId = normalized.sessionId;
+    if (options.activate || !activeSessionId) {
+      activeSessionId = normalized.sessionId;
+    }
     if (sessions.size > softWarnCount) {
       warning = '终端会话较多，可能影响性能';
     }
     return normalized;
+  }
+
+  function replaceSessions(nextSessions = []) {
+    const seen = new Set();
+    nextSessions.forEach((session, index) => {
+      const normalized = normalizeSession(session, index + 1);
+      sessions.set(normalized.sessionId, normalized);
+      seen.add(normalized.sessionId);
+    });
+    Array.from(sessions.keys()).forEach((sessionId) => {
+      if (!seen.has(sessionId)) {
+        sessions.delete(sessionId);
+      }
+    });
+    if (activeSessionId && !sessions.has(activeSessionId)) {
+      activeSessionId = sessions.size ? Array.from(sessions.keys()).at(0) : null;
+    }
+    if (!activeSessionId && sessions.size) {
+      activeSessionId = Array.from(sessions.keys()).at(0);
+    }
+    warning = sessions.size > softWarnCount ? '终端会话较多，可能影响性能' : '';
   }
 
   function closeTab(sessionId) {
@@ -37,11 +70,15 @@ function createTerminalState(options = {}) {
     }
   }
 
-  function updateStatus(sessionId, status) {
+  function updateSession(sessionId, patch = {}) {
     const session = sessions.get(sessionId);
     if (session) {
-      session.status = status;
+      Object.assign(session, patch);
     }
+  }
+
+  function updateStatus(sessionId, status) {
+    updateSession(sessionId, { status });
   }
 
   function setWarning(message) {
@@ -49,9 +86,11 @@ function createTerminalState(options = {}) {
   }
 
   return {
-    openTab,
+    upsertSession,
+    replaceSessions,
     closeTab,
     setActive,
+    updateSession,
     updateStatus,
     setWarning,
     activeSessionId: () => activeSessionId,
@@ -70,7 +109,7 @@ const TerminalUI = {
         const session = typeof sessionOrId === 'string'
           ? { sessionId: sessionOrId }
           : sessionOrId;
-        return state.openTab(session);
+        return state.upsertSession(session, { activate: true });
       },
       setActive(sessionId) {
         state.setActive(sessionId);
@@ -79,6 +118,7 @@ const TerminalUI = {
         state.setActive(sessionId);
         state.updateStatus(sessionId, 'attached');
       },
+      replaceSessions: state.replaceSessions,
       updateStatus: state.updateStatus,
       closeTab: state.closeTab,
       activeSessionId: state.activeSessionId,
@@ -96,8 +136,10 @@ const TerminalPanel = {
   terms: new Map(),
   fitAddons: new Map(),
   focusTimer: null,
+  fitTimer: null,
   softWarnSessionCount: 4,
   isVisible: false,
+  pendingCreateSession: false,
 
   init() {
     this.cacheElements();
@@ -132,7 +174,10 @@ const TerminalPanel = {
       this.authorize();
     });
     this.elements.newButton?.addEventListener('click', () => this.createSession());
-    window.addEventListener('resize', () => this.fitActiveTerminal());
+    window.addEventListener('resize', () => {
+      this.fitActiveTerminal();
+      this.scheduleFitActiveTerminal();
+    });
   },
 
   showDesktop() {
@@ -156,6 +201,7 @@ const TerminalPanel = {
     }
     this.render();
     this.fitActiveTerminal();
+    this.scheduleFitActiveTerminal();
     this.focusActiveTerminal();
     this.scheduleFocusActiveTerminal();
   },
@@ -201,6 +247,7 @@ const TerminalPanel = {
       }
       sessionStorage.setItem(TERMINAL_ADMIN_TOKEN_KEY, body.token);
       this.elements.authPassword.value = '';
+      this.releaseTerminalControlFocus();
       this.setStatus('已授权', 'connected');
       this.connectSocket();
       this.render();
@@ -210,11 +257,7 @@ const TerminalPanel = {
   },
 
   connectSocket() {
-    if (this.socket?.connected) return;
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    if (this.socket) return;
 
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
@@ -228,9 +271,10 @@ const TerminalPanel = {
     });
 
     this.socket.on('connect', () => {
-      this.setStatus('已连接', 'connected');
+      this.setStatus('共享控制台已连接', 'connected');
       this.reattachSessions();
       this.socket.emit('terminal:list', {});
+      this.render();
     });
     this.socket.on('disconnect', () => {
       this.setStatus('断线重连中', 'warning');
@@ -240,37 +284,32 @@ const TerminalPanel = {
     this.socket.on('connect_error', (err) => {
       this.setStatus(`连接失败：${err.message}`, 'error');
     });
-    this.socket.on('terminal:snapshot', (payload) => {
-      (payload.sessions || []).forEach((session) => this.ensureSession(session));
-      this.render();
-    });
-    this.socket.on('terminal:created', (session) => {
-      this.ensureSession(session);
-      this.render();
-      this.fitActiveTerminal();
-      this.focusActiveTerminal();
-      this.scheduleFocusActiveTerminal();
-    });
-    this.socket.on('terminal:attached', (session) => {
-      this.ensureSession(session);
-      this.state.updateStatus(session.sessionId, 'attached');
-      this.render();
-      this.fitActiveTerminal();
-      this.focusActiveTerminal();
-      this.scheduleFocusActiveTerminal();
-    });
+    const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
+    const handleSessionCreated = (session) => this.handleSessionCreated(session);
+    const handleSessionAttached = (session) => this.attachSessionState(session);
+    const handleSessionClosed = (session) => this.handleSessionClosed(session);
+
+    this.socket.on('terminal:pool_snapshot', applyPoolSnapshot);
+    this.socket.on('terminal:snapshot', applyPoolSnapshot);
+    this.socket.on('terminal:session_created', handleSessionCreated);
+    this.socket.on('terminal:created', handleSessionCreated);
+    this.socket.on('terminal:session_attached', handleSessionAttached);
+    this.socket.on('terminal:attached', handleSessionAttached);
     this.socket.on('terminal:output', (payload) => {
       this.writeOutput(payload.sessionId, payload.data);
+    });
+    this.socket.on('terminal:replay', (payload) => {
+      this.writeReplay(payload.sessionId, payload.replay);
     });
     this.socket.on('terminal:exit', (payload) => {
       this.state.updateStatus(payload.sessionId, 'exited');
       this.writeOutput(payload.sessionId, `\r\n[process exited: ${payload.exitCode ?? ''} ${payload.signal || ''}]\r\n`);
       this.render();
     });
-    this.socket.on('terminal:closed', (session) => {
-      this.destroyTerm(session.sessionId);
-      this.state.closeTab(session.sessionId);
-      this.render();
+    this.socket.on('terminal:session_closed', handleSessionClosed);
+    this.socket.on('terminal:closed', handleSessionClosed);
+    this.socket.on('terminal:presence', (payload) => {
+      this.updatePresence(payload);
     });
     this.socket.on('terminal:warning', (payload) => {
       this.setWarning(payload.message || '终端会话较多，可能影响性能');
@@ -300,17 +339,40 @@ const TerminalPanel = {
       this.setStatus('正在连接终端服务', 'warning');
       return;
     }
-    this.socket.emit('terminal:create', {
+    this.pendingCreateSession = true;
+    this.socket.emit('terminal:create_session', {
       cols: 120,
       rows: 32,
-      title: `Terminal ${this.state.sessionCount() + 1}`,
+      title: `Shared shell ${this.state.sessionCount() + 1}`,
+    });
+  },
+
+  releaseTerminalControlFocus() {
+    const controls = [
+      this.elements.newButton,
+      this.elements.authButton,
+      this.elements.terminalTab,
+    ];
+    controls.forEach((element) => {
+      if (typeof element?.blur === 'function') {
+        element.blur();
+      }
     });
   },
 
   reattachSessions() {
     if (!this.socket?.connected) return;
+    const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    if (lastActive) {
+      this.socket.emit('terminal:attach_session', {
+        sessionId: lastActive,
+        cols: 120,
+        rows: 32,
+      });
+      return;
+    }
     this.state.getSessions().forEach((session) => {
-      this.socket.emit('terminal:attach', {
+      this.socket.emit('terminal:attach_session', {
         sessionId: session.sessionId,
         cols: 120,
         rows: 32,
@@ -318,12 +380,89 @@ const TerminalPanel = {
     });
   },
 
-  ensureSession(session) {
-    const normalized = this.state.openTab(session);
+  ensureSession(session, options = {}) {
+    const lastActiveSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    const normalized = this.state.upsertSession(session, {
+      activate: options.activate || !this.state.activeSessionId() || session.sessionId === lastActiveSessionId,
+    });
     if (!this.terms.has(normalized.sessionId)) {
       this.createTerm(normalized.sessionId);
     }
     return normalized;
+  },
+
+  applyPoolSnapshot(payload = {}) {
+    const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+    const previousIds = new Set(this.state.getSessions().map((session) => session.sessionId));
+    this.state.replaceSessions(sessions);
+    sessions.forEach((session) => {
+      previousIds.delete(session.sessionId);
+      this.ensureSession(session);
+    });
+    previousIds.forEach((sessionId) => this.destroyTerm(sessionId));
+    if (!this.state.activeSessionId()) {
+      this.persistActiveSessionId('');
+    }
+    this.render();
+  },
+
+  handleSessionCreated(session) {
+    const lastActiveSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    const shouldActivate = this.pendingCreateSession
+      || !this.state.activeSessionId()
+      || session.sessionId === lastActiveSessionId;
+    this.pendingCreateSession = false;
+    this.ensureSession(session, { activate: shouldActivate });
+    if (shouldActivate) {
+      this.persistActiveSessionId(session.sessionId);
+    }
+    this.render();
+    if (this.state.activeSessionId() === session.sessionId) {
+      this.releaseTerminalControlFocus();
+      this.fitActiveTerminal();
+      this.scheduleFitActiveTerminal();
+      this.focusActiveTerminal();
+      this.scheduleFocusActiveTerminal();
+    }
+  },
+
+  attachSessionState(session) {
+    this.ensureSession(session, {
+      activate: session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
+    });
+    this.state.updateSession(session.sessionId, {
+      status: session.status || 'attached',
+      observerCount: Number(session.observerCount ?? this.state.getSession(session.sessionId)?.observerCount ?? 0),
+      activePresenterClientId: session.activePresenterClientId ?? this.state.getSession(session.sessionId)?.activePresenterClientId ?? null,
+    });
+    if (this.state.activeSessionId() === session.sessionId) {
+      this.announceActivePresenter(session.sessionId);
+    }
+    this.render();
+    this.releaseTerminalControlFocus();
+    this.fitActiveTerminal();
+    this.scheduleFitActiveTerminal();
+    this.focusActiveTerminal();
+    this.scheduleFocusActiveTerminal();
+  },
+
+  handleSessionClosed(session) {
+    this.destroyTerm(session.sessionId);
+    this.state.closeTab(session.sessionId);
+    if (!this.state.activeSessionId()) {
+      this.persistActiveSessionId('');
+    }
+    this.render();
+  },
+
+  updatePresence(payload = {}) {
+    if (!payload.sessionId) return;
+    this.ensureSession({ sessionId: payload.sessionId });
+    this.state.updateSession(payload.sessionId, {
+      observerCount: Number(payload.observerCount ?? 0),
+      activePresenterClientId: payload.activePresenterClientId ?? null,
+    });
+    this.render();
   },
 
   createTerm(sessionId) {
@@ -393,19 +532,50 @@ const TerminalPanel = {
     }
   },
 
-  closeSession(sessionId) {
-    if (this.socket?.connected) {
-      this.socket.emit('terminal:close', { sessionId, reason: 'user-close' });
-    }
-    this.destroyTerm(sessionId);
-    this.state.closeTab(sessionId);
+  writeReplay(sessionId, replay = []) {
+    this.ensureSession({ sessionId }, {
+      activate: sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
+    });
+    replay.forEach((entry) => this.writeOutput(sessionId, entry?.data));
+    this.state.updateStatus(sessionId, 'attached');
     this.render();
   },
 
-  activateSession(sessionId) {
+  closeSession(sessionId) {
+    if (this.socket?.connected) {
+      this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
+    }
+    this.destroyTerm(sessionId);
+    this.state.closeTab(sessionId);
+    if (!this.state.activeSessionId()) {
+      this.persistActiveSessionId('');
+    }
+    this.render();
+  },
+
+  activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
+    this.persistActiveSessionId(sessionId);
+    if (options.announce !== false) {
+      this.announceActivePresenter(sessionId);
+    }
     this.render();
     this.fitActiveTerminal();
+    this.scheduleFitActiveTerminal();
+  },
+
+  announceActivePresenter(sessionId) {
+    if (this.socket?.connected && sessionId) {
+      this.socket.emit('terminal:set_active_presenter', { sessionId });
+    }
+  },
+
+  persistActiveSessionId(sessionId) {
+    if (!sessionId) {
+      localStorage.removeItem(LAST_ACTIVE_SESSION_KEY);
+      return;
+    }
+    localStorage.setItem(LAST_ACTIVE_SESSION_KEY, sessionId);
   },
 
   fitActiveTerminal() {
@@ -414,21 +584,42 @@ const TerminalPanel = {
     if (addon?.fit) {
       try {
         addon.fit();
+        return true;
       } catch (err) {
         console.warn('[Terminal] fit failed:', err);
       }
     }
+    return false;
+  },
+
+  scheduleFitActiveTerminal(delay = 50, remainingAttempts = 6) {
+    if (this.fitTimer) {
+      clearTimeout(this.fitTimer);
+    }
+    this.fitTimer = setTimeout(() => {
+      this.fitTimer = null;
+      const fitted = this.fitActiveTerminal();
+      if (fitted && remainingAttempts > 1 && this.isVisible) {
+        this.scheduleFitActiveTerminal(80, remainingAttempts - 1);
+      }
+    }, delay);
   },
 
   focusActiveTerminal() {
     const active = this.state.activeSessionId();
-    if (!active) return;
+    if (!active) return false;
     const node = this.elements.workspace?.querySelector(`[data-session-id="${active}"]`);
+    const isFocusedWithinNode = () => {
+      const activeElement = document.activeElement;
+      return Boolean(activeElement && node?.contains?.(activeElement));
+    };
     const helper = node?.querySelector?.('.xterm-helper-textarea');
     if (helper?.focus) {
       try {
         helper.focus();
-        return;
+        if (isFocusedWithinNode()) {
+          return true;
+        }
       } catch (err) {
         console.warn('[Terminal] helper focus failed:', err);
       }
@@ -437,26 +628,38 @@ const TerminalPanel = {
     if (term?.focus) {
       try {
         term.focus();
+        if (isFocusedWithinNode()) {
+          return true;
+        }
       } catch (err) {
         console.warn('[Terminal] focus failed:', err);
       }
     }
+    return isFocusedWithinNode();
   },
 
-  scheduleFocusActiveTerminal(delay = 50) {
+  scheduleFocusActiveTerminal(delay = 50, remainingAttempts = 6) {
     if (this.focusTimer) {
       clearTimeout(this.focusTimer);
     }
     this.focusTimer = setTimeout(() => {
       this.focusTimer = null;
-      this.focusActiveTerminal();
+      this.releaseTerminalControlFocus();
+      const focused = this.focusActiveTerminal();
+      if (!focused && remainingAttempts > 1 && this.isVisible) {
+        this.scheduleFocusActiveTerminal(80, remainingAttempts - 1);
+      }
     }, delay);
   },
 
   render() {
     const authorized = this.hasAdminToken();
+    const connected = Boolean(this.socket?.connected);
     this.elements.authForm?.classList.toggle('hidden', authorized);
     this.elements.newButton?.classList.toggle('hidden', !authorized);
+    if (this.elements.newButton) {
+      this.elements.newButton.disabled = !authorized || !connected;
+    }
 
     if (!authorized) {
       this.setStatus('需要 admin 二次授权', 'warning');
@@ -470,7 +673,8 @@ const TerminalPanel = {
         const button = document.createElement('button');
         button.className = 'terminal-session-tab';
         button.classList.toggle('active', session.sessionId === activeId);
-        button.textContent = session.title || session.sessionId;
+        const observerLabel = session.observerCount > 0 ? ` · ${session.observerCount}人` : '';
+        button.textContent = `${session.title || session.sessionId}${observerLabel}`;
         button.addEventListener('click', () => this.activateSession(session.sessionId));
 
         const close = document.createElement('span');

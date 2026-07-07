@@ -311,7 +311,8 @@ body.tunnel-relay-active #remoteVideo {
 }
 
 .terminal-auth-form,
-.terminal-toolbar {
+.terminal-toolbar,
+.terminal-pool-note {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -358,8 +359,24 @@ body.tunnel-relay-active #remoteVideo {
   transform: translateY(-1px);
 }
 
+.terminal-primary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
 .terminal-toolbar {
   min-height: 38px;
+}
+
+.terminal-pool-note {
+  min-height: 28px;
+  padding: 7px 10px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(59, 130, 246, 0.08);
+  color: #bfdbfe;
+  font: 12px/1.4 'JetBrains Mono', monospace;
 }
 
 .terminal-session-tabs {
@@ -452,6 +469,7 @@ body.tunnel-relay-active #remoteVideo {
 }
 
 .terminal-workspace {
+  grid-row: 5;
   min-height: 0;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: var(--radius-md);

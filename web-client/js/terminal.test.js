@@ -42,6 +42,7 @@ function makeElement(id) {
     appendChild(child) {
       children.push(child);
       child.parentNode = this;
+      child.ownerDocument = this.ownerDocument || child.ownerDocument || null;
       return child;
     },
     remove() {
@@ -49,6 +50,9 @@ function makeElement(id) {
     },
     focus() {
       this.focusCalls += 1;
+      if (this.ownerDocument) {
+        this.ownerDocument.activeElement = this;
+      }
     },
     addEventListener(type, handler) {
       this[`on${type}`] = handler;
@@ -68,6 +72,16 @@ function makeElement(id) {
         return children.find((child) => child.className.includes('xterm-helper-textarea')) || null;
       }
       return null;
+    },
+    contains(target) {
+      if (this === target) return true;
+      return children.some((child) => {
+        if (child === target) return true;
+        if (typeof child.contains === 'function') {
+          return child.contains(target);
+        }
+        return false;
+      });
     },
     get __children() {
       return children;
@@ -91,10 +105,17 @@ function loadTerminal(overrides = {}) {
     'terminalStatus',
     'terminalWarning',
     'terminalWorkspace',
+    'disconnectBtn',
+    'remoteVideo',
+    'relayImage',
+    'scaleBtn',
+    'fullscreenBtn',
+    'toggleControlsBtn',
   ];
   ids.forEach((id) => elements.set(id, makeElement(id)));
 
   const sessionStorageMap = new Map();
+  const localStorageMap = new Map();
   const socketHandlers = new Map();
   const emitted = [];
   const fakeSocket = {
@@ -147,13 +168,26 @@ function loadTerminal(overrides = {}) {
     clearTimeout,
     window: { addEventListener() {} },
     document: {
+      activeElement: null,
       body: makeElement('body'),
       addEventListener(type, handler) {
         if (type === 'DOMContentLoaded') {
           handler();
         }
       },
-      createElement: (tagName) => makeElement(tagName),
+      createElement(tagName) {
+        const element = makeElement(tagName);
+        element.ownerDocument = this;
+        return element;
+      },
+      querySelector(selector) {
+        if (selector === '.viewer-container') {
+          const element = makeElement('viewer-container');
+          element.ownerDocument = this;
+          return element;
+        }
+        return null;
+      },
       getElementById: (id) => elements.get(id) || null,
     },
     sessionStorage: {
@@ -167,6 +201,17 @@ function loadTerminal(overrides = {}) {
         sessionStorageMap.delete(key);
       },
     },
+    localStorage: {
+      getItem(key) {
+        return localStorageMap.has(key) ? localStorageMap.get(key) : null;
+      },
+      setItem(key, value) {
+        localStorageMap.set(key, String(value));
+      },
+      removeItem(key) {
+        localStorageMap.delete(key);
+      },
+    },
     RuntimeConfig: {
       getSocketBase: () => 'http://127.0.0.1:8080',
       url: (pathname) => `http://127.0.0.1:8080${pathname}`,
@@ -175,7 +220,12 @@ function loadTerminal(overrides = {}) {
     FitAddon: overrides.FitAddon || { FitAddon: FakeFitAddon },
     io: overrides.io || (() => fakeSocket),
     fetch: overrides.fetch,
+    confirm: overrides.confirm || (() => true),
   };
+  context.document.body.ownerDocument = context.document;
+  elements.forEach((element) => {
+    element.ownerDocument = context.document;
+  });
   context.globalThis = context;
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, 'terminal.js'), 'utf8');
@@ -191,12 +241,20 @@ globalThis.__TERMINAL_ADMIN_TOKEN_KEY = TERMINAL_ADMIN_TOKEN_KEY;`, context);
     fakeSocket,
     socketHandlers,
     sessionStorageMap,
+    localStorageMap,
     createdTerms,
     createTerminalState: context.__createTerminalState,
     TerminalUI: context.__TerminalUI,
     TerminalPanel: context.__TerminalPanel,
     tokenKey: context.__TERMINAL_ADMIN_TOKEN_KEY,
   };
+}
+
+function loadUi(context) {
+  const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+  vm.runInContext(`${source}
+globalThis.__UI = UI;`, context);
+  return context.__UI;
 }
 
 test('TerminalUI tracks multiple tabs and active attachment', () => {
@@ -250,7 +308,7 @@ test('TerminalPanel reconnect reattaches existing sessions by original session i
   socketHandlers.get('connect')();
 
   assert.deepEqual(
-    emitted.filter((item) => item.event === 'terminal:attach').map((item) => item.payload.sessionId),
+    emitted.filter((item) => item.event === 'terminal:attach_session').map((item) => item.payload.sessionId),
     ['term_keep']
   );
 });
@@ -288,4 +346,286 @@ test('TerminalPanel focuses an existing terminal when the terminal tab is shown'
   const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
   const textarea = node.querySelector('.xterm-helper-textarea');
   assert.equal(textarea.focusCalls > 0, true);
+});
+
+test('TerminalPanel retries focus when xterm helper is attached after a delay', async () => {
+  function DelayedTerminal() {
+    return {
+      focusCalls: 0,
+      open(container) {
+        this.container = container;
+        setTimeout(() => {
+          const textarea = makeElement('textarea');
+          textarea.className = 'xterm-helper-textarea';
+          container.appendChild(textarea);
+        }, 120);
+      },
+      focus() {
+        this.focusCalls += 1;
+      },
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write() {},
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements } = loadTerminal({
+    Terminal: DelayedTerminal,
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.isVisible = true;
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
+  socketHandlers.get('terminal:created')(session);
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+  const textarea = node.querySelector('.xterm-helper-textarea');
+  assert.ok(textarea, 'delayed helper textarea should exist');
+  assert.equal(textarea.focusCalls > 0, true);
+});
+
+test('TerminalPanel keeps retrying until terminal helper becomes the active element', async () => {
+  let helperFocusAttempts = 0;
+
+  function StickyFocusTerminal() {
+    return {
+      focusCalls: 0,
+      open(container) {
+        this.container = container;
+        const textarea = makeElement('textarea');
+        textarea.className = 'xterm-helper-textarea';
+        textarea.focus = function focusHelper() {
+          this.focusCalls += 1;
+          helperFocusAttempts += 1;
+          if (helperFocusAttempts >= 2 && this.ownerDocument) {
+            this.ownerDocument.activeElement = this;
+          }
+        };
+        container.appendChild(textarea);
+      },
+      focus() {
+        this.focusCalls += 1;
+      },
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write() {},
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements, context } = loadTerminal({
+    Terminal: StickyFocusTerminal,
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.isVisible = true;
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
+  socketHandlers.get('terminal:created')(session);
+
+  await new Promise((resolve) => setTimeout(resolve, 160));
+
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+  const textarea = node.querySelector('.xterm-helper-textarea');
+  assert.ok(textarea, 'helper textarea should exist');
+  assert.equal(helperFocusAttempts >= 2, true);
+  assert.equal(context.document.activeElement, textarea);
+});
+
+test('TerminalPanel blurs the new-session button so terminal focus can take over', async () => {
+  function ButtonBlockedFocusTerminal() {
+    return {
+      focusCalls: 0,
+      open(container) {
+        const textarea = makeElement('textarea');
+        textarea.className = 'xterm-helper-textarea';
+        textarea.focus = function focusHelper() {
+          this.focusCalls += 1;
+          if (this.ownerDocument?.activeElement?.id !== 'terminalNewBtn') {
+            this.ownerDocument.activeElement = this;
+          }
+        };
+        container.appendChild(textarea);
+      },
+      focus() {
+        this.focusCalls += 1;
+      },
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write() {},
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements, context } = loadTerminal({
+    Terminal: ButtonBlockedFocusTerminal,
+  });
+  const newButton = elements.get('terminalNewBtn');
+  newButton.blur = function blurNewButton() {
+    this.blurCalls = (this.blurCalls || 0) + 1;
+    if (this.ownerDocument?.activeElement === this) {
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
+  };
+
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.isVisible = true;
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  context.document.activeElement = newButton;
+  const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
+  socketHandlers.get('terminal:created')(session);
+
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+  const textarea = node.querySelector('.xterm-helper-textarea');
+  assert.ok(textarea, 'helper textarea should exist');
+  assert.equal(newButton.blurCalls > 0, true);
+  assert.equal(context.document.activeElement, textarea);
+});
+
+test('TerminalPanel retries fit after terminal creation while layout settles', async () => {
+  const fitCalls = [];
+
+  function TrackingFitAddon() {
+    this.fit = () => {
+      fitCalls.push(Date.now());
+    };
+  }
+
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal({
+    FitAddon: { FitAddon: TrackingFitAddon },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.isVisible = true;
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
+  socketHandlers.get('terminal:created')(session);
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+
+  assert.equal(fitCalls.length >= 2, true);
+});
+
+test('TerminalPanel keeps the new-session button disabled until the terminal socket is connected', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+
+  TerminalPanel.render();
+  assert.equal(elements.get('terminalNewBtn').disabled, true);
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  assert.equal(elements.get('terminalNewBtn').disabled, false);
+});
+
+test('TerminalPanel keeps the terminal socket alive when the user switches back to the desktop tab', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.showDesktop();
+
+  assert.equal(TerminalPanel.socket, fakeSocket);
+  assert.equal(fakeSocket.connected, true);
+});
+
+test('TerminalPanel restores replayed output after reattach using the last active shared session id', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:session_created')({ sessionId: 'term_keep', title: 'Shared shell', observerCount: 1 });
+  socketHandlers.get('terminal:replay')({
+    sessionId: 'term_keep',
+    replay: [{ seq: 1, data: 'npm test\r\n' }],
+  });
+
+  const term = TerminalPanel.terms.get('term_keep');
+  assert.ok(term, 'shared terminal instance should exist');
+  assert.equal(TerminalPanel.state.getSession('term_keep').status, 'attached');
+});
+
+test('desktop disconnect only calls WebRTC.disconnect and never disconnects the terminal socket', () => {
+  let disconnectCalls = 0;
+  const { context, TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  context.WebRTC = { disconnect() { disconnectCalls += 1; } };
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  const UI = loadUi(context);
+  UI.setupControlButtons();
+  context.document.getElementById('disconnectBtn').onclick?.({ preventDefault() {} });
+
+  assert.equal(disconnectCalls, 1);
+  assert.equal(fakeSocket.connected, true);
+});
+
+test('TerminalPanel persists the last active shared session id and reattaches on reconnect', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Shared shell' });
+  TerminalPanel.activateSession('term_keep');
+
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_keep');
+
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_keep'), true);
 });

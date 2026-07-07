@@ -78,7 +78,7 @@ const UI = {
     });
 
     if (disconnectBtn) disconnectBtn.addEventListener('click', () => {
-      if (confirm('确定要断开连接吗？')) {
+      if (confirm('确定要断开桌面连接吗？这不会关闭共享控制台。')) {
         WebRTC.disconnect();
       }
     });
