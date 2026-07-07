@@ -660,6 +660,51 @@ test('TerminalPanel auto-attaches the default shared session from a fresh pool s
   );
 });
 
+test('TerminalPanel falls back to the live default session when the persisted active session is stale', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term_stale');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_live',
+    sessions: [{ sessionId: 'term_live', title: 'Shared shell', observerCount: 0 }],
+  });
+
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_live'),
+    true,
+  );
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_live');
+});
+
+test('TerminalPanel activating an unattached shared session requests attach', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_1',
+    sessions: [
+      { sessionId: 'term_1', title: 'Shared shell 1', observerCount: 0 },
+      { sessionId: 'term_2', title: 'Shared shell 2', observerCount: 0 },
+    ],
+  });
+
+  TerminalPanel.activateSession('term_2');
+
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_2'),
+    true,
+  );
+});
+
 test('desktop disconnect only calls WebRTC.disconnect and never disconnects the terminal socket', () => {
   let disconnectCalls = 0;
   const { context, TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();

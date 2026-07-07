@@ -402,6 +402,7 @@ const TerminalPanel = {
 
   applyPoolSnapshot(payload = {}) {
     const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+    const liveSessionIds = new Set(sessions.map((session) => session.sessionId).filter(Boolean));
     const previousIds = new Set(this.state.getSessions().map((session) => session.sessionId));
     this.state.replaceSessions(sessions);
     sessions.forEach((session) => {
@@ -409,7 +410,18 @@ const TerminalPanel = {
       this.ensureSession(session);
     });
     previousIds.forEach((sessionId) => this.destroyTerm(sessionId));
-    const preferredSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
+    this.attachedSessionIds.forEach((sessionId) => {
+      if (!liveSessionIds.has(sessionId)) {
+        this.attachedSessionIds.delete(sessionId);
+      }
+    });
+    this.pendingAttachSessionIds.forEach((sessionId) => {
+      if (!liveSessionIds.has(sessionId)) {
+        this.pendingAttachSessionIds.delete(sessionId);
+      }
+    });
+    const persistedLastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    const preferredSessionId = (persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null)
       || payload.defaultSessionId
       || this.state.activeSessionId();
     if (preferredSessionId) {
@@ -603,6 +615,7 @@ const TerminalPanel = {
   activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
     this.persistActiveSessionId(sessionId);
+    this.requestAttachSession(sessionId);
     if (options.announce !== false) {
       this.announceActivePresenter(sessionId);
     }
