@@ -63,7 +63,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 - 前端页面由 `signal-server` 托管，**不要**额外启动 `web-client` 开发服务器
 - 当前仓库唯一正确本地入口是 `http://127.0.0.1:8080`
-- **不要打开** `http://127.0.0.1:5173`；那通常是本机其他项目的 Vite 页面，不属于当前远程桌面
+- **不要把** `http://127.0.0.1:5173` **当作当前仓库正式入口**；`5173` 只在显式配置 `dev.link.stockhub.wiki` 时作为可选开发映射存在
 - 重启 Host 时必须使用 `./scripts/restart-host.sh`，不要手工 `kill` 后重启
 - `./scripts/restart-host.sh` 的重启动作是重新注册并 kickstart `com.webremotedesktop.host`，这是预期行为
 
@@ -188,7 +188,30 @@ LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
 LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
 ```
 
-启动成功后，固定入口默认为：`https://link.stockhub.wiki`
+如需同时生成可选开发子域配置，可在执行 `setup-cloudflare.sh` 时显式开启：
+
+```bash
+ENABLE_DEV_SUBDOMAIN=1 \
+DEV_DOMAIN=dev.link.stockhub.wiki \
+DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
+./scripts/setup-cloudflare.sh
+```
+
+固定域名契约：
+
+- 正式入口：`https://link.stockhub.wiki -> 127.0.0.1:8080`
+- 可选开发入口：`https://dev.link.stockhub.wiki -> 127.0.0.1:5173`
+- `dev.link.stockhub.wiki` 必须单独受 Cloudflare Access 保护
+- `5173` 不是正式入口，也不是 startup-blocking 依赖
+
+启动成功后，固定正式入口默认为：`https://link.stockhub.wiki`
+
+### 4.1 开发子域影响边界
+
+- 重启 `5173`：只影响 `dev.link.stockhub.wiki`
+- 重启 `8080`：影响 `link.stockhub.wiki`，也会影响 `dev.link.stockhub.wiki` 通过 Vite proxy 访问 `/api`、`/socket.io` 的能力
+- 重启 named tunnel / `cloudflared tunnel run`：`link.stockhub.wiki` 与 `dev.link.stockhub.wiki` 同时受影响
+- 修改 Cloudflare Access：只影响 `dev.link.stockhub.wiki` 的边缘准入，不会直接重启本地 `8080` / `5173`
 
 ## 关键文件
 
@@ -214,7 +237,7 @@ LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
 按下面顺序检查：
 
 1. `./scripts/status-safe-wrd.sh`
-2. 先确认自己访问的是 `http://127.0.0.1:8080`，不是 `5173`
+2. 先确认自己访问的是 `http://127.0.0.1:8080`、`https://link.stockhub.wiki`，或已配置好的 `https://dev.link.stockhub.wiki`，而不是裸 `5173`
 3. `curl http://127.0.0.1:8080/health`
 4. `curl http://127.0.0.1:8080/api/status`
 5. `cat /tmp/wrd-safe-current-url.txt`
@@ -222,7 +245,7 @@ LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
 
 判断方法：
 
-- 如果打开的是 `5173` 页面：这是错误入口，切回 `8080` 或 safe URL
+- 如果打开的是裸 `5173` 页面：这是错误入口；正式入口应切回 `8080` / `link.stockhub.wiki`，开发映射应改走 `dev.link.stockhub.wiki`
 - 如果 `health` 不通：优先看 `signal-server`
 - 如果 `health` 通但 `hostOnline` 为 `false`：优先看 `back-debug.log`
 - 如果 `back-debug.log` 只看到 `Signal server healthy: ...` 但没有 `Host auth preflight succeeded: ...`：优先检查 `HOST_SHARED_SECRET`
@@ -327,4 +350,4 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 - Viewer 的 `断开连接` 按钮以及网络模式切换只影响远程桌面链路，不会关闭 Terminal 会话
 - `signal-server` / Host 重启通常会保留当前 tunnel 地址，但共享 Terminal 会话在内存中维护，因此会随服务重启结束
 - Terminal 失败应直接报错并上送诊断日志，不要自动退回媒体 tunnel 或 TURN
-- `http://localhost:5173/` 只作为前端开发映射时的 API 入口，不是当前仓库的正式页面入口
+- `http://localhost:5173/` 只作为开发映射入口；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式页面入口

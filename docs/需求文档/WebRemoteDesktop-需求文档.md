@@ -135,7 +135,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
 - [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
 - [x] **软提示**：不设硬上限，但当会话数量较多时给出明显性能提示
-- [ ] **开发映射**：本机 `http://localhost:5173/` 打开的网页也要能通过映射访问同一套 Terminal 服务
+- [ ] **开发映射**：开发页应通过受保护的 `https://dev.link.stockhub.wiki` 访问同一套 Terminal 服务；部署细节和代理契约以部署文档为准，更强的运行时隔离仍是后续工作
 - [ ] **审计日志**：记录 admin 登录、Terminal 创建、断开、重连、关闭和错误
 - [ ] **独立实现**：优先使用 `@xterm/xterm` + `node-pty` + Socket.IO 的内嵌方案，不默认引入 WeTTY / ttyd 独立服务
 
@@ -245,6 +245,14 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 若在短生命周期自动化 shell 中执行 safe quick tunnel，后台子进程可能在父 shell 结束后被回收；此时应改为在用户自己的常驻终端中执行，或改用固定域名隧道。
 
+固定域名与开发子域要求：
+
+- 正式入口保持 `https://link.stockhub.wiki -> 127.0.0.1:8080`
+- 可选开发入口使用 `https://dev.link.stockhub.wiki -> 127.0.0.1:5173`
+- `dev.link.stockhub.wiki` 必须单独受 Cloudflare Access 保护
+- `5173` 不是正式入口，也不是启动阻塞依赖；正式服务仍以 `8080` 为唯一主入口
+- `dev` 页面对接同一套 `8080` 后端能力，因此当前阶段提供的是入口隔离，不是运行时隔离
+
 ### 4.3 目录结构
 
 ```
@@ -291,6 +299,7 @@ WebRemoteDesktop/
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
+- **开发子域**：`dev.link.stockhub.wiki` 只作为可选开发入口；其边缘访问由 Cloudflare Access 单独保护，但默认仍通过 proxy 复用 `8080` 后端能力
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
 - **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
 - **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化

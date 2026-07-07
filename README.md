@@ -128,7 +128,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 这条手动本地路径同样会安装并启用 `com.webremotedesktop.host` LaunchAgent。当前设计就是通过 LaunchAgent 托管 Host，而不是用一次性前台进程。
 
 - 前端**不单独运行** `npm run dev`
-- **不要打开**其他项目的 `5173` 页面；那个通常是别的 Vite 应用，不是当前远程桌面
+- **不要把**裸 `5173` **页面当作当前仓库正式入口**；只有在显式配置 `dev.link.stockhub.wiki` 时，`5173` 才作为可选开发映射存在
 - `signal-server` 会通过 `express.static()` 直接托管 `web-client/`
 - 本地唯一正确入口：`http://127.0.0.1:8080`
 - 健康检查：`http://127.0.0.1:8080/health`
@@ -158,14 +158,31 @@ LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
 LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
 ```
 
-脚本成功后，固定域名入口默认为：`https://link.stockhub.wiki`
+如需同时生成可选开发子域配置，可在执行 `setup-cloudflare.sh` 时显式开启：
+
+```bash
+ENABLE_DEV_SUBDOMAIN=1 \
+DEV_DOMAIN=dev.link.stockhub.wiki \
+DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
+./scripts/setup-cloudflare.sh
+```
+
+固定域名契约：
+
+- 正式入口：`https://link.stockhub.wiki -> 127.0.0.1:8080`
+- 可选开发入口：`https://dev.link.stockhub.wiki -> 127.0.0.1:5173`
+- `dev.link.stockhub.wiki` 必须单独受 Cloudflare Access 保护
+- `5173` 不是当前仓库正式入口，也不是 fixed-domain 启动的 startup-blocking 依赖
+
+脚本成功后，固定域名正式入口默认为：`https://link.stockhub.wiki`
 
 ### 启动成功后的访问方式
 
 - 本地访问：`http://127.0.0.1:8080`
 - 安全脚本临时公网访问：`cat /tmp/wrd-safe-current-url.txt`
 - 旧版普通 quick tunnel 地址：`cat /tmp/wrd-current-url.txt`
-- 固定域名访问：`https://link.stockhub.wiki`
+- 固定域名正式访问：`https://link.stockhub.wiki`
+- 固定域名开发访问（仅在显式配置且通过 Cloudflare Access 后可用）：`https://dev.link.stockhub.wiki`
 
 ### 启动后快速自检
 
@@ -217,7 +234,7 @@ http://127.0.0.1:8080
 
 - 前端不单独运行 `npm run dev`
 - 当前仓库页面只从 `http://127.0.0.1:8080` 打开
-- **不要把** `http://127.0.0.1:5173` **当作当前仓库入口**；它很可能是本机其他项目的 Vite 页面
+- **不要把** `http://127.0.0.1:5173` **当作当前仓库正式入口**；`5173` 只在显式配置 `dev.link.stockhub.wiki` 时作为可选开发映射存在
 - 前端页面由 `signal-server` 通过 `express.static()` 提供
 - 若看到“等待 Host 上线”，先检查 `signal-server` 和 `python-host` 是否都已启动
 - 页面登录流程保持不变：打开网页 → 输入 Viewer 密码 → 点击“开始学习助手”
@@ -234,7 +251,7 @@ http://127.0.0.1:8080
 - Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
 - Terminal 只走浏览器会话内的 Socket.IO / HTTPS 通道，不接入 STUN / TURN / WebRTC 媒体链路
-- `http://localhost:5173/` 仅用于前端开发映射时的 API 代理，不是当前仓库的正式入口
+- `http://localhost:5173/` 仅用于开发映射；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式入口
 - 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
 
 
@@ -301,7 +318,7 @@ WebRemoteDesktop/
 
 1. 区分地址文件：safe 脚本看 `cat /tmp/wrd-safe-current-url.txt`，旧脚本看 `cat /tmp/wrd-current-url.txt`
 2. 检查状态：`./scripts/status-safe-wrd.sh`
-3. 先确认自己打开的不是 `5173`，而是 `8080` 或 safe URL
+3. 先确认自己打开的是 `8080`、`link.stockhub.wiki`，或已配置好的 `dev.link.stockhub.wiki`，而不是裸 `5173`
 4. 检查 tunnel 日志：`tail -100 /tmp/wrd-safe-quicktunnel.log` 或 `tail -100 /tmp/cloudflared-wrd.log`
 5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址过期，脚本会自动重启并更新地址文件
 6. 如果日志已打印 trycloudflare 地址，但域名仍无法解析或状态脚本显示 `safe quick tunnel: stale`，说明公网入口实际上尚未可用；常见原因是 DNS 传播延迟，或后台进程在短生命周期 shell 退出后被回收
