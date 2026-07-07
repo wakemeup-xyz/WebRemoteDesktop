@@ -124,14 +124,16 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ### 3.7 Web Terminal
 
-- [ ] **Terminal tab**：在现有 Viewer 页面中增加 Terminal tab，用户无需离开当前网页
-- [ ] **二次授权**：Viewer 登录后，Terminal 需要单独的 admin 二次授权
-- [ ] **共享授权入口**：完成 Terminal admin 二次授权的浏览器可以接入共享 shell session pool，不把 PTY 绑定到单一浏览器
+- 说明：本节中 `[x]` 表示当前共享 Terminal 已落地的运行语义；`[ ]` 表示仍保留为后续增强项或独立交付项。
+
+- [x] **Terminal tab**：在现有 Viewer 页面中增加 Terminal tab，用户无需离开当前网页
+- [x] **二次授权**：Viewer 登录后，Terminal 需要单独的 admin 二次授权
+- [x] **共享授权入口**：完成 Terminal admin 二次授权的浏览器可以接入共享 shell session pool，不把 PTY 绑定到单一浏览器
 - [ ] **完整 shell**：Terminal 直接连接本机完整 shell，不限制在项目目录
-- [ ] **共享会话附着**：多个浏览器可同时附着到同一个共享 Terminal 会话，输入立即作用到同一个 shell
+- [x] **共享会话附着**：多个浏览器可同时附着到同一个共享 Terminal 会话，输入立即作用到同一个 shell
 - [ ] **断网重连**：浏览器断网后自动重连到原来的 Terminal，会话和上下文保留
-- [ ] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
-- [ ] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
+- [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
+- [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
 - [ ] **软提示**：不设硬上限，但当会话数量较多时给出明显性能提示
 - [ ] **开发映射**：本机 `http://localhost:5173/` 打开的网页也要能通过映射访问同一套 Terminal 服务
 - [ ] **审计日志**：记录 admin 登录、Terminal 创建、断开、重连、关闭和错误
