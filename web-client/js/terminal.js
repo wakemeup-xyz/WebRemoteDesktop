@@ -135,6 +135,8 @@ const TerminalPanel = {
   state: createTerminalState(),
   terms: new Map(),
   fitAddons: new Map(),
+  attachedSessionIds: new Set(),
+  pendingAttachSessionIds: new Set(),
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
@@ -280,6 +282,8 @@ const TerminalPanel = {
 
     this.socket.on('connect', () => {
       this.socketState = 'connected';
+      this.attachedSessionIds.clear();
+      this.pendingAttachSessionIds.clear();
       this.setStatus('共享控制台已连接', 'connected');
       this.reattachSessions();
       this.socket.emit('terminal:list', {});
@@ -287,6 +291,8 @@ const TerminalPanel = {
     });
     this.socket.on('disconnect', () => {
       this.socketState = 'disconnected';
+      this.attachedSessionIds.clear();
+      this.pendingAttachSessionIds.clear();
       this.setStatus('断线重连中', 'warning');
       this.state.getSessions().forEach((session) => this.state.updateStatus(session.sessionId, 'detached'));
       this.render();
@@ -375,19 +381,11 @@ const TerminalPanel = {
     if (!this.socket?.connected) return;
     const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
     if (lastActive) {
-      this.socket.emit('terminal:attach_session', {
-        sessionId: lastActive,
-        cols: 120,
-        rows: 32,
-      });
+      this.requestAttachSession(lastActive);
       return;
     }
     this.state.getSessions().forEach((session) => {
-      this.socket.emit('terminal:attach_session', {
-        sessionId: session.sessionId,
-        cols: 120,
-        rows: 32,
-      });
+      this.requestAttachSession(session.sessionId);
     });
   },
 
@@ -411,6 +409,12 @@ const TerminalPanel = {
       this.ensureSession(session);
     });
     previousIds.forEach((sessionId) => this.destroyTerm(sessionId));
+    const preferredSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
+      || payload.defaultSessionId
+      || this.state.activeSessionId();
+    if (preferredSessionId) {
+      this.requestAttachSession(preferredSessionId);
+    }
     this.syncPersistedActiveSession();
     this.render();
   },
@@ -423,6 +427,8 @@ const TerminalPanel = {
       || session.sessionId === lastActiveSessionId;
     if (createdByCurrentClient) {
       this.pendingCreateClientId = null;
+      this.pendingAttachSessionIds.delete(session.sessionId);
+      this.attachedSessionIds.add(session.sessionId);
     }
     this.ensureSession(session, { activate: shouldActivate });
     if (shouldActivate) {
@@ -441,6 +447,8 @@ const TerminalPanel = {
   attachSessionState(session) {
     const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
       || Boolean(this.pendingCreateClientId);
+    this.pendingAttachSessionIds.delete(session.sessionId);
+    this.attachedSessionIds.add(session.sessionId);
     this.ensureSession(session, {
       activate: shouldActivate,
     });
@@ -467,10 +475,25 @@ const TerminalPanel = {
   },
 
   handleSessionClosed(session) {
+    this.pendingAttachSessionIds.delete(session.sessionId);
+    this.attachedSessionIds.delete(session.sessionId);
     this.destroyTerm(session.sessionId);
     this.state.closeTab(session.sessionId);
     this.syncPersistedActiveSession();
     this.render();
+  },
+
+  requestAttachSession(sessionId) {
+    if (!this.socket?.connected || !sessionId) return;
+    if (this.attachedSessionIds.has(sessionId) || this.pendingAttachSessionIds.has(sessionId)) {
+      return;
+    }
+    this.pendingAttachSessionIds.add(sessionId);
+    this.socket.emit('terminal:attach_session', {
+      sessionId,
+      cols: 120,
+      rows: 32,
+    });
   },
 
   updatePresence(payload = {}) {

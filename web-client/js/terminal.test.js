@@ -641,6 +641,25 @@ test('TerminalPanel restores replayed output after reattach using the last activ
   assert.equal(TerminalPanel.state.getSession('term_keep').status, 'attached');
 });
 
+test('TerminalPanel auto-attaches the default shared session from a fresh pool snapshot', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_shared',
+    sessions: [{ sessionId: 'term_shared', title: 'Shared shell', observerCount: 0 }],
+  });
+
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_shared'),
+    true,
+  );
+});
+
 test('desktop disconnect only calls WebRTC.disconnect and never disconnects the terminal socket', () => {
   let disconnectCalls = 0;
   const { context, TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
