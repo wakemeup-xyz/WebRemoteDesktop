@@ -75,6 +75,7 @@ function createTerminalSessionManager(options = {}) {
     startupTimeoutMs: Number(rawConfig.startupTimeoutMs ?? rawConfig.terminalStartupTimeoutMs ?? 10000),
     auditLog: rawConfig.auditLog ?? rawConfig.terminalAuditLog ?? '',
     recordIo: Boolean(rawConfig.recordIo ?? rawConfig.terminalRecordIo ?? false),
+    replayBufferBytes: Number(rawConfig.replayBufferBytes ?? rawConfig.terminalReplayBufferBytes ?? 262144),
   };
   const now = options.now || (() => new Date());
   const logger = options.logger || console;
@@ -234,7 +235,7 @@ function createTerminalSessionManager(options = {}) {
       detachedReason: null,
       pty,
       observers: new Map(),
-      replayBuffer: createReplayBuffer(),
+      replayBuffer: createReplayBuffer(config.replayBufferBytes),
       activePresenterClientId: null,
     };
 

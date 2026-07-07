@@ -113,6 +113,33 @@ test('shared session manager broadcasts PTY output to every attached observer an
   assert.equal(replay.replay[0].data, 'first line\r\n');
 });
 
+test('shared session manager trims replay entries when the bounded buffer is exceeded', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+      terminalReplayBufferBytes: 20,
+    },
+  });
+
+  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  pty.emitData('1234567890');
+  pty.emitData('abcdefghij');
+  pty.emitData('KLMNOPQRST');
+
+  const attached = manager.attachSession(created.sessionId, { clientId: 'browser-b' });
+  assert.deepEqual(attached.replay.map((entry) => entry.data), ['abcdefghij', 'KLMNOPQRST']);
+});
+
 test('shared session manager keeps PTY alive after last observer detaches and only kills on explicit close', () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
