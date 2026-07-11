@@ -9,7 +9,7 @@ const DIAG_MAX_AGE_DAYS = 7;
 const DIAG_MAX_PER_VIEWER = 3;
 const DIAG_MAX_TOTAL = 50;
 
-function cleanupDiagLogs() {
+function cleanupDiagLogs(logger = console) {
   try {
     if (!fs.existsSync(DIAG_DIR)) return;
     const files = fs.readdirSync(DIAG_DIR)
@@ -66,7 +66,7 @@ function cleanupDiagLogs() {
       fs.unlinkSync(oldest.path);
     }
   } catch (err) {
-    console.error('[DIAGNOSTIC] cleanup failed:', err.message);
+    logger.error?.('[DIAGNOSTIC] cleanup failed:', err.message);
   }
 }
 
@@ -120,7 +120,116 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, number));
 }
 
-function setupSignaling(io) {
+function ingestDiagnosticPayload(options = {}) {
+  const {
+    role,
+    viewerId,
+    userAgent,
+    data,
+    config = loadConfig(),
+    logger = console,
+  } = options;
+
+  if (role !== 'viewer') {
+    return { accepted: false, error: 'viewer-only' };
+  }
+
+  const redacted = redactDiagnosticPayload(data || {});
+  const receivedAt = new Date().toISOString();
+  const connectionAttemptId = String(redacted.connectionAttemptId || '').trim() || `attempt-${Date.now()}`;
+  const logs = Array.isArray(redacted.logs) ? redacted.logs : [];
+  const schemaVersion = Number.parseInt(redacted.schemaVersion, 10);
+  const traceSummary = redacted.traceSummary && typeof redacted.traceSummary === 'object'
+    ? { ...redacted.traceSummary }
+    : {
+        trigger: redacted.trigger || 'manual',
+        reason: redacted.reason || null,
+      };
+  const trigger = typeof redacted.trigger === 'string' && redacted.trigger
+    ? redacted.trigger
+    : traceSummary.trigger || 'manual';
+  const reason = typeof redacted.reason === 'string' || redacted.reason === null
+    ? redacted.reason
+    : (traceSummary.reason ?? null);
+  const report = {
+    type: String(redacted.type || 'diagnostic'),
+    schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : 1,
+    receivedAt,
+    viewerId,
+    userAgent: redacted.userAgent || userAgent || 'unknown',
+    screen: redacted.screen || 'unknown',
+    connectionAttemptId,
+    mode: typeof redacted.mode === 'string' ? redacted.mode : null,
+    entrypoint: typeof redacted.entrypoint === 'string' ? redacted.entrypoint : null,
+    logCount: logs.length,
+    logs,
+    keyboardDebug: Array.isArray(redacted.keyboardDebug) ? redacted.keyboardDebug : [],
+    trigger,
+    reason,
+    traceSummary,
+    recommendation: redacted.recommendation && typeof redacted.recommendation === 'object'
+      ? { ...redacted.recommendation }
+      : null,
+    events: Array.isArray(redacted.events) ? redacted.events : [],
+    network: redacted.network && typeof redacted.network === 'object' ? redacted.network : null,
+    inputState: redacted.inputState || null,
+    probeResults: Array.isArray(redacted.probeResults) ? redacted.probeResults : [],
+    inputChannelTimeline: Array.isArray(redacted.inputChannelTimeline) ? redacted.inputChannelTimeline : [],
+  };
+
+  if (redacted.failureCategory != null) {
+    report.failureCategory = redacted.failureCategory;
+  }
+  if (redacted.latency != null) {
+    report.latency = redacted.latency;
+  }
+  if (redacted.mediaPolicy != null) {
+    report.mediaPolicy = redacted.mediaPolicy;
+  }
+  if (redacted.selectedCandidatePair && typeof redacted.selectedCandidatePair === 'object') {
+    report.selectedCandidatePair = redacted.selectedCandidatePair;
+  }
+  if (redacted.pc && typeof redacted.pc === 'object') {
+    report.pc = redacted.pc;
+  }
+  if (redacted.ice && typeof redacted.ice === 'object') {
+    report.ice = redacted.ice;
+  }
+  if (redacted.candidate != null) {
+    report.candidate = redacted.candidate;
+  }
+  if (redacted.adaptiveMedia && typeof redacted.adaptiveMedia === 'object') {
+    report.adaptiveMedia = redacted.adaptiveMedia;
+  }
+  if (redacted.redaction && typeof redacted.redaction === 'object') {
+    report.redaction = redacted.redaction;
+  }
+
+  if (config.enableDiagPersist) {
+    try {
+      if (!fs.existsSync(DIAG_DIR)) {
+        fs.mkdirSync(DIAG_DIR, { recursive: true });
+      }
+      cleanupDiagLogs(logger);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `${ts}_${viewerId}.json`;
+      persistDiagnostic(filename, report);
+      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
+    } catch (err) {
+      logger.error?.('[DIAGNOSTIC] Failed to write log file:', err.message);
+    }
+  }
+
+  return {
+    accepted: true,
+    connectionAttemptId,
+    report,
+  };
+}
+
+function setupSignaling(io, options = {}) {
+  const config = options.config || loadConfig();
+  const logger = options.logger || console;
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -266,42 +375,19 @@ function setupSignaling(io) {
         return;
       }
       const logCount = data.logs?.length || 0;
-      console.log(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
-
-      const redacted = redactDiagnosticPayload(data);
-      const config = loadConfig();
-
-      if (config.enableDiagPersist) {
-        try {
-          if (!fs.existsSync(DIAG_DIR)) {
-            fs.mkdirSync(DIAG_DIR, { recursive: true });
-          }
-          cleanupDiagLogs();
-          const ts = new Date().toISOString().replace(/[:.]/g, '-');
-          const filename = `${ts}_${socket.id}.json`;
-          const report = {
-            receivedAt: new Date().toISOString(),
-            viewerId: socket.id,
-            userAgent: redacted.userAgent || 'unknown',
-            screen: redacted.screen || 'unknown',
-            logCount,
-            latency: redacted.latency || null,
-            logs: redacted.logs || [],
-            keyboardDebug: redacted.keyboardDebug || [],
-            keyboardMode: redacted.keyboardMode || null,
-            inputState: redacted.inputState || null,
-            inputChannelTimeline: redacted.inputChannelTimeline || [],
-          };
-          persistDiagnostic(filename, report);
-          console.log(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
-        } catch (err) {
-          console.error('[DIAGNOSTIC] Failed to write log file:', err.message);
-        }
-      }
+      logger.log?.(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
+      const result = ingestDiagnosticPayload({
+        role,
+        viewerId: socket.id,
+        userAgent: socket.handshake.headers['user-agent'] || 'unknown',
+        data,
+        config,
+        logger,
+      });
 
       // Also relay to host for real-time analysis
-      if (connections.host) {
-        connections.host.emit('diagnostic', redacted);
+      if (result.accepted && connections.host) {
+        connections.host.emit('diagnostic', result.report);
       }
     });
 
@@ -452,4 +538,4 @@ function getConnectionStatus() {
   };
 }
 
-module.exports = { setupSignaling, connections, getConnectionStatus };
+module.exports = { setupSignaling, connections, getConnectionStatus, ingestDiagnosticPayload };

@@ -8,9 +8,24 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth');
-const { loadConfig, getTurnStatus } = require('./lib/config');
+const {
+  loadConfig,
+  getTurnStatus,
+  getPublicEntryConfig,
+  getMediaModeCapabilities,
+} = require('./lib/config');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
-const { setupSignaling, getConnectionStatus } = require('./websocket/signaling');
+const {
+  setupSignaling,
+  connections,
+  getConnectionStatus,
+  ingestDiagnosticPayload,
+} = require('./websocket/signaling');
+const {
+  loadRecentDiagnostics,
+  dedupeDiagnosticsByAttempt,
+  buildConnectionSummary,
+} = require('./lib/diagnostic');
 const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
 
@@ -69,7 +84,7 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io);
+  setupSignaling(io, { config, logger });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -90,6 +105,8 @@ function createServerApp(options = {}) {
 
   app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
     const turnState = getTurnStatus(config);
+    const capabilities = getMediaModeCapabilities(config);
+    const publicEntry = getPublicEntryConfig(config);
 
     const iceServers = [];
     if (config.stunUrls.length) {
@@ -110,6 +127,63 @@ function createServerApp(options = {}) {
       turnStatus: turnState.turnStatus,
       turnUrls: turnState.turnConfigured ? config.turnUrls : [],
       iceServers,
+      ...capabilities,
+      publicEntry,
+    });
+  });
+
+  app.post('/api/diagnostics', requireAccessToken, (req, res) => {
+    const result = ingestDiagnosticPayload({
+      role: req.user.role,
+      viewerId: `http-${req.user.sub}`,
+      userAgent: req.headers['user-agent'] || 'unknown',
+      data: req.body,
+      config,
+      logger,
+    });
+
+    if (!result.accepted) {
+      return res.status(result.error === 'viewer-only' ? 403 : 400).json({
+        accepted: false,
+        error: result.error,
+      });
+    }
+
+    if (connections.host) {
+      connections.host.emit('diagnostic', result.report);
+    }
+
+    return res.status(202).json({
+      accepted: true,
+      connectionAttemptId: result.connectionAttemptId,
+    });
+  });
+
+  app.get('/api/admin/connection-summary', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+
+    const items = loadRecentDiagnostics(200, { logger });
+    return res.json({
+      ...buildConnectionSummary(items),
+      hostOnline: Boolean(connections.host),
+      viewerCount: connections.viewers.size,
+    });
+  });
+
+  app.get('/api/admin/connection-attempts', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(100, requestedLimit))
+      : 50;
+    const items = loadRecentDiagnostics(Math.max(limit * 4, 50), { logger });
+    return res.json({
+      items: dedupeDiagnosticsByAttempt(items).slice(0, limit),
     });
   });
 

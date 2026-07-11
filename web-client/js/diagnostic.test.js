@@ -152,7 +152,7 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputChannelTimeline[2].kind, 'close');
 });
 
-test('buildConnectionDiagnostic returns redacted schema v2 payload from current trace data', () => {
+test('buildConnectionDiagnostic returns redacted schema v3 payload from current trace data', () => {
   const { context } = createDiagnosticContext();
   const traceSnapshot = {
     connectionAttemptId: 'wrd-20260627-abc123',
@@ -186,7 +186,7 @@ test('buildConnectionDiagnostic returns redacted schema v2 payload from current 
   const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'candidate-check-failed' });
 
   assert.equal(payload.type, 'connection-diagnostic');
-  assert.equal(payload.schemaVersion, 2);
+  assert.equal(payload.schemaVersion, 3);
   assert.equal(Array.isArray(payload.events), true);
   assert.equal(Array.isArray(payload.probeResults), true);
   assert.equal(payload.redaction.sdp, 'omitted');
@@ -198,6 +198,15 @@ test('buildConnectionDiagnostic returns redacted schema v2 payload from current 
 
 test('buildConnectionDiagnostic includes adaptive media summary from WebRTC', () => {
   const { context } = createDiagnosticContext();
+  context.WebRTC.networkMode = 'auto';
+  context.WebRTC.serverConfig = {
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+  context.WebRTC.recommendationState = {
+    failureCode: 'direct-failed-suggest-relay',
+    nextSuggestedMode: 'relay',
+    severity: 'warning',
+  };
   context.WebRTC.linkQualityController = {
     snapshot() {
       return {
@@ -216,6 +225,14 @@ test('buildConnectionDiagnostic includes adaptive media summary from WebRTC', ()
   assert.equal(payload.adaptiveMedia.currentProfile, 'survival');
   assert.equal(payload.adaptiveMedia.profileChanges.length, 1);
   assert.equal(payload.adaptiveMedia.iceRestart.attempts, 1);
+  assert.equal(payload.schemaVersion, 3);
+  assert.equal(payload.mode, 'auto');
+  assert.equal(payload.entrypoint, 'https://link.stockhub.wiki');
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.recommendation)), {
+    failureCode: 'direct-failed-suggest-relay',
+    nextSuggestedMode: 'relay',
+    severity: 'warning',
+  });
 });
 
 test('sendConnectionDiagnostic queues payload when socket and fetch fail', async () => {
@@ -256,6 +273,28 @@ test('replayPendingDiagnostics replays at most two queued diagnostics and remove
   assert.deepEqual(JSON.parse(storage.getItem('wrdPendingDiagnostics')), [{ connectionAttemptId: 'wrd-3' }]);
 });
 
+test('autoSendFailure is scoped per connection attempt instead of one global cooldown', () => {
+  const { context } = createDiagnosticContext();
+  const emitted = [];
+  context.WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  context.WebRTC.networkMode = 'auto';
+  context.WebRTC.currentConnectionAttemptId = 'attempt-1';
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  Diagnostic.autoSendFailure('pc-failed');
+  context.WebRTC.currentConnectionAttemptId = 'attempt-2';
+  Diagnostic.autoSendFailure('relay-failed');
+
+  assert.equal(emitted.length, 2);
+  assert.equal(emitted[0].payload.connectionAttemptId, 'attempt-1');
+  assert.equal(emitted[1].payload.connectionAttemptId, 'attempt-2');
+});
+
 test('sendConnectionDiagnostic falls back to fetch when socket is unavailable', async () => {
   const requests = [];
   const { context, storage } = createDiagnosticContext({
@@ -271,10 +310,70 @@ test('sendConnectionDiagnostic falls back to fetch when socket is unavailable', 
 
   assert.equal(ok, true);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, '/api/diagnostics');
+  assert.equal(requests[0].url, 'http://localhost:8080/api/diagnostics');
   assert.equal(requests[0].options.method, 'POST');
   assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
   assert.equal(storage.getItem('wrdPendingDiagnostics'), null);
+});
+
+test('sendConnectionDiagnostic uses runtime API base and bearer auth when socket is unavailable', async () => {
+  const requests = [];
+  const { context } = createDiagnosticContext({
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, status: 202 };
+    },
+  });
+  context.WebRTC.socket = { connected: false, emit() { throw new Error('should not be used'); } };
+  context.Auth = {
+    getToken: () => 'viewer-token-123',
+  };
+  context.RuntimeConfig = {
+    getApiBase: () => 'https://link.stockhub.wiki',
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  const ok = await Diagnostic.sendConnectionDiagnostic({
+    type: 'connection-diagnostic',
+    connectionAttemptId: 'attempt-42',
+    recommendation: { nextSuggestedMode: 'relay' },
+  });
+
+  assert.equal(ok, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://link.stockhub.wiki/api/diagnostics');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer viewer-token-123');
+  assert.match(requests[0].options.body, /"connectionAttemptId":"attempt-42"/);
+  assert.match(requests[0].options.body, /"nextSuggestedMode":"relay"/);
+});
+
+test('autoSendFailure emits connection diagnostics instead of generic log payload', () => {
+  const { context } = createDiagnosticContext();
+  const emitted = [];
+  context.WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  context.WebRTC.networkMode = 'auto';
+  context.WebRTC.serverConfig = {
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+  context.WebRTC.recommendationState = {
+    failureCode: 'direct-failed-suggest-relay',
+    nextSuggestedMode: 'relay',
+    severity: 'warning',
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  Diagnostic.autoSendFailure('pc-failed');
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].event, 'diagnostic');
+  assert.equal(emitted[0].payload.type, 'connection-diagnostic');
+  assert.equal(emitted[0].payload.traceSummary.reason, 'pc-failed');
+  assert.equal(emitted[0].payload.recommendation.nextSuggestedMode, 'relay');
 });
 
 test('sendLogs includes network snapshot and failure reason metadata', () => {

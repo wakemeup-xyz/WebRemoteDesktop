@@ -3,7 +3,7 @@ const Diagnostic = {
   logs: [],
   maxLogs: 500,
   socket: null,
-  lastAutoSendAt: 0,
+  autoSendByAttempt: {},
   autoSendCooldownMs: 15000,
 
   init() {
@@ -160,6 +160,9 @@ const Diagnostic = {
     const inputState = (typeof Input !== 'undefined' && typeof Input.getDiagnosticState === 'function')
       ? Input.getDiagnosticState()
       : null;
+    const terminalState = (typeof TerminalPanel !== 'undefined' && typeof TerminalPanel.getDiagnosticState === 'function')
+      ? TerminalPanel.getDiagnosticState()
+      : null;
 
     const payload = {
       type: 'diagnostic',
@@ -173,6 +176,7 @@ const Diagnostic = {
       network: this.getNetworkSnapshot(),
       keyboardDebug: [],
       keyboardMode: inputState?.keyboardMode || null,
+      terminal: terminalState,
       inputState: inputState ? {
         keyboardMode: inputState.keyboardMode || null,
         pendingKeys: Array.isArray(inputState.pendingKeys) ? inputState.pendingKeys.length : 0,
@@ -231,11 +235,40 @@ const Diagnostic = {
       && typeof WebRTC.linkQualityController.snapshot === 'function')
       ? WebRTC.linkQualityController.snapshot()
       : { enabled: false };
+    const recommendation = (typeof WebRTC !== 'undefined' && WebRTC.recommendationState)
+      ? { ...WebRTC.recommendationState }
+      : null;
+    const entrypoint = (typeof WebRTC !== 'undefined')
+      ? (
+        typeof WebRTC.getPublicEntryUrl === 'function'
+          ? WebRTC.getPublicEntryUrl()
+          : String(
+            WebRTC.serverConfig?.publicEntry?.formalEntryUrl
+            || WebRTC.serverConfig?.publicEntryUrl
+            || window.location.origin
+            || ''
+          ).trim()
+      )
+      : String(window.location.origin || '').trim();
+    const mode = (typeof WebRTC !== 'undefined' && WebRTC.networkMode)
+      ? WebRTC.networkMode
+      : null;
+    const connectionAttemptId = basePayload.connectionAttemptId
+      || snapshot.connectionAttemptId
+      || (typeof WebRTC !== 'undefined' && WebRTC.currentConnectionAttemptId)
+      || `wrd-${Date.now()}`;
+    const terminalState = (typeof TerminalPanel !== 'undefined' && typeof TerminalPanel.getDiagnosticState === 'function')
+      ? TerminalPanel.getDiagnosticState()
+      : null;
 
     return {
       type: 'connection-diagnostic',
-      schemaVersion: 2,
-      connectionAttemptId: basePayload.connectionAttemptId || snapshot.connectionAttemptId || `wrd-${Date.now()}`,
+      schemaVersion: 3,
+      connectionAttemptId,
+      entrypoint,
+      mode,
+      recommendation,
+      terminal: terminalState,
       events: redactedEvents,
       probeResults: Array.isArray(basePayload.probeResults) ? basePayload.probeResults.slice() : [],
       adaptiveMedia,
@@ -287,6 +320,14 @@ const Diagnostic = {
     this.setPendingDiagnostics(pending);
   },
 
+  pruneAutoSendCooldown(now = Date.now()) {
+    Object.keys(this.autoSendByAttempt).forEach((attemptId) => {
+      if (now - Number(this.autoSendByAttempt[attemptId] || 0) >= this.autoSendCooldownMs) {
+        delete this.autoSendByAttempt[attemptId];
+      }
+    });
+  },
+
   async sendConnectionDiagnostic(payload) {
     const diagnosticPayload = payload || this.buildConnectionDiagnostic();
     try {
@@ -296,9 +337,19 @@ const Diagnostic = {
       }
 
       if (typeof fetch === 'function') {
-        const response = await fetch('/api/diagnostics', {
+        const apiBase = (typeof RuntimeConfig !== 'undefined' && typeof RuntimeConfig.getApiBase === 'function')
+          ? RuntimeConfig.getApiBase()
+          : String(window.location.origin || '').replace(/\/+$/, '');
+        const token = (typeof Auth !== 'undefined' && typeof Auth.getToken === 'function')
+          ? Auth.getToken()
+          : '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetch(`${apiBase}/api/diagnostics`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(diagnosticPayload),
         });
         if (response.ok) {
@@ -328,13 +379,20 @@ const Diagnostic = {
   },
 
   autoSendFailure(reason) {
+    const payload = this.buildConnectionDiagnostic({
+      trigger: 'auto-failure',
+      reason,
+    });
+    const attemptId = String(payload.connectionAttemptId || '').trim() || 'global';
     const now = Date.now();
-    if (now - this.lastAutoSendAt < this.autoSendCooldownMs) {
+    this.pruneAutoSendCooldown(now);
+    const lastSentAt = Number(this.autoSendByAttempt[attemptId] || 0);
+    if (now - lastSentAt < this.autoSendCooldownMs) {
       console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
       return;
     }
-    this.lastAutoSendAt = now;
-    this.sendLogs({ trigger: 'auto-failure', reason });
+    this.autoSendByAttempt[attemptId] = now;
+    this.sendConnectionDiagnostic(payload);
   }
 };
 
