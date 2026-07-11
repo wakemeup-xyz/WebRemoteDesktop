@@ -19,15 +19,17 @@ const {
   setupSignaling,
   connections,
   getConnectionStatus,
-  ingestDiagnosticPayload,
 } = require('./websocket/signaling');
 const {
   loadRecentDiagnostics,
   dedupeDiagnosticsByAttempt,
   buildConnectionSummary,
+  ingestDiagnosticPayload,
 } = require('./lib/diagnostic');
 const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
+const { createStructuredLogger } = require('./lib/observability/logger');
+const { createRecentEventStore } = require('./lib/observability/store');
 
 function requireAccessToken(req, res, next) {
   try {
@@ -45,6 +47,16 @@ function requireAccessToken(req, res, next) {
 function createServerApp(options = {}) {
   const config = options.config || loadConfig();
   const logger = options.logger || console;
+  const recentEventStore = options.recentEventStore || createRecentEventStore();
+  const structuredLogger = options.structuredLogger || createStructuredLogger({
+    write(line) {
+      try {
+        logger.info?.(JSON.parse(line));
+      } catch (_error) {
+        logger.info?.(line);
+      }
+    },
+  });
   ensureNodePtySpawnHelperExecutable(logger);
 
   const app = express();
@@ -84,7 +96,7 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger });
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -148,6 +160,8 @@ function createServerApp(options = {}) {
         error: result.error,
       });
     }
+    recentEventStore.append(result.summaryEvent);
+    structuredLogger.info(result.summaryEvent);
 
     if (connections.host) {
       connections.host.emit('diagnostic', result.report);
@@ -187,6 +201,27 @@ function createServerApp(options = {}) {
     });
   });
 
+  app.get('/api/admin/observability/summary', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+    return res.json(recentEventStore.summary());
+  });
+
+  app.get('/api/admin/observability/recent', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(200, requestedLimit))
+      : 50;
+    const domain = String(req.query.domain || '').trim();
+    return res.json({
+      items: recentEventStore.recent({ domain, limit }),
+    });
+  });
+
   app.get('/api/terminal/bootstrap', requireAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
@@ -204,6 +239,8 @@ function createServerApp(options = {}) {
     io,
     config,
     terminal,
+    recentEventStore,
+    structuredLogger,
   };
 }
 

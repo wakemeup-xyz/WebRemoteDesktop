@@ -1,74 +1,6 @@
-const fs = require('fs');
-const path = require('path');
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
-const { redactDiagnosticPayload, getDiagDir, persistDiagnostic } = require('../lib/diagnostic');
-
-const DIAG_DIR = getDiagDir();
-const DIAG_MAX_AGE_DAYS = 7;
-const DIAG_MAX_PER_VIEWER = 3;
-const DIAG_MAX_TOTAL = 50;
-
-function cleanupDiagLogs(logger = console) {
-  try {
-    if (!fs.existsSync(DIAG_DIR)) return;
-    const files = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        const stat = fs.statSync(p);
-        return { name: f, path: p, mtime: stat.mtimeMs, size: stat.size };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    const now = Date.now();
-    const maxAgeMs = DIAG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-
-    // 1. 删除过期文件
-    for (const file of files) {
-      if (now - file.mtime > maxAgeMs) {
-        fs.unlinkSync(file.path);
-      }
-    }
-
-    // 2. 重新读取并限制每个 viewer 的条数
-    const remaining = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        const stat = fs.statSync(p);
-        // 从文件名提取 viewerId: TIMESTAMP_viewerId.json
-        const viewerId = f.replace(/^.+_/, '').replace('.json', '');
-        return { name: f, path: p, mtime: stat.mtimeMs, viewerId };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    const viewerCounts = {};
-    for (const file of remaining) {
-      viewerCounts[file.viewerId] = (viewerCounts[file.viewerId] || 0) + 1;
-      if (viewerCounts[file.viewerId] > DIAG_MAX_PER_VIEWER) {
-        fs.unlinkSync(file.path);
-        viewerCounts[file.viewerId]--;
-      }
-    }
-
-    // 3. 限制总文件数，删除最旧的
-    const finalFiles = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        return { path: p, mtime: fs.statSync(p).mtimeMs };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    while (finalFiles.length > DIAG_MAX_TOTAL) {
-      const oldest = finalFiles.shift();
-      fs.unlinkSync(oldest.path);
-    }
-  } catch (err) {
-    logger.error?.('[DIAGNOSTIC] cleanup failed:', err.message);
-  }
-}
+const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 
 // Store connections
 const connections = {
@@ -120,116 +52,11 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, number));
 }
 
-function ingestDiagnosticPayload(options = {}) {
-  const {
-    role,
-    viewerId,
-    userAgent,
-    data,
-    config = loadConfig(),
-    logger = console,
-  } = options;
-
-  if (role !== 'viewer') {
-    return { accepted: false, error: 'viewer-only' };
-  }
-
-  const redacted = redactDiagnosticPayload(data || {});
-  const receivedAt = new Date().toISOString();
-  const connectionAttemptId = String(redacted.connectionAttemptId || '').trim() || `attempt-${Date.now()}`;
-  const logs = Array.isArray(redacted.logs) ? redacted.logs : [];
-  const schemaVersion = Number.parseInt(redacted.schemaVersion, 10);
-  const traceSummary = redacted.traceSummary && typeof redacted.traceSummary === 'object'
-    ? { ...redacted.traceSummary }
-    : {
-        trigger: redacted.trigger || 'manual',
-        reason: redacted.reason || null,
-      };
-  const trigger = typeof redacted.trigger === 'string' && redacted.trigger
-    ? redacted.trigger
-    : traceSummary.trigger || 'manual';
-  const reason = typeof redacted.reason === 'string' || redacted.reason === null
-    ? redacted.reason
-    : (traceSummary.reason ?? null);
-  const report = {
-    type: String(redacted.type || 'diagnostic'),
-    schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : 1,
-    receivedAt,
-    viewerId,
-    userAgent: redacted.userAgent || userAgent || 'unknown',
-    screen: redacted.screen || 'unknown',
-    connectionAttemptId,
-    mode: typeof redacted.mode === 'string' ? redacted.mode : null,
-    entrypoint: typeof redacted.entrypoint === 'string' ? redacted.entrypoint : null,
-    logCount: logs.length,
-    logs,
-    keyboardDebug: Array.isArray(redacted.keyboardDebug) ? redacted.keyboardDebug : [],
-    trigger,
-    reason,
-    traceSummary,
-    recommendation: redacted.recommendation && typeof redacted.recommendation === 'object'
-      ? { ...redacted.recommendation }
-      : null,
-    events: Array.isArray(redacted.events) ? redacted.events : [],
-    network: redacted.network && typeof redacted.network === 'object' ? redacted.network : null,
-    inputState: redacted.inputState || null,
-    probeResults: Array.isArray(redacted.probeResults) ? redacted.probeResults : [],
-    inputChannelTimeline: Array.isArray(redacted.inputChannelTimeline) ? redacted.inputChannelTimeline : [],
-  };
-
-  if (redacted.failureCategory != null) {
-    report.failureCategory = redacted.failureCategory;
-  }
-  if (redacted.latency != null) {
-    report.latency = redacted.latency;
-  }
-  if (redacted.mediaPolicy != null) {
-    report.mediaPolicy = redacted.mediaPolicy;
-  }
-  if (redacted.selectedCandidatePair && typeof redacted.selectedCandidatePair === 'object') {
-    report.selectedCandidatePair = redacted.selectedCandidatePair;
-  }
-  if (redacted.pc && typeof redacted.pc === 'object') {
-    report.pc = redacted.pc;
-  }
-  if (redacted.ice && typeof redacted.ice === 'object') {
-    report.ice = redacted.ice;
-  }
-  if (redacted.candidate != null) {
-    report.candidate = redacted.candidate;
-  }
-  if (redacted.adaptiveMedia && typeof redacted.adaptiveMedia === 'object') {
-    report.adaptiveMedia = redacted.adaptiveMedia;
-  }
-  if (redacted.redaction && typeof redacted.redaction === 'object') {
-    report.redaction = redacted.redaction;
-  }
-
-  if (config.enableDiagPersist) {
-    try {
-      if (!fs.existsSync(DIAG_DIR)) {
-        fs.mkdirSync(DIAG_DIR, { recursive: true });
-      }
-      cleanupDiagLogs(logger);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `${ts}_${viewerId}.json`;
-      persistDiagnostic(filename, report);
-      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
-    } catch (err) {
-      logger.error?.('[DIAGNOSTIC] Failed to write log file:', err.message);
-    }
-  }
-
-  return {
-    accepted: true,
-    connectionAttemptId,
-    report,
-  };
-}
-
 function setupSignaling(io, options = {}) {
   const config = options.config || loadConfig();
   const logger = options.logger || console;
+  const recentEventStore = options.recentEventStore || null;
+  const structuredLogger = options.structuredLogger || null;
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -379,11 +206,16 @@ function setupSignaling(io, options = {}) {
       const result = ingestDiagnosticPayload({
         role,
         viewerId: socket.id,
+        socketId: socket.id,
         userAgent: socket.handshake.headers['user-agent'] || 'unknown',
         data,
         config,
         logger,
       });
+      if (result.accepted && result.summaryEvent) {
+        recentEventStore?.append(result.summaryEvent);
+        structuredLogger?.info(result.summaryEvent);
+      }
 
       // Also relay to host for real-time analysis
       if (result.accepted && connections.host) {

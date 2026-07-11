@@ -5,8 +5,8 @@ const path = require('node:path');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { createServerApp } = require('../server');
-const { connections, ingestDiagnosticPayload } = require('../websocket/signaling');
-const { redactDiagnosticPayload, getDiagDir, persistDiagnostic } = require('../lib/diagnostic');
+const { connections } = require('../websocket/signaling');
+const { redactDiagnosticPayload, getDiagDir, persistDiagnostic, ingestDiagnosticPayload } = require('../lib/diagnostic');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test-viewer-password';
@@ -63,6 +63,7 @@ test('ingestDiagnosticPayload returns a shared redacted diagnostic report shape'
     data: {
       type: 'connection-diagnostic',
       schemaVersion: 2,
+      browserSessionId: 'browser-1',
       connectionAttemptId: 'attempt-unit-1',
       logs: ['line-1'],
       trigger: 'manual',
@@ -123,6 +124,24 @@ test('ingestDiagnosticPayload returns a shared redacted diagnostic report shape'
   assert.equal('keyboardMode' in result.report, false);
   assert.equal('unexpected' in result.report, false);
   assert.match(result.report.receivedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(result.summaryEvent, {
+    domain: 'viewer',
+    event: 'diagnostic_uploaded',
+    message: 'Viewer uploaded diagnostic bundle',
+    correlation: {
+      browserSessionId: 'browser-1',
+      connectionAttemptId: 'attempt-unit-1',
+      viewerId: 'viewer-1',
+      socketId: null,
+    },
+    meta: {
+      trigger: 'manual',
+      reason: 'ice-failed',
+      type: 'connection-diagnostic',
+      logCount: 1,
+      persisted: false,
+    },
+  });
 });
 
 test('POST /api/diagnostics rejects requests without a bearer token', async () => {
@@ -505,6 +524,87 @@ test('GET /api/admin/connection-attempts ignores malformed diagnostic files', as
     assert.equal(body.items[0].connectionAttemptId, 'attempt-ok-1');
   } finally {
     fs.rmSync(getDiagDir(), { recursive: true, force: true });
+    await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('admin observability summary and recent endpoints return structured diagnostic events from runtime memory', async () => {
+  const runtime = createServerApp({
+    config: {
+      port: 0,
+      nodeEnv: 'test',
+      jwtSecret: process.env.JWT_SECRET,
+      viewerAccessPassword: process.env.VIEWER_ACCESS_PASSWORD,
+      hostSharedSecret: process.env.HOST_SHARED_SECRET,
+      corsOrigins: [],
+      stunUrls: [],
+      turnUrls: [],
+      turnUsername: '',
+      turnCredential: '',
+      publicEntryUrl: 'https://link.stockhub.wiki',
+      enableDiagPersist: false,
+      logLevel: 'info',
+      logFormat: 'jsonl',
+      logDir: '',
+      enableTerminal: false,
+      terminalAdminPassword: '',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalAuditLog: '',
+      terminalRecordIo: false,
+    },
+    logger: { log() {}, info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const { port } = runtime.server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const uploadResponse = await fetch(baseUrl + '/api/diagnostics', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${signAccessToken('viewer', 'viewer-observability')}`,
+      },
+      body: JSON.stringify({
+        type: 'connection-diagnostic',
+        schemaVersion: 2,
+        browserSessionId: 'browser-summary-1',
+        connectionAttemptId: 'attempt-summary-runtime-1',
+        trigger: 'manual',
+        reason: 'ice-failed',
+        logs: ['line-1'],
+      }),
+    });
+    assert.equal(uploadResponse.status, 202);
+
+    const summaryResponse = await fetch(baseUrl + '/api/admin/observability/summary', {
+      headers: {
+        Authorization: `Bearer ${signAccessToken('admin', 'diag-admin')}`,
+      },
+    });
+    const summary = await summaryResponse.json();
+    assert.equal(summaryResponse.status, 200);
+    assert.equal(summary.total, 1);
+    assert.equal(summary.byDomain.viewer, 1);
+    assert.equal(summary.byEvent['viewer.diagnostic_uploaded'], 1);
+
+    const recentResponse = await fetch(baseUrl + '/api/admin/observability/recent?domain=viewer&limit=5', {
+      headers: {
+        Authorization: `Bearer ${signAccessToken('admin', 'diag-admin')}`,
+      },
+    });
+    const recent = await recentResponse.json();
+    assert.equal(recentResponse.status, 200);
+    assert.equal(recent.items.length, 1);
+    assert.equal(recent.items[0].domain, 'viewer');
+    assert.equal(recent.items[0].event, 'diagnostic_uploaded');
+    assert.equal(recent.items[0].correlation.browserSessionId, 'browser-summary-1');
+    assert.equal(recent.items[0].correlation.connectionAttemptId, 'attempt-summary-runtime-1');
+  } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }
 });
