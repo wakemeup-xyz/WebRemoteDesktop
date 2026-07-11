@@ -8,6 +8,7 @@
 - ✅ Python Host 应用 (Python + aiortc + MSS屏幕捕获)
 - ✅ H.264 WebRTC 低延迟视频链路
 - ✅ WebRTC DataChannel 输入链路
+- ✅ Host 捕获源回退：MSS 瞬时只返回 `0x0` monitor 时，自动回退到 `screeninfo`
 - ✅ macOS 防睡眠守护和 quick tunnel 自恢复
 
 ## 系统架构
@@ -48,9 +49,14 @@
 
 > 当前仓库若准备正式公开发布，仍需先轮换历史上已实际使用过的密码、JWT secret、TURN 凭据和 tunnel 相关凭据。
 
-### 方式一：默认推荐启动（safe quick tunnel）
+正式公网入口：`https://link.stockhub.wiki`
 
-默认推荐先用这一种：同时拉起本地服务和 safe quick tunnel 临时公网入口。
+- 外部用户应只记这一个固定域名
+- `trycloudflare` / safe quick tunnel 仅用于本地调试、临时排障和公网入口兜底验证，不应作为长期正式入口
+
+### 方式一：本地调试/排障启动（safe quick tunnel）
+
+当你需要同时拉起本地服务，并保留一个临时 quick tunnel 做调试或排障时，使用这一种。
 
 ```bash
 cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
@@ -342,6 +348,8 @@ WebRemoteDesktop/
 2. 在网页控制栏切换网络模式：本地同网优先“本地直连”，普通外网用“自动穿透”或“外网直连”；TURN / 隧道中继作为用户手动模式使用
 3. 如果网页一直 `0 FPS` 且链路为 `-` / `unknown`，说明 ICE 没有选出媒体路径；Strict STUN 默认不会自动切 TURN 或媒体 tunnel
 4. TURN 环境变量：`TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL`；STUN 可通过 `STUN_URLS` 覆盖
+5. 如果 Host 日志出现 `No usable monitor reported by MSS`，说明这次失败是 Host 屏幕枚举异常，不是公网入口异常；当前 Host 会优先用 `MSS`，若只拿到 `0x0` monitor 再回退到 `screeninfo`
+6. 2026-07-09 已验证：`https://link.stockhub.wiki` 下手动切到 `隧道中继` 可以真实出画，Viewer 状态会显示 `已连接 / 链路 tunnel / Tunnel relay stream`
 
 ### Strict STUN 自适应优化
 
@@ -389,7 +397,7 @@ TURN_CREDENTIAL=你的凭证
 
 1. 让用户在网页诊断面板点击“发送日志到服务端”
 2. `web-client/js/diagnostic.js` 会收集最近控制台日志和延迟统计
-3. 前端通过 Socket.IO `diagnostic` 事件发送到 Signal Server，服务端会先做脱敏和截断
+3. 前端优先通过 Socket.IO `diagnostic` 事件发送；若 signaling/socket 不可用，再退化为带 Bearer 的 HTTP `POST /api/diagnostics`
 4. 默认不会把诊断日志持久化到仓库目录；仅在设置 `WRD_ENABLE_DIAG_PERSIST=1` 时写入系统临时目录下的 `wrd-diag/`
 5. 排查问题时，优先看实时服务端日志；若已开启持久化，再读取临时目录中的最新诊断文件
 

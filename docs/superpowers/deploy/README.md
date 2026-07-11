@@ -15,3 +15,4 @@
 
 - 不要再依赖临时 `trycloudflare` 地址作为长期入口
 - 外网访问应以 `https://link.stockhub.wiki` 为准
+- quick tunnel 只保留给本地调试、临时排障和链路验证，不作为正式交付地址

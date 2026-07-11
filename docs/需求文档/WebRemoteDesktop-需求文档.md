@@ -204,6 +204,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 该脚本只会复用或启动当前仓库自己的 `signal-server`、Host LaunchAgent、safe quick tunnel。
 
+入口口径需要明确区分：
+
+1. 正式公网入口统一使用 `https://link.stockhub.wiki`
+2. safe quick tunnel / `trycloudflare` 仅用于调试、临时排障和固定域名不可用时的辅助验证
+3. 用户不应保存或依赖临时 quick tunnel URL 作为长期访问地址
+
 其中 Host 的启动语义为：
 
 1. `scripts/start-safe-wrd.sh` 与 `scripts/restart-host.sh` 都会安装并启用 `com.webremotedesktop.host` LaunchAgent
@@ -225,7 +231,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 停止该安全链路时，使用：`./scripts/stop-safe-wrd.sh`。它只会停止安全启动脚本记录过的 PID，不会清理其他项目进程。
 查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 健康状态。
 
-当前 safe quick tunnel 地址会写入：
+当前 safe quick tunnel 调试地址会写入：
 
 ```bash
 /tmp/wrd-safe-current-url.txt

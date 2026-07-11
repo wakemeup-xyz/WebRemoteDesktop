@@ -6,15 +6,20 @@
 
 当前仓库推荐按下面优先级选择启动方式：
 
-1. **默认推荐：安全一键启动**：`./scripts/start-safe-wrd.sh`
-2. **手动本地启动**：`signal-server` + `./scripts/restart-host.sh`
-3. **固定域名启动**：`./scripts/start-fixed-domain.sh`
+1. **正式公网入口**：`./scripts/start-fixed-domain.sh`
+2. **本地调试/排障 + 临时 quick tunnel**：`./scripts/start-safe-wrd.sh`
+3. **手动本地启动**：`signal-server` + `./scripts/restart-host.sh`
 
 区别如下：
 
-- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
+- `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名；正式用户入口应始终使用 `https://link.stockhub.wiki`
+- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址做调试或排障，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
 - 手动本地启动：适合只做本机调试，不需要公网地址；但仍会通过 LaunchAgent 托管 Host
-- `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名
+
+入口口径：
+
+- 正式公网入口：`https://link.stockhub.wiki`
+- quick tunnel / `trycloudflare`：仅调试、临时排障、或 fixed-domain 不可用时的临时观察链路，不作为正式对外地址
 
 Host 启动语义：
 
@@ -27,7 +32,7 @@ Tunnel 操作语义：
 
 - 默认不要重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程
 - 若只是重启本地 `signal-server` 或 `python-host`，必须优先复用现有 tunnel
-- 当前有效公网地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
+- 当前有效 debug quick tunnel 地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
 - `重启服务` 不得被解释为重建 quick tunnel；在 tunnel 仍存活时，重启本地服务不应改变 `/tmp/wrd-safe-current-url.txt`
 - 只有在用户明确要求“重建 tunnel / 重建 Cloudflare / 重启 tunnel / 重新生成公网地址”时，才允许重建 quick tunnel；tunnel 失效本身不是授权
 
@@ -256,6 +261,8 @@ LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
 2. 如果出现 `WRD_MEDIA_PROFILE`，说明 Viewer 已检测到弱链路并尝试降载
 3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel
 4. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连可达
+5. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
+6. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
 
 家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
 
