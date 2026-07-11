@@ -159,10 +159,13 @@ wait_safe_url
 
 echo
 echo '=== safe wrd ready ==='
+echo 'formal public entry: https://link.stockhub.wiki'
 echo 'entrypoint: http://127.0.0.1:8080'
 echo 'warning: do not open 5173 / http://127.0.0.1:5173 or run npm run dev for this repo'
-echo 'use either the local 8080 page or the safe URL below'
+echo 'quick tunnel: debug-only, do not share it as the formal public entry'
+echo 'use either the local 8080 page or the debug quick tunnel URL below'
 echo "safe url: $(cat "$SAFE_URL_FILE")"
+echo "debug quick tunnel url: $(cat "$SAFE_URL_FILE")"
 echo "status: $(curl -fsS http://127.0.0.1:8080/api/status)"
 echo "signal pid file: $SIGNAL_PID_FILE"
 echo "host pid file: $HOST_PID_FILE"

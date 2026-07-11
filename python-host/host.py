@@ -28,6 +28,7 @@ except ImportError:
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCConfiguration, RTCIceServer
 import logging
 from concurrent.futures import ThreadPoolExecutor
+import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import H264VideoToolboxEncoder
 
@@ -183,24 +184,59 @@ def build_ice_servers():
     return ice_servers
 
 
+def _monitor_value(monitor, key):
+    if isinstance(monitor, dict):
+        return monitor.get(key)
+    return getattr(monitor, key, None)
+
+
+def normalize_monitor_region(monitor):
+    width = int(_monitor_value(monitor, "width") or 0)
+    height = int(_monitor_value(monitor, "height") or 0)
+    if width <= 0 or height <= 0:
+        return None
+    return {
+        "left": int(_monitor_value(monitor, "left") if _monitor_value(monitor, "left") is not None else _monitor_value(monitor, "x") or 0),
+        "top": int(_monitor_value(monitor, "top") if _monitor_value(monitor, "top") is not None else _monitor_value(monitor, "y") or 0),
+        "width": width,
+        "height": height,
+    }
+
+
 def is_valid_monitor_region(monitor):
-    return bool(monitor) and int(monitor.get("width") or 0) > 0 and int(monitor.get("height") or 0) > 0
+    return normalize_monitor_region(monitor) is not None
 
 
-def select_capture_monitor(monitors):
+def select_capture_monitor(monitors, fallback_monitors=None):
     if not monitors:
         raise RuntimeError("No monitors reported by MSS")
 
     candidates = list(monitors[1:] if len(monitors) > 1 else monitors)
     for monitor in candidates:
-      if is_valid_monitor_region(monitor):
-          return monitor
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            return normalized
 
     for monitor in monitors:
-      if is_valid_monitor_region(monitor):
-          return monitor
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            return normalized
+
+    for monitor in fallback_monitors or []:
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            logger.warning("MSS reported only zero-sized monitors; using screeninfo fallback: %s", normalized)
+            return normalized
 
     raise RuntimeError(f"No usable monitor reported by MSS: {monitors!r}")
+
+
+def get_screeninfo_monitors():
+    try:
+        return screeninfo.get_monitors()
+    except Exception as exc:
+        logger.warning("Failed to read screeninfo monitors for fallback: %s", exc)
+        return []
 
 
 class OverlayNotifier:
@@ -318,7 +354,7 @@ class TunnelRelayStreamer:
         frame_interval = 1 / self.fps
         ack_timeout = max(0.35, min(1.0, frame_interval * 4))
         with MSS() as sct:
-            monitor = select_capture_monitor(sct.monitors)
+            monitor = select_capture_monitor(sct.monitors, fallback_monitors=get_screeninfo_monitors())
             while self.enabled and self.viewer_id:
                 started = time.time()
                 try:
@@ -476,7 +512,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def __init__(self, target_fps=20, max_width=1280, max_height=720):
         super().__init__()
         self.sct = MSS()
-        self.monitor = select_capture_monitor(self.sct.monitors)
+        self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
         self.last_time = time.time()
         self._start = time.time()

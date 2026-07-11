@@ -98,3 +98,10 @@ test('safe status script distinguishes dns failure from origin failure in reacha
   assert.match(source, /safe url reachability: dns-unresolved/);
   assert.match(source, /safe url reachability: origin-unreachable/);
 });
+
+test('safe status script labels fixed domain as formal public entry and quick tunnel as debug-only', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+
+  assert.match(source, /formal public entry: https:\/\/link\.stockhub\.wiki/i);
+  assert.match(source, /quick tunnel: debug-only|debug quick tunnel/i);
+});

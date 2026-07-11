@@ -48,3 +48,11 @@ test('safe startup script validates the current safe URL before reusing a runnin
   assert.match(source, /restart-safe-tunnel\.sh/);
   assert.match(source, /SAFE_TUNNEL_PID="\/tmp\/wrd-safe-quicktunnel\.pid"/);
 });
+
+test('safe startup script prints formal entry first and marks quick tunnel as debug-only', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+
+  assert.match(source, /formal public entry: https:\/\/link\.stockhub\.wiki/i);
+  assert.match(source, /debug quick tunnel url:/i);
+  assert.match(source, /quick tunnel.*debug-only|debug-only.*quick tunnel/i);
+});

@@ -69,10 +69,12 @@ print_pid_status() {
 }
 
 echo '=== safe wrd status ==='
+echo 'formal public entry: https://link.stockhub.wiki'
 print_pid_status "$SAFE_SIGNAL_PID" 'safe signal-server' signal
 print_pid_status "$SAFE_HOST_PID" 'safe host' host
 print_pid_status "$SAFE_TUNNEL_SUPERVISOR_PID" 'safe tunnel supervisor' tunnel-supervisor
 print_pid_status "$SAFE_TUNNEL_PID" 'safe quick tunnel' quick-tunnel
+echo 'quick tunnel: debug-only, do not share it as the formal public entry'
 echo 'entrypoint: WebRemoteDesktop uses http://127.0.0.1:8080 (do not open 5173 or run npm run dev for this repo)'
 
 recover_safe_url_file || true
@@ -80,7 +82,7 @@ recover_safe_url_file || true
 if [ -f "$SAFE_URL_FILE" ]; then
   SAFE_URL_VALUE=$(cat "$SAFE_URL_FILE" 2>/dev/null || echo 'empty')
   echo "safe url file: $SAFE_URL_VALUE"
-  echo "safe url source of truth: use $SAFE_URL_FILE as the current effective public URL; trycloudflare may change only when the tunnel expires or is rebuilt"
+  echo "safe url source of truth: use $SAFE_URL_FILE as the current effective debug quick tunnel URL; trycloudflare may change only when the tunnel expires or is rebuilt"
   SAFE_URL_STATE=$(wrd_safe_url_reachability_state "$SAFE_URL_VALUE" || true)
   case "$SAFE_URL_STATE" in
     reachable)
