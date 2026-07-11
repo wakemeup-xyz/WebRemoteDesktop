@@ -56,12 +56,23 @@ function setupTerminal(io, options = {}) {
     const user = socket.user;
     const clientId = getClientId(socket);
     const socketId = socket.id;
+    const getTransportName = () => String(socket.conn?.transport?.name || 'unknown');
     audit.info('terminal_socket_connected', {
       socketId,
       clientId,
       subject: user?.sub || '',
       role: user?.role || '',
+      transport: getTransportName(),
     });
+    if (typeof socket.conn?.on === 'function') {
+      socket.conn.on('upgrade', (transport) => {
+        audit.info('terminal_socket_transport_upgrade', {
+          socketId,
+          clientId,
+          transport: String(transport?.name || 'unknown'),
+        });
+      });
+    }
 
     function emitPoolSnapshot() {
       const snapshot = sessionManager.getPoolSnapshot();
@@ -236,6 +247,18 @@ function setupTerminal(io, options = {}) {
     socket.on('terminal:attach', handleAttach);
     socket.on('terminal:detach', handleDetach);
     socket.on('terminal:close', handleClose);
+    socket.on('terminal:ping', (payload = {}) => {
+      const serverReceivedAt = Date.now();
+      socket.emit('terminal:pong', {
+        nonce: typeof payload.nonce === 'string' ? payload.nonce : null,
+        clientSentAt: Number.isFinite(Number(payload.clientSentAt))
+          ? Number(payload.clientSentAt)
+          : null,
+        serverReceivedAt,
+        serverSentAt: Date.now(),
+        transport: getTransportName(),
+      });
+    });
 
     socket.on('terminal:input', (payload = {}) => {
       if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
@@ -254,10 +277,22 @@ function setupTerminal(io, options = {}) {
         return;
       }
       try {
+        const serverReceivedAt = Date.now();
         sessionManager.writeInput(payload.sessionId, {
           clientId,
           socketId,
           data,
+        });
+        socket.emit('terminal:input_ack', {
+          sessionId: payload.sessionId,
+          inputId: typeof payload.inputId === 'string' ? payload.inputId : null,
+          clientSentAt: Number.isFinite(Number(payload.clientSentAt))
+            ? Number(payload.clientSentAt)
+            : null,
+          serverReceivedAt,
+          serverSentAt: Date.now(),
+          bytes: Buffer.byteLength(data, 'utf8'),
+          transport: getTransportName(),
         });
       } catch (err) {
         socket.emit('terminal:error', {

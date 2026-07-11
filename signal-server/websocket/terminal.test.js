@@ -24,6 +24,10 @@ class FakeSocket extends EventEmitter {
       headers: { 'user-agent': 'test-agent' },
     };
     this.sent = [];
+    this.conn = {
+      transport: { name: 'websocket' },
+      on() {},
+    };
   }
 
   emit(event, data) {
@@ -294,6 +298,41 @@ test('shared observers may send input and must use the websocket active-presente
   assert.deepEqual(session.pty.resizeCalls, [{ cols: 144, rows: 40 }]);
   assert.equal(adminB.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b-client'), true);
+});
+
+test('terminal namespace responds to terminal:ping and terminal:input with latency metadata', () => {
+  const { namespace } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  admin.trigger('terminal:ping', {
+    nonce: 'ping-1',
+    clientSentAt: 1234,
+  });
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'pwd\n',
+    inputId: 'input-1',
+    clientSentAt: 2345,
+  });
+
+  const pong = admin.sent.find((message) => message.event === 'terminal:pong');
+  assert.equal(pong.data.nonce, 'ping-1');
+  assert.equal(pong.data.clientSentAt, 1234);
+  assert.equal(pong.data.transport, 'websocket');
+  assert.equal(typeof pong.data.serverReceivedAt, 'number');
+  assert.equal(typeof pong.data.serverSentAt, 'number');
+
+  const ack = admin.sent.find((message) => message.event === 'terminal:input_ack');
+  assert.equal(ack.data.sessionId, created.sessionId);
+  assert.equal(ack.data.inputId, 'input-1');
+  assert.equal(ack.data.clientSentAt, 2345);
+  assert.equal(ack.data.transport, 'websocket');
+  assert.equal(ack.data.bytes, Buffer.byteLength('pwd\n', 'utf8'));
+  assert.equal(typeof ack.data.serverReceivedAt, 'number');
+  assert.equal(typeof ack.data.serverSentAt, 'number');
 });
 
 test('terminal:set_active_presenter rejects callers that are not attached observers', () => {
