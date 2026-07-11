@@ -181,6 +181,92 @@ test('refresh clears stuck offer state before creating a new offer', async () =>
   assert.deepEqual(observed, [false]);
 });
 
+test('refresh resets ICE restart attempts for same-page recovery', async () => {
+  const { WebRTC } = loadWebRTC();
+
+  WebRTC.socket = { connected: true };
+  WebRTC._iceRestartAttempts = 1;
+  WebRTC.pc = {
+    close() {},
+  };
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => {
+    WebRTC.pc = { close() {} };
+  };
+  WebRTC.createOffer = () => {};
+
+  await WebRTC.refresh();
+
+  assert.equal(WebRTC._iceRestartAttempts, 0);
+});
+
+test('refresh in tunnel mode recreates a disconnected signaling socket before restarting relay', async () => {
+  const replacementSocket = {
+    connected: true,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC } = loadWebRTC({
+    io: () => replacementSocket,
+  });
+  const staleSocket = {
+    connected: false,
+    disconnectCalled: false,
+    disconnect() {
+      this.disconnectCalled = true;
+    },
+  };
+
+  let startCalls = 0;
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.socket = staleSocket;
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.startTunnelRelay = () => {
+    startCalls += 1;
+  };
+
+  await WebRTC.refresh();
+
+  assert.equal(staleSocket.disconnectCalled, true);
+  assert.equal(WebRTC.socket, replacementSocket);
+  assert.equal(startCalls, 1);
+});
+
+test('signaling disconnect in tunnel mode schedules same-page recovery even after socket goes offline', () => {
+  const handlers = new Map();
+  let scheduledRecovery = null;
+  const socket = {
+    connected: true,
+    on(event, callback) {
+      handlers.set(event, callback);
+    },
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback) {
+      scheduledRecovery = callback;
+      return 1;
+    },
+    clearTimeout() {},
+  });
+
+  let refreshCalls = 0;
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.socket = socket;
+  WebRTC.refresh = () => {
+    refreshCalls += 1;
+  };
+
+  WebRTC.setupSocketListeners();
+  handlers.get('disconnect')();
+
+  assert.equal(typeof scheduledRecovery, 'function');
+  scheduledRecovery();
+  assert.equal(refreshCalls, 1);
+});
+
 test('stale createOffer completion does not clear newer offer progress', async () => {
   const { WebRTC } = loadWebRTC();
   let resolveOffer;
@@ -246,7 +332,7 @@ test('relay socket connect emits start control during auto tunnel fallback', () 
     },
     disconnect() {},
   };
-  const { WebRTC } = loadWebRTC({
+  const { WebRTC, context } = loadWebRTC({
     io: () => relaySocket,
   });
 
@@ -260,6 +346,35 @@ test('relay socket connect emits start control during auto tunnel fallback', () 
     emitted.some(([event]) => event === 'relay-stream-control'),
     true
   );
+});
+
+test('socket reconnect replays queued diagnostics before continuing recovery', async () => {
+  const handlers = new Map();
+  const socket = {
+    connected: true,
+    on(event, callback) {
+      handlers.set(event, callback);
+    },
+    emit() {},
+    disconnect() {},
+  };
+  const replayedSockets = [];
+  const { WebRTC } = loadWebRTC({
+    Diagnostic: {
+      replayPendingDiagnostics(targetSocket) {
+        replayedSockets.push(targetSocket);
+        return Promise.resolve(1);
+      },
+    },
+  });
+
+  WebRTC.socket = socket;
+  WebRTC.pc = { connectionState: 'connected' };
+  WebRTC.setupSocketListeners();
+  await handlers.get('connect')();
+
+  assert.equal(replayedSockets.length, 1);
+  assert.equal(replayedSockets[0], socket);
 });
 
 test('relay mode without TURN does not fall back to STUN candidates', () => {
@@ -307,9 +422,32 @@ test('stun mode builds deduplicated STUN config with candidate pool', () => {
   ]);
 });
 
-test('selecting relay without TURN switches to tunnel mode explicitly', () => {
+test('auto failure with TURN configured suggests relay without switching mode', () => {
+  const { WebRTC } = loadWebRTC();
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example.com:3478'],
+    iceServers: [{ urls: ['turn:turn.example.com:3478'], username: 'u', credential: 'p' }],
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+
+  WebRTC.setFailureRecommendation('direct-failed-suggest-relay');
+
+  assert.equal(WebRTC.networkMode, 'auto');
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.recommendationState)), {
+    failureCode: 'direct-failed-suggest-relay',
+    nextSuggestedMode: 'relay',
+    severity: 'warning',
+  });
+});
+
+test('selecting relay without TURN keeps relay persisted and shows recommendation-only guidance', () => {
   let savedMode = null;
-  const { WebRTC } = loadWebRTC({
+  const { WebRTC, context } = loadWebRTC({
     localStorage: {
       getItem: () => null,
       setItem: (_key, value) => {
@@ -321,15 +459,255 @@ test('selecting relay without TURN switches to tunnel mode explicitly', () => {
   WebRTC.serverConfig = {
     stunUrls: ['stun:stun.example.com:3478'],
     turnConfigured: false,
+    turnStatus: 'missing',
     turnUrls: [],
     iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
   };
   WebRTC.socket = { connected: false };
 
   WebRTC.setNetworkMode('relay');
 
-  assert.equal(WebRTC.networkMode, 'tunnel');
-  assert.equal(savedMode, 'tunnel');
+  const advisorText = context.document.getElementById('networkAdvisorText').textContent;
+  const turnStatus = context.document.getElementById('networkTurnStatus').textContent;
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(savedMode, 'relay');
+  assert.equal(WebRTC.recommendationState?.nextSuggestedMode, 'tunnel');
+  assert.match(advisorText, /建议.*隧道中继/);
+  assert.equal(advisorText.includes('自动切换'), false);
+  assert.equal(advisorText.includes('已切换'), false);
+  assert.match(turnStatus, /link\.stockhub\.wiki/);
+});
+
+test('init with unavailable relay still starts signaling lifecycle for same-page recovery', async () => {
+  let socketConfig = null;
+  const socket = {
+    connected: true,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC, context } = loadWebRTC({
+    localStorage: {
+      getItem: () => 'relay',
+      setItem: () => {},
+    },
+    io: (base, config) => {
+      socketConfig = { base, config };
+      return socket;
+    },
+  });
+
+  WebRTC.loadServerConfig = async () => {
+    WebRTC.serverConfig = {
+      stunUrls: ['stun:stun.example.com:3478'],
+      turnConfigured: false,
+      turnStatus: 'missing',
+      turnUrls: [],
+      iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+      publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+    };
+  };
+  WebRTC.configureNetworkControls = () => {};
+  let setupSocketListenersCalled = false;
+  WebRTC.setupSocketListeners = () => {
+    setupSocketListenersCalled = true;
+  };
+  WebRTC.startTunnelRelay = () => {
+    throw new Error('tunnel should not start for unavailable relay');
+  };
+
+  await WebRTC.init();
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(setupSocketListenersCalled, true);
+  assert.equal(WebRTC.socket, socket);
+  assert.equal(socketConfig.base, 'http://127.0.0.1:8080');
+  assert.equal(socketConfig.config.auth.role, 'viewer');
+  assert.equal(WebRTC.recommendationState?.nextSuggestedMode, 'tunnel');
+});
+
+test('selecting unavailable relay tears down active direct media but preserves same-page recovery', () => {
+  let savedMode = null;
+  const socket = {
+    connected: true,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC, context } = loadWebRTC({
+    localStorage: {
+      getItem: () => 'auto',
+      setItem: (_key, value) => {
+        savedMode = value;
+      },
+    },
+  });
+
+  let closed = false;
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+    iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+  WebRTC.socket = socket;
+  WebRTC.remoteStream = { id: 'live-stream' };
+  const videoEl = context.document.getElementById('remoteVideo');
+  videoEl.srcObject = WebRTC.remoteStream;
+  videoEl.classList.add('connected');
+  context.document.body.classList.add('stream-connected');
+  context.document.getElementById('candidateDisplay').textContent = '当前链路：STUN直连 · 42 ms';
+  context.document.getElementById('latencyDisplay').textContent = '42 ms';
+  context.document.getElementById('fpsDisplay').textContent = '24 FPS';
+  context.document.getElementById('resolutionDisplay').textContent = '960x540';
+  WebRTC.pc = {
+    close() {
+      closed = true;
+    },
+  };
+  WebRTC.statsTimer = setInterval(() => {}, 1000);
+  WebRTC._latencySyncInterval = setInterval(() => {}, 1000);
+  WebRTC.inputChannel = { readyState: 'open' };
+  WebRTC.inputMoveChannel = { readyState: 'open' };
+  WebRTC._iceRestartAttempts = 1;
+  WebRTC.candidateSummary = {
+    local: { host: 2, srflx: 1, relay: 0, prflx: 0, other: 0 },
+    remote: { host: 1, srflx: 1, relay: 0, prflx: 0, other: 0 },
+    samples: {
+      local: [{ type: 'srflx', protocol: 'udp', address: '203.0.113.1:5000' }],
+      remote: [{ type: 'host', protocol: 'udp', address: '192.168.0.2:6000' }],
+    },
+  };
+
+  WebRTC.setNetworkMode('relay');
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(savedMode, 'relay');
+  assert.equal(closed, true);
+  assert.equal(WebRTC.pc, null);
+  assert.equal(WebRTC.socket, socket);
+  assert.equal(WebRTC.statsTimer, null);
+  assert.equal(WebRTC._latencySyncInterval, null);
+  assert.equal(WebRTC.remoteStream, null);
+  assert.equal(videoEl.srcObject, null);
+  assert.equal(videoEl.classList.contains('connected'), false);
+  assert.equal(context.document.body.classList.contains('stream-connected'), false);
+  assert.equal(context.document.getElementById('candidateDisplay').textContent, '-');
+  assert.equal(context.document.getElementById('latencyDisplay').textContent, '- ms');
+  assert.equal(context.document.getElementById('fpsDisplay').textContent, '- FPS');
+  assert.equal(context.document.getElementById('resolutionDisplay').textContent, '-');
+  assert.equal(WebRTC._iceRestartAttempts, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.candidateSummary)), {
+    local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+    remote: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
+    samples: { local: [], remote: [] },
+  });
+  assert.equal(WebRTC.recommendationState?.nextSuggestedMode, 'tunnel');
+
+  let refreshCalled = false;
+  WebRTC.refresh = () => {
+    refreshCalled = true;
+  };
+
+  WebRTC.setNetworkMode('stun');
+
+  assert.equal(WebRTC.networkMode, 'stun');
+  assert.equal(savedMode, 'stun');
+  assert.equal(refreshCalled, true);
+});
+
+test('selecting unavailable relay tears down stale direct state even when socket is disconnected', () => {
+  let savedMode = null;
+  const socket = {
+    connected: false,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC, context } = loadWebRTC({
+    localStorage: {
+      getItem: () => 'auto',
+      setItem: (_key, value) => {
+        savedMode = value;
+      },
+    },
+  });
+
+  let closed = false;
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+    iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+  WebRTC.socket = socket;
+  WebRTC.remoteStream = { id: 'stale-live-stream' };
+  const videoEl = context.document.getElementById('remoteVideo');
+  videoEl.srcObject = WebRTC.remoteStream;
+  videoEl.classList.add('connected');
+  context.document.body.classList.add('stream-connected');
+  context.document.getElementById('candidateDisplay').textContent = '当前链路：STUN直连 · 51 ms';
+  context.document.getElementById('latencyDisplay').textContent = '51 ms';
+  context.document.getElementById('fpsDisplay').textContent = '29 FPS';
+  context.document.getElementById('resolutionDisplay').textContent = '1280x720';
+  WebRTC.pc = {
+    close() {
+      closed = true;
+    },
+  };
+  WebRTC.statsTimer = setInterval(() => {}, 1000);
+  WebRTC._latencySyncInterval = setInterval(() => {}, 1000);
+  WebRTC.inputChannel = { readyState: 'open' };
+  WebRTC.inputMoveChannel = { readyState: 'open' };
+
+  WebRTC.setNetworkMode('relay');
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(savedMode, 'relay');
+  assert.equal(closed, true);
+  assert.equal(WebRTC.pc, null);
+  assert.equal(WebRTC.socket, socket);
+  assert.equal(WebRTC.statsTimer, null);
+  assert.equal(WebRTC._latencySyncInterval, null);
+  assert.equal(WebRTC.remoteStream, null);
+  assert.equal(videoEl.srcObject, null);
+  assert.equal(videoEl.classList.contains('connected'), false);
+  assert.equal(context.document.body.classList.contains('stream-connected'), false);
+  assert.equal(context.document.getElementById('candidateDisplay').textContent, '-');
+  assert.equal(context.document.getElementById('latencyDisplay').textContent, '- ms');
+  assert.equal(context.document.getElementById('fpsDisplay').textContent, '- FPS');
+  assert.equal(context.document.getElementById('resolutionDisplay').textContent, '-');
+  assert.equal(WebRTC.recommendationState?.nextSuggestedMode, 'tunnel');
+});
+
+test('auto without TURN shows recommendation-only copy instead of auto fallback promise', () => {
+  const { WebRTC, context } = loadWebRTC();
+
+  WebRTC.networkMode = 'auto';
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: false,
+    turnStatus: 'missing',
+    turnUrls: [],
+    iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+    publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
+  };
+
+  WebRTC.updateNetworkUI('网络模式已就绪');
+
+  const advisorText = context.document.getElementById('networkAdvisorText').textContent;
+  const turnStatus = context.document.getElementById('networkTurnStatus').textContent;
+
+  assert.equal(advisorText.includes('自动切换到隧道中继'), false);
+  assert.equal(advisorText.includes('自动改走中继'), false);
+  assert.match(advisorText, /手动改用|建议/);
+  assert.match(turnStatus, /固定入口.*link\.stockhub\.wiki/);
 });
 
 test('collectNetworkSnapshot summarizes candidate and state context', () => {

@@ -14,6 +14,7 @@ const WebRTC = {
   inputMoveChannel: null,
   serverConfig: null,
   networkMode: localStorage.getItem('wrdNetworkMode') || 'auto',
+  recommendationState: null,
   useRelayFallback: false,
   tunnelRelayActive: false,
   tunnelFrameCount: 0,
@@ -29,6 +30,7 @@ const WebRTC = {
   _autoFailCount: 0,
   _iceRestartAttempts: 0,
   _tunnelLockUntil: 0,
+  currentConnectionAttemptId: '',
   selectedCandidatePair: null,
   candidateSummary: {
     local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
@@ -49,27 +51,202 @@ const WebRTC = {
     auto: {
       label: '自动穿透',
       state: '推荐',
-      hint: '默认模式。优先低延迟直连；配置 TURN 时失败后可自动改走中继；未配置 TURN 时仍先尝试直连，失败后按恢复逻辑处理。'
+      hint: '默认模式。优先低延迟直连；失败时只给出下一步建议，不会自动改写你选中的模式。'
     },
     stun: {
       label: '外网直连',
       state: '看网络',
-      hint: '适合外网但 UDP 未被限制的环境。失败时会自动降载并尝试 ICE 恢复，不自动切换中继。'
+      hint: '适合外网但 UDP 未被限制的环境。失败时会尝试 ICE 恢复，并提示你手动切换到更稳的模式。'
     },
     relay: {
       label: '外网中继',
       state: '最稳',
-      hint: '适合公司网、校园网、跨运营商、蜂窝热点或 ICE 失败场景。需要服务端配置 TURN。'
+      hint: '适合公司网、校园网、跨运营商、蜂窝热点或 ICE 失败场景。需要服务端配置 TURN；若 TURN 不可用，只会提示你手动改用隧道中继。'
     },
     tunnel: {
       label: '隧道中继',
       state: '兜底',
-      hint: 'TURN 也失败时使用。视频通过 Cloudflare/Socket.IO 转发，FPS 较低但不依赖 UDP。'
+      hint: '最终兜底模式。视频通过 Cloudflare/Socket.IO 转发，FPS 较低但不依赖 UDP。'
     }
   },
 
   hasTurnConfigured() {
     return this.getTurnServers().length > 0;
+  },
+
+  getPublicEntryUrl() {
+    return String(
+      this.serverConfig?.publicEntry?.formalEntryUrl
+      || this.serverConfig?.publicEntryUrl
+      || window.location.origin
+      || ''
+    ).trim();
+  },
+
+  createConnectionAttemptId() {
+    return `wrd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  },
+
+  beginConnectionAttempt(trigger = 'viewer-open') {
+    this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.start === 'function') {
+      ConnectionTrace.start({
+        trigger,
+        mode: this.networkMode,
+        entrypoint: this.getPublicEntryUrl(),
+        connectionAttemptId: this.currentConnectionAttemptId,
+      });
+    }
+    return this.currentConnectionAttemptId;
+  },
+
+  clearFailureRecommendation() {
+    this.recommendationState = null;
+  },
+
+  setFailureRecommendation(failureCode, severity = 'warning') {
+    const nextSuggestedMode = {
+      'direct-failed-suggest-relay': 'relay',
+      'direct-failed-suggest-tunnel': 'tunnel',
+      'relay-unavailable-no-turn': 'tunnel',
+      'relay-failed-suggest-tunnel': 'tunnel',
+    }[failureCode] || null;
+
+    this.recommendationState = {
+      failureCode,
+      nextSuggestedMode,
+      severity,
+    };
+    return this.recommendationState;
+  },
+
+  getRecommendationMessage() {
+    const recommendation = this.recommendationState;
+    const label = recommendation?.nextSuggestedMode
+      ? (this.networkModes[recommendation.nextSuggestedMode]?.label || recommendation.nextSuggestedMode)
+      : '';
+
+    switch (recommendation?.failureCode) {
+      case 'direct-failed-suggest-relay':
+        return `当前保持“${this.networkModes[this.networkMode]?.label || this.networkMode}”；建议下一步手动切换到“${label}”。`;
+      case 'direct-failed-suggest-tunnel':
+        return `当前保持“${this.networkModes[this.networkMode]?.label || this.networkMode}”；若固定入口可打开但媒体仍失败，建议手动切换到“${label}”。`;
+      case 'relay-unavailable-no-turn':
+        return `当前选择的是“${this.networkModes.relay.label}”，但 TURN 不可用，所以该模式暂时不可用。建议手动切换到“${label}”。`;
+      case 'relay-failed-suggest-tunnel':
+        return `外网中继未能建立稳定媒体链路。建议手动切换到“${label}”。`;
+      default:
+        return '';
+    }
+  },
+
+  getDefaultNetworkGuidance() {
+    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
+      return this.serverConfig?.turnStatus === 'misconfigured'
+        ? 'TURN 配置不完整，当前无法建立真实外网中继。'
+        : '当前未配置 TURN，外网中继暂时不可用。';
+    }
+    if (this.networkMode === 'auto' && !this.hasTurnConfigured()) {
+      return '当前为 STUN-only 自动模式。系统会保持你的选择不变；若直连失败，请按建议手动改用“隧道中继”。';
+    }
+    return '';
+  },
+
+  buildTurnStatusText() {
+    const entry = this.getPublicEntryUrl();
+    const prefix = entry ? `固定入口：${entry}` : '固定入口：未提供';
+    if (this.serverConfig?.turnConfigured) {
+      const urls = (this.serverConfig.turnUrls || []).join(', ');
+      return `${prefix}。TURN 已配置：${urls || '已启用'}。若外网画面异常，请按建议手动切换模式。`;
+    }
+    if (this.serverConfig?.turnStatus === 'misconfigured') {
+      return `${prefix}。TURN 配置不完整，当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
+    }
+    return `${prefix}。TURN 未配置，当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
+  },
+
+  enterUnavailableRelayState(message) {
+    this.offerInProgress = false;
+    this._offerEpoch += 1;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this._dcTimeout) {
+      clearTimeout(this._dcTimeout);
+      this._dcTimeout = null;
+    }
+    if (this._disconnectedTimer) {
+      clearTimeout(this._disconnectedTimer);
+      this._disconnectedTimer = null;
+    }
+    if (this._iceDisconnectedTimer) {
+      clearTimeout(this._iceDisconnectedTimer);
+      this._iceDisconnectedTimer = null;
+    }
+    if (this._dcReconnectTimer) {
+      clearTimeout(this._dcReconnectTimer);
+      this._dcReconnectTimer = null;
+    }
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+    if (this._latencySyncInterval) {
+      clearInterval(this._latencySyncInterval);
+      this._latencySyncInterval = null;
+    }
+    this.stopTunnelRelay();
+    if (this.pc) {
+      this.pc.oniceconnectionstatechange = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.onsignalingstatechange = null;
+      this.pc.onicegatheringstatechange = null;
+      this.pc.onicecandidate = null;
+      this.pc.ontrack = null;
+      this.pc.close();
+      this.pc = null;
+    }
+    this.remoteStream = null;
+    this.selectedCandidatePair = null;
+    this.resetCandidateSummary();
+    this.lastCandidateType = '';
+    this.noMediaTicks = 0;
+    this._iceRestartAttempts = 0;
+    this.inputChannel = null;
+    this.inputMoveChannel = null;
+    if (typeof Input !== 'undefined') {
+      Input.setActive(false);
+    }
+    const videoElement = document.getElementById('remoteVideo');
+    if (videoElement) {
+      videoElement.srcObject = null;
+      videoElement.classList.remove('connected');
+    }
+    document.body.classList.remove('stream-connected');
+    const candidateEl = document.getElementById('candidateDisplay');
+    if (candidateEl) {
+      candidateEl.textContent = '-';
+    }
+    const latencyEl = document.getElementById('latencyDisplay');
+    if (latencyEl) {
+      latencyEl.textContent = '- ms';
+    }
+    const fpsEl = document.getElementById('fpsDisplay');
+    if (fpsEl) {
+      fpsEl.textContent = '- FPS';
+    }
+    const resolutionEl = document.getElementById('resolutionDisplay');
+    if (resolutionEl) {
+      resolutionEl.textContent = '-';
+    }
+    document.getElementById('loading')?.classList.remove('hidden');
+    updateConnectionStatus('disconnected');
+    updateLoadingText('TURN 未配置，外网中继不可用。请手动切换到其他网络模式。');
+    this.updateNetworkUI(
+      message || '外网中继当前不可用，请手动切换到“隧道中继”或其他可用模式。',
+      'warning'
+    );
   },
 
   ensureLinkQualityController() {
@@ -154,21 +331,21 @@ const WebRTC = {
   },
 
   enforceSupportedNetworkMode(preferredMode = this.networkMode) {
-    if (preferredMode === 'relay' && !this.hasTurnConfigured()) {
-      console.warn('[NETWORK] Relay mode requested without TURN; forcing tunnel mode');
-      this.networkMode = 'tunnel';
-      localStorage.setItem('wrdNetworkMode', 'tunnel');
-      return {
-        effectiveMode: 'tunnel',
-        changed: true,
-        reason: this.serverConfig?.turnStatus === 'misconfigured'
-          ? 'TURN 配置不完整，无法使用外网中继，已切换到隧道中继。'
-          : '当前未配置 TURN，无法使用外网中继，已切换到隧道中继。',
-      };
-    }
     this.networkMode = preferredMode;
     localStorage.setItem('wrdNetworkMode', preferredMode);
-    return { effectiveMode: preferredMode, changed: false, reason: '' };
+    if (preferredMode === 'relay' && !this.hasTurnConfigured()) {
+      console.warn('[NETWORK] Relay mode requested without TURN; keeping relay selection and surfacing guidance');
+      this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
+      return {
+        effectiveMode: preferredMode,
+        changed: false,
+        unavailable: true,
+        reason: this.serverConfig?.turnStatus === 'misconfigured'
+          ? 'TURN 配置不完整，外网中继当前不可用。请手动改用“隧道中继”或补全 TURN 用户名/凭证。'
+          : '当前未配置 TURN，外网中继当前不可用。请手动改用“隧道中继”。',
+      };
+    }
+    return { effectiveMode: preferredMode, changed: false, unavailable: false, reason: '' };
   },
   
   async init() {
@@ -179,23 +356,39 @@ const WebRTC = {
     }
     this.manualDisconnect = false;
     await this.loadServerConfig();
+    this.clearFailureRecommendation();
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
+    this.beginConnectionAttempt('viewer-open');
     this.configureNetworkControls();
     this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
+    this.createSignalingSocket(true);
+    if (this.networkMode === 'tunnel') {
+      this.startTunnelRelay();
+      return;
+    }
+    this.createPeerConnection();
+  },
 
+  createSignalingSocket(forceRecreate = false) {
+    if (this.socket && !forceRecreate) {
+      return this.socket;
+    }
+    if (this.socket) {
+      this.socket.disconnect();
+    }
+    const token = Auth.getToken();
+    if (!token) {
+      console.error('No token available');
+      return null;
+    }
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
     this.socket = io(socketBase, {
       auth: { token, role: 'viewer' }
     });
-
     this.setupSocketListeners();
-    if (this.networkMode === 'tunnel') {
-      this.startTunnelRelay();
-      return;
-    }
-    this.createPeerConnection();
+    return this.socket;
   },
 
   async loadServerConfig() {
@@ -384,10 +577,13 @@ const WebRTC = {
   },
   
   setupSocketListeners() {
-    this.socket.on('connect', () => {
+    this.socket.on('connect', async () => {
       console.log('[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s',
         this.offerInProgress, !!this.pc, this.pc?.connectionState);
       updateConnectionStatus('connecting');
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
+        await Diagnostic.replayPendingDiagnostics(this.socket);
+      }
       // Reset offerInProgress on reconnect to prevent stuck state
       if (this.offerInProgress) {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
@@ -461,6 +657,9 @@ const WebRTC = {
       console.log('Signaling disconnected');
       updateConnectionStatus('disconnected');
       document.getElementById('remoteVideo').classList.remove('connected');
+      if (this.networkMode === 'tunnel' && !this.manualDisconnect) {
+        this.scheduleReconnect('signal-disconnected');
+      }
     });
 
     this.socket.on('relay-frame', (data) => {
@@ -470,6 +669,11 @@ const WebRTC = {
   
   createPeerConnection() {
     if (this.networkMode === 'tunnel') {
+      return;
+    }
+    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
+      this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
+      this.enterUnavailableRelayState('外网中继当前不可用，请手动切换到“隧道中继”或补全 TURN 配置。');
       return;
     }
     this.config = this.buildPeerConfig();
@@ -540,6 +744,7 @@ const WebRTC = {
         console.log('WebRTC connected, initializing input...');
         // Start stats ASAP — before any other init that could throw
         this.startStats();
+        this.clearFailureRecommendation();
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
         this._iceRestartAttempts = 0;
@@ -902,6 +1107,9 @@ const WebRTC = {
     });
     this.relaySocket.on('disconnect', () => {
       console.log('[TUNNEL] Relay socket disconnected');
+      if (this.tunnelRelayActive && !this.manualDisconnect) {
+        this.scheduleReconnect('relay-disconnected');
+      }
     });
   },
 
@@ -1001,6 +1209,7 @@ const WebRTC = {
     this.tunnelFrameCount += 1;
     const elapsed = Math.max(1, (performance.now() - this.tunnelStartedAt) / 1000);
     document.getElementById('fpsDisplay').textContent = `${Math.round(this.tunnelFrameCount / elapsed)} FPS`;
+    this.clearFailureRecommendation();
     this.updateNetworkUI(`隧道中继已连接。当前经 Cloudflare/Socket.IO 转发，延迟约 ${latency || '-'} ms。`, 'warning');
   },
   
@@ -1012,9 +1221,9 @@ const WebRTC = {
       this.startTunnelRelay();
       return;
     }
-    if (this._tunnelLockUntil > Date.now() && (this.networkMode === 'auto' || this.networkMode === 'stun')) {
-      console.warn('[NETWORK] Tunnel relay lock active, skipping WebRTC offer');
-      this.startTunnelRelay();
+    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
+      this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
+      this.enterUnavailableRelayState('外网中继当前不可用，请手动切换到“隧道中继”或补全 TURN 配置。');
       return;
     }
     if (!this.pc || this.offerInProgress) {
@@ -1159,9 +1368,7 @@ const WebRTC = {
     }
 
     if (turnStatus) {
-      turnStatus.textContent = this.serverConfig?.turnConfigured
-        ? `TURN 已配置：${(this.serverConfig.turnUrls || []).join(', ')}`
-        : 'TURN 未配置：当前只能做 STUN 直连；跨网络失败时会回退隧道中继。若要稳定外网中继，请配置 TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL。';
+      turnStatus.textContent = this.buildTurnStatusText();
     }
     this.syncNetworkModal();
   },
@@ -1177,13 +1384,22 @@ const WebRTC = {
     if (!this.networkModes[mode]) {
       return;
     }
+    this.clearFailureRecommendation();
+    if (mode !== 'tunnel') {
+      this._tunnelLockUntil = 0;
+    }
     const modeState = this.enforceSupportedNetworkMode(mode);
+    this.beginConnectionAttempt('manual-mode-switch');
     this.useRelayFallback = false;
     this._autoFailCount = 0;
     this.updateNetworkUI(
-      modeState.changed ? modeState.reason : '网络模式已切换，正在重连...',
+      modeState.reason || '网络模式已切换，正在重连...',
       modeState.changed ? 'warning' : ''
     );
+    if (modeState.unavailable) {
+      this.enterUnavailableRelayState(modeState.reason);
+      return;
+    }
     if (this.socket && this.socket.connected) {
       this.refresh();
     }
@@ -1196,29 +1412,38 @@ const WebRTC = {
     const title = document.getElementById('networkAdvisorTitle');
     const state = document.getElementById('networkAdvisorState');
     const text = document.getElementById('networkAdvisorText');
+    const turnStatus = document.getElementById('networkTurnStatus');
 
     if (modeBtn) {
       modeBtn.textContent = `网络：${mode.label}`;
+    }
+    if (turnStatus) {
+      turnStatus.textContent = this.buildTurnStatusText();
     }
     if (!advisor || !title || !state || !text) {
       return;
     }
 
-    let detail = message || mode.hint;
-    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
-      severity = 'warning';
-      detail = this.serverConfig?.turnStatus === 'misconfigured'
-        ? 'TURN 配置不完整。当前无法建立真实外网中继，建议补全 TURN_USERNAME / TURN_CREDENTIAL，或先使用隧道中继。'
-        : '外网中继需要 TURN。当前未配置 TURN，页面会直接切换到隧道中继。';
-    } else if (this.networkMode === 'auto' && !this.hasTurnConfigured()) {
-      detail = message || '当前为 STUN-only 自动模式。若外网直连失败，页面会自动切换到隧道中继。';
-    }
+    const recommendation = this.recommendationState;
+    const genericMessage = message === '网络模式已就绪' || message === '网络模式已切换，正在重连...';
+    const baseMessage = (!message || genericMessage)
+      ? (this.getDefaultNetworkGuidance() || message || mode.hint)
+      : message;
+    const detail = [
+      this.getPublicEntryUrl() ? `固定入口：${this.getPublicEntryUrl()}。` : '',
+      baseMessage,
+      this.getRecommendationMessage(),
+    ].filter(Boolean).join(' ');
+    const effectiveSeverity = severity || recommendation?.severity || (this.networkMode === 'relay' && !this.hasTurnConfigured() ? 'warning' : '');
 
     title.textContent = `网络模式：${mode.label}`;
-    state.textContent = mode.state;
+    state.textContent = recommendation?.nextSuggestedMode
+      ? `建议：${this.networkModes[recommendation.nextSuggestedMode]?.label || recommendation.nextSuggestedMode}`
+      : mode.state;
     text.textContent = detail || mode.hint;
-    advisor.classList.toggle('warning', severity === 'warning');
-    advisor.classList.toggle('danger', severity === 'danger');
+    advisor.classList.toggle('warning', effectiveSeverity === 'warning');
+    advisor.classList.toggle('danger', effectiveSeverity === 'danger');
+    state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
     advisor.classList.add('visible');
   },
   
@@ -1323,13 +1548,24 @@ const WebRTC = {
       }
 
       if (selectedCandidateType === 'relay') {
+        this.clearFailureRecommendation();
         this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
       } else if (selectedCandidateType === 'host') {
+        this.clearFailureRecommendation();
         this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
       } else if (selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx') {
+        this.clearFailureRecommendation();
         this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
       } else if (this.noMediaTicks >= 3) {
         const hasTurn = this.hasTurnConfigured();
+        this.setFailureRecommendation(
+          this.networkMode === 'relay'
+            ? 'relay-failed-suggest-tunnel'
+            : hasTurn
+              ? 'direct-failed-suggest-relay'
+              : 'direct-failed-suggest-tunnel',
+          'danger'
+        );
         this.updateNetworkUI(
           this.networkMode === 'relay'
             ? '外网中继仍未生成媒体链路。建议切换到“隧道中继”，它不依赖 UDP/TURN。'
@@ -1382,6 +1618,7 @@ const WebRTC = {
     this.manualDisconnect = false;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.beginConnectionAttempt('refresh');
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1423,6 +1660,7 @@ const WebRTC = {
     // Explicitly clear DataChannel references
     this.inputChannel = null;
     this.inputMoveChannel = null;
+    this._iceRestartAttempts = 0;
     if (this.statsTimer) {
       clearInterval(this.statsTimer);
       this.statsTimer = null;
@@ -1433,8 +1671,16 @@ const WebRTC = {
 
     this._refreshing = false;
 
-    if (this.networkMode === 'tunnel') {
-      this.startTunnelRelay();
+    if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
+      this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
+      this.enterUnavailableRelayState('外网中继当前不可用，请手动切换到“隧道中继”或补全 TURN 配置。');
+    } else if (this.networkMode === 'tunnel') {
+      if (!this.socket || !this.socket.connected) {
+        this.createSignalingSocket(true);
+      }
+      if (this.socket?.connected) {
+        this.startTunnelRelay();
+      }
     } else {
       this.createPeerConnection();
       this.createOffer();
@@ -1460,17 +1706,6 @@ const WebRTC = {
       && this._iceRestartAttempts < 1
       && ['ice-failed', 'ice-disconnected', 'pc-failed'].includes(reason);
 
-    if (this._tunnelLockUntil > Date.now() && (this.networkMode === 'auto' || this.networkMode === 'stun')) {
-      console.warn('[RECOVERY] Tunnel relay lock active, keeping tunnel path');
-      updateLoadingText('保持隧道中继，避免重复切回直连...');
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        if (this.manualDisconnect || !this.socket || !this.socket.connected) return;
-        this.startTunnelRelay();
-      }, 500);
-      return;
-    }
-
     if (canRestartIce) {
       this._iceRestartAttempts += 1;
       console.warn('[RECOVERY] Trying ICE restart before full refresh');
@@ -1491,11 +1726,13 @@ const WebRTC = {
     }
 
     if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn && this._autoFailCount < 2) {
+      this.setFailureRecommendation('direct-failed-suggest-relay', 'warning');
       this.updateNetworkUI('自动穿透失败；Strict STUN 默认不自动切 TURN，可手动选择外网中继。', 'warning');
       updateLoadingText('直连异常，正在尝试恢复...');
     } else if (this.networkMode === 'auto' && (this.useRelayFallback || this._autoFailCount >= 2)) {
       console.warn('[RECOVERY] Strict STUN auto exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.useRelayFallback = false;
+      this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
@@ -1506,6 +1743,7 @@ const WebRTC = {
       return;
     } else if (this.networkMode === 'stun' && this._autoFailCount >= 2) {
       console.warn('[RECOVERY] Strict STUN mode exhausted (failCount=%d), not using tunnel', this._autoFailCount);
+      this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
@@ -1515,9 +1753,12 @@ const WebRTC = {
       }
       return;
     } else if (this.networkMode === 'relay' && !this.getTurnServers().length) {
-      // relay mode with no TURN configured, suggest tunnel
+      this.setFailureRecommendation('relay-unavailable-no-turn', 'danger');
       this.updateNetworkUI('外网中继无 TURN 配置，建议切换到隧道中继。', 'danger');
       updateLoadingText('TURN 未配置，无法中继…');
+      document.getElementById('loading').classList.remove('hidden');
+      document.body.classList.remove('stream-connected');
+      return;
     } else {
       updateLoadingText('连接中断，正在自动重连...');
     }
@@ -1526,7 +1767,10 @@ const WebRTC = {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.manualDisconnect || !this.socket || !this.socket.connected) {
+      if (this.manualDisconnect) {
+        return;
+      }
+      if (this.networkMode !== 'tunnel' && (!this.socket || !this.socket.connected)) {
         return;
       }
       this.refresh();

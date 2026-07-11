@@ -1,6 +1,44 @@
 const TERMINAL_ADMIN_TOKEN_KEY = 'wrd_terminal_admin_token';
 const LAST_ACTIVE_SESSION_KEY = 'wrd_terminal_last_active_session_id';
 
+function createLatencySeries(maxSamples = 20) {
+  const samples = [];
+
+  function summarize() {
+    if (!samples.length) {
+      return { last: null, min: null, max: null, p50: null, sampleCount: 0 };
+    }
+    const sorted = samples.slice().sort((a, b) => a - b);
+    return {
+      last: samples.at(-1),
+      min: sorted[0],
+      max: sorted.at(-1),
+      p50: sorted[Math.floor(sorted.length / 2)],
+      sampleCount: samples.length,
+    };
+  }
+
+  return {
+    record(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < 0) {
+        return summarize();
+      }
+      samples.push(Math.round(number));
+      if (samples.length > maxSamples) {
+        samples.shift();
+      }
+      return summarize();
+    },
+    snapshot() {
+      return summarize();
+    },
+    clear() {
+      samples.length = 0;
+    },
+  };
+}
+
 function createTerminalState(options = {}) {
   const softWarnCount = Number(options.softWarnCount || 4);
   const sessions = new Map();
@@ -144,6 +182,16 @@ const TerminalPanel = {
   pendingCreateClientId: null,
   socketAuthToken: null,
   socketState: 'idle',
+  socketStatusBaseText: '',
+  socketStatusKind: '',
+  transportName: 'unknown',
+  terminalSocketLatency: createLatencySeries(),
+  terminalInputAckLatency: createLatencySeries(),
+  latencyProbeTimer: null,
+  pendingLatencyProbes: new Map(),
+  pendingInputAcks: new Map(),
+  pendingLocalEchoBySession: new Map(),
+  alternateScreenSessionIds: new Set(),
 
   init() {
     this.cacheElements();
@@ -219,9 +267,29 @@ const TerminalPanel = {
   },
 
   setStatus(text, kind = '') {
+    this.socketStatusBaseText = String(text || '');
+    this.socketStatusKind = kind;
+    this.refreshStatus();
+  },
+
+  refreshStatus() {
     if (!this.elements.status) return;
-    this.elements.status.textContent = text;
-    this.elements.status.dataset.state = kind;
+    const extras = [];
+    const socketLatency = this.terminalSocketLatency.snapshot();
+    const inputAckLatency = this.terminalInputAckLatency.snapshot();
+    if (this.transportName && this.transportName !== 'unknown' && this.socketState === 'connected') {
+      extras.push(this.transportName);
+    }
+    if (Number.isFinite(socketLatency.p50)) {
+      extras.push(`RTT ${socketLatency.p50}ms`);
+    }
+    if (Number.isFinite(inputAckLatency.p50)) {
+      extras.push(`输入 ${inputAckLatency.p50}ms`);
+    }
+    this.elements.status.textContent = extras.length
+      ? `${this.socketStatusBaseText} · ${extras.join(' · ')}`
+      : this.socketStatusBaseText;
+    this.elements.status.dataset.state = this.socketStatusKind;
   },
 
   setWarning(text) {
@@ -276,21 +344,32 @@ const TerminalPanel = {
         clientId: this.getBrowserSessionId(),
       },
       transports: ['websocket', 'polling'],
+      rememberUpgrade: true,
     });
     this.socketAuthToken = token;
     this.socketState = 'connecting';
 
     this.socket.on('connect', () => {
       this.socketState = 'connected';
+      this.transportName = this.socket.io?.engine?.transport?.name || 'websocket';
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
       this.setStatus('共享控制台已连接', 'connected');
+      this.startLatencyProbeLoop();
+      if (typeof this.socket.io?.engine?.on === 'function') {
+        this.socket.io.engine.on('upgrade', (transport) => {
+          this.transportName = String(transport?.name || this.transportName || 'unknown');
+          this.refreshStatus();
+        });
+      }
       this.reattachSessions();
       this.socket.emit('terminal:list', {});
       this.render();
     });
     this.socket.on('disconnect', () => {
       this.socketState = 'disconnected';
+      this.stopLatencyProbeLoop();
+      this.pendingInputAcks.clear();
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
       this.setStatus('断线重连中', 'warning');
@@ -314,6 +393,12 @@ const TerminalPanel = {
     this.socket.on('terminal:attached', handleSessionAttached);
     this.socket.on('terminal:output', (payload) => {
       this.writeOutput(payload.sessionId, payload.data);
+    });
+    this.socket.on('terminal:input_ack', (payload) => {
+      this.handleInputAck(payload);
+    });
+    this.socket.on('terminal:pong', (payload) => {
+      this.handleLatencyPong(payload);
     });
     this.socket.on('terminal:replay', (payload) => {
       this.writeReplay(payload.sessionId, payload.replay);
@@ -344,6 +429,83 @@ const TerminalPanel = {
       sessionStorage.setItem(key, id);
     }
     return id;
+  },
+
+  makeInputId(sessionId) {
+    return `${sessionId || 'term'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  },
+
+  getTransportName() {
+    return String(this.transportName || this.socket?.io?.engine?.transport?.name || 'unknown');
+  },
+
+  startLatencyProbeLoop() {
+    this.stopLatencyProbeLoop();
+    this.sendLatencyProbe();
+    this.latencyProbeTimer = setTimeout(() => {
+      this.latencyProbeTimer = null;
+      if (this.socket?.connected) {
+        this.startLatencyProbeLoop();
+      }
+    }, 5000);
+    if (typeof this.latencyProbeTimer?.unref === 'function') {
+      this.latencyProbeTimer.unref();
+    }
+  },
+
+  stopLatencyProbeLoop() {
+    if (this.latencyProbeTimer) {
+      clearTimeout(this.latencyProbeTimer);
+      this.latencyProbeTimer = null;
+    }
+    this.pendingLatencyProbes.clear();
+  },
+
+  sendLatencyProbe() {
+    if (!this.socket?.connected) {
+      return;
+    }
+    const nonce = this.makeInputId('ping');
+    const clientSentAt = Date.now();
+    this.pendingLatencyProbes.set(nonce, clientSentAt);
+    this.socket.emit('terminal:ping', {
+      nonce,
+      clientSentAt,
+    });
+  },
+
+  handleLatencyPong(payload = {}) {
+    const nonce = typeof payload.nonce === 'string' ? payload.nonce : '';
+    const sentAt = this.pendingLatencyProbes.get(nonce);
+    const clientSentAt = Number.isFinite(Number(payload.clientSentAt))
+      ? Number(payload.clientSentAt)
+      : sentAt;
+    if (nonce) {
+      this.pendingLatencyProbes.delete(nonce);
+    }
+    if (!Number.isFinite(clientSentAt)) {
+      return;
+    }
+    this.transportName = String(payload.transport || this.getTransportName());
+    this.terminalSocketLatency.record(Date.now() - clientSentAt);
+    this.refreshStatus();
+  },
+
+  handleInputAck(payload = {}) {
+    const inputId = typeof payload.inputId === 'string' ? payload.inputId : '';
+    const pending = inputId ? this.pendingInputAcks.get(inputId) : null;
+    const clientSentAt = Number.isFinite(Number(payload.clientSentAt))
+      ? Number(payload.clientSentAt)
+      : pending?.clientSentAt;
+    if (inputId) {
+      this.pendingInputAcks.delete(inputId);
+    }
+    if (!Number.isFinite(clientSentAt)) {
+      return;
+    }
+    this.transportName = String(payload.transport || this.getTransportName());
+    this.terminalInputAckLatency.record(Math.max(0, Number(payload.serverReceivedAt || Date.now()) - clientSentAt));
+    this.refreshStatus();
   },
 
   createSession() {
@@ -539,7 +701,19 @@ const TerminalPanel = {
       term.open(container);
       term.onData((data) => {
         if (this.socket?.connected) {
-          this.socket.emit('terminal:input', { sessionId, data });
+          const inputId = this.makeInputId(sessionId);
+          const clientSentAt = Date.now();
+          this.pendingInputAcks.set(inputId, {
+            sessionId,
+            clientSentAt,
+          });
+          this.applyOptimisticLocalEcho(sessionId, data);
+          this.socket.emit('terminal:input', {
+            sessionId,
+            data,
+            inputId,
+            clientSentAt,
+          });
         }
       });
       term.onResize((size) => {
@@ -578,14 +752,18 @@ const TerminalPanel = {
     if (term?.dispose) term.dispose();
     this.terms.delete(sessionId);
     this.fitAddons.delete(sessionId);
+    this.pendingLocalEchoBySession.delete(sessionId);
+    this.alternateScreenSessionIds.delete(sessionId);
     const node = this.elements.workspace?.querySelector(`[data-session-id="${sessionId}"]`);
     node?.remove();
   },
 
   writeOutput(sessionId, data) {
     const term = this.terms.get(sessionId);
-    if (term?.write) {
-      term.write(String(data || ''));
+    const normalized = this.consumeOptimisticLocalEcho(sessionId, String(data || ''));
+    this.trackAlternateScreen(sessionId, String(data || ''));
+    if (term?.write && normalized) {
+      term.write(normalized);
     }
   },
 
@@ -594,6 +772,7 @@ const TerminalPanel = {
     this.ensureSession({ sessionId }, {
       activate: sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
     });
+    this.pendingLocalEchoBySession.delete(sessionId);
     if (hadExistingTerm) {
       this.resetRenderedTerm(sessionId);
     }
@@ -638,6 +817,93 @@ const TerminalPanel = {
     localStorage.setItem(LAST_ACTIVE_SESSION_KEY, sessionId);
   },
 
+  shouldOptimisticallyEcho(sessionId, data) {
+    const text = String(data || '');
+    if (!text || this.alternateScreenSessionIds.has(sessionId)) {
+      return false;
+    }
+    if (text.length > 64) {
+      return false;
+    }
+    return /^[\x20-\x7e\u00a0-\uffff\r\n]+$/.test(text);
+  },
+
+  normalizeOptimisticEcho(data) {
+    return String(data || '').replace(/\r/g, '\r\n');
+  },
+
+  applyOptimisticLocalEcho(sessionId, data) {
+    if (!this.shouldOptimisticallyEcho(sessionId, data)) {
+      return false;
+    }
+    const term = this.terms.get(sessionId);
+    const normalized = this.normalizeOptimisticEcho(data);
+    if (!term?.write || !normalized) {
+      return false;
+    }
+    term.write(normalized);
+    const existing = this.pendingLocalEchoBySession.get(sessionId) || { text: '', createdAt: Date.now() };
+    existing.text += normalized;
+    existing.createdAt = Date.now();
+    if (existing.text.length > 512) {
+      existing.text = existing.text.slice(-512);
+    }
+    this.pendingLocalEchoBySession.set(sessionId, existing);
+    return true;
+  },
+
+  consumeOptimisticLocalEcho(sessionId, data) {
+    const pending = this.pendingLocalEchoBySession.get(sessionId);
+    if (!pending?.text) {
+      return data;
+    }
+    if (Date.now() - Number(pending.createdAt || 0) > 3000) {
+      this.pendingLocalEchoBySession.delete(sessionId);
+      return data;
+    }
+    let output = String(data || '');
+    let expected = pending.text;
+    while (output && expected && output[0] === expected[0]) {
+      output = output.slice(1);
+      expected = expected.slice(1);
+    }
+    if (expected) {
+      this.pendingLocalEchoBySession.set(sessionId, {
+        text: expected,
+        createdAt: pending.createdAt,
+      });
+    } else {
+      this.pendingLocalEchoBySession.delete(sessionId);
+    }
+    return output;
+  },
+
+  trackAlternateScreen(sessionId, data) {
+    const text = String(data || '');
+    if (/\u001b\[\?(?:1049|1047|47)h/.test(text)) {
+      this.alternateScreenSessionIds.add(sessionId);
+    }
+    if (/\u001b\[\?(?:1049|1047|47)l/.test(text)) {
+      this.alternateScreenSessionIds.delete(sessionId);
+    }
+  },
+
+  getDiagnosticState() {
+    const activeSessionId = this.state.activeSessionId();
+    return {
+      socketState: this.socketState,
+      transport: this.getTransportName(),
+      socketRtt: this.terminalSocketLatency.snapshot(),
+      inputAck: this.terminalInputAckLatency.snapshot(),
+      activeSessionId,
+      pendingLocalEchoBytes: Array.from(this.pendingLocalEchoBySession.values()).reduce(
+        (sum, item) => sum + String(item?.text || '').length,
+        0,
+      ),
+      alternateScreenActive: Boolean(activeSessionId && this.alternateScreenSessionIds.has(activeSessionId)),
+    };
+  },
+
   destroySocket() {
     if (this.socket?.disconnect) {
       this.socket.disconnect();
@@ -645,6 +911,9 @@ const TerminalPanel = {
     this.socket = null;
     this.socketState = 'idle';
     this.socketAuthToken = null;
+    this.transportName = 'unknown';
+    this.stopLatencyProbeLoop();
+    this.pendingInputAcks.clear();
   },
 
   syncPersistedActiveSession() {

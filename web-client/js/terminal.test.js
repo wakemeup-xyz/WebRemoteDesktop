@@ -166,6 +166,8 @@ function loadTerminal(overrides = {}) {
     console,
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
     window: { addEventListener() {} },
     document: {
       activeElement: null,
@@ -885,4 +887,143 @@ test('stale token connect_error then reauthorize recreates the terminal socket w
   assert.equal(ioCalls.length, 2);
   assert.equal(sockets[0].disconnectCalls, 1);
   assert.equal(ioCalls[1].options.auth.token, 'fresh-token');
+});
+
+test('TerminalPanel records terminal latency state and suppresses duplicated remote echo after optimistic local echo', () => {
+  const writes = [];
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write(data) {
+        writes.push(String(data));
+      },
+      dispose() {},
+    };
+  }
+
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    sessionStorageMap,
+    tokenKey,
+    emitted,
+  } = loadTerminal({ Terminal: TrackingTerminal });
+
+  sessionStorageMap.set(tokenKey, 'terminal-admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_echo',
+    title: 'Shared shell',
+    status: 'attached',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+  socketHandlers.get('terminal:session_attached')({
+    sessionId: 'term_echo',
+    status: 'attached',
+    observerCount: 1,
+    activePresenterClientId: TerminalPanel.getBrowserSessionId(),
+  });
+
+  const term = TerminalPanel.terms.get('term_echo');
+  term.onDataHandler('ls');
+
+  const inputEvent = emitted.findLast((entry) => entry.event === 'terminal:input');
+  assert.equal(inputEvent.payload.sessionId, 'term_echo');
+  assert.equal(inputEvent.payload.data, 'ls');
+  assert.equal(typeof inputEvent.payload.inputId, 'string');
+  assert.equal(typeof inputEvent.payload.clientSentAt, 'number');
+  assert.deepEqual(writes, ['ls']);
+
+  socketHandlers.get('terminal:input_ack')({
+    sessionId: 'term_echo',
+    inputId: inputEvent.payload.inputId,
+    clientSentAt: inputEvent.payload.clientSentAt,
+    serverReceivedAt: inputEvent.payload.clientSentAt + 120,
+    serverSentAt: inputEvent.payload.clientSentAt + 121,
+    transport: 'websocket',
+  });
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_echo',
+    data: 'ls',
+  });
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_echo',
+    data: '\r\nprompt$ ',
+  });
+
+  assert.deepEqual(writes, ['ls', '\r\nprompt$ ']);
+
+  const diagnostic = TerminalPanel.getDiagnosticState();
+  assert.equal(diagnostic.transport, 'websocket');
+  assert.equal(diagnostic.socketState, 'connected');
+  assert.equal(diagnostic.inputAck.last, 120);
+  assert.equal(diagnostic.inputAck.p50, 120);
+});
+
+test('TerminalPanel disables optimistic local echo while the terminal is in the alternate screen', () => {
+  const writes = [];
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write(data) {
+        writes.push(String(data));
+      },
+      dispose() {},
+    };
+  }
+
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    sessionStorageMap,
+    tokenKey,
+  } = loadTerminal({ Terminal: TrackingTerminal });
+
+  sessionStorageMap.set(tokenKey, 'terminal-admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_alt',
+    title: 'Shared shell',
+    status: 'attached',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+  socketHandlers.get('terminal:session_attached')({
+    sessionId: 'term_alt',
+    status: 'attached',
+    observerCount: 1,
+    activePresenterClientId: TerminalPanel.getBrowserSessionId(),
+  });
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_alt',
+    data: '\u001b[?1049h',
+  });
+
+  const term = TerminalPanel.terms.get('term_alt');
+  term.onDataHandler('j');
+
+  assert.deepEqual(writes, ['\u001b[?1049h']);
 });
