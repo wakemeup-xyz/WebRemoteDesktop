@@ -69,7 +69,7 @@ function createDiagnosticContext(overrides = {}) {
     clearTimeout,
     requestAnimationFrame: (fn) => fn(),
     performance: { now: () => 123.4 },
-    sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    sessionStorage: Object.assign(baseStorage, overrides.sessionStorage || {}),
     localStorage: Object.assign(baseStorage, overrides.localStorage || {}),
     navigator: { platform: 'MacIntel', userAgent: 'node-test' },
     window: {
@@ -150,6 +150,46 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputChannelTimeline[0].kind, 'open');
   assert.equal(emitted[0].payload.inputChannelTimeline[1].kind, 'error');
   assert.equal(emitted[0].payload.inputChannelTimeline[2].kind, 'close');
+});
+
+test('buildConnectionDiagnostic includes browserSessionId and terminal diagnostic state', () => {
+  const sessionStore = new Map([['wrd_browser_session_id', 'browser-session-1']]);
+  const { context } = createDiagnosticContext({
+    sessionStorage: {
+      getItem(key) {
+        return sessionStore.has(key) ? sessionStore.get(key) : null;
+      },
+      setItem(key, value) {
+        sessionStore.set(key, String(value));
+      },
+    },
+  });
+  context.TerminalPanel = {
+    getDiagnosticState() {
+      return { activeSessionId: 'term-1', socketState: 'connected' };
+    },
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual' });
+
+  assert.equal(payload.browserSessionId, 'browser-session-1');
+  assert.equal(payload.terminal.activeSessionId, 'term-1');
+  assert.equal(payload.terminal.socketState, 'connected');
+});
+
+test('console interception stores structured log entries instead of bare strings', () => {
+  const { context } = createDiagnosticContext();
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  Diagnostic.logs = [];
+  context.console.error('[INPUT-DC] DataChannel error');
+
+  assert.equal(Diagnostic.logs.length, 1);
+  assert.equal(typeof Diagnostic.logs[0].message, 'string');
+  assert.equal(Diagnostic.logs[0].level, 'ERR');
+  assert.equal(Diagnostic.logs[0].channel, 'console');
+  assert.equal(typeof Diagnostic.logs[0].at, 'string');
 });
 
 test('buildConnectionDiagnostic returns redacted schema v3 payload from current trace data', () => {

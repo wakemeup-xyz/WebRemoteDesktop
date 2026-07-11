@@ -5,11 +5,52 @@ const Diagnostic = {
   socket: null,
   autoSendByAttempt: {},
   autoSendCooldownMs: 15000,
+  browserSessionId: null,
 
   init() {
+    this.ensureBrowserSessionId();
     this.hijackConsole();
     this.setupUI();
     console.log('[Diagnostic] Log collector initialized');
+  },
+
+  ensureBrowserSessionId() {
+    if (this.browserSessionId) {
+      return this.browserSessionId;
+    }
+    const key = 'wrd_browser_session_id';
+    const existing = sessionStorage.getItem(key);
+    if (existing) {
+      this.browserSessionId = existing;
+      return existing;
+    }
+    const created = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    sessionStorage.setItem(key, created);
+    this.browserSessionId = created;
+    return created;
+  },
+
+  normalizeLogMessage(args = []) {
+    return args.map((arg) => {
+      if (typeof arg === 'object') {
+        try {
+          return JSON.stringify(arg);
+        } catch (_error) {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(' ');
+  },
+
+  formatLogEntry(entry) {
+    if (typeof entry === 'string') {
+      return entry;
+    }
+    const at = entry?.at || '';
+    const level = entry?.level || 'LOG';
+    const message = entry?.message || '';
+    return `[${at}] [${level}] ${message}`;
   },
 
   hijackConsole() {
@@ -18,14 +59,13 @@ const Diagnostic = {
     const originalWarn = console.warn;
     const originalInfo = console.info;
 
-    const push = (level, args) => {
-      const msg = args.map(a => {
-        if (typeof a === 'object') {
-          try { return JSON.stringify(a); } catch (e) { return String(a); }
-        }
-        return String(a);
-      }).join(' ');
-      const entry = `[${new Date().toLocaleTimeString()}] [${level}] ${msg}`;
+    const push = (level, args, channel = 'console') => {
+      const entry = {
+        at: new Date().toLocaleTimeString(),
+        level,
+        channel,
+        message: this.normalizeLogMessage(args),
+      };
       this.logs.push(entry);
       if (this.logs.length > this.maxLogs) {
         this.logs.shift();
@@ -62,7 +102,7 @@ const Diagnostic = {
     if (!diagBtn) return;
 
     diagBtn.addEventListener('click', () => {
-      area.value = this.logs.join('\n');
+      area.value = this.logs.map((entry) => this.formatLogEntry(entry)).join('\n');
       area.scrollTop = area.scrollHeight;
       if (keyArea && typeof Input !== 'undefined') {
         keyArea.value = Input.getKeyboardDebugEntries().join('\n');
@@ -91,6 +131,7 @@ const Diagnostic = {
 
   getInputChannelTimeline() {
     return this.logs
+      .map((entry) => this.formatLogEntry(entry))
       .filter((line) => line.includes('[INPUT-DC]'))
       .slice(-40)
       .map((line) => {
@@ -167,6 +208,7 @@ const Diagnostic = {
     const payload = {
       type: 'diagnostic',
       timestamp: Date.now(),
+      browserSessionId: this.ensureBrowserSessionId(),
       userAgent: navigator.userAgent,
       screen: `${window.screen.width}x${window.screen.height}`,
       latency: latencyStats,
@@ -264,6 +306,7 @@ const Diagnostic = {
     return {
       type: 'connection-diagnostic',
       schemaVersion: 3,
+      browserSessionId: this.ensureBrowserSessionId(),
       connectionAttemptId,
       entrypoint,
       mode,
