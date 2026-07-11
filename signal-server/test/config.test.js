@@ -3,7 +3,7 @@ const test = require('node:test');
 
 const { signAccessToken } = require('../lib/auth');
 const { createServerApp } = require('../server');
-const { getTurnStatus, getPublicEntryConfig, getMediaModeCapabilities } = require('../lib/config');
+const { getTurnStatus, getPublicEntryConfig, getMediaModeCapabilities, loadConfig } = require('../lib/config');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test-viewer-password';
@@ -93,6 +93,30 @@ test('getMediaModeCapabilities omits relay from the manual fallback contract whe
     recommendedMode: 'auto',
     manualFallbackChain: ['auto', 'tunnel'],
   });
+});
+
+test('loadConfig keeps diag persistence separate from runtime log settings', () => {
+  const previousEnv = { ...process.env };
+
+  process.env.JWT_SECRET = '12345678';
+  process.env.VIEWER_ACCESS_PASSWORD = 'test-viewer-password';
+  process.env.HOST_SHARED_SECRET = 'test-host-secret';
+  process.env.WRD_ENABLE_DIAG_PERSIST = '0';
+  process.env.WRD_LOG_LEVEL = 'debug';
+  process.env.WRD_LOG_FORMAT = 'jsonl';
+  process.env.WRD_LOG_DIR = '/tmp/wrd-logs';
+  process.env.WRD_TERMINAL_AUDIT_LOG = '/tmp/wrd-terminal-audit.jsonl';
+
+  try {
+    const config = loadConfig();
+    assert.equal(config.enableDiagPersist, false);
+    assert.equal(config.logLevel, 'debug');
+    assert.equal(config.logFormat, 'jsonl');
+    assert.equal(config.logDir, '/tmp/wrd-logs');
+    assert.equal(config.terminalAuditLog, '/tmp/wrd-terminal-audit.jsonl');
+  } finally {
+    process.env = previousEnv;
+  }
 });
 
 test('/api/webrtc-config returns ICE settings plus capability and public entry metadata', async () => {
