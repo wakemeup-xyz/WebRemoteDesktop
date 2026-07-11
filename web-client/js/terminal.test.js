@@ -671,6 +671,11 @@ test('TerminalPanel falls back to the live default session when the persisted ac
   fakeSocket.connected = true;
   socketHandlers.get('connect')();
 
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_stale'),
+    false,
+  );
+
   socketHandlers.get('terminal:pool_snapshot')({
     defaultSessionId: 'term_live',
     sessions: [{ sessionId: 'term_live', title: 'Shared shell', observerCount: 0 }],
@@ -681,6 +686,35 @@ test('TerminalPanel falls back to the live default session when the persisted ac
     true,
   );
   assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_live');
+});
+
+test('TerminalPanel falls back to the live default session even when it is not the first snapshot item', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term_stale');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_2',
+    sessions: [
+      { sessionId: 'term_1', title: 'Shared shell 1', observerCount: 0 },
+      { sessionId: 'term_2', title: 'Shared shell 2', observerCount: 0 },
+    ],
+  });
+
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_stale'),
+    false,
+  );
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_2'),
+    true,
+  );
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_2');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_2');
 });
 
 test('TerminalPanel activating an unattached shared session requests attach', () => {

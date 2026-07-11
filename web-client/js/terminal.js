@@ -542,7 +542,7 @@ const TerminalPanel = {
   reattachSessions() {
     if (!this.socket?.connected) return;
     const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    if (lastActive) {
+    if (lastActive && this.state.getSession(lastActive)) {
       this.requestAttachSession(lastActive);
       return;
     }
@@ -587,9 +587,12 @@ const TerminalPanel = {
       || payload.defaultSessionId
       || this.state.activeSessionId();
     if (preferredSessionId) {
+      this.state.setActive(preferredSessionId);
+      this.persistActiveSessionId(preferredSessionId);
       this.requestAttachSession(preferredSessionId);
+    } else {
+      this.persistActiveSessionId('');
     }
-    this.syncPersistedActiveSession();
     this.render();
   },
 
@@ -793,10 +796,13 @@ const TerminalPanel = {
 
   activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
-    this.persistActiveSessionId(sessionId);
-    this.requestAttachSession(sessionId);
+    const activeSessionId = this.state.activeSessionId();
+    this.persistActiveSessionId(activeSessionId || '');
+    if (activeSessionId) {
+      this.requestAttachSession(activeSessionId);
+    }
     if (options.announce !== false) {
-      this.announceActivePresenter(sessionId);
+      this.announceActivePresenter(activeSessionId);
     }
     this.render();
     this.fitActiveTerminal();

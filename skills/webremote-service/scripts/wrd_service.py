@@ -75,25 +75,46 @@ def launchctl_submit_signal(project_dir: Path) -> str:
     raise RuntimeError("signal-server did not become healthy")
 
 
+def pid_matches_project(pid: str, project_dir: Path) -> bool:
+    if not pid:
+        return False
+    cwd = subprocess.run(
+        ["lsof", "-a", "-d", "cwd", "-p", pid, "-Fn"],
+        check=False,
+        text=True,
+        capture_output=True,
+    ).stdout
+    return str(project_dir / "signal-server") in cwd
+
+
 def find_signal_pid(project_dir: Path) -> str:
     try:
         result = run(["pgrep", "-f", "server\\.js"], check=False)
     except Exception:
         return ""
     for pid in result.stdout.split():
-        cwd = subprocess.run(
-            ["lsof", "-a", "-d", "cwd", "-p", pid, "-Fn"],
-            check=False,
-            text=True,
-            capture_output=True,
-        ).stdout
-        if str(project_dir / "signal-server") in cwd:
+        if pid_matches_project(pid, project_dir):
             return pid
     return ""
 
 
+def reconcile_signal_pid(project_dir: Path) -> str:
+    live_pid = find_signal_pid(project_dir)
+    if live_pid and pid_alive(live_pid):
+        write_text(SAFE_SIGNAL_PID, live_pid)
+        return live_pid
+
+    recorded_pid = read_text(SAFE_SIGNAL_PID)
+    if recorded_pid and pid_alive(recorded_pid) and pid_matches_project(recorded_pid, project_dir):
+        write_text(SAFE_SIGNAL_PID, recorded_pid)
+        return recorded_pid
+
+    SAFE_SIGNAL_PID.unlink(missing_ok=True)
+    return ""
+
+
 def stop_existing_signal(project_dir: Path) -> None:
-    old_pid = find_signal_pid(project_dir) or read_text(SAFE_SIGNAL_PID)
+    old_pid = reconcile_signal_pid(project_dir)
     subprocess.run(["launchctl", "remove", "com.webremotedesktop.signal"], check=False)
     if old_pid and pid_alive(old_pid):
         subprocess.run(["kill", old_pid], check=False)
@@ -101,7 +122,7 @@ def stop_existing_signal(project_dir: Path) -> None:
             if not pid_alive(old_pid):
                 break
             time.sleep(0.5)
-        if pid_alive(old_pid):
+        if pid_alive(old_pid) and pid_matches_project(old_pid, project_dir):
             subprocess.run(["kill", "-9", old_pid], check=False)
             for _ in range(10):
                 if not pid_alive(old_pid):
@@ -159,7 +180,7 @@ def restart_host(project_dir: Path) -> str:
 
 def status(project_dir: Path) -> None:
     safe_url = current_safe_url()
-    signal_pid = read_text(SAFE_SIGNAL_PID)
+    signal_pid = reconcile_signal_pid(project_dir)
     host_pid = read_text(SAFE_HOST_PID)
     health_ok = subprocess.run(
         ["curl", "-fsS", "http://127.0.0.1:8080/health"],
