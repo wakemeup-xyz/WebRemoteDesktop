@@ -15,11 +15,22 @@ const LinkQualityController = {
       degradedCount: 0,
       criticalCount: 0,
       goodCount: 0,
+      startupGraceSamplesRemaining: 0,
       lastPacketsLost: null,
       lastFramesDecoded: null,
       iceRestartAttempted: false,
       profileChanges: [],
       lastProfileChangeAt: 0,
+
+      beginConnection(graceSamples = 2) {
+        this.startupGraceSamplesRemaining = Math.max(0, Number(graceSamples) || 0);
+        this.degradedCount = 0;
+        this.criticalCount = 0;
+        this.goodCount = 0;
+        this.lastPacketsLost = null;
+        this.lastFramesDecoded = null;
+        this.iceRestartAttempted = false;
+      },
 
       observe(stats = {}) {
         const packetsLost = Number(stats.packetsLost || 0);
@@ -58,6 +69,17 @@ const LinkQualityController = {
           this.criticalCount = 0;
           this.goodCount = 0;
           return { action: 'hold', profile: this.currentProfile, reason: 'no-selected-pair' };
+        }
+
+        if (mediaStalled && this.startupGraceSamplesRemaining > 0) {
+          this.startupGraceSamplesRemaining -= 1;
+          this.degradedCount = 0;
+          this.criticalCount = 0;
+          this.goodCount = 0;
+          return { action: 'hold', profile: this.currentProfile, reason: 'media-warmup' };
+        }
+        if (!zeroFps) {
+          this.startupGraceSamplesRemaining = 0;
         }
 
         if (mediaStalled || veryHighRtt) {

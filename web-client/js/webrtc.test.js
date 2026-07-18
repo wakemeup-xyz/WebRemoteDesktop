@@ -236,6 +236,66 @@ test('LinkQualityController requires two fresh degraded samples for every downsh
   assert.equal(firstSampleAtMedium.profile, 'medium');
 });
 
+test('LinkQualityController ignores two startup zero-fps samples before evaluating stalls', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create();
+  controller.beginConnection();
+  const startupSample = {
+    fps: 0,
+    rttMs: 5,
+    jitterBufferMs: 0,
+    packetsLost: 0,
+    framesReceived: 20,
+    framesDecoded: 0,
+    selectedCandidateType: 'host',
+    interval: true,
+  };
+
+  assert.equal(controller.observe(startupSample).reason, 'media-warmup');
+  assert.equal(controller.observe(startupSample).reason, 'media-warmup');
+  assert.equal(controller.observe(startupSample).action, 'hold');
+  assert.equal(controller.observe(startupSample).action, 'critical');
+  assert.equal(controller.snapshot().currentProfile, 'survival');
+});
+
+test('WebRTC configures a finite numeric video playout delay hint', () => {
+  const { WebRTC } = loadWebRTC();
+  const values = [];
+  const receiver = {
+    track: { kind: 'video' },
+    get playoutDelayHint() { return null; },
+    set playoutDelayHint(value) { values.push(value); },
+    get jitterBufferTarget() { return null; },
+    set jitterBufferTarget(_value) {},
+  };
+
+  WebRTC.configureVideoReceiver(receiver);
+
+  assert.deepEqual(values, [0]);
+  assert.equal(Number.isFinite(values[0]), true);
+});
+
+test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
+  const emitted = [];
+  WebRTC.linkQualityController = LinkQualityController.create();
+  WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+
+  WebRTC.syncMediaProfile();
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].event, 'media-profile-change');
+  assert.equal(emitted[0].payload.profile, 'high');
+  assert.equal(emitted[0].payload.targetFps, 20);
+  assert.equal(emitted[0].payload.mediaPolicy, 'strict-stun');
+});
+
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
   let createCalls = 0;
   let startCalls = 0;

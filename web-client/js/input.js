@@ -22,6 +22,13 @@ const Input = {
   _pressedMouseButtons: new Set(),
   _pendingMouseReset: false,
   _lastPointerCoords: null,
+  _activePointerClickCount: 1,
+  _lastPointerClickAt: null,
+  _lastPointerClickButton: null,
+  _lastPointerClickClientX: null,
+  _lastPointerClickClientY: null,
+  _pointerDoubleClickWindowMs: 500,
+  _pointerDoubleClickDistancePx: 6,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -299,6 +306,36 @@ const Input = {
   getMouseButton(button) {
     const buttons = ['left', 'middle', 'right'];
     return buttons[button] || 'left';
+  },
+
+  getPointerClickCount(event) {
+    const nativeCount = Math.max(0, Number(event.detail) || 0);
+    const eventAt = Number.isFinite(Number(event.timeStamp)) ? Number(event.timeStamp) : Date.now();
+    const clientX = Number(event.clientX || 0);
+    const clientY = Number(event.clientY || 0);
+    const elapsed = this._lastPointerClickAt == null ? Infinity : eventAt - this._lastPointerClickAt;
+    const distance = this._lastPointerClickClientX == null || this._lastPointerClickClientY == null
+      ? Infinity
+      : Math.hypot(clientX - this._lastPointerClickClientX, clientY - this._lastPointerClickClientY);
+    const inferredDoubleClick = this._lastPointerClickButton === event.button
+      && elapsed >= 0
+      && elapsed <= this._pointerDoubleClickWindowMs
+      && distance <= this._pointerDoubleClickDistancePx;
+    const clickCount = nativeCount >= 2 || inferredDoubleClick ? 2 : 1;
+    this._lastPointerClickAt = eventAt;
+    this._lastPointerClickButton = event.button;
+    this._lastPointerClickClientX = clientX;
+    this._lastPointerClickClientY = clientY;
+    this._activePointerClickCount = clickCount;
+    return clickCount;
+  },
+
+  resetPointerClickSequence() {
+    this._activePointerClickCount = 1;
+    this._lastPointerClickAt = null;
+    this._lastPointerClickButton = null;
+    this._lastPointerClickClientX = null;
+    this._lastPointerClickClientY = null;
   },
 
   getModifiers(e) {
@@ -582,6 +619,7 @@ const Input = {
     this._activePointerId = null;
     this._activePointerElement = null;
     this._pendingMouseMove = null;
+    this.resetPointerClickSequence();
     if (!needsReset) return null;
     const inputId = this.sendInput('mouse', 'reset', { reason });
     this._pendingMouseReset = !inputId;
@@ -652,10 +690,11 @@ const Input = {
         el.setPointerCapture(e.pointerId);
       }
       const button = this.getMouseButton(e.button);
+      const clickCount = this.getPointerClickCount(e);
       const inputId = this.sendInput('mouse', 'down', {
         ...coords,
         button,
-        clickCount: Math.max(1, Number(e.detail) || 1),
+        clickCount,
       });
       if (!inputId) {
         if (typeof el.hasPointerCapture === 'function' && el.hasPointerCapture(e.pointerId)) {
@@ -677,7 +716,7 @@ const Input = {
       const inputId = coords ? this.sendInput('mouse', 'up', {
         ...coords,
         button,
-        clickCount: Math.max(1, Number(e.detail) || 1),
+        clickCount: this._activePointerClickCount,
       }) : null;
       this._pressedMouseButtons.delete(button);
       this._pendingMouseReset = this._pendingMouseReset || !inputId;

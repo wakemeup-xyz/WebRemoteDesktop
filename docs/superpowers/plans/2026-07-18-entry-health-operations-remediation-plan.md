@@ -206,3 +206,28 @@ State that status never recovers/writes URL files, 404 is unavailable, and only 
 Run: `git diff --check && rg -n 'status.*recover|404.*reachable' README.md docs/runbook-safe-startup.md skills/webremote-service/references/service-rules.md`
 
 Expected: no contradictory active guidance and no whitespace errors.
+
+### Task 6: Refresh Host credentials during Signal recovery
+
+**Files:**
+- Modify: `python-host/test_connection_diagnostics.py`
+- Modify: `python-host/host.py`
+- Modify: `docs/superpowers/reports/2026-07-18-remote-desktop-connection-interaction-performance-diagnostic.md`
+
+- [x] **Step 1: Add a failing expired-token reconnect test**
+
+Assert `ensure_connected()` tears down the stale Socket.IO client, calls `authenticate()`, and passes the refreshed Host token to `connect()`.
+
+- [x] **Step 2: Verify RED**
+
+Run: `PYTHONPATH=python-host python3 -m pytest -q python-host/test_connection_diagnostics.py -k reauthenticates`
+
+Observed: FAIL because reconnect called `connect()` with the old token and never authenticated.
+
+- [x] **Step 3: Reauthenticate before reconnect**
+
+Keep the existing one-second retry loop. After clearing the stale client, return early when Host login fails; otherwise connect with the newly issued 15-minute token.
+
+- [x] **Step 4: Verify GREEN and runtime recovery**
+
+Focused tests pass. After loading the code, restart only Signal Server and assert Host PID is unchanged, a new `Authenticated as host` event appears, `hostOnline=true` returns without a Host restart, and tunnel state is unchanged.

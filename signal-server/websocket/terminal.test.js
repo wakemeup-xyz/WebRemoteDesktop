@@ -256,6 +256,38 @@ test('terminal:detach_session detaches only the calling observer and terminal:cl
   assert.equal(sessionManager._getSession(created.sessionId), null);
 });
 
+test('late Terminal events after session close return stable errors without escaping the handlers', () => {
+  const { namespace, auditEvents } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Closing shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+
+  assert.doesNotThrow(() => {
+    admin.trigger('terminal:input', {
+      sessionId: created.sessionId,
+      data: 'late-sensitive-input',
+      inputId: 'late-input',
+    });
+  });
+  assert.doesNotThrow(() => {
+    admin.trigger('terminal:resize', {
+      sessionId: created.sessionId,
+      cols: 120,
+      rows: 32,
+    });
+  });
+
+  const sessionErrors = admin.sent.filter((message) => (
+    message.event === 'terminal:error' && message.data.code === 'terminal_session_not_found'
+  ));
+  assert.equal(sessionErrors.length, 2);
+  assert.equal(auditEvents.some((entry) => entry.event === 'terminal_input_rejected'), true);
+  assert.equal(auditEvents.some((entry) => entry.event === 'terminal_resize_rejected'), true);
+  assert.equal(JSON.stringify(auditEvents).includes('late-sensitive-input'), false);
+});
+
 test('legacy terminal:detach and terminal:close aliases still map into shared session semantics', () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));

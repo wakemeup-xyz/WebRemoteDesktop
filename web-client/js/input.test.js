@@ -329,19 +329,20 @@ test('pointer double-click sends exactly two down/up pairs with click counts', (
   };
   Input.bindMouseEvents(element);
 
-  const event = (detail) => ({
+  const event = (timeStamp) => ({
     pointerId: 7,
     button: 0,
-    detail,
+    detail: 1,
+    timeStamp,
     clientX: 50,
     clientY: 50,
     currentTarget: element,
     preventDefault() {},
   });
-  element.listeners.get('pointerdown')(event(1));
-  element.listeners.get('pointerup')(event(1));
-  element.listeners.get('pointerdown')(event(2));
-  element.listeners.get('pointerup')(event(2));
+  element.listeners.get('pointerdown')(event(1000));
+  element.listeners.get('pointerup')(event(1020));
+  element.listeners.get('pointerdown')(event(1120));
+  element.listeners.get('pointerup')(event(1140));
 
   assert.deepEqual(sent.map(({ action, payload }) => `${action}:${payload.clickCount}`), [
     'down:1', 'up:1', 'down:2', 'up:2',

@@ -113,6 +113,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复
 - [x] **全屏控制**：网页端提供全屏按钮，Esc 使用浏览器原生 Fullscreen API 退出
 - [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel
+- [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
 - [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明
 
 ### 3.5 Host 本机浮动提示
@@ -145,6 +146,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，可配置 idle timeout 回收超时且无人附着的会话
 - [x] **同钟延迟指标**：`socketRtt`、`inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 只在 Signal Server 内部相减，不混用浏览器与服务端 wall clock
 - [x] **密码安全回显**：首批普通输入只作为隐藏 probe；确认远端 shell 实际回显后才允许后续本地回显。Enter、控制键、alternate-screen、断线和重连均清零 confidence
+- [x] **关闭竞态保护**：session 关闭后的迟到 input/resize 返回稳定 `terminal_session_not_found` 并记录脱敏拒绝元数据，不得终止 Signal Server 或影响新 session
 - [ ] **开发映射**：开发页应通过受保护的 `https://dev.link.stockhub.wiki` 访问同一套 Terminal 服务；部署细节和代理契约以部署文档为准，更强的运行时隔离仍是后续工作
 - [x] **审计日志**：Signal Server 记录 Terminal admin 登录、socket 连接、创建、附着、断开、关闭、拒绝和错误的结构化审计事件
 - [ ] **独立实现**：优先使用 `@xterm/xterm` + `node-pty` + Socket.IO 的内嵌方案，不默认引入 WeTTY / ttyd 独立服务
@@ -355,3 +357,4 @@ WebRemoteDesktop/
 | 2026-06-06 | 明确 safe quick tunnel 重启语义：仅重启本地服务时默认复用现有 quick tunnel，公网地址通常不变；停止 safe 链路或 tunnel 失效重建时地址才变化 |
 | 2026-06-14 | 明确 Host 由 `com.webremotedesktop.host` LaunchAgent 托管；`restart-host.sh` / `start-safe-wrd.sh` 会重新注册 LaunchAgent；`run-host-launchctl.sh` 新增 signal-server health 与 host auth 双重预检，避免 Host 在前置条件未满足时反复失败拉起 |
 | 2026-07-18 | 完成远程连接与延迟整改：入口健康真相、Pointer 输入契约、媒体 stats/timing v2、自适应恢复、独立桌面 input ack、Terminal 同钟 RTT 与密码安全 echo、session/replay/idle 资源保护、输入日志脱敏与 10 MiB/3 份轮转、named tunnel credentials-file 安全告警及 event-loop lag 上下文 |
+| 2026-07-19 | 完成真实普通浏览器验收；修复 Chromium 双击计数、首轮媒体预热/profile 同步、Terminal 关闭后迟到事件崩溃和 Signal 重启后的 Host 过期 token 重连；保留首帧 P50 与公网 Terminal RTT 未达目标的诚实结论 |

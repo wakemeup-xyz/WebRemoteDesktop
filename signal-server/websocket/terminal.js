@@ -102,6 +102,35 @@ function setupTerminal(io, options = {}) {
       terminalNamespace.emit('terminal:presence', sessionManager.getPresence(sessionId));
     }
 
+    function requireAttachedSession(sessionId, rejectionEvent) {
+      let attached = false;
+      try {
+        attached = Boolean(
+          sessionId
+          && sessionManager.isObserverAttached(sessionId, { clientId, socketId }),
+        );
+      } catch (err) {
+        if (err.code !== 'terminal_session_not_found') {
+          throw err;
+        }
+      }
+      if (attached) {
+        return true;
+      }
+      audit.warn(rejectionEvent, {
+        sessionId: sessionId || null,
+        clientId,
+        socketId,
+        code: 'terminal_session_not_found',
+        reason: 'observer_not_attached',
+      });
+      socket.emit('terminal:error', {
+        code: 'terminal_session_not_found',
+        message: 'Terminal session not found',
+      });
+      return false;
+    }
+
     function bindSessionCallbacks(sessionId) {
       return {
         onData: (data) => {
@@ -276,18 +305,7 @@ function setupTerminal(io, options = {}) {
     });
 
     socket.on('terminal:input', (payload = {}) => {
-      if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
-        audit.warn('terminal_input_rejected', {
-          sessionId: payload.sessionId || null,
-          clientId,
-          socketId,
-          code: 'terminal_session_not_found',
-          reason: 'observer_not_attached',
-        });
-        socket.emit('terminal:error', {
-          code: 'terminal_session_not_found',
-          message: 'Terminal session not found',
-        });
+      if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected')) {
         return;
       }
       const data = String(payload.data || '');
@@ -341,18 +359,7 @@ function setupTerminal(io, options = {}) {
     });
 
     socket.on('terminal:resize', (payload = {}) => {
-      if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
-        audit.warn('terminal_resize_rejected', {
-          sessionId: payload.sessionId || null,
-          clientId,
-          socketId,
-          code: 'terminal_session_not_found',
-          reason: 'observer_not_attached',
-        });
-        socket.emit('terminal:error', {
-          code: 'terminal_session_not_found',
-          message: 'Terminal session not found',
-        });
+      if (!requireAttachedSession(payload.sessionId, 'terminal_resize_rejected')) {
         return;
       }
       const cols = Number(payload.cols);

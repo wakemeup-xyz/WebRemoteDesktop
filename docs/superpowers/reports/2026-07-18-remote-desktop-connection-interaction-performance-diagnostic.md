@@ -581,3 +581,67 @@ Batch C 的自动化生命周期测试覆盖连续 50 次 start/stop 后无残�
 在已确认“不部署 TURN、不引入 VPS/客户端、保留固定域名 + Strict STUN + 手动 tunnel fallback”的方案边界内，F-01、F-04 至 F-20 的代码整改、自动化契约、合并部署和非浏览器运行态验收已经闭环，模块边界与降级策略合理。F-03 是明确接受的部署约束，不再作为待开发项；F-02 是仍存在的 Cloudflare 路径性能上限，不应虚报为代码已解决。
 
 仍未闭环的验收只有真实浏览器/真实会话才能完成：当前没有可用的浏览器自动化实例且 `viewerCount=0`，因此没有取得实时 selected candidate pair、首次出帧、非黑画面、FPS/jitter、50 次 refresh 回调计数、双击/拖出释放/cover-fill 点位，以及 Terminal password/alternate-screen 的真实 UI 证据。另有两项已知运维状态保持不变：debug quick tunnel 当前 404；现有 cloudflared argv 仍触发 token 暴露告警。按既定权限边界，本次只报告，未重建 tunnel 或轮换其凭据。
+
+### 13.6 真实普通浏览器验收与验收后整改
+
+本节取代第 13.5 节末尾“没有浏览器证据”的限制结论。测试使用普通 headless Chromium 147 和 Python Playwright，从正式入口 `https://link.stockhub.wiki` 完成 Viewer 登录、真实 WebRTC/Quartz 输入和临时共享 PTY 会话；没有使用 TURN、媒体 tunnel、浏览器内 mock 或协议级假视频。测试 PTY 均显式关闭。
+
+#### 媒体连接、首帧与画面
+
+| 项目 | 真实结果 | 判断 |
+|---|---|---|
+| selected candidate pair | `host -> host`、UDP、remote IPv4 `192.168.0.107`，RTT 样本约 `1-17ms`；无 relay candidate | Strict STUN/direct contract 通过 |
+| 首次出帧 | 三次独立冷会话 `4.12s / 3.52s / 4.52s`；P50 `4.12s`、nearest-rank P95 `4.52s` | P95 `<5s` 通过；P50 `<3s` 未通过 |
+| 首帧分段 | 代表性 4.12s 会话：PC `0.42s`、public signaling socket `1.51s`、ICE connected `3.52s`、video ready `4.10s` | 等待主要在 Cloudflare 信令与 ICE，连接后解码/出帧约 `0.58s` |
+| 稳态媒体 | `19-20 FPS`，jitter buffer 常见 `0-5.8ms` | 当前 20 FPS profile 达标 |
+| 非黑画面 | Canvas 采样 non-black ratio 约 `98.5%-100%`，分辨率 `1152x720`，截图可见真实桌面 | 通过 |
+| 统计生命周期 | 稳态 `getStats()` 正好约 1 次/秒；一个 sampler、一个 active video-frame callback | 通过 |
+
+`playoutDelayHint` 的真实 Chromium 接口要求有限数值秒，旧 `{min,max}` 对象会抛异常；另外，前两次 0 FPS 解码预热样本会被误判为 survival，且 Host media profile 会跨 Viewer 保留。浏览器验收已推动以下修复：数值 `playoutDelayHint=0`、两样本 `media-warmup` grace、每个新 PC 同步当前 high profile。修复后 focused WebRTC 测试 `37/37` 通过，首帧从修复前约 `6.47s` 降至上述 `3.52-4.52s`，但 P50 目标仍不能标记完成。
+
+#### 刷新与自适应质量恢复
+
+- 通过真实 `#refreshBtn` 并遵守 5 秒 UI debounce 连续执行 50 次 refresh，`50/50` 重连成功；重连 P50 `1.18s`、最大 `2.10s`。
+- 每一轮均保持一个 sampler、一个 active callback，且 sampler 绑定当前 PeerConnection；页面异常为 0。
+- 强制 survival 后持续采样 60 秒，档位依次为 `survival -> low -> medium -> high`；采样点约在 20s、35s、50s 观察到升档，末值 high/20 FPS、connected、页面异常为 0。
+- 绕过 UI debounce 的非正常高频直接 refresh 在约第 31 次暴露 trickle ICE 竞态：Host 先收到 `127.0.0.1` candidate，约 50ms 后 srflx 才到，ICE 已提前失败。正常 UI 路径未复现；该压力路径记录为 P3 robustness 风险，不作为 50 次真实 UI 验收失败。
+
+#### 桌面输入与坐标
+
+| 项目 | 真实结果 |
+|---|---|
+| Chromium 双击 | PointerEvent 第二次 down/up 的 `detail` 仍为 1；修复后实际发送严格为 `down:1, up:1, down:2, up:2`，全部由 DataChannel 接受 |
+| 拖出释放 | 释放后 pressed buttons=0、active pointer=null、pointer capture=false；window blur 另发送已接受的 `mouse/reset` |
+| contain/cover/fill | 三种模式各九点均为有限且有界坐标，中心误差 0；contain 黑边按 outside 处理 |
+| 输入延迟 | input RTT P50/P95 约 `13/16ms`；Host execute P50/P95 约 `0.99/5.55ms`；visual feedback P50/P95 约 `39/63ms` |
+
+真实 Chromium 证明浏览器不会为 PointerEvent 提供可靠的第二击 `detail=2`。Viewer 已改为按同一按钮、500ms 时间窗和 6px 距离推断第二击，pointerup 复用当前 down 的 clickCount；blur/cancel/reset 清理序列。对应输入 focused 测试 `12/12` 通过，浏览器页面异常为 0。
+
+#### Terminal 普通回显、密码与 alternate-screen
+
+- 普通命令标记出现两次，严格对应“命令 + 输出”，没有第三次重复回显。
+- `stty -echo` 下输入 13 字符 sentinel：输入中和提交后均不可见，返回 `WRD_PASSWORD_LEN:13`；新鲜完整会话的 `echoConfident=false`。
+- 额外 10ms 高频采样取得 154 个 echo-off 状态样本：`echoConfident` 从未为 true，pending local echo 最大 0 字节，输入前后均无 sentinel。
+- alternate-screen 进入状态为 true，按键后 100ms 内没有本地字符，echo confidence 为 false；随后正确返回 primary screen。
+- 最新公网样本中 socket RTT 约 `520-893ms`，input ack 约 `591-1426ms`，server process `0-1ms`。抖动来自当前 Cloudflare 公网路径，PTY 处理不是主耗时。
+- Cloudflare RUM `/cdn-cgi/rum` 出现一次 `net::ERR_ABORTED`，产品页面 error/console error 均为 0，按非产品请求分类。
+
+#### 验收发现的 Signal/Host 恢复缺陷
+
+浏览器关闭旧 PTY 后立即创建并输入时，迟到事件曾让 `terminal:input` 在 handler 外抛出 `terminal_session_not_found`，Signal Server 进程退出。修复保留 session-manager 严格异常语义，在 Socket.IO adapter 统一把已关闭 session 的迟到 input/resize 转为稳定错误和脱敏拒绝审计。TDD 先复现 `1 fail`，修复后 focused `1/1`、Terminal WebSocket `12/12`；真实浏览器再测时 Signal PID 保持不变，新 session 命令完成、session 数回到 0、页面/console 异常为 0。
+
+该崩溃还揭示 Host token 过期恢复问题：Host token 有效期 15 分钟，Signal Server 长时间运行后重启，旧实现持续用过期 token 重连，无法自动上线。`ensure_connected()` 现会销毁旧 client、重新认证、再连接。运行验证中只重启 Signal Server，Signal PID `96038 -> 339`，Host PID 始终为 `204`；首次认证在 origin 尚未监听时失败，下一秒重新认证成功并恢复 `hostOnline=true`，无需重启 Host。
+
+#### 日志、安全、服务与回归
+
+- 修复后 Signal 日志没有新的 uncaught/unhandled/traceback/exception/error；迟到 Terminal 事件仅形成 `terminal_input_rejected` / `terminal_resize_rejected`。
+- 当前 Viewer/Terminal 运行密码、三组浏览器测试 sentinel、输入标记均未出现在 Signal/Host 日志；版本差异秘密扫描为 0 命中。
+- 并行浏览器与全量测试负载期间 Host 记录三次 event-loop lag：`94.9ms`、`106.0ms`、`40.9ms`，一次达到 critical；当时 `pcState=none`、无 relay，告警随后未持续。F-20 的监控已有效，但仍应在真实长会话中观察是否周期性出现。
+- 最新全量回归：Signal Server `76/76`、Viewer/CSS/运维 `165/165`、Python Host/入口健康/service helper `56/56`，合计 `297/297` 通过；仅保留既有 MSS deprecation warning。
+- 最终本地服务 health 正常、Host online。safe URL 文件 SHA-256 始终为 `db9e24d63c80c44591b3da933379de5cb4ab9d59e92b29741b3e5891aac46214`，cloudflared PID 始终为 `398/5567/90866`；本轮没有停止、重建或轮换 tunnel。
+
+#### 最终完成判断
+
+真实浏览器功能与正确性验收已闭环：selected pair、非黑画面、稳态 FPS/jitter、50 次正常刷新、自适应恢复、双击、拖出释放、三种 object-fit、Terminal 普通回显、密码隐藏和 alternate-screen 均取得实际证据。验收发现的 Terminal close race 和 Host 过期 token 重连也已修复并运行验证。
+
+仍不能标记为完全达到所有性能目标：首帧 P50 实测 `4.12s`，未达到 `<3s`；公网 Terminal RTT 仍约数百毫秒且波动到接近 900ms；Host 在高并发验收负载下出现一次 106ms event-loop critical lag。前两项主要受当前 Cloudflare/ICE 路径和既定部署约束影响，第三项需要长会话趋势证据。除此之外，当前方案在“不部署 TURN、不引入 VPS/Viewer 客户端、Strict STUN 失败后手动 tunnel”的边界内合理且已完成代码闭环。

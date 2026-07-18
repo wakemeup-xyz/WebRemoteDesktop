@@ -110,6 +110,10 @@ def check_entry(url: str, *, health_path: str = "/health", timeout: float = 10.0
 
 Shell 通过 `scripts/check-entry-health.sh` 薄适配器调用 Python CLI。现有三态文字保留为兼容展示，但新增 `http-invalid` 和 `content-invalid`，并输出实际 HTTP status。
 
+### 6.4 Host 控制面恢复
+
+Host access token 的有效期为 15 分钟。Signal Server 在长时间运行后重启时，Host 不得继续用旧 token 无限重连；`ensure_connected()` 必须先销毁旧 Socket.IO client，再重新调用 Host 登录获取新 token，最后创建新 client。认证或连接失败保持 Host 离线，由现有一秒监控循环继续重试；恢复过程不得要求重启 Host 或影响 cloudflared。
+
 ## 7. RemoteInputController
 
 ### 7.1 Pointer 生命周期
@@ -233,6 +237,10 @@ Terminal 页面维护三个独立 series：
 - alternate-screen 始终禁用。
 - UI/诊断可以展示 echo mode，但不记录字符内容。
 
+### 9.2a Terminal 关闭竞态边界
+
+Shared Terminal 关闭 session 后，浏览器或网络队列中可能仍有迟到的 `terminal:input` / `terminal:resize`。`session-manager` 继续以 `terminal_session_not_found` 抛错维护严格的 session 真相；Socket.IO handler 必须在调用 `isObserverAttached()` 时捕获该错误，记录不含输入内容的拒绝元数据，并向当前 socket 返回稳定 `terminal:error`。任何已关闭 session 的迟到事件都不得逃出 handler、终止 Signal Server 或影响随后创建的 session。
+
 ### 9.3b Shared Terminal resource ceiling
 
 Session pool 默认最多 8 个 PTY，`WRD_TERMINAL_MAX_SESSIONS` 可配置；达到上限返回稳定 `terminal_session_limit`，不 kill 或影响现有会话。每 session replay 默认 256 KiB（`WRD_TERMINAL_REPLAY_BUFFER_BYTES`），`WRD_TERMINAL_IDLE_TIMEOUT_MS>0` 时自动回收超时且无人附着的 detached session。Pool snapshot 只暴露容量计数和上限，不暴露 shell 内容。
@@ -275,6 +283,7 @@ Signal Server 继续使用现有 structured logger，并为 file sink 应用相�
 - Desktop input：独立 `input_ack`、Host execute 与 visual feedback 分离、Socket fallback 路由。
 - Terminal resource：session hard ceiling、replay budget、idle detached-session reap。
 - Logging：input payload redaction、rotation、bootstrap child error、event-loop lag context。
+- Host recovery：Signal Server 重启后重新认证并自动注册，不能复用过期的 15 分钟 token。
 
 ### 10.2 运行验收
 

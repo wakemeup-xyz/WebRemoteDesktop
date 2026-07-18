@@ -1882,6 +1882,8 @@ class WebRemoteHost:
                     pass
                 self.sio = None
                 self.relay_streamer = None
+            if not await self.authenticate():
+                return False
             return await self.connect()
         finally:
             self._reconnecting = False

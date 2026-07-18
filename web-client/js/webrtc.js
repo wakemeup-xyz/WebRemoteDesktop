@@ -277,6 +277,40 @@ const WebRTC = {
     }
   },
 
+  configureVideoReceiver(receiver) {
+    if (!receiver?.track || receiver.track.kind !== 'video') return;
+    // Chromium exposes playoutDelayHint as one numeric delay in seconds,
+    // not the min/max object accepted by older experimental builds.
+    if (typeof receiver.playoutDelayHint !== 'undefined') {
+      try {
+        receiver.playoutDelayHint = 0;
+        console.log('[LATENCY] Set playoutDelayHint = 0s');
+      } catch (error) {
+        console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
+      }
+    }
+    if (typeof receiver.jitterBufferTarget !== 'undefined') {
+      try {
+        receiver.jitterBufferTarget = 1;
+        console.log('[LATENCY] Set jitterBufferTarget = 1');
+      } catch (error) {
+        console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
+      }
+    }
+  },
+
+  syncMediaProfile() {
+    const controller = this.ensureLinkQualityController();
+    const profileName = controller?.currentProfile;
+    const profile = typeof LinkQualityController !== 'undefined'
+      ? LinkQualityController.profiles?.[profileName]
+      : null;
+    if (!profile) return;
+    if (this.pc && this._profileSyncedPc === this.pc) return;
+    this._profileSyncedPc = this.pc || null;
+    this.applyMediaProfile(profile, 'connection-sync');
+  },
+
   applyMediaProfile(profile, reason) {
     if (!profile) return;
     console.warn(`[MEDIA] applying profile ${profile.name} size=${profile.width}x${profile.height} fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps reason=${reason}`);
@@ -752,6 +786,7 @@ const WebRTC = {
         // Start stats ASAP — before any other init that could throw
         this.startStats();
         this.startVideoFrameTracking();
+        this.syncMediaProfile();
         this.clearFailureRecommendation();
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
@@ -831,18 +866,7 @@ const WebRTC = {
       // Reduce jitter buffer aggressively for remote desktop (Chrome/Edge only)
       const receivers = this.pc.getReceivers ? this.pc.getReceivers() : [];
       receivers.forEach(receiver => {
-        if (receiver.track && receiver.track.kind === 'video') {
-          // playoutDelayHint (Chrome 129+): explicit min/max in seconds
-          if (typeof receiver.playoutDelayHint !== 'undefined') {
-            receiver.playoutDelayHint = { min: 0, max: 0.1 };
-            console.log('[LATENCY] Set playoutDelayHint = {min:0, max:0.1}');
-          }
-          // jitterBufferTarget: hint in ms (older API, still useful as fallback)
-          if (typeof receiver.jitterBufferTarget !== 'undefined') {
-            receiver.jitterBufferTarget = 1;
-            console.log('[LATENCY] Set jitterBufferTarget = 1');
-          }
-        }
+        this.configureVideoReceiver(receiver);
       });
 
       videoElement.muted = true;
@@ -1466,6 +1490,7 @@ const WebRTC = {
     if (!this._statsSampler) {
       const pc = this.pc;
       this._statsPc = pc;
+      this.ensureLinkQualityController()?.beginConnection?.();
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),
         intervalMs: 1000,

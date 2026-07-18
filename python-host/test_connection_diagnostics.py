@@ -17,6 +17,37 @@ class ListHandler(logging.Handler):
 
 
 @pytest.mark.asyncio
+async def test_host_reauthenticates_before_reconnecting_after_signal_restart():
+    calls = []
+    host = object.__new__(WebRemoteHost)
+    host._reconnecting = False
+    host.token = "expired-host-token"
+
+    async def disconnect():
+        calls.append("disconnect")
+
+    host.sio = SimpleNamespace(connected=False, disconnect=disconnect)
+    host.relay_streamer = object()
+
+    async def authenticate():
+        calls.append("authenticate")
+        host.token = "fresh-host-token"
+        return True
+
+    async def connect():
+        calls.append(("connect", host.token))
+        return True
+
+    host.authenticate = authenticate
+    host.connect = connect
+
+    assert await host.ensure_connected() is True
+    assert calls == ["disconnect", "authenticate", ("connect", "fresh-host-token")]
+    assert host.sio is None
+    assert host.relay_streamer is None
+
+
+@pytest.mark.asyncio
 async def test_schema_v2_diagnostic_logs_single_stun_failure_summary():
     host = object.__new__(WebRemoteHost)
     host._last_diag_network = None

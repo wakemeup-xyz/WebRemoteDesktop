@@ -244,3 +244,30 @@ Expected: active documentation matches implementation and contains no secret val
 - [x] **Step 2: Replace `sleep(0)` timing with 1-second deadline drift**
 - [x] **Step 3: Add 20/100ms severity, five-second warning aggregation, and fixed resource/status fields**
 - [x] **Step 4: Verify no task names, stacks, or input values are logged**
+
+### Task 10: Contain late Terminal events after session close
+
+**Files:**
+- Modify: `signal-server/websocket/terminal.test.js`
+- Modify: `signal-server/websocket/terminal.js`
+- Modify: `docs/superpowers/reports/2026-07-18-remote-desktop-connection-interaction-performance-diagnostic.md`
+
+- [x] **Step 1: Add the failing close-race regression**
+
+Create a shared session, close it, then trigger late `terminal:input` and `terminal:resize` events for the closed ID. Assert neither trigger throws, both return `terminal:error` with `code=terminal_session_not_found`, and the audit stream contains `terminal_input_rejected` / `terminal_resize_rejected` without input data.
+
+- [x] **Step 2: Verify RED**
+
+Run: `cd signal-server && node --test --test-name-pattern='late Terminal events' websocket/terminal.test.js`
+
+Expected: FAIL because `isObserverAttached()` throws before the current input/resize rejection branches.
+
+- [x] **Step 3: Add the minimal WebSocket error boundary**
+
+Wrap the attachment check used by each handler in the same local error conversion used by attach/close/write operations. Preserve strict `session-manager` exceptions, emit the stable session-not-found error, and log only session/client/socket IDs plus the rejection reason.
+
+- [x] **Step 4: Verify GREEN and browser reproduction**
+
+Run: `cd signal-server && node --test websocket/terminal.test.js`
+
+Then repeat the ordinary Chromium close/create/input sequence. Expected: Signal PID remains unchanged, the new PTY receives its command, no session remains after explicit close, and no page error or unhandled server exception is emitted.

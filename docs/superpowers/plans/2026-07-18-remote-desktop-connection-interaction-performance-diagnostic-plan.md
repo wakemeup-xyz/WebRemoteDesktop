@@ -139,7 +139,7 @@ Expected: Exact pass/fail counts and any behavior not protected by tests.
 
 Run: Open the live Viewer, inspect connection/mode/statistics UI, exercise non-destructive controls, and send real Host input only if the user explicitly authorizes it.
 
-Observed: The browser runtime reported no available browser instances. No Host input was sent. Browser screenshots, current WebRTC stats and live interaction feedback remain unverified and are recorded as a report limitation.
+Observed: The original 2026-07-18 diagnostic run had no browser instance. The 2026-07-19 follow-up used ordinary headless Chromium through Python Playwright after explicit user authorization and completed the media, 50-refresh, input, Terminal and recovery matrix recorded in report section 13.6.
 
 ### Task 5: Diagnose Web Terminal Separately
 
