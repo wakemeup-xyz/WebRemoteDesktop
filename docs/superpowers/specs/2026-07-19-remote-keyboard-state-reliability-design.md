@@ -358,6 +358,8 @@ window blur 只触发键盘 reset，不释放控制租约；document hidden、�
 
 reset 同时释放当前 lease 的键盘键和鼠标按钮。允许的 reason 是固定枚举；未知 reason 归一化为 `unspecified`，避免把任意文本带入日志。
 
+固定 reason 枚举为：`window-blur`、`visibility-hidden`、`deactivated`、`keyboard-mode-change`、`transport-change`、`control-revoked`、`controller-disconnect`、`lease-expired`、`signal-disconnect`、`webrtc-disconnected`、`datachannel-closed`、`viewer-disconnect`、`host-reconnect`、`host-stop`、`batch-failed`、`pending-reset`、`manual`、`unspecified`。
+
 ### 8.6 applied ack
 
 ```json
@@ -374,7 +376,7 @@ reset 同时释放当前 lease 的键盘键和鼠标按钮。允许的 reason �
 }
 ```
 
-允许 status：`applied`、`duplicate`、`stale-lease`、`sequence-gap`、`resync-required`、`execution-failed`。ack 不包含 key、code 或文本。
+允许 status：`applied`、`duplicate`、`stale-lease`、`sequence-gap`、`resync-required`、`invalid-input`、`unsupported-code`、`execution-failed`。ack 不包含 key、code 或文本。
 
 ## 9. Viewer 键盘状态
 
