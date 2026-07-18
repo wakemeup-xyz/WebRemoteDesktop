@@ -36,6 +36,8 @@
 
 键盘协议与媒体路径解耦。控制租约和 Socket.IO control plane 必须在 direct WebRTC 与 tunnel 两种媒体模式下保持相同语义。
 
+v2 tunnel 复用主 Viewer Socket.IO 连接发送 `relay-stream-control`、接收 `relay-frame` 并回传 `relay-frame-ack`，不再创建第二个可独立声明控制身份的 `relay-viewer` socket。这样租约 owner、输入 sender 和 tunnel media consumer 使用同一个已认证 socket id。
+
 ### 2.2 多 Viewer 控制权
 
 采用用户确认的方案 B：**单一控制租约**。
@@ -515,6 +517,7 @@ KeyboardSessionState(
 - 同一时间仍只有一个 legacy 或 v2 controller。
 - direct v1 DataChannel 绑定到 offer 对应的 server-issued lease；Host 的唯一 `LegacyInputAdapter` 为到达的 v1 DataChannel/Socket.IO 事件分配内部 seq。
 - legacy Viewer 不具备 applied reset barrier。其 transport 发生变化时，Host adapter 必须先 reset 再应用新 transport；takeover 和 disconnect 由 Signal 强制 Host reset。
+- 旧版 tunnel 的 `relay-viewer` companion 只有在恰好一个主 Viewer 在线时才可绑定到该主 Viewer 的 legacy lease；两个或更多主 Viewer 在线时拒绝 companion control 并要求刷新页面。禁止通过 IP、User-Agent 或共享 JWT subject 猜测 companion owner。
 
 ### 12.3 阶段 3：收紧兼容
 
