@@ -468,6 +468,7 @@ unsupported 是显式、可诊断的结果，不做字符 fallback。字符输�
 ```python
 KeyboardSessionState(
     connection_generation,
+    lease_id,
     lease_epoch,
     last_applied_seq,
     pressed_codes,
@@ -476,6 +477,8 @@ KeyboardSessionState(
 ```
 
 `pressed_codes` 是 modifier flags 的唯一真相。每次 apply 后从左右 modifier code 集合重新计算 Quartz flags，不对共享 bit 做单边加减。
+
+Host 从 Signal 的 `control-transition` 接收并保存 opaque `lease_id`。Socket.IO 和 direct DataChannel 输入都必须同时匹配 `connection_generation + lease_id + lease_epoch`；Viewer payload 不能建立或替换 Host lease truth。
 
 ### 11.2 串行执行
 
