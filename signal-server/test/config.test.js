@@ -105,6 +105,9 @@ test('loadConfig keeps diag persistence separate from runtime log settings', () 
   process.env.WRD_LOG_LEVEL = 'debug';
   process.env.WRD_LOG_FORMAT = 'jsonl';
   process.env.WRD_LOG_DIR = '/tmp/wrd-logs';
+  process.env.WRD_LOG_MAX_BYTES = '2048';
+  process.env.WRD_LOG_BACKUP_COUNT = '5';
+  process.env.WRD_HOST_VERBOSE_DIAGNOSTICS = '1';
   process.env.WRD_TERMINAL_AUDIT_LOG = '/tmp/wrd-terminal-audit.jsonl';
 
   try {
@@ -113,7 +116,24 @@ test('loadConfig keeps diag persistence separate from runtime log settings', () 
     assert.equal(config.logLevel, 'debug');
     assert.equal(config.logFormat, 'jsonl');
     assert.equal(config.logDir, '/tmp/wrd-logs');
+    assert.equal(config.logMaxBytes, 2048);
+    assert.equal(config.logBackupCount, 5);
+    assert.equal(config.hostVerboseDiagnostics, true);
     assert.equal(config.terminalAuditLog, '/tmp/wrd-terminal-audit.jsonl');
+  } finally {
+    process.env = previousEnv;
+  }
+});
+
+test('loadConfig defaults file rotation to ten MiB and three backups', () => {
+  const previousEnv = { ...process.env };
+  delete process.env.WRD_LOG_MAX_BYTES;
+  delete process.env.WRD_LOG_BACKUP_COUNT;
+
+  try {
+    const config = loadConfig();
+    assert.equal(config.logMaxBytes, 10 * 1024 * 1024);
+    assert.equal(config.logBackupCount, 3);
   } finally {
     process.env = previousEnv;
   }

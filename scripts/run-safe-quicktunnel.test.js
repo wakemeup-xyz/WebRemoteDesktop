@@ -48,7 +48,7 @@ test('safe quick tunnel script persists the current URL to a durable archive fil
   const source = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(source, /URL_ARCHIVE_FILE="\$\{URL_ARCHIVE_FILE:-\/tmp\/wrd-safe-current-url\.last\.txt\}"/);
-  assert.match(source, /printf '%s\\n' "\$URL" > "\$URL_ARCHIVE_FILE"/);
+  assert.match(source, /publish_safe_url/);
   assert.match(source, /cat "\$URL_ARCHIVE_FILE"/);
 });
 
@@ -58,10 +58,18 @@ test('safe quick tunnel script verifies the URL is reachable before publishing i
   assert.match(source, /source "\$PROJECT_DIR\/scripts\/lib-safe-wrd\.sh"/);
   assert.match(source, /wrd_safe_url_is_reachable/);
   assert.match(source, /URL_READY_TIMEOUT_SECONDS/);
-  assert.ok(
-    source.indexOf('wrd_safe_url_is_reachable') < source.indexOf('printf \'%s\\n\' "$URL" > "$URL_FILE"'),
-    'URL reachability should be checked before the URL is written to disk',
-  );
+  assert.match(source, /publish_safe_url\(\)/);
+  assert.match(source, /wrd_safe_url_is_reachable "\$url"[\s\S]*mv "\$current_tmp" "\$URL_FILE"/);
+  assert.doesNotMatch(source, /printf '%s\\n' "\$URL" > "\$URL_FILE"/);
+});
+
+test('safe quick tunnel publishes current and archive URL files atomically', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+
+  assert.match(source, /current_tmp="\$\{URL_FILE\}\.tmp\.\$\$"/);
+  assert.match(source, /archive_tmp="\$\{URL_ARCHIVE_FILE\}\.tmp\.\$\$"/);
+  assert.match(source, /mv "\$current_tmp" "\$URL_FILE"/);
+  assert.match(source, /mv "\$archive_tmp" "\$URL_ARCHIVE_FILE"/);
 });
 
 test('safe quick tunnel script restarts when the published URL stays unreachable for too long', () => {

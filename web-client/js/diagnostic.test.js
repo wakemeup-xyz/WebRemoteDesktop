@@ -416,6 +416,56 @@ test('autoSendFailure emits connection diagnostics instead of generic log payloa
   assert.equal(emitted[0].payload.recommendation.nextSuggestedMode, 'relay');
 });
 
+test('autoSendFailure includes the current network snapshot for candidate diagnostics', () => {
+  const { context } = createDiagnosticContext();
+  const emitted = [];
+  context.WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  context.WebRTC.networkMode = 'stun';
+  context.WebRTC.collectNetworkSnapshot = () => ({
+    networkMode: 'stun',
+    turnConfigured: false,
+    turnStatus: 'missing',
+    selectedCandidatePair: {
+      localType: 'srflx',
+      remoteType: 'host',
+      protocol: 'udp',
+      localAddress: '203.0.113.1:5000',
+      remoteAddress: '2001:db8::1:6000',
+      localAddressFamily: 'ipv4',
+      remoteAddressFamily: 'ipv6',
+      rttMs: 88,
+    },
+    candidateSummary: {
+      local: { host: 2, srflx: 1, relay: 0, prflx: 0, other: 0 },
+      remote: { host: 1, srflx: 1, relay: 0, prflx: 0, other: 0 },
+      samples: {
+        local: [{ type: 'srflx', address: '203.0.113.1:5000', protocol: 'udp' }],
+        remote: [{ type: 'host', address: '192.168.0.2:6000', protocol: 'udp' }],
+      },
+    },
+    pc: {
+      connectionState: 'failed',
+      iceConnectionState: 'failed',
+      iceGatheringState: 'complete',
+      signalingState: 'stable',
+    },
+  });
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  Diagnostic.autoSendFailure('pc-failed');
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].payload.network.selectedCandidatePair.protocol, 'udp');
+  assert.equal(emitted[0].payload.network.selectedCandidatePair.remoteAddressFamily, 'ipv6');
+  assert.equal(emitted[0].payload.network.candidateSummary.local.srflx, 1);
+  assert.equal(emitted[0].payload.network.candidateSummary.remote.host, 1);
+});
+
 test('sendLogs includes network snapshot and failure reason metadata', () => {
   const elements = new Map();
   const ids = [

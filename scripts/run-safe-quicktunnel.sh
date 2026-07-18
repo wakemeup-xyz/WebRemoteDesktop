@@ -17,6 +17,21 @@ UNREACHABLE_URL_FAIL_LIMIT="${UNREACHABLE_URL_FAIL_LIMIT:-4}"
 
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 
+publish_safe_url() {
+  local url="$1"
+  local current_tmp="${URL_FILE}.tmp.$$"
+  local archive_tmp="${URL_ARCHIVE_FILE}.tmp.$$"
+  wrd_safe_url_is_reachable "$url" || return 1
+  if ! printf '%s\n' "$url" > "$archive_tmp" || ! mv "$archive_tmp" "$URL_ARCHIVE_FILE"; then
+    rm -f "$archive_tmp" "$current_tmp"
+    return 1
+  fi
+  if ! printf '%s\n' "$url" > "$current_tmp" || ! mv "$current_tmp" "$URL_FILE"; then
+    rm -f "$current_tmp"
+    return 1
+  fi
+}
+
 extract_trycloudflare_url() {
   local source_file="$1"
   [ -f "$source_file" ] || return 1
@@ -54,8 +69,7 @@ if [ -f "$PID_FILE" ]; then
       URL="$(extract_trycloudflare_url "$LOG_FILE" || true)"
       if [ -n "$URL" ]; then
         if wait_for_public_url "$URL"; then
-          printf '%s\n' "$URL" > "$URL_FILE"
-          printf '%s\n' "$URL" > "$URL_ARCHIVE_FILE"
+          publish_safe_url "$URL"
         else
           URL=""
         fi
@@ -94,8 +108,7 @@ while true; do
     fi
     if [ -n "$URL" ]; then
       if wait_for_public_url "$URL"; then
-        printf '%s\n' "$URL" > "$URL_FILE"
-        printf '%s\n' "$URL" > "$URL_ARCHIVE_FILE"
+        publish_safe_url "$URL"
         echo "$URL"
         break
       fi
@@ -117,8 +130,7 @@ while true; do
       URL=$(extract_trycloudflare_url "$LOG_FILE" || true)
       if [ -n "$URL" ]; then
         if wait_for_public_url "$URL"; then
-          printf '%s\n' "$URL" > "$URL_FILE"
-          printf '%s\n' "$URL" > "$URL_ARCHIVE_FILE"
+          publish_safe_url "$URL"
         else
           URL=""
         fi
@@ -131,8 +143,8 @@ while true; do
     fi
   fi
 
+  UNREACHABLE_URL_FAIL_COUNT=0
   while kill -0 "$PID" 2>/dev/null; do
-    UNREACHABLE_URL_FAIL_COUNT=0
     if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
       echo "$(date -u +%FT%TZ) safe quick tunnel expired, restarting" >> "$LOG_FILE"
       kill "$PID" 2>/dev/null || true

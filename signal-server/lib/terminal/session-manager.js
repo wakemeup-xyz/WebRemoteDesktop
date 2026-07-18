@@ -71,6 +71,7 @@ function createTerminalSessionManager(options = {}) {
     shell: String(rawConfig.shell ?? rawConfig.terminalShell ?? '/bin/zsh'),
     cwd: String(rawConfig.cwd ?? rawConfig.terminalCwd ?? ''),
     softWarnSessionCount: Number(rawConfig.softWarnSessionCount ?? rawConfig.terminalSoftWarnSessionCount ?? 4),
+    maxSessions: Math.max(1, Number(rawConfig.maxSessions ?? rawConfig.terminalMaxSessions ?? 8)),
     idleTimeoutMs: Number(rawConfig.idleTimeoutMs ?? rawConfig.terminalIdleTimeoutMs ?? 0),
     startupTimeoutMs: Number(rawConfig.startupTimeoutMs ?? rawConfig.terminalStartupTimeoutMs ?? 10000),
     auditLog: rawConfig.auditLog ?? rawConfig.terminalAuditLog ?? '',
@@ -117,6 +118,13 @@ function createTerminalSessionManager(options = {}) {
       poolId: pool.poolId,
       title: pool.title,
       defaultSessionId: pool.defaultSessionId,
+      capacity: {
+        sessionCount: sessions.size,
+        maxSessions: config.maxSessions,
+        availableSessions: Math.max(0, config.maxSessions - sessions.size),
+        replayBufferBytesPerSession: config.replayBufferBytes,
+        maxReplayBytes: config.maxSessions * config.replayBufferBytes,
+      },
       sessions: Array.from(sessions.values()).map(snapshotSession),
     };
   }
@@ -192,10 +200,14 @@ function createTerminalSessionManager(options = {}) {
     if (typeof pty.onData === 'function') {
       pty.onData((data) => {
         session.lastActiveAt = timestamp();
-        audit.info('terminal_output', {
-          sessionId: session.sessionId,
-          ioRecording: config.recordIo,
-        });
+        if (config.recordIo) {
+          audit.info('terminal_output_observed', {
+            sessionId: session.sessionId,
+            clientId: session.activePresenterClientId,
+            bytes: Buffer.byteLength(String(data || ''), 'utf8'),
+            ioRecording: true,
+          });
+        }
         emitOutput(session, data);
       });
     }
@@ -217,6 +229,17 @@ function createTerminalSessionManager(options = {}) {
     if (!config.adminPassword) {
       throw Object.assign(new Error('Terminal admin password not configured'), {
         code: 'terminal_admin_password_missing',
+      });
+    }
+    reapIdleSessions();
+    if (sessions.size >= config.maxSessions) {
+      audit.warn('terminal_session_rejected', {
+        code: 'terminal_session_limit',
+        sessionCount: sessions.size,
+        maxSessions: config.maxSessions,
+      });
+      throw Object.assign(new Error('Terminal session limit reached'), {
+        code: 'terminal_session_limit',
       });
     }
     const sessionId = 'term_' + crypto.randomBytes(8).toString('hex');
@@ -258,11 +281,14 @@ function createTerminalSessionManager(options = {}) {
     audit.info('terminal_session_created', {
       sessionId,
       poolId: pool.poolId,
+      clientId: session.creatorClientId,
+      socketId: String(input.socketId || '').trim() || null,
       shell: session.shell,
       cwd: session.cwd,
       cols,
       rows,
       observerCount: session.observers.size,
+      ioRecording: config.recordIo,
     });
     return snapshotSession(session);
   }
@@ -277,6 +303,13 @@ function createTerminalSessionManager(options = {}) {
         rows: input.rows,
       });
     }
+    audit.info('terminal_session_attached', {
+      sessionId: session.sessionId,
+      poolId: pool.poolId,
+      clientId: String(input.clientId || '').trim() || null,
+      socketId: String(input.socketId || '').trim() || null,
+      observerCount: session.observers.size,
+    });
     return {
       ...snapshotSession(session),
       replay: session.replayBuffer.snapshot(),
@@ -319,6 +352,14 @@ function createTerminalSessionManager(options = {}) {
       session.activePresenterClientId = session.observers.values().next().value?.clientId || null;
     }
     updatePresence(session, input.reason || 'detached');
+    audit.info('terminal_session_detached', {
+      sessionId: session.sessionId,
+      poolId: pool.poolId,
+      clientId: removedClientId || clientId || null,
+      socketId: socketId || null,
+      observerCount: session.observers.size,
+      reason: input.reason || 'detached',
+    });
     return snapshotSession(session);
   }
 
@@ -410,6 +451,8 @@ function createTerminalSessionManager(options = {}) {
     }
     audit.info('terminal_session_closed', {
       sessionId,
+      clientId: String(input.clientId || '').trim() || null,
+      socketId: String(input.socketId || '').trim() || null,
       reason: session.detachedReason,
       poolId: pool.poolId,
     });
@@ -418,6 +461,26 @@ function createTerminalSessionManager(options = {}) {
 
   function listSessions() {
     return Array.from(sessions.values()).map(snapshotSession);
+  }
+
+  function reapIdleSessions() {
+    if (!Number.isFinite(config.idleTimeoutMs) || config.idleTimeoutMs <= 0) {
+      return [];
+    }
+    const currentTime = now().getTime();
+    const reaped = [];
+    for (const session of Array.from(sessions.values())) {
+      const lastActiveTime = Date.parse(session.lastActiveAt);
+      if (
+        session.observers.size === 0
+        && Number.isFinite(lastActiveTime)
+        && currentTime - lastActiveTime > config.idleTimeoutMs
+      ) {
+        closeSession(session.sessionId, { reason: 'idle-timeout' });
+        reaped.push(session.sessionId);
+      }
+    }
+    return reaped;
   }
 
   function getPresence(sessionId) {
@@ -493,6 +556,7 @@ function createTerminalSessionManager(options = {}) {
     listSessions,
     setActivePresenter,
     resizeSession,
+    reapIdleSessions,
     handleSocketDisconnect,
     _getSession: getSession,
   };

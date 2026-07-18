@@ -99,6 +99,40 @@ function loadLinkQualityController() {
   return { LinkQualityController: context.__LQC, context };
 }
 
+test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyMonitor', () => {
+  const acks = [];
+  const channels = new Map();
+  const socketHandlers = new Map();
+  const { WebRTC } = loadWebRTC({
+    LatencyMonitor: { onInputAck(payload) { acks.push(payload); } },
+  });
+  WebRTC.pc = {
+    connectionState: 'connecting',
+    iceConnectionState: 'checking',
+    createDataChannel(label) {
+      const channel = {
+        label,
+        readyState: 'connecting',
+        bufferedAmount: 0,
+        send() {},
+      };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.socket = {
+    on(event, handler) { socketHandlers.set(event, handler); },
+  };
+  WebRTC.createInputChannel();
+  WebRTC.setupSocketListeners();
+
+  channels.get('input').onmessage({ data: JSON.stringify({ type: 'input_ack', inputIds: ['dc-1'] }) });
+  socketHandlers.get('input-ack')({ type: 'input_ack', inputIds: ['socket-1'] });
+
+  assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
+  clearTimeout(WebRTC._dcTimeout);
+});
+
 test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const controller = LinkQualityController.create();
@@ -155,6 +189,138 @@ test('LinkQualityController enters critical recovery after repeated zero fps wit
   assert.equal(result.action, 'critical');
   assert.equal(result.profile, 'survival');
   assert.equal(result.shouldRestartIce, true);
+});
+
+test('LinkQualityController upgrades one profile after ten good samples and cooldown', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  let now = 0;
+  const controller = LinkQualityController.create({ initialProfile: 'survival', now: () => now });
+  const good = {
+    fps: 20,
+    rttMs: 40,
+    jitterBufferMs: 12,
+    packetsLost: 0,
+    framesDecoded: 20,
+    selectedCandidateType: 'srflx',
+  };
+
+  for (let index = 0; index < 10; index += 1) {
+    now += 1000;
+    assert.equal(controller.observe(good).action, 'hold');
+  }
+  now = 16000;
+  const result = controller.observe(good);
+
+  assert.equal(result.action, 'upgrade');
+  assert.equal(result.profile, 'low');
+});
+
+test('LinkQualityController requires two fresh degraded samples for every downshift', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create();
+  const bad = {
+    fps: 4,
+    rttMs: 140,
+    jitterBufferMs: 180,
+    packetsLost: 30,
+    framesDecoded: 10,
+    selectedCandidateType: 'srflx',
+    interval: true,
+  };
+
+  assert.equal(controller.observe(bad).action, 'hold');
+  assert.equal(controller.observe(bad).profile, 'medium');
+  const firstSampleAtMedium = controller.observe(bad);
+
+  assert.equal(firstSampleAtMedium.action, 'hold');
+  assert.equal(firstSampleAtMedium.profile, 'medium');
+});
+
+test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
+  let createCalls = 0;
+  let startCalls = 0;
+  let stopCalls = 0;
+  const sampler = {
+    start() { startCalls += 1; },
+    stop() { stopCalls += 1; },
+    snapshot() { return null; },
+  };
+  const { WebRTC } = loadWebRTC({
+    WebRtcStats: {
+      createWebRtcStatsSampler() {
+        createCalls += 1;
+        return sampler;
+      },
+    },
+  });
+  WebRTC.pc = { getStats: async () => new Map() };
+
+  WebRTC.startStats();
+  WebRTC.startStats();
+  WebRTC.stopMediaTelemetry();
+
+  assert.equal(createCalls, 1);
+  assert.equal(startCalls, 2);
+  assert.equal(stopCalls, 1);
+});
+
+test('video frame callback is cancelled and never accumulates on restart', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  let nextId = 1;
+  const active = new Set();
+  const cancelled = [];
+  video.requestVideoFrameCallback = () => {
+    const id = nextId++;
+    active.add(id);
+    return id;
+  };
+  video.cancelVideoFrameCallback = (id) => {
+    active.delete(id);
+    cancelled.push(id);
+  };
+
+  WebRTC.startVideoFrameTracking();
+  WebRTC.startVideoFrameTracking();
+  WebRTC.stopMediaTelemetry();
+
+  assert.equal(active.size, 0);
+  assert.equal(cancelled.length, 2);
+});
+
+test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {
+  let created = 0;
+  let stopped = 0;
+  const { WebRTC, context } = loadWebRTC({
+    WebRtcStats: {
+      createWebRtcStatsSampler() {
+        created += 1;
+        return { start() {}, stop() { stopped += 1; }, snapshot() { return null; } };
+      },
+    },
+  });
+  const video = context.document.getElementById('remoteVideo');
+  let nextCallback = 1;
+  const activeCallbacks = new Set();
+  video.requestVideoFrameCallback = () => {
+    const id = nextCallback++;
+    activeCallbacks.add(id);
+    return id;
+  };
+  video.cancelVideoFrameCallback = (id) => activeCallbacks.delete(id);
+
+  for (let index = 0; index < 50; index += 1) {
+    WebRTC.pc = { getStats: async () => new Map() };
+    WebRTC.startStats();
+    WebRTC.startVideoFrameTracking();
+    WebRTC.stopMediaTelemetry();
+  }
+
+  assert.equal(created, 50);
+  assert.equal(stopped, 50);
+  assert.equal(activeCallbacks.size, 0);
+  assert.equal(WebRTC._statsSampler, null);
+  assert.equal(WebRTC._videoFrameCallbackId, null);
 });
 
 test('refresh clears stuck offer state before creating a new offer', async () => {
@@ -317,6 +483,39 @@ test('auto fallback handles relay frames while tunnel relay is active', () => {
 
   assert.equal(relayImage.classList.contains('hidden'), false);
   assert.equal(elements.get('connectionStatus').textContent, '已连接');
+});
+
+test('base64 relay frames ack after the browser image loads', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  const relayImage = elements.get('relayImage') || makeElement();
+  elements.set('relayImage', relayImage);
+  const emitted = [];
+
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.relaySocket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+
+  WebRTC.handleRelayFrame({
+    data: 'ZmFrZS1mcmFtZQ==',
+    mime: 'image/jpeg',
+    frameId: 7,
+    width: 960,
+    height: 540,
+    timestamp: Date.now() - 25,
+  });
+
+  assert.equal(typeof relayImage.onload, 'function');
+  relayImage.onload();
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].event, 'relay-frame-ack');
+  assert.equal(emitted[0].payload.frameId, 7);
+  assert.equal(typeof emitted[0].payload.latencyMs, 'number');
 });
 
 test('relay socket connect emits start control during auto tunnel fallback', () => {

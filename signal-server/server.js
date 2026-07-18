@@ -7,7 +7,7 @@ const helmet = require('helmet');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
-const authRoutes = require('./routes/auth');
+const { createAuthRouter } = require('./routes/auth');
 const {
   loadConfig,
   getTurnStatus,
@@ -28,8 +28,9 @@ const {
 } = require('./lib/diagnostic');
 const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
-const { createStructuredLogger } = require('./lib/observability/logger');
+const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
+const { createTerminalAudit } = require('./lib/terminal/audit');
 
 function requireAccessToken(req, res, next) {
   try {
@@ -48,14 +49,28 @@ function createServerApp(options = {}) {
   const config = options.config || loadConfig();
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || createRecentEventStore();
+  const structuredFileSink = createRotatingFileSink({
+    filePath: config.logDir ? path.join(config.logDir, 'signal-server.jsonl') : '',
+    maxBytes: config.logMaxBytes,
+    backupCount: config.logBackupCount,
+  });
   const structuredLogger = options.structuredLogger || createStructuredLogger({
     write(line) {
+      structuredFileSink.write(line + '\n');
       try {
         logger.info?.(JSON.parse(line));
       } catch (_error) {
         logger.info?.(line);
       }
     },
+  });
+  const terminalAudit = options.terminalAudit || createTerminalAudit({
+    logger,
+    structuredLogger,
+    recentEventStore,
+    auditLogPath: config.terminalAuditLog,
+    maxBytes: config.logMaxBytes,
+    backupCount: config.logBackupCount,
   });
   ensureNodePtySpawnHelperExecutable(logger);
 
@@ -73,7 +88,11 @@ function createServerApp(options = {}) {
     credentials: false,
   }));
   app.use(express.json({ limit: '200kb' }));
-  app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }), authRoutes);
+  app.use(
+    '/api/auth',
+    rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }),
+    createAuthRouter({ config, logger, terminalAudit }),
+  );
 
   const webClientPath = path.join(__dirname, '..', 'web-client');
   app.use(express.static(webClientPath, {
@@ -100,6 +119,7 @@ function createServerApp(options = {}) {
   const terminal = setupTerminal(io, {
     config,
     logger,
+    audit: terminalAudit,
     ...(options.terminal || {}),
   });
 
@@ -239,6 +259,7 @@ function createServerApp(options = {}) {
     io,
     config,
     terminal,
+    terminalAudit,
     recentEventStore,
     structuredLogger,
   };

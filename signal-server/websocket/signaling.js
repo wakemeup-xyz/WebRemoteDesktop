@@ -179,7 +179,11 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (data.type !== 'mouse' || data.action !== 'move') {
-        console.log(`[INPUT] Relaying from viewer ${socket.id}:`, JSON.stringify(data));
+        const inputType = ['mouse', 'keyboard', 'command'].includes(data.type) ? data.type : 'unknown';
+        const action = /^[a-z-]{1,32}$/i.test(String(data.action || '')) ? String(data.action) : 'unknown';
+        const transport = data.transport === 'datachannel' ? 'datachannel' : 'socket';
+        const payloadBytes = Buffer.byteLength(JSON.stringify(data.payload || {}), 'utf8');
+        logger.log?.(`[INPUT] relay viewer=${socket.id} type=${inputType} action=${action} transport=${transport} payloadBytes=${payloadBytes}`);
       }
       if (connections.host) {
         connections.host.emit('input', {
@@ -189,6 +193,22 @@ function setupSignaling(io, options = {}) {
       } else {
         console.warn('[INPUT] No host connected, dropping input');
       }
+    });
+
+    socket.on('input-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) {
+        logger.warn?.(`[INPUT] ack rejected role=${role}`);
+        return;
+      }
+      const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
+      if (!viewerSocket) return;
+      viewerSocket.emit('input-ack', {
+        type: 'input_ack',
+        schemaVersion: 1,
+        inputIds: Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [],
+        hostExecuteMs: Math.max(0, Number(data.hostExecuteMs || 0)),
+        transport: 'socket',
+      });
     });
 
     // Diagnostic logs relay (viewer -> host) + persist to disk

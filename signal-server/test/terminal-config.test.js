@@ -13,6 +13,8 @@ test('loadConfig exposes terminal defaults', () => {
   delete process.env.WRD_TERMINAL_SHELL;
   delete process.env.WRD_TERMINAL_CWD;
   delete process.env.WRD_TERMINAL_SOFT_WARN_SESSION_COUNT;
+  delete process.env.WRD_TERMINAL_MAX_SESSIONS;
+  delete process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES;
   delete process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS;
   delete process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS;
   delete process.env.WRD_TERMINAL_AUDIT_LOG;
@@ -25,6 +27,8 @@ test('loadConfig exposes terminal defaults', () => {
   assert.equal(config.terminalShell, '/bin/zsh');
   assert.equal(config.terminalCwd, '');
   assert.equal(config.terminalSoftWarnSessionCount, 4);
+  assert.equal(config.terminalMaxSessions, 8);
+  assert.equal(config.terminalReplayBufferBytes, 256 * 1024);
   assert.equal(config.terminalIdleTimeoutMs, 0);
   assert.equal(config.terminalStartupTimeoutMs, 10000);
   assert.equal(config.terminalAuditLog, '');
@@ -37,6 +41,8 @@ test('loadConfig parses terminal overrides', () => {
   process.env.WRD_TERMINAL_SHELL = '/bin/bash';
   process.env.WRD_TERMINAL_CWD = '/tmp';
   process.env.WRD_TERMINAL_SOFT_WARN_SESSION_COUNT = '7';
+  process.env.WRD_TERMINAL_MAX_SESSIONS = '12';
+  process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES = '131072';
   process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS = '2500';
   process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS = '15000';
   process.env.WRD_TERMINAL_AUDIT_LOG = '/var/log/terminal.log';
@@ -49,6 +55,8 @@ test('loadConfig parses terminal overrides', () => {
   assert.equal(config.terminalShell, '/bin/bash');
   assert.equal(config.terminalCwd, '/tmp');
   assert.equal(config.terminalSoftWarnSessionCount, 7);
+  assert.equal(config.terminalMaxSessions, 12);
+  assert.equal(config.terminalReplayBufferBytes, 131072);
   assert.equal(config.terminalIdleTimeoutMs, 2500);
   assert.equal(config.terminalStartupTimeoutMs, 15000);
   assert.equal(config.terminalAuditLog, '/var/log/terminal.log');

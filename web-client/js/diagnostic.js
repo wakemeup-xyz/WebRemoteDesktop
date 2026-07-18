@@ -302,6 +302,7 @@ const Diagnostic = {
     const terminalState = (typeof TerminalPanel !== 'undefined' && typeof TerminalPanel.getDiagnosticState === 'function')
       ? TerminalPanel.getDiagnosticState()
       : null;
+    const network = this.getNetworkSnapshot();
 
     return {
       type: 'connection-diagnostic',
@@ -312,6 +313,7 @@ const Diagnostic = {
       mode,
       recommendation,
       terminal: terminalState,
+      network,
       events: redactedEvents,
       probeResults: Array.isArray(basePayload.probeResults) ? basePayload.probeResults.slice() : [],
       adaptiveMedia,

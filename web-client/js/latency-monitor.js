@@ -8,6 +8,7 @@ const LatencyMonitor = {
 
   // Input tracking
   _inputMap: new Map(), // inputId -> { i0, ts }
+  _visualInputMap: new Map(), // inputId -> { i0, ts }
 
   // Playout buffer tracking (delta calculation)
   _lastJitterDelay: 0,
@@ -23,6 +24,8 @@ const LatencyMonitor = {
     playout: [],
     inputRtt: [],
     executeTime: [],
+    visualFeedback: [],
+    paint: [],
   },
 
   init() {
@@ -72,21 +75,30 @@ const LatencyMonitor = {
 
   onFrameTiming(data) {
     const now = Date.now();
-    const timings = data.timings;
+    const timings = data.timings || {};
 
-    const hostToViewer = (hostSec) => hostSec * 1000 + this._offsetMs;
-
-    const t0v = hostToViewer(timings.captureStart);
-    const t1v = hostToViewer(timings.captureEnd);
-    const t2v = hostToViewer(timings.scaleEnd);
-    const t3v = hostToViewer(timings.encodeEnd);
-    const t4v = hostToViewer(timings.packetSend);
-    const t5v = now;
-
-    this._pushStat('capture', t1v - t0v);
-    this._pushStat('scale', t2v - t1v);
-    this._pushStat('encode', t3v - t2v);
-    this._pushStat('network', t5v - t4v);
+    if (data.schemaVersion === 2) {
+      if (Number.isFinite(Number(timings.capturePrepareMs))) {
+        this._pushStat('capture', Number(timings.capturePrepareMs));
+      }
+      if (Number.isFinite(Number(timings.frameConvertMs))) {
+        this._pushStat('scale', Number(timings.frameConvertMs));
+      }
+      if (timings.encoderMs != null && Number.isFinite(Number(timings.encoderMs))) {
+        this._pushStat('encode', Number(timings.encoderMs));
+      }
+    } else {
+      const hostToViewer = (hostSec) => hostSec * 1000 + this._offsetMs;
+      const t0v = hostToViewer(timings.captureStart);
+      const t1v = hostToViewer(timings.captureEnd);
+      const t2v = hostToViewer(timings.scaleEnd);
+      const t3v = hostToViewer(timings.encodeEnd);
+      const t4v = hostToViewer(timings.packetSend);
+      this._pushStat('capture', t1v - t0v);
+      this._pushStat('scale', t2v - t1v);
+      this._pushStat('encode', t3v - t2v);
+      this._pushStat('network', now - t4v);
+    }
 
     // Process input timing data from host (receiveTime, executeTime)
     const inputs = data.inputs;
@@ -98,18 +110,23 @@ const LatencyMonitor = {
       }
     }
 
-    // Compute input RTT for each inputId bound to this frame
+    // Frame-bound input IDs represent visual feedback, not transport ack RTT.
     if (data.inputIds && data.inputIds.length > 0) {
       for (const inputId of data.inputIds) {
+        const visualRecord = this._visualInputMap.get(inputId);
+        if (visualRecord) {
+          this._pushStat('visualFeedback', now - visualRecord.i0);
+          this._visualInputMap.delete(inputId);
+        }
+        // Compatibility with an older Host that has no independent input_ack.
         const inputRecord = this._inputMap.get(inputId);
         if (inputRecord) {
-          this._pushStat('inputRtt', t5v - inputRecord.i0);
+          this._pushStat('inputRtt', now - inputRecord.i0);
           this._inputMap.delete(inputId);
         }
       }
     }
 
-    this._estimatePlayoutBuffer();
   },
 
   // ─── Input Tracking ───
@@ -117,6 +134,7 @@ const LatencyMonitor = {
   recordInputSend(inputId) {
     const now = Date.now();
     this._inputMap.set(inputId, { i0: now, ts: now });
+    this._visualInputMap.set(inputId, { i0: now, ts: now });
     // Cleanup old entries every 10 calls instead of every call to avoid O(n) loop on hot path
     this._inputCleanupCounter = (this._inputCleanupCounter || 0) + 1;
     if (this._inputCleanupCounter >= 10) {
@@ -125,41 +143,40 @@ const LatencyMonitor = {
       for (const [id, rec] of this._inputMap) {
         if (rec.ts < cutoff) this._inputMap.delete(id);
       }
+      for (const [id, rec] of this._visualInputMap) {
+        if (rec.ts < cutoff) this._visualInputMap.delete(id);
+      }
+    }
+  },
+
+  onInputAck(data = {}) {
+    const now = Date.now();
+    const inputIds = Array.isArray(data.inputIds) ? data.inputIds : [];
+    for (const inputId of inputIds) {
+      const inputRecord = this._inputMap.get(inputId);
+      if (!inputRecord) continue;
+      this._pushStat('inputRtt', Math.max(0, now - inputRecord.i0));
+      this._inputMap.delete(inputId);
+    }
+    const hostExecuteMs = Number(data.hostExecuteMs);
+    if (Number.isFinite(hostExecuteMs) && hostExecuteMs >= 0) {
+      this._pushStat('executeTime', hostExecuteMs);
     }
   },
 
   // ─── Video Frame / Playout Buffer ───
 
   onVideoFrame(now, metadata) {
-    // Trigger playout estimation on each rendered frame
-    this._estimatePlayoutBuffer();
+    if (this._lastPaintAt != null && Number.isFinite(Number(now))) {
+      this._pushStat('paint', Math.max(0, Number(now) - this._lastPaintAt));
+    }
+    this._lastPaintAt = Number(now);
   },
 
-  async _estimatePlayoutBuffer() {
-    if (typeof WebRTC === 'undefined' || !WebRTC.pc) return;
-    try {
-      const stats = await WebRTC.pc.getStats();
-      let currDelay = 0;
-      let currEmitted = 0;
-      for (const report of stats.values()) {
-        if (report.type === 'inbound-rtp' && report.kind === 'video') {
-          currDelay = report.jitterBufferDelay || 0;
-          currEmitted = report.jitterBufferEmittedCount || 0;
-          break;
-        }
-      }
-      if (currEmitted > 0 && currEmitted > this._lastJitterEmitted) {
-        const deltaDelay = currDelay - this._lastJitterDelay;
-        const deltaEmitted = currEmitted - this._lastJitterEmitted;
-        const currentPlayoutMs = (deltaDelay / deltaEmitted) * 1000;
-        if (currentPlayoutMs >= 0 && currentPlayoutMs < 5000) {
-          this._pushStat('playout', currentPlayoutMs);
-        }
-      }
-      this._lastJitterDelay = currDelay;
-      this._lastJitterEmitted = currEmitted;
-    } catch (e) {
-      // ignore getStats errors
+  onMediaStats(snapshot = {}) {
+    const jitterBufferMs = Number(snapshot.jitterBufferMs);
+    if (Number.isFinite(jitterBufferMs) && jitterBufferMs >= 0 && jitterBufferMs < 5000) {
+      this._pushStat('playout', jitterBufferMs);
     }
   },
 
@@ -189,7 +206,7 @@ const LatencyMonitor = {
 
   getStats() {
     const calc = (arr) => {
-      if (!arr || arr.length === 0) return { p50: 0, p95: 0, count: 0 };
+      if (!arr || arr.length === 0) return { last: null, p50: null, p95: null, count: 0, available: false };
       // QuickSelect-style partition for p50/p95: O(n) instead of O(n log n) sort
       const values = arr.map(x => x.value);
       const n = values.length;
@@ -197,7 +214,7 @@ const LatencyMonitor = {
       const p95Idx = Math.floor(n * 0.95);
       const p50 = this._quickSelect(values, p50Idx);
       const p95 = p95Idx >= n ? values[this._quickSelect(values, n - 1, true)] : this._quickSelect(values, p95Idx);
-      return { p50, p95, count: n };
+      return { last: arr.at(-1).value, p50, p95, count: n, available: true };
     };
 
     return {
@@ -208,6 +225,8 @@ const LatencyMonitor = {
       playout: calc(this._stats.playout),
       inputRtt: calc(this._stats.inputRtt),
       executeTime: calc(this._stats.executeTime),
+      visualFeedback: calc(this._stats.visualFeedback),
+      paint: calc(this._stats.paint),
       sync: {
         state: this._syncState,
         rtt: this._rttMs,

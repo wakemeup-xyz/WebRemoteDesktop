@@ -52,8 +52,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **延迟优化**：浏览器端 `jitterBufferTarget = 0`，编码器 GOP 1 秒、禁用 B 帧
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
+- [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
+- [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，只上报实测 `capturePrepareMs` / `frameConvertMs`；尚未建立真实边界的 `encoderMs` / `rtpSendMs` / `endToEndVideoMs` 必须为 `null`，不得用 track return 或 DataChannel 到达时间冒充
 - [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继
 - [x] **Strict STUN 自适应降载**：Viewer 根据 FPS、RTT、jitter buffer 和丢包识别弱直连链路，自动降为 540p/15fps、480p/12fps、360p/8fps，并通知 Host 调整采集档位
+- [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
+- [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；恢复耗尽后明确失败并自动上报诊断
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
@@ -62,17 +66,20 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ### 3.2 鼠标输入
 
-- [x] **移动**：mousemove 事件转发，坐标映射到远程屏幕
-- [x] **点击**：mousedown / mouseup / click / dblclick
+- [x] **移动**：Pointer Events 转发，坐标映射到远程屏幕
+- [x] **点击**：`pointerdown` / `pointerup` 携带 `clickCount`；双击只产生两组 down/up，不额外发送 `dblclick` 动作
 - [x] **滚轮**：wheel 事件转发（deltaX/deltaY）
-- [x] **坐标映射**：基于视频内容区域（去除 object-fit 黑边）
+- [x] **坐标映射**：`contain` 去除黑边、`cover` 反算被裁剪源区域、`fill` 直接线性映射
 - [x] **多按钮支持**：左键、右键、中键
 - [x] **低延迟传输**：鼠标移动优先通过无序、不可重传的 `input-move` WebRTC DataChannel 发送，避免高频移动事件排队
+- [x] **拖拽恢复**：pointer capture 保证画面外释放仍可收到；cancel、失焦、隐藏、停用、断线或 Viewer 消失时通过幂等 `mouse/reset` 释放 Host 按钮状态
 
 **约束**：
 - 鼠标坐标使用相对比例 (0-1) 传输，Host 根据屏幕分辨率换算为绝对坐标
-- 视频内容区域与元素区域可能不一致（object-fit: contain 导致黑边），前端需计算内容区域偏移
+- 视频内容区域与元素区域可能不一致，前端必须以 `input-geometry.js` 的 object-fit 公式作为唯一坐标真相
 - 鼠标移动事件可丢弃，点击、滚轮、键盘事件不可丢弃
+- `Input.sendInput()` 只有在 DataChannel/Socket.IO 接受消息或明确丢弃高频 move 时才返回 input ID；没有可用 transport 时返回 `null`，不得进入延迟 pending map
+- Host 可兼容接收旧 `dblclick`，但 Viewer 不再产生该动作；Quartz down/up 的 click state 只由 `clickCount` 驱动
 
 ### 3.3 键盘输入
 
@@ -93,6 +100,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport` 和端到端发送延迟，便于区分 DataChannel 与 Socket.IO 兜底路径
+- 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT
 
 ### 3.4 控制栏
 
@@ -134,9 +142,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [ ] **断网重连**：浏览器断网后自动重连到原来的 Terminal，会话和上下文保留
 - [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
 - [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
-- [x] **软提示**：不设硬上限，但当会话数量较多时给出明显性能提示
+- [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，可配置 idle timeout 回收超时且无人附着的会话
+- [x] **同钟延迟指标**：`socketRtt`、`inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 只在 Signal Server 内部相减，不混用浏览器与服务端 wall clock
+- [x] **密码安全回显**：首批普通输入只作为隐藏 probe；确认远端 shell 实际回显后才允许后续本地回显。Enter、控制键、alternate-screen、断线和重连均清零 confidence
 - [ ] **开发映射**：本机 `http://localhost:5173/` 打开的网页也要能通过映射访问同一套 Terminal 服务
-- [ ] **审计日志**：记录 admin 登录、Terminal 创建、断开、重连、关闭和错误
+- [x] **审计日志**：Signal Server 记录 Terminal admin 登录、socket 连接、创建、附着、断开、关闭、拒绝和错误的结构化审计事件
 - [ ] **独立实现**：优先使用 `@xterm/xterm` + `node-pty` + Socket.IO 的内嵌方案，不默认引入 WeTTY / ttyd 独立服务
 
 **Terminal 安全约束**：
@@ -154,6 +164,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - Input relay 与 diagnostic relay 仅允许 viewer 派生角色发送
 - Host 端默认开启 TLS 校验；仅本地开发场景可通过 `WRD_INSECURE_SKIP_TLS_VERIFY=1` 放宽 localhost 校验
 - 诊断日志默认不落仓库；若开启 `WRD_ENABLE_DIAG_PERSIST=1`，仅写入系统临时目录并使用脱敏后的内容
+- Signal Server 默认记录结构化运行日志；Viewer 诊断、Terminal 审计、Host 摘要应共享稳定的事件包结构和关联 ID
+- Terminal 默认只记录结构化审计事件，不记录完整 IO 原文；仅在 `WRD_TERMINAL_RECORD_IO=1` 时允许详细 IO 记录
+- Host 默认只记录浏览器诊断摘要；仅在 `WRD_HOST_VERBOSE_DIAGNOSTICS=1` 时允许逐行输出 Viewer 详细日志
+- Viewer、Host 和 Signal Server 默认不记录 key、code、文本、鼠标坐标或完整 input payload；只保留 action、transport、payload byte count、input ID hash 和本机耗时。Viewer 控制台与自动诊断日志同样只保留输入元数据
+- Host/Signal/Terminal audit file 使用 `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 轮转，默认 10 MiB / 3 个备份
+- `host_event_loop_lag` 只记录有界状态/资源摘要，20ms 为 warning、100ms 为 critical，普通告警按 5 秒聚合
 
 ---
 
@@ -173,6 +189,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_DISABLE_OVERLAY` | python-host | 设置为 `1` 时禁用 Host 本机浮动提示 |
 | `WRD_INSECURE_SKIP_TLS_VERIFY` | python-host | 仅本地开发时允许放宽 localhost 的 TLS 校验 |
 | `WRD_ENABLE_DIAG_PERSIST` | signal-server | 设置为 `1` 时把脱敏后的诊断日志写入系统临时目录 |
+| `WRD_LOG_LEVEL` | signal-server | 结构化运行日志级别，默认 `info` |
+| `WRD_LOG_FORMAT` | signal-server | 结构化运行日志格式，默认 `jsonl` |
+| `WRD_LOG_DIR` | signal-server | 可选运行日志目录配置；不改变默认 stdout/stderr 输出语义 |
+| `WRD_LOG_MAX_BYTES` | signal-server / python-host | 单个运行日志文件上限，默认 `10485760`（10 MiB） |
+| `WRD_LOG_BACKUP_COUNT` | signal-server / python-host | 日志备份数量，默认 `3` |
 | `STUN_URLS` | signal-server / python-host | 逗号分隔的 STUN URL，默认使用 Google STUN |
 | `TURN_URLS` | signal-server / python-host | 逗号分隔的 TURN/TURNS URL，用于外网中继 |
 | `TURN_USERNAME` | signal-server / python-host | TURN 用户名 |
@@ -182,10 +203,13 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_TERMINAL_SHELL` | signal-server | 默认 shell，推荐 `/bin/zsh` |
 | `WRD_TERMINAL_CWD` | signal-server | Terminal 默认工作目录 |
 | `WRD_TERMINAL_SOFT_WARN_SESSION_COUNT` | signal-server | 会话数软提示阈值，默认 `4` |
+| `WRD_TERMINAL_MAX_SESSIONS` | signal-server | PTY session 硬上限，默认 `8` |
+| `WRD_TERMINAL_REPLAY_BUFFER_BYTES` | signal-server | 每个 session replay buffer 上限，默认 `262144`（256 KiB） |
 | `WRD_TERMINAL_IDLE_TIMEOUT_MS` | signal-server | 会话空闲超时，默认 `0` 表示不自动销毁 |
 | `WRD_TERMINAL_STARTUP_TIMEOUT_MS` | signal-server | PTY 启动超时 |
-| `WRD_TERMINAL_AUDIT_LOG` | signal-server | 是否记录 Terminal 审计日志 |
+| `WRD_TERMINAL_AUDIT_LOG` | signal-server | 可选 Terminal 独立审计 JSONL 文件路径；为空时仍进入统一运行日志 |
 | `WRD_TERMINAL_RECORD_IO` | signal-server | 是否记录完整输入输出，默认 `0` |
+| `WRD_HOST_VERBOSE_DIAGNOSTICS` | python-host | 是否额外逐行输出 Viewer 诊断日志，默认 `0` |
 
 ### 4.2 启动顺序
 
@@ -229,7 +253,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 这条路径同样会重新注册并 kickstart `com.webremotedesktop.host` LaunchAgent；这是当前产品设计的一部分，而不是异常副作用。
 
 停止该安全链路时，使用：`./scripts/stop-safe-wrd.sh`。它只会停止安全启动脚本记录过的 PID，不会清理其他项目进程。
-查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 健康状态。
+查看该安全链路状态时，使用：`./scripts/status-safe-wrd.sh`。它只读取安全 PID / URL 文件，并检查本地 `8080` 与公网 `/health`；不得调和 PID 文件或从 archive/log 恢复当前 URL。
 
 当前 safe quick tunnel 调试地址会写入：
 
@@ -238,7 +262,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ```
 
 由于 trycloudflare quick tunnel 没有稳定性保证，`scripts/run-safe-quicktunnel.sh` 会在检测到 `Unauthorized: Tunnel not found` 时重建 quick tunnel 并更新当前安全地址文件。
-同时，脚本现在要求：拿到 trycloudflare URL 后，必须先通过本机 `curl -I -L` reachability 校验，才允许把该地址写入 `/tmp/wrd-safe-current-url.txt`。
+同时，`scripts/run-safe-quicktunnel.sh` 是 safe URL 的唯一 publisher：拿到 trycloudflare URL 后，必须先确认 `/health` 返回 2xx 且 JSON `status=ok`，才允许原子写入 `/tmp/wrd-safe-current-url.txt` 与 archive。3xx、404、429、5xx 或错误内容均不可交付。
 
 需要特别说明：地址文件中已经写出 trycloudflare URL，只能说明 `cloudflared` 已拿到一个临时地址，**不能直接视为公网可用**。对外提供前仍应检查：
 
@@ -296,12 +320,14 @@ WebRemoteDesktop/
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
+- **当前部署策略**：本轮明确不引入 TURN/VPS/Viewer 客户端。公网媒体严格 STUN，失败后只由用户手动切换 JPEG tunnel fallback；固定域名与媒体是否直连无关
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
 - **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
 - **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化
 - **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准，只有用户明确要求或 tunnel 已失效时才重建
-- **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 HTTP 可达性，不能仅凭“拿到 URL”就判断公网入口已经成功
+- **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
+- **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
 - **系统睡眠**：远程桌面依赖实时屏幕采集，Host 必须通过 `caffeinate -dims` 防止系统/显示/磁盘睡眠；手动睡眠、断电、合盖仍可能强制中断
 
@@ -319,3 +345,4 @@ WebRemoteDesktop/
 | 2026-06-06 | 同步开源前安全加固现状：Viewer 与 Host 分离认证、`/api/webrtc-config` 需要 Bearer token、TLS 默认校验开启、诊断日志默认不落仓库，仅在显式开启时写入系统临时目录 |
 | 2026-06-06 | 明确 safe quick tunnel 重启语义：仅重启本地服务时默认复用现有 quick tunnel，公网地址通常不变；停止 safe 链路或 tunnel 失效重建时地址才变化 |
 | 2026-06-14 | 明确 Host 由 `com.webremotedesktop.host` LaunchAgent 托管；`restart-host.sh` / `start-safe-wrd.sh` 会重新注册 LaunchAgent；`run-host-launchctl.sh` 新增 signal-server health 与 host auth 双重预检，避免 Host 在前置条件未满足时反复失败拉起 |
+| 2026-07-18 | 完成远程连接与延迟整改：入口健康真相、Pointer 输入契约、媒体 stats/timing v2、自适应恢复、独立桌面 input ack、Terminal 同钟 RTT 与密码安全 echo、session/replay/idle 资源保护、输入日志脱敏与 10 MiB/3 份轮转、named tunnel credentials-file 安全告警及 event-loop lag 上下文 |

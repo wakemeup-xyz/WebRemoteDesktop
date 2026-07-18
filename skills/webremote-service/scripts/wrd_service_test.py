@@ -41,7 +41,7 @@ class WrdServiceTest(unittest.TestCase):
     def test_status_prefers_live_signal_pid_over_stale_pid_file(self):
         output = io.StringIO()
         host_pid = "5555"
-        with mock.patch.object(MODULE, "reconcile_signal_pid", return_value="4321"), \
+        with mock.patch.object(MODULE, "inspect_signal_pid", return_value="4321"), \
             mock.patch.object(MODULE, "current_safe_url", return_value="https://example.trycloudflare.com"), \
             mock.patch.object(MODULE, "read_text", return_value=host_pid), \
             mock.patch.object(MODULE, "pid_alive", side_effect=lambda pid: pid in {"4321", host_pid}), \
@@ -55,6 +55,30 @@ class WrdServiceTest(unittest.TestCase):
         self.assertEqual(payload["signal_alive"], True)
         self.assertEqual(payload["host_pid"], host_pid)
         self.assertEqual(payload["host_online"], True)
+
+    def test_url_is_reachable_uses_canonical_entry_health_cli(self):
+        completed = types.SimpleNamespace(returncode=0, stdout='{"deliverable":true}', stderr="")
+        with mock.patch.object(MODULE, "run", return_value=completed) as run:
+            reachable = MODULE.url_is_reachable("https://example.trycloudflare.com")
+
+        self.assertTrue(reachable)
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], MODULE.sys.executable)
+        self.assertIn("wrd_entry_health.py", command[1])
+        self.assertEqual(command[-2:], ["--url", "https://example.trycloudflare.com"])
+
+    def test_status_does_not_reconcile_or_write_pid_files(self):
+        output = io.StringIO()
+        with mock.patch.object(MODULE, "inspect_signal_pid", return_value=""), \
+            mock.patch.object(MODULE, "current_safe_url", return_value=""), \
+            mock.patch.object(MODULE, "read_text", return_value=""), \
+            mock.patch.object(MODULE, "pid_alive", return_value=False), \
+            mock.patch.object(MODULE, "run", return_value=types.SimpleNamespace(returncode=1, stdout="")), \
+            mock.patch.object(MODULE, "write_text") as write_text, \
+            mock.patch("sys.stdout", output):
+            MODULE.status(Path("/tmp/project"))
+
+        write_text.assert_not_called()
 
 
 if __name__ == "__main__":

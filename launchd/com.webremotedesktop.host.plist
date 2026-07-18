@@ -16,8 +16,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log</string>
+  <string>/tmp/wrd-host-launch.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log</string>
+  <string>/tmp/wrd-host-launch.log</string>
 </dict>
 </plist>

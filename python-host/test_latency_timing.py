@@ -38,6 +38,27 @@ class TestFrameTiming(unittest.TestCase):
         self.assertEqual(track._timing_seq, 0)
         track.sct.close()  # Clean up MSS resources
 
+    def test_frame_timing_v2_only_names_measured_boundaries(self):
+        sent = []
+        track = object.__new__(ScreenCaptureTrack)
+        track._host_ref = type("Host", (), {"get_input_datachannel": lambda self: type("DC", (), {"send": lambda self, value: sent.append(value)})()})()
+        track._pending_input_lock = __import__("threading").Lock()
+        track._pending_input_ids = set()
+        track._pending_input_data = []
+        track._timing_seq = 7
+
+        track._send_frame_timing(capture_prepare_ms=3.5, frame_convert_ms=1.25)
+        payload = __import__("json").loads(sent[0])
+
+        self.assertEqual(payload["schemaVersion"], 2)
+        self.assertEqual(payload["timings"]["capturePrepareMs"], 3.5)
+        self.assertEqual(payload["timings"]["frameConvertMs"], 1.25)
+        self.assertIsNone(payload["timings"]["encoderMs"])
+        self.assertIsNone(payload["timings"]["rtpSendMs"])
+        self.assertIsNone(payload["timings"]["endToEndVideoMs"])
+        self.assertNotIn("encodeEnd", payload["timings"])
+        self.assertNotIn("packetSend", payload["timings"])
+
 
 if __name__ == '__main__':
     unittest.main()

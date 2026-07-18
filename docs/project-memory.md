@@ -34,11 +34,11 @@ This file captures long-lived project knowledge migrated from Claude memory file
 - Prefer `scripts/start-safe-wrd.sh` for repo-scoped startup when both local services and a temporary public URL are needed without touching `/Users/macstudio1/AI/Claude/StockHub`.
 - Prefer `scripts/run-safe-quicktunnel.sh` when WebRemoteDesktop must expose a temporary public URL without affecting `/Users/macstudio1/AI/Claude/StockHub`.
 - Safe quick tunnel state is stored in `/tmp/wrd-safe-quicktunnel.pid`, `/tmp/wrd-safe-quicktunnel.log`, and `/tmp/wrd-safe-current-url.txt`.
-- Do not restart `trycloudflare`, `scripts/run-safe-quicktunnel.sh`, or the repo-scoped quick-tunnel `cloudflared` process unless the user explicitly asks for it or the tunnel is already dead and public access must be restored.
+- Do not restart `trycloudflare`, `scripts/run-safe-quicktunnel.sh`, or the repo-scoped quick-tunnel `cloudflared` process unless the user explicitly asks to rebuild or restart the tunnel or regenerate the public URL. A dead or unreachable tunnel is diagnosis evidence, not implicit restart authorization.
 - When only `signal-server` or Host needs a restart, preserve the existing quick tunnel and treat `/tmp/wrd-safe-current-url.txt` as the source of truth for the current public URL.
 - In repo terminology, `restart services` means local `signal-server` / Host only; it must not be implemented as a tunnel restart while the current quick tunnel is still alive.
-- If the viewer enters through a public origin such as trycloudflare and TURN is not configured, the viewer should go straight to tunnel relay instead of attempting STUN-first WebRTC.
-- When Cloudflare returns `Unauthorized: Tunnel not found`, the safe quick tunnel script should restart and refresh the safe URL file automatically.
+- A public origin does not determine the media path. Without TURN, `auto` and `stun` remain Strict STUN; recovery exhaustion must fail explicitly, and only the user may manually select JPEG tunnel fallback.
+- When Cloudflare returns `Unauthorized: Tunnel not found`, diagnose and report the stale quick tunnel. An already-running supervisor may rotate it under its own policy, but an agent must not manually start/restart it or regenerate the URL without explicit user authorization.
 - Before starting a safe quick tunnel, verify the local origin with `http://127.0.0.1:8080/health`.
 - A generated trycloudflare URL is not sufficient proof of public reachability; verify process liveness, DNS resolution, and an HTTP response before handing the link to users.
 - In short-lived automation shells, background quick-tunnel child processes may be reaped when the parent shell exits; prefer a persistent terminal session or a fixed-domain tunnel for operator-facing handoff.

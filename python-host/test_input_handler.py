@@ -1,5 +1,6 @@
 import input_handler
 import asyncio
+import logging
 import pytest
 from input_handler import InputHandler
 
@@ -221,3 +222,100 @@ async def test_keyboard_handler_does_not_sleep_while_input_lock_is_held(monkeypa
     })
 
     assert True not in sleep_lock_states
+
+
+def test_mouse_reset_releases_tracked_button_once(monkeypatch):
+    posted = []
+
+    def fake_create_mouse_event(source, event_type, position, button_type):
+        return {"event_type": event_type, "position": position, "button_type": button_type}
+
+    monkeypatch.setattr(input_handler, "CGEventCreateMouseEvent", fake_create_mouse_event)
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._handle_mouse("down", {"button": "left", "relX": 0.2, "relY": 0.3})
+    handler._handle_mouse("reset", {"reason": "pointer-cancel"})
+    handler._handle_mouse("reset", {"reason": "duplicate"})
+
+    assert [event["event_type"] for event in posted] == [
+        input_handler.kCGEventLeftMouseDown,
+        input_handler.kCGEventLeftMouseUp,
+    ]
+    assert handler._pressed_mouse_button is None
+
+
+def test_mouse_down_and_up_apply_click_count(monkeypatch):
+    posted = []
+
+    def fake_create_mouse_event(source, event_type, position, button_type):
+        return {"event_type": event_type, "position": position, "button_type": button_type}
+
+    def fake_set_integer(event, field, value):
+        event["integer"] = (field, value)
+
+    monkeypatch.setattr(input_handler, "CGEventCreateMouseEvent", fake_create_mouse_event)
+    monkeypatch.setattr(input_handler, "CGEventSetIntegerValueField", fake_set_integer)
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._handle_mouse("down", {"button": "left", "relX": 0.5, "relY": 0.5, "clickCount": 2})
+    handler._handle_mouse("up", {"button": "left", "relX": 0.5, "relY": 0.5, "clickCount": 2})
+
+    assert [event["integer"] for event in posted] == [
+        (input_handler.kCGMouseEventClickState, 2),
+        (input_handler.kCGMouseEventClickState, 2),
+    ]
+
+
+def test_release_all_mouse_buttons_is_public_and_idempotent(monkeypatch):
+    posted = []
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateMouseEvent",
+        lambda _source, event_type, _position, _button: {"event_type": event_type},
+    )
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._pressed_mouse_button = "right"
+    handler.release_all_mouse_buttons(reason="viewer-disconnected")
+    handler.release_all_mouse_buttons(reason="duplicate")
+
+    assert [event["event_type"] for event in posted] == [input_handler.kCGEventRightMouseUp]
+
+
+def test_input_handler_logs_no_keyboard_values_or_mouse_coordinates(monkeypatch, caplog):
+    posted = []
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateMouseEvent",
+        lambda _source, event_type, position, _button: {"event_type": event_type, "position": position},
+    )
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        handler._handle_keyboard("keydown", {
+            "key": "Secret123",
+            "code": "KeyA",
+            "keyCode": 65,
+            "modifiers": {},
+        })
+        handler._handle_mouse("down", {
+            "button": "left",
+            "relX": 0.987654,
+            "relY": 0.5,
+        })
+
+    text = "\n".join(record.getMessage() for record in caplog.records if record.name == "input_handler")
+    assert "Secret123" not in text
+    assert "KeyA" not in text
+    assert "0.9877" not in text
+    assert "screen=(" not in text
+    assert "keyboard_input action=keydown" in text
+    assert "mouse_input action=down" in text

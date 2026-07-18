@@ -280,6 +280,61 @@ test('input from disconnected viewer is not relayed to host', () => {
   );
 });
 
+test('host input ack is routed only to its original viewer', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(host);
+  io.connect(viewerA);
+  io.connect(viewerB);
+
+  host.trigger('input-ack', {
+    viewerId: 'viewer-a',
+    type: 'input_ack',
+    inputIds: ['input-1'],
+    hostExecuteMs: 8,
+    transport: 'socket',
+  });
+
+  assert.equal(viewerA.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-1'), true);
+  assert.equal(viewerB.sent.some((message) => message.event === 'input-ack'), false);
+});
+
+test('signal input relay logs metadata without raw input payload values', () => {
+  resetConnections();
+  const io = makeIo();
+  const lines = [];
+  setupSignaling(io, { logger: { log(...values) { lines.push(values.join(' ')); }, warn() {}, info() {}, error() {} } });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  const originalLog = console.log;
+  console.log = (...values) => lines.push(values.join(' '));
+  try {
+    viewer.trigger('input', {
+      type: 'keyboard',
+      action: 'keydown',
+      transport: 'socket',
+      inputIds: ['input-Secret123'],
+      payload: { key: 'Secret123', code: 'KeyA', x: 987.654 },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const text = lines.join('\n');
+  assert.equal(text.includes('Secret123'), false);
+  assert.equal(text.includes('KeyA'), false);
+  assert.equal(text.includes('987.654'), false);
+  assert.match(text, /type=keyboard/);
+  assert.match(text, /action=keydown/);
+});
+
 test('relay control from disconnected viewer is not relayed to host', () => {
   resetConnections();
   const io = makeIo();

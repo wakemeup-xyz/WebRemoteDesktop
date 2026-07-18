@@ -22,6 +22,7 @@ SAFE_SIGNAL_PID = Path("/tmp/wrd-safe-signal.pid")
 SAFE_HOST_PID = Path("/tmp/wrd-safe-host.pid")
 SIGNAL_LOG = Path("/tmp/signal-server.log")
 HOST_LOG = DEFAULT_PROJECT_DIR / "back-debug.log"
+ENTRY_HEALTH_SCRIPT = DEFAULT_PROJECT_DIR / "scripts" / "wrd_entry_health.py"
 NODE_BIN = os.environ.get("NODE_BIN") or "/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node"
 
 
@@ -51,7 +52,13 @@ def current_safe_url() -> str:
 def url_is_reachable(url: str) -> bool:
     if not url:
         return False
-    return subprocess.run(["curl", "-I", "-L", "--max-time", "10", url], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    result = run([sys.executable, str(ENTRY_HEALTH_SCRIPT), "--url", url], check=False)
+    if result.returncode != 0:
+        return False
+    try:
+        return json.loads(result.stdout).get("deliverable") is True
+    except (AttributeError, json.JSONDecodeError):
+        return False
 
 
 def launchctl_submit_signal(project_dir: Path) -> str:
@@ -110,6 +117,16 @@ def reconcile_signal_pid(project_dir: Path) -> str:
         return recorded_pid
 
     SAFE_SIGNAL_PID.unlink(missing_ok=True)
+    return ""
+
+
+def inspect_signal_pid(project_dir: Path) -> str:
+    live_pid = find_signal_pid(project_dir)
+    if live_pid and pid_alive(live_pid):
+        return live_pid
+    recorded_pid = read_text(SAFE_SIGNAL_PID)
+    if recorded_pid and pid_alive(recorded_pid) and pid_matches_project(recorded_pid, project_dir):
+        return recorded_pid
     return ""
 
 
@@ -180,14 +197,13 @@ def restart_host(project_dir: Path) -> str:
 
 def status(project_dir: Path) -> None:
     safe_url = current_safe_url()
-    signal_pid = reconcile_signal_pid(project_dir)
+    signal_pid = inspect_signal_pid(project_dir)
     host_pid = read_text(SAFE_HOST_PID)
-    health_ok = subprocess.run(
+    health_result = run(
         ["curl", "-fsS", "http://127.0.0.1:8080/health"],
         check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    )
+    health_ok = health_result.returncode == 0
     api_result = run(["curl", "-fsS", "http://127.0.0.1:8080/api/status"], check=False)
     print(json.dumps({
         "signal_pid": signal_pid,

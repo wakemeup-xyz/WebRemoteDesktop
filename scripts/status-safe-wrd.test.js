@@ -1,9 +1,12 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { execFileSync } = require('node:child_process');
 
 const scriptPath = path.join(__dirname, 'status-safe-wrd.sh');
+const helperPath = path.join(__dirname, 'lib-safe-wrd.sh');
 
 test('safe status script inspects safe pid files and local api status without global cleanup', () => {
   assert.equal(fs.existsSync(scriptPath), true, 'script should exist');
@@ -19,23 +22,24 @@ test('safe status script inspects safe pid files and local api status without gl
   assert.doesNotMatch(source, /pkill\b/);
 });
 
-test('safe status script resolves stale pid files against live repo processes before reporting stale', () => {
+test('safe status script inspects stale pid files against live repo processes without reconciling files', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(source, /source "\$PROJECT_DIR\/scripts\/lib-safe-wrd\.sh"/);
-  assert.match(source, /wrd_safe_reconcile_pid_file/);
+  assert.doesNotMatch(source, /wrd_safe_reconcile_pid_file/);
+  assert.match(source, /wrd_safe_find_pid_by_kind/);
   assert.match(source, /safe signal-server'.*signal/s);
   assert.match(source, /safe host'.*host/s);
   assert.match(source, /safe tunnel supervisor'.*tunnel-supervisor/s);
   assert.match(source, /safe quick tunnel'.*quick-tunnel/s);
 });
 
-test('safe status script reconciles tunnel supervisor even when the pid file is missing', () => {
+test('safe status script discovers a live tunnel supervisor without writing a missing pid file', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
-  assert.doesNotMatch(source, /if \[ ! -f "\$pid_file" \]; then[\s\S]*pid file missing[\s\S]*return 0/);
   assert.match(source, /recorded_pid=\$\(wrd_safe_read_pid_file "\$pid_file"\)/);
-  assert.match(source, /recorded_pid=\$\(wrd_safe_reconcile_pid_file "\$pid_file" "\$kind" "\$PROJECT_DIR" \|\| true\)/);
+  assert.match(source, /live_pid=\$\(wrd_safe_find_pid_by_kind "\$kind" "\$PROJECT_DIR"/);
+  assert.doesNotMatch(source, /wrd_safe_write_pid_file/);
 });
 
 test('safe status script warns that 5173 is not the WebRemoteDesktop entrypoint', () => {
@@ -61,32 +65,18 @@ test('safe status script reminds operators to treat the safe URL file as the sou
   assert.match(source, /trycloudflare|tunnel/i);
 });
 
-test('safe status script attempts to recover a missing safe URL file from the quick tunnel log', () => {
+test('safe status script never recovers or writes a missing safe URL file', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
-  assert.match(source, /wrd-safe-quicktunnel\.log/);
-  assert.match(source, /grep -Eo 'https:\/\/\[\^\[:space:\]\]\+\\\.trycloudflare\\\.com'/);
-  assert.match(source, /printf '%s\\n' "\$recovered_url" > "\$SAFE_URL_FILE"/);
-});
-
-test('safe status script prefers recovering the safe URL from a durable archive before logs', () => {
-  const source = fs.readFileSync(scriptPath, 'utf8');
-
-  assert.match(source, /SAFE_URL_ARCHIVE_FILE="\/tmp\/wrd-safe-current-url\.last\.txt"/);
-  assert.match(source, /\[ -f "\$SAFE_URL_ARCHIVE_FILE" \]/);
-  assert.match(source, /cat "\$SAFE_URL_ARCHIVE_FILE"/);
-});
-
-test('safe status script only restores a recovered URL when it is reachable', () => {
-  const source = fs.readFileSync(scriptPath, 'utf8');
-
-  assert.match(source, /wrd_safe_url_is_reachable "\$recovered_url"/);
+  assert.doesNotMatch(source, /recover_safe_url_file/);
+  assert.doesNotMatch(source, />\s*"\$SAFE_URL_FILE"/);
+  assert.match(source, /safe url file: missing/);
 });
 
 test('safe status script reports when the current safe URL is not reachable from this machine', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
-  assert.match(source, /wrd_safe_url_is_reachable/);
+  assert.match(source, /wrd_safe_url_reachability_state/);
   assert.match(source, /safe url reachability: ok/);
   assert.match(source, /safe url reachability: unreachable/);
 });
@@ -104,4 +94,25 @@ test('safe status script labels fixed domain as formal public entry and quick tu
 
   assert.match(source, /formal public entry: https:\/\/link\.stockhub\.wiki/i);
   assert.match(source, /quick tunnel: debug-only|debug quick tunnel/i);
+});
+
+test('safe status emits a read-only warning for cloudflared token argv without printing the token', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+  assert.match(source, /wrd_safe_cloudflared_token_in_argv/);
+  assert.match(source, /security warning: cloudflared token found in process arguments/);
+  assert.doesNotMatch(source, /kill[^\n]*cloudflared|launchctl\s+remove/);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-token-argv-'));
+  const argsPath = path.join(dir, 'args.txt');
+  fs.writeFileSync(argsPath, '/usr/bin/cloudflared tunnel run --token SUPER-SECRET-TOKEN\n');
+  const output = execFileSync('bash', [
+    '-c',
+    'source "$1"; if wrd_safe_cloudflared_token_in_argv "$2"; then echo "security warning: cloudflared token found in process arguments"; fi',
+    'bash',
+    helperPath,
+    argsPath,
+  ], { encoding: 'utf8' });
+
+  assert.match(output, /security warning: cloudflared token found in process arguments/);
+  assert.doesNotMatch(output, /SUPER-SECRET-TOKEN/);
 });

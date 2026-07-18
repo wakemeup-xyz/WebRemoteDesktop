@@ -1,9 +1,13 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
-const { createStructuredLogger } = require('../lib/observability/logger');
+const { createRotatingFileSink, createStructuredLogger } = require('../lib/observability/logger');
 const { redactValue } = require('../lib/observability/redact');
 const { createRecentEventStore } = require('../lib/observability/store');
+const { createTerminalAudit } = require('../lib/terminal/audit');
 
 test('createStructuredLogger emits a stable envelope with correlation and meta fields', () => {
   const written = [];
@@ -60,6 +64,60 @@ test('redactValue removes secret-bearing fields recursively', () => {
   assert.equal(redacted.nested.safe, 'ok');
   assert.match(redacted.url, /token=(%5Bredacted%5D|\[redacted\])/);
   assert.match(redacted.url, /safe=1/);
+});
+
+test('input values are redacted before structured console, memory, and terminal audit persistence', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-redaction-'));
+  const auditLogPath = path.join(dir, 'terminal-audit.jsonl');
+  const written = [];
+  const store = createRecentEventStore({ capacity: 4 });
+  const structuredLogger = createStructuredLogger({
+    write(line) { written.push(JSON.parse(line)); },
+  });
+  const audit = createTerminalAudit({
+    structuredLogger,
+    recentEventStore: store,
+    auditLogPath,
+  });
+
+  audit.info('terminal_input_observed', {
+    data: 'Secret123',
+    key: 'Secret123',
+    code: 'KeyA',
+    text: 'Secret123',
+    payload: { x: 987.654, y: 123.456 },
+    x: 987.654,
+    y: 123.456,
+    bytes: 9,
+    inputIdHash: 'hash-123',
+  });
+
+  const persisted = JSON.stringify({
+    console: written,
+    memory: store.recent({ limit: 4 }),
+    file: fs.readFileSync(auditLogPath, 'utf8'),
+  });
+  assert.equal(persisted.includes('Secret123'), false);
+  assert.equal(persisted.includes('KeyA'), false);
+  assert.equal(persisted.includes('987.654'), false);
+  assert.equal(persisted.includes('123.456'), false);
+  assert.match(persisted, /\[redacted\]/);
+  assert.match(persisted, /"bytes":9/);
+  assert.match(persisted, /"inputIdHash":"hash-123"/);
+});
+
+test('rotating file sink keeps the current file and configured backup count', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-node-rotation-'));
+  const filePath = path.join(dir, 'signal.jsonl');
+  const sink = createRotatingFileSink({ filePath, maxBytes: 96, backupCount: 2 });
+
+  for (let index = 0; index < 30; index += 1) {
+    sink.write(`${index}-${'x'.repeat(32)}\n`);
+  }
+
+  const files = fs.readdirSync(dir).sort();
+  assert.deepEqual(files, ['signal.jsonl', 'signal.jsonl.1', 'signal.jsonl.2']);
+  files.forEach((name) => assert.ok(fs.statSync(path.join(dir, name)).size <= 96));
 });
 
 test('createRecentEventStore keeps a bounded recent window and grouped summary', () => {

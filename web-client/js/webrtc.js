@@ -4,6 +4,10 @@ const WebRTC = {
   relaySocket: null,
   remoteStream: null,
   statsTimer: null,
+  _statsSampler: null,
+  _statsPc: null,
+  _videoFrameCallbackId: null,
+  _videoFrameElement: null,
   offerInProgress: false,
   _offerEpoch: 0,
   videoTransceiver: null,
@@ -188,10 +192,7 @@ const WebRTC = {
       clearTimeout(this._dcReconnectTimer);
       this._dcReconnectTimer = null;
     }
-    if (this.statsTimer) {
-      clearInterval(this.statsTimer);
-      this.statsTimer = null;
-    }
+    this.stopMediaTelemetry();
     if (this._latencySyncInterval) {
       clearInterval(this._latencySyncInterval);
       this._latencySyncInterval = null;
@@ -653,6 +654,12 @@ const WebRTC = {
       }
     });
 
+    this.socket.on('input-ack', (data) => {
+      if (typeof LatencyMonitor !== 'undefined') {
+        LatencyMonitor.onInputAck(data);
+      }
+    });
+
     this.socket.on('disconnect', () => {
       console.log('Signaling disconnected');
       updateConnectionStatus('disconnected');
@@ -744,6 +751,7 @@ const WebRTC = {
         console.log('WebRTC connected, initializing input...');
         // Start stats ASAP — before any other init that could throw
         this.startStats();
+        this.startVideoFrameTracking();
         this.clearFailureRecommendation();
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
@@ -768,19 +776,6 @@ const WebRTC = {
           Input.init();
           Input.setActive(true);
         }
-        // Hook requestVideoFrameCallback for latency measurement
-        const video = document.getElementById('remoteVideo');
-        if (video && typeof video.requestVideoFrameCallback === 'function') {
-          const onFrame = (now, metadata) => {
-            if (typeof LatencyMonitor !== 'undefined') {
-              LatencyMonitor.onVideoFrame(now, metadata);
-            }
-            video.requestVideoFrameCallback(onFrame);
-          };
-          video.requestVideoFrameCallback(onFrame);
-        }
-        // Playout buffer is already estimated via requestVideoFrameCallback in LatencyMonitor.onVideoFrame
-        // No need for a redundant setInterval here
         // Start latency clock sync after connection is stable
         setTimeout(() => {
           if (typeof LatencyMonitor !== 'undefined') {
@@ -796,6 +791,7 @@ const WebRTC = {
           }
         }, 2000);
       } else if (['failed', 'disconnected', 'closed'].includes(this.pc.connectionState)) {
+        this.stopMediaTelemetry();
         if (typeof Input !== 'undefined') {
           Input.setActive(false);
         }
@@ -803,7 +799,6 @@ const WebRTC = {
           clearInterval(this._latencySyncInterval);
           this._latencySyncInterval = null;
         }
-        // _playoutEstimateInterval removed: playout buffer is tracked via requestVideoFrameCallback only
         this.updateNetworkUI('媒体链路失败，请按浮窗建议切换网络模式', 'danger');
         if (this.pc.connectionState === 'disconnected') {
           if (this._disconnectedTimer) return;
@@ -1001,6 +996,12 @@ const WebRTC = {
           }
           return;
         }
+        if (data.type === 'input_ack') {
+          if (typeof LatencyMonitor !== 'undefined') {
+            LatencyMonitor.onInputAck(data);
+          }
+          return;
+        }
         // Host capture stats → update FPS display as fallback
         if (data.type === 'capture_stats') {
           if (data.fps !== undefined) {
@@ -1057,10 +1058,7 @@ const WebRTC = {
       this.pc.close();
       this.pc = null;
     }
-    if (this.statsTimer) {
-      clearInterval(this.statsTimer);
-      this.statsTimer = null;
-    }
+    this.stopMediaTelemetry();
     this._tunnelLockUntil = Date.now() + 30000;
     this.tunnelRelayActive = true;
     this.tunnelFrameCount = 0;
@@ -1158,13 +1156,36 @@ const WebRTC = {
     if (!relayImage || !data?.data) {
       return;
     }
+    relayImage.decoding = 'async';
+    relayImage.loading = 'eager';
+    if ('fetchPriority' in relayImage) {
+      relayImage.fetchPriority = 'high';
+    }
     const frameId = Number(data.frameId || 0);
     if (frameId && frameId <= this.tunnelLastFrameId) {
       return;
     }
     this.tunnelLastFrameId = frameId || this.tunnelLastFrameId + 1;
 
+    const ackLoadedFrame = (objectUrl = '') => {
+      if (objectUrl) {
+        if (this.tunnelLastObjectUrl) {
+          URL.revokeObjectURL(this.tunnelLastObjectUrl);
+        }
+        this.tunnelLastObjectUrl = objectUrl;
+        this.tunnelPendingObjectUrl = '';
+      }
+      if (this.relaySocket && this.relaySocket.connected) {
+        this.relaySocket.emit('relay-frame-ack', {
+          frameId: frameId || this.tunnelLastFrameId,
+          renderedAt: Date.now(),
+          latencyMs: data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0
+        });
+      }
+    };
+
     if (typeof data.data === 'string') {
+      relayImage.onload = () => ackLoadedFrame();
       relayImage.src = `data:${data.mime || 'image/jpeg'};base64,${data.data}`;
     } else {
       const blob = data.data instanceof Blob
@@ -1174,20 +1195,8 @@ const WebRTC = {
         URL.revokeObjectURL(this.tunnelPendingObjectUrl);
       }
       this.tunnelPendingObjectUrl = URL.createObjectURL(blob);
-      relayImage.onload = () => {
-        if (this.tunnelLastObjectUrl) {
-          URL.revokeObjectURL(this.tunnelLastObjectUrl);
-        }
-        this.tunnelLastObjectUrl = this.tunnelPendingObjectUrl;
-        this.tunnelPendingObjectUrl = '';
-        if (this.relaySocket && this.relaySocket.connected) {
-          this.relaySocket.emit('relay-frame-ack', {
-            frameId: this.tunnelLastFrameId,
-            renderedAt: Date.now(),
-            latencyMs: data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0
-          });
-        }
-      };
+      const objectUrl = this.tunnelPendingObjectUrl;
+      relayImage.onload = () => ackLoadedFrame(objectUrl);
       relayImage.src = this.tunnelPendingObjectUrl;
     }
     relayImage.classList.remove('hidden');
@@ -1448,88 +1457,78 @@ const WebRTC = {
   },
   
   startStats() {
-    console.log('[STATS] Timer started');
+    if (!this.pc || typeof WebRtcStats === 'undefined') return;
+    if (this._statsSampler && this._statsPc !== this.pc) {
+      this._statsSampler.stop();
+      this._statsSampler = null;
+      this._statsPc = null;
+    }
+    if (!this._statsSampler) {
+      const pc = this.pc;
+      this._statsPc = pc;
+      this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
+        getStats: () => pc.getStats(),
+        intervalMs: 1000,
+        onSample: (snapshot) => this.processStatsSnapshot(snapshot),
+        onError: (error) => console.warn('[STATS] getStats failed:', error?.message || error),
+      });
+    }
+    this._statsSampler.start();
+  },
+
+  stopVideoFrameTracking() {
+    const video = this._videoFrameElement;
+    if (video && this._videoFrameCallbackId != null
+        && typeof video.cancelVideoFrameCallback === 'function') {
+      video.cancelVideoFrameCallback(this._videoFrameCallbackId);
+    }
+    this._videoFrameCallbackId = null;
+    this._videoFrameElement = null;
+  },
+
+  startVideoFrameTracking() {
+    this.stopVideoFrameTracking();
+    const video = document.getElementById('remoteVideo');
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    this._videoFrameElement = video;
+    const onFrame = (now, metadata) => {
+      if (this._videoFrameElement !== video) return;
+      if (typeof LatencyMonitor !== 'undefined') {
+        LatencyMonitor.onVideoFrame(now, metadata);
+      }
+      this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
+    };
+    this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
+  },
+
+  stopMediaTelemetry() {
+    if (this._statsSampler) this._statsSampler.stop();
+    this._statsSampler = null;
+    this._statsPc = null;
     if (this.statsTimer) {
       clearInterval(this.statsTimer);
+      this.statsTimer = null;
     }
+    this.stopVideoFrameTracking();
+  },
 
-    this.statsTimer = setInterval(async () => {
-      if (!this.pc) {
-        console.warn('[STATS] No PC, skipping');
-        return;
-      }
-
-      let stats;
-      try {
-        stats = await this.pc.getStats();
-      } catch (err) {
-        console.warn('[STATS] getStats failed:', err.message || err);
-        return;
-      }
-      if (!stats) {
-        console.warn('[STATS] getStats returned null/undefined');
-        return;
-      }
-      let fps = 0;
-      let latencyMs = 0;
-      let jitterBufferDelay = 0;
-      let framesReceived = 0;
-      let framesDecoded = 0;
-      let packetsLost = 0;
-      let bytesReceived = 0;
-      let codec = '';
-      let selectedCandidateType = '';
-      let codecId = '';
-      let localCandidateId = '';
-      let remoteCandidateId = '';
-
-      stats.forEach((report) => {
-        if (report.type === 'inbound-rtp' && report.kind === 'video') {
-          fps = report.framesPerSecond || 0;
-          framesReceived = report.framesReceived || 0;
-          framesDecoded = report.framesDecoded || 0;
-          packetsLost = report.packetsLost || 0;
-          bytesReceived = report.bytesReceived || 0;
-          codecId = report.codecId || '';
-          if (report.jitterBufferDelay && report.jitterBufferEmittedCount) {
-            jitterBufferDelay = (report.jitterBufferDelay / report.jitterBufferEmittedCount * 1000).toFixed(1);
-          }
-        }
-        if (report.type === 'codec' && report.id === codecId) {
-          codec = report.mimeType || '';
-        }
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          const rtt = report.currentRoundTripTime;
-          if (typeof rtt === 'number') {
-            latencyMs = Math.round(rtt * 1000);
-          }
-          selectedCandidateType = report.localCandidateType || '';
-          localCandidateId = report.localCandidateId || '';
-          remoteCandidateId = report.remoteCandidateId || '';
-        }
-      });
-
-      if (codecId && stats.has(codecId)) {
-        const codecReport = stats.get(codecId);
-        codec = codecReport.mimeType || codec;
-      }
-      if (!selectedCandidateType && localCandidateId && stats.has(localCandidateId)) {
-        selectedCandidateType = stats.get(localCandidateId).candidateType || '';
-      }
-      const localCandidate = localCandidateId && stats.has(localCandidateId) ? stats.get(localCandidateId) : null;
-      const remoteCandidate = remoteCandidateId && stats.has(remoteCandidateId) ? stats.get(remoteCandidateId) : null;
-      this.selectedCandidatePair = {
-        localType: localCandidate?.candidateType || selectedCandidateType || '',
-        remoteType: remoteCandidate?.candidateType || '',
-        protocol: localCandidate?.protocol || remoteCandidate?.protocol || '',
-        localAddress: localCandidate?.address && localCandidate?.port ? `${localCandidate.address}:${localCandidate.port}` : '',
-        remoteAddress: remoteCandidate?.address && remoteCandidate?.port ? `${remoteCandidate.address}:${remoteCandidate.port}` : '',
-        localAddressFamily: this.detectAddressFamily(localCandidate?.address || ''),
-        remoteAddressFamily: this.detectAddressFamily(remoteCandidate?.address || ''),
-        rttMs: latencyMs || 0,
+  processStatsSnapshot(stats = {}) {
+      const fps = Number(stats.fps || 0);
+      const latencyMs = Number(stats.rttMs || 0);
+      const jitterBufferDelay = Number(stats.jitterBufferMs || 0);
+      const framesReceived = Number(stats.framesReceived || 0);
+      const framesDecoded = Number(stats.framesDecoded || 0);
+      const packetsLost = Number(stats.packetsLost || 0);
+      const bytesReceived = Number(stats.bytesReceived || 0);
+      const codec = String(stats.codec || '');
+      const selectedCandidateType = String(stats.selectedCandidateType || '');
+      this.selectedCandidatePair = stats.selectedCandidatePair || {
+        localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
+        localAddressFamily: '', remoteAddressFamily: '', rttMs: 0,
       };
 
-      document.getElementById('fpsDisplay').textContent = `${Math.round(fps)} FPS`;
+      const fpsEl = document.getElementById('fpsDisplay');
+      if (fpsEl) fpsEl.textContent = `${Math.round(fps)} FPS`;
       const latencyEl = document.getElementById('latencyDisplay');
       if (latencyEl) {
         latencyEl.textContent = latencyMs > 0 ? `${latencyMs} ms` : '- ms';
@@ -1579,12 +1578,17 @@ const WebRTC = {
       console.log(`[STATS] FPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
                   `Recv=${framesReceived}, Decoded=${framesDecoded}, Lost=${packetsLost}, ` +
-                  `Bytes=${(bytesReceived/1024/1024).toFixed(2)}MB`);
-      if (this.selectedCandidatePair.localType || this.selectedCandidatePair.remoteType) {
+                  `IntervalBytes=${(bytesReceived/1024).toFixed(1)}KiB`);
+      if (this.selectedCandidatePair?.localType || this.selectedCandidatePair?.remoteType) {
         console.log('[NETWORK] Selected candidate pair:', this.selectedCandidatePair);
       }
 
+      if (typeof LatencyMonitor !== 'undefined' && typeof LatencyMonitor.onMediaStats === 'function') {
+        LatencyMonitor.onMediaStats(stats);
+      }
+
       this.handleReceiverStats({
+        interval: true,
         fps,
         rttMs: latencyMs,
         jitterBufferMs: Number(jitterBufferDelay) || 0,
@@ -1609,7 +1613,6 @@ const WebRTC = {
           selectedCandidateType
         });
       }
-    }, 2000);
   },
 
   async refresh() {
@@ -1661,10 +1664,7 @@ const WebRTC = {
     this.inputChannel = null;
     this.inputMoveChannel = null;
     this._iceRestartAttempts = 0;
-    if (this.statsTimer) {
-      clearInterval(this.statsTimer);
-      this.statsTimer = null;
-    }
+    this.stopMediaTelemetry();
     if (typeof Input !== 'undefined') {
       Input.setActive(false);
     }
@@ -1800,10 +1800,7 @@ const WebRTC = {
     if (typeof Input !== 'undefined') {
       Input.setActive(false);
     }
-    if (this.statsTimer) {
-      clearInterval(this.statsTimer);
-      this.statsTimer = null;
-    }
+    this.stopMediaTelemetry();
     this.stopTunnelRelay();
     if (this.pc) {
       this.pc.close();
