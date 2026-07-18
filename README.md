@@ -313,7 +313,7 @@ WebRemoteDesktop/
 - [x] H.264 视频编码优先
 - [x] 远程鼠标操作响应
 - [x] 远程键盘输入响应
-- [x] Windows 访问模式支持 Ctrl → macOS Command
+- [ ] Windows 访问模式 Ctrl → macOS Command 已有 UI 和归一化代码，但发送 payload 仍需按键盘专项审计整改并重新验收
 - [x] WebRTC DataChannel 输入优先，Socket.IO 兜底
 - [x] 分辨率切换正常
 - [x] 防睡眠 LaunchAgent 运行

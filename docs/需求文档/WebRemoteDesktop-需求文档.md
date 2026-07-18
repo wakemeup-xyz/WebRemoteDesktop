@@ -84,11 +84,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ### 3.3 键盘输入
 
 - [x] **单键输入**：字母、数字、标点、功能键 F1-F12
-- [x] **组合键**：Command/Control/Shift/Alt + 任意键
+- [ ] **组合键完整性**：Command/Control/Shift/Alt 基础组合已实现；Dead/AltGraph、左右同类 modifier、跨 transport 和异常释放仍需整改
 - [x] **虚拟按钮**：回车、上下左右方向键、复制(Command+C)、粘贴(Command+V)
 - [x] **输入记录**：顶部状态栏实时显示发送的按键信息
 - [x] **防重复绑定**：`Input.init()` 通过 `_listenersBound` 标志防止重复注册事件监听器
-- [x] **Windows 访问兼容**：Windows 键盘模式下将 Ctrl 映射为 macOS Command，并提供网页按钮切换 Mac / Windows 模式
+- [ ] **Windows 访问兼容**：已提供 Mac / Windows 模式切换，但当前发送层仍会丢失 Ctrl -> Command 的归一化 modifiers，需整改后重新验收
 - [x] **DataChannel 输入**：键盘和点击优先通过可靠有序 `input` WebRTC DataChannel 发送，Socket.IO 仅用于兜底
 
 **关键技术约束**：
@@ -101,6 +101,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport` 和端到端发送延迟，便于区分 DataChannel 与 Socket.IO 兜底路径
 - 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT
+
+> 2026-07-19 键盘专项审计：US/Mac 常用键位具备基础能力，但 Windows modifiers、tracked keyup、虚拟组合键、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约及 ISO/JIS 映射尚未闭环。完整证据与整改门槛见 `docs/superpowers/reports/2026-07-19-remote-keyboard-mapping-stuck-key-systemic-analysis.md`。
 
 ### 3.4 控制栏
 
@@ -358,3 +360,4 @@ WebRemoteDesktop/
 | 2026-06-14 | 明确 Host 由 `com.webremotedesktop.host` LaunchAgent 托管；`restart-host.sh` / `start-safe-wrd.sh` 会重新注册 LaunchAgent；`run-host-launchctl.sh` 新增 signal-server health 与 host auth 双重预检，避免 Host 在前置条件未满足时反复失败拉起 |
 | 2026-07-18 | 完成远程连接与延迟整改：入口健康真相、Pointer 输入契约、媒体 stats/timing v2、自适应恢复、独立桌面 input ack、Terminal 同钟 RTT 与密码安全 echo、session/replay/idle 资源保护、输入日志脱敏与 10 MiB/3 份轮转、named tunnel credentials-file 安全告警及 event-loop lag 上下文 |
 | 2026-07-19 | 完成真实普通浏览器验收；修复 Chromium 双击计数、首轮媒体预热/profile 同步、Terminal 关闭后迟到事件崩溃和 Signal 重启后的 Host 过期 token 重连；保留首帧 P50 与公网 Terminal RTT 未达目标的诚实结论 |
+| 2026-07-19 | 完成键盘映射与卡键专项审计；确认 Windows Ctrl -> Command、tracked keyup、跨 transport reset、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约和国际键盘映射仍需整改，不再把组合键与 Windows 模式标记为完整验收 |
