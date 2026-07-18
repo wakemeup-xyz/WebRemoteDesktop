@@ -523,3 +523,61 @@ Batch C 的自动化生命周期测试覆盖连续 50 次 start/stop 后无残�
 | Python Host、入口健康、service helper | 55/55 通过；1 条既有 MSS deprecation warning |
 
 合并后合计 **292/292 通过**。这仍是代码和自动化契约验收；本轮没有重启 Signal Server、Host 或 `cloudflared`，因此第 13.2 节列出的真实浏览器与公网运行态验收仍然待用户授权。
+
+### 13.5 2026-07-19 重启后运行态验收
+
+本节记录 `main@aee1f02` 合并、推送并获得用户授权后执行的本地重启验收。重启命令仅作用于 Signal Server 和 Host；没有停止、重启或重建任何 `cloudflared`/tunnel 进程。
+
+#### 服务与 tunnel 保持性
+
+| 项目 | 重启后结果 |
+|---|---|
+| Signal Server | PID `81849`，`/health` 为 200/`status=ok` |
+| Host | PID `81890`，`hostOnline=true`，Host ID `NsreA0B4-V9f-7bMAAAB` |
+| Host 新代码启动证据 | 日志确认 VideoToolbox H.264 patch、aioice consent/retry patch、input handler 和 overlay 均已加载，Host 认证及 signaling 连接成功 |
+| safe URL | 仍为 `https://memo-patterns-curve-contacted.trycloudflare.com` |
+| safe URL 文件 | 重启前后 SHA-256 均为 `db9e24d63c80c44591b3da933379de5cb4ab9d59e92b29741b3e5891aac46214` |
+| cloudflared | 重启前后 PID 集合均为 `398`、`5567`、`90866` |
+
+上述证据证明本地 restart 没有造成 URL 轮换或 tunnel 进程 churn。当前 safe quick tunnel 连续 3 次 `/health` 均返回 404；新 status 逻辑正确分类为 `http-invalid`，没有把它误报为可交付入口，也没有改写 URL 文件。该地址继续只作为不可用的 debug quick tunnel 记录，不影响固定正式入口。
+
+#### 入口、认证与配置
+
+下表的 HTTP 分位数采用 12 个独立 curl 冷连接样本的 nearest-rank 口径：
+
+| 入口 | 成功率 | connect P50/P95 | TLS P50/P95 | TTFB P50/P95 | total P50/P95 |
+|---|---:|---:|---:|---:|---:|
+| `127.0.0.1:8080/health` | 12/12 | `0.42/0.63ms` | n/a | `1.55/17.00ms` | `1.66/17.09ms` |
+| `link.stockhub.wiki/health` | 12/12 | `72/196ms` | `148/700ms` | `889/1971ms` | `889/2541ms` |
+
+使用浏览器 User-Agent 对本地与固定域名分别执行 Viewer 登录、WebRTC 配置、Terminal admin 登录和 bootstrap，全部返回 200。固定域名单次样本分别为 `1467ms`、`1028ms`、`845ms`、`912ms`；本地除首次 Viewer bcrypt 登录为 `355ms` 外，其余均为 `2.8-5.3ms`。运行配置确认：
+
+- `turnConfigured=false`、`turnStatus=missing`，与“不部署 TURN”的明确约束一致。
+- `recommendedMode=auto`，无 TURN 时 `manualFallbackChain=[auto,tunnel]`；Strict STUN 失败后不会自动切换 tunnel。
+- 正式入口模式为 `fixed-domain`；Terminal 已启用，默认最多 8 个 session，每个 session replay 上限 256 KiB，默认不记录 Terminal IO。
+
+固定域名返回的 `webrtc-stats.js`、`input-geometry.js` 和 `terminal-echo-controller.js` 与本地文件的字节数及 SHA-256 逐项一致，说明公网静态入口正在提供合并后的整改资源，而不是旧缓存版本。
+
+#### Terminal RTT
+
+测试仅建立 admin Socket.IO `/terminal` WebSocket 并发送 12 次 `terminal:ping`；没有创建 PTY、没有发送 shell input。
+
+| 入口 | WebSocket 建连 | RTT P50 | RTT P95 | 最大值 | transport |
+|---|---:|---:|---:|---:|---|
+| 本地 | `22.37ms` | `1.07ms` | `11.90ms` | `11.90ms` | websocket |
+| 固定域名 | `1444.89ms` | `419.31ms` | `437.96ms` | `437.96ms` | websocket |
+
+这与整改前结论一致：本地业务处理没有形成主要延迟，约 420ms 的持续 RTT 来自当前 Cloudflare 公网路径。仓库内指标修复可以准确显示并避免额外开销，但在不改变网络入口、connector 路径且不引入 VPS/TURN/客户端的约束下，无法把该外部 RTT 降到设计目标。
+
+#### 日志与回归
+
+- 重启后的 Host/Signal 日志未发现新的 `ERROR`、exception、traceback 或 event-loop lag 告警。
+- 新日志未命中旧的 `Input received`、`Keyboard executed`、raw key/code/text/coordinate 模式；`WRD_TERMINAL_RECORD_IO=false`。
+- 当前 Host 日志约 1.1 KiB；重启前约 45 MiB 的历史输出保存在未跟踪的 `back-debug.log.1`，未纳入提交。
+- 2026-07-19 重新执行全量回归：Signal Server `75/75`、Viewer/CSS/运维脚本 `162/162`、Python Host/入口健康/service helper `55/55`，合计 `292/292` 通过；仅有 1 条既有 `mss.mss` API deprecation warning。
+
+#### 当前完成判断
+
+在已确认“不部署 TURN、不引入 VPS/客户端、保留固定域名 + Strict STUN + 手动 tunnel fallback”的方案边界内，F-01、F-04 至 F-20 的代码整改、自动化契约、合并部署和非浏览器运行态验收已经闭环，模块边界与降级策略合理。F-03 是明确接受的部署约束，不再作为待开发项；F-02 是仍存在的 Cloudflare 路径性能上限，不应虚报为代码已解决。
+
+仍未闭环的验收只有真实浏览器/真实会话才能完成：当前没有可用的浏览器自动化实例且 `viewerCount=0`，因此没有取得实时 selected candidate pair、首次出帧、非黑画面、FPS/jitter、50 次 refresh 回调计数、双击/拖出释放/cover-fill 点位，以及 Terminal password/alternate-screen 的真实 UI 证据。另有两项已知运维状态保持不变：debug quick tunnel 当前 404；现有 cloudflared argv 仍触发 token 暴露告警。按既定权限边界，本次只报告，未重建 tunnel 或轮换其凭据。
