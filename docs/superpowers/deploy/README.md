@@ -118,3 +118,4 @@ curl -I https://dev.link.stockhub.wiki
 - 不要再依赖临时 `trycloudflare` 地址作为长期入口
 - 正式外网访问应以 `https://link.stockhub.wiki` 为准
 - `https://dev.link.stockhub.wiki` 只用于可选开发入口，不替代正式入口
+- quick tunnel 只保留给本地调试、临时排障和链路验证，不作为正式交付地址

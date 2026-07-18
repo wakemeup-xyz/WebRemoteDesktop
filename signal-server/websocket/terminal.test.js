@@ -116,9 +116,10 @@ function makeIo() {
   };
 }
 
-function buildTerminalHarness() {
+function buildTerminalHarness(configOverrides = {}) {
   const io = makeIo();
   const ptyBySessionId = new Map();
+  const auditEvents = [];
   const ptyFactory = () => {
     const pty = createFakePty();
     return pty;
@@ -136,6 +137,8 @@ function buildTerminalHarness() {
       terminalStartupTimeoutMs: 10000,
       terminalRecordIo: false,
       terminalReplayBufferBytes: 64,
+      terminalMaxSessions: 8,
+      ...configOverrides,
     },
   });
   const originalCreateSession = sessionManager.createSession;
@@ -152,12 +155,24 @@ function buildTerminalHarness() {
       terminalSoftWarnSessionCount: 1,
     },
     sessionManager,
+    audit: {
+      info(event, meta = {}) {
+        auditEvents.push({ level: 'info', event, meta });
+      },
+      warn(event, meta = {}) {
+        auditEvents.push({ level: 'warn', event, meta });
+      },
+      error(event, meta = {}) {
+        auditEvents.push({ level: 'error', event, meta });
+      },
+    },
     logger: { info() {}, warn() {}, error() {} },
   });
 
   return {
     namespace: io.of('/terminal'),
     sessionManager,
+    auditEvents,
     getPty(sessionId) {
       return ptyBySessionId.get(sessionId);
     },
@@ -357,4 +372,38 @@ test('terminal:set_active_presenter rejects callers that are not attached observ
 
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'terminal_session_not_found'), true);
   assert.equal(successEventsAfter, successEventsBefore);
+});
+
+test('terminal websocket emits audit events for rejected resize and oversized input', () => {
+  const { namespace, auditEvents } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  admin.trigger('terminal:resize', {
+    sessionId: created.sessionId,
+    cols: 5,
+    rows: 999,
+  });
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'x'.repeat(70 * 1024),
+  });
+
+  assert.equal(auditEvents.some((entry) => entry.event === 'terminal_resize_rejected'), true);
+  assert.equal(auditEvents.some((entry) => entry.event === 'terminal_input_rejected'), true);
+});
+
+test('terminal websocket returns a stable error when the hard session limit is reached', () => {
+  const { namespace } = buildTerminalHarness({ terminalMaxSessions: 1 });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { title: 'one' });
+  admin.trigger('terminal:create_session', { title: 'two' });
+
+  assert.equal(
+    admin.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'terminal_session_limit'),
+    true,
+  );
 });

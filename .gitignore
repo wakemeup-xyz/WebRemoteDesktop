@@ -17,6 +17,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+!signal-server/lib/
+!signal-server/lib/observability/
+!signal-server/lib/observability/*.js
 lib64/
 parts/
 sdist/

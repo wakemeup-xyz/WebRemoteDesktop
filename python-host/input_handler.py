@@ -21,7 +21,8 @@ from Quartz import (
     kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
     kCGEventFlagMaskAlternate, kCGEventFlagMaskControl,
     CGEventCreateScrollWheelEvent, kCGScrollEventUnitLine,
-    CGEventCreate, CGEventGetLocation
+    CGEventCreate, CGEventGetLocation, CGEventSetIntegerValueField,
+    kCGMouseEventClickState
 )
 import screeninfo
 
@@ -49,6 +50,7 @@ class InputHandler:
         self._lock_waiters = 0
         self._lock_contention_logged = False
         self._pressed_mouse_button = None  # Track pressed button for drag events
+        self._last_mouse_position = None
 
     def start(self):
         """Start the input handler"""
@@ -240,6 +242,8 @@ class InputHandler:
     def stop(self):
         """Stop the input handler"""
         self._running = False
+        self.release_all_mouse_buttons(reason="handler-stop")
+        self.release_all_keys(reason="handler-stop")
         logger.info("Input handler stopped")
 
     async def check_stale_keys(self):
@@ -311,7 +315,7 @@ class InputHandler:
                 elif input_type == 'keyboard':
                     input_ids = data.get("inputIds", [])
                     if action == 'reset':
-                        logger.info("Keyboard reset: reason=%s ids=%s", payload.get("reason", "remote-reset"), input_ids)
+                        logger.info("keyboard_reset")
                         self.release_all_keys(reason=payload.get("reason", "remote-reset"))
                         i2 = time.perf_counter()
                         return {
@@ -324,7 +328,7 @@ class InputHandler:
                     await loop.run_in_executor(self._input_thread_pool, self._handle_keyboard, action, payload)
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                     i2 = time.perf_counter()
-                    logger.info("Keyboard executed: action=%s ids=%s thread_ms=%.1f", action, input_ids, to_thread_ms)
+                    logger.info("keyboard_executed action=%s thread_ms=%.1f", action, to_thread_ms)
                     return {
                         "inputIds": input_ids,
                         "receiveTime": i1,
@@ -353,7 +357,7 @@ class InputHandler:
             }
 
         except Exception as e:
-            logger.error(f"Error handling input: {e}")
+            logger.error("Error handling input: %s", type(e).__name__, exc_info=True)
 
     def _handle_command(self, action, payload):
         """Handle special command actions."""
@@ -382,8 +386,7 @@ class InputHandler:
             edge_y = self.monitor.y + self.monitor.height - 1
             push_y = self.monitor.y + self.monitor.height + 10
 
-            logger.info("Show dock: current=(%.0f,%.0f) pushing past edge (%.0f, %.0f -> %.0f)",
-                        current_x, current_y, target_x, edge_y, push_y)
+            logger.info("Show dock: pushing cursor past screen edge")
 
             move_event = CGEventCreateMouseEvent(
                 self.source, kCGEventMouseMoved, (target_x, edge_y), kCGMouseButtonLeft
@@ -402,12 +405,15 @@ class InputHandler:
                 self.source, kCGEventMouseMoved, (current_x, current_y), kCGMouseButtonLeft
             )
             CGEventPost(kCGHIDEventTap, restore_event)
-            logger.info("Show dock: restored mouse to (%.0f, %.0f)", current_x, current_y)
+            logger.info("Show dock: restored cursor")
         except Exception as e:
             logger.error("Show dock failed: %s", e, exc_info=True)
 
     def _handle_mouse(self, action, payload):
         """Handle mouse events using Quartz"""
+        if action == 'reset':
+            self.release_all_mouse_buttons(reason=payload.get('reason', 'remote-reset'))
+            return
         if not self.monitor:
             return
 
@@ -419,16 +425,17 @@ class InputHandler:
         # NOTE: macOS Quartz uses top-left origin (same as web), so NO inversion needed.
         x = self.monitor.x + rel_x * self.monitor.width
         y = self.monitor.y + rel_y * self.monitor.height
+        self._last_mouse_position = (x, y)
 
         if action != 'move':
-            logger.info(
-                f"Mouse {action}: screen=({x:.0f}, {y:.0f}) "
-                f"rel=({rel_x:.4f}, {rel_y:.4f}) "
-                f"monitor=({self.monitor.x},{self.monitor.y},{self.monitor.width},{self.monitor.height})"
-            )
+            logger.info("mouse_input action=%s", action)
 
         button = payload.get('button', 'left')
         button_type = self._get_mouse_button(button)
+        try:
+            click_count = max(1, min(int(payload.get('clickCount', 1)), 3))
+        except (TypeError, ValueError):
+            click_count = 1
 
         if action == 'move':
             # Use dragged event type when a button is held (critical for drag to work)
@@ -452,11 +459,13 @@ class InputHandler:
                 'right': kCGEventRightMouseDown,
                 'middle': kCGEventOtherMouseDown
             }.get(button, kCGEventLeftMouseDown)
-            self._pressed_mouse_button = button
             event = CGEventCreateMouseEvent(
                 self.source, event_type, (x, y), button_type
             )
+            if click_count > 1:
+                CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count)
             CGEventPost(kCGHIDEventTap, event)
+            self._pressed_mouse_button = button
 
         elif action == 'up':
             event_type = {
@@ -464,11 +473,15 @@ class InputHandler:
                 'right': kCGEventRightMouseUp,
                 'middle': kCGEventOtherMouseUp
             }.get(button, kCGEventLeftMouseUp)
-            self._pressed_mouse_button = None
             event = CGEventCreateMouseEvent(
                 self.source, event_type, (x, y), button_type
             )
-            CGEventPost(kCGHIDEventTap, event)
+            if click_count > 1:
+                CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count)
+            try:
+                CGEventPost(kCGHIDEventTap, event)
+            finally:
+                self._pressed_mouse_button = None
 
         elif action == 'click':
             # click is now a no-op: viewer sends mousedown + mouseup which
@@ -511,6 +524,27 @@ class InputHandler:
                 scroll_x,
             )
             CGEventPost(kCGHIDEventTap, event)
+
+    def release_all_mouse_buttons(self, reason="remote-reset"):
+        button = self._pressed_mouse_button
+        if not button:
+            return
+        logger.warning("Releasing stuck mouse button reason=%s button=%s", reason, button)
+        try:
+            if not self.monitor:
+                return
+            position = self._last_mouse_position or (self.monitor.x, self.monitor.y)
+            event_type = {
+                'left': kCGEventLeftMouseUp,
+                'right': kCGEventRightMouseUp,
+                'middle': kCGEventOtherMouseUp,
+            }.get(button, kCGEventLeftMouseUp)
+            event = CGEventCreateMouseEvent(
+                self.source, event_type, position, self._get_mouse_button(button)
+            )
+            CGEventPost(kCGHIDEventTap, event)
+        finally:
+            self._pressed_mouse_button = None
 
     def _normalize_scroll_delta(self, delta_x, delta_y):
         """Convert browser wheel deltas to compact Quartz line scroll units."""
@@ -695,19 +729,23 @@ class InputHandler:
             mapped = True
 
         if not mapped:
-            logger.warning(f"Unhandled key: key='{key_char}', code='{code}', keyCode={payload.get('keyCode')}")
+            logger.warning("keyboard_unhandled action=%s", action)
             return
 
         # Detect modifier keys: do not attach modifier flags to the modifier key itself
         is_modifier = key_code in (54, 55, 56, 58, 59, 60, 61, 62, 57)
         modifier_flag = modifier_key_flags.get(key_code, 0)
 
-        logger.info(f"Keyboard {action}: key='{key_char}', code='{code}', mac_code={key_code}, flags=0x{flags:08x}, is_modifier={is_modifier}")
         logger.info(
-            "[KEYMAP] action=%s key=%r code=%r payload_flags=0x%08x host_flags=0x%08x mac_code=%s is_modifier=%s pressed_mods=%s",
+            "keyboard_input action=%s mac_code=%s flags=0x%08x is_modifier=%s",
             action,
-            key_char,
-            code,
+            key_code,
+            flags,
+            is_modifier,
+        )
+        logger.info(
+            "[KEYMAP] action=%s payload_flags=0x%08x host_flags=0x%08x mac_code=%s is_modifier=%s pressed_mods=%s",
+            action,
             payload_flags,
             self._modifier_flags,
             key_code,
@@ -809,7 +847,7 @@ class InputHandler:
             if self._modifier_flags & kCGEventFlagMaskControl:
                 pressed.add(59)
 
-        logger.warning("Releasing stuck modifiers reason=%s flags=0x%08x keys=%s", reason, self._modifier_flags, sorted(pressed))
+        logger.warning("Releasing stuck modifiers flags=0x%08x key_count=%s", self._modifier_flags, len(pressed))
         self._modifier_flags = 0
         self._pressed_modifier_key_codes.clear()
         self._pressed_key_codes.difference_update(pressed)
@@ -830,7 +868,7 @@ class InputHandler:
 
         pressed = set(self._pressed_key_codes)
         modifier_keys = set(self._pressed_modifier_key_codes)
-        logger.warning("Releasing stuck keys reason=%s keys=%s flags=0x%08x", reason, sorted(pressed), self._modifier_flags)
+        logger.warning("Releasing stuck keys key_count=%s flags=0x%08x", len(pressed), self._modifier_flags)
 
         non_modifiers = sorted(pressed - modifier_keys)
         for key_code in non_modifiers:

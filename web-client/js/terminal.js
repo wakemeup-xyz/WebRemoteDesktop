@@ -187,11 +187,13 @@ const TerminalPanel = {
   transportName: 'unknown',
   terminalSocketLatency: createLatencySeries(),
   terminalInputAckLatency: createLatencySeries(),
+  terminalServerProcessLatency: createLatencySeries(),
   latencyProbeTimer: null,
   pendingLatencyProbes: new Map(),
   pendingInputAcks: new Map(),
-  pendingLocalEchoBySession: new Map(),
+  echoControllersBySession: new Map(),
   alternateScreenSessionIds: new Set(),
+  poolCapacity: null,
 
   init() {
     this.cacheElements();
@@ -266,6 +268,20 @@ const TerminalPanel = {
     return sessionStorage.getItem(TERMINAL_ADMIN_TOKEN_KEY);
   },
 
+  clearAdminToken() {
+    sessionStorage.removeItem(TERMINAL_ADMIN_TOKEN_KEY);
+  },
+
+  isAuthFailure(errorLike) {
+    const message = String(errorLike?.message || errorLike || '').toLowerCase();
+    return (
+      message.includes('jwt expired')
+      || message.includes('unauthorized')
+      || message.includes('invalid token')
+      || message.includes('authentication required')
+    );
+  },
+
   setStatus(text, kind = '') {
     this.socketStatusBaseText = String(text || '');
     this.socketStatusKind = kind;
@@ -277,6 +293,7 @@ const TerminalPanel = {
     const extras = [];
     const socketLatency = this.terminalSocketLatency.snapshot();
     const inputAckLatency = this.terminalInputAckLatency.snapshot();
+    const serverProcessLatency = this.terminalServerProcessLatency.snapshot();
     if (this.transportName && this.transportName !== 'unknown' && this.socketState === 'connected') {
       extras.push(this.transportName);
     }
@@ -285,6 +302,9 @@ const TerminalPanel = {
     }
     if (Number.isFinite(inputAckLatency.p50)) {
       extras.push(`输入 ${inputAckLatency.p50}ms`);
+    }
+    if (Number.isFinite(serverProcessLatency.p50)) {
+      extras.push(`服务端 ${serverProcessLatency.p50}ms`);
     }
     this.elements.status.textContent = extras.length
       ? `${this.socketStatusBaseText} · ${extras.join(' · ')}`
@@ -350,6 +370,7 @@ const TerminalPanel = {
     this.socketState = 'connecting';
 
     this.socket.on('connect', () => {
+      this.resetEchoControllers('reconnect');
       this.socketState = 'connected';
       this.transportName = this.socket.io?.engine?.transport?.name || 'websocket';
       this.attachedSessionIds.clear();
@@ -367,6 +388,7 @@ const TerminalPanel = {
       this.render();
     });
     this.socket.on('disconnect', () => {
+      this.resetEchoControllers('disconnect');
       this.socketState = 'disconnected';
       this.stopLatencyProbeLoop();
       this.pendingInputAcks.clear();
@@ -378,6 +400,13 @@ const TerminalPanel = {
     });
     this.socket.on('connect_error', (err) => {
       this.socketState = 'error';
+      if (this.isAuthFailure(err)) {
+        this.clearAdminToken();
+        this.destroySocket();
+        this.setStatus('授权已过期，请重新授权', 'warning');
+        this.render();
+        return;
+      }
       this.setStatus(`连接失败：${err.message}`, 'error');
     });
     const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
@@ -477,9 +506,7 @@ const TerminalPanel = {
   handleLatencyPong(payload = {}) {
     const nonce = typeof payload.nonce === 'string' ? payload.nonce : '';
     const sentAt = this.pendingLatencyProbes.get(nonce);
-    const clientSentAt = Number.isFinite(Number(payload.clientSentAt))
-      ? Number(payload.clientSentAt)
-      : sentAt;
+    const clientSentAt = sentAt;
     if (nonce) {
       this.pendingLatencyProbes.delete(nonce);
     }
@@ -494,9 +521,7 @@ const TerminalPanel = {
   handleInputAck(payload = {}) {
     const inputId = typeof payload.inputId === 'string' ? payload.inputId : '';
     const pending = inputId ? this.pendingInputAcks.get(inputId) : null;
-    const clientSentAt = Number.isFinite(Number(payload.clientSentAt))
-      ? Number(payload.clientSentAt)
-      : pending?.clientSentAt;
+    const clientSentAt = pending?.clientSentAt;
     if (inputId) {
       this.pendingInputAcks.delete(inputId);
     }
@@ -504,7 +529,12 @@ const TerminalPanel = {
       return;
     }
     this.transportName = String(payload.transport || this.getTransportName());
-    this.terminalInputAckLatency.record(Math.max(0, Number(payload.serverReceivedAt || Date.now()) - clientSentAt));
+    this.terminalInputAckLatency.record(Math.max(0, Date.now() - clientSentAt));
+    const serverReceivedAt = Number(payload.serverReceivedAt);
+    const serverSentAt = Number(payload.serverSentAt);
+    if (Number.isFinite(serverReceivedAt) && Number.isFinite(serverSentAt)) {
+      this.terminalServerProcessLatency.record(Math.max(0, serverSentAt - serverReceivedAt));
+    }
     this.refreshStatus();
   },
 
@@ -516,6 +546,10 @@ const TerminalPanel = {
     this.connectSocket();
     if (!this.socket?.connected) {
       this.setStatus('正在连接终端服务', 'warning');
+      return;
+    }
+    if (Number(this.poolCapacity?.availableSessions) === 0 && Number(this.poolCapacity?.maxSessions) > 0) {
+      this.setWarning(`Terminal 会话已达到上限 (${this.poolCapacity.maxSessions})`);
       return;
     }
     this.pendingCreateClientId = this.getBrowserSessionId();
@@ -542,7 +576,7 @@ const TerminalPanel = {
   reattachSessions() {
     if (!this.socket?.connected) return;
     const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    if (lastActive) {
+    if (lastActive && this.state.getSession(lastActive)) {
       this.requestAttachSession(lastActive);
       return;
     }
@@ -567,6 +601,7 @@ const TerminalPanel = {
     const liveSessionIds = new Set(sessions.map((session) => session.sessionId).filter(Boolean));
     const previousIds = new Set(this.state.getSessions().map((session) => session.sessionId));
     this.state.replaceSessions(sessions);
+    this.poolCapacity = payload.capacity || null;
     sessions.forEach((session) => {
       previousIds.delete(session.sessionId);
       this.ensureSession(session);
@@ -587,9 +622,15 @@ const TerminalPanel = {
       || payload.defaultSessionId
       || this.state.activeSessionId();
     if (preferredSessionId) {
+      this.state.setActive(preferredSessionId);
+      this.persistActiveSessionId(preferredSessionId);
       this.requestAttachSession(preferredSessionId);
+    } else {
+      this.persistActiveSessionId('');
     }
-    this.syncPersistedActiveSession();
+    if (Number(this.poolCapacity?.availableSessions) === 0 && Number(this.poolCapacity?.maxSessions) > 0) {
+      this.state.setWarning(`Terminal 会话已达到上限 (${this.poolCapacity.maxSessions})`);
+    }
     this.render();
   },
 
@@ -699,6 +740,7 @@ const TerminalPanel = {
         term.loadAddon(fitAddon);
       }
       term.open(container);
+      this.getEchoController(sessionId);
       term.onData((data) => {
         if (this.socket?.connected) {
           const inputId = this.makeInputId(sessionId);
@@ -752,7 +794,8 @@ const TerminalPanel = {
     if (term?.dispose) term.dispose();
     this.terms.delete(sessionId);
     this.fitAddons.delete(sessionId);
-    this.pendingLocalEchoBySession.delete(sessionId);
+    this.echoControllersBySession.get(sessionId)?.reset('destroy');
+    this.echoControllersBySession.delete(sessionId);
     this.alternateScreenSessionIds.delete(sessionId);
     const node = this.elements.workspace?.querySelector(`[data-session-id="${sessionId}"]`);
     node?.remove();
@@ -760,8 +803,8 @@ const TerminalPanel = {
 
   writeOutput(sessionId, data) {
     const term = this.terms.get(sessionId);
-    const normalized = this.consumeOptimisticLocalEcho(sessionId, String(data || ''));
     this.trackAlternateScreen(sessionId, String(data || ''));
+    const normalized = this.consumeOptimisticLocalEcho(sessionId, String(data || ''));
     if (term?.write && normalized) {
       term.write(normalized);
     }
@@ -772,7 +815,7 @@ const TerminalPanel = {
     this.ensureSession({ sessionId }, {
       activate: sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY),
     });
-    this.pendingLocalEchoBySession.delete(sessionId);
+    this.getEchoController(sessionId).reset('replay');
     if (hadExistingTerm) {
       this.resetRenderedTerm(sessionId);
     }
@@ -793,10 +836,13 @@ const TerminalPanel = {
 
   activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
-    this.persistActiveSessionId(sessionId);
-    this.requestAttachSession(sessionId);
+    const activeSessionId = this.state.activeSessionId();
+    this.persistActiveSessionId(activeSessionId || '');
+    if (activeSessionId) {
+      this.requestAttachSession(activeSessionId);
+    }
     if (options.announce !== false) {
-      this.announceActivePresenter(sessionId);
+      this.announceActivePresenter(activeSessionId);
     }
     this.render();
     this.fitActiveTerminal();
@@ -817,74 +863,40 @@ const TerminalPanel = {
     localStorage.setItem(LAST_ACTIVE_SESSION_KEY, sessionId);
   },
 
-  shouldOptimisticallyEcho(sessionId, data) {
-    const text = String(data || '');
-    if (!text || this.alternateScreenSessionIds.has(sessionId)) {
-      return false;
+  getEchoController(sessionId) {
+    if (!this.echoControllersBySession.has(sessionId)) {
+      this.echoControllersBySession.set(sessionId, TerminalEchoController.create());
     }
-    if (text.length > 64) {
-      return false;
-    }
-    return /^[\x20-\x7e\u00a0-\uffff\r\n]+$/.test(text);
+    return this.echoControllersBySession.get(sessionId);
   },
 
-  normalizeOptimisticEcho(data) {
-    return String(data || '').replace(/\r/g, '\r\n');
+  resetEchoControllers(reason) {
+    this.echoControllersBySession.forEach((controller) => controller.reset(reason));
   },
 
   applyOptimisticLocalEcho(sessionId, data) {
-    if (!this.shouldOptimisticallyEcho(sessionId, data)) {
-      return false;
-    }
     const term = this.terms.get(sessionId);
-    const normalized = this.normalizeOptimisticEcho(data);
-    if (!term?.write || !normalized) {
+    const result = this.getEchoController(sessionId).onInput(data);
+    if (!term?.write || !result.localEcho) {
       return false;
     }
-    term.write(normalized);
-    const existing = this.pendingLocalEchoBySession.get(sessionId) || { text: '', createdAt: Date.now() };
-    existing.text += normalized;
-    existing.createdAt = Date.now();
-    if (existing.text.length > 512) {
-      existing.text = existing.text.slice(-512);
-    }
-    this.pendingLocalEchoBySession.set(sessionId, existing);
+    term.write(result.localEcho);
     return true;
   },
 
   consumeOptimisticLocalEcho(sessionId, data) {
-    const pending = this.pendingLocalEchoBySession.get(sessionId);
-    if (!pending?.text) {
-      return data;
-    }
-    if (Date.now() - Number(pending.createdAt || 0) > 3000) {
-      this.pendingLocalEchoBySession.delete(sessionId);
-      return data;
-    }
-    let output = String(data || '');
-    let expected = pending.text;
-    while (output && expected && output[0] === expected[0]) {
-      output = output.slice(1);
-      expected = expected.slice(1);
-    }
-    if (expected) {
-      this.pendingLocalEchoBySession.set(sessionId, {
-        text: expected,
-        createdAt: pending.createdAt,
-      });
-    } else {
-      this.pendingLocalEchoBySession.delete(sessionId);
-    }
-    return output;
+    return this.getEchoController(sessionId).onRemoteOutput(data);
   },
 
   trackAlternateScreen(sessionId, data) {
     const text = String(data || '');
     if (/\u001b\[\?(?:1049|1047|47)h/.test(text)) {
       this.alternateScreenSessionIds.add(sessionId);
+      this.getEchoController(sessionId).setAlternateScreen(true);
     }
     if (/\u001b\[\?(?:1049|1047|47)l/.test(text)) {
       this.alternateScreenSessionIds.delete(sessionId);
+      this.getEchoController(sessionId).setAlternateScreen(false);
     }
   },
 
@@ -895,9 +907,12 @@ const TerminalPanel = {
       transport: this.getTransportName(),
       socketRtt: this.terminalSocketLatency.snapshot(),
       inputAck: this.terminalInputAckLatency.snapshot(),
+      serverProcess: this.terminalServerProcessLatency.snapshot(),
       activeSessionId,
-      pendingLocalEchoBytes: Array.from(this.pendingLocalEchoBySession.values()).reduce(
-        (sum, item) => sum + String(item?.text || '').length,
+      echoConfident: Boolean(activeSessionId && this.echoControllersBySession.get(activeSessionId)?.snapshot().confident),
+      echoAwaitingProbe: Boolean(activeSessionId && this.echoControllersBySession.get(activeSessionId)?.snapshot().awaitingProbe),
+      pendingLocalEchoBytes: Array.from(this.echoControllersBySession.values()).reduce(
+        (sum, controller) => sum + Number(controller.snapshot().pendingEchoBytes || 0),
         0,
       ),
       alternateScreenActive: Boolean(activeSessionId && this.alternateScreenSessionIds.has(activeSessionId)),
@@ -914,6 +929,7 @@ const TerminalPanel = {
     this.transportName = 'unknown';
     this.stopLatencyProbeLoop();
     this.pendingInputAcks.clear();
+    this.resetEchoControllers('destroy-socket');
   },
 
   syncPersistedActiveSession() {
@@ -1020,10 +1036,12 @@ const TerminalPanel = {
     this.elements.authForm?.classList.toggle('hidden', authorized);
     this.elements.newButton?.classList.toggle('hidden', !authorized);
     if (this.elements.newButton) {
-      this.elements.newButton.disabled = !authorized || !connected;
+      const atCapacity = Number(this.poolCapacity?.availableSessions) === 0
+        && Number(this.poolCapacity?.maxSessions) > 0;
+      this.elements.newButton.disabled = !authorized || !connected || atCapacity;
     }
 
-    if (!authorized) {
+    if (!authorized && !this.socketStatusBaseText) {
       this.setStatus('需要 admin 二次授权', 'warning');
     }
 

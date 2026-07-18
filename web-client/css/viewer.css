@@ -763,6 +763,11 @@ body.controls-hidden .action-bar {
   font-weight: 700;
 }
 
+.network-advisor__state.recommended {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+}
+
 .network-advisor p {
   color: var(--text-muted);
   font-size: 12px;

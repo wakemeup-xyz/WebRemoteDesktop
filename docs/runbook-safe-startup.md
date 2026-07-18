@@ -6,15 +6,21 @@
 
 当前仓库推荐按下面优先级选择启动方式：
 
-1. **默认推荐：安全一键启动**：`./scripts/start-safe-wrd.sh`
-2. **手动本地启动**：`signal-server` + `./scripts/restart-host.sh`
-3. **固定域名启动**：`./scripts/start-fixed-domain.sh`
+1. **正式公网入口**：`./scripts/start-fixed-domain.sh`
+2. **本地调试/排障 + 临时 quick tunnel**：`./scripts/start-safe-wrd.sh`
+3. **手动本地启动**：`signal-server` + `./scripts/restart-host.sh`
 
 区别如下：
 
-- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
+- `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名；正式用户入口应始终使用 `https://link.stockhub.wiki`
+- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址做调试或排障，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
 - 手动本地启动：适合只做本机调试，不需要公网地址；但仍会通过 LaunchAgent 托管 Host
-- `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名
+
+入口口径：
+
+- 正式公网入口：`https://link.stockhub.wiki`
+- quick tunnel / `trycloudflare`：仅调试、临时排障、或 fixed-domain 不可用时的临时观察链路，不作为正式对外地址
+- named tunnel：只允许 `~/.cloudflared/config.yml` 中的 `credentials-file`；不得用 `--token` 或 `TUNNEL_TOKEN` 启动正式入口
 
 Host 启动语义：
 
@@ -27,9 +33,10 @@ Tunnel 操作语义：
 
 - 默认不要重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程
 - 若只是重启本地 `signal-server` 或 `python-host`，必须优先复用现有 tunnel
-- 当前有效公网地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
+- 当前有效 debug quick tunnel 地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
 - `重启服务` 不得被解释为重建 quick tunnel；在 tunnel 仍存活时，重启本地服务不应改变 `/tmp/wrd-safe-current-url.txt`
 - 只有在用户明确要求“重建 tunnel / 重建 Cloudflare / 重启 tunnel / 重新生成公网地址”时，才允许重建 quick tunnel；tunnel 失效本身不是授权
+- `status-safe-wrd.sh` 发现 cloudflared argv 含 `--token` 时只输出固定安全告警；不得打印 token、停止进程或执行 `launchctl remove`
 
 ## 目标
 
@@ -82,7 +89,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 4. 在 `scripts/run-host-launchctl.sh` 内等待 `/health` 与 `/api/auth/login/host` 预检都通过
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
 6. 复用或启动 `scripts/run-safe-quicktunnel.sh`
-7. 只有在该 URL 通过本机 `curl -I -L` reachability 校验后，才把它写入 `/tmp/wrd-safe-current-url.txt` 并输出
+7. 只有在该 URL 的 `/health` 返回 2xx 且 JSON `status=ok` 后，才原子写入 `/tmp/wrd-safe-current-url.txt` 与 archive 并输出
 
 重启约定：
 
@@ -107,15 +114,15 @@ cat /tmp/wrd-safe-current-url.txt
 
 1. `./scripts/status-safe-wrd.sh` 确认 `safe quick tunnel` 为 `running`
 2. 确认该 trycloudflare 子域名已经可以解析
-3. `curl -I -L <safe-url>` 能拿到 HTTP 响应
-4. `scripts/run-safe-quicktunnel.sh` 现在不会在 reachability 失败时发布 URL；如果文件里已经有 URL，就表示脚本至少已经通过了一次本机 reachability 校验
+3. `python3 scripts/wrd_entry_health.py --url <safe-url>` 返回 `deliverable=true`
+4. `scripts/run-safe-quicktunnel.sh` 是唯一 URL publisher，不会在 health 失败时发布 URL；404、429、5xx、重定向和错误 JSON 全部不可交付
 5. 若这台机器自己的系统 DNS 解析不到 `*.trycloudflare.com`，脚本会改用公共 DNS 解析并通过 `curl --resolve` 继续做入口校验，避免把 resolver 问题误判成 tunnel 故障
 
 进一步约束：
 
-1. 若 `curl -I -L <safe-url>` 返回 `Could not resolve host`，说明当前地址连 DNS 都不可用了，只能报告并等待用户明确是否重建 tunnel
-2. 若 DNS 已恢复，但 `curl -I -L <safe-url>` 返回 `HTTP 530`、长时间超时，或没有拿到正常入口页，也应视为当前地址不可用，只能报告并等待用户明确授权
-3. 不要把“quick tunnel 进程仍在”误判成“公网地址仍可访问”；公网可达性的最终依据始终是 `curl -I -L`
+1. 若 canonical checker 返回 `dns-unresolved`，说明本机和公共 DNS 都不能解析当前地址，只能报告并等待用户明确是否重建 tunnel
+2. 若返回 `origin-unreachable`、`http-invalid` 或 `content-invalid`，当前地址同样不可用，只能报告并等待用户明确授权
+3. 不要把“quick tunnel 进程仍在”误判成“公网地址仍可访问”；公网可达性的最终依据始终是 `/health` 的 2xx + JSON 内容
 4. 对本仓库来说，`HTTP 530` 和 `Could not resolve host` 都按“当前 trycloudflare 入口不可交付”处理；这一步先归类为 tunnel 侧故障，不要误判成 `signal-server` 或 Host 崩了，也不要自动重建 tunnel
 5. 如果只有本机默认 resolver 报 `Could not resolve host`，但公共 DNS 能解析且 `curl --resolve` 返回正常 HTTP，这应归类为本机 DNS 问题，不应让 `run-safe-quicktunnel.sh` 退出并清掉当前 tunnel
 
@@ -126,7 +133,7 @@ cat /tmp/wrd-safe-current-url.txt
 ```bash
 ./scripts/status-safe-wrd.sh
 SAFE_URL=$(cat /tmp/wrd-safe-current-url.txt)
-curl -I -L "$SAFE_URL"
+python3 scripts/wrd_entry_health.py --url "$SAFE_URL"
 ```
 
 ### 2. 查看安全链路状态
@@ -145,6 +152,8 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - safe URL 文件状态
 - 本地 `8080` 健康检查结果
 - 本地 `api/status` 返回内容
+
+该命令严格只读：缺失的 PID 文件保持缺失，过期的 URL 不会从 archive/log 恢复，也不会改写 `/tmp/wrd-safe-current-url.txt`。只有运行中的 tunnel supervisor 可以在重新验证成功后发布 safe URL。
 
 ### 3. 一键安全停止
 
@@ -228,7 +237,20 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - `safe quick tunnel log`: `/tmp/wrd-safe-quicktunnel.log`
 - `safe tunnel supervisor log`: `/tmp/wrd-safe-tunnel-supervisor.log`
 - `signal-server log`: `/tmp/signal-server.log`
-- `host log`: `back-debug.log`
+- `host runtime log`: `back-debug.log`（Python `RotatingFileHandler`）
+- `host LaunchAgent wrapper log`: `/tmp/wrd-host-launch.log`（每次 wrapper 启动前原地保留最近 1 MiB）
+
+### 运行时日志语义
+
+- 结构化运行日志默认始终开启，Viewer 诊断摘要、Terminal 审计事件、Host 摘要事件都会进入实时日志
+- `WRD_ENABLE_DIAG_PERSIST=1` 只控制 Viewer 诊断 bundle 是否额外写入系统临时目录，不影响运行日志输出
+- `WRD_TERMINAL_AUDIT_LOG=/path/to/file.jsonl` 只是在统一运行日志之外再复制一份 Terminal 审计 JSONL
+- `WRD_TERMINAL_RECORD_IO=0` 是保守默认值，表示不记录完整 Terminal 输入输出内容
+- `WRD_HOST_VERBOSE_DIAGNOSTICS=1` 仅用于显式排障；默认 Host 只记诊断摘要，不刷整段 `[VIEWER]` 日志
+- `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 控制 Host、Signal structured file sink 和 Terminal audit file，默认 10 MiB / 3 个备份
+- Host/Signal 默认不记录 key、code、文本、坐标或完整 input payload；只保留 action、transport、字节数、input ID hash 和本机耗时
+- Terminal `socketRtt` / `inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 独立计算。password-safe echo 只有确认远端 shell 回显后才开启，Enter/控制键/alternate-screen/重连会立即关闭
+- shared Terminal 默认硬上限 8 个 session；`WRD_TERMINAL_IDLE_TIMEOUT_MS>0` 时回收超时且无人附着的 session
 
 ## 排障顺序
 
@@ -248,18 +270,18 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - 如果打开的是裸 `5173` 页面：这是错误入口；正式入口应切回 `8080` / `link.stockhub.wiki`，开发映射应改走 `dev.link.stockhub.wiki`
 - 如果 `health` 不通：优先看 `signal-server`
 - 如果 `health` 通但 `hostOnline` 为 `false`：优先看 `back-debug.log`
-- 如果 `back-debug.log` 只看到 `Signal server healthy: ...` 但没有 `Host auth preflight succeeded: ...`：优先检查 `HOST_SHARED_SECRET`
+- 如果 `/tmp/wrd-host-launch.log` 只有 `Signal server healthy: ...` 但没有 `Host auth preflight succeeded: ...`：优先检查 `HOST_SHARED_SECRET`
 - 如果本地都通但公网不通：优先看 safe quick tunnel 日志
 - 如果本地都通、DNS 也能解析，但 `curl -I -L` 返回 `HTTP 530`：按“公网入口失效”处理，报告原因并等待用户明确是否重建 tunnel，不要先重启本地 `signal-server` 或 Host
 - 如果本地都通、DNS 直接不解析：这同样不是 origin 故障，优先按 quick tunnel 地址失效处理，但不得自动重建 tunnel
 - 如果只是本地服务异常，但 `/tmp/wrd-safe-current-url.txt` 仍指向现有 tunnel：只修本地服务，不得重建 tunnel
 - 如果 URL 文件里已经有 trycloudflare 地址，但状态脚本显示 `safe quick tunnel: stale`：说明地址文件已经写出，但实际公网进程没有存活，不能把这个链接当作有效入口
-- 如果状态脚本把原本 stale 的 PID 自动纠正为 live PID，会显示 `running pid=... (reconciled)`
+- 如果 PID 文件 stale 但发现同仓库 live 进程，状态只显示 `discovered; pid file unchanged`，不会调和 PID 文件
 
 补充排查：
 
 - 如果本地 `health` 正常，但浏览器页面显示“等待 Host 上线”，说明 `signal-server` 正常、`python-host` 尚未成功回连
-- 如果 `restart-host.sh` 执行后很快退出，优先查看 `back-debug.log`
+- 如果 `restart-host.sh` 执行后很快退出，先看 `/tmp/wrd-host-launch.log` 的预检，再看 `back-debug.log` 的 Host runtime
 - 如果 fixed domain 不可用，先确认本地 `8080` 正常，再检查 `~/.cloudflared/config.yml` 和隧道配置
 - Web Terminal 走的是 Viewer 内部的 Socket.IO 二次授权，不会重启 quick tunnel，也不会占用 WebRTC 媒体链路
 
@@ -279,6 +301,8 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 2. 如果出现 `WRD_MEDIA_PROFILE`，说明 Viewer 已检测到弱链路并尝试降载
 3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel
 4. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连可达
+5. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
+6. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
 
 家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
 

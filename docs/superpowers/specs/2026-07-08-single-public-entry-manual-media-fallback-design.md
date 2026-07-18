@@ -199,7 +199,31 @@ Viewer 页面需要有一个固定连接状态卡片，至少显示：
 - `tunnel-connected`
 - `terminal-failure`
 
-### 四、提示动作
+### 四、Host 捕获源韧性
+
+媒体 mode 是否能成功，不只取决于公网入口、ICE 和 TURN，还取决于 Host 侧能否拿到一个可用的屏幕捕获区域。
+
+2026-07-09 的实际故障说明了这一点：
+
+1. 页面和 Socket.IO 信令都正常
+2. 用户切到 `tunnel` 作为最终兜底
+3. Host 侧 `MSS` 瞬时只返回 `[{left:0, top:0, width:0, height:0}]`
+4. `ScreenCaptureTrack` 和 `TunnelRelayStreamer` 都因为拿不到有效 monitor 而失败
+
+因此 Host 端的设计要求应补充为：
+
+1. 捕获源优先使用 `MSS`
+2. 若 `MSS` 当前只返回 `0x0` monitor，占位结果不能直接当成“无屏幕”终态
+3. 此时应回退到 `screeninfo` 提供的主屏矩形
+4. 只有 `MSS` 与 `screeninfo` 都拿不到有效区域时，才把失败上报为 Host 捕获源故障
+
+这条规则同时适用于：
+
+- WebRTC `ScreenCaptureTrack` 初始化
+- Cloudflare/Socket.IO `TunnelRelayStreamer` 启动
+- 连接重试过程中重新创建 capture track 的场景
+
+### 五、提示动作
 
 当失败发生时，页面必须提供明确动作，而不是只有错误提示。典型动作包括：
 
@@ -318,6 +342,12 @@ Viewer 页面需要有一个固定连接状态卡片，至少显示：
 - `tunnel-stream-stalled`
 - `host-monitor-unavailable`
 - `host-offer-processing-failed`
+
+其中 `host-monitor-unavailable` 的判定口径要明确为：
+
+1. Host 捕获链在 `MSS` 和 `screeninfo` 两条来源下都无法拿到有效 monitor
+2. 不能把单次 `MSS` 返回 `0x0` monitor 直接上报为最终 Host 故障
+3. 这类故障与入口域名、TURN 配置和 UDP 连通性分开统计
 
 分类要求：
 

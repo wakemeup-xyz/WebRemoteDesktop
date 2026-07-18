@@ -39,6 +39,66 @@ function createFakePty() {
   };
 }
 
+test('shared session manager enforces a hard session ceiling and reports bounded capacity', () => {
+  const ptys = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => {
+      const pty = createFakePty();
+      ptys.push(pty);
+      return pty;
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 2,
+      terminalReplayBufferBytes: 1024,
+    },
+  });
+
+  const first = manager.createSession({ clientId: 'browser-a' });
+  manager.createSession({ clientId: 'browser-a' });
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'terminal_session_limit',
+  );
+  assert.equal(ptys.length, 2);
+  assert.deepEqual(manager.getPoolSnapshot().capacity, {
+    sessionCount: 2,
+    maxSessions: 2,
+    availableSessions: 0,
+    replayBufferBytesPerSession: 1024,
+    maxReplayBytes: 2048,
+  });
+
+  manager.closeSession(first.sessionId, { reason: 'user-close' });
+  manager.createSession({ clientId: 'browser-a' });
+  assert.equal(ptys.length, 3);
+});
+
+test('idle detached sessions are reaped using the configured timeout', () => {
+  let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    now: () => new Date(nowMs),
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 8,
+      terminalIdleTimeoutMs: 1000,
+    },
+  });
+  const created = manager.createSession({ clientId: 'browser-a' });
+  manager.detachSession(created.sessionId, 'test-detach');
+
+  nowMs += 1001;
+  assert.deepEqual(manager.reapIdleSessions(), [created.sessionId]);
+  assert.equal(manager.listSessions().length, 0);
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+});
+
 test('shared session manager stores sessions in the default pool and no longer exposes ownerSub ownership', () => {
   const manager = createTerminalSessionManager({
     ptyFactory: createFakePty,
@@ -260,6 +320,62 @@ test('session manager exposes public observer, input, presenter, and resize meth
 
   assert.deepEqual(pty.writeCalls, ['pwd\n']);
   assert.deepEqual(pty.resizeCalls, [{ cols: 100, rows: 30 }]);
+});
+
+test('terminal session manager emits structured create, attach, and detach audit events', () => {
+  const events = [];
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    audit: {
+      info(event, meta = {}) {
+        events.push({ level: 'info', event, meta });
+      },
+      warn(event, meta = {}) {
+        events.push({ level: 'warn', event, meta });
+      },
+      error(event, meta = {}) {
+        events.push({ level: 'error', event, meta });
+      },
+    },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    cols: 100,
+    rows: 30,
+  });
+  manager.attachSession(created.sessionId, {
+    clientId: 'browser-b',
+    socketId: 'socket-b',
+  });
+  manager.detachObserver(created.sessionId, {
+    clientId: 'browser-b',
+    socketId: 'socket-b',
+    reason: 'manual-detach',
+  });
+
+  assert.deepEqual(events.slice(0, 3).map((entry) => entry.event), [
+    'terminal_session_created',
+    'terminal_session_attached',
+    'terminal_session_detached',
+  ]);
+  assert.equal(events[0].meta.ioRecording, false);
+  assert.equal(events[0].meta.clientId, 'browser-a');
+  assert.equal(events[1].meta.clientId, 'browser-b');
+  assert.equal(events[2].meta.reason, 'manual-detach');
 });
 
 test('buildTerminalEnv prepends executable and user bin paths while preserving existing PATH entries', () => {

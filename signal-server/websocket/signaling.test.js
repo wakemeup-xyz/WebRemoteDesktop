@@ -280,6 +280,61 @@ test('input from disconnected viewer is not relayed to host', () => {
   );
 });
 
+test('host input ack is routed only to its original viewer', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(host);
+  io.connect(viewerA);
+  io.connect(viewerB);
+
+  host.trigger('input-ack', {
+    viewerId: 'viewer-a',
+    type: 'input_ack',
+    inputIds: ['input-1'],
+    hostExecuteMs: 8,
+    transport: 'socket',
+  });
+
+  assert.equal(viewerA.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-1'), true);
+  assert.equal(viewerB.sent.some((message) => message.event === 'input-ack'), false);
+});
+
+test('signal input relay logs metadata without raw input payload values', () => {
+  resetConnections();
+  const io = makeIo();
+  const lines = [];
+  setupSignaling(io, { logger: { log(...values) { lines.push(values.join(' ')); }, warn() {}, info() {}, error() {} } });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  const originalLog = console.log;
+  console.log = (...values) => lines.push(values.join(' '));
+  try {
+    viewer.trigger('input', {
+      type: 'keyboard',
+      action: 'keydown',
+      transport: 'socket',
+      inputIds: ['input-Secret123'],
+      payload: { key: 'Secret123', code: 'KeyA', x: 987.654 },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const text = lines.join('\n');
+  assert.equal(text.includes('Secret123'), false);
+  assert.equal(text.includes('KeyA'), false);
+  assert.equal(text.includes('987.654'), false);
+  assert.match(text, /type=keyboard/);
+  assert.match(text, /action=keydown/);
+});
+
 test('relay control from disconnected viewer is not relayed to host', () => {
   resetConnections();
   const io = makeIo();
@@ -371,6 +426,7 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
       keyboardDebug: ['dbg-1'],
       trigger: 'auto-failure',
       reason: 'pc-failed',
+      latency: 42,
       network: {
         networkMode: 'stun',
         turnConfigured: false,
@@ -399,37 +455,80 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
   }
 
   assert.equal(captured, null);
-  assert.deepEqual(
-    host.sent.filter((message) => message.event === 'diagnostic').at(-1),
-    { event: 'diagnostic', data: {
-      logs: ['line-1'],
-      keyboardDebug: [],
-      trigger: 'auto-failure',
-      reason: 'pc-failed',
-      network: {
-        networkMode: 'stun',
-        turnConfigured: false,
-        turnStatus: 'missing',
-        candidateSummary: {
-          local: { host: 2, srflx: 1 },
-          remote: { host: 1, srflx: 1 },
-          samples: {
-            local: [{ type: 'srflx', address: '203.0.113.1:5000' }],
-            remote: [{ type: 'host', address: '192.168.0.2:6000' }],
-          },
-        },
+  const diagnostic = host.sent.filter((message) => message.event === 'diagnostic').at(-1);
+  assert.equal(diagnostic.event, 'diagnostic');
+  assert.equal(diagnostic.data.type, 'diagnostic');
+  assert.equal(diagnostic.data.viewerId, 'viewer-1');
+  assert.equal(diagnostic.data.userAgent, 'unknown');
+  assert.equal(diagnostic.data.screen, 'unknown');
+  assert.equal(diagnostic.data.logCount, 1);
+  assert.deepEqual(diagnostic.data.logs, ['line-1']);
+  assert.deepEqual(diagnostic.data.keyboardDebug, []);
+  assert.equal(diagnostic.data.trigger, 'auto-failure');
+  assert.equal(diagnostic.data.reason, 'pc-failed');
+  assert.equal(diagnostic.data.latency, 42);
+  assert.deepEqual(diagnostic.data.traceSummary, {
+    trigger: 'auto-failure',
+    reason: 'pc-failed',
+  });
+  assert.deepEqual(diagnostic.data.network, {
+    networkMode: 'stun',
+    turnConfigured: false,
+    turnStatus: 'missing',
+    candidateSummary: {
+      local: { host: 2, srflx: 1 },
+      remote: { host: 1, srflx: 1 },
+      samples: {
+        local: [{ type: 'srflx', address: '203.0.113.1:5000' }],
+        remote: [{ type: 'host', address: '192.168.0.2:6000' }],
       },
-      keyboardMode: 'windows',
-      inputState: {
-        keyboardMode: 'windows',
-        pendingKeys: 0,
-        lastReleaseAllReason: 'window-blur',
-        lastKeyboardResetReason: 'window-blur',
-        recentInputEvents: [{ type: 'keyboard-reset', reason: 'window-blur' }],
-      },
-      inputChannelTimeline: [{ kind: 'open', message: '[INPUT-DC] DataChannel open' }],
-    } }
-  );
+    },
+  });
+  assert.deepEqual(diagnostic.data.inputState, {
+    keyboardMode: 'windows',
+    pendingKeys: 0,
+    lastReleaseAllReason: 'window-blur',
+    lastKeyboardResetReason: 'window-blur',
+    recentInputEvents: [{ type: 'keyboard-reset', reason: 'window-blur' }],
+  });
+  assert.deepEqual(diagnostic.data.inputChannelTimeline, [{ kind: 'open', message: '[INPUT-DC] DataChannel open' }]);
+  assert.deepEqual(diagnostic.data.probeResults, []);
+  assert.equal('keyboardMode' in diagnostic.data, false);
+  assert.match(diagnostic.data.connectionAttemptId, /^attempt-/);
+  assert.match(diagnostic.data.receivedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('diagnostic relay preserves attempt metadata and recommendation context', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('diagnostic', {
+    type: 'connection-diagnostic',
+    schemaVersion: 3,
+    connectionAttemptId: 'attempt-socket-1',
+    mode: 'auto',
+    entrypoint: 'https://link.stockhub.wiki',
+    traceSummary: { trigger: 'auto-failure', reason: 'direct-failed-suggest-relay' },
+    recommendation: { nextSuggestedMode: 'relay', severity: 'warning' },
+    events: [{ kind: 'ice-state', value: 'failed' }],
+  });
+
+  const diagnostic = host.sent.filter((message) => message.event === 'diagnostic').at(-1);
+
+  assert.equal(diagnostic.data.type, 'connection-diagnostic');
+  assert.equal(diagnostic.data.schemaVersion, 3);
+  assert.equal(diagnostic.data.connectionAttemptId, 'attempt-socket-1');
+  assert.equal(diagnostic.data.mode, 'auto');
+  assert.equal(diagnostic.data.entrypoint, 'https://link.stockhub.wiki');
+  assert.equal(diagnostic.data.traceSummary.reason, 'direct-failed-suggest-relay');
+  assert.equal(diagnostic.data.recommendation.nextSuggestedMode, 'relay');
+  assert.deepEqual(diagnostic.data.events, [{ kind: 'ice-state', value: 'failed' }]);
 });
 
 test('viewer connection cannot claim host role metadata', () => {

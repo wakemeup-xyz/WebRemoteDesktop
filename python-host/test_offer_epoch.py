@@ -68,7 +68,10 @@ async def test_viewer_status_zero_closes_stale_peer_connection():
     host._input_datachannel = object()
     host.pending_candidates = [{"candidate": "old"}]
     host.relay_streamer = None
-    host.input_handler = SimpleNamespace(release_all_keys=lambda reason: None)
+    host.input_handler = SimpleNamespace(
+        release_all_keys=lambda reason: None,
+        release_all_mouse_buttons=lambda reason: None,
+    )
     host.overlay = SimpleNamespace(send=lambda event: None)
 
     await host.on_viewer_status({"onlineCount": 0, "viewers": []})

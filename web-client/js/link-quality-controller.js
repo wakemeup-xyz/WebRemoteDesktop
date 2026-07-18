@@ -8,20 +8,25 @@ const LinkQualityController = {
 
   create(options = {}) {
     const order = ['high', 'medium', 'low', 'survival'];
+    const now = options.now || Date.now;
 
     return {
       currentProfile: options.initialProfile || 'high',
       degradedCount: 0,
       criticalCount: 0,
+      goodCount: 0,
       lastPacketsLost: null,
       lastFramesDecoded: null,
       iceRestartAttempted: false,
       profileChanges: [],
+      lastProfileChangeAt: 0,
 
       observe(stats = {}) {
         const packetsLost = Number(stats.packetsLost || 0);
         const framesDecoded = Number(stats.framesDecoded || 0);
-        const packetsLostDelta = this.lastPacketsLost == null
+        const packetsLostDelta = stats.interval === true
+          ? packetsLost
+          : this.lastPacketsLost == null
           ? packetsLost
           : Math.max(0, packetsLost - this.lastPacketsLost);
         const decodedDelta = this.lastFramesDecoded == null
@@ -51,6 +56,7 @@ const LinkQualityController = {
         if (!hasSelectedPair) {
           this.degradedCount = 0;
           this.criticalCount = 0;
+          this.goodCount = 0;
           return { action: 'hold', profile: this.currentProfile, reason: 'no-selected-pair' };
         }
 
@@ -62,8 +68,15 @@ const LinkQualityController = {
 
         if (zeroFps || highRtt || highJitter || highLoss) {
           this.degradedCount += 1;
+          this.goodCount = 0;
         } else {
           this.degradedCount = 0;
+          this.criticalCount = 0;
+          this.goodCount += 1;
+          const currentIndex = order.indexOf(this.currentProfile);
+          if (currentIndex > 0 && this.goodCount >= 10 && now() - this.lastProfileChangeAt >= 15000) {
+            return this.setProfile(order[currentIndex - 1], 'sustained-good', { action: 'upgrade' });
+          }
           return { action: 'hold', profile: this.currentProfile, reason: 'good' };
         }
 
@@ -93,6 +106,10 @@ const LinkQualityController = {
         const from = this.currentProfile;
         this.currentProfile = profile;
         if (from !== profile) {
+          this.lastProfileChangeAt = now();
+          this.degradedCount = 0;
+          this.criticalCount = 0;
+          this.goodCount = 0;
           this.profileChanges.push({
             at: Date.now(),
             from,

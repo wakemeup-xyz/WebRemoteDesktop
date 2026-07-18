@@ -33,6 +33,43 @@ async def test_tunnel_relay_allows_multiple_frames_in_flight_before_waiting_for_
     assert relay.ack_event.is_set() is True
 
 
+def test_tunnel_relay_blocks_capture_when_inflight_window_is_full():
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+    relay.inflight_frames = {
+        1: {"sent_at_ms": 1000.0},
+        2: {"sent_at_ms": 2000.0},
+    }
+    relay.max_in_flight_frames = 2
+
+    assert relay.should_wait_before_capture() is True
+
+    relay.inflight_frames.pop(1)
+
+    assert relay.should_wait_before_capture() is False
+
+
+def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback():
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+
+    assert relay.profile_name == "medium"
+    assert relay.jpeg_quality == 26
+
+    relay.ack(1, latency_ms=1500)
+    assert relay.profile_name == "low"
+    assert relay.max_in_flight_frames == 1
+
+    relay.ack(2, latency_ms=1500)
+    assert relay.profile_name == "survival"
+    assert relay.jpeg_quality == 18
+
+    relay.good_ack_streak = 3
+    relay.ack(3, latency_ms=180)
+
+    assert relay.profile_name == "low"
+
+
 def test_select_capture_monitor_skips_zero_sized_entries():
     monitor = select_capture_monitor([
         {"left": 0, "top": 0, "width": 0, "height": 0},
@@ -41,3 +78,16 @@ def test_select_capture_monitor_skips_zero_sized_entries():
     ])
 
     assert monitor == {"left": 10, "top": 20, "width": 1512, "height": 982}
+
+
+def test_select_capture_monitor_falls_back_to_screeninfo_when_mss_is_zero_sized():
+    monitor = select_capture_monitor(
+        [
+            {"left": 0, "top": 0, "width": 0, "height": 0},
+        ],
+        fallback_monitors=[
+            SimpleNamespace(x=32, y=64, width=1728, height=1117),
+        ],
+    )
+
+    assert monitor == {"left": 32, "top": 64, "width": 1728, "height": 1117}

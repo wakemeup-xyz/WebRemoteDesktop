@@ -8,6 +8,7 @@ const helperPath = path.join(__dirname, 'lib-tunnel-launchctl.sh');
 const startPath = path.join(__dirname, 'start-safe-wrd.sh');
 const stopPath = path.join(__dirname, 'stop-safe-wrd.sh');
 const rotatePath = path.join(__dirname, 'restart-safe-tunnel.sh');
+const fixedDomainPath = path.join(__dirname, 'start-fixed-domain.sh');
 
 test('tunnel launchagent plist exists and uses the repo tunnel label', () => {
   assert.equal(fs.existsSync(launchdPath), true, 'tunnel launchagent plist should exist');
@@ -58,4 +59,13 @@ test('safe stop script stops the tunnel through the shared launchctl helper', ()
 
   assert.match(source, /lib-tunnel-launchctl\.sh/);
   assert.match(source, /wrd_tunnel_launchctl_stop/);
+});
+
+test('fixed-domain startup requires config credentials-file and never passes a tunnel token', () => {
+  const source = fs.readFileSync(fixedDomainPath, 'utf8');
+
+  assert.match(source, /credentials-file/);
+  assert.match(source, /--config[^\n]+run[^\n]+TUNNEL_NAME/);
+  assert.doesNotMatch(source, /--token\b/);
+  assert.match(source, /unset TUNNEL_TOKEN/);
 });

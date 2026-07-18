@@ -1,74 +1,6 @@
-const fs = require('fs');
-const path = require('path');
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
-const { redactDiagnosticPayload, getDiagDir, persistDiagnostic } = require('../lib/diagnostic');
-
-const DIAG_DIR = getDiagDir();
-const DIAG_MAX_AGE_DAYS = 7;
-const DIAG_MAX_PER_VIEWER = 3;
-const DIAG_MAX_TOTAL = 50;
-
-function cleanupDiagLogs() {
-  try {
-    if (!fs.existsSync(DIAG_DIR)) return;
-    const files = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        const stat = fs.statSync(p);
-        return { name: f, path: p, mtime: stat.mtimeMs, size: stat.size };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    const now = Date.now();
-    const maxAgeMs = DIAG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-
-    // 1. 删除过期文件
-    for (const file of files) {
-      if (now - file.mtime > maxAgeMs) {
-        fs.unlinkSync(file.path);
-      }
-    }
-
-    // 2. 重新读取并限制每个 viewer 的条数
-    const remaining = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        const stat = fs.statSync(p);
-        // 从文件名提取 viewerId: TIMESTAMP_viewerId.json
-        const viewerId = f.replace(/^.+_/, '').replace('.json', '');
-        return { name: f, path: p, mtime: stat.mtimeMs, viewerId };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    const viewerCounts = {};
-    for (const file of remaining) {
-      viewerCounts[file.viewerId] = (viewerCounts[file.viewerId] || 0) + 1;
-      if (viewerCounts[file.viewerId] > DIAG_MAX_PER_VIEWER) {
-        fs.unlinkSync(file.path);
-        viewerCounts[file.viewerId]--;
-      }
-    }
-
-    // 3. 限制总文件数，删除最旧的
-    const finalFiles = fs.readdirSync(DIAG_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const p = path.join(DIAG_DIR, f);
-        return { path: p, mtime: fs.statSync(p).mtimeMs };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-
-    while (finalFiles.length > DIAG_MAX_TOTAL) {
-      const oldest = finalFiles.shift();
-      fs.unlinkSync(oldest.path);
-    }
-  } catch (err) {
-    console.error('[DIAGNOSTIC] cleanup failed:', err.message);
-  }
-}
+const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 
 // Store connections
 const connections = {
@@ -120,7 +52,11 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, number));
 }
 
-function setupSignaling(io) {
+function setupSignaling(io, options = {}) {
+  const config = options.config || loadConfig();
+  const logger = options.logger || console;
+  const recentEventStore = options.recentEventStore || null;
+  const structuredLogger = options.structuredLogger || null;
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -243,7 +179,11 @@ function setupSignaling(io) {
         return;
       }
       if (data.type !== 'mouse' || data.action !== 'move') {
-        console.log(`[INPUT] Relaying from viewer ${socket.id}:`, JSON.stringify(data));
+        const inputType = ['mouse', 'keyboard', 'command'].includes(data.type) ? data.type : 'unknown';
+        const action = /^[a-z-]{1,32}$/i.test(String(data.action || '')) ? String(data.action) : 'unknown';
+        const transport = data.transport === 'datachannel' ? 'datachannel' : 'socket';
+        const payloadBytes = Buffer.byteLength(JSON.stringify(data.payload || {}), 'utf8');
+        logger.log?.(`[INPUT] relay viewer=${socket.id} type=${inputType} action=${action} transport=${transport} payloadBytes=${payloadBytes}`);
       }
       if (connections.host) {
         connections.host.emit('input', {
@@ -253,6 +193,22 @@ function setupSignaling(io) {
       } else {
         console.warn('[INPUT] No host connected, dropping input');
       }
+    });
+
+    socket.on('input-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) {
+        logger.warn?.(`[INPUT] ack rejected role=${role}`);
+        return;
+      }
+      const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
+      if (!viewerSocket) return;
+      viewerSocket.emit('input-ack', {
+        type: 'input_ack',
+        schemaVersion: 1,
+        inputIds: Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [],
+        hostExecuteMs: Math.max(0, Number(data.hostExecuteMs || 0)),
+        transport: 'socket',
+      });
     });
 
     // Diagnostic logs relay (viewer -> host) + persist to disk
@@ -266,42 +222,24 @@ function setupSignaling(io) {
         return;
       }
       const logCount = data.logs?.length || 0;
-      console.log(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
-
-      const redacted = redactDiagnosticPayload(data);
-      const config = loadConfig();
-
-      if (config.enableDiagPersist) {
-        try {
-          if (!fs.existsSync(DIAG_DIR)) {
-            fs.mkdirSync(DIAG_DIR, { recursive: true });
-          }
-          cleanupDiagLogs();
-          const ts = new Date().toISOString().replace(/[:.]/g, '-');
-          const filename = `${ts}_${socket.id}.json`;
-          const report = {
-            receivedAt: new Date().toISOString(),
-            viewerId: socket.id,
-            userAgent: redacted.userAgent || 'unknown',
-            screen: redacted.screen || 'unknown',
-            logCount,
-            latency: redacted.latency || null,
-            logs: redacted.logs || [],
-            keyboardDebug: redacted.keyboardDebug || [],
-            keyboardMode: redacted.keyboardMode || null,
-            inputState: redacted.inputState || null,
-            inputChannelTimeline: redacted.inputChannelTimeline || [],
-          };
-          persistDiagnostic(filename, report);
-          console.log(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
-        } catch (err) {
-          console.error('[DIAGNOSTIC] Failed to write log file:', err.message);
-        }
+      logger.log?.(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
+      const result = ingestDiagnosticPayload({
+        role,
+        viewerId: socket.id,
+        socketId: socket.id,
+        userAgent: socket.handshake.headers['user-agent'] || 'unknown',
+        data,
+        config,
+        logger,
+      });
+      if (result.accepted && result.summaryEvent) {
+        recentEventStore?.append(result.summaryEvent);
+        structuredLogger?.info(result.summaryEvent);
       }
 
       // Also relay to host for real-time analysis
-      if (connections.host) {
-        connections.host.emit('diagnostic', redacted);
+      if (result.accepted && connections.host) {
+        connections.host.emit('diagnostic', result.report);
       }
     });
 
@@ -452,4 +390,4 @@ function getConnectionStatus() {
   };
 }
 
-module.exports = { setupSignaling, connections, getConnectionStatus };
+module.exports = { setupSignaling, connections, getConnectionStatus, ingestDiagnosticPayload };

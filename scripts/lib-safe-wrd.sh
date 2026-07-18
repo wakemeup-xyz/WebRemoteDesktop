@@ -137,73 +137,54 @@ wrd_safe_reconcile_pid_file() {
   return 1
 }
 
-wrd_safe_trycloudflare_ips() {
-  local host="$1"
-  [ -n "$host" ] || return 1
-
-  nslookup "$host" 8.8.8.8 2>/dev/null \
-    | sed -n 's/^Address: //p' \
-    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-    | tail -n +2 \
-    | awk '!seen[$0]++'
+wrd_safe_entry_health_script() {
+  local scripts_dir=""
+  scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  printf '%s\n' "${WRD_ENTRY_HEALTH_SCRIPT:-$scripts_dir/wrd_entry_health.py}"
 }
 
-wrd_safe_trycloudflare_reachable() {
+wrd_safe_entry_health_json() {
   local url="$1"
-  local host="$2"
-  local ip=""
+  [ -n "$url" ] || return 1
+  python3 "$(wrd_safe_entry_health_script)" --url "$url" 2>/dev/null
+}
 
-  while IFS= read -r ip; do
-    [ -n "$ip" ] || continue
-    if curl --resolve "${host}:443:${ip}" -I -L --max-time 10 "$url" >/dev/null 2>&1; then
-      return 0
-    fi
-  done < <(wrd_safe_trycloudflare_ips "$host")
-
-  return 1
+wrd_safe_entry_health_state_from_json() {
+  sed -n 's/.*"state":"\([^"]*\)".*/\1/p'
 }
 
 wrd_safe_url_reachability_state() {
   local url="$1"
   [ -n "$url" ] || return 1
 
-  if curl -I -L --max-time 10 "$url" >/dev/null 2>&1; then
-    printf '%s\n' reachable
-    return 0
-  fi
-
-  local host=""
-  host=$(printf '%s\n' "$url" | sed -E 's#^https?://([^/]+).*$#\1#')
-  if ! printf '%s\n' "$host" | grep -q '\.trycloudflare\.com$'; then
-    printf '%s\n' unreachable
-    return 1
-  fi
-
-  local ip=""
-  local resolved_ips=""
-  resolved_ips=$(wrd_safe_trycloudflare_ips "$host" 2>/dev/null || true)
-  if [ -z "$resolved_ips" ]; then
-    printf '%s\n' dns-unresolved
-    return 1
-  fi
-
-  while IFS= read -r ip; do
-    [ -n "$ip" ] || continue
-    if curl --resolve "${host}:443:${ip}" -I -L --max-time 10 "$url" >/dev/null 2>&1; then
-      printf '%s\n' reachable
-      return 0
-    fi
-  done <<EOF
-$resolved_ips
-EOF
-
-  printf '%s\n' origin-unreachable
-  return 1
+  local health_json=""
+  local state=""
+  health_json=$(wrd_safe_entry_health_json "$url" || true)
+  state=$(printf '%s\n' "$health_json" | wrd_safe_entry_health_state_from_json)
+  [ -n "$state" ] || state=origin-unreachable
+  printf '%s\n' "$state"
+  [ "$state" = deliverable ]
 }
 
 wrd_safe_url_is_reachable() {
   local url="$1"
   local state=""
   state=$(wrd_safe_url_reachability_state "$url" || true)
-  [ "$state" = reachable ]
+  [ "$state" = deliverable ]
+}
+
+wrd_safe_cloudflared_token_in_argv() {
+  local args_file="${1:-}"
+  if [ -n "$args_file" ]; then
+    [ -f "$args_file" ] || return 1
+    awk '
+      /cloudflared/ && /(^|[[:space:]])--token([=[:space:]]|$)/ { found = 1 }
+      END { exit(found ? 0 : 1) }
+    ' "$args_file"
+    return $?
+  fi
+  ps -axo command= 2>/dev/null | awk '
+    /[c]loudflared/ && /(^|[[:space:]])--token([=[:space:]]|$)/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
 }

@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
@@ -46,8 +47,9 @@ async function startServer() {
     WRD_TERMINAL_ADMIN_PASSWORD: 'test-terminal-admin-password',
     WRD_TERMINAL_SOFT_WARN_SESSION_COUNT: '3',
   };
-  const child = spawn(process.execPath, ['signal-server/server.js'], {
-    cwd: process.cwd(),
+  const serverPath = path.join(__dirname, '..', 'server.js');
+  const child = spawn(process.execPath, [serverPath], {
+    cwd: path.dirname(serverPath),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -61,7 +63,20 @@ async function startServer() {
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;
-  await waitForHealthy(baseUrl);
+  const childExit = new Promise((_, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      reject(new Error(`server_exited_before_health code=${code} signal=${signal || ''}`));
+    });
+  });
+  try {
+    await Promise.race([waitForHealthy(baseUrl), childExit]);
+  } catch (error) {
+    if (child.exitCode == null && child.signalCode == null) {
+      child.kill('SIGTERM');
+    }
+    throw new Error(`${error.message}\n${output}`);
+  }
 
   return {
     baseUrl,

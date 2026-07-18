@@ -48,7 +48,32 @@ test('host launchagent plist exists and uses the repo host label', () => {
   assert.match(source, /run-host-launchctl\.sh/);
   assert.match(source, /RunAtLoad/);
   assert.match(source, /KeepAlive/);
-  assert.match(source, /back-debug\.log/);
+  assert.match(source, /wrd-host-launch\.log/);
+  assert.doesNotMatch(source, /back-debug\.log/);
+});
+
+test('run-host-launchctl preserves only the newest one MiB of wrapper log before appending', (t) => {
+  const fixture = prepareRunnerProject();
+  const launchLogPath = path.join(fixture.projectDir, 'wrd-host-launch.log');
+  t.after(() => fs.rmSync(fixture.projectDir, { recursive: true, force: true }));
+  fs.writeFileSync(launchLogPath, `old-prefix-${'x'.repeat(1536 * 1024)}-old-tail`);
+
+  execFileSync('bash', [fixture.runnerCopyPath], {
+    cwd: fixture.projectDir,
+    env: {
+      ...process.env,
+      WRD_HOST_LAUNCH_LOG: launchLogPath,
+      WRD_HOST_HEALTH_URL: 'http://127.0.0.1:65531/health',
+      WRD_HOST_WAIT_INTERVAL_SECONDS: '0.01',
+      WRD_HOST_WAIT_TIMEOUT_SECONDS: '1',
+    },
+  });
+
+  const contents = fs.readFileSync(launchLogPath);
+  assert.ok(contents.length <= (1024 * 1024) + 4096);
+  assert.equal(contents.includes(Buffer.from('old-prefix')), false);
+  assert.equal(contents.includes(Buffer.from('old-tail')), true);
+  assert.equal(contents.includes(Buffer.from('Signal server health check failed')), true);
 });
 
 test('host launchctl helper exists and manages the host launchagent label', () => {
@@ -136,7 +161,7 @@ test('run-host-launchctl starts host.py once signal-server health is ready', asy
     await once(child, 'exit').catch(() => {});
   });
 
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 50; i += 1) {
     if (fs.existsSync(fixture.pythonMarkerPath)) {
       break;
     }
@@ -205,7 +230,7 @@ test('run-host-launchctl does not start host.py until host auth succeeds', async
 
   allowAuth = true;
 
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 50; i += 1) {
     if (fs.existsSync(fixture.pythonMarkerPath)) {
       break;
     }

@@ -8,6 +8,7 @@
 - ✅ Python Host 应用 (Python + aiortc + MSS屏幕捕获)
 - ✅ H.264 WebRTC 低延迟视频链路
 - ✅ WebRTC DataChannel 输入链路
+- ✅ Host 捕获源回退：MSS 瞬时只返回 `0x0` monitor 时，自动回退到 `screeninfo`
 - ✅ macOS 防睡眠守护和 quick tunnel 自恢复
 
 ## 系统架构
@@ -48,9 +49,14 @@
 
 > 当前仓库若准备正式公开发布，仍需先轮换历史上已实际使用过的密码、JWT secret、TURN 凭据和 tunnel 相关凭据。
 
-### 方式一：默认推荐启动（safe quick tunnel）
+正式公网入口：`https://link.stockhub.wiki`
 
-默认推荐先用这一种：同时拉起本地服务和 safe quick tunnel 临时公网入口。
+- 外部用户应只记这一个固定域名
+- `trycloudflare` / safe quick tunnel 仅用于本地调试、临时排障和公网入口兜底验证，不应作为长期正式入口
+
+### 方式一：本地调试/排障启动（safe quick tunnel）
+
+当你需要同时拉起本地服务，并保留一个临时 quick tunnel 做调试或排障时，使用这一种。
 
 ```bash
 cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
@@ -64,7 +70,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 3. 通过 LaunchAgent 注册并启动 `python-host`
 4. 在 `scripts/run-host-launchctl.sh` 内先等待 `/health` 成功，再预检 `/api/auth/login/host` 认证成功，最后才真正启动 `host.py`
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
-6. 启动 safe quick tunnel，并先做本机 `curl -I -L` 可达性校验，验证通过后才把公网地址写入 `/tmp/wrd-safe-current-url.txt`
+6. 启动 safe quick tunnel，并通过 `scripts/wrd_entry_health.py` 校验 `<origin>/health` 返回 2xx 且 JSON `status=ok`，验证通过后才原子写入 `/tmp/wrd-safe-current-url.txt`
 
 补充约定：
 
@@ -81,18 +87,18 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 1. `./scripts/status-safe-wrd.sh` 中 `safe quick tunnel` 仍为 `running`
 2. trycloudflare 子域名已经可以解析
-3. `curl -I -L <safe-url>` 能拿到 HTTP 响应
-4. 如果 `safe quick tunnel` 进程仍在，但 `curl -I -L <safe-url>` 已失败，说明旧 tunnel 地址可能已经失效；此时只能报告并等待用户明确授权是否重建 tunnel
-5. `scripts/run-safe-quicktunnel.sh` 现在会在把 URL 写入文件前先做本机 200 校验；如果校验失败，说明这个 trycloudflare 地址暂时还不能交付
+3. `python3 scripts/wrd_entry_health.py --url <safe-url>` 返回 `deliverable=true`
+4. 如果 `safe quick tunnel` 进程仍在，但入口检查已失败，说明旧 tunnel 地址可能已经失效；此时只能报告并等待用户明确授权是否重建 tunnel
+5. `scripts/run-safe-quicktunnel.sh` 是 safe URL 的唯一 publisher；它只在 `/health` 2xx 且 JSON `status=ok` 后原子写入当前文件和 archive
 6. 如果这台机器的系统 DNS 一时解析不到 `*.trycloudflare.com`，脚本会回退到公共 DNS 解析并用 `curl --resolve` 校验；避免把“本机 resolver 异常”误判成 tunnel 本身不可用
 
 补充判断：
 
-1. `DNS 可解析` 仍不等于入口可用；若 `curl -I -L` 返回超时、`Could not resolve host`、`HTTP 530` 等，都应视为当前公网入口无效
-2. `cloudflared` 进程仍在，也不等于这个 trycloudflare 地址仍然有效；状态判断必须以 `status-safe-wrd.sh` 加 `curl -I -L` 为准
+1. `DNS 可解析` 仍不等于入口可用；404、410、429、5xx、重定向或错误 JSON 都不是可交付入口
+2. `cloudflared` 进程仍在，也不等于这个 trycloudflare 地址仍然有效；状态判断必须以 `status-safe-wrd.sh` 的 canonical health 结果为准
 3. trycloudflare 本身没有稳定性保证；如果需要长期稳定地址，应切换到命名隧道和固定域名，而不是继续依赖临时 quick tunnel
 4. 如果你看到地址“变了”，以 `/tmp/wrd-safe-current-url.txt` 的最新内容为准；旧链接只要过了 reachability 校验就必须视为失效
-5. 现在 `status-safe-wrd.sh` / `run-safe-quicktunnel.sh` 的 reachability 判断会优先尝试普通 `curl`，仅在 `trycloudflare` 遇到本机 DNS 失败时才回退到公共 DNS 校验
+5. `status-safe-wrd.sh` 只读检查，不创建、恢复、删除或改写 PID/URL 真相文件；`trycloudflare` 遇到本机 DNS 失败时，canonical checker 会回退到公共 DNS 并保持正确 TLS SNI 做相同内容校验
 
 如果是在短生命周期的自动化 shell 中启动（例如一次性命令执行器），后台 `nohup` 子进程可能会在父 shell 结束后被回收；此时建议在用户自己的常驻终端中重新执行该脚本，或单独保持 `./scripts/run-safe-quicktunnel.sh` 运行。
 
@@ -149,7 +155,10 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 - 已完成 `scripts/setup-cloudflare.sh`
 - 本机存在 `~/.cloudflared/config.yml`
+- `config.yml` 中为 named tunnel 配置了 `credentials-file`；正式启动不接受 `--token` 参数或 `TUNNEL_TOKEN` 作为凭据来源
 - `wrd-tunnel` 命名隧道已配置完成
+
+`./scripts/status-safe-wrd.sh` 若发现现有 `cloudflared` argv 含 `--token`，只输出固定安全告警，不显示 token，也不会停止或重启 tunnel。凭据迁移和 tunnel 重启必须由用户单独授权。
 
 如本地服务不是 `8080`，可在执行前覆盖：
 
@@ -196,7 +205,7 @@ curl http://127.0.0.1:8080/api/status
 - `/health` 返回 `status: ok`
 - `/api/status` 返回 `hostOnline: true`
 
-如需确认 LaunchAgent 守门逻辑是否生效，可看 `back-debug.log` 中是否出现以下顺序日志：
+如需确认 LaunchAgent 守门逻辑是否生效，可看 `/tmp/wrd-host-launch.log` 中是否出现以下顺序日志：
 
 - `=== LaunchAgent starting host ===`
 - `Signal server healthy: ...`
@@ -251,7 +260,10 @@ http://127.0.0.1:8080
 - Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
 - Terminal 只走浏览器会话内的 Socket.IO / HTTPS 通道，不接入 STUN / TURN / WebRTC 媒体链路
-- `http://localhost:5173/` 仅用于开发映射；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式入口
+- Terminal 的 `socketRtt` 和 `inputAckRtt` 只使用浏览器本地 pending 时间；服务端 `serverProcessMs` 单独显示，不能跨机器相减 wall clock
+- password-safe echo 默认不可信：首批普通输入只作为隐藏 probe，只有远端 shell 确实回显后才对后续字符启用；Enter、控制键、alternate-screen、断线和重连都会清零，因此密码提示不会在浏览器显示输入字符
+- shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 默认 256 KiB，配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
+- `http://localhost:5173/` 仅用于前端开发映射和 API 代理；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式入口
 - 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
 
 
@@ -352,13 +364,16 @@ WebRemoteDesktop/
 ### 一键安全状态
 
 1. 查看本仓库安全链路状态：`./scripts/status-safe-wrd.sh`
-2. 它会只读取 `/tmp/wrd-safe-*.pid`、`/tmp/wrd-safe-current-url.txt`，并检查 `http://127.0.0.1:8080/health` 与 `http://127.0.0.1:8080/api/status`
+2. 它会只读取 `/tmp/wrd-safe-*.pid`、`/tmp/wrd-safe-current-url.txt`，并检查公网 `/health`、本地 `http://127.0.0.1:8080/health` 与 `/api/status`
+3. 它可以发现与 PID 文件不一致的活进程并报告，但不会调和 PID 文件，也不会从 archive/log 恢复 URL
 
 ### WebRTC 连接失败
 1. 检查浏览器控制台是否有 JavaScript 错误
 2. 在网页控制栏切换网络模式：本地同网优先“本地直连”，普通外网用“自动穿透”或“外网直连”；TURN / 隧道中继作为用户手动模式使用
 3. 如果网页一直 `0 FPS` 且链路为 `-` / `unknown`，说明 ICE 没有选出媒体路径；Strict STUN 默认不会自动切 TURN 或媒体 tunnel
 4. TURN 环境变量：`TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL`；STUN 可通过 `STUN_URLS` 覆盖
+5. 如果 Host 日志出现 `No usable monitor reported by MSS`，说明这次失败是 Host 屏幕枚举异常，不是公网入口异常；当前 Host 会优先用 `MSS`，若只拿到 `0x0` monitor 再回退到 `screeninfo`
+6. 2026-07-09 已验证：`https://link.stockhub.wiki` 下手动切到 `隧道中继` 可以真实出画，Viewer 状态会显示 `已连接 / 链路 tunnel / Tunnel relay stream`
 
 ### Strict STUN 自适应优化
 
@@ -406,9 +421,16 @@ TURN_CREDENTIAL=你的凭证
 
 1. 让用户在网页诊断面板点击“发送日志到服务端”
 2. `web-client/js/diagnostic.js` 会收集最近控制台日志和延迟统计
-3. 前端通过 Socket.IO `diagnostic` 事件发送到 Signal Server，服务端会先做脱敏和截断
-4. 默认不会把诊断日志持久化到仓库目录；仅在设置 `WRD_ENABLE_DIAG_PERSIST=1` 时写入系统临时目录下的 `wrd-diag/`
-5. 排查问题时，优先看实时服务端日志；若已开启持久化，再读取临时目录中的最新诊断文件
+3. 前端优先通过 Socket.IO `diagnostic` 事件发送；若 signaling/socket 不可用，再退化为带 Bearer 的 HTTP `POST /api/diagnostics`
+4. 运行时结构化日志默认始终开启；Viewer 诊断、Terminal 审计和 Host 摘要事件都会进入实时服务端日志
+5. 默认不会把诊断 bundle 持久化到仓库目录；仅在设置 `WRD_ENABLE_DIAG_PERSIST=1` 时写入系统临时目录下的 `wrd-diag/`
+6. Terminal 审计事件默认进入统一运行日志；仅在设置 `WRD_TERMINAL_AUDIT_LOG=/path/to/file.jsonl` 时额外写一份独立 JSONL 审计文件
+7. `WRD_TERMINAL_RECORD_IO=0` 表示默认不记录完整 Terminal 输入输出原文；只有显式打开时才允许记录详细 IO
+8. Host 处理浏览器诊断时默认只输出摘要事件；只有设置 `WRD_HOST_VERBOSE_DIAGNOSTICS=1` 才会额外打印逐行 Viewer 日志
+9. Host 和 Signal file sink 共用 `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT`，默认单文件 10 MiB、保留 3 个备份；Terminal audit file 使用相同轮转边界
+10. 默认输入日志只记录 action、transport、payload byte count、input ID hash 和本机执行时间，不记录 key、code、文本、坐标或完整 payload
+11. `host_event_loop_lag` 以 20ms/100ms 分级并附带媒体档位、连接状态、计数和有界资源摘要；普通告警按 5 秒聚合，避免日志放大阻塞
+12. 排查问题时，优先看实时服务端日志；若已开启 bundle 持久化，再读取临时目录中的最新诊断文件
 
 ### Mac 待机后服务不可用
 

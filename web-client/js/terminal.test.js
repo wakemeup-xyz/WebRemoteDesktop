@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { TerminalEchoController } = require('./terminal-echo-controller');
 
 function makeClassList() {
   const classes = new Set();
@@ -223,6 +224,8 @@ function loadTerminal(overrides = {}) {
     io: overrides.io || (() => fakeSocket),
     fetch: overrides.fetch,
     confirm: overrides.confirm || (() => true),
+    Date: overrides.Date || Date,
+    TerminalEchoController,
   };
   context.document.body.ownerDocument = context.document;
   elements.forEach((element) => {
@@ -585,6 +588,24 @@ test('TerminalPanel keeps the new-session button disabled until the terminal soc
   assert.equal(elements.get('terminalNewBtn').disabled, false);
 });
 
+test('TerminalPanel disables new session creation when pool capacity is exhausted', () => {
+  const { TerminalPanel, elements } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = { connected: true, emit() {} };
+  TerminalPanel.applyPoolSnapshot({
+    capacity: { sessionCount: 2, maxSessions: 2, availableSessions: 0 },
+    sessions: [
+      { sessionId: 'term-1', title: 'one' },
+      { sessionId: 'term-2', title: 'two' },
+    ],
+  });
+  TerminalPanel.render();
+
+  assert.equal(elements.get('terminalNewBtn').disabled, true);
+  assert.match(elements.get('terminalWarning').textContent, /上限|limit/i);
+});
+
 test('TerminalPanel keeps the terminal socket alive when the user switches back to the desktop tab', () => {
   const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');
@@ -671,6 +692,11 @@ test('TerminalPanel falls back to the live default session when the persisted ac
   fakeSocket.connected = true;
   socketHandlers.get('connect')();
 
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_stale'),
+    false,
+  );
+
   socketHandlers.get('terminal:pool_snapshot')({
     defaultSessionId: 'term_live',
     sessions: [{ sessionId: 'term_live', title: 'Shared shell', observerCount: 0 }],
@@ -681,6 +707,35 @@ test('TerminalPanel falls back to the live default session when the persisted ac
     true,
   );
   assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_live');
+});
+
+test('TerminalPanel falls back to the live default session even when it is not the first snapshot item', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term_stale');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_2',
+    sessions: [
+      { sessionId: 'term_1', title: 'Shared shell 1', observerCount: 0 },
+      { sessionId: 'term_2', title: 'Shared shell 2', observerCount: 0 },
+    ],
+  });
+
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_stale'),
+    false,
+  );
+  assert.equal(
+    emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_2'),
+    true,
+  );
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_2');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_2');
 });
 
 test('TerminalPanel activating an unattached shared session requests attach', () => {
@@ -889,8 +944,39 @@ test('stale token connect_error then reauthorize recreates the terminal socket w
   assert.equal(ioCalls[1].options.auth.token, 'fresh-token');
 });
 
+test('expired terminal admin token is cleared on connect_error so the auth form becomes visible again', () => {
+  const sockets = [];
+  const { TerminalPanel, sessionStorageMap, tokenKey, elements } = loadTerminal({
+    io: (_url, _options) => {
+      const socket = createSocketDouble();
+      sockets.push(socket);
+      return socket;
+    },
+  });
+
+  sessionStorageMap.set(tokenKey, 'expired-admin-token');
+  TerminalPanel.init();
+  TerminalPanel.showTerminal();
+
+  assert.equal(TerminalPanel.hasAdminToken(), true);
+  assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), true);
+
+  sockets[0].handlers.get('connect_error')({ message: 'jwt expired' });
+
+  assert.equal(TerminalPanel.hasAdminToken(), false);
+  assert.equal(sessionStorageMap.has(tokenKey), false);
+  assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), false);
+  assert.match(elements.get('terminalStatus').textContent, /重新授权|重新登录|过期/i);
+});
+
 test('TerminalPanel records terminal latency state and suppresses duplicated remote echo after optimistic local echo', () => {
   const writes = [];
+  let now = 1000;
+  class FakeDate extends Date {
+    static now() {
+      return now;
+    }
+  }
   function TrackingTerminal() {
     return {
       open() {},
@@ -916,7 +1002,7 @@ test('TerminalPanel records terminal latency state and suppresses duplicated rem
     sessionStorageMap,
     tokenKey,
     emitted,
-  } = loadTerminal({ Terminal: TrackingTerminal });
+  } = loadTerminal({ Terminal: TrackingTerminal, Date: FakeDate });
 
   sessionStorageMap.set(tokenKey, 'terminal-admin-token');
   TerminalPanel.cacheElements();
@@ -937,39 +1023,208 @@ test('TerminalPanel records terminal latency state and suppresses duplicated rem
   });
 
   const term = TerminalPanel.terms.get('term_echo');
-  term.onDataHandler('ls');
+  term.onDataHandler('l');
 
+  const probeEvent = emitted.findLast((entry) => entry.event === 'terminal:input');
+  assert.equal(probeEvent.payload.sessionId, 'term_echo');
+  assert.equal(probeEvent.payload.data, 'l');
+  assert.deepEqual(writes, []);
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_echo',
+    data: 'l',
+  });
+
+  term.onDataHandler('s');
   const inputEvent = emitted.findLast((entry) => entry.event === 'terminal:input');
   assert.equal(inputEvent.payload.sessionId, 'term_echo');
-  assert.equal(inputEvent.payload.data, 'ls');
+  assert.equal(inputEvent.payload.data, 's');
   assert.equal(typeof inputEvent.payload.inputId, 'string');
   assert.equal(typeof inputEvent.payload.clientSentAt, 'number');
-  assert.deepEqual(writes, ['ls']);
+  assert.deepEqual(writes, ['l', 's']);
 
+  now = 1120;
   socketHandlers.get('terminal:input_ack')({
     sessionId: 'term_echo',
     inputId: inputEvent.payload.inputId,
     clientSentAt: inputEvent.payload.clientSentAt,
-    serverReceivedAt: inputEvent.payload.clientSentAt + 120,
-    serverSentAt: inputEvent.payload.clientSentAt + 121,
+    serverReceivedAt: 9_000_000,
+    serverSentAt: 9_000_001,
     transport: 'websocket',
   });
   socketHandlers.get('terminal:output')({
     sessionId: 'term_echo',
-    data: 'ls',
+    data: 's',
   });
   socketHandlers.get('terminal:output')({
     sessionId: 'term_echo',
     data: '\r\nprompt$ ',
   });
 
-  assert.deepEqual(writes, ['ls', '\r\nprompt$ ']);
+  assert.deepEqual(writes, ['l', 's', '\r\nprompt$ ']);
 
   const diagnostic = TerminalPanel.getDiagnosticState();
   assert.equal(diagnostic.transport, 'websocket');
   assert.equal(diagnostic.socketState, 'connected');
   assert.equal(diagnostic.inputAck.last, 120);
   assert.equal(diagnostic.inputAck.p50, 120);
+  assert.equal(diagnostic.serverProcess.last, 1);
+  assert.equal(diagnostic.echoConfident, true);
+  assert.equal(diagnostic.pendingLocalEchoBytes, 0);
+});
+
+test('TerminalPanel measures input ack RTT in the browser clock and server processing separately', () => {
+  let now = 1120;
+  class FakeDate extends Date {
+    static now() {
+      return now;
+    }
+  }
+  const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  TerminalPanel.pendingInputAcks.set('input-skew', {
+    sessionId: 'term-skew',
+    clientSentAt: 1000,
+  });
+
+  TerminalPanel.handleInputAck({
+    inputId: 'input-skew',
+    clientSentAt: 8_999_000,
+    serverReceivedAt: 9_000_000,
+    serverSentAt: 9_000_007,
+    transport: 'websocket',
+  });
+
+  const diagnostic = TerminalPanel.getDiagnosticState();
+  assert.equal(diagnostic.inputAck.last, 120);
+  assert.equal(diagnostic.serverProcess.last, 7);
+  assert.equal(TerminalPanel.pendingInputAcks.has('input-skew'), false);
+
+  now = 1130;
+});
+
+test('TerminalPanel socket RTT trusts the local pending probe instead of echoed client time', () => {
+  class FakeDate extends Date {
+    static now() {
+      return 1120;
+    }
+  }
+  const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  TerminalPanel.pendingLatencyProbes.set('ping-skew', 1000);
+
+  TerminalPanel.handleLatencyPong({
+    nonce: 'ping-skew',
+    clientSentAt: 9_000_000,
+    serverReceivedAt: 9_000_010,
+    serverSentAt: 9_000_011,
+    transport: 'websocket',
+  });
+
+  assert.equal(TerminalPanel.getDiagnosticState().socketRtt.last, 120);
+});
+
+test('TerminalPanel suppresses echoed input even when remote output starts with a control sequence', () => {
+  const writes = [];
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) {
+        this.onDataHandler = handler;
+      },
+      onResize(handler) {
+        this.onResizeHandler = handler;
+      },
+      write(data) {
+        writes.push(String(data));
+      },
+      dispose() {},
+    };
+  }
+
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    sessionStorageMap,
+    tokenKey,
+  } = loadTerminal({ Terminal: TrackingTerminal });
+
+  sessionStorageMap.set(tokenKey, 'terminal-admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_control_seq',
+    title: 'Shared shell',
+    status: 'attached',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+  socketHandlers.get('terminal:session_attached')({
+    sessionId: 'term_control_seq',
+    status: 'attached',
+    observerCount: 1,
+    activePresenterClientId: TerminalPanel.getBrowserSessionId(),
+  });
+
+  const term = TerminalPanel.terms.get('term_control_seq');
+  term.onDataHandler('a');
+
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_control_seq',
+    data: '\u001b[?2004ha',
+  });
+  term.onDataHandler('b');
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_control_seq',
+    data: '\u001b[32mb',
+  });
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_control_seq',
+    data: '\r\nprompt$ ',
+  });
+
+  assert.deepEqual(writes, ['\u001b[?2004ha', 'b', '\u001b[32m', '\r\nprompt$ ']);
+  assert.equal(TerminalPanel.getDiagnosticState().pendingLocalEchoBytes, 0);
+});
+
+test('TerminalPanel never writes an unconfirmed password probe to xterm', () => {
+  const writes = [];
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) { this.onDataHandler = handler; },
+      onResize() {},
+      write(data) { writes.push(String(data)); },
+      dispose() {},
+    };
+  }
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    sessionStorageMap,
+    tokenKey,
+  } = loadTerminal({ Terminal: TrackingTerminal });
+  sessionStorageMap.set(tokenKey, 'terminal-admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_password',
+    status: 'attached',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+
+  TerminalPanel.terms.get('term_password').onDataHandler('Secret123');
+
+  assert.deepEqual(writes, []);
+  assert.equal(TerminalPanel.getDiagnosticState().echoConfident, false);
+  assert.equal(TerminalPanel.getDiagnosticState().echoAwaitingProbe, true);
+  assert.equal(TerminalPanel.getDiagnosticState().pendingLocalEchoBytes, 0);
 });
 
 test('TerminalPanel disables optimistic local echo while the terminal is in the alternate screen', () => {

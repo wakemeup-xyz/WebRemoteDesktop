@@ -34,6 +34,21 @@ function setupTerminal(io, options = {}) {
   });
 
   const terminalNamespace = io.of('/terminal');
+  let idleReaperTimer = null;
+  if (
+    Number(config.terminalIdleTimeoutMs) > 0
+    && typeof sessionManager.reapIdleSessions === 'function'
+  ) {
+    const intervalMs = Math.min(60000, Math.max(1000, Math.floor(Number(config.terminalIdleTimeoutMs) / 2)));
+    idleReaperTimer = setInterval(() => {
+      const reaped = sessionManager.reapIdleSessions();
+      if (!reaped.length) return;
+      const snapshot = sessionManager.getPoolSnapshot();
+      terminalNamespace.emit('terminal:pool_snapshot', snapshot);
+      terminalNamespace.emit('terminal:snapshot', snapshot);
+    }, intervalMs);
+    idleReaperTimer.unref?.();
+  }
 
   terminalNamespace.use((socket, next) => {
     try {
@@ -262,6 +277,13 @@ function setupTerminal(io, options = {}) {
 
     socket.on('terminal:input', (payload = {}) => {
       if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
+        audit.warn('terminal_input_rejected', {
+          sessionId: payload.sessionId || null,
+          clientId,
+          socketId,
+          code: 'terminal_session_not_found',
+          reason: 'observer_not_attached',
+        });
         socket.emit('terminal:error', {
           code: 'terminal_session_not_found',
           message: 'Terminal session not found',
@@ -270,6 +292,14 @@ function setupTerminal(io, options = {}) {
       }
       const data = String(payload.data || '');
       if (Buffer.byteLength(data, 'utf8') > 64 * 1024) {
+        audit.warn('terminal_input_rejected', {
+          sessionId: payload.sessionId,
+          clientId,
+          socketId,
+          code: 'terminal_input_too_large',
+          bytes: Buffer.byteLength(data, 'utf8'),
+          maxBytes: 64 * 1024,
+        });
         socket.emit('terminal:error', {
           code: 'terminal_input_too_large',
           message: 'Terminal input exceeds 64KB',
@@ -295,6 +325,14 @@ function setupTerminal(io, options = {}) {
           transport: getTransportName(),
         });
       } catch (err) {
+        audit.error('terminal_error', {
+          sessionId: payload.sessionId || null,
+          clientId,
+          socketId,
+          action: 'input',
+          code: err.code || 'terminal_input_failed',
+          message: err.message,
+        });
         socket.emit('terminal:error', {
           code: err.code || 'terminal_input_failed',
           message: err.message,
@@ -304,6 +342,13 @@ function setupTerminal(io, options = {}) {
 
     socket.on('terminal:resize', (payload = {}) => {
       if (!payload.sessionId || !sessionManager.isObserverAttached(payload.sessionId, { clientId, socketId })) {
+        audit.warn('terminal_resize_rejected', {
+          sessionId: payload.sessionId || null,
+          clientId,
+          socketId,
+          code: 'terminal_session_not_found',
+          reason: 'observer_not_attached',
+        });
         socket.emit('terminal:error', {
           code: 'terminal_session_not_found',
           message: 'Terminal session not found',
@@ -313,19 +358,42 @@ function setupTerminal(io, options = {}) {
       const cols = Number(payload.cols);
       const rows = Number(payload.rows);
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || cols > 300 || rows < 5 || rows > 100) {
+        audit.warn('terminal_resize_rejected', {
+          sessionId: payload.sessionId,
+          clientId,
+          socketId,
+          code: 'terminal_resize_out_of_range',
+          cols,
+          rows,
+        });
         socket.emit('terminal:error', {
           code: 'terminal_resize_out_of_range',
           message: 'Terminal resize is out of range',
         });
         return;
       }
-      sessionManager.resizeSession(payload.sessionId, {
-        clientId,
-        socketId,
-        cols,
-        rows,
-      });
-      emitPoolSnapshot();
+      try {
+        sessionManager.resizeSession(payload.sessionId, {
+          clientId,
+          socketId,
+          cols,
+          rows,
+        });
+        emitPoolSnapshot();
+      } catch (err) {
+        audit.error('terminal_error', {
+          sessionId: payload.sessionId || null,
+          clientId,
+          socketId,
+          action: 'resize',
+          code: err.code || 'terminal_resize_failed',
+          message: err.message,
+        });
+        socket.emit('terminal:error', {
+          code: err.code || 'terminal_resize_failed',
+          message: err.message,
+        });
+      }
     });
 
     socket.on('disconnect', () => {
@@ -349,6 +417,10 @@ function setupTerminal(io, options = {}) {
   return {
     namespace: terminalNamespace,
     sessionManager,
+    close() {
+      if (idleReaperTimer) clearInterval(idleReaperTimer);
+      idleReaperTimer = null;
+    },
   };
 }
 

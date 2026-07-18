@@ -17,6 +17,11 @@ const Input = {
   _lastKeyboardResetReason: null,
   _lastKeyboardResetAt: 0,
   _keyboardResetDedupeMs: 250,
+  _activePointerId: null,
+  _activePointerElement: null,
+  _pressedMouseButtons: new Set(),
+  _pendingMouseReset: false,
+  _lastPointerCoords: null,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -87,7 +92,7 @@ const Input = {
       this.updateKeyDisplayRaw(`${status}: ↓${label}`);
 
       if (!this.isActive) {
-        console.warn(`[KEYBOARD] Ignored keydown: keyId=${this.getKeyId(normalized)} key=${e.key} code=${e.code} (isActive=false)`);
+        console.warn('[KEYBOARD] keydown ignored reason=inactive');
         return;
       }
       e.preventDefault();
@@ -114,7 +119,7 @@ const Input = {
         modifiers: mods
       });
       this.recordKeyboardDebug('keydown', e, normalized, mods, downId);
-      console.log(`[KEYBOARD] keydown: keyId=${keyId} inputId=${downId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
+      console.log(`[KEYBOARD] keydown sent inputId=${downId}`);
     });
 
     document.addEventListener('keyup', (e) => {
@@ -135,7 +140,7 @@ const Input = {
         modifiers
       });
       this.recordKeyboardDebug('keyup', e, normalized, modifiers, upId);
-      console.log(`[KEYBOARD] keyup:   keyId=${keyId} inputId=${upId} key=${e.key} code=${e.code} -> normalized=${normalized.key}/${normalized.code}`);
+      console.log(`[KEYBOARD] keyup sent inputId=${upId}`);
     });
 
     // 点击获得焦点（不再发送冗余 click 事件，mousedown+mouseup 已构成完整点击）
@@ -148,24 +153,6 @@ const Input = {
       });
     }
 
-    // 双击事件
-    video.addEventListener('dblclick', (e) => {
-      if (!this.isActive) return;
-      e.preventDefault();
-      video.focus();
-      const coords = this.getRelativeCoords(e);
-      this.sendInput('mouse', 'dblclick', coords);
-    });
-    if (relayImage) {
-      relayImage.addEventListener('dblclick', (e) => {
-        if (!this.isActive) return;
-        e.preventDefault();
-        relayImage.focus();
-        const coords = this.getRelativeCoords(e);
-        this.sendInput('mouse', 'dblclick', coords);
-      });
-    }
-
     // 视频开始播放时激活输入
     video.addEventListener('playing', () => {
       console.log('Input: Video playing, activating input');
@@ -174,8 +161,7 @@ const Input = {
     });
 
     video.addEventListener('pause', () => {
-      this.releaseAllKeys();
-      this.isActive = false;
+      this.setActive(false);
     });
 
     // 防止右键菜单
@@ -189,12 +175,14 @@ const Input = {
     }
 
     window.addEventListener('blur', () => {
-      this.releaseAllKeys();
+      this.releasePointer('window-blur');
+      this.releaseAllKeys('window-blur');
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        this.releaseAllKeys();
+        this.releasePointer('visibility-hidden');
+        this.releaseAllKeys('visibility-hidden');
       }
     });
   },
@@ -293,36 +281,19 @@ const Input = {
     });
   },
 
-  getRelativeCoords(e) {
-    // Use the event target element for coordinate calculation (supports both <video> and <img>)
+  getRelativeCoords(e, allowOutside = false) {
     const el = e.currentTarget || this.videoElement;
     const rect = el.getBoundingClientRect();
-
-    // <video> uses videoWidth/videoHeight, <img> uses naturalWidth/naturalHeight
-    const videoWidth = el.videoWidth || el.naturalWidth || rect.width;
-    const videoHeight = el.videoHeight || el.naturalHeight || rect.height;
-    const videoRatio = videoWidth / videoHeight;
-    const rectRatio = rect.width / rect.height;
-
-    let contentWidth, contentHeight, offsetX, offsetY;
-    if (rectRatio > videoRatio) {
-      contentHeight = rect.height;
-      contentWidth = contentHeight * videoRatio;
-      offsetX = (rect.width - contentWidth) / 2;
-      offsetY = 0;
-    } else {
-      contentWidth = rect.width;
-      contentHeight = contentWidth / videoRatio;
-      offsetX = 0;
-      offsetY = (rect.height - contentHeight) / 2;
-    }
-
-    const rawRelX = (e.clientX - rect.left - offsetX) / contentWidth;
-    const rawRelY = (e.clientY - rect.top - offsetY) / contentHeight;
-    const relX = Math.max(0, Math.min(1, rawRelX));
-    const relY = Math.max(0, Math.min(1, rawRelY));
-
-    return { relX, relY };
+    const result = InputGeometry.mapClientPoint({
+      clientX: e.clientX,
+      clientY: e.clientY,
+      rect,
+      sourceWidth: el.videoWidth || el.naturalWidth || rect.width,
+      sourceHeight: el.videoHeight || el.naturalHeight || rect.height,
+      objectFit: getComputedStyle(el).objectFit || 'contain',
+    });
+    if (!result.inside && !allowOutside) return null;
+    return { relX: result.relX, relY: result.relY };
   },
 
   getMouseButton(button) {
@@ -386,6 +357,8 @@ const Input = {
       lastKeyboardResetReason: this._lastKeyboardResetReason || null,
       lastKeyboardResetAt: this._lastKeyboardResetAt || 0,
       recentInputEvents: this._recentInputEvents.slice(),
+      pressedMouseButtonCount: this._pressedMouseButtons.size,
+      pendingMouseReset: this._pendingMouseReset,
     };
   },
 
@@ -424,7 +397,7 @@ const Input = {
         this.scheduleKeyWatchdog();
         return;
       }
-      console.warn('[KEYBOARD] Watchdog releasing stuck keys:', stuckKeys.map(([, pressed]) => pressed));
+      console.warn(`[KEYBOARD] Watchdog releasing stuck keys count=${stuckKeys.length}`);
       stuckKeys.reverse().forEach(([keyId, pressed]) => {
         this.sendInput('keyboard', 'keyup', {
           key: pressed.key,
@@ -452,15 +425,13 @@ const Input = {
     const inputId = `inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     data.inputIds = [inputId];
 
-    // Record input send time for latency measurement
-    if (typeof LatencyMonitor !== 'undefined') {
-      LatencyMonitor.recordInputSend(inputId);
-    }
-
     // Prefer DataChannel for lowest latency
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput && WebRTC.sendInput(data)) {
+      if (typeof LatencyMonitor !== 'undefined') {
+        LatencyMonitor.recordInputSend(inputId);
+      }
       if (type === 'keyboard' || action !== 'move') {
-        console.log(`[SEND:dc] ${type} ${action} id=${inputId}`, payload);
+        console.log(`[SEND:dc] ${type} ${action} id=${inputId}`);
       }
       return inputId;
     }
@@ -472,8 +443,12 @@ const Input = {
         transport: 'socket'
       });
 
+      if (typeof LatencyMonitor !== 'undefined') {
+        LatencyMonitor.recordInputSend(inputId);
+      }
+
       if (type === 'keyboard' || action !== 'move') {
-        console.log(`[SEND:socket] ${type} ${action} id=${inputId}`, payload);
+        console.log(`[SEND:socket] ${type} ${action} id=${inputId}`);
       }
       return inputId;
     }
@@ -482,6 +457,7 @@ const Input = {
     const dcState = (typeof WebRTC !== 'undefined' && WebRTC.inputChannel)
       ? WebRTC.inputChannel.readyState : 'null';
     console.warn(`Input: No transport available (dc=${dcState}, socket=disconnected) id=${inputId}`);
+    this.recordInputDiagnosticEvent({ type: 'input-not-sent', inputType: type, action, dcState });
 
     // If WebRTC is connected but DataChannel is stuck, try reconnecting
     if (typeof WebRTC !== 'undefined' && WebRTC.pc
@@ -489,7 +465,7 @@ const Input = {
         && dcState !== 'open') {
       WebRTC.scheduleReconnect('dc-missing');
     }
-    return inputId;
+    return null;
   },
 
   updateKeyDisplay(payload, action) {
@@ -530,6 +506,7 @@ const Input = {
 
   setActive(active) {
     if (!active) {
+      this.releasePointer('deactivated');
       this.releaseAllKeys('deactivated', true);
     }
     this.isActive = active;
@@ -586,6 +563,32 @@ const Input = {
     });
   },
 
+  flushPendingMouseReset() {
+    if (!this._pendingMouseReset) return true;
+    const inputId = this.sendInput('mouse', 'reset', { reason: 'pending-reset' });
+    this._pendingMouseReset = !inputId;
+    return Boolean(inputId);
+  },
+
+  releasePointer(reason = 'pointer-release') {
+    const pointerId = this._activePointerId;
+    const element = this._activePointerElement;
+    if (element && pointerId != null && typeof element.hasPointerCapture === 'function'
+        && element.hasPointerCapture(pointerId)) {
+      element.releasePointerCapture(pointerId);
+    }
+    const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
+    this._pressedMouseButtons.clear();
+    this._activePointerId = null;
+    this._activePointerElement = null;
+    this._pendingMouseMove = null;
+    if (!needsReset) return null;
+    const inputId = this.sendInput('mouse', 'reset', { reason });
+    this._pendingMouseReset = !inputId;
+    this.recordInputDiagnosticEvent({ type: 'mouse-reset', reason, sent: Boolean(inputId) });
+    return inputId;
+  },
+
   sendKey(key, code, keyCode, modifiers = {}) {
     const modMap = {
       meta:  { key: 'Meta',    code: 'MetaLeft',    keyCode: 55 },
@@ -630,38 +633,70 @@ const Input = {
   },
 
   bindMouseEvents(el) {
-    el.addEventListener('mousemove', (e) => {
+    el.addEventListener('pointermove', (e) => {
       if (!this.isActive) return;
-      const coords = this.getRelativeCoords(e);
+      const coords = this.getRelativeCoords(e, this._activePointerId === e.pointerId);
+      if (!coords) return;
+      this._lastPointerCoords = coords;
       this.queueMouseMove(coords);
     });
 
-    el.addEventListener('mousedown', (e) => {
+    el.addEventListener('pointerdown', (e) => {
       if (!this.isActive) return;
       e.preventDefault();
       el.focus();
-      this.scheduleKeyWatchdog();  // Reset watchdog on user activity
       const coords = this.getRelativeCoords(e);
-      this.sendInput('mouse', 'down', {
+      if (!coords || !this.flushPendingMouseReset()) return;
+      this.scheduleKeyWatchdog();
+      if (typeof el.setPointerCapture === 'function') {
+        el.setPointerCapture(e.pointerId);
+      }
+      const button = this.getMouseButton(e.button);
+      const inputId = this.sendInput('mouse', 'down', {
         ...coords,
-        button: this.getMouseButton(e.button)
+        button,
+        clickCount: Math.max(1, Number(e.detail) || 1),
       });
+      if (!inputId) {
+        if (typeof el.hasPointerCapture === 'function' && el.hasPointerCapture(e.pointerId)) {
+          el.releasePointerCapture(e.pointerId);
+        }
+        return;
+      }
+      this._activePointerId = e.pointerId;
+      this._activePointerElement = el;
+      this._pressedMouseButtons.add(button);
+      this._lastPointerCoords = coords;
     });
 
-    el.addEventListener('mouseup', (e) => {
-      if (!this.isActive) return;
+    el.addEventListener('pointerup', (e) => {
+      if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       e.preventDefault();
-      const coords = this.getRelativeCoords(e);
-      this.sendInput('mouse', 'up', {
+      const coords = this.getRelativeCoords(e, true) || this._lastPointerCoords;
+      const button = this.getMouseButton(e.button);
+      const inputId = coords ? this.sendInput('mouse', 'up', {
         ...coords,
-        button: this.getMouseButton(e.button)
-      });
+        button,
+        clickCount: Math.max(1, Number(e.detail) || 1),
+      }) : null;
+      this._pressedMouseButtons.delete(button);
+      this._pendingMouseReset = this._pendingMouseReset || !inputId;
+      if (this._pressedMouseButtons.size === 0) {
+        if (typeof el.hasPointerCapture === 'function' && el.hasPointerCapture(e.pointerId)) {
+          el.releasePointerCapture(e.pointerId);
+        }
+        this._activePointerId = null;
+        this._activePointerElement = null;
+      }
     });
+
+    el.addEventListener('pointercancel', () => this.releasePointer('pointer-cancel'));
 
     el.addEventListener('wheel', (e) => {
       if (!this.isActive) return;
       e.preventDefault();
       const coords = this.getRelativeCoords(e);
+      if (!coords) return;
       this.sendInput('mouse', 'wheel', {
         ...coords,
         deltaX: e.deltaX,

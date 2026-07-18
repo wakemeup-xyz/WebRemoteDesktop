@@ -14,16 +14,22 @@ DEV_LOCAL_ORIGIN="${DEV_LOCAL_ORIGIN:-http://127.0.0.1:5173}"
 HEALTH_URL="${HEALTH_URL:-${LOCAL_ORIGIN}/health}"
 TUNNEL_LABEL="${TUNNEL_LABEL:-com.webremotedesktop.fixed-domain}"
 ENABLE_DEV_SUBDOMAIN="${ENABLE_DEV_SUBDOMAIN:-0}"
+CLOUDFLARED_CONFIG="${CLOUDFLARED_CONFIG:-$HOME/.cloudflared/config.yml}"
 
-if [ ! -f "$HOME/.cloudflared/config.yml" ]; then
+if [ ! -f "$CLOUDFLARED_CONFIG" ]; then
   echo "Missing ~/.cloudflared/config.yml. Run scripts/setup-cloudflare.sh first."
   exit 1
 fi
+if ! grep -Eq '^[[:space:]]*credentials-file[[:space:]]*:' "$CLOUDFLARED_CONFIG"; then
+  echo "Cloudflare config must define credentials-file for the named tunnel."
+  exit 1
+fi
+unset TUNNEL_TOKEN
 
 pkill -f 'node server.js' 2>/dev/null || true
 pkill -f 'python.*host.py' 2>/dev/null || true
 launchctl remove "$TUNNEL_LABEL" 2>/dev/null || true
-pkill -f "cloudflared tunnel --config $HOME/.cloudflared/config.yml run $TUNNEL_NAME" 2>/dev/null || true
+pkill -f "cloudflared tunnel --config $CLOUDFLARED_CONFIG run $TUNNEL_NAME" 2>/dev/null || true
 sleep 2
 
 (cd "$PROJECT_DIR/signal-server" && nohup "$NODE_BIN" server.js > /tmp/signal-server.log 2>&1 &)
@@ -36,7 +42,7 @@ curl -s "$HEALTH_URL" >/dev/null 2>&1 || {
   exit 1
 }
 
-launchctl submit -l "$TUNNEL_LABEL" -- /bin/zsh -lc "exec \"$CLOUDFLARED\" tunnel --config \"$HOME/.cloudflared/config.yml\" run \"$TUNNEL_NAME\" >> /tmp/wrd-fixed-domain.log 2>&1"
+launchctl submit -l "$TUNNEL_LABEL" -- /bin/zsh -lc "unset TUNNEL_TOKEN; exec \"$CLOUDFLARED\" tunnel --config \"$CLOUDFLARED_CONFIG\" run \"$TUNNEL_NAME\" >> /tmp/wrd-fixed-domain.log 2>&1"
 for _ in {1..20}; do
   if cloudflared tunnel info "$TUNNEL_NAME" 2>/dev/null | grep -qv 'does not have any active connection'; then
     break

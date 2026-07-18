@@ -14,6 +14,9 @@ import time
 import re
 import subprocess
 import io
+import os
+import resource
+import sys
 from mss import mss as MSS
 import numpy as np
 import av
@@ -28,10 +31,15 @@ except ImportError:
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCConfiguration, RTCIceServer
 import logging
 from concurrent.futures import ThreadPoolExecutor
+import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import H264VideoToolboxEncoder
+from observability import configure_host_logging, emit_host_event, summarize_input_event
 
-logging.basicConfig(level=logging.INFO)
+if __name__ == "__main__":
+    configure_host_logging()
+else:
+    logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
@@ -101,7 +109,6 @@ except Exception as e:
     logger.warning(f"Failed to patch aioice Transaction.__retry: {e}")
 
 # Configuration
-import os
 SERVER_URL = os.environ.get('SERVER_URL', "http://127.0.0.1:8080")
 HOST_SHARED_SECRET = os.environ.get('HOST_SHARED_SECRET') or os.environ.get('HOST_PASSWORD', '')
 
@@ -111,6 +118,42 @@ MEDIA_PROFILE_DEFAULT = {
     "height": 720,
     "target_fps": 20,
     "video_bitrate_kbps": 2500,
+}
+
+TUNNEL_RELAY_PROFILE_ORDER = ["high", "medium", "low", "survival"]
+TUNNEL_RELAY_PROFILES = {
+    "high": {
+        "name": "high",
+        "width": 1280,
+        "height": 720,
+        "fps": 8,
+        "jpeg_quality": 30,
+        "max_in_flight_frames": 2,
+    },
+    "medium": {
+        "name": "medium",
+        "width": 960,
+        "height": 540,
+        "fps": 6,
+        "jpeg_quality": 26,
+        "max_in_flight_frames": 2,
+    },
+    "low": {
+        "name": "low",
+        "width": 854,
+        "height": 480,
+        "fps": 4,
+        "jpeg_quality": 22,
+        "max_in_flight_frames": 1,
+    },
+    "survival": {
+        "name": "survival",
+        "width": 640,
+        "height": 360,
+        "fps": 2,
+        "jpeg_quality": 18,
+        "max_in_flight_frames": 1,
+    },
 }
 
 
@@ -183,24 +226,59 @@ def build_ice_servers():
     return ice_servers
 
 
+def _monitor_value(monitor, key):
+    if isinstance(monitor, dict):
+        return monitor.get(key)
+    return getattr(monitor, key, None)
+
+
+def normalize_monitor_region(monitor):
+    width = int(_monitor_value(monitor, "width") or 0)
+    height = int(_monitor_value(monitor, "height") or 0)
+    if width <= 0 or height <= 0:
+        return None
+    return {
+        "left": int(_monitor_value(monitor, "left") if _monitor_value(monitor, "left") is not None else _monitor_value(monitor, "x") or 0),
+        "top": int(_monitor_value(monitor, "top") if _monitor_value(monitor, "top") is not None else _monitor_value(monitor, "y") or 0),
+        "width": width,
+        "height": height,
+    }
+
+
 def is_valid_monitor_region(monitor):
-    return bool(monitor) and int(monitor.get("width") or 0) > 0 and int(monitor.get("height") or 0) > 0
+    return normalize_monitor_region(monitor) is not None
 
 
-def select_capture_monitor(monitors):
+def select_capture_monitor(monitors, fallback_monitors=None):
     if not monitors:
         raise RuntimeError("No monitors reported by MSS")
 
     candidates = list(monitors[1:] if len(monitors) > 1 else monitors)
     for monitor in candidates:
-      if is_valid_monitor_region(monitor):
-          return monitor
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            return normalized
 
     for monitor in monitors:
-      if is_valid_monitor_region(monitor):
-          return monitor
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            return normalized
+
+    for monitor in fallback_monitors or []:
+        normalized = normalize_monitor_region(monitor)
+        if normalized:
+            logger.warning("MSS reported only zero-sized monitors; using screeninfo fallback: %s", normalized)
+            return normalized
 
     raise RuntimeError(f"No usable monitor reported by MSS: {monitors!r}")
+
+
+def get_screeninfo_monitors():
+    try:
+        return screeninfo.get_monitors()
+    except Exception as exc:
+        logger.warning("Failed to read screeninfo monitors for fallback: %s", exc)
+        return []
 
 
 class OverlayNotifier:
@@ -257,38 +335,139 @@ class TunnelRelayStreamer:
         self.width = 960
         self.height = 540
         self.fps = 8
+        self.profile_name = "medium"
+        self.jpeg_quality = 26
         self.frame_id = 0
         self.ack_event = asyncio.Event()
         self.last_acked_frame_id = 0
+        self.inflight_frames = {}
         self.stats_started_at = time.time()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
         self.stats_encode_ms = 0.0
+        self.stats_ack_latency_ms = 0.0
+        self.stats_ack_samples = 0
+        self.stats_timeout_count = 0
+        self.good_ack_streak = 0
+        self.last_ack_latency_ms = None
         self.max_in_flight_frames = 2
+        self._apply_profile("medium", reason="init", log=False)
+
+    def _profile_spec(self, profile_name):
+        return TUNNEL_RELAY_PROFILES.get(profile_name) or TUNNEL_RELAY_PROFILES["medium"]
+
+    def _profile_index(self, profile_name):
+        try:
+            return TUNNEL_RELAY_PROFILE_ORDER.index(profile_name)
+        except ValueError:
+            return TUNNEL_RELAY_PROFILE_ORDER.index("medium")
+
+    def _pick_initial_profile(self, width, height, fps):
+        width = int(width or 0)
+        height = int(height or 0)
+        fps = int(fps or 0)
+        if width >= 1200 or height >= 680 or fps >= 8:
+            return "high"
+        if width >= 900 or height >= 500 or fps >= 6:
+            return "medium"
+        if width >= 760 or height >= 420 or fps >= 4:
+            return "low"
+        return "survival"
+
+    def _apply_profile(self, profile_name, reason, log=True):
+        spec = self._profile_spec(profile_name)
+        next_name = spec["name"]
+        changed = next_name != self.profile_name
+        self.profile_name = next_name
+        self.width = spec["width"]
+        self.height = spec["height"]
+        self.fps = spec["fps"]
+        self.jpeg_quality = spec["jpeg_quality"]
+        self.max_in_flight_frames = spec["max_in_flight_frames"]
+        if log and (changed or reason != "init"):
+            logger.info(
+                "TUNNEL_RELAY_PROFILE viewer=%s profile=%s size=%sx%s fps=%s quality=%s max_in_flight=%s reason=%s",
+                self.viewer_id,
+                self.profile_name,
+                self.width,
+                self.height,
+                self.fps,
+                self.jpeg_quality,
+                self.max_in_flight_frames,
+                reason,
+            )
+        return changed
+
+    def step_down_profile(self, reason):
+        current = self._profile_index(self.profile_name)
+        next_index = min(len(TUNNEL_RELAY_PROFILE_ORDER) - 1, current + 1)
+        return self._apply_profile(TUNNEL_RELAY_PROFILE_ORDER[next_index], reason)
+
+    def step_up_profile(self, reason):
+        current = self._profile_index(self.profile_name)
+        next_index = max(0, current - 1)
+        return self._apply_profile(TUNNEL_RELAY_PROFILE_ORDER[next_index], reason)
+
+    def pending_frame_count(self):
+        return len(self.inflight_frames)
+
+    def should_wait_before_capture(self):
+        return self.pending_frame_count() >= self.max_in_flight_frames
+
+    def _record_ack_feedback(self, latency_ms):
+        try:
+            latency_ms = float(latency_ms)
+        except (TypeError, ValueError):
+            return
+
+        self.last_ack_latency_ms = max(0.0, latency_ms)
+        self.stats_ack_latency_ms += self.last_ack_latency_ms
+        self.stats_ack_samples += 1
+
+        pending = self.pending_frame_count()
+        if self.last_ack_latency_ms >= 1000 or pending >= self.max_in_flight_frames:
+            self.good_ack_streak = 0
+            self.step_down_profile(f"ack-latency-{int(self.last_ack_latency_ms)}ms")
+            return
+
+        if self.last_ack_latency_ms <= 250 and pending <= 1:
+            self.good_ack_streak += 1
+            if self.good_ack_streak >= 4:
+                self.good_ack_streak = 0
+                self.step_up_profile(f"stable-ack-{int(self.last_ack_latency_ms)}ms")
+        else:
+            self.good_ack_streak = 0
 
     async def start(self, viewer_id, width=960, height=540, fps=8):
         await self.stop()
         self.viewer_id = viewer_id
-        self.width = max(320, min(int(width or 960), 1280))
-        self.height = max(180, min(int(height or 540), 720))
-        self.fps = max(1, min(int(fps or 8), 12))
+        self._apply_profile(self._pick_initial_profile(width, height, fps), reason="start", log=False)
         self.frame_id = 0
         self.last_acked_frame_id = 0
+        self.inflight_frames = {}
         self.ack_event.clear()
         self.stats_started_at = time.time()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
         self.stats_encode_ms = 0.0
+        self.stats_ack_latency_ms = 0.0
+        self.stats_ack_samples = 0
+        self.stats_timeout_count = 0
+        self.good_ack_streak = 0
+        self.last_ack_latency_ms = None
         self.enabled = True
         self.task = asyncio.create_task(self._run())
         logger.info(
-            "Tunnel relay stream started viewer=%s size=%sx%s fps=%s",
+            "Tunnel relay stream started viewer=%s profile=%s size=%sx%s fps=%s quality=%s max_in_flight=%s",
             self.viewer_id,
+            self.profile_name,
             self.width,
             self.height,
             self.fps,
+            self.jpeg_quality,
+            self.max_in_flight_frames,
         )
 
     async def stop(self):
@@ -301,28 +480,54 @@ class TunnelRelayStreamer:
                 pass
             self.task = None
 
-    def ack(self, frame_id):
+    def ack(self, frame_id, latency_ms=None):
         try:
             frame_id = int(frame_id)
         except Exception:
             return
         if frame_id > self.last_acked_frame_id:
+            frame_meta = self.inflight_frames.pop(frame_id, None)
             self.last_acked_frame_id = frame_id
             self.stats_acked += 1
             self.ack_event.set()
+            measured_ms = latency_ms
+            if measured_ms is None and frame_meta and frame_meta.get("sent_at_ms") is not None:
+                measured_ms = time.monotonic() * 1000.0 - frame_meta["sent_at_ms"]
+            if measured_ms is not None:
+                self._record_ack_feedback(measured_ms)
+
+    def note_ack_timeout(self, reason):
+        self.stats_timeout_count += 1
+        self.good_ack_streak = 0
+        self.step_down_profile(reason)
 
     def should_wait_for_ack(self):
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
 
     async def _run(self):
-        frame_interval = 1 / self.fps
-        ack_timeout = max(0.35, min(1.0, frame_interval * 4))
         with MSS() as sct:
-            monitor = select_capture_monitor(sct.monitors)
+            monitor = select_capture_monitor(sct.monitors, fallback_monitors=get_screeninfo_monitors())
             while self.enabled and self.viewer_id:
+                frame_interval = 1 / max(1, self.fps)
+                ack_timeout = max(0.35, min(1.5, frame_interval * 4))
+                if self.should_wait_before_capture():
+                    try:
+                        await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
+                        self.ack_event.clear()
+                        continue
+                    except asyncio.TimeoutError:
+                        self.ack_event.clear()
+                        logger.debug(
+                            "Tunnel relay backpressure timeout viewer=%s pending=%s profile=%s",
+                            self.viewer_id,
+                            self.pending_frame_count(),
+                            self.profile_name,
+                        )
+                        self.note_ack_timeout("pre-capture-backpressure")
+                        continue
+
                 started = time.time()
                 try:
-                    self.ack_event.clear()
                     shot = sct.grab(monitor)
                     # Fast path: numpy stride downsample then PIL JPEG encode
                     img = np.array(shot)  # BGRA
@@ -339,27 +544,42 @@ class TunnelRelayStreamer:
                     rgb = img[:, :, 2::-1]
                     image = Image.fromarray(rgb)
                     buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=30, optimize=False, subsampling=2)
+                    image.save(buffer, format="JPEG", quality=self.jpeg_quality, optimize=False, subsampling=2)
                     jpeg_bytes = buffer.getvalue()
                     encode_ms = (time.time() - started) * 1000
                     self.frame_id += 1
-                    self.stats_frames += 1
-                    self.stats_bytes += len(jpeg_bytes)
-                    self.stats_encode_ms += encode_ms
-                    await self.sio.emit("relay-frame", {
-                        "viewerId": self.viewer_id,
-                        "frameId": self.frame_id,
+                    frame_id = self.frame_id
+                    sent_at_ms = time.monotonic() * 1000.0
+                    self.inflight_frames[frame_id] = {
+                        "sent_at_ms": sent_at_ms,
+                        "profile": self.profile_name,
+                        "quality": self.jpeg_quality,
                         "width": image.width,
                         "height": image.height,
-                        "timestamp": int(time.time() * 1000),
-                        "mime": "image/jpeg",
-                        "bytes": len(jpeg_bytes),
-                        "data": jpeg_bytes,
-                    })
-                    if self.should_wait_for_ack():
-                        await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
+                    }
+                    try:
+                        await self.sio.emit("relay-frame", {
+                            "viewerId": self.viewer_id,
+                            "frameId": frame_id,
+                            "width": image.width,
+                            "height": image.height,
+                            "timestamp": int(time.time() * 1000),
+                            "mime": "image/jpeg",
+                            "bytes": len(jpeg_bytes),
+                            "profile": self.profile_name,
+                            "quality": self.jpeg_quality,
+                            "maxInFlightFrames": self.max_in_flight_frames,
+                            "data": jpeg_bytes,
+                        })
+                        self.stats_frames += 1
+                        self.stats_bytes += len(jpeg_bytes)
+                        self.stats_encode_ms += encode_ms
+                    except Exception:
+                        self.inflight_frames.pop(frame_id, None)
+                        raise
                 except asyncio.TimeoutError:
                     logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
+                    self.note_ack_timeout("post-send-backpressure")
                 except Exception as e:
                     logger.warning(f"Tunnel relay frame failed: {e}")
 
@@ -369,22 +589,32 @@ class TunnelRelayStreamer:
                     duration = max(0.001, now - self.stats_started_at)
                     avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
                     avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
+                    avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
                     logger.info(
-                        "TUNNEL_RELAY_STATS viewer=%s fps=%.1f sent=%s acked=%s avg_kb=%.1f avg_encode_ms=%.1f size=%sx%s",
+                        "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
                         self.viewer_id,
+                        self.profile_name,
                         self.stats_frames / duration,
                         self.stats_frames,
                         self.stats_acked,
+                        self.pending_frame_count(),
+                        self.stats_timeout_count,
                         avg_kb,
                         avg_encode,
+                        avg_ack_latency,
                         self.width,
                         self.height,
+                        self.jpeg_quality,
+                        self.max_in_flight_frames,
                     )
                     self.stats_started_at = now
                     self.stats_frames = 0
                     self.stats_acked = 0
                     self.stats_bytes = 0
                     self.stats_encode_ms = 0.0
+                    self.stats_ack_latency_ms = 0.0
+                    self.stats_ack_samples = 0
+                    self.stats_timeout_count = 0
                 await asyncio.sleep(max(0.001, frame_interval - elapsed))
 
 
@@ -476,7 +706,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def __init__(self, target_fps=20, max_width=1280, max_height=720):
         super().__init__()
         self.sct = MSS()
-        self.monitor = select_capture_monitor(self.sct.monitors)
+        self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
         self.last_time = time.time()
         self._start = time.time()
@@ -533,10 +763,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     def _capture_loop(self):
         """Continuously capture screenshots in background thread.
-        Target ~3x frame rate (min 60 FPS) with adaptive sleep to prevent
-        CPU spin while ensuring fresh frames for recv()."""
-        _min_interval = 1.0 / max(self._target_fps * 3, 60)
+        Capture pacing follows the current media profile to avoid wasted work."""
         while self._capture_running:
+            with self._target_lock:
+                target_fps = self._target_fps
+            _min_interval = 1.0 / self.capture_fps_for_target(target_fps)
             t0 = time.perf_counter()
             try:
                 shot = self.sct.grab(self.monitor)
@@ -583,7 +814,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             await asyncio.sleep(sleep_time)
         self._last_frame_time = time.time()
 
-        t0 = time.time()
+        capture_prepare_start = time.perf_counter()
 
         # Zero-wait: grab latest capture from background thread
         with self._capture_lock:
@@ -619,8 +850,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         else:
             img = np.zeros((self._max_height, self._max_width, 4), dtype=np.uint8)
 
-        t1 = time.time()
-        t2 = t1  # scale/convert timestamp (processing happened above)
+        capture_prepare_ms = (time.perf_counter() - capture_prepare_start) * 1000
 
         # Validate frame data
         if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
@@ -639,7 +869,6 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 np.zeros((self._max_height, self._max_width, 4), dtype=np.uint8),
                 format="bgra",
             )
-        t3 = time.time()
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
@@ -698,12 +927,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     except Exception:
                         pass
 
-        t4 = time.time()
-        self._send_frame_timing(t0, t1, t2, t3, t4)
+        self._send_frame_timing(
+            capture_prepare_ms=capture_prepare_ms,
+            frame_convert_ms=convert_time * 1000,
+        )
 
         return frame
 
-    def _send_frame_timing(self, t0, t1, t2, t3, t4):
+    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms):
         host = getattr(self, '_host_ref', None)
         if host is None:
             return
@@ -719,13 +950,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
         timing = {
             "type": "frame_timing",
+            "schemaVersion": 2,
             "frameId": self._timing_seq,
             "timings": {
-                "captureStart": t0,
-                "captureEnd": t1,
-                "scaleEnd": t2,
-                "encodeEnd": t3,
-                "packetSend": t4,
+                "capturePrepareMs": round(float(capture_prepare_ms), 3),
+                "frameConvertMs": round(float(frame_convert_ms), 3),
+                "encoderMs": None,
+                "rtpSendMs": None,
+                "endToEndVideoMs": None,
             },
         }
         if input_ids:
@@ -757,6 +989,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._target_fps = target_fps
             self._frame_interval = 1.0 / target_fps
         logger.info("Screen stream target FPS set to %s", target_fps)
+
+    @staticmethod
+    def capture_fps_for_target(target_fps):
+        target_fps = max(1, int(target_fps))
+        return min(60, max(target_fps * 2, target_fps + 5))
 
     def apply_media_profile(self, profile):
         self.set_max_resolution(profile["width"], profile["height"])
@@ -824,6 +1061,8 @@ class WebRemoteHost:
         self._reconnecting = False
         self._last_diag_network = None
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
+        self._input_event_count = 0
+        self._last_input_at_monotonic = None
 
     async def authenticate(self):
         try:
@@ -901,49 +1140,34 @@ class WebRemoteHost:
                 return
             input_type = data.get('type')
             if input_type not in ('mouse', 'keyboard', 'command'):
-                logger.warning(f"Unknown input type: {input_type}")
+                logger.warning("Unknown input type")
                 return
             payload = data.get('payload', {})
             if input_type == 'mouse':
                 rel_x = payload.get('relX')
                 rel_y = payload.get('relY')
                 if rel_x is not None and not (0 <= rel_x <= 1):
-                    logger.warning(f"Invalid relX: {rel_x}")
+                    logger.warning("Invalid mouse coordinate field=relX")
                     return
                 if rel_y is not None and not (0 <= rel_y <= 1):
-                    logger.warning(f"Invalid relY: {rel_y}")
+                    logger.warning("Invalid mouse coordinate field=relY")
                     return
             action = data.get('action')
             transport = data.get("transport", "socket")
-            sent_at = data.get("timestamp")
-            input_delay = None
-            if isinstance(sent_at, (int, float)):
-                input_delay = time.time() * 1000 - float(sent_at)
             input_ids = data.get("inputIds", [])
-            ids_str = f" ids={input_ids}" if input_ids else ""
+            self._input_event_count = int(getattr(self, "_input_event_count", 0) or 0) + 1
+            self._last_input_at_monotonic = time.perf_counter()
             if input_type == 'keyboard' or action != 'move':
-                if input_delay is not None and -10000 < input_delay < 60000:
-                    logger.info(
-                        "Input received: %s %s transport=%s%s input_delay=%.1fms payload=%s",
-                        input_type,
-                        action,
-                        transport,
-                        ids_str,
-                        input_delay,
-                        payload,
-                    )
-                else:
-                    logger.info(f"Input received: {input_type} {action} transport={transport}{ids_str} payload={payload}")
-            else:
-                logger.debug(f"Input received: {input_type} {action} transport={transport}")
-            if input_type == 'keyboard' and action == 'reset':
-                logger.info(
-                    "Keyboard reset observed: viewer=%s transport=%s reason=%s ids=%s",
-                    data.get("viewerId"),
-                    transport,
-                    payload.get("reason", "remote-reset"),
-                    input_ids,
+                emit_host_event(
+                    logger,
+                    event="host_input_received",
+                    message="Remote input received",
+                    meta=summarize_input_event(data),
                 )
+            else:
+                logger.debug("Input received: type=mouse action=move transport=%s", transport)
+            if input_type == 'keyboard' and action == 'reset':
+                logger.info("Keyboard reset observed transport=%s", transport)
             if input_type == 'keyboard' and action != 'reset':
                 self.overlay.send({
                     "type": "key",
@@ -951,6 +1175,20 @@ class WebRemoteHost:
                     "viewerId": data.get("viewerId")
                 })
             result = await self.input_handler.handle_input(data)
+            if result and isinstance(result, dict):
+                receive_time = result.get("receiveTime")
+                execute_time = result.get("executeTime")
+                local_execute_ms = None
+                if isinstance(receive_time, (int, float)) and isinstance(execute_time, (int, float)):
+                    local_execute_ms = (execute_time - receive_time) * 1000
+                if input_type == 'keyboard' or action != 'move':
+                    emit_host_event(
+                        logger,
+                        event="host_input_executed",
+                        message="Remote input executed",
+                        meta=summarize_input_event(data, local_execute_ms=local_execute_ms),
+                    )
+                await self._send_input_ack(data, result, local_execute_ms)
             if result and isinstance(result, dict) and result.get("inputIds"):
                 if self.screen_track:
                     with self.screen_track._pending_input_lock:
@@ -961,10 +1199,77 @@ class WebRemoteHost:
                             "executeTime": result.get("executeTime"),
                         })
         except Exception as e:
-            logger.error(f"Input handling error: {e}")
+            logger.error("Input handling error: %s", type(e).__name__, exc_info=True)
+
+    async def _send_input_ack(self, data, result, local_execute_ms):
+        input_ids = result.get("inputIds", []) if isinstance(result, dict) else []
+        if not input_ids:
+            return False
+        ack = {
+            "type": "input_ack",
+            "schemaVersion": 1,
+            "inputIds": list(input_ids),
+            "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+            "transport": str(data.get("transport") or "socket"),
+        }
+        if ack["transport"] == "datachannel":
+            channel = self.get_input_datachannel()
+            if channel is None or not hasattr(channel, "send"):
+                return False
+            channel.send(json.dumps(ack))
+            return True
+        if self.sio is None:
+            return False
+        await self.sio.emit("input-ack", {
+            **ack,
+            "viewerId": data.get("viewerId"),
+        })
+        return True
 
     async def on_connected(self, data):
         logger.info(f"Connected: {data}")
+
+    def build_event_loop_lag_context(self, *, lag_ms, sample_count, max_lag_ms, task_count):
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        rss_divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+        try:
+            system_load_1 = round(float(os.getloadavg()[0]), 3)
+        except (AttributeError, OSError):
+            system_load_1 = None
+        last_input_at = getattr(self, "_last_input_at_monotonic", None)
+        last_input_age_ms = None
+        if isinstance(last_input_at, (int, float)):
+            last_input_age_ms = round(max(0.0, (time.perf_counter() - last_input_at) * 1000), 3)
+        relay = getattr(self, "relay_streamer", None)
+        pending_relay_frames = 0
+        if relay is not None and hasattr(relay, "pending_frame_count"):
+            pending_relay_frames = int(relay.pending_frame_count())
+        profile = getattr(self, "media_profile", {}) or {}
+        pc = getattr(self, "pc", None)
+        screen_track = getattr(self, "screen_track", None)
+        input_handler = getattr(self, "input_handler", None)
+        severity = "critical" if float(max_lag_ms) >= 100 else "warning"
+        return {
+            "lagMs": round(max(0.0, float(lag_ms)), 3),
+            "maxLagMs": round(max(0.0, float(max_lag_ms)), 3),
+            "sampleCount": int(sample_count),
+            "severity": severity,
+            "mediaProfile": str(profile.get("profile") or "unknown"),
+            "targetFps": int(profile.get("target_fps") or getattr(screen_track, "_target_fps", 0) or 0),
+            "pcState": str(getattr(pc, "connectionState", "none") or "none"),
+            "iceState": str(getattr(pc, "iceConnectionState", "none") or "none"),
+            "captureSeq": int(getattr(screen_track, "_capture_seq", 0) or 0),
+            "inputEventCount": int(getattr(self, "_input_event_count", 0) or 0),
+            "lastInputAgeMs": last_input_age_ms,
+            "inputWaiters": int(getattr(input_handler, "_lock_waiters", 0) or 0),
+            "relayRunning": bool(getattr(relay, "running", getattr(relay, "enabled", False))),
+            "pendingRelayFrames": pending_relay_frames,
+            "taskCount": int(task_count),
+            "threadCount": threading.active_count(),
+            "processCpuSeconds": round(float(usage.ru_utime + usage.ru_stime), 3),
+            "rssMiB": round(float(usage.ru_maxrss) / rss_divisor, 3),
+            "systemLoad1": system_load_1,
+        }
 
     def _should_process_offer(self, viewer_id, offer_epoch):
         """Return whether an offer is current, tracking epochs per viewer socket."""
@@ -1077,6 +1382,7 @@ class WebRemoteHost:
                     if state == 'connected':
                         logger.info("WebRTC CONNECTED!")
                     elif state in ('failed', 'closed', 'disconnected'):
+                        self.input_handler.release_all_mouse_buttons(reason=f"webrtc-{state}")
                         self.input_handler.release_all_keys(reason=f"webrtc-{state}")
                         if state == 'failed':
                             logger.error("WebRTC FAILED")
@@ -1271,9 +1577,26 @@ class WebRemoteHost:
                 or data.get('selectedCandidateType')
                 or '-'
             )
-            logger.info(f"=== DIAGNOSTIC LOGS FROM VIEWER ===")
-            logger.info(f"User-Agent: {ua}")
-            logger.info(f"Screen: {screen}")
+            verbose_diagnostics = os.environ.get("WRD_HOST_VERBOSE_DIAGNOSTICS", "0") == "1"
+            emit_host_event(
+                logger,
+                event="host_viewer_diagnostic_summary",
+                message="Viewer diagnostic received by host",
+                correlation={
+                    "browserSessionId": data.get("browserSessionId"),
+                    "connectionAttemptId": data.get("connectionAttemptId"),
+                },
+                meta={
+                    "userAgent": ua,
+                    "screen": screen,
+                    "trigger": trigger,
+                    "reason": reason,
+                    "logCount": len(logs),
+                    "networkMode": network.get("networkMode", "-"),
+                    "turnConfigured": network.get("turnConfigured", False),
+                    "turnStatus": network.get("turnStatus", "unknown"),
+                },
+            )
             if schema_version == 2:
                 logger.info(
                     "WRD_STUN_FAILURE connectionAttemptId=%s failureCategory=%s candidateSummary=%s selectedCandidatePair=%s pc=%s ice=%s candidate=%s",
@@ -1286,7 +1609,7 @@ class WebRemoteHost:
                     format_diag_value(candidate),
                 )
             logger.info(
-                "WRD_FAILURE_DIAG trigger=%s reason=%s mode=%s turn=%s/%s pc=%s ice=%s candidate=%s local=%s remote=%s",
+                "WRD_FAILURE_DIAG trigger=%s reason=%s mode=%s turn=%s/%s pc=%s ice=%s candidate=%s selectedCandidatePair=%s local=%s remote=%s",
                 trigger,
                 reason,
                 network.get('networkMode', '-'),
@@ -1295,12 +1618,20 @@ class WebRemoteHost:
                 (network.get('pc') or {}).get('connectionState', '-'),
                 (network.get('pc') or {}).get('iceConnectionState', '-'),
                 network.get('lastCandidateType', '-'),
+                format_diag_value(selected_candidate_pair),
                 candidate_summary.get('local', {}),
                 candidate_summary.get('remote', {}),
             )
-            for line in logs:
-                logger.info(f"[VIEWER] {line}")
-            logger.info(f"=== END DIAGNOSTIC LOGS ({len(logs)} lines) ===")
+            if verbose_diagnostics:
+                logger.info("=== DIAGNOSTIC LOGS FROM VIEWER ===")
+                logger.info(f"User-Agent: {ua}")
+                logger.info(f"Screen: {screen}")
+                for line in logs:
+                    if isinstance(line, dict):
+                        logger.info("[VIEWER] %s", json.dumps(line, ensure_ascii=True, sort_keys=True))
+                    else:
+                        logger.info(f"[VIEWER] {line}")
+                logger.info(f"=== END DIAGNOSTIC LOGS ({len(logs)} lines) ===")
         except Exception as e:
             logger.error(f"Error handling diagnostic logs: {e}")
 
@@ -1410,7 +1741,7 @@ class WebRemoteHost:
     async def on_relay_frame_ack(self, data):
         try:
             if self.relay_streamer and data.get("viewerId") == self.relay_streamer.viewer_id:
-                self.relay_streamer.ack(data.get("frameId"))
+                self.relay_streamer.ack(data.get("frameId"), latency_ms=data.get("latencyMs"))
         except Exception as e:
             logger.debug(f"Error handling relay frame ack: {e}")
 
@@ -1419,6 +1750,7 @@ class WebRemoteHost:
         try:
             logger.info(f"Viewer status: {data.get('onlineCount', 0)} online")
             if data.get("onlineCount", 0) == 0:
+                self.input_handler.release_all_mouse_buttons(reason="viewer-disconnected")
                 self.input_handler.release_all_keys(reason="viewer-disconnected")
                 if self.relay_streamer:
                     await self.relay_streamer.stop()
@@ -1566,13 +1898,40 @@ class WebRemoteHost:
 
         # Event loop lag monitor
         async def monitor_event_loop_lag():
+            interval_seconds = 1.0
+            emit_cooldown_seconds = 5.0
+            deadline = time.perf_counter() + interval_seconds
+            last_emitted_at = 0.0
+            pending_count = 0
+            pending_max_lag_ms = 0.0
             while True:
-                await asyncio.sleep(1)
-                t0 = time.perf_counter()
-                await asyncio.sleep(0)  # yield to event loop
-                lag_ms = (time.perf_counter() - t0) * 1000
+                await asyncio.sleep(max(0.0, deadline - time.perf_counter()))
+                observed_at = time.perf_counter()
+                lag_ms = max(0.0, (observed_at - deadline) * 1000)
+                deadline = observed_at + interval_seconds
                 if lag_ms > 20:
-                    logger.warning("Event loop lag: %.1fms (loop may be blocked)", lag_ms)
+                    pending_count += 1
+                    pending_max_lag_ms = max(pending_max_lag_ms, lag_ms)
+                should_emit = pending_count > 0 and (
+                    pending_max_lag_ms >= 100
+                    or observed_at - last_emitted_at >= emit_cooldown_seconds
+                )
+                if should_emit:
+                    emit_host_event(
+                        logger,
+                        event="host_event_loop_lag",
+                        message="Host event loop lag exceeded threshold",
+                        level="warning",
+                        meta=self.build_event_loop_lag_context(
+                            lag_ms=pending_max_lag_ms,
+                            sample_count=pending_count,
+                            max_lag_ms=pending_max_lag_ms,
+                            task_count=len(asyncio.all_tasks()),
+                        ),
+                    )
+                    pending_count = 0
+                    pending_max_lag_ms = 0.0
+                    last_emitted_at = observed_at
 
         lag_task = asyncio.create_task(monitor_event_loop_lag())
 

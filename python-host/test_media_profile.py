@@ -1,6 +1,6 @@
 import logging
 
-from host import WebRemoteHost
+from host import ScreenCaptureTrack, WebRemoteHost
 
 
 class ListHandler(logging.Handler):
@@ -77,3 +77,11 @@ def test_invalid_media_profile_is_clamped():
     assert host.media_profile["height"] == 180
     assert host.media_profile["target_fps"] == 30
     assert host.media_profile["video_bitrate_kbps"] == 5000
+
+
+def test_capture_fps_tracks_current_media_target_with_a_60_fps_cap():
+    assert ScreenCaptureTrack.capture_fps_for_target(20) == 40
+    assert ScreenCaptureTrack.capture_fps_for_target(15) == 30
+    assert ScreenCaptureTrack.capture_fps_for_target(12) == 24
+    assert ScreenCaptureTrack.capture_fps_for_target(8) == 16
+    assert ScreenCaptureTrack.capture_fps_for_target(30) == 60
