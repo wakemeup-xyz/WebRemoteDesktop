@@ -415,10 +415,15 @@ test('TerminalPanel retries focus when xterm helper is attached after a delay', 
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
   socketHandlers.get('terminal:created')(session);
 
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  const deadline = Date.now() + 1000;
+  let textarea = null;
+  while (Date.now() < deadline) {
+    const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
+    textarea = node?.querySelector('.xterm-helper-textarea') || null;
+    if (textarea?.focusCalls > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 
-  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
-  const textarea = node.querySelector('.xterm-helper-textarea');
   assert.ok(textarea, 'delayed helper textarea should exist');
   assert.equal(textarea.focusCalls > 0, true);
 });
