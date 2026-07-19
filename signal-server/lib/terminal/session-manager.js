@@ -216,9 +216,25 @@ function createTerminalSessionManager(options = {}) {
     if (session.killRequested) return false;
     session.killRequested = true;
     if (session.pty && typeof session.pty.kill === 'function') {
-      session.pty.kill('SIGHUP');
+      try {
+        session.pty.kill('SIGHUP');
+      } catch {
+        audit.error('terminal_pty_kill_failed', {
+          sessionId: session.sessionId,
+          clientId: session.creatorClientId,
+          code: 'pty_kill_failed',
+          processStatus: session.processStatus,
+        });
+      }
     }
     return true;
+  }
+
+  function removeSessionFromPool(sessionId) {
+    sessions.delete(sessionId);
+    if (pool.defaultSessionId === sessionId) {
+      pool.defaultSessionId = sessions.keys().next().value || null;
+    }
   }
 
   function markPtyReady(session) {
@@ -385,16 +401,35 @@ function createTerminalSessionManager(options = {}) {
       signal: null,
     };
 
-    wirePty(session, pty);
     addObserver(session, input);
     sessions.set(sessionId, session);
+    if (!pool.defaultSessionId) {
+      pool.defaultSessionId = sessionId;
+    }
     session.startupTimer = scheduleTimeout(
       () => handleStartupTimeout(session),
       config.startupTimeoutMs,
     );
     session.startupTimer?.unref?.();
-    if (!pool.defaultSessionId) {
-      pool.defaultSessionId = sessionId;
+    try {
+      wirePty(session, pty);
+    } catch {
+      audit.error('terminal_pty_registration_failed', {
+        sessionId,
+        clientId: session.creatorClientId,
+        socketId: String(input.socketId || '').trim() || null,
+        code: 'pty_spawn_failed',
+      });
+      clearStartupTimer(session);
+      session.processStatus = transitionProcessState(session.processStatus, 'close');
+      session.exitHandled = true;
+      killPtyOnce(session);
+      session.status = 'detached';
+      session.detachedReason = 'registration-failed';
+      session.observers.clear();
+      session.activePresenterClientId = null;
+      removeSessionFromPool(sessionId);
+      throw makeTerminalError('pty_spawn_failed');
     }
     maybeWarnSessionCount();
     audit.info('terminal_session_created', {
@@ -572,10 +607,7 @@ function createTerminalSessionManager(options = {}) {
     session.lastActiveAt = timestamp();
     session.observers.clear();
     session.activePresenterClientId = null;
-    sessions.delete(sessionId);
-    if (pool.defaultSessionId === sessionId) {
-      pool.defaultSessionId = sessions.keys().next().value || null;
-    }
+    removeSessionFromPool(sessionId);
     audit.info('terminal_session_closed', {
       sessionId,
       clientId: String(input.clientId || '').trim() || null,

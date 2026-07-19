@@ -401,6 +401,115 @@ test('first PTY output marks a starting session ready exactly once and clears it
   assert.equal(readyEvents[0].meta.startupDurationMs, 250);
 });
 
+test('synchronous PTY data during callback registration clears the timer and reaches the creator', () => {
+  const activeTimers = new Set();
+  const delivered = [];
+  const pty = createFakePty();
+  pty.onData = (handler) => handler('instant prompt');
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler, delay) {
+      const timer = { handler, delay };
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout(timer) { activeTimers.delete(timer); },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    onData: (data) => delivered.push(data),
+  });
+
+  assert.equal(created.processStatus, 'running');
+  assert.deepEqual(delivered, ['instant prompt']);
+  assert.equal(activeTimers.size, 0);
+  assert.equal(manager.listSessions().length, 1);
+});
+
+test('synchronous PTY exit during callback registration notifies the creator and leaves failed state without a timer', () => {
+  const activeTimers = new Set();
+  const exits = [];
+  const pty = createFakePty();
+  pty.onExit = (handler) => handler({ exitCode: 2, signal: 0 });
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler, delay) {
+      const timer = { handler, delay };
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout(timer) { activeTimers.delete(timer); },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    onExit: (payload) => exits.push(payload),
+  });
+
+  assert.equal(created.processStatus, 'failed');
+  assert.equal(created.exitCode, 2);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].processStatus, 'failed');
+  assert.equal(activeTimers.size, 0);
+  assert.equal(manager.listSessions().length, 1);
+});
+
+test('PTY callback registration failure leaves no pooled session or live timer', () => {
+  const activeTimers = new Set();
+  const events = [];
+  const pty = createFakePty();
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler, delay) {
+      const timer = { handler, delay };
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout(timer) { activeTimers.delete(timer); },
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed' && !error.message.includes('SECRET_VALUE'),
+  );
+  assert.equal(manager.listSessions().length, 0);
+  assert.equal(activeTimers.size, 0);
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.equal(events.some((entry) => entry.event === 'terminal_pty_registration_failed'), true);
+  assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
 test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', () => {
   let startupHandler;
   const pty = createFakePty();
@@ -439,6 +548,100 @@ test('PTY startup timeout fails once, kills once, notifies once, and retains rep
   manager.closeSession(created.sessionId, { reason: 'user-close' });
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
 });
+
+test('PTY startup timeout still notifies and retains failed state when kill throws', () => {
+  let startupHandler;
+  const events = [];
+  const errors = [];
+  const exits = [];
+  const pty = createFakePty();
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('kill SECRET_VALUE');
+  };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler) { startupHandler = handler; return { id: 1 }; },
+    clearTimeout() {},
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 1000,
+    },
+  });
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    onError: (error) => errors.push(error),
+    onExit: (payload) => exits.push(payload),
+  });
+
+  assert.doesNotThrow(() => startupHandler());
+  assert.equal(manager._getSession(created.sessionId).processStatus, 'failed');
+  assert.equal(manager.listSessions().length, 1);
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.equal(errors.length, 1);
+  assert.equal(exits.length, 1);
+  assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
+  assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+for (const terminalState of ['running', 'exited']) {
+  test(`explicit close completes cleanup when ${terminalState} PTY kill throws`, () => {
+    const activeTimers = new Set();
+    const events = [];
+    const pty = createFakePty();
+    pty.kill = function kill(signal) {
+      this.killCalls.push(signal);
+      throw new Error('close kill SECRET_VALUE');
+    };
+    const manager = createTerminalSessionManager({
+      ptyFactory: () => pty,
+      setTimeout(handler, delay) {
+        const timer = { handler, delay };
+        activeTimers.add(timer);
+        return timer;
+      },
+      clearTimeout(timer) { activeTimers.delete(timer); },
+      audit: {
+        info(event, meta) { events.push({ level: 'info', event, meta }); },
+        warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+        error(event, meta) { events.push({ level: 'error', event, meta }); },
+      },
+      logger: { warn() {}, info() {}, error() {} },
+      config: {
+        enableTerminal: true,
+        terminalAdminPassword: 'test-terminal-admin-password',
+        terminalShell: '/bin/zsh',
+        terminalCwd: '/tmp',
+        terminalStartupTimeoutMs: 10000,
+      },
+    });
+    const created = manager.createSession({ clientId: 'browser-a' });
+    const session = manager._getSession(created.sessionId);
+    pty.emitData('ready');
+    if (terminalState === 'exited') {
+      pty.emitExit({ exitCode: 0, signal: 0 });
+    }
+
+    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'user-close' }));
+    assert.equal(session.processStatus, 'closed');
+    assert.equal(session.status, 'detached');
+    assert.equal(session.observers.size, 0);
+    assert.equal(activeTimers.size, 0);
+    assert.equal(manager.listSessions().length, 0);
+    assert.deepEqual(pty.killCalls, ['SIGHUP']);
+    assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
+    assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+  });
+}
 
 test('PTY exit is processed once and exited sessions reject write and resize without touching the PTY', () => {
   const pty = createFakePty();
