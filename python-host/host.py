@@ -1830,7 +1830,11 @@ class WebRemoteHost:
 
                 lease_id = data.get("leaseId")
                 lease_epoch = data.get("leaseEpoch")
+                connection_attempt_id = data.get("connectionAttemptId")
                 if isinstance(lease_id, str) and len(lease_id) >= 16 and isinstance(lease_epoch, int) and lease_epoch >= 1:
+                    if not isinstance(connection_attempt_id, str) or not connection_attempt_id:
+                        logger.warning("Ignoring offer without connectionAttemptId")
+                        return
                     self._connection_generation = max(
                         int(getattr(self, "_connection_generation", 0) or 0) + 1,
                         int(data.get("connectionGeneration") or 0),
@@ -1840,6 +1844,7 @@ class WebRemoteHost:
                         "leaseId": lease_id,
                         "leaseEpoch": lease_epoch,
                         "connectionGeneration": self._connection_generation,
+                        "connectionAttemptId": connection_attempt_id,
                     }
                     result = await self.input_handler.transition_keyboard(
                         connection_generation=binding["connectionGeneration"],
@@ -1850,6 +1855,13 @@ class WebRemoteHost:
                         logger.warning("Ignoring offer with rejected keyboard binding")
                         return
                     self._active_input_binding = binding
+                    # New offer/attempt invalidates prior media activity progress.
+                    self._media_activity_binding = {
+                        "viewerId": viewer_id,
+                        "connectionAttemptId": connection_attempt_id,
+                        "generation": 0,
+                        "state": "active",
+                    }
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
@@ -2255,15 +2267,21 @@ class WebRemoteHost:
             return False, "viewer-mismatch", None
         if binding.get("leaseId") != lease_id or binding.get("leaseEpoch") != lease_epoch:
             return False, "stale-lease", None
+        # Media activity must match the current offer binding attempt. Prior media
+        # progress from a different attempt is irrelevant and must not block the
+        # new attempt (generation may restart from a small value).
+        bound_attempt = binding.get("connectionAttemptId")
+        if isinstance(bound_attempt, str) and bound_attempt and bound_attempt != attempt_id:
+            return False, "wrong-attempt", None
 
         current = getattr(self, "_media_activity_binding", None)
-        if isinstance(current, dict):
-            if (
-                current.get("connectionAttemptId") == attempt_id
-                and isinstance(current.get("generation"), int)
-                and generation <= current["generation"]
-            ):
-                return False, "stale-generation", None
+        if (
+            isinstance(current, dict)
+            and current.get("connectionAttemptId") == attempt_id
+            and isinstance(current.get("generation"), int)
+            and generation <= current["generation"]
+        ):
+            return False, "stale-generation", None
 
         return True, None, {
             "schemaVersion": 1,

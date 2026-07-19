@@ -365,6 +365,29 @@ function setupSignaling(io, options = {}) {
     }
     return legacy;
   }
+  function isValidConnectionAttemptId(value) {
+    return typeof value === 'string'
+      && value.length >= 1
+      && value.length <= 128
+      && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+  }
+
+  function bindViewerConnectionAttempt(viewerId, connectionAttemptId) {
+    if (!viewerId || !isValidConnectionAttemptId(connectionAttemptId)) return false;
+    mediaActivityProgress.set(viewerId, {
+      connectionAttemptId,
+      generation: 0,
+    });
+    return true;
+  }
+
+  function currentViewerConnectionAttempt(viewerId) {
+    const prior = mediaActivityProgress.get(viewerId);
+    return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
+      ? prior.connectionAttemptId
+      : null;
+  }
+
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
     const networkMode = String(data.networkMode || data.iceMode || '').trim();
@@ -376,7 +399,12 @@ function setupSignaling(io, options = {}) {
     };
     // v2 offers have already passed authorizeViewer(), so this opaque token
     // is safe to forward solely to the Host for its direct DataChannel binding.
-    if (data.schemaVersion === 2) forwarded.leaseId = data.leaseId;
+    if (data.schemaVersion === 2) {
+      if (!isValidConnectionAttemptId(data.connectionAttemptId)) return false;
+      forwarded.leaseId = data.leaseId;
+      forwarded.connectionAttemptId = data.connectionAttemptId;
+      bindViewerConnectionAttempt(socket.id, data.connectionAttemptId);
+    }
     if (networkMode) {
       forwarded.networkMode = networkMode;
       forwarded.iceMode = networkMode;
@@ -848,6 +876,12 @@ function setupSignaling(io, options = {}) {
         leaseEpoch: value.leaseEpoch,
       }, { legacy: false })) {
         socket.emit('media-activity-rejected', { reason: 'unauthorized' });
+        return;
+      }
+      const currentAttempt = currentViewerConnectionAttempt(socket.id);
+      // Once an offer binds the media session, only that attempt may change media.
+      if (currentAttempt && value.connectionAttemptId !== currentAttempt) {
+        socket.emit('media-activity-rejected', { reason: 'wrong-attempt' });
         return;
       }
       const prior = mediaActivityProgress.get(socket.id);

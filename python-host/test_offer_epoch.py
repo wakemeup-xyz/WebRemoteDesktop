@@ -713,6 +713,71 @@ async def test_input_from_stale_viewer_is_ignored():
 
 
 @pytest.mark.asyncio
+async def test_media_activity_rejects_old_connection_attempt_and_accepts_new_attempt_low_generation():
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+        "connectionGeneration": 2,
+        "connectionAttemptId": "attempt-B",
+    }
+    host._media_activity_binding = {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": "attempt-A",
+        "generation": 50,
+        "state": "active",
+    }
+    host._media_activity_suspended = False
+    host._media_activity_lock = asyncio.Lock()
+    host.input_handler = None
+    host.media_sender = None
+    host.pc = None
+    host.screen_track = None
+    host.tunnel_relay = None
+    acks = []
+
+    class FakeSio:
+        async def emit(self, event, payload):
+            acks.append((event, payload))
+
+    host.sio = FakeSio()
+
+    # Old attempt cannot suspend the new session.
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 51,
+        "connectionAttemptId": "attempt-A",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert acks[-1][1]["applied"] is False
+    assert acks[-1][1]["reason"] == "wrong-attempt"
+    assert host._media_activity_suspended is False
+
+    # New attempt may restart generation from a small value.
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "attempt-B",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert acks[-1][1]["applied"] is True
+    assert acks[-1][1]["connectionAttemptId"] == "attempt-B"
+    assert acks[-1][1]["generation"] == 1
+    assert host._media_activity_binding["connectionAttemptId"] == "attempt-B"
+    assert host._media_activity_binding["generation"] == 1
+    assert host._media_activity_suspended is True
+
+
+@pytest.mark.asyncio
 async def test_media_activity_rejects_stale_lease_and_generation():
     host = object.__new__(WebRemoteHost)
     host._active_input_binding = {
@@ -720,6 +785,7 @@ async def test_media_activity_rejects_stale_lease_and_generation():
         "leaseId": "lease-000000000001",
         "leaseEpoch": 3,
         "connectionGeneration": 1,
+        "connectionAttemptId": "wrd-1",
     }
     host._media_activity_binding = {
         "viewerId": "viewer-1",

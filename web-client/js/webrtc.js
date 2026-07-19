@@ -2111,6 +2111,9 @@ const WebRTC = {
       }
       if (epoch !== this._offerEpoch) return;
 
+      if (!this.currentConnectionAttemptId) {
+        this.currentConnectionAttemptId = this.createConnectionAttemptId();
+      }
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
       this.socket.emit('offer', {
         offer: this.pc.localDescription,
@@ -2120,8 +2123,9 @@ const WebRTC = {
         iceMode: this.networkMode,
         leaseId: this.controlState.lease.leaseId,
         leaseEpoch: this.controlState.lease.leaseEpoch,
+        connectionAttemptId: this.currentConnectionAttemptId,
       });
-      console.log('Offer sent (epoch=%d)', epoch);
+      console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {
       console.error('Failed to create offer:', err);
       this.scheduleReconnect('offer-error');

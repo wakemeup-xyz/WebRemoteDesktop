@@ -1102,6 +1102,38 @@ test('stale createOffer completion does not clear newer offer progress', async (
   assert.equal(WebRTC.offerInProgress, true);
 });
 
+test('createOffer emits connectionAttemptId bound to the current attempt', async () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = {
+    connected: true,
+    emit(...args) { emitted.push(args); },
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 },
+  };
+  WebRTC.networkMode = 'stun';
+  WebRTC.currentConnectionAttemptId = 'attempt-from-begin';
+  WebRTC.pc = {
+    getTransceivers: () => [],
+    addTransceiver: () => ({}),
+    createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    setLocalDescription: async () => {},
+    localDescription: { type: 'offer', sdp: 'v=0' },
+  };
+  WebRTC.preferH264 = () => {};
+
+  await WebRTC.createOffer();
+  const offerEmit = emitted.find((entry) => entry[0] === 'offer');
+  assert.ok(offerEmit);
+  assert.equal(offerEmit[1].connectionAttemptId, 'attempt-from-begin');
+  assert.equal(offerEmit[1].leaseId, 'lease-000000000001');
+  assert.equal(offerEmit[1].schemaVersion, 2);
+});
+
 test('auto fallback handles relay frames while tunnel relay is active', () => {
   const { WebRTC, elements } = loadWebRTC();
   const relayImage = elements.get('relayImage') || makeElement();

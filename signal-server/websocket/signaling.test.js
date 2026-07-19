@@ -528,6 +528,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     epoch: 3,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-owner-1',
   });
 
   const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1).data;
@@ -537,6 +538,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     epoch: 3,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-owner-1',
   });
   assert.equal(observer.sent.some((entry) => entry.event === 'offer'), false);
   assert.equal(JSON.stringify(observer.sent).includes(grant.leaseId), false);
@@ -1247,6 +1249,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
     iceMode: 'relay',
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-turn-1',
   });
 
   const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1);
@@ -1254,6 +1257,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
   assert.equal(forwarded.data.networkMode, 'relay');
   assert.equal(forwarded.data.iceMode, 'relay');
   assert.equal(forwarded.data.viewerId, viewer.id);
+  assert.equal(forwarded.data.connectionAttemptId, 'attempt-turn-1');
 });
 
 test('legacy controller is single-writer and a v2 takeover resets it before grant', () => {
@@ -1688,4 +1692,123 @@ test('media-activity-change requires active lease and monotonic generation', () 
   assert.equal(ack.applied, true);
   assert.equal(ack.generation, 1);
   assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+});
+
+test('v2 offer forwards connectionAttemptId and binds media activity to that attempt', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'attempt-bind' });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((e) => e.event === 'control-grant').data;
+
+  // Missing attempt id is rejected and not forwarded.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'offer').length, 0);
+
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    networkMode: 'stun',
+    iceMode: 'stun',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-A',
+  });
+  const forwarded = host.sent.filter((e) => e.event === 'offer').at(-1).data;
+  assert.equal(forwarded.connectionAttemptId, 'attempt-A');
+  assert.equal(forwarded.viewerId, 'viewer-1');
+  assert.equal(forwarded.leaseId, grant.leaseId);
+
+  // Media for a different attempt is rejected even with a higher generation.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 9,
+    connectionAttemptId: 'attempt-OLD',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+  assert.equal(host.sent.filter((e) => e.event === 'media-activity-change').length, 0);
+
+  // Matching current attempt is accepted and generation is tracked per attempt.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'media-activity-change').length, 1);
+
+  // New offer rebinds attempt; old attempt cannot suspend/resume the new session.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=1' },
+    epoch: 2,
+    networkMode: 'stun',
+    iceMode: 'stun',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-B',
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'offer').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+
+  // Attempt B can restart generation from a small value without pollution from A.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-B',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'media-activity-change').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+  assert.equal(
+    host.sent.filter((e) => e.event === 'media-activity-change').at(-1).data.generation,
+    1,
+  );
 });
