@@ -95,6 +95,15 @@
       <button id="terminalNewBtn" class="terminal-primary-btn hidden" type="button">新建</button>
     </div>
     <div class="terminal-pool-note">共享控制台：当前会话对所有已附着观察者可见，桌面断开不会关闭终端。</div>
+    <div class="terminal-transport-row" aria-label="Terminal transport">
+      <label for="terminalTransportSelect">传输</label>
+      <select id="terminalTransportSelect" class="terminal-transport-select">
+        <option value="socketio" selected>Socket.IO（默认）</option>
+        <option value="webrtc-turn">TURN DataChannel</option>
+      </select>
+      <button id="terminalTransportTestBtn" class="terminal-primary-btn" type="button">测试传输</button>
+      <span id="terminalTransportStatus" class="terminal-transport-status">默认 Socket.IO</span>
+    </div>
     <div id="terminalStatus" class="terminal-status" data-state="warning">需要 admin 二次授权</div>
     <div id="terminalWarning" class="terminal-warning hidden"></div>
     <div id="terminalWorkspace" class="terminal-workspace"></div>
@@ -165,7 +174,7 @@
           <input type="radio" name="networkMode" value="auto" checked>
           <span>
             <strong>自动穿透</strong>
-            <small>默认模式。先尝试直连和 STUN，有 TURN 时自动兜底。</small>
+            <small>默认模式。先尝试直连和 STUN；失败时提示手动切换外网中继或隧道中继，不自动改写模式。</small>
           </span>
         </label>
         <label class="network-option">
@@ -191,8 +200,12 @@
         </label>
       </div>
       <p id="networkTurnStatus" class="network-turn-status">正在读取 TURN 配置...</p>
-      <button id="applyNetworkMode" class="modal-btn primary">应用并重连</button>
-      <button id="closeNetworkMode" class="modal-btn">取消</button>
+      <pre id="networkTurnTestResult" class="network-turn-test-result" aria-live="polite"></pre>
+      <div class="network-modal-actions">
+        <button id="testTurnBtn" class="modal-btn" type="button">测试 TURN</button>
+        <button id="applyNetworkMode" class="modal-btn primary" type="button">应用并重连</button>
+        <button id="closeNetworkMode" class="modal-btn" type="button">取消</button>
+      </div>
     </div>
   </div>
   
@@ -239,6 +252,7 @@
   <script src="js/media-activity-controller.js"></script>
   <script src="js/media-activity-lifecycle.js"></script>
   <script src="js/stun-port-search-controller.js"></script>
+  <script src="js/turn-selftest.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input-geometry.js"></script>
   <script src="js/keyboard-transport.js"></script>

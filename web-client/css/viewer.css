@@ -412,6 +412,40 @@ body.tunnel-relay-active #remoteVideo {
   font: 12px/1.4 'JetBrains Mono', monospace;
 }
 
+.terminal-transport-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.terminal-transport-select {
+  background: rgba(15, 23, 42, 0.8);
+  color: var(--text-primary);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.terminal-transport-status {
+  color: var(--text-muted);
+}
+
+.terminal-transport-status[data-state="connected"] {
+  color: #86efac;
+}
+
+.terminal-transport-status[data-state="error"] {
+  color: #fca5a5;
+}
+
+.terminal-transport-status[data-state="warning"] {
+  color: #fde68a;
+}
+
 .terminal-session-tabs {
   min-width: 0;
   flex: 1;
@@ -781,6 +815,39 @@ body.controls-hidden .action-bar {
   font-size: 12px;
   line-height: 1.5;
   margin-bottom: 12px;
+}
+
+.network-turn-test-result {
+  min-height: 0;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.network-turn-test-result:empty {
+  display: none;
+}
+
+.network-turn-test-result[data-severity="danger"] {
+  color: #fca5a5;
+}
+
+.network-turn-test-result[data-severity="ok"] {
+  color: #86efac;
+}
+
+.network-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .network-advisor {

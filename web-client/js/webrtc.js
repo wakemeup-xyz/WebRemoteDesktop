@@ -67,7 +67,7 @@ const WebRTC = {
     auto: {
       label: '自动穿透',
       state: '推荐',
-      hint: '默认模式。优先低延迟直连；失败时只给出下一步建议，不会自动改写你选中的模式。'
+      hint: '默认模式。优先低延迟直连；失败时只提示手动切换外网中继或隧道中继，不会自动改写你选中的模式。'
     },
     stun: {
       label: '外网直连',
@@ -211,14 +211,78 @@ const WebRTC = {
   buildTurnStatusText() {
     const entry = this.getPublicEntryUrl();
     const prefix = entry ? `固定入口：${entry}` : '固定入口：未提供';
+    const source = this.serverConfig?.turnSource || 'none';
+    const fp = (typeof TurnSelfTest !== 'undefined' && TurnSelfTest.shortFingerprint)
+      ? TurnSelfTest.shortFingerprint(this.serverConfig?.turnFingerprint)
+      : String(this.serverConfig?.turnFingerprint || '').slice(0, 12);
+    const hostReady = this.serverConfig?.hostTurnReady;
+    const hostFp = (typeof TurnSelfTest !== 'undefined' && TurnSelfTest.shortFingerprint)
+      ? TurnSelfTest.shortFingerprint(this.serverConfig?.hostTurnFingerprint)
+      : String(this.serverConfig?.hostTurnFingerprint || '').slice(0, 12);
+    const hostPart = hostReady
+      ? `Host ready · fp ${hostFp || '-'}`
+      : (this.serverConfig?.hostTurnFingerprint
+        ? `Host fp ${hostFp}`
+        : 'Host TURN 未上报');
+
     if (this.serverConfig?.turnConfigured) {
       const urls = (this.serverConfig.turnUrls || []).join(', ');
-      return `${prefix}。TURN 已配置：${urls || '已启用'}。若外网画面异常，请按建议手动切换模式。`;
+      return `${prefix}。TURN 已配置（source=${source}${fp ? ` · fp ${fp}` : ''}）：${urls || '已启用'}。${hostPart}。失败时请手动切换外网中继，不会自动改写模式。`;
     }
     if (this.serverConfig?.turnStatus === 'misconfigured') {
-      return `${prefix}。TURN 配置不完整，当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
+      return `${prefix}。TURN 配置不完整（source=${source}），当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
     }
     return `${prefix}。TURN 未配置，当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
+  },
+
+  async runTurnSelfTest({ skipAllocate = false } = {}) {
+    const resultEl = document.getElementById('networkTurnTestResult');
+    const setResult = (text, severity = '') => {
+      if (!resultEl) return;
+      resultEl.textContent = text;
+      resultEl.dataset.severity = severity || '';
+    };
+
+    if (typeof TurnSelfTest === 'undefined' || typeof TurnSelfTest.run !== 'function') {
+      setResult('TURN 自检模块未加载。', 'danger');
+      return null;
+    }
+
+    setResult('正在刷新配置并测试 TURN…');
+    await this.loadServerConfig();
+    this.updateNetworkUI('', '');
+
+    const apiBase = (typeof RuntimeConfig !== 'undefined')
+      ? RuntimeConfig.getApiBase()
+      : '';
+    const token = (typeof Auth !== 'undefined' && Auth.getToken)
+      ? Auth.getToken()
+      : '';
+    const summary = await TurnSelfTest.run({
+      iceServers: this.serverConfig?.iceServers || [],
+      turnConfigured: Boolean(this.serverConfig?.turnConfigured),
+      turnMisconfigured: Boolean(this.serverConfig?.turnMisconfigured),
+      turnFingerprint: this.serverConfig?.turnFingerprint || '',
+      hostTurnReady: this.serverConfig?.hostTurnReady,
+      hostTurnFingerprint: this.serverConfig?.hostTurnFingerprint || '',
+      skipAllocate,
+      includeServerProbe: true,
+      serverProbeOptions: {
+        apiBase,
+        token,
+        timeoutMs: 10000,
+      },
+      timeoutMs: 8000,
+    });
+    this.lastTurnSelfTest = summary;
+
+    const lines = (summary.steps || []).map((step) => {
+      const mark = step.ok ? 'PASS' : 'FAIL';
+      return `${mark} ${step.step}: ${step.code}${step.detail ? ` — ${step.detail}` : ''}`;
+    });
+    lines.push(summary.message);
+    setResult(lines.join('\n'), summary.ok ? 'ok' : 'danger');
+    return summary;
   },
 
   enterUnavailableRelayState(message) {
@@ -478,6 +542,29 @@ const WebRTC = {
     return this.socket;
   },
 
+  applyHostCapabilities(capabilities = null) {
+    if (!this.serverConfig || typeof this.serverConfig !== 'object') {
+      this.serverConfig = {};
+    }
+    if (!capabilities || typeof capabilities !== 'object') {
+      return this.serverConfig;
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'turnReady')) {
+      this.serverConfig.hostTurnReady = Boolean(capabilities.turnReady);
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'turnFingerprint')) {
+      this.serverConfig.hostTurnFingerprint = String(capabilities.turnFingerprint || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'supportsSessionTurn')) {
+      this.serverConfig.hostSupportsSessionTurn = Boolean(capabilities.supportsSessionTurn);
+    }
+    const turnStatus = document.getElementById('networkTurnStatus');
+    if (turnStatus) {
+      turnStatus.textContent = this.buildTurnStatusText();
+    }
+    return this.serverConfig;
+  },
+
   async loadServerConfig() {
     try {
       const token = Auth.getToken();
@@ -495,6 +582,9 @@ const WebRTC = {
       console.log('[NETWORK] Loaded WebRTC config:', {
         stunUrls: this.serverConfig.stunUrls,
         turnConfigured: this.serverConfig.turnConfigured,
+        turnSource: this.serverConfig.turnSource,
+        turnFingerprint: this.serverConfig.turnFingerprint,
+        hostTurnReady: this.serverConfig.hostTurnReady,
         turnUrls: this.serverConfig.turnUrls
       });
     } catch (err) {
@@ -502,6 +592,12 @@ const WebRTC = {
       this.serverConfig = {
         stunUrls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
         turnConfigured: false,
+        turnMisconfigured: false,
+        turnStatus: 'missing',
+        turnSource: 'none',
+        turnFingerprint: '',
+        hostTurnReady: false,
+        hostTurnFingerprint: '',
         turnUrls: [],
         iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
       };
@@ -546,10 +642,9 @@ const WebRTC = {
     } else if (this.networkMode === 'relay') {
       iceServers = turnServers;
       iceTransportPolicy = 'relay';
-    } else if (this.useRelayFallback && turnServers.length) {
-      iceServers = turnServers;
-      iceTransportPolicy = 'relay';
     } else {
+      // Strict STUN policy: never silently force-relay while networkMode stays auto/stun.
+      // useRelayFallback is retained only as diagnostic residue and must not change ICE.
       iceServers = [...this.getStunServers(), ...turnServers];
     }
 
@@ -652,6 +747,24 @@ const WebRTC = {
       lastCandidateType: this.lastCandidateType || '',
       turnConfigured: Boolean(this.serverConfig?.turnConfigured),
       turnStatus: this.serverConfig?.turnStatus || 'unknown',
+      turnSource: this.serverConfig?.turnSource || 'none',
+      turnFingerprint: this.serverConfig?.turnFingerprint || '',
+      hostTurnReady: Boolean(this.serverConfig?.hostTurnReady),
+      hostTurnFingerprint: this.serverConfig?.hostTurnFingerprint || '',
+      turnSelfTest: this.lastTurnSelfTest
+        ? {
+          ok: Boolean(this.lastTurnSelfTest.ok),
+          failedCode: this.lastTurnSelfTest.failedCode || null,
+          message: this.lastTurnSelfTest.message || '',
+          steps: (this.lastTurnSelfTest.steps || []).map((step) => ({
+            step: step.step,
+            ok: Boolean(step.ok),
+            code: step.code,
+            detail: step.detail || '',
+            relayCandidateCount: step.relayCandidateCount,
+          })),
+        }
+        : null,
       selectedCandidatePair: this.selectedCandidatePair,
       candidateSummary: this.candidateSummary,
       stunPortSearch: this.portSearchController?.snapshot() || null,
@@ -947,6 +1060,7 @@ const WebRTC = {
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
       this.controlState.hostOnline = Boolean(data.hostOnline);
+      this.applyHostCapabilities(data.hostCapabilities);
       this.renderPortSearchStatus();
       if (data.hostOnline) {
         this.requestControl();
@@ -960,6 +1074,7 @@ const WebRTC = {
         data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
         this.controlState.hostOnline = true;
+        this.applyHostCapabilities(data.hostCapabilities);
         this.renderPortSearchStatus();
         updateLoadingText('Host已上线，正在连接...');
         if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
@@ -973,6 +1088,7 @@ const WebRTC = {
         this.requestControl();
       } else {
         this.controlState.hostOnline = false;
+        this.applyHostCapabilities({ turnReady: false, turnFingerprint: '', supportsSessionTurn: false });
         if (this.isPortSearchActive()) {
           this.stopPortSearch('host-offline');
         } else {
@@ -982,6 +1098,10 @@ const WebRTC = {
         updateConnectionStatus('disconnected');
         updateLoadingText('Host已离线');
       }
+    });
+
+    this.socket.on('host-capabilities', (data) => {
+      this.applyHostCapabilities(data);
     });
 
     this.socket.on('answer', async (data) => {
@@ -1702,14 +1822,21 @@ const WebRTC = {
       const offer = await this.pc.createOffer();
       if (epoch !== this._offerEpoch) return;
       await this.pc.setLocalDescription(offer);
-      if (this.networkMode === 'relay' || this.useRelayFallback) {
+      if (this.networkMode === 'relay') {
         await this.waitForIceGatheringComplete(8000);
       }
       if (epoch !== this._offerEpoch) return;
 
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
-      this.socket.emit('offer', { offer: this.pc.localDescription, epoch, schemaVersion: 2,
-        leaseId: this.controlState.lease.leaseId, leaseEpoch: this.controlState.lease.leaseEpoch });
+      this.socket.emit('offer', {
+        offer: this.pc.localDescription,
+        epoch,
+        schemaVersion: 2,
+        networkMode: this.networkMode,
+        iceMode: this.networkMode,
+        leaseId: this.controlState.lease.leaseId,
+        leaseEpoch: this.controlState.lease.leaseEpoch,
+      });
       console.log('Offer sent (epoch=%d)', epoch);
     } catch (err) {
       console.error('Failed to create offer:', err);
@@ -1787,6 +1914,7 @@ const WebRTC = {
     const modal = document.getElementById('networkModal');
     const applyBtn = document.getElementById('applyNetworkMode');
     const closeBtn = document.getElementById('closeNetworkMode');
+    const testBtn = document.getElementById('testTurnBtn');
     const turnStatus = document.getElementById('networkTurnStatus');
 
     if (modeBtn && !modeBtn.dataset.bound) {
@@ -1819,6 +1947,20 @@ const WebRTC = {
           this.setNetworkMode(selected.value);
           modal?.classList.add('hidden');
         }
+      });
+    }
+
+    if (testBtn && !testBtn.dataset.bound) {
+      testBtn.dataset.bound = '1';
+      testBtn.addEventListener('click', () => {
+        this.runTurnSelfTest().catch((err) => {
+          console.warn('[NETWORK] TURN self-test failed:', err);
+          const resultEl = document.getElementById('networkTurnTestResult');
+          if (resultEl) {
+            resultEl.textContent = `测试异常：${err?.message || err}`;
+            resultEl.dataset.severity = 'danger';
+          }
+        });
       });
     }
 
@@ -2202,11 +2344,11 @@ const WebRTC = {
       return;
     }
 
-    if (this.networkMode === 'auto' && !this.useRelayFallback && hasTurn && this._autoFailCount < 2) {
+    if (this.networkMode === 'auto' && hasTurn && this._autoFailCount < 2) {
       this.setFailureRecommendation('direct-failed-suggest-relay', 'warning');
       this.updateNetworkUI('自动穿透失败；Strict STUN 默认不自动切 TURN，可手动选择外网中继。', 'warning');
       updateLoadingText('直连异常，正在尝试恢复...');
-    } else if (this.networkMode === 'auto' && (this.useRelayFallback || this._autoFailCount >= 2)) {
+    } else if (this.networkMode === 'auto' && this._autoFailCount >= 2) {
       console.warn('[RECOVERY] Strict STUN auto exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.useRelayFallback = false;
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
