@@ -1824,20 +1824,40 @@ test('collectNetworkSnapshot includes stunPortSearch without candidate IPs', () 
   WebRTC.stopPortSearch('cleanup');
 });
 
-test('manual refresh cancels an active port search', () => {
+test('manual refresh cancels an active port search', async () => {
   const { WebRTC } = loadWebRTC();
   preparePortSearch(WebRTC);
-  // Keep startPortSearch from using the real refresh path for setup.
-  WebRTC.refresh = () => {};
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = async () => {};
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.stopMediaTelemetry = () => {};
   assert.equal(WebRTC.startPortSearch(), true);
   assert.equal(WebRTC.isPortSearchActive(), true);
 
-  // Simulate the real refresh implementation's cancel gate used by the
-  // normal refresh button (not search-owned refresh).
-  if (!WebRTC._portSearchRefreshOwned && WebRTC.isPortSearchActive()) {
-    WebRTC.stopPortSearch('manual-refresh');
-  }
+  // Call the real refresh path (not search-owned): it must cancel search.
+  WebRTC._portSearchRefreshOwned = false;
+  await WebRTC.refresh();
   assert.equal(WebRTC.isPortSearchActive(), false);
+});
+
+test('manual refresh clears sticky exhausted port-search candidate text', async () => {
+  const { WebRTC, context } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = async () => {};
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.stopMediaTelemetry = () => {};
+  WebRTC.portSearchController = context.StunPortSearchController.create({ limit: 1 });
+  WebRTC.portSearchController.start();
+  WebRTC.portSearchController.beginAttempt('manual');
+  WebRTC.portSearchController.failAttempt('timeout');
+  assert.equal(WebRTC.portSearchController.snapshot().status, 'exhausted');
+  WebRTC.renderPortSearchStatus();
+  assert.match(context.document.getElementById('candidateDisplay').textContent, /端口搜索失败/);
+
+  WebRTC._portSearchRefreshOwned = false;
+  await WebRTC.refresh();
+  assert.equal(WebRTC.portSearchController, null);
 });
 
 test('signal disconnect cancels active port search', () => {

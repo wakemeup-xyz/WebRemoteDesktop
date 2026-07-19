@@ -2078,6 +2078,13 @@ const WebRTC = {
     console.log('Refreshing WebRTC connection...');
     if (!this._portSearchRefreshOwned && this.isPortSearchActive()) {
       this.stopPortSearch('manual-refresh');
+    } else if (!this._portSearchRefreshOwned && this.portSearchController) {
+      // Normal refresh should release sticky success/exhausted candidate text.
+      const portSearchStatus = this.portSearchController.snapshot?.()?.status;
+      if (portSearchStatus === 'succeeded' || portSearchStatus === 'exhausted' || portSearchStatus === 'stopped') {
+        this.portSearchController = null;
+        this.renderPortSearchStatus();
+      }
     }
     this._refreshing = true;
     this.manualDisconnect = false;

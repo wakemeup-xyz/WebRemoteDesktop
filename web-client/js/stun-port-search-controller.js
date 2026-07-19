@@ -39,6 +39,8 @@
       }
 
       function snapshot() {
+        // Diagnostics should stay bounded: current-round ports + unique count only.
+        // Do not export the full historical uniquePorts array.
         return {
           active: status === 'searching',
           status,
@@ -47,7 +49,6 @@
           lastReason,
           stableMediaSamples,
           uniquePortCount: uniquePorts.size,
-          uniquePorts: Array.from(uniquePorts),
           current: {
             viewerPorts: currentViewerPorts.slice(),
             hostPorts: currentHostPorts.slice(),
