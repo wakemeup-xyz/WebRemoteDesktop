@@ -88,4 +88,15 @@ Express limiter 的内存状态会跨测试污染。每个测试必须使用新 
 
 `PASS WITH IMPLEMENTATION GATES`
 
+## 7. Implementation Closure Notes
+
+Tasks 1-7 are implemented in the isolated `feat/terminal-hardening` worktree. The runtime contract is now:
+
+- PTY environment is allowlisted, no-rc, and explicitly orders Homebrew Python 3.11 before system Python.
+- Lifecycle, identity, close permission, input limits, ack-driven observer backpressure, bounded metrics, auth limiters, and websocket-only default transport are enforced by code and focused tests.
+- `WRD_TERMINAL_RECORD_IO=1` is metadata-only; it does not authorize raw command or output logging.
+- Cloudflare/tunnel lifecycle is outside this change. `scripts/terminal-runtime-check.sh` is read-only and never rebuilds or restarts a tunnel.
+
+Task 8 documentation and checker changes are pending final review and runtime proof. Do not claim the live Terminal acceptance is complete until Task 9's local process, Python resolution, metrics, exited-input, and unchanged URL checks are run against user-managed services.
+
 文档可以进入实现，但每个任务必须先写失败测试，并在 Task 9 用真实新建 Terminal 做 environment、Python、exited input、metrics 和 URL unchanged 验收。没有这些运行时证据，不能宣称 Terminal 加固完成。

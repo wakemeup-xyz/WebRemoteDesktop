@@ -146,6 +146,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
 - [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
 - [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，可配置 idle timeout 回收超时且无人附着的会话
+- [x] **环境确定性**：PTY 使用 allowlist 环境和 no-rc interactive shell；PATH 固定包含 Homebrew Python 3.11 libexec，`WRD_TERMINAL_PATH_EXTRA` 仅允许已存在绝对目录，服务密钥和代理/API 凭据不继承
+- [x] **PTY 生命周期**：`starting/running/exited/failed/closed` 状态独立于 observer presence；非 running 状态禁止输入和成功 ack，spawn/timeout/exit/close 使用稳定错误码和一次性通知
+- [x] **流控与背压**：每 observer 输入 token bucket、64 KiB 单消息限制和 ack 驱动输出队列；慢 observer 单独 detach，replay 保留完整 chunk，其他 observer 与共享 PTY 不受影响
+- [x] **有界指标**：admin-only `/api/admin/terminal/metrics` 返回固定计数器、有界 latency p50/p95、transport 分桶和 pool 容量，不包含原始 IO。`WRD_TERMINAL_RECORD_IO=1` 仅开启 metadata 记录
+- [x] **传输策略**：默认 WebSocket-only；`WRD_TERMINAL_ALLOW_POLLING=1` 才启用 polling，两个 transport 的延迟样本分开统计
 - [x] **同钟延迟指标**：`socketRtt`、`inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 只在 Signal Server 内部相减，不混用浏览器与服务端 wall clock
 - [x] **密码安全回显**：首批普通输入只作为隐藏 probe；确认远端 shell 实际回显后才允许后续本地回显。Enter、控制键、alternate-screen、断线和重连均清零 confidence
 - [x] **关闭竞态保护**：session 关闭后的迟到 input/resize 返回稳定 `terminal_session_not_found` 并记录脱敏拒绝元数据，不得终止 Signal Server 或影响新 session
@@ -212,7 +217,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_TERMINAL_IDLE_TIMEOUT_MS` | signal-server | 会话空闲超时，默认 `0` 表示不自动销毁 |
 | `WRD_TERMINAL_STARTUP_TIMEOUT_MS` | signal-server | PTY 启动超时 |
 | `WRD_TERMINAL_AUDIT_LOG` | signal-server | 可选 Terminal 独立审计 JSONL 文件路径；为空时仍进入统一运行日志 |
-| `WRD_TERMINAL_RECORD_IO` | signal-server | 是否记录完整输入输出，默认 `0` |
+| `WRD_TERMINAL_PATH_EXTRA` | signal-server | 冒号分隔的已存在绝对 PATH 目录；重复、空项和非法路径启动时拒绝 |
+| `WRD_TERMINAL_ALLOW_POLLING` | signal-server | 是否允许 Terminal Socket.IO polling fallback，默认 `0` |
+| `WRD_TERMINAL_INPUT_BYTES_PER_SECOND` | signal-server | 每 observer 输入 token bucket 速率，默认 `65536` |
+| `WRD_TERMINAL_INPUT_BURST_BYTES` | signal-server | 每 observer 输入 burst，默认 `131072` |
+| `WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES` | signal-server | 每 observer ack 驱动输出队列，默认 `524288` |
+| `WRD_TERMINAL_RECORD_IO` | signal-server | 是否记录 metadata（不记录原始命令/输出），默认 `0` |
 | `WRD_HOST_VERBOSE_DIAGNOSTICS` | python-host | 是否额外逐行输出 Viewer 诊断日志，默认 `0` |
 
 ### 4.2 启动顺序
