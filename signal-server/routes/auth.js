@@ -1,8 +1,51 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const { loadConfig } = require('../lib/config');
 const { signAccessToken, verifyAccessToken, readBearerToken } = require('../lib/auth');
 const { createTerminalAudit } = require('../lib/terminal/audit');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
+
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+
+function createLimiter(max, options = {}) {
+  const {
+    terminalMetrics = null,
+    recordAuthRejection = false,
+    ...rateLimitOptions
+  } = options;
+  return rateLimit({
+    windowMs: AUTH_WINDOW_MS,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler(_req, res) {
+      if (recordAuthRejection) {
+        terminalMetrics?.recordCounter('auth_rejected');
+      }
+      return res.status(429).json({ error: 'Too many requests' });
+    },
+    ...rateLimitOptions,
+  });
+}
+
+function createAuthLimiters(options = {}) {
+  const adminLimiterOptions = {
+    terminalMetrics: options.terminalMetrics || null,
+    recordAuthRejection: true,
+  };
+  return {
+    viewer: createLimiter(20),
+    host: createLimiter(60),
+    admin: createLimiter(5, adminLimiterOptions),
+    adminGlobal: createLimiter(100, {
+      ...adminLimiterOptions,
+      keyGenerator: () => 'terminal-admin-global',
+      validate: false,
+    }),
+    verify: createLimiter(120),
+  };
+}
 
 async function verifyPassword(input, expected) {
   const hash = bcrypt.hashSync(expected, 10);
@@ -12,6 +55,8 @@ async function verifyPassword(input, expected) {
 function createAuthRouter(options = {}) {
   const router = express.Router();
   const terminalAudit = options.terminalAudit || createTerminalAudit(options.logger || console);
+  const terminalMetrics = options.terminalMetrics || new TerminalMetrics();
+  const limiters = options.authLimiters || createAuthLimiters({ terminalMetrics });
 
   function getConfig() {
     return {
@@ -39,10 +84,10 @@ function createAuthRouter(options = {}) {
     });
   }
 
-  router.post('/login', loginViewer);
-  router.post('/login/viewer', loginViewer);
+  router.post('/login', limiters.viewer, loginViewer);
+  router.post('/login/viewer', limiters.viewer, loginViewer);
 
-  router.post('/login/host', (req, res) => {
+  router.post('/login/host', limiters.host, (req, res) => {
     const { hostSharedSecret } = getConfig();
     const secret = String(req.body?.secret || '');
 
@@ -60,7 +105,7 @@ function createAuthRouter(options = {}) {
     });
   });
 
-  router.post('/login/admin', (req, res) => {
+  router.post('/login/admin', limiters.adminGlobal, limiters.admin, (req, res) => {
     const { enableTerminal, terminalAdminPassword } = getConfig();
     const password = String(req.body?.password || '');
     const meta = {
@@ -69,14 +114,17 @@ function createAuthRouter(options = {}) {
     };
 
     if (!enableTerminal) {
+      terminalMetrics.recordCounter('auth_rejected');
       terminalAudit.warn('terminal_admin_auth_disabled', meta);
       return res.status(403).json({ error: 'Terminal disabled' });
     }
     if (!terminalAdminPassword) {
+      terminalMetrics.recordCounter('auth_rejected');
       terminalAudit.error('terminal_admin_auth_misconfigured', meta);
       return res.status(500).json({ error: 'Terminal admin password not configured' });
     }
     if (!password) {
+      terminalMetrics.recordCounter('auth_rejected');
       terminalAudit.warn('terminal_admin_auth_failed', {
         ...meta,
         reason: 'password_required',
@@ -84,6 +132,7 @@ function createAuthRouter(options = {}) {
       return res.status(400).json({ error: 'Password required' });
     }
     if (password !== terminalAdminPassword) {
+      terminalMetrics.recordCounter('auth_rejected');
       terminalAudit.warn('terminal_admin_auth_failed', {
         ...meta,
         reason: 'invalid_password',
@@ -91,6 +140,7 @@ function createAuthRouter(options = {}) {
       return res.status(401).json({ error: 'Invalid password' });
     }
 
+    terminalMetrics.recordCounter('auth_success');
     terminalAudit.info('terminal_admin_authorized', {
       ...meta,
       subject: 'terminal-admin-login',
@@ -102,7 +152,7 @@ function createAuthRouter(options = {}) {
     });
   });
 
-  router.get('/verify', (req, res) => {
+  router.get('/verify', limiters.verify, (req, res) => {
     try {
       const token = readBearerToken(req.headers.authorization);
       if (!token) {
@@ -121,4 +171,5 @@ function createAuthRouter(options = {}) {
 const defaultRouter = createAuthRouter();
 
 module.exports = defaultRouter;
+module.exports.createAuthLimiters = createAuthLimiters;
 module.exports.createAuthRouter = createAuthRouter;

@@ -251,6 +251,11 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - Host/Signal 默认不记录 key、code、文本、坐标或完整 input payload；只保留 action、transport、字节数、input ID hash 和本机耗时
 - Terminal `socketRtt` / `inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 独立计算。password-safe echo 只有确认远端 shell 回显后才开启，Enter/控制键/alternate-screen/重连会立即关闭
 - shared Terminal 默认硬上限 8 个 session；`WRD_TERMINAL_IDLE_TIMEOUT_MS>0` 时回收超时且无人附着的 session
+- Terminal 运行环境由服务端 allowlist 构造，zsh/bash 使用 no-rc interactive 参数；`PATH` 包含 Homebrew Python 3.11 libexec 目录，`WRD_TERMINAL_PATH_EXTRA` 只能配置已存在绝对目录。环境中不得出现 JWT、password、proxy credential、API key 或 token
+- Terminal 默认 WebSocket-only；`WRD_TERMINAL_ALLOW_POLLING=1` 才允许 polling。`WRD_TERMINAL_RECORD_IO=1` 仅为 metadata 记录，不提供原始 IO 回放
+- PTY `starting/exited/failed` 状态拒绝输入并不发送成功 ack；输入默认 64 KiB 单消息上限和每 observer token bucket，慢 observer 超过 512 KiB 队列会被单独 detach，下一次 attach 通过 replay 恢复
+- admin-only `GET /api/admin/terminal/metrics` 返回 bounded counters、p50/p95、transport 分桶和 pool 容量；不得把命令、密码或完整 PTY 输出写入日志
+- 可运行只读检查：`bash scripts/terminal-runtime-check.sh`。它只读取本地 health/status、`/tmp/wrd-safe-current-url.txt` 和可选 metrics/env probe；设置 `WRD_TERMINAL_PROBE_TOKEN` 时会创建并关闭一个临时 Terminal，验证 `command -v python3`、`/usr/bin/env python3`、敏感环境键和 exited-input 无 ack，并确认 safe URL 前后不变；不会调用 `stop-safe-wrd.sh`、重启脚本、`cloudflared` 或 `launchctl remove`
 
 ## 排障顺序
 

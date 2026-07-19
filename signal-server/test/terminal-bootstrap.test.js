@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 const { createServerApp } = require('../server');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
@@ -89,12 +90,18 @@ async function startServer() {
 }
 
 function createFakePty() {
+  let dataHandler = null;
   return {
-    onData() {},
+    onData(handler) {
+      dataHandler = handler;
+    },
     onExit() {},
     write() {},
     resize() {},
     kill() {},
+    emitData(data) {
+      dataHandler?.(data);
+    },
   };
 }
 
@@ -131,6 +138,7 @@ test('/api/terminal/bootstrap returns terminal pool metadata for admin tokens', 
     assert.equal(response.status, 200);
     assert.equal(body.enabled, true);
     assert.equal(body.softWarnSessionCount, 3);
+    assert.equal(body.allowPolling, false);
     assert.equal(body.pool.poolId, 'default');
     assert.deepEqual(body.pool.sessions, []);
   } finally {
@@ -139,8 +147,9 @@ test('/api/terminal/bootstrap returns terminal pool metadata for admin tokens', 
 });
 
 test('/api/terminal/bootstrap returns the live shared pool snapshot after a session exists', async () => {
+  const pty = createFakePty();
   const sessionManager = createTerminalSessionManager({
-    ptyFactory: () => createFakePty(),
+    ptyFactory: () => pty,
     logger: { log() {}, info() {}, warn() {}, error() {} },
     config: {
       enableTerminal: true,
@@ -154,8 +163,7 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
       terminalRecordIo: false,
     },
   });
-  const runtime = createServerApp({
-    config: {
+  const config = {
       port: 0,
       nodeEnv: 'test',
       jwtSecret: process.env.JWT_SECRET,
@@ -176,12 +184,27 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
       terminalStartupTimeoutMs: 10000,
       terminalAuditLog: '',
       terminalRecordIo: false,
-    },
+      terminalAllowPolling: true,
+  };
+  assert.throws(() => {
+    const conflictingRuntime = createServerApp({
+      config,
+      terminal: { sessionManager },
+      terminalMetrics: new TerminalMetrics(),
+      logger: { log() {}, info() {}, warn() {}, error() {} },
+    });
+    conflictingRuntime.io.close();
+  }, /metrics instance/i);
+
+  const runtime = createServerApp({
+    config,
     terminal: {
       sessionManager,
     },
     logger: { log() {}, info() {}, warn() {}, error() {} },
   });
+  assert.equal(runtime.terminalMetrics, sessionManager.metrics);
+  assert.equal(runtime.terminal.metrics, sessionManager.metrics);
   await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
   const { port } = runtime.server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -192,6 +215,7 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
       rows: 24,
       title: 'Shared shell',
     });
+    pty.emitData('ready');
 
     const response = await fetch(baseUrl + '/api/terminal/bootstrap', {
       headers: { Authorization: `Bearer ${signAccessToken('admin', 'bootstrap-live-snapshot')}` },
@@ -202,6 +226,23 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
     assert.equal(body.pool.sessions.length, 1);
     assert.equal(body.pool.sessions[0].sessionId, created.sessionId);
     assert.equal(body.pool.sessions[0].title, 'Shared shell');
+    assert.equal(body.allowPolling, true);
+
+    const viewerMetricsResponse = await fetch(baseUrl + '/api/admin/terminal/metrics', {
+      headers: { Authorization: `Bearer ${signAccessToken('viewer', 'metrics-viewer')}` },
+    });
+    assert.equal(viewerMetricsResponse.status, 403);
+
+    const metricsResponse = await fetch(baseUrl + '/api/admin/terminal/metrics', {
+      headers: { Authorization: `Bearer ${signAccessToken('admin', 'metrics-admin')}` },
+    });
+    const metricsBody = await metricsResponse.json();
+    assert.equal(metricsResponse.status, 200);
+    assert.equal(metricsBody.metrics.counters.session_created, 1);
+    assert.equal(metricsBody.pool.sessions[0].sessionId, created.sessionId);
+    runtime.terminal.sessionManager.closeSession(created.sessionId, {
+      clientId: 'bootstrap-browser',
+    });
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }

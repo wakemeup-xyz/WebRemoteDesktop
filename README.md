@@ -263,6 +263,11 @@ http://127.0.0.1:8080
 - Terminal 的 `socketRtt` 和 `inputAckRtt` 只使用浏览器本地 pending 时间；服务端 `serverProcessMs` 单独显示，不能跨机器相减 wall clock
 - password-safe echo 默认不可信：首批普通输入只作为隐藏 probe，只有远端 shell 确实回显后才对后续字符启用；Enter、控制键、alternate-screen、断线和重连都会清零，因此密码提示不会在浏览器显示输入字符
 - shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 默认 256 KiB，配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
+- Terminal PTY 只继承 allowlist 环境，shell 使用 `/bin/zsh -f -i` 或 `/bin/bash --noprofile --norc -i`；`PATH` 由服务端固定注入 Homebrew Python 3.11 libexec 路径，不读取个人 shell rc。`WRD_TERMINAL_PATH_EXTRA` 只接受已存在的绝对目录，重复或空项会拒绝启动
+- Terminal 进程状态分为 `starting/running/exited/failed/closed`；starting、exited、failed 不接受输入，也不会发送成功 ack。输出按 observer 独立限流，慢 observer 会单独 detach，PTY 和其他 observer 继续运行并可通过 replay 恢复
+- `WRD_TERMINAL_RECORD_IO=1` 只记录 metadata（字节数、chunk 数、延迟和状态），不记录原始命令、密码或完整输出。管理员可读取 `GET /api/admin/terminal/metrics`，该接口只返回有界计数、p50/p95 摘要和 pool 容量
+- Terminal transport 默认只用 WebSocket；只有显式设置 `WRD_TERMINAL_ALLOW_POLLING=1` 才启用 polling fallback。polling 与 websocket latency 样本分开统计
+- 公网入口的 Cloudflare/边缘 RTT 不由 Terminal 代码消除；runtime checker 只读验证本地 health、Terminal metrics、Python 路径、环境键和 exited-input；设置 `WRD_TERMINAL_PROBE_TOKEN` 时会创建并关闭一个临时 Terminal，并确认 safe URL 没有变化，不会重启或重建 tunnel
 - `http://localhost:5173/` 仅用于前端开发映射和 API 代理；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式入口
 - 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
 

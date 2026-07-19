@@ -5,6 +5,18 @@ const TERMINAL_COMPOSER_RAW_HINT = '当前程序未启用 bracketed paste，多�
 const TERMINAL_MODE_SEQUENCE_MAX_LENGTH = 256;
 const TERMINAL_INPUT_MAX_BYTES = 64 * 1024;
 const TERMINAL_COMPOSER_INPUT_LIMIT_ERROR = '终端输入超过 64 KiB UTF-8 限制，请缩短后重试';
+const PROCESS_STATUSES = new Set(['starting', 'running', 'exited', 'failed', 'closed']);
+const TERMINAL_ERROR_MESSAGES = Object.freeze({
+  pty_starting: '终端正在启动',
+  pty_exited: '终端进程已退出',
+  pty_spawn_failed: '终端启动失败',
+  pty_startup_timeout: '终端启动超时',
+  pty_cleanup_failed: '终端进程清理失败，请重试',
+  terminal_input_rate_limited: '终端输入过快，请稍后重试',
+});
+const TERMINAL_WARNING_MESSAGES = Object.freeze({
+  terminal_output_backpressure: '终端输出拥塞，已断开当前观察连接',
+});
 
 function getTerminalComposerApi() {
   return (typeof window !== 'undefined' && window.TerminalComposer)
@@ -21,6 +33,17 @@ function createFallbackTerminalDraftStore() {
     delete() {},
     clear() {},
   };
+}
+
+function normalizeProcessStatus(value, fallback = 'running') {
+  return PROCESS_STATUSES.has(value) ? value : fallback;
+}
+
+function processStatusLabel(status) {
+  if (status === 'starting') return '启动中';
+  if (status === 'exited') return '已退出';
+  if (status === 'failed') return '启动失败';
+  return '';
 }
 
 function createLatencySeries(maxSamples = 20) {
@@ -75,6 +98,10 @@ function createTerminalState(options = {}) {
       sessionId: session.sessionId,
       title: session.title || previous.title || `Terminal ${fallbackIndex}`,
       status: session.status || previous.status || 'running',
+      processStatus: normalizeProcessStatus(
+        session.processStatus,
+        normalizeProcessStatus(previous.processStatus, 'running'),
+      ),
       warning: session.warning || previous.warning || '',
       observerCount: Number(session.observerCount ?? previous.observerCount ?? 0),
       activePresenterClientId: session.activePresenterClientId ?? previous.activePresenterClientId ?? null,
@@ -197,11 +224,12 @@ const TerminalPanel = {
   fitAddons: new Map(),
   attachedSessionIds: new Set(),
   pendingAttachSessionIds: new Set(),
+  pendingCloseSessionIds: new Set(),
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
   isVisible: false,
-  pendingCreateClientId: null,
+  pendingCreateRequestId: null,
   socketAuthToken: null,
   socketState: 'idle',
   socketStatusBaseText: '',
@@ -222,6 +250,11 @@ const TerminalPanel = {
   composerDrafts: (getTerminalComposerApi()?.createTerminalDraftStore?.() || createFallbackTerminalDraftStore()),
   renderedComposerSessionId: null,
   poolCapacity: null,
+  allowPolling: false,
+  bootstrapAuthToken: null,
+  bootstrapPromise: null,
+  transportLatency: new Map(),
+  aliasedEvents: new Map(),
 
   init() {
     this.cacheElements();
@@ -381,7 +414,7 @@ const TerminalPanel = {
       this.elements.authPassword.value = '';
       this.releaseTerminalControlFocus();
       this.setStatus('已授权', 'connected');
-      this.connectSocket();
+      await this.connectSocket();
       this.render();
     } catch (err) {
       this.setStatus(`授权失败：${err.message}`, 'error');
@@ -391,6 +424,11 @@ const TerminalPanel = {
   connectSocket() {
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
+    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token) {
+      return this.ensureTerminalBootstrap(token).then(() => {
+        if (this.getAdminToken() === token) this.connectSocket();
+      });
+    }
     const canReuseSocket = this.socket
       && this.socket.connected
       && this.socketAuthToken === token
@@ -398,12 +436,13 @@ const TerminalPanel = {
     if (canReuseSocket) return;
     this.destroySocket();
 
+    const transports = this.allowPolling ? ['websocket', 'polling'] : ['websocket'];
     this.socket = io(`${RuntimeConfig.getSocketBase()}/terminal`, {
       auth: {
         token,
         clientId: this.getBrowserSessionId(),
       },
-      transports: ['websocket', 'polling'],
+      transports,
       rememberUpgrade: true,
     });
     this.socketAuthToken = token;
@@ -412,18 +451,18 @@ const TerminalPanel = {
     this.socket.on('connect', () => {
       this.resetEchoControllers('reconnect');
       this.socketState = 'connected';
-      this.transportName = this.socket.io?.engine?.transport?.name || 'websocket';
+      this.setTransportName(this.socket.io?.engine?.transport?.name || 'websocket');
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
+      this.pendingCloseSessionIds.clear();
       this.setStatus('共享控制台已连接', 'connected');
       this.startLatencyProbeLoop();
       if (typeof this.socket.io?.engine?.on === 'function') {
         this.socket.io.engine.on('upgrade', (transport) => {
-          this.transportName = String(transport?.name || this.transportName || 'unknown');
+          this.setTransportName(transport?.name || this.transportName || 'unknown');
           this.refreshStatus();
         });
       }
-      this.reattachSessions();
       this.socket.emit('terminal:list', {});
       this.render();
     });
@@ -436,6 +475,7 @@ const TerminalPanel = {
       this.composerPreflightError = null;
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
+      this.pendingCreateRequestId = null;
       this.setStatus('断线重连中', 'warning');
       this.state.getSessions().forEach((session) => this.state.updateStatus(session.sessionId, 'detached'));
       this.render();
@@ -452,10 +492,18 @@ const TerminalPanel = {
       this.setStatus(`连接失败：${err.message}`, 'error');
       this.refreshComposer();
     });
-    const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
-    const handleSessionCreated = (session) => this.handleSessionCreated(session);
-    const handleSessionAttached = (session) => this.attachSessionState(session);
-    const handleSessionClosed = (session) => this.handleSessionClosed(session);
+    const applyPoolSnapshot = (payload) => this.dispatchAliasedEvent(
+      'snapshot', payload, () => this.applyPoolSnapshot(payload),
+    );
+    const handleSessionCreated = (session) => this.dispatchAliasedEvent(
+      'created', session, () => this.handleSessionCreated(session),
+    );
+    const handleSessionAttached = (session) => this.dispatchAliasedEvent(
+      'attached', session, () => this.attachSessionState(session),
+    );
+    const handleSessionClosed = (session) => this.dispatchAliasedEvent(
+      'closed', session, () => this.handleSessionClosed(session),
+    );
 
     this.socket.on('terminal:pool_snapshot', applyPoolSnapshot);
     this.socket.on('terminal:snapshot', applyPoolSnapshot);
@@ -463,8 +511,17 @@ const TerminalPanel = {
     this.socket.on('terminal:created', handleSessionCreated);
     this.socket.on('terminal:session_attached', handleSessionAttached);
     this.socket.on('terminal:attached', handleSessionAttached);
-    this.socket.on('terminal:output', (payload) => {
-      this.writeOutput(payload.sessionId, payload.data);
+    this.socket.on('terminal:output', (payload, acknowledge) => {
+      try {
+        const session = this.state.getSession(payload.sessionId);
+        if (session?.processStatus === 'starting') {
+          this.state.updateSession(payload.sessionId, { processStatus: 'running' });
+          this.render();
+        }
+        this.writeOutput(payload.sessionId, payload.data);
+      } finally {
+        if (typeof acknowledge === 'function') acknowledge();
+      }
     });
     this.socket.on('terminal:input_ack', (payload) => {
       this.handleInputAck(payload);
@@ -476,7 +533,12 @@ const TerminalPanel = {
       this.writeReplay(payload.sessionId, payload.replay);
     });
     this.socket.on('terminal:exit', (payload) => {
-      this.state.updateStatus(payload.sessionId, 'exited');
+      this.state.updateSession(payload.sessionId, {
+        processStatus: normalizeProcessStatus(
+          payload.processStatus,
+          payload.errorCode ? 'failed' : 'exited',
+        ),
+      });
       this.writeOutput(payload.sessionId, `\r\n[process exited: ${payload.exitCode ?? ''} ${payload.signal || ''}]\r\n`);
       this.render();
     });
@@ -486,11 +548,50 @@ const TerminalPanel = {
       this.updatePresence(payload);
     });
     this.socket.on('terminal:warning', (payload) => {
-      this.setWarning(payload.message || '终端会话较多，可能影响性能');
+      const warning = (
+        TERMINAL_WARNING_MESSAGES[payload.code]
+        || payload.message
+        || '终端会话较多，可能影响性能'
+      );
+      if (payload.code === 'terminal_output_backpressure' && payload.sessionId) {
+        this.attachedSessionIds.delete(payload.sessionId);
+        this.pendingAttachSessionIds.delete(payload.sessionId);
+        this.state.updateSession(payload.sessionId, {
+          status: 'detached',
+          warning,
+        });
+      }
+      this.setWarning(warning);
+      this.render();
     });
     this.socket.on('terminal:error', (payload) => {
+      if (payload.sessionId && ['pty_spawn_failed', 'pty_startup_timeout'].includes(payload.code)) {
+        this.state.updateSession(payload.sessionId, { processStatus: 'failed' });
+        this.render();
+      }
+      if (
+        payload.sessionId
+        && payload.code === 'pty_exited'
+      ) {
+        this.state.updateSession(payload.sessionId, { processStatus: 'exited' });
+        this.render();
+      }
+      if (
+        payload.sessionId
+        && ['pty_cleanup_failed', 'terminal_close_failed'].includes(payload.code)
+      ) {
+        this.pendingCloseSessionIds.delete(payload.sessionId);
+        if (payload.code === 'pty_cleanup_failed') {
+          this.ensureSession({
+            sessionId: payload.sessionId,
+            processStatus: 'closed',
+          });
+        }
+        this.render();
+      }
       this.handleTerminalError(payload);
     });
+    return this.socket;
   },
 
   getBrowserSessionId() {
@@ -509,6 +610,9 @@ const TerminalPanel = {
 
   emitTerminalInput(sessionId, data, options = {}) {
     if (!this.socket?.connected || !sessionId) {
+      return null;
+    }
+    if (this.state.getSession(sessionId)?.processStatus && this.state.getSession(sessionId)?.processStatus !== 'running') {
       return null;
     }
     const inputId = this.makeInputId(sessionId);
@@ -530,8 +634,80 @@ const TerminalPanel = {
     return { inputId, clientSentAt };
   },
 
+  makeCreateRequestId() {
+    return `create_${Date.now()}_${Math.random().toString(16).slice(2)}`.slice(0, 128);
+  },
+
   getTransportName() {
     return String(this.transportName || this.socket?.io?.engine?.transport?.name || 'unknown');
+  },
+
+  getTransportLatency(name = this.getTransportName()) {
+    const transport = String(name || 'unknown');
+    if (!this.transportLatency.has(transport)) {
+      this.transportLatency.set(transport, {
+        socket: createLatencySeries(),
+        input: createLatencySeries(),
+        server: createLatencySeries(),
+      });
+    }
+    return this.transportLatency.get(transport);
+  },
+
+  setTransportName(name) {
+    this.transportName = String(name || 'unknown');
+    const latency = this.getTransportLatency(this.transportName);
+    this.terminalSocketLatency = latency.socket;
+    this.terminalInputAckLatency = latency.input;
+    this.terminalServerProcessLatency = latency.server;
+  },
+
+  reportTransportMetric(name, value, transport = this.getTransportName()) {
+    if (!this.socket?.connected || !Number.isFinite(value)) return;
+    this.socket.emit('terminal:client_metrics', {
+      name,
+      transport: String(transport || 'unknown'),
+      value: Math.max(0, value),
+    });
+  },
+
+  applyBootstrap(payload = {}) {
+    this.allowPolling = payload.allowPolling === true;
+    if (Number.isFinite(Number(payload.softWarnSessionCount))) {
+      this.softWarnSessionCount = Number(payload.softWarnSessionCount);
+    }
+  },
+
+  ensureTerminalBootstrap(token) {
+    if (this.bootstrapAuthToken === token) return Promise.resolve();
+    if (this.bootstrapPromise) return this.bootstrapPromise;
+    this.bootstrapPromise = (async () => {
+      try {
+        const response = await fetch(RuntimeConfig.url('/api/terminal/bootstrap'), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        this.applyBootstrap(body);
+      } catch (err) {
+        this.applyBootstrap({ allowPolling: false });
+      } finally {
+        this.bootstrapAuthToken = token;
+        this.bootstrapPromise = null;
+      }
+    })();
+    return this.bootstrapPromise;
+  },
+
+  dispatchAliasedEvent(kind, payload = {}, apply) {
+    const identity = payload.sessionId || payload.poolId || 'pool';
+    const key = `${kind}:${identity}:${JSON.stringify(payload)}`;
+    if (this.aliasedEvents.has(key)) return false;
+    this.aliasedEvents.set(key, true);
+    const timer = setTimeout(() => this.aliasedEvents.delete(key), 0);
+    timer?.unref?.();
+    apply();
+    return true;
   },
 
   startLatencyProbeLoop() {
@@ -579,8 +755,11 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.transportName = String(payload.transport || this.getTransportName());
-    this.terminalSocketLatency.record(Date.now() - clientSentAt);
+    const transport = payload.transport || this.getTransportName();
+    const value = Math.max(0, Date.now() - clientSentAt);
+    const latency = this.getTransportLatency(transport);
+    latency.socket.record(value);
+    this.reportTransportMetric('socket_rtt_ms', value, transport);
     this.refreshStatus();
   },
 
@@ -612,12 +791,15 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.transportName = String(payload.transport || this.getTransportName());
-    this.terminalInputAckLatency.record(Math.max(0, Date.now() - clientSentAt));
+    const transport = payload.transport || this.getTransportName();
+    const value = Math.max(0, Date.now() - clientSentAt);
+    const latency = this.getTransportLatency(transport);
+    latency.input.record(value);
+    this.reportTransportMetric('input_ack_rtt_ms', value, transport);
     const serverReceivedAt = Number(payload.serverReceivedAt);
     const serverSentAt = Number(payload.serverSentAt);
     if (Number.isFinite(serverReceivedAt) && Number.isFinite(serverSentAt)) {
-      this.terminalServerProcessLatency.record(Math.max(0, serverSentAt - serverReceivedAt));
+      latency.server.record(Math.max(0, serverSentAt - serverReceivedAt));
     }
     this.refreshStatus();
   },
@@ -632,7 +814,10 @@ const TerminalPanel = {
         this.refreshComposer();
       }
     }
-    this.setStatus(payload.message || payload.code || 'Terminal error', 'error');
+    this.setStatus(
+      TERMINAL_ERROR_MESSAGES[payload.code] || payload.message || payload.code || 'Terminal error',
+      payload.code === 'terminal_input_rate_limited' ? 'warning' : 'error',
+    );
   },
 
   createSession() {
@@ -649,8 +834,9 @@ const TerminalPanel = {
       this.setWarning(`Terminal 会话已达到上限 (${this.poolCapacity.maxSessions})`);
       return;
     }
-    this.pendingCreateClientId = this.getBrowserSessionId();
+    this.pendingCreateRequestId = this.makeCreateRequestId();
     this.socket.emit('terminal:create_session', {
+      requestId: this.pendingCreateRequestId,
       cols: 120,
       rows: 32,
       title: `Shared shell ${this.state.sessionCount() + 1}`,
@@ -667,18 +853,6 @@ const TerminalPanel = {
       if (typeof element?.blur === 'function') {
         element.blur();
       }
-    });
-  },
-
-  reattachSessions() {
-    if (!this.socket?.connected) return;
-    const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    if (lastActive && this.state.getSession(lastActive)) {
-      this.requestAttachSession(lastActive);
-      return;
-    }
-    this.state.getSessions().forEach((session) => {
-      this.requestAttachSession(session.sessionId);
     });
   },
 
@@ -734,11 +908,13 @@ const TerminalPanel = {
   handleSessionCreated(session) {
     const lastActiveSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
     const createdByCurrentClient = this.didCurrentClientCreateSession(session);
+    if (this.state.getSession(session.sessionId) && !createdByCurrentClient) {
+      return;
+    }
     const shouldActivate = createdByCurrentClient
-      || (!this.state.activeSessionId() && !this.pendingCreateClientId)
       || session.sessionId === lastActiveSessionId;
     if (createdByCurrentClient) {
-      this.pendingCreateClientId = null;
+      this.pendingCreateRequestId = null;
       this.pendingAttachSessionIds.delete(session.sessionId);
       this.attachedSessionIds.add(session.sessionId);
     }
@@ -757,18 +933,18 @@ const TerminalPanel = {
   },
 
   attachSessionState(session) {
-    const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
-      || Boolean(this.pendingCreateClientId);
+    const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
     this.pendingAttachSessionIds.delete(session.sessionId);
     this.attachedSessionIds.add(session.sessionId);
     this.ensureSession(session, {
       activate: shouldActivate,
     });
-    if (this.pendingCreateClientId) {
-      this.pendingCreateClientId = null;
-    }
     this.state.updateSession(session.sessionId, {
       status: session.status || 'attached',
+      processStatus: normalizeProcessStatus(
+        session.processStatus,
+        this.state.getSession(session.sessionId)?.processStatus || 'running',
+      ),
       observerCount: Number(session.observerCount ?? this.state.getSession(session.sessionId)?.observerCount ?? 0),
       activePresenterClientId: session.activePresenterClientId ?? this.state.getSession(session.sessionId)?.activePresenterClientId ?? null,
     });
@@ -787,8 +963,12 @@ const TerminalPanel = {
   },
 
   handleSessionClosed(session) {
+    this.pendingCloseSessionIds.delete(session.sessionId);
     this.pendingAttachSessionIds.delete(session.sessionId);
     this.attachedSessionIds.delete(session.sessionId);
+    if (!this.state.getSession(session.sessionId) && !this.terms.has(session.sessionId)) {
+      return;
+    }
     this.destroyTerm(session.sessionId);
     this.state.closeTab(session.sessionId);
     this.syncPersistedActiveSession();
@@ -842,7 +1022,10 @@ const TerminalPanel = {
         this.emitTerminalInput(sessionId, data, { optimisticEcho: true });
       });
       term.onResize((size) => {
-        if (this.socket?.connected) {
+        if (
+          this.socket?.connected
+          && this.state.getSession(sessionId)?.processStatus === 'running'
+        ) {
           this.socket.emit('terminal:resize', {
             sessionId,
             cols: size.cols,
@@ -923,12 +1106,13 @@ const TerminalPanel = {
   },
 
   closeSession(sessionId) {
-    if (this.socket?.connected) {
-      this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
+    if (!this.socket?.connected) {
+      this.setStatus('终端连接不可用，请稍后重试', 'warning');
+      return;
     }
-    this.destroyTerm(sessionId);
-    this.state.closeTab(sessionId);
-    this.syncPersistedActiveSession();
+    if (!sessionId || this.pendingCloseSessionIds.has(sessionId)) return;
+    this.pendingCloseSessionIds.add(sessionId);
+    this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
     this.render();
   },
 
@@ -1183,6 +1367,7 @@ const TerminalPanel = {
     this.pendingInputAcks.clear();
     this.pendingComposerInputIdsBySession.clear();
     this.composerPreflightError = null;
+    this.pendingCreateRequestId = null;
     this.resetEchoControllers('destroy-socket');
     this.refreshComposer();
   },
@@ -1193,9 +1378,9 @@ const TerminalPanel = {
 
   didCurrentClientCreateSession(session = {}) {
     return Boolean(
-      session.creatorClientId
-      && this.pendingCreateClientId
-      && session.creatorClientId === this.pendingCreateClientId
+      typeof session.requestId === 'string'
+      && this.pendingCreateRequestId
+      && session.requestId === this.pendingCreateRequestId
     );
   },
 
@@ -1241,6 +1426,7 @@ const TerminalPanel = {
   focusActiveTerminal() {
     const active = this.state.activeSessionId();
     if (!active) return false;
+    if (this.state.getSession(active)?.processStatus !== 'running') return false;
     const node = this.elements.workspace?.querySelector(`[data-session-id="${active}"]`);
     const isFocusedWithinNode = () => {
       const activeElement = document.activeElement;
@@ -1309,7 +1495,8 @@ const TerminalPanel = {
         button.className = 'terminal-session-tab';
         button.classList.toggle('active', session.sessionId === activeId);
         const observerLabel = session.observerCount > 0 ? ` · ${session.observerCount}人` : '';
-        button.textContent = `${session.title || session.sessionId}${observerLabel}`;
+        const processLabel = processStatusLabel(session.processStatus);
+        button.textContent = `${session.title || session.sessionId}${observerLabel}${processLabel ? ` · ${processLabel}` : ''}`;
         button.addEventListener('click', () => this.activateSession(session.sessionId));
 
         const close = document.createElement('span');
@@ -1326,6 +1513,12 @@ const TerminalPanel = {
 
     this.elements.workspace?.querySelectorAll('.terminal-instance').forEach((node) => {
       node.classList.toggle('hidden', node.dataset.sessionId !== activeId);
+      const session = this.state.getSession(node.dataset.sessionId);
+      const writable = session?.processStatus === 'running';
+      const helper = node.querySelector?.('.xterm-helper-textarea');
+      if (helper) helper.disabled = !writable;
+      const term = this.terms.get(node.dataset.sessionId);
+      if (term?.options) term.options.disableStdin = !writable;
     });
 
     this.setWarning(this.state.getWarning());

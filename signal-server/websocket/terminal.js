@@ -2,13 +2,17 @@ const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
 const { createTerminalAudit } = require('../lib/terminal/audit');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 
 function getToken(socket) {
   return socket.handshake?.auth?.token || null;
 }
 
-function getClientId(socket) {
-  return socket.handshake?.auth?.clientId || socket.id;
+function getClientLabel(socket) {
+  const rawLabel = socket.handshake?.auth?.clientId;
+  return rawLabel === undefined || rawLabel === null
+    ? null
+    : String(rawLabel).slice(0, 128);
 }
 
 function authenticate(socket) {
@@ -27,11 +31,18 @@ function authenticate(socket) {
 function setupTerminal(io, options = {}) {
   const config = options.config || loadConfig();
   const audit = options.audit || createTerminalAudit(options.logger || console);
+  const managerMetrics = options.sessionManager?.metrics || null;
+  if (options.metrics && managerMetrics && options.metrics !== managerMetrics) {
+    throw new Error('[terminal] Explicit metrics instance must match sessionManager.metrics');
+  }
+  const metrics = options.metrics || managerMetrics || new TerminalMetrics();
   const sessionManager = options.sessionManager || createTerminalSessionManager({
     config,
     logger: options.logger || console,
     audit,
+    metrics,
   });
+  const metricNow = typeof options.metricNow === 'function' ? options.metricNow : () => performance.now();
 
   const terminalNamespace = io.of('/terminal');
   let idleReaperTimer = null;
@@ -69,12 +80,15 @@ function setupTerminal(io, options = {}) {
 
   terminalNamespace.on('connection', (socket) => {
     const user = socket.user;
-    const clientId = getClientId(socket);
+    const clientId = socket.id;
     const socketId = socket.id;
+    const clientLabel = getClientLabel(socket);
     const getTransportName = () => String(socket.conn?.transport?.name || 'unknown');
+    metrics.recordCounter('socket_connected');
     audit.info('terminal_socket_connected', {
       socketId,
       clientId,
+      clientLabel,
       subject: user?.sub || '',
       role: user?.role || '',
       transport: getTransportName(),
@@ -84,6 +98,7 @@ function setupTerminal(io, options = {}) {
         audit.info('terminal_socket_transport_upgrade', {
           socketId,
           clientId,
+          clientLabel,
           transport: String(transport?.name || 'unknown'),
         });
       });
@@ -141,48 +156,124 @@ function setupTerminal(io, options = {}) {
 
     function bindSessionCallbacks(sessionId) {
       return {
-        onData: (data) => {
+        onData: (data, metadata, acknowledge) => {
           socket.emit('terminal:output', {
-            sessionId,
+            sessionId: metadata?.sessionId || sessionId,
             data,
+          }, acknowledge);
+        },
+        onError: (error, metadata = {}) => {
+          socket.emit('terminal:error', {
+            sessionId: metadata.sessionId || error.details?.sessionId || sessionId,
+            code: error.code || 'terminal_process_failed',
+            message: error.message,
           });
         },
-        onExit: ({ exitCode, signal }) => {
+        onExit: ({ sessionId: callbackSessionId, exitCode, signal, errorCode, processStatus }) => {
           socket.emit('terminal:exit', {
-            sessionId,
+            sessionId: callbackSessionId || sessionId,
             exitCode,
             signal,
+            errorCode,
+            processStatus,
           });
+        },
+        onWarning: ({ code, stats }) => {
+          socket.emit('terminal:warning', {
+            sessionId,
+            code,
+            stats,
+          });
+        },
+        onPresence: ({ presence, pool }) => {
+          terminalNamespace.emit('terminal:presence', presence);
+          terminalNamespace.emit('terminal:pool_snapshot', pool);
+          terminalNamespace.emit('terminal:snapshot', pool);
         },
       };
     }
 
     function handleCreate(payload = {}) {
       try {
+        const requestId = typeof payload.requestId === 'string'
+          ? payload.requestId.slice(0, 128)
+          : null;
         const sessionRef = { sessionId: null };
+        const pendingLifecycleEvents = [];
+        const emitLifecycleEvent = (event, eventPayload, acknowledge) => {
+          if (!sessionRef.sessionId) {
+            pendingLifecycleEvents.push({ event, payload: eventPayload, acknowledge });
+            return;
+          }
+          const correlatedPayload = {
+            ...eventPayload,
+            sessionId: eventPayload.sessionId || sessionRef.sessionId,
+          };
+          if (typeof acknowledge === 'function') {
+            socket.emit(event, correlatedPayload, acknowledge);
+          } else {
+            socket.emit(event, correlatedPayload);
+          }
+        };
         const created = sessionManager.createSession({
           clientId,
           socketId,
           title: payload.title,
           cols: payload.cols,
           rows: payload.rows,
-          onData: (data) => {
-            socket.emit('terminal:output', {
-              sessionId: sessionRef.sessionId,
+          onData: (data, metadata, acknowledge) => {
+            emitLifecycleEvent('terminal:output', {
+              sessionId: metadata?.sessionId || null,
               data,
+            }, acknowledge);
+          },
+          onError: (error, metadata = {}) => {
+            emitLifecycleEvent('terminal:error', {
+              sessionId: metadata.sessionId || error.details?.sessionId || null,
+              code: error.code || 'terminal_process_failed',
+              message: error.message,
             });
           },
-          onExit: ({ exitCode, signal }) => {
-            socket.emit('terminal:exit', {
-              sessionId: sessionRef.sessionId,
+          onExit: ({ sessionId, exitCode, signal, errorCode, processStatus }) => {
+            emitLifecycleEvent('terminal:exit', {
+              sessionId: sessionId || null,
               exitCode,
               signal,
+              errorCode,
+              processStatus,
             });
+          },
+          onWarning: ({ code, stats }) => {
+            emitLifecycleEvent('terminal:warning', {
+              code,
+              stats,
+            });
+          },
+          onPresence: ({ presence, pool }) => {
+            if (!sessionRef.sessionId) return;
+            terminalNamespace.emit('terminal:presence', presence);
+            terminalNamespace.emit('terminal:pool_snapshot', pool);
+            terminalNamespace.emit('terminal:snapshot', pool);
           },
         });
         sessionRef.sessionId = created.sessionId;
-        terminalNamespace.emit('terminal:session_created', created);
-        terminalNamespace.emit('terminal:created', created);
+        const creatorPayload = { ...created, requestId };
+        socket.emit('terminal:session_created', creatorPayload);
+        socket.emit('terminal:created', creatorPayload);
+        socket.broadcast.emit('terminal:session_created', created);
+        socket.broadcast.emit('terminal:created', created);
+        for (const pending of pendingLifecycleEvents) {
+          const correlatedPayload = {
+            ...pending.payload,
+            sessionId: pending.payload.sessionId || created.sessionId,
+          };
+          if (typeof pending.acknowledge === 'function') {
+            socket.emit(pending.event, correlatedPayload, pending.acknowledge);
+          } else {
+            socket.emit(pending.event, correlatedPayload);
+          }
+        }
+        pendingLifecycleEvents.length = 0;
         emitPoolSnapshot();
         emitPresence(created.sessionId);
         if (sessionManager.getPoolSnapshot().sessions.length > config.terminalSoftWarnSessionCount) {
@@ -248,16 +339,30 @@ function setupTerminal(io, options = {}) {
         const closed = sessionManager.closeSession(payload.sessionId, {
           clientId,
           socketId,
-          reason: payload.reason || 'user-close',
+          reason: 'user-close',
         });
         terminalNamespace.emit('terminal:session_closed', closed);
         terminalNamespace.emit('terminal:closed', closed);
         emitPoolSnapshot();
       } catch (err) {
+        const code = err.code || 'terminal_close_failed';
+        if (code === 'terminal_session_not_attached' || code === 'terminal_session_not_found') {
+          audit.warn('terminal_close_rejected', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            code,
+            reason: code === 'terminal_session_not_attached'
+              ? 'observer_not_attached'
+              : 'session_not_found',
+          });
+        }
         socket.emit('terminal:error', {
-          code: err.code || 'terminal_close_failed',
+          sessionId: payload.sessionId || null,
+          code,
           message: err.message,
         });
+        emitPoolSnapshot();
       }
     }
 
@@ -312,13 +417,23 @@ function setupTerminal(io, options = {}) {
       });
     });
 
+    socket.on('terminal:client_metrics', (payload = {}) => {
+      metrics.recordTransportLatency(
+        typeof payload.name === 'string' ? payload.name : '',
+        typeof payload.transport === 'string' ? payload.transport : '',
+        Number(payload.value),
+      );
+    });
+
     socket.on('terminal:input', (payload = {}) => {
       const inputErrorContext = getInputErrorContext(payload);
       if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected', inputErrorContext)) {
+        metrics.recordCounter('input_rejected');
         return;
       }
       const data = String(payload.data || '');
       if (Buffer.byteLength(data, 'utf8') > 64 * 1024) {
+        metrics.recordCounter('input_rejected');
         audit.warn('terminal_input_rejected', {
           sessionId: payload.sessionId,
           clientId,
@@ -334,6 +449,7 @@ function setupTerminal(io, options = {}) {
         });
         return;
       }
+      const processingStartedAt = metricNow();
       try {
         const serverReceivedAt = Date.now();
         sessionManager.writeInput(payload.sessionId, {
@@ -353,19 +469,32 @@ function setupTerminal(io, options = {}) {
           transport: getTransportName(),
         });
       } catch (err) {
-        audit.error('terminal_error', {
-          sessionId: payload.sessionId || null,
-          clientId,
-          socketId,
-          action: 'input',
-          code: err.code || 'terminal_input_failed',
-          message: err.message,
-        });
+        const code = err.code || 'terminal_input_failed';
+        if (code !== 'terminal_input_rate_limited') {
+          metrics.recordCounter('input_rejected');
+        }
+        if (code !== 'terminal_input_rate_limited') {
+          audit.error('terminal_error', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            action: 'input',
+            code,
+            message: err.message,
+          });
+        }
         socket.emit('terminal:error', {
-          code: err.code || 'terminal_input_failed',
+          sessionId: payload.sessionId || null,
+          code,
           message: err.message,
           ...inputErrorContext,
+          ...(err.details ? { details: err.details } : {}),
         });
+      } finally {
+        metrics.recordLatency(
+          'server_input_process_ms',
+          Math.max(0, Number(metricNow()) - Number(processingStartedAt)),
+        );
       }
     });
 
@@ -415,6 +544,7 @@ function setupTerminal(io, options = {}) {
     });
 
     socket.on('disconnect', () => {
+      metrics.recordCounter('socket_disconnected');
       const disconnected = sessionManager.handleSocketDisconnect({
         clientId,
         socketId,
@@ -427,6 +557,7 @@ function setupTerminal(io, options = {}) {
       audit.info('terminal_socket_disconnected', {
         socketId,
         clientId,
+        clientLabel,
         subject: user?.sub || '',
       });
     });
@@ -435,6 +566,7 @@ function setupTerminal(io, options = {}) {
   return {
     namespace: terminalNamespace,
     sessionManager,
+    metrics,
     close() {
       if (idleReaperTimer) clearInterval(idleReaperTimer);
       idleReaperTimer = null;

@@ -5,7 +5,7 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
-const rateLimit = require('express-rate-limit');
+const proxyaddr = require('proxy-addr');
 const { Server } = require('socket.io');
 const { createAuthRouter } = require('./routes/auth');
 const {
@@ -31,6 +31,9 @@ const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
 const { createTerminalAudit } = require('./lib/terminal/audit');
+const { TerminalMetrics } = require('./lib/terminal/metrics');
+
+const trustLoopbackProxy = proxyaddr.compile('loopback');
 
 function requireAccessToken(req, res, next) {
   try {
@@ -72,11 +75,26 @@ function createServerApp(options = {}) {
     maxBytes: config.logMaxBytes,
     backupCount: config.logBackupCount,
   });
+  const terminalOptions = options.terminal || {};
+  if (
+    options.terminalMetrics
+    && terminalOptions.metrics
+    && options.terminalMetrics !== terminalOptions.metrics
+  ) {
+    throw new Error('[terminal] Explicit metrics instances must match');
+  }
+  const explicitTerminalMetrics = options.terminalMetrics || terminalOptions.metrics || null;
+  const managerMetrics = terminalOptions.sessionManager?.metrics || null;
+  if (explicitTerminalMetrics && managerMetrics && explicitTerminalMetrics !== managerMetrics) {
+    throw new Error('[terminal] Explicit metrics instance must match sessionManager.metrics');
+  }
+  const terminalMetrics = explicitTerminalMetrics || managerMetrics || new TerminalMetrics();
   ensureNodePtySpawnHelperExecutable(logger);
 
   const app = express();
   const server = http.createServer(app);
 
+  app.set('trust proxy', trustLoopbackProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors({
     origin(origin, callback) {
@@ -88,11 +106,12 @@ function createServerApp(options = {}) {
     credentials: false,
   }));
   app.use(express.json({ limit: '200kb' }));
-  app.use(
-    '/api/auth',
-    rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }),
-    createAuthRouter({ config, logger, terminalAudit }),
-  );
+  app.use('/api/auth', createAuthRouter({
+    config,
+    logger,
+    terminalAudit,
+    terminalMetrics,
+  }));
 
   const webClientPath = path.join(__dirname, '..', 'web-client');
   app.use(express.static(webClientPath, {
@@ -120,7 +139,8 @@ function createServerApp(options = {}) {
     config,
     logger,
     audit: terminalAudit,
-    ...(options.terminal || {}),
+    ...terminalOptions,
+    metrics: terminalMetrics,
   });
 
   app.get('/health', (req, res) => {
@@ -249,6 +269,17 @@ function createServerApp(options = {}) {
     return res.json({
       enabled: config.enableTerminal,
       softWarnSessionCount: config.terminalSoftWarnSessionCount,
+      allowPolling: Boolean(config.terminalAllowPolling ?? config.allowPolling ?? false),
+      pool: terminal.sessionManager.getPoolSnapshot(),
+    });
+  });
+
+  app.get('/api/admin/terminal/metrics', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin role required' });
+    }
+    return res.json({
+      metrics: terminalMetrics.snapshot(),
       pool: terminal.sessionManager.getPoolSnapshot(),
     });
   });
@@ -259,6 +290,7 @@ function createServerApp(options = {}) {
     io,
     config,
     terminal,
+    terminalMetrics,
     terminalAudit,
     recentEventStore,
     structuredLogger,

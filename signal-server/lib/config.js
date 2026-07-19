@@ -1,4 +1,5 @@
 const REQUIRED_MIN_SECRET_LEN = 8;
+const { parseTerminalConfig } = require('./terminal/config');
 
 function splitCsv(value) {
   return String(value || '')
@@ -42,6 +43,7 @@ function loadConfig() {
     firstDefined(process.env.HOST_SHARED_SECRET, process.env.HOST_PASSWORD, process.env.ACCESS_PASSWORD),
     8,
   );
+  const terminal = parseTerminalConfig(process.env);
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -62,17 +64,24 @@ function loadConfig() {
     logMaxBytes: Math.max(1, Number(process.env.WRD_LOG_MAX_BYTES || 10 * 1024 * 1024)),
     logBackupCount: Math.max(0, Number(process.env.WRD_LOG_BACKUP_COUNT || 3)),
     hostVerboseDiagnostics: process.env.WRD_HOST_VERBOSE_DIAGNOSTICS === '1',
-    enableTerminal: process.env.WRD_ENABLE_TERMINAL === '1',
-    terminalAdminPassword: String(process.env.WRD_TERMINAL_ADMIN_PASSWORD || '').trim(),
-    terminalShell: String(process.env.WRD_TERMINAL_SHELL || '/bin/zsh').trim() || '/bin/zsh',
-    terminalCwd: String(process.env.WRD_TERMINAL_CWD || '').trim(),
-    terminalSoftWarnSessionCount: Number(process.env.WRD_TERMINAL_SOFT_WARN_SESSION_COUNT || 4),
-    terminalMaxSessions: Math.max(1, Number(process.env.WRD_TERMINAL_MAX_SESSIONS || 8)),
-    terminalReplayBufferBytes: Math.max(1024, Number(process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES || 256 * 1024)),
-    terminalIdleTimeoutMs: Number(process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS || 0),
-    terminalStartupTimeoutMs: Number(process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS || 10000),
-    terminalAuditLog: String(process.env.WRD_TERMINAL_AUDIT_LOG || '').trim(),
-    terminalRecordIo: process.env.WRD_TERMINAL_RECORD_IO === '1',
+    enableTerminal: terminal.enabled,
+    terminalAdminPassword: terminal.adminPassword,
+    terminalShell: terminal.shell,
+    terminalCwd: terminal.cwd,
+    terminalPathEntries: terminal.pathEntries,
+    terminalSoftWarnSessionCount: terminal.softWarnSessionCount,
+    terminalMaxSessions: terminal.maxSessions,
+    terminalReplayBufferBytes: terminal.replayBufferBytes,
+    terminalIdleTimeoutMs: terminal.idleTimeoutMs,
+    terminalStartupTimeoutMs: terminal.startupTimeoutMs,
+    terminalInputRate: terminal.inputRate,
+    terminalInputBytesPerSecond: terminal.inputRate.bytesPerSecond,
+    terminalInputBurstBytes: terminal.inputRate.burstBytes,
+    terminalMaxObserverQueueBytes: terminal.maxObserverQueueBytes,
+    terminalAllowPolling: terminal.allowPolling,
+    terminalAuditLog: terminal.auditLog,
+    terminalRecordIoMetadata: terminal.recordIoMetadata,
+    terminalRecordIo: terminal.recordIoMetadata,
   };
 }
 
