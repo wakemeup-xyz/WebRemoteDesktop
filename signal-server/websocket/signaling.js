@@ -73,6 +73,7 @@ function setupSignaling(io, options = {}) {
   let pendingControllerProtocolVersion = null;
   let legacyControllerViewerId = null;
   const legacyRelayCompanionByOwner = new Map();
+  const legacyRelayOwnerIds = new Set();
 
   function clearPendingInputs(viewerId = null) {
     if (viewerId === null) pendingInputs.clear();
@@ -356,6 +357,7 @@ function setupSignaling(io, options = {}) {
         legacyControllerViewerId = pendingControllerProtocolVersion === 1
           ? desktopLease.snapshot().controllerViewerId
           : null;
+        if (legacyControllerViewerId) legacyRelayOwnerIds.add(legacyControllerViewerId);
         pendingControllerProtocolVersion = null;
         sendGrant(desktopLease.snapshot().controllerViewerId, result.lease);
       }
@@ -669,12 +671,15 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
         return;
       }
-      const companionId = hasActiveLegacyRelayOwner(data.viewerId)
-        ? legacyRelayCompanionByOwner.get(data.viewerId)
-        : null;
-      const viewerSocket = (companionId && connections.relayViewers.get(companionId))
-        || connections.relayViewers.get(data.viewerId)
-        || connections.viewers.get(data.viewerId);
+      if (legacyRelayOwnerIds.has(data.viewerId)) {
+        const companionId = hasActiveLegacyRelayOwner(data.viewerId)
+          ? legacyRelayCompanionByOwner.get(data.viewerId)
+          : null;
+        const companionSocket = companionId && connections.relayViewers.get(companionId);
+        if (companionSocket) companionSocket.volatile.emit('relay-frame', data);
+        return;
+      }
+      const viewerSocket = connections.relayViewers.get(data.viewerId) || connections.viewers.get(data.viewerId);
       if (viewerSocket) {
         viewerSocket.volatile.emit('relay-frame', data);
       }
@@ -750,6 +755,7 @@ function setupSignaling(io, options = {}) {
         const priorControl = controlSnapshot();
         const leaseResult = desktopLease.viewerDisconnected(socket.id);
         clearLegacyRelayCompanion(socket.id, { stop: true });
+        legacyRelayOwnerIds.delete(socket.id);
         if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
         if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
         if (leaseResult.transition) {

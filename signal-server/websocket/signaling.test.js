@@ -839,6 +839,7 @@ test('legacy relay companion ambiguity stops the host relay and rejects later fr
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   relayViewer.trigger('relay-stream-control', { enabled: true });
   const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
+  const mainFramesBefore = mainViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
 
   io.connect(new FakeSocket('legacy-observer', 'viewer'));
   assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
@@ -847,6 +848,7 @@ test('legacy relay companion ambiguity stops the host relay and rejects later fr
   });
   host.trigger('relay-frame', { viewerId: 'legacy-main', frameId: 2, data: 'stale' });
   assert.equal(relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length, relayedFramesBefore);
+  assert.equal(mainViewer.sent.filter((entry) => entry.event === 'relay-frame').length, mainFramesBefore);
 });
 
 test('legacy controller disconnect stops its bound relay companion and rejects later frames', () => {
@@ -897,6 +899,8 @@ test('v2 main viewer relay control remains strictly lease-authorized', () => {
     schemaVersion: 2, enabled: true, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
     viewerId: 'viewer-v2',
   });
+  host.trigger('relay-frame', { viewerId: 'viewer-v2', frameId: 1, data: 'v2-frame' });
+  assert.equal(viewer.sent.filter((entry) => entry.event === 'relay-frame').length, 1);
 });
 
 test('legacy relay companion stops forwarding while a v2 takeover reset is pending', () => {
