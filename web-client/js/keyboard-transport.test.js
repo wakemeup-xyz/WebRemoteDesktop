@@ -162,6 +162,7 @@ test('all outgoing inputs carry the RemoteInput v2 envelope', () => {
     leaseId: 'lease-for-test-0001',
     leaseEpoch: 7,
     seq: 1,
+    inputIds: ['input-1'],
     payload: {
       phase: 'down',
       code: 'KeyQ',
@@ -230,4 +231,12 @@ test('text, batch, and reset payloads remain v2 actions and validate unchanged',
   assert.deepEqual(h.dataChannel.slice(0, 2).map((payload) => payload.action), ['text', 'batch']);
   assert.deepEqual(h.socket[0].payload, { reason: 'manual' });
   [...h.dataChannel, ...h.socket].forEach((payload) => assert.equal(validateRemoteInput(payload).ok, true));
+});
+
+test('no-argument reset barrier uses the valid unspecified reason', () => {
+  const h = createHarness();
+  h.transport.resetBarrier();
+
+  assert.deepEqual(h.socket[0].payload, { reason: 'unspecified' });
+  assert.equal(validateRemoteInput(h.socket[0]).ok, true);
 });

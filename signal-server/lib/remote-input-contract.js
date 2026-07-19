@@ -2,9 +2,11 @@
 
 const MAX_TEXT_SCALARS = 4096;
 const MAX_BATCH_STEPS = 16;
+const MAX_INPUT_IDS = 64;
+const MAX_INPUT_ID_LENGTH = 128;
 
 const ENVELOPE_FIELDS = new Set([
-  'schemaVersion', 'type', 'action', 'leaseId', 'leaseEpoch', 'seq', 'payload',
+  'schemaVersion', 'type', 'action', 'leaseId', 'leaseEpoch', 'seq', 'inputIds', 'payload',
 ]);
 const KEY_FIELDS = new Set(['phase', 'code', 'location', 'repeat', 'modifiers', 'locks']);
 const MODIFIER_FIELDS = new Set(['altKey', 'ctrlKey', 'metaKey', 'shiftKey']);
@@ -46,6 +48,24 @@ function validateKeyPayload(payload) {
   return null;
 }
 
+function validateInputIds(inputIds) {
+  if (inputIds === undefined) return 'MISSING_INPUT_IDS';
+  if (!Array.isArray(inputIds) || inputIds.length < 1 || inputIds.length > MAX_INPUT_IDS) {
+    return 'INVALID_INPUT_IDS';
+  }
+  return inputIds.every((inputId) => typeof inputId === 'string'
+    && inputId.length > 0
+    && inputId.length <= MAX_INPUT_ID_LENGTH
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(inputId))
+    ? null
+    : 'INVALID_INPUT_IDS';
+}
+
+function accepted(data) {
+  const inputIdError = validateInputIds(data.inputIds);
+  return inputIdError ? failed(inputIdError) : { ok: true, value: data };
+}
+
 function validateRemoteInput(data) {
   try {
     if (!isRecord(data)) return failed('INVALID_ENVELOPE');
@@ -61,14 +81,12 @@ function validateRemoteInput(data) {
 
     if (data.action === 'key') {
       const code = validateKeyPayload(data.payload);
-      return code ? failed(code) : { ok: true, value: data };
+      return code ? failed(code) : accepted(data);
     }
     if (data.action === 'text') {
       if (!hasOnlyFields(data.payload, new Set(['text']))) return failed('UNKNOWN_FIELD');
       if (typeof data.payload.text !== 'string') return failed('INVALID_TEXT');
-      return [...data.payload.text].length > MAX_TEXT_SCALARS
-        ? failed('TEXT_TOO_LONG')
-        : { ok: true, value: data };
+      return [...data.payload.text].length > MAX_TEXT_SCALARS ? failed('TEXT_TOO_LONG') : accepted(data);
     }
     if (data.action === 'batch') {
       if (!hasOnlyFields(data.payload, new Set(['steps']))) return failed('UNKNOWN_FIELD');
@@ -78,13 +96,11 @@ function validateRemoteInput(data) {
         const code = validateKeyPayload(step);
         if (code) return failed(code);
       }
-      return { ok: true, value: data };
+      return accepted(data);
     }
 
     if (!hasOnlyFields(data.payload, new Set(['reason']))) return failed('UNKNOWN_FIELD');
-    return RESET_REASONS.has(data.payload.reason)
-      ? { ok: true, value: data }
-      : failed('INVALID_RESET_REASON');
+    return RESET_REASONS.has(data.payload.reason) ? accepted(data) : failed('INVALID_RESET_REASON');
   } catch (_error) {
     return failed('INVALID_ENVELOPE');
   }
@@ -120,4 +136,5 @@ module.exports = {
   summarizeRemoteInput,
   MAX_TEXT_SCALARS,
   MAX_BATCH_STEPS,
+  MAX_INPUT_IDS,
 };

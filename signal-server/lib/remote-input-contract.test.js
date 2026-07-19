@@ -45,7 +45,21 @@ test('unicode text summary is JSON safe and never discloses text or lease id', (
   assert.doesNotThrow(() => JSON.stringify(summary));
   assert.equal(JSON.stringify(summary).includes(unicode.payload.text), false);
   assert.equal(JSON.stringify(summary).includes(unicode.leaseId), false);
+  assert.equal(JSON.stringify(summary).includes(unicode.inputIds[0]), false);
   assert.deepEqual(Object.keys(summary), ['action', 'leaseEpoch', 'payloadBytes', 'schemaVersion', 'seq', 'type']);
+});
+
+test('requires a bounded array of safe input identifiers', () => {
+  const input = clone(fixtures.valid[0].input);
+  delete input.inputIds;
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'MISSING_INPUT_IDS' });
+
+  input.inputIds = [];
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_INPUT_IDS' });
+  input.inputIds = ['unsafe id'];
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_INPUT_IDS' });
+  input.inputIds = Array.from({ length: 65 }, (_, index) => `input-${index}`);
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_INPUT_IDS' });
 });
 
 test('rejects unknown envelope and payload fields', () => {

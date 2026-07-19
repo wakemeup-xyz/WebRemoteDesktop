@@ -9,6 +9,7 @@
         "leaseId": "lease-0123456789abcdef",
         "leaseEpoch": 7,
         "seq": 1,
+        "inputIds": ["input-1"],
         "payload": {
           "phase": "down",
           "code": "KeyA",
@@ -28,6 +29,7 @@
         "leaseId": "lease-0123456789abcdef",
         "leaseEpoch": 7,
         "seq": 2,
+        "inputIds": ["input-2"],
         "payload": {
           "phase": "down",
           "code": "ArrowDown",
@@ -47,6 +49,7 @@
         "leaseId": "lease-0123456789abcdef",
         "leaseEpoch": 7,
         "seq": 3,
+        "inputIds": ["input-3"],
         "payload": { "text": "A😀中" }
       }
     },
@@ -59,6 +62,7 @@
         "leaseId": "lease-0123456789abcdef",
         "leaseEpoch": 7,
         "seq": 4,
+        "inputIds": ["input-4"],
         "payload": {
           "steps": [
             {
@@ -90,6 +94,7 @@
         "leaseId": "lease-0123456789abcdef",
         "leaseEpoch": 7,
         "seq": 5,
+        "inputIds": ["input-5"],
         "payload": { "reason": "window-blur" }
       }
     }

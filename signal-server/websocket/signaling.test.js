@@ -18,6 +18,7 @@ function v2Key(overrides = {}) {
     leaseId: 'lease-000000000001',
     leaseEpoch: 1,
     seq: 1,
+    inputIds: ['input-1'],
     payload: {
       phase: 'down',
       code: 'KeyA',

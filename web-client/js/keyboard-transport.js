@@ -131,6 +131,7 @@
         leaseId,
         leaseEpoch,
         seq,
+        inputIds: [inputId],
       };
       const record = { inputId, seq, adapter: adapterName, reset: Boolean(isReset) };
       pending.set(inputId, record);
@@ -201,7 +202,7 @@
     }
 
     function resetBarrier(reason) {
-      return sendReset(reason || 'reset');
+      return sendReset(reason || 'unspecified');
     }
 
     function acceptAck(ack) {
