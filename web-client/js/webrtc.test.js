@@ -102,6 +102,54 @@ function loadLinkQualityController() {
   return { LinkQualityController: context.__LQC, context };
 }
 
+test('WebRTC lazily owns media activity reasons and forwards changes to its media hook', () => {
+  let controllerOptions = null;
+  let lifecycleOptions = null;
+  let starts = 0;
+  let creates = 0;
+  const snapshot = { state: 'suspended', reasons: ['manual-pause'], generation: 1 };
+  const controllerCalls = [];
+  const controller = {
+    setReason(reason, enabled) {
+      controllerCalls.push([reason, enabled]);
+      controllerOptions.onChange(snapshot);
+      return snapshot;
+    },
+    snapshot() {
+      return snapshot;
+    },
+  };
+  const { WebRTC } = loadWebRTC({
+    MediaActivityController: {
+      create(options) {
+        creates += 1;
+        controllerOptions = options;
+        return controller;
+      },
+    },
+    MediaActivityLifecycle: {
+      create(options) {
+        lifecycleOptions = options;
+        return { start() { starts += 1; } };
+      },
+    },
+  });
+  const applied = [];
+  WebRTC.applyMediaActivity = (nextSnapshot) => applied.push(nextSnapshot);
+
+  assert.deepEqual(WebRTC.setMediaActivityReason('manual-pause', true), snapshot);
+  assert.deepEqual(WebRTC.getMediaActivitySnapshot(), snapshot);
+  assert.equal(creates, 1);
+  assert.equal(starts, 1);
+  assert.deepEqual(applied, [snapshot]);
+  lifecycleOptions.setReason('page-hide', true);
+  assert.equal(creates, 1);
+  assert.deepEqual(controllerCalls, [
+    ['manual-pause', true],
+    ['page-hide', true],
+  ]);
+});
+
 test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyMonitor', () => {
   const acks = [];
   const channels = new Map();

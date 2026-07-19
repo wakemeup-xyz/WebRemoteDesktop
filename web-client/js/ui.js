@@ -59,22 +59,20 @@ const UI = {
     const relayImage = document.getElementById('relayImage');
     const viewerContainer = document.querySelector('.viewer-container');
 
-    let isPaused = false;
     const scaleModes = ['contain', 'cover', 'fill'];
     const scaleLabels = ['自适应', '填充', '拉伸'];
     let scaleIndex = 0;
 
-    if (pauseBtn && video) pauseBtn.addEventListener('click', () => {
-      if (isPaused) {
-        video.play();
-        pauseBtn.textContent = '暂停';
-        Input.setActive(true);
-      } else {
-        video.pause();
-        pauseBtn.textContent = '恢复';
-        Input.setActive(false);
+    if (pauseBtn) pauseBtn.addEventListener('click', () => {
+      if (typeof WebRTC === 'undefined' || typeof WebRTC.setMediaActivityReason !== 'function') {
+        return;
       }
-      isPaused = !isPaused;
+      const snapshot = typeof WebRTC.getMediaActivitySnapshot === 'function'
+        ? WebRTC.getMediaActivitySnapshot()
+        : { reasons: [] };
+      const manuallyPaused = snapshot.reasons?.includes('manual-pause');
+      WebRTC.setMediaActivityReason('manual-pause', !manuallyPaused);
+      pauseBtn.textContent = manuallyPaused ? '暂停' : '恢复';
     });
 
     if (disconnectBtn) disconnectBtn.addEventListener('click', () => {

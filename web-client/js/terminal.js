@@ -270,6 +270,9 @@ const TerminalPanel = {
 
   showDesktop() {
     this.isVisible = false;
+    if (typeof WebRTC !== 'undefined') {
+      WebRTC.setMediaActivityReason?.('terminal-active', false);
+    }
     document.body.classList.remove('terminal-active');
     this.elements.desktopPanel?.classList.remove('hidden');
     this.elements.terminalPanel?.classList.add('hidden');
@@ -279,6 +282,9 @@ const TerminalPanel = {
 
   showTerminal() {
     this.isVisible = true;
+    if (typeof WebRTC !== 'undefined') {
+      WebRTC.setMediaActivityReason?.('terminal-active', true);
+    }
     document.body.classList.add('terminal-active');
     this.elements.desktopPanel?.classList.add('hidden');
     this.elements.terminalPanel?.classList.remove('hidden');

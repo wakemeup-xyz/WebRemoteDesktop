@@ -127,6 +127,7 @@ function loadTerminal(overrides = {}) {
     'terminalComposerSubmit',
     'terminalComposerHint',
     'disconnectBtn',
+    'pauseBtn',
     'remoteVideo',
     'relayImage',
     'scaleBtn',
@@ -1324,6 +1325,56 @@ test('desktop disconnect only calls WebRTC.disconnect and never disconnects the 
   context.document.getElementById('disconnectBtn').onclick?.({ preventDefault() {} });
 
   assert.equal(disconnectCalls, 1);
+  assert.equal(fakeSocket.connected, true);
+});
+
+test('pause control toggles only the manual media suspension reason from the WebRTC snapshot', () => {
+  const { context, elements } = loadTerminal();
+  let snapshot = { state: 'active', reasons: [], generation: 0 };
+  const changes = [];
+  context.WebRTC = {
+    getMediaActivitySnapshot() { return snapshot; },
+    setMediaActivityReason(reason, enabled) {
+      changes.push([reason, enabled]);
+    },
+  };
+
+  const UI = loadUi(context);
+  UI.setupControlButtons();
+  const pauseButton = elements.get('pauseBtn');
+  pauseButton.onclick();
+  snapshot = { state: 'suspended', reasons: ['manual-pause'], generation: 1 };
+  pauseButton.onclick();
+
+  assert.deepEqual(changes, [
+    ['manual-pause', true],
+    ['manual-pause', false],
+  ]);
+  assert.equal(pauseButton.textContent, '暂停');
+});
+
+test('terminal tab sets terminal-active and desktop clears only that reason without closing its socket', () => {
+  const { context, TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  const changes = [];
+  context.WebRTC = {
+    setMediaActivityReason(reason, enabled) {
+      changes.push([reason, enabled]);
+    },
+  };
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.showTerminal();
+  TerminalPanel.showDesktop();
+
+  assert.deepEqual(changes, [
+    ['terminal-active', true],
+    ['terminal-active', false],
+  ]);
+  assert.equal(TerminalPanel.socket, fakeSocket);
   assert.equal(fakeSocket.connected, true);
 });
 

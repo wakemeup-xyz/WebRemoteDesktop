@@ -31,6 +31,8 @@ const WebRTC = {
   tunnelLastFrameId: 0,
   currentResolution: { width: 960, height: 540, label: '540p' },
   linkQualityController: null,
+  mediaActivityController: null,
+  mediaActivityLifecycle: null,
   adaptiveMediaEnabled: true,
   noMediaTicks: 0,
   lastCandidateType: '',
@@ -75,6 +77,46 @@ const WebRTC = {
       state: '兜底',
       hint: '最终兜底模式。视频通过 Cloudflare/Socket.IO 转发，FPS 较低但不依赖 UDP。'
     }
+  },
+
+  initializeMediaActivity() {
+    if (this.mediaActivityController) {
+      return this.mediaActivityController.snapshot();
+    }
+
+    if (typeof MediaActivityController === 'undefined') {
+      return { state: 'active', reasons: [], generation: 0 };
+    }
+
+    this.mediaActivityController = MediaActivityController.create({
+      onChange: (snapshot) => this.applyMediaActivity(snapshot),
+    });
+    if (typeof MediaActivityLifecycle !== 'undefined') {
+      this.mediaActivityLifecycle = MediaActivityLifecycle.create({
+        setReason: (reason, enabled) => this.setMediaActivityReason(reason, enabled),
+      });
+      this.mediaActivityLifecycle.start();
+    }
+    return this.mediaActivityController.snapshot();
+  },
+
+  setMediaActivityReason(reason, enabled) {
+    this.initializeMediaActivity();
+    if (!this.mediaActivityController) {
+      return this.getMediaActivitySnapshot();
+    }
+    return this.mediaActivityController.setReason(reason, enabled);
+  },
+
+  getMediaActivitySnapshot() {
+    this.initializeMediaActivity();
+    return this.mediaActivityController
+      ? this.mediaActivityController.snapshot()
+      : { state: 'active', reasons: [], generation: 0 };
+  },
+
+  applyMediaActivity(snapshot) {
+    return snapshot;
   },
 
   hasTurnConfigured() {
@@ -1953,6 +1995,7 @@ function updateLoadingText(text) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  WebRTC.initializeMediaActivity();
   WebRTC.loadServerConfig().then(() => {
     WebRTC.configureNetworkControls();
     WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
