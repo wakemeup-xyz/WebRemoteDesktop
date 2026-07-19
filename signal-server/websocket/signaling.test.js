@@ -446,6 +446,61 @@ test('offer from disconnected viewer is not relayed to host', () => {
   );
 });
 
+test('active v2 offer forwards its authorized lease only to the host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const owner = new FakeSocket('viewer-owner', 'viewer');
+  const observer = new FakeSocket('viewer-observer', 'viewer');
+  io.connect(host);
+  io.connect(owner);
+  io.connect(observer);
+
+  owner.trigger('control-acquire', { requestId: 'owner-control' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = owner.sent.find((entry) => entry.event === 'control-grant').data;
+
+  owner.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 3,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1).data;
+  assert.deepEqual(forwarded, {
+    offer: { type: 'offer', sdp: 'v=0' },
+    viewerId: 'viewer-owner',
+    epoch: 3,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(observer.sent.some((entry) => entry.event === 'offer'), false);
+  assert.equal(JSON.stringify(observer.sent).includes(grant.leaseId), false);
+  assert.equal(JSON.stringify(owner.sent.filter((entry) => entry.event === 'control-state')).includes(grant.leaseId), false);
+});
+
+test('legacy offer does not receive a synthetic lease token when forwarded', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-legacy', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('offer', { offer: { type: 'offer', sdp: 'v=0' }, epoch: 2 });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
+  const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1).data;
+  assert.equal(Object.hasOwn(forwarded, 'leaseId'), false);
+  assert.equal(forwarded.leaseEpoch, transition.leaseEpoch);
+});
+
 test('ice candidate from disconnected viewer is not relayed to host', () => {
   resetConnections();
   const io = makeIo();

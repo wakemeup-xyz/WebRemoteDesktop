@@ -125,12 +125,16 @@ function setupSignaling(io, options = {}) {
   }
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
-    connections.host.emit('offer', {
+    const forwarded = {
       offer: data.offer,
       viewerId: socket.id,
       epoch: data.epoch,
       leaseEpoch: data.schemaVersion === 2 ? data.leaseEpoch : desktopLease.snapshot().leaseEpoch,
-    });
+    };
+    // v2 offers have already passed authorizeViewer(), so this opaque token
+    // is safe to forward solely to the Host for its direct DataChannel binding.
+    if (data.schemaVersion === 2) forwarded.leaseId = data.leaseId;
+    connections.host.emit('offer', forwarded);
     return true;
   }
   // Use default namespace for all connections
