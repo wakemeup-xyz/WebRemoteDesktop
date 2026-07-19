@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import asyncio
 
 import pytest
 
@@ -88,6 +89,54 @@ def test_old_datachannel_and_mismatched_lease_are_rejected_after_takeover():
         **v2,
         "leaseId": "lease-not-bound",
     }) is None
+
+
+@pytest.mark.asyncio
+async def test_input_move_close_does_not_reset_bound_keyboard_but_input_close_does():
+    binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 7,
+        "connectionGeneration": 4,
+    }
+
+    class FakeChannel:
+        def __init__(self, label):
+            self.label = label
+
+    class FakeInputHandler:
+        def __init__(self):
+            self.pressed_key_count = 1
+            self.reset_reasons = []
+
+        async def reset_keyboard(self, **kwargs):
+            self.reset_reasons.append(kwargs)
+            self.pressed_key_count = 0
+            return {"status": "applied"}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = binding
+    host._input_lifecycle_tasks = set()
+    host.input_handler = FakeInputHandler()
+    move_channel = FakeChannel("input-move")
+    input_channel = FakeChannel("input")
+    host._input_datachannel = input_channel
+
+    host._handle_datachannel_close(move_channel, binding)
+    await asyncio.sleep(0)
+    assert host.input_handler.reset_reasons == []
+    assert host.input_handler.pressed_key_count == 1
+
+    host._handle_datachannel_close(input_channel, binding)
+    await asyncio.gather(*host._input_lifecycle_tasks)
+    assert host.input_handler.reset_reasons == [{
+        "reason": "datachannel-closed",
+        "lease_epoch": 7,
+    }]
+    assert host.input_handler.pressed_key_count == 0
 
 
 @pytest.mark.asyncio

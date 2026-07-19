@@ -1386,6 +1386,21 @@ class WebRemoteHost:
         task.add_done_callback(tasks.discard)
         return task
 
+    def _handle_datachannel_close(self, channel, binding):
+        """Only the active reliable input channel can end a keyboard lease."""
+        if getattr(channel, "label", None) != "input":
+            return
+        if channel is not getattr(self, "_input_datachannel", None):
+            return
+        self._input_datachannel = None
+        if self._binding_matches(binding, getattr(self, "_active_input_binding", None)):
+            self._schedule_input_lifecycle(
+                self._reset_keyboard_lifecycle(
+                    "datachannel-closed",
+                    lease_epoch=binding["leaseEpoch"],
+                )
+            )
+
     async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
         handler = getattr(self, "input_handler", None)
         if handler is None:
@@ -1544,15 +1559,7 @@ class WebRemoteHost:
                         ice_state = self.pc.iceConnectionState if self.pc else 'no-pc'
                         logger.warning("DataChannel CLOSED: label=%s pc=%s ice=%s",
                                        channel.label, pc_state, ice_state)
-                        if channel.label == "input":
-                            self._input_datachannel = None
-                        if binding:
-                            self._schedule_input_lifecycle(
-                                self._reset_keyboard_lifecycle(
-                                    "datachannel-closed",
-                                    lease_epoch=binding.get("leaseEpoch"),
-                                )
-                            )
+                        self._handle_datachannel_close(channel, binding)
 
                     @channel.on("message")
                     def on_message(message):
