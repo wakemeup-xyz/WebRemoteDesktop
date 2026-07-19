@@ -99,8 +99,10 @@ Artifacts (local only, not committed):
 ### Runtime rows
 
 Primary local dual-viewer harness: `/tmp/wrd-acceptance/task9-local-report.json`  
-Extended timing/input/formal harness: `/tmp/wrd-acceptance/task9-extended-report.json`  
-Scripts: `scripts/runtime_reliability_acceptance.py`, `scripts/runtime_reliability_acceptance_ext.py`
+Extended harness: `/tmp/wrd-acceptance/task9-extended-report.json`  
+Final batch: `/tmp/wrd-acceptance/task9-final-report.json`  
+Input reprobe: `/tmp/wrd-acceptance/task9-input-reprobe.json`  
+Scripts: `scripts/runtime_reliability_acceptance.py`, `..._ext.py`, `..._final.py`
 
 | Gate | Status | Evidence / reason |
 |------|--------|-------------------|
@@ -113,21 +115,21 @@ Scripts: `scripts/runtime_reliability_acceptance.py`, `scripts/runtime_reliabili
 | 9B WebRTC connected | **PASS** (`browser-protocol`) | Chromium PeerConnection path runs after Start |
 | 9B media suspend applied phase | **PASS** | controller enters `suspending`/`suspended`, health suppressed, input/search gated |
 | 9B media resume applied phase | **PASS** | returns to `resuming`/`active` after clear + rendered-frame note |
-| 9B WebRTC suspend 15s payload stop | **PASS** (`browser-protocol`) | after applied `suspended` + drain, 15s hold: phase stays suspended, health suppressed, input gated, RTP `bytesReceived` growth ≤32KiB (payload stopped). `framesDecoded` may still lag on buffered frames |
-| 9B resume latency (single sample) | **PASS** | request→active ≈220–320ms local; formal ≈550–650ms. **Not** full 20-run P95 |
-| 9B resume P95 over 20 runs | **NOT RUN** | only single-sample latency collected |
-| 9B mouse double-click / drag | **PASS** (`browser-protocol`) | synthetic mouse down/up/move path observed (18 events); Host open/select visual assertion not claimed |
+| 9B WebRTC suspend 15s payload stop | **PASS** (`browser-protocol`) | after applied `suspended` + drain, 15s hold: phase stays suspended, health suppressed, input gated, RTP payload bytes not growing meaningfully |
+| 9B resume latency 20-run P95 | **PASS** | 20/20 ok; p50≈247.5ms; **p95≈333ms**; max 340ms; threshold 1500ms (`task9-final-report.json`) |
+| 9B mouse double-click / drag | **PASS** (`browser-protocol`) | protocol events observed; Host open/select visual assertion not claimed |
 | 9C keyboard controller ready | **PASS** (`browser-protocol`) | Input module + active lease present |
-| 9C keyboard browser-protocol subset | **PASS** | left/right modifiers + common keys dispatched; full K-01–K-13 ordinary-Chrome matrix still open |
-| 9C keyboard K-01–K-13 ordinary Chrome full matrix | **NOT RUN** | full matrix not completed as product sign-off |
+| 9C keyboard browser-protocol subset | **PASS** | left/right modifiers + common keys via controller `handleDomEvent` + DataChannel; pressedCount returns 0 (`task9-input-reprobe.json`) |
+| 9C keyboard K-01–K-13 ordinary Chrome product matrix | **PARTIAL** | protocol subset closed; full ordinary-Chrome product sign-off / physical still open |
 | 9C physical-keyboard | **NOT RUN** | requires user physical presses |
 | 9C os-reserved | **NOT RUN** | OS/browser may intercept before page |
 | 9C Terminal UI + pause coexistence | **PASS** | Terminal UI present; `terminal-active` suspend keeps socket connected |
 | 9D trycloudflare safe URL media | **BLOCKED** | `/tmp/wrd-safe-current-url.txt` health `http-invalid`/404; tunnel not rebuilt by policy |
-| 9D formal fixed-domain media smoke | **PASS** | `https://link.stockhub.wiki` deliverable; control + suspend/resume smoke OK |
+| 9D formal fixed-domain dual Viewer | **PASS** | `https://link.stockhub.wiki` A controller then B takeover single-writer |
+| 9D formal tunnel-mode media | **PASS** | formal entry `networkMode=tunnel`; suspend→resume active (~123ms sample), socket remains |
 | 9D formal entry health | **PASS** | `https://link.stockhub.wiki/health` ok |
 
-Honest labels kept: open rows remain **NOT RUN** / **BLOCKED**, not rewritten as full product acceptance.
+Honest labels kept for truly open rows: physical keyboard, OS-reserved, reset-blocked fault injection, trycloudflare URL.
 
 ### Host media-stop hardening during acceptance
 
