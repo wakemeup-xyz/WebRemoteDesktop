@@ -1,7 +1,19 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const { MediaActivityController } = require('./media-activity-controller.js');
+
+test('exposes the controller object directly on the browser global', () => {
+  const browserGlobal = {};
+  const source = fs.readFileSync(path.join(__dirname, 'media-activity-controller.js'), 'utf8');
+
+  vm.runInNewContext(source, { window: browserGlobal, globalThis: browserGlobal });
+
+  assert.equal(typeof browserGlobal.MediaActivityController.create, 'function');
+});
 
 test('starts active with generation zero and no suspension reasons', () => {
   const controller = MediaActivityController.create();

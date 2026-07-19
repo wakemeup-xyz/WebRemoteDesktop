@@ -62,7 +62,7 @@
   };
 
   const api = { MediaActivityController };
-  globalObject.MediaActivityController = api;
+  globalObject.MediaActivityController = MediaActivityController;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }
