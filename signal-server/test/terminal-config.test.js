@@ -116,13 +116,13 @@ test('parseTerminalConfig exposes normalized defaults', () => {
   });
 });
 
-test('parseTerminalConfig normalizes overrides and deduplicates path entries', () => {
+test('parseTerminalConfig normalizes overrides with distinct path entries', () => {
   const config = parseTerminalConfig(terminalEnv({
     WRD_ENABLE_TERMINAL: '1',
     WRD_TERMINAL_ADMIN_PASSWORD: ' terminal-admin-password ',
     WRD_TERMINAL_SHELL: '/bin/bash',
     WRD_TERMINAL_CWD: '/tmp',
-    WRD_TERMINAL_PATH_EXTRA: '/tmp:/private/tmp:/tmp',
+    WRD_TERMINAL_PATH_EXTRA: '/tmp:/private/tmp',
     WRD_TERMINAL_MAX_SESSIONS: '12',
     WRD_TERMINAL_SOFT_WARN_SESSION_COUNT: '7',
     WRD_TERMINAL_REPLAY_BUFFER_BYTES: '131072',
@@ -174,6 +174,7 @@ for (const { key, value } of [
   { key: 'WRD_TERMINAL_CWD', value: '/dev/null' },
   { key: 'WRD_TERMINAL_PATH_EXTRA', value: 'relative/path' },
   { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/definitely/not/wrd-terminal' },
+  { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/tmp:/private/tmp:/tmp' },
 ]) {
   test(`parseTerminalConfig rejects invalid ${key}=${value}`, () => {
     assert.throws(

@@ -47,9 +47,13 @@ function parsePathEntries(raw) {
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-  return [...new Set(entries.map((entry) => (
+  const normalizedEntries = entries.map((entry) => (
     existingAbsoluteDirectory('WRD_TERMINAL_PATH_EXTRA', entry)
-  )))];
+  ));
+  if (new Set(normalizedEntries).size !== normalizedEntries.length) {
+    throw new Error('[config] WRD_TERMINAL_PATH_EXTRA must not contain duplicate directories');
+  }
+  return normalizedEntries;
 }
 
 function parseTerminalConfig(env = process.env) {
