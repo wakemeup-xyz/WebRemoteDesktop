@@ -70,12 +70,45 @@
       return payload.code || payload.key || payload.keyCode || null;
     }
 
-    function isKeyDown(action) {
-      return action === 'keydown' || action === 'down';
+    function isKeyDown(message) {
+      return message.action === 'keydown' || message.action === 'down'
+        || (message.action === 'key' && message.payload && message.payload.phase === 'down');
     }
 
-    function isKeyUp(action) {
-      return action === 'keyup' || action === 'up';
+    function isKeyUp(message) {
+      return message.action === 'keyup' || message.action === 'up'
+        || (message.action === 'key' && message.payload && message.payload.phase === 'up');
+    }
+
+    function booleanValue(primary, fallback) {
+      const value = typeof primary === 'boolean' || primary === 0 || primary === 1
+        ? primary
+        : fallback;
+      return value === true || value === 1;
+    }
+
+    function normalizeLegacyKey(message) {
+      if (message.action !== 'keydown' && message.action !== 'keyup') return message;
+      const payload = message.payload || {};
+      const modifiers = payload.modifiers || {};
+      const locks = payload.locks || {};
+      return {
+        type: message.type || 'keyboard',
+        action: 'key',
+        payload: {
+          phase: message.action === 'keydown' ? 'down' : 'up',
+          code: payload.code,
+          location: Number.isInteger(payload.location) ? payload.location : 0,
+          repeat: booleanValue(payload.repeat),
+          modifiers: {
+            altKey: booleanValue(modifiers.altKey, modifiers.alt),
+            ctrlKey: booleanValue(modifiers.ctrlKey, modifiers.ctrl),
+            metaKey: booleanValue(modifiers.metaKey, modifiers.meta),
+            shiftKey: booleanValue(modifiers.shiftKey, modifiers.shift),
+          },
+          locks: { capsLock: booleanValue(locks.capsLock) },
+        },
+      };
     }
 
     function trimPending() {
@@ -98,7 +131,6 @@
         leaseId,
         leaseEpoch,
         seq,
-        inputIds: [inputId],
       };
       const record = { inputId, seq, adapter: adapterName, reset: Boolean(isReset) };
       pending.set(inputId, record);
@@ -157,11 +189,11 @@
       const adapterName = chooseAdapter(false);
       if (!adapterName) return null;
       const identity = keyIdentity(message);
-      const record = sendThrough(adapterName, message, false);
-      if (isKeyDown(message.action) && identity) {
+      const record = sendThrough(adapterName, normalizeLegacyKey(message), false);
+      if (isKeyDown(message) && identity) {
         pressed.add(identity);
         pinnedAdapter = adapterName;
-      } else if (isKeyUp(message.action) && identity) {
+      } else if (isKeyUp(message) && identity) {
         pressed.delete(identity);
         if (pressed.size === 0) pinnedAdapter = null;
       }

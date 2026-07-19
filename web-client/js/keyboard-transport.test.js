@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const KeyboardTransport = require('./keyboard-transport.js');
+const { validateRemoteInput } = require('../../signal-server/lib/remote-input-contract.js');
 
 function createHarness(options = {}) {
   let time = 1000;
@@ -21,7 +22,7 @@ function createHarness(options = {}) {
     makeInputId: () => `input-${++nextId}`,
     ackTimeoutMs: options.ackTimeoutMs || 3000,
   });
-  transport.setLease({ leaseId: 'lease-for-test', leaseEpoch: 7 });
+  transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
   return {
     transport,
     dataChannel,
@@ -59,7 +60,8 @@ test('reset barrier blocks new input until its applied or duplicate acknowledgem
   const secondReset = h.transport.resetBarrier('focus-lost-again');
   assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'duplicate' }).status, 'duplicate');
   assert.equal(h.transport.canSendNewInput(), true);
-  assert.equal(secondReset, h.socket[1].inputIds[0]);
+  assert.equal(resetId, 'input-1');
+  assert.equal(secondReset, 'input-2');
 });
 
 test('keyboard transport pins its adapter until every physical key is released', () => {
@@ -69,7 +71,8 @@ test('keyboard transport pins its adapter until every physical key is released',
   h.transport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyA' } });
 
   assert.equal(h.dataChannel.length, 2);
-  assert.equal(h.dataChannel[1].action, 'keyup');
+  assert.equal(h.dataChannel[1].action, 'key');
+  assert.equal(h.dataChannel[1].payload.phase, 'up');
   assert.equal(h.transport.getSnapshot().adapter, null);
 });
 
@@ -136,18 +139,24 @@ test('lease revocation disables sends and snapshots never expose the lease token
   assert.equal(JSON.stringify(snapshot).includes('lease-for-test'), false);
 });
 
-test('all outgoing inputs carry the v2 lease ID, lease epoch, sequence, and input ID schema', () => {
+test('all outgoing inputs carry the RemoteInput v2 envelope', () => {
   const h = createHarness();
   h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyQ' } });
   assert.deepEqual(h.dataChannel[0], {
     type: 'keyboard',
-    action: 'keydown',
-    payload: { code: 'KeyQ' },
+    action: 'key',
     schemaVersion: 2,
-    leaseId: 'lease-for-test',
+    leaseId: 'lease-for-test-0001',
     leaseEpoch: 7,
     seq: 1,
-    inputIds: ['input-1'],
+    payload: {
+      phase: 'down',
+      code: 'KeyQ',
+      location: 0,
+      repeat: false,
+      modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+      locks: { capsLock: false },
+    },
   });
 });
 
@@ -156,8 +165,56 @@ test('non-spec lease and acknowledgement aliases do not authorize input or advan
   h.transport.setLease('legacy-lease');
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyW' } }), null);
 
-  h.transport.setLease({ leaseId: 'lease-for-test', leaseEpoch: 7 });
+  h.transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
   h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyW' } });
   assert.equal(h.transport.acceptAck({ epoch: 7, seq: 1, inputIds: ['input-1'] }).status, 'stale');
   assert.equal(h.transport.getSnapshot().lastApplied, 0);
+});
+
+test('legacy controller keydown and keyup normalize to valid RemoteInput v2 key envelopes', () => {
+  const h = createHarness();
+  h.transport.send({
+    type: 'keyboard',
+    action: 'keydown',
+    payload: { code: 'KeyA', modifiers: { ctrl: 1, shift: 0 }, locks: { capsLock: 1 } },
+  });
+  h.transport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyA' } });
+
+  assert.deepEqual(h.dataChannel.map((payload) => [payload.action, payload.payload.phase]), [
+    ['key', 'down'],
+    ['key', 'up'],
+  ]);
+  assert.deepEqual(h.dataChannel[0].payload.modifiers, {
+    altKey: false,
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+  });
+  assert.deepEqual(h.dataChannel[0].payload.locks, { capsLock: true });
+  h.dataChannel.forEach((payload) => assert.equal(validateRemoteInput(payload).ok, true));
+  assert.equal(h.transport.getSnapshot().adapter, null);
+});
+
+test('text, batch, and reset payloads remain v2 actions and validate unchanged', () => {
+  const h = createHarness();
+  h.transport.send({ type: 'keyboard', action: 'text', payload: { text: 'hello' } });
+  h.transport.send({
+    type: 'keyboard',
+    action: 'batch',
+    payload: {
+      steps: [{
+        phase: 'down',
+        code: 'KeyB',
+        location: 0,
+        repeat: false,
+        modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+        locks: { capsLock: false },
+      }],
+    },
+  });
+  h.transport.resetBarrier('manual');
+
+  assert.deepEqual(h.dataChannel.slice(0, 2).map((payload) => payload.action), ['text', 'batch']);
+  assert.deepEqual(h.socket[0].payload, { reason: 'manual' });
+  [...h.dataChannel, ...h.socket].forEach((payload) => assert.equal(validateRemoteInput(payload).ok, true));
 });
