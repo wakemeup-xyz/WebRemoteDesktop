@@ -317,11 +317,28 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 1. 查看 Host 日志里的 `VIEWER_STATS`、`WRD_MEDIA_PROFILE`、`WRD_STUN_FAILURE`
 2. 如果出现 `WRD_MEDIA_PROFILE`，说明 Viewer 已检测到弱链路并尝试降载
 3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel；需要时可再尝试手动「搜索端口」（最多 500 轮）
-4. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连可达
-5. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
-6. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
+4. **若需要跨网稳定投屏**：检查 TURN 是否双边就绪（见下节），再**手动**切换「外网中继」；不要假设 `auto` 会自动切 TURN
+5. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连或 TURN 可达
+6. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
+7. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
 
 家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口（系统分配，绑定 `0`），手动搜索端口也只是反复重建连接以换取新的系统端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
+
+#### TURN / 外网中继排查（手动）
+
+设计与实施计划：
+
+- `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
+- `docs/superpowers/plans/2026-07-20-turn-integration-plan.md`
+
+检查顺序：
+
+1. 配置源：`TURN_*` 环境变量，或 `signal-server/.env`，或 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（env 覆盖 json）
+2. 登录后访问 `/api/webrtc-config`：`turnConfigured=true`；接入完成后核对 `turnSource` / `turnFingerprint` / `hostTurnReady`
+3. Host 必须注入**同一套** `TURN_*`（LaunchAgent 路径尤易遗漏）；用 `scripts/restart-host.sh` 重启后看 Host 日志是否装载 TURN
+4. 页面选手动「外网中继」；成功时链路为 `relay` / TURN 中继且 FPS > 0
+5. 失败分类优先：配置缺失/不完整、Host 未就绪、fingerprint 不一致、Allocate 失败（3478/防火墙/凭据）、有 candidate 无 selected、pair 有但 0 FPS（捕获/编码）
+6. Terminal **默认**仍走 Socket.IO，与 TURN 无关；可选 `webrtc-turn` 见设计 Phase 2，失败不得静默回退
 
 ### 场景 2：Cloudflare 地址失效
 

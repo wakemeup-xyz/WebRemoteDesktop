@@ -259,7 +259,7 @@ http://127.0.0.1:8080
 - 关闭当前 Terminal 标签页或整个 Viewer 页面，只会让该浏览器断开附着，不会 kill 底层 PTY；会话会持续到显式关闭或服务重启
 - Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
-- Terminal 只走浏览器会话内的 Socket.IO / HTTPS 通道，不接入 STUN / TURN / WebRTC 媒体链路
+- Terminal **默认**只走浏览器会话内的 Socket.IO / HTTPS 通道，不依赖 STUN / TURN / WebRTC 媒体链路；可选 `webrtc-turn`（DataChannel + 同一 TURN）见 TURN 接入设计 Phase 2，须显式选择且失败不得静默回退
 - Terminal 的 `socketRtt` 和 `inputAckRtt` 只使用浏览器本地 pending 时间；服务端 `serverProcessMs` 单独显示，不能跨机器相减 wall clock
 - password-safe echo 默认不可信：首批普通输入只作为隐藏 probe，只有远端 shell 确实回显后才对后续字符启用；Enter、控制键、alternate-screen、断线和重连都会清零，因此密码提示不会在浏览器显示输入字符
 - shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 默认 256 KiB，配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
@@ -390,30 +390,63 @@ WebRemoteDesktop/
 
 ### TURN 配置示例
 
-如果你希望手动 `外网中继` 模式真正可用，需要同时配置 TURN。当前项目支持从 `signal-server/.env` 读取：
+如果你希望手动 `外网中继` 模式真正可用，需要同时配置 TURN。**Viewer（signal-server）与 Host（python-host）必须使用同一套 TURN**，否则选不出 `relay` candidate pair。
+
+权威设计与分阶段实施：
+
+- 设计：`docs/superpowers/specs/2026-07-20-turn-integration-design.md`
+- 计划：`docs/superpowers/plans/2026-07-20-turn-integration-plan.md`
+
+#### 配置源优先级
+
+1. 进程环境变量 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`（最高优先级）
+2. `signal-server/.env`（dotenv）
+3. `WRD_TURN_JSON` 指向的 JSON，或默认本机 `~/.StockHub/turn.json`（若文件存在）
+
+本机 JSON 示例结构（**不要提交到 git**）：
+
+```json
+{
+  "turnServer": {
+    "host": "your.turn.host",
+    "port": 3478,
+    "username": "your-user",
+    "password": "your-password",
+    "realm": "example.realm",
+    "transport": "udp"
+  }
+}
+```
+
+也可直接写在 `signal-server/.env`：
 
 ```env
 STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
-TURN_URLS=turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443
+TURN_URLS=turn:your.turn.host:3478?transport=udp
 TURN_USERNAME=你的用户名
 TURN_CREDENTIAL=你的凭证
+# 可选：显式指定 JSON 路径
+# WRD_TURN_JSON=/Users/you/.StockHub/turn.json
 ```
 
 配置要点：
 
-1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效
-2. `signal-server` 和 `python-host` 都会读取这些环境变量，因此重启后端和 Host 即可生效
-3. `auto` / `stun` 模式：保持 Strict STUN，失败时先降载和 ICE restart，恢复耗尽后明确失败，不自动切 TURN 或 tunnel
-4. `relay` 模式：只有 TURN 配置完整时才会启用；若未配置或配置不完整，页面会提示改用手动 tunnel 模式
-5. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件；是否进入 tunnel 由实际连接结果和用户手动模式决定
-5. 常见来源：自建 coturn，或使用 metered.ca / Twilio / Cloudflare Calls 等 TURN 服务
+1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效（`turnMisconfigured`）
+2. **Host LaunchAgent 路径必须注入同一套 `TURN_*`**；仅改 signal-server 不够。接入完成后应使用仓库脚本重启 Host（`scripts/restart-host.sh`），并在 Host 日志中确认 TURN 已装载
+3. `relay` 会话必须在 Host 侧 **会话级** 允许 TURN；全局 `strict-stun` 不得再导致外网中继模式被静默忽略
+4. `auto` / `stun` 模式：保持 Strict STUN，失败时先降载和 ICE restart / 可选手动端口搜索，恢复耗尽后明确失败，**不自动**切 TURN 或 tunnel
+5. `relay` 模式：`iceTransportPolicy: 'relay'`；配置不完整时页面明确提示，建议手动改用隧道中继
+6. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件
+7. 常见来源：自建 coturn，或 metered.ca / Twilio / Cloudflare Calls 等；公司网常拦 UDP，可追加 `?transport=tcp` / `turns:` 备选并先做自检
+8. Terminal **默认**仍走 Socket.IO，不依赖 TURN；可选 `webrtc-turn` DataChannel 为后续 Phase（见设计文档），失败时不得静默假装已接通
 
 验证方式：
 
-- 打开页面网络模式面板，确认显示 `TURN 已配置`
+- 打开页面网络模式面板，确认显示 `TURN 已配置`（接入完成后还应显示来源 / fingerprint / Host ready）
 - 先在网页登录，再使用带 Bearer Token 的请求访问 `/api/webrtc-config`，确认 `turnConfigured` 为 `true`
-- 连接后若 stats 显示链路 `relay`，说明已实际走 TURN 中继
-- Host 日志中应出现 `Using custom H.264 encoder` 和 `VIEWER_STATS`
+- 选「外网中继」重连；stats 显示链路 `relay` / TURN 中继，且 FPS > 0
+- Host 日志中应出现 TURN 已配置类日志，以及 `Using custom H.264 encoder` / `VIEWER_STATS`
+- 接入自检 UI 后：点「测试 TURN」，配置完整性 + Allocate + 双边 fingerprint 应 PASS
 
 ### 操作画面延迟高
 

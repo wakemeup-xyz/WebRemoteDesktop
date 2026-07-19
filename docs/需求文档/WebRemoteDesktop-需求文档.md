@@ -54,7 +54,10 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
 - [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
 - [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，只上报实测 `capturePrepareMs` / `frameConvertMs`；尚未建立真实边界的 `encoderMs` / `rtpSendMs` / `endToEndVideoMs` 必须为 `null`，不得用 track return 或 DataChannel 到达时间冒充
-- [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继
+- [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继（失败只提示手动切换，不静默改写模式）
+- [x] **TURN 双边统一配置**：支持 `TURN_*` env、`signal-server/.env` 与本机 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（env 覆盖 json）；signal-server 与 python-host 使用同一 fingerprint；Host LaunchAgent 注入 `TURN_*`（`scripts/lib-turn-env.sh`）
+- [x] **会话级 Host TURN**：`relay` 会话必须装载 TURN；`auto`/`stun` 在 Strict STUN 下仍可省略 TURN；offer 携带 `networkMode`
+- [x] **TURN 选择与自检**：网络面板展示配置来源/fingerprint/Host ready；支持一键「测试 TURN」（配置完整性、Allocate、双边一致性）；诊断 snapshot 含 `turnSelfTest`
 - [x] **Strict STUN 自适应降载**：Viewer 根据 FPS、RTT、jitter buffer 和丢包识别弱直连链路，自动降为 540p/15fps、480p/12fps、360p/8fps，并通知 Host 调整采集档位
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
@@ -173,7 +176,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - Terminal 默认关闭，必须显式开启
 - Terminal 使用独立 admin 密码，不复用普通 Viewer 密码
 - admin 授权只保存在浏览器 session 内，不默认写入持久 localStorage；已授权浏览器仅获得共享会话的附着权限，不拥有浏览器私有 PTY
-- Terminal 不走 STUN / TURN / WebRTC DataChannel，只走 HTTPS / WebSocket
+- Terminal **默认**不走 STUN / TURN / WebRTC DataChannel，只走 HTTPS / WebSocket（Socket.IO）
+- [x] **可选** Terminal 传输 `webrtc-turn`（DataChannel + 与桌面同一 TURN，`node-datachannel` 网关）：须显式选择、可测试；失败必须明确报错，不得静默回退或假装在线
 - 不默认记录完整命令和输出内容，避免泄露密钥
 - 如果 shell 启动失败、权限不足或资源压力过高，必须明确报错或提示，不允许静默降级
 
@@ -216,9 +220,10 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_LOG_MAX_BYTES` | signal-server / python-host | 单个运行日志文件上限，默认 `10485760`（10 MiB） |
 | `WRD_LOG_BACKUP_COUNT` | signal-server / python-host | 日志备份数量，默认 `3` |
 | `STUN_URLS` | signal-server / python-host | 逗号分隔的 STUN URL，默认使用 Google STUN |
-| `TURN_URLS` | signal-server / python-host | 逗号分隔的 TURN/TURNS URL，用于外网中继 |
+| `TURN_URLS` | signal-server / python-host | 逗号分隔的 TURN/TURNS URL，用于外网中继；须与 Host 一致 |
 | `TURN_USERNAME` | signal-server / python-host | TURN 用户名 |
 | `TURN_CREDENTIAL` | signal-server / python-host | TURN 密码/凭证 |
+| `WRD_TURN_JSON` | signal-server / python-host（注入） | 可选本机 TURN JSON 绝对路径；默认可读 `~/.StockHub/turn.json`；优先级低于已设置的 `TURN_*` |
 | `WRD_ENABLE_TERMINAL` | signal-server | 是否启用网页 Terminal，默认 `0` |
 | `WRD_TERMINAL_ADMIN_PASSWORD` | signal-server | Terminal 二次授权密码 |
 | `WRD_TERMINAL_SHELL` | signal-server | 默认 shell，推荐 `/bin/zsh` |
@@ -355,8 +360,8 @@ WebRemoteDesktop/
 - **辅助功能权限**：Host 需要 macOS 辅助功能权限才能执行输入
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
-- **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
-- **当前部署策略**：本轮明确不引入 TURN/VPS/Viewer 客户端。公网媒体严格 STUN；自动恢复有界耗尽后明确失败，用户可手动切换 JPEG tunnel fallback，或在 `auto`/`stun` 下手动「搜索端口」最多 500 轮尝试系统分配 UDP 端口；固定域名与媒体是否直连无关
+- **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 并**手动**选择外网中继才能稳定投屏
+- **当前部署策略**：正式入口仍是 `link.stockhub.wiki`。公网媒体默认 Strict STUN；自动恢复有界耗尽后明确失败。用户可手动：① 外网中继（TURN，须 Viewer+Host 双边配置）② JPEG tunnel fallback ③ `auto`/`stun` 下「搜索端口」最多 500 轮。固定域名与媒体是否直连/是否走 TURN 无关。TURN 全链路设计见 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
 - **系统分配端口**：浏览器没有选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0` 由 OS 分配。手动端口搜索不保证唯一端口，也不能替代可控的 Host UDP 端口范围与路由器转发方案
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
 - **开发子域**：`dev.link.stockhub.wiki` 只作为可选开发入口；其边缘访问由 Cloudflare Access 单独保护，但默认仍通过 proxy 复用 `8080` 后端能力
@@ -388,3 +393,4 @@ WebRemoteDesktop/
 | 2026-07-19 | 完成键盘映射与卡键专项审计；确认 Windows Ctrl -> Command、tracked keyup、跨 transport reset、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约和国际键盘映射仍需整改，不再把组合键与 Windows 模式标记为完整验收 |
 | 2026-07-19 | 补齐键盘 v1/v2 迁移契约：Host/Viewer 版本能力协商、旧 Host 拒绝 v2 激活、legacy 单 controller 与 transport-change reset；真实 Host/Quartz 运行验收保留至 Task12 |
 | 2026-07-20 | 补充手动 STUN 端口搜索：仅按钮触发最多 500 轮全量重建；成功需 selected pair + 连续 3 次解码采样；UI 只显示数字端口；不覆盖 Strict STUN，耗尽不自动 TURN/tunnel；端口仍由系统分配 |
+| 2026-07-20 | 立项 TURN 全链路接入：`turn.json`/env 双源、Host 注入与会话级 relay ICE、页面选择与自检、Terminal 默认 Socket.IO + 可选 `webrtc-turn`；设计 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`，计划 `docs/superpowers/plans/2026-07-20-turn-integration-plan.md` |

@@ -38,6 +38,8 @@ This file captures long-lived project knowledge migrated from Claude memory file
 - When only `signal-server` or Host needs a restart, preserve the existing quick tunnel and treat `/tmp/wrd-safe-current-url.txt` as the source of truth for the current public URL.
 - In repo terminology, `restart services` means local `signal-server` / Host only; it must not be implemented as a tunnel restart while the current quick tunnel is still alive.
 - A public origin does not determine the media path. Without TURN, `auto` and `stun` remain Strict STUN; recovery exhaustion must fail explicitly, and only the user may manually select JPEG tunnel fallback.
+- TURN secrets may live in `~/.StockHub/turn.json` or `signal-server/.env` (`TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`); env overrides JSON. Viewer and Host must share the same TURN fingerprint. Host LaunchAgent must export `TURN_*`—editing only signal-server is not enough. See `docs/superpowers/specs/2026-07-20-turn-integration-design.md`.
+- Desktop `relay` is the supported TURN media mode; Strict STUN must not silently strip TURN from relay sessions. Terminal defaults to Socket.IO; optional Terminal-over-TURN is a separate DataChannel phase, not the default.
 - When Cloudflare returns `Unauthorized: Tunnel not found`, diagnose and report the stale quick tunnel. An already-running supervisor may rotate it under its own policy, but an agent must not manually start/restart it or regenerate the URL without explicit user authorization.
 - Before starting a safe quick tunnel, verify the local origin with `http://127.0.0.1:8080/health`.
 - A generated trycloudflare URL is not sufficient proof of public reachability; verify process liveness, DNS resolution, and an HTTP response before handing the link to users.
