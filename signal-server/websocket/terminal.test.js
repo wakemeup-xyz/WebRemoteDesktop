@@ -128,6 +128,17 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
   const io = makeIo();
   const ptyBySessionId = new Map();
   const auditEvents = [];
+  const audit = {
+    info(event, meta = {}) {
+      auditEvents.push({ level: 'info', event, meta });
+    },
+    warn(event, meta = {}) {
+      auditEvents.push({ level: 'warn', event, meta });
+    },
+    error(event, meta = {}) {
+      auditEvents.push({ level: 'error', event, meta });
+    },
+  };
   const ptyFactory = harnessOptions.ptyFactory || (() => {
     const pty = createFakePty();
     return pty;
@@ -135,6 +146,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
   const sessionManager = createTerminalSessionManager({
     ptyFactory: (...args) => ptyFactory(...args),
     logger: { info() {}, warn() {}, error() {} },
+    audit,
     now: harnessOptions.now,
     outputSchedule: harnessOptions.outputSchedule || ((drain) => drain()),
     config: {
@@ -165,17 +177,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
       terminalSoftWarnSessionCount: 1,
     },
     sessionManager,
-    audit: {
-      info(event, meta = {}) {
-        auditEvents.push({ level: 'info', event, meta });
-      },
-      warn(event, meta = {}) {
-        auditEvents.push({ level: 'warn', event, meta });
-      },
-      error(event, meta = {}) {
-        auditEvents.push({ level: 'error', event, meta });
-      },
-    },
+    audit,
     logger: { info() {}, warn() {}, error() {} },
   });
 
@@ -339,6 +341,42 @@ test('synchronous PTY output is emitted once after session creation with the aut
   assert.equal(outputIndexes[0].message.data.sessionId, created.sessionId);
   assert.notEqual(outputIndexes[0].message.data.sessionId, null);
   assert.equal(outputIndexes[0].message.data.data, 'instant prompt');
+});
+
+test('synchronous create-time output overflow preserves creation event ordering and detached state', () => {
+  const pty = createFakePty();
+  pty.onData = (handler) => handler('123456');
+  const { namespace } = buildTerminalHarness({
+    terminalMaxObserverQueueBytes: 5,
+  }, {
+    ptyFactory: () => pty,
+  });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  admin.sent.length = 0;
+
+  admin.trigger('terminal:create_session', { title: 'Immediate overflow shell' });
+
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created');
+  assert.ok(created);
+  const sessionId = created.data.sessionId;
+  const eventsAboutSession = admin.sent.filter((message) => (
+    message.data?.sessionId === sessionId
+    || message.data?.sessions?.some((session) => session.sessionId === sessionId)
+  ));
+  assert.equal(eventsAboutSession[0].event, 'terminal:session_created');
+  assert.deepEqual(eventsAboutSession.slice(0, 2).map((message) => message.event), [
+    'terminal:session_created',
+    'terminal:created',
+  ]);
+  const creationAliasesEnd = admin.sent.findLastIndex((message) => message.event === 'terminal:created');
+  for (const event of ['terminal:presence', 'terminal:pool_snapshot', 'terminal:snapshot', 'terminal:warning']) {
+    const index = admin.sent.findIndex((message) => message.event === event);
+    assert.equal(index > creationAliasesEnd, true, `${event} must follow creation aliases`);
+  }
+  const finalSnapshot = admin.sent.findLast((message) => message.event === 'terminal:pool_snapshot');
+  const finalSession = finalSnapshot.data.sessions.find((session) => session.sessionId === sessionId);
+  assert.equal(finalSession.status, 'detached');
+  assert.equal(finalSession.observerCount, 0);
 });
 
 test('synchronous PTY exit is emitted once after session creation with the authoritative session id', () => {
@@ -704,6 +742,10 @@ test('terminal websocket reports input rate limits without ack or raw input and 
   assert.deepEqual(pty.writeCalls, ['1234567890']);
   assert.equal(JSON.stringify(error).includes('SECRET_INPUT'), false);
   assert.equal(JSON.stringify(auditEvents).includes('SECRET_INPUT'), false);
+  assert.equal(
+    auditEvents.filter((entry) => entry.event === 'terminal_input_rate_limited').length,
+    1,
+  );
 
   nowMs = 1200;
   admin.trigger('terminal:input', {
