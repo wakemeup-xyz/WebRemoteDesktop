@@ -1455,6 +1455,9 @@ class WebRemoteHost:
                 active_epoch,
             )
             return
+        # Freeze the previous authority before yielding to the reset queue so
+        # no old Socket.IO or DataChannel input remains executable mid-handoff.
+        self._active_input_binding = None
         self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
         await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
         if has_binding_identity:

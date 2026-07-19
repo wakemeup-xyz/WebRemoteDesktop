@@ -131,6 +131,72 @@ async def test_v2_input_uses_active_lease_binding_instead_of_legacy_offer_viewer
 
 
 @pytest.mark.asyncio
+async def test_newer_transition_freezes_prior_v2_lease_before_reset_completes():
+    old_binding = {
+        "viewerId": "viewer-a",
+        "leaseId": "lease-0000000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 1,
+    }
+
+    class BlockingInputHandler:
+        def __init__(self):
+            self.reset_started = asyncio.Event()
+            self.allow_reset = asyncio.Event()
+            self.applied = []
+
+        async def reset_keyboard(self, **_kwargs):
+            self.reset_started.set()
+            await self.allow_reset.wait()
+            return {"status": "applied"}
+
+        async def transition_keyboard(self, **_kwargs):
+            return {"status": "applied"}
+
+        async def apply_keyboard(self, data):
+            self.applied.append(data)
+            return {"inputIds": []}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-a"
+    host._active_input_binding = old_binding
+    host._connection_generation = 1
+    host.input_handler = BlockingInputHandler()
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host.sio = None
+
+    transition = asyncio.create_task(host.on_control_transition({
+        "viewerId": "viewer-b",
+        "leaseId": "lease-0000000000000002",
+        "leaseEpoch": 2,
+    }))
+    await asyncio.wait_for(host.input_handler.reset_started.wait(), timeout=1)
+
+    await host.on_input({
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "viewerId": old_binding["viewerId"],
+        "leaseId": old_binding["leaseId"],
+        "leaseEpoch": old_binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-old"],
+        "payload": {},
+    })
+
+    assert host.input_handler.applied == []
+    assert host._active_input_binding is None
+
+    host.input_handler.allow_reset.set()
+    await transition
+    assert host._active_input_binding["viewerId"] == "viewer-b"
+
+
+@pytest.mark.asyncio
 async def test_input_move_close_does_not_reset_bound_keyboard_but_input_close_does():
     binding = {
         "viewerId": "viewer-1",
