@@ -294,9 +294,21 @@ function setupTerminal(io, options = {}) {
         terminalNamespace.emit('terminal:closed', closed);
         emitPoolSnapshot();
       } catch (err) {
+        const code = err.code || 'terminal_close_failed';
+        if (code === 'terminal_session_not_attached' || code === 'terminal_session_not_found') {
+          audit.warn('terminal_close_rejected', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            code,
+            reason: code === 'terminal_session_not_attached'
+              ? 'observer_not_attached'
+              : 'session_not_found',
+          });
+        }
         socket.emit('terminal:error', {
           sessionId: payload.sessionId || null,
-          code: err.code || 'terminal_close_failed',
+          code,
           message: err.message,
         });
         emitPoolSnapshot();

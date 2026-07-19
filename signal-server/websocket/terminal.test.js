@@ -248,6 +248,38 @@ test('socket identity prevents equal browser labels from merging observers or gr
   assert.notEqual(sessionManager._getSession(created.sessionId), null);
 });
 
+test('unattached close attempts emit a redacted socket-owned audit warning', () => {
+  const { namespace, sessionManager, auditEvents } = buildTerminalHarness();
+  const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const attacker = namespace.connect(new FakeSocket(
+    'admin-b',
+    'admin',
+    'admin',
+    'spoofed-client-label-SECRET_LABEL',
+  ));
+  creator.trigger('terminal:create_session', { title: 'Protected shell' });
+  const created = creator.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  attacker.trigger('terminal:close_session', {
+    sessionId: created.sessionId,
+    reason: 'system:shutdown-SECRET_REASON',
+    raw: 'SECRET_RAW_PAYLOAD',
+  });
+
+  const rejection = auditEvents.find((entry) => entry.event === 'terminal_close_rejected');
+  assert.ok(rejection);
+  assert.equal(rejection.level, 'warn');
+  assert.deepEqual(rejection.meta, {
+    sessionId: created.sessionId,
+    clientId: 'admin-b',
+    socketId: 'admin-b',
+    code: 'terminal_session_not_attached',
+    reason: 'observer_not_attached',
+  });
+  assert.equal(JSON.stringify(rejection).includes('SECRET_'), false);
+  assert.notEqual(sessionManager._getSession(created.sessionId), null);
+});
+
 test('create requestId is bounded and returned only to the creator on both aliases', () => {
   const { namespace } = buildTerminalHarness();
   const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
