@@ -264,27 +264,23 @@ def main():
             "after_media": sb_media.get("media"),
         }
 
-        # Resume
+        # Resume: wait for real Host ack + fresh rendered frame only (no synthetic note).
         page_b.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', false)")
-        for _ in range(30):
+        for _ in range(80):
             phase = page_b.evaluate("() => WebRTC.getMediaAppliedPhase()")
-            if phase in ("resuming", "active"):
+            if phase == "active":
                 break
-            page_b.wait_for_timeout(250)
-        # note rendered frame if still resuming
-        page_b.evaluate("() => { if (WebRTC.getMediaAppliedPhase() === 'resuming') WebRTC.noteMediaRenderedFrame(); }")
-        page_b.wait_for_timeout(500)
-        # also process stats path may mark frame; force note again
-        page_b.evaluate("() => WebRTC.noteMediaRenderedFrame()")
+            page_b.wait_for_timeout(100)
         sb_resume = snap(page_b)
         report["gates"]["9B_media_resume_local"] = {
-            "status": "PASS" if sb_resume.get("phase") in ("active", "resuming") else "FAIL",
+            "status": "PASS" if sb_resume.get("phase") == "active" else "FAIL",
             "after": {
                 "phase": sb_resume.get("phase"),
                 "media": sb_resume.get("media"),
                 "canSearch": sb_resume.get("canSearch"),
                 "controller": sb_resume["controlState"]["controller"],
             },
+            "note": "active requires matching ack plus fresh rendered frame; no synthetic unlock",
         }
 
         # Keyboard / input gate browser-protocol

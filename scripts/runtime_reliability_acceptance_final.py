@@ -52,13 +52,12 @@ def login_start(context, origin, name):
 
 
 def wait_phase(page, target, timeout_s=15):
+    """Wait for applied media phase. Never synthesizes rendered frames."""
     end = time.time() + timeout_s
     while time.time() < end:
         phase = page.evaluate("() => WebRTC.getMediaAppliedPhase()")
         if phase == target:
             return True
-        if target == "active" and phase == "resuming":
-            page.evaluate("() => WebRTC.noteMediaRenderedFrame()")
         page.wait_for_timeout(100)
     return page.evaluate("() => WebRTC.getMediaAppliedPhase()") == target
 
@@ -82,9 +81,9 @@ def video_bytes(page):
 
 
 def ensure_input_ready(page):
+    """Bind lease/input only when media is truly active after a fresh frame."""
     page.evaluate(
         """() => {
-          if (WebRTC.getMediaAppliedPhase() === 'resuming') WebRTC.noteMediaRenderedFrame();
           if (typeof Input !== 'undefined') {
             if (WebRTC.controlState && WebRTC.controlState.lease) {
               Input.setControlLease(WebRTC.controlState.lease);

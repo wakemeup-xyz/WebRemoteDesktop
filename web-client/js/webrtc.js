@@ -35,6 +35,9 @@ const WebRTC = {
   mediaActivityLifecycle: null,
   mediaActivityRuntime: null,
   _mediaResumeFramePending: false,
+  _mediaResumeBaseline: null,
+  _lastInboundFramesDecoded: 0,
+  _videoFrameSeq: 0,
   adaptiveMediaEnabled: true,
   noMediaTicks: 0,
   lastCandidateType: '',
@@ -164,6 +167,7 @@ const WebRTC = {
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
       this.noMediaTicks = 0;
       this._mediaResumeFramePending = false;
+      this._mediaResumeBaseline = null;
     }
 
     const runtime = this.mediaActivityRuntime;
@@ -174,9 +178,25 @@ const WebRTC = {
       });
     }
 
+    // Capture resume baseline before the request so post-ack unlock needs a
+    // frame after this moment (decoded delta or video frame callback).
+    if (desired === 'active') {
+      this.captureMediaResumeBaseline(generation);
+    }
+
     this.sendMediaActivityRequest(desired, snapshot);
     this.syncDesktopInputGate();
     return snapshot;
+  },
+
+  captureMediaResumeBaseline(generation) {
+    this._mediaResumeBaseline = {
+      connectionAttemptId: this.currentConnectionAttemptId || null,
+      generation: Number(generation) || 0,
+      framesDecoded: Number(this._lastInboundFramesDecoded) || 0,
+      videoFrameSeq: Number(this._videoFrameSeq) || 0,
+      pc: this.pc || null,
+    };
   },
 
   sendMediaActivityRequest(desired, snapshot) {
@@ -232,23 +252,82 @@ const WebRTC = {
     if (!result.accepted) return;
     if (result.phase === 'resuming') {
       this._mediaResumeFramePending = true;
+      if (!this._mediaResumeBaseline) {
+        this.captureMediaResumeBaseline(data.generation);
+      }
     }
     if (result.phase === 'suspended') {
       this._mediaResumeFramePending = false;
+      this._mediaResumeBaseline = null;
     }
     this.syncDesktopInputGate();
   },
 
-  noteMediaRenderedFrame() {
-    if (!this.mediaActivityRuntime) return;
-    const result = this.mediaActivityRuntime.noteRenderedFrame({
-      connectionAttemptId: this.currentConnectionAttemptId || null,
-    });
-    if (result.accepted) {
-      this._mediaResumeFramePending = false;
-      this.noMediaTicks = 0;
-      this.syncDesktopInputGate();
+  observeFreshResumeFrame({
+    source = 'unknown',
+    framesDecoded = null,
+    frameSeq = null,
+    connectionAttemptId = null,
+    pc = null,
+  } = {}) {
+    if (!this._mediaResumeFramePending || !this.mediaActivityRuntime) return false;
+    if (this.getMediaAppliedPhase() !== 'resuming') return false;
+    if (!this.hasActiveControl()) return false;
+
+    const baseline = this._mediaResumeBaseline;
+    if (!baseline) return false;
+
+    const attemptId = connectionAttemptId || this.currentConnectionAttemptId || null;
+    if (baseline.connectionAttemptId && attemptId && attemptId !== baseline.connectionAttemptId) {
+      return false;
     }
+    if (baseline.pc && pc && baseline.pc !== pc) {
+      return false;
+    }
+    if (baseline.pc && this.pc && baseline.pc !== this.pc && !pc) {
+      return false;
+    }
+
+    let isFresh = false;
+    if (source === 'stats' || framesDecoded != null) {
+      const decoded = Number(framesDecoded);
+      if (Number.isFinite(decoded) && decoded > Number(baseline.framesDecoded || 0)) {
+        isFresh = true;
+      }
+    }
+    if (source === 'video-callback' || frameSeq != null) {
+      const seq = Number(frameSeq);
+      if (Number.isFinite(seq) && seq > Number(baseline.videoFrameSeq || 0)) {
+        isFresh = true;
+      }
+    }
+    if (!isFresh) return false;
+
+    const result = this.mediaActivityRuntime.noteRenderedFrame({
+      connectionAttemptId: attemptId,
+      afterResume: true,
+    });
+    if (!result.accepted) return false;
+    this._mediaResumeFramePending = false;
+    this._mediaResumeBaseline = null;
+    this.noMediaTicks = 0;
+    this.syncDesktopInputGate();
+    return true;
+  },
+
+  noteMediaRenderedFrame(meta = {}) {
+    // Prefer explicit source metadata. Bare calls (tests/legacy) still require
+    // a post-baseline video-callback sequence when a baseline exists.
+    if (meta && (meta.source || meta.frameSeq != null || meta.framesDecoded != null)) {
+      return this.observeFreshResumeFrame(meta);
+    }
+    this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
+    return this.observeFreshResumeFrame({
+      source: 'video-callback',
+      frameSeq: this._videoFrameSeq,
+      connectionAttemptId: this.currentConnectionAttemptId || null,
+      pc: this.pc || null,
+    });
   },
 
   syncDesktopInputGate() {
@@ -2376,8 +2455,17 @@ const WebRTC = {
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
       if (this._videoFrameElement !== video) return;
+      this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
+      }
+      if (this._mediaResumeFramePending) {
+        this.observeFreshResumeFrame({
+          source: 'video-callback',
+          frameSeq: this._videoFrameSeq,
+          connectionAttemptId: this.currentConnectionAttemptId || null,
+          pc: this.pc || null,
+        });
       }
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
     };
@@ -2405,6 +2493,9 @@ const WebRTC = {
       const bytesReceived = Number(stats.bytesReceived || 0);
       const codec = String(stats.codec || '');
       const selectedCandidateType = String(stats.selectedCandidateType || '');
+      if (Number.isFinite(framesDecoded)) {
+        this._lastInboundFramesDecoded = framesDecoded;
+      }
       this.selectedCandidatePair = stats.selectedCandidatePair || {
         localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
         localAddressFamily: '', remoteAddressFamily: '', rttMs: 0,
@@ -2440,8 +2531,14 @@ const WebRTC = {
         this.noMediaTicks = 0;
       }
 
-      if (framesDecoded > 0 && this._mediaResumeFramePending) {
-        this.noteMediaRenderedFrame();
+      // Resume unlock requires framesDecoded delta past baseline, not cumulative > 0.
+      if (this._mediaResumeFramePending) {
+        this.observeFreshResumeFrame({
+          source: 'stats',
+          framesDecoded,
+          connectionAttemptId: this.currentConnectionAttemptId || null,
+          pc: this.pc || null,
+        });
       }
 
       if (this.isMediaHealthSuppressed()) {
