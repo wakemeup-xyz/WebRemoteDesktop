@@ -7,6 +7,10 @@ const TERMINAL_ERROR_MESSAGES = Object.freeze({
   pty_spawn_failed: '终端启动失败',
   pty_startup_timeout: '终端启动超时',
   pty_cleanup_failed: '终端进程清理失败，请重试',
+  terminal_input_rate_limited: '终端输入过快，请稍后重试',
+});
+const TERMINAL_WARNING_MESSAGES = Object.freeze({
+  terminal_output_backpressure: '终端输出拥塞，已断开当前观察连接',
 });
 
 function normalizeProcessStatus(value, fallback = 'running') {
@@ -218,6 +222,11 @@ const TerminalPanel = {
   echoControllersBySession: new Map(),
   alternateScreenSessionIds: new Set(),
   poolCapacity: null,
+  allowPolling: false,
+  bootstrapAuthToken: null,
+  bootstrapPromise: null,
+  transportLatency: new Map(),
+  aliasedEvents: new Map(),
 
   init() {
     this.cacheElements();
@@ -365,7 +374,7 @@ const TerminalPanel = {
       this.elements.authPassword.value = '';
       this.releaseTerminalControlFocus();
       this.setStatus('已授权', 'connected');
-      this.connectSocket();
+      await this.connectSocket();
       this.render();
     } catch (err) {
       this.setStatus(`授权失败：${err.message}`, 'error');
@@ -375,6 +384,11 @@ const TerminalPanel = {
   connectSocket() {
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
+    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token) {
+      return this.ensureTerminalBootstrap(token).then(() => {
+        if (this.getAdminToken() === token) this.connectSocket();
+      });
+    }
     const canReuseSocket = this.socket
       && this.socket.connected
       && this.socketAuthToken === token
@@ -382,12 +396,13 @@ const TerminalPanel = {
     if (canReuseSocket) return;
     this.destroySocket();
 
+    const transports = this.allowPolling ? ['websocket', 'polling'] : ['websocket'];
     this.socket = io(`${RuntimeConfig.getSocketBase()}/terminal`, {
       auth: {
         token,
         clientId: this.getBrowserSessionId(),
       },
-      transports: ['websocket', 'polling'],
+      transports,
       rememberUpgrade: true,
     });
     this.socketAuthToken = token;
@@ -396,7 +411,7 @@ const TerminalPanel = {
     this.socket.on('connect', () => {
       this.resetEchoControllers('reconnect');
       this.socketState = 'connected';
-      this.transportName = this.socket.io?.engine?.transport?.name || 'websocket';
+      this.setTransportName(this.socket.io?.engine?.transport?.name || 'websocket');
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
       this.pendingCloseSessionIds.clear();
@@ -404,7 +419,7 @@ const TerminalPanel = {
       this.startLatencyProbeLoop();
       if (typeof this.socket.io?.engine?.on === 'function') {
         this.socket.io.engine.on('upgrade', (transport) => {
-          this.transportName = String(transport?.name || this.transportName || 'unknown');
+          this.setTransportName(transport?.name || this.transportName || 'unknown');
           this.refreshStatus();
         });
       }
@@ -434,10 +449,18 @@ const TerminalPanel = {
       }
       this.setStatus(`连接失败：${err.message}`, 'error');
     });
-    const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
-    const handleSessionCreated = (session) => this.handleSessionCreated(session);
-    const handleSessionAttached = (session) => this.attachSessionState(session);
-    const handleSessionClosed = (session) => this.handleSessionClosed(session);
+    const applyPoolSnapshot = (payload) => this.dispatchAliasedEvent(
+      'snapshot', payload, () => this.applyPoolSnapshot(payload),
+    );
+    const handleSessionCreated = (session) => this.dispatchAliasedEvent(
+      'created', session, () => this.handleSessionCreated(session),
+    );
+    const handleSessionAttached = (session) => this.dispatchAliasedEvent(
+      'attached', session, () => this.attachSessionState(session),
+    );
+    const handleSessionClosed = (session) => this.dispatchAliasedEvent(
+      'closed', session, () => this.handleSessionClosed(session),
+    );
 
     this.socket.on('terminal:pool_snapshot', applyPoolSnapshot);
     this.socket.on('terminal:snapshot', applyPoolSnapshot);
@@ -482,11 +505,22 @@ const TerminalPanel = {
       this.updatePresence(payload);
     });
     this.socket.on('terminal:warning', (payload) => {
-      this.setWarning(payload.message || '终端会话较多，可能影响性能');
+      this.setWarning(
+        TERMINAL_WARNING_MESSAGES[payload.code]
+        || payload.message
+        || '终端会话较多，可能影响性能',
+      );
     });
     this.socket.on('terminal:error', (payload) => {
       if (payload.sessionId && ['pty_spawn_failed', 'pty_startup_timeout'].includes(payload.code)) {
         this.state.updateSession(payload.sessionId, { processStatus: 'failed' });
+        this.render();
+      }
+      if (
+        payload.sessionId
+        && payload.code === 'pty_exited'
+      ) {
+        this.state.updateSession(payload.sessionId, { processStatus: 'exited' });
         this.render();
       }
       if (
@@ -504,9 +538,10 @@ const TerminalPanel = {
       }
       this.setStatus(
         TERMINAL_ERROR_MESSAGES[payload.code] || payload.message || payload.code || 'Terminal error',
-        'error',
+        payload.code === 'terminal_input_rate_limited' ? 'warning' : 'error',
       );
     });
+    return this.socket;
   },
 
   getBrowserSessionId() {
@@ -529,6 +564,65 @@ const TerminalPanel = {
 
   getTransportName() {
     return String(this.transportName || this.socket?.io?.engine?.transport?.name || 'unknown');
+  },
+
+  getTransportLatency(name = this.getTransportName()) {
+    const transport = String(name || 'unknown');
+    if (!this.transportLatency.has(transport)) {
+      this.transportLatency.set(transport, {
+        socket: createLatencySeries(),
+        input: createLatencySeries(),
+        server: createLatencySeries(),
+      });
+    }
+    return this.transportLatency.get(transport);
+  },
+
+  setTransportName(name) {
+    this.transportName = String(name || 'unknown');
+    const latency = this.getTransportLatency(this.transportName);
+    this.terminalSocketLatency = latency.socket;
+    this.terminalInputAckLatency = latency.input;
+    this.terminalServerProcessLatency = latency.server;
+  },
+
+  applyBootstrap(payload = {}) {
+    this.allowPolling = payload.allowPolling === true;
+    if (Number.isFinite(Number(payload.softWarnSessionCount))) {
+      this.softWarnSessionCount = Number(payload.softWarnSessionCount);
+    }
+  },
+
+  ensureTerminalBootstrap(token) {
+    if (this.bootstrapAuthToken === token) return Promise.resolve();
+    if (this.bootstrapPromise) return this.bootstrapPromise;
+    this.bootstrapPromise = (async () => {
+      try {
+        const response = await fetch(RuntimeConfig.url('/api/terminal/bootstrap'), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        this.applyBootstrap(body);
+      } catch (err) {
+        this.applyBootstrap({ allowPolling: false });
+      } finally {
+        this.bootstrapAuthToken = token;
+        this.bootstrapPromise = null;
+      }
+    })();
+    return this.bootstrapPromise;
+  },
+
+  dispatchAliasedEvent(kind, payload = {}, apply) {
+    const identity = payload.sessionId || payload.poolId || 'pool';
+    const key = `${kind}:${identity}:${JSON.stringify(payload)}`;
+    if (this.aliasedEvents.has(key)) return false;
+    this.aliasedEvents.set(key, true);
+    const timer = setTimeout(() => this.aliasedEvents.delete(key), 0);
+    timer?.unref?.();
+    apply();
+    return true;
   },
 
   startLatencyProbeLoop() {
@@ -576,7 +670,7 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.transportName = String(payload.transport || this.getTransportName());
+    this.setTransportName(payload.transport || this.getTransportName());
     this.terminalSocketLatency.record(Date.now() - clientSentAt);
     this.refreshStatus();
   },
@@ -591,7 +685,7 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.transportName = String(payload.transport || this.getTransportName());
+    this.setTransportName(payload.transport || this.getTransportName());
     this.terminalInputAckLatency.record(Math.max(0, Date.now() - clientSentAt));
     const serverReceivedAt = Number(payload.serverReceivedAt);
     const serverSentAt = Number(payload.serverSentAt);

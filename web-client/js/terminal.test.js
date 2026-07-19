@@ -1144,17 +1144,21 @@ test('stale token connect_error then reauthorize recreates the terminal socket w
       sockets.push(socket);
       return socket;
     },
-    fetch: async (_url, options) => {
-      fetchCalls.push(options);
+    fetch: async (url, options) => {
+      fetchCalls.push({ url, options });
       return {
         ok: true,
-        json: async () => ({ token: 'fresh-token' }),
+        json: async () => (
+          url.endsWith('/api/terminal/bootstrap')
+            ? { allowPolling: false }
+            : { token: 'fresh-token' }
+        ),
       };
     },
   });
   sessionStorageMap.set(tokenKey, 'stale-token');
   TerminalPanel.cacheElements();
-  TerminalPanel.connectSocket();
+  await TerminalPanel.connectSocket();
 
   assert.equal(ioCalls.length, 1);
   assert.equal(ioCalls[0].options.auth.token, 'stale-token');
@@ -1164,7 +1168,8 @@ test('stale token connect_error then reauthorize recreates the terminal socket w
 
   await TerminalPanel.authorize();
 
-  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls.filter((entry) => entry.options?.method === 'POST').length, 1);
+  assert.equal(fetchCalls.filter((entry) => entry.url.endsWith('/api/terminal/bootstrap')).length, 2);
   assert.equal(sessionStorageMap.get(tokenKey), 'fresh-token');
   assert.equal(ioCalls.length, 2);
   assert.equal(sockets[0].disconnectCalls, 1);
@@ -1547,4 +1552,149 @@ test('TerminalPanel acknowledges terminal output once after processing, includin
     /render failed/,
   );
   assert.equal(acknowledgements, 2);
+});
+
+test('TerminalPanel requests websocket only by default and polling only after bootstrap opt-in', () => {
+  const ioCalls = [];
+  const { TerminalPanel, sessionStorageMap, tokenKey } = loadTerminal({
+    io: (url, options) => {
+      ioCalls.push({ url, options });
+      return createSocketDouble();
+    },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+
+  TerminalPanel.connectSocket();
+  assert.deepEqual(Array.from(ioCalls[0].options.transports), ['websocket']);
+  assert.equal(ioCalls[0].options.rememberUpgrade, true);
+  assert.equal(typeof ioCalls[0].options.auth.clientId, 'string');
+
+  TerminalPanel.destroySocket();
+  TerminalPanel.applyBootstrap({ allowPolling: true });
+  TerminalPanel.connectSocket();
+  assert.deepEqual(Array.from(ioCalls[1].options.transports), ['websocket', 'polling']);
+});
+
+test('TerminalPanel loads canonical polling policy from terminal bootstrap before connecting', async () => {
+  const ioCalls = [];
+  const fetchCalls = [];
+  const { TerminalPanel, sessionStorageMap, tokenKey } = loadTerminal({
+    fetch: async (url, options) => {
+      fetchCalls.push({ url, options });
+      return {
+        ok: true,
+        json: async () => ({ allowPolling: true }),
+      };
+    },
+    io: (url, options) => {
+      ioCalls.push({ url, options });
+      return createSocketDouble();
+    },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+
+  await TerminalPanel.connectSocket();
+
+  assert.equal(fetchCalls[0].url.endsWith('/api/terminal/bootstrap'), true);
+  assert.equal(fetchCalls[0].options.headers.Authorization, 'Bearer admin-token');
+  assert.deepEqual(Array.from(ioCalls[0].options.transports), ['websocket', 'polling']);
+});
+
+test('TerminalPanel keeps websocket and polling latency samples separate', () => {
+  let now = 1120;
+  class FakeDate extends Date {
+    static now() { return now; }
+  }
+  const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+
+  TerminalPanel.pendingInputAcks.set('ws-input', { clientSentAt: 1000 });
+  TerminalPanel.handleInputAck({
+    inputId: 'ws-input',
+    serverReceivedAt: 2000,
+    serverSentAt: 2007,
+    transport: 'websocket',
+  });
+  now = 2020;
+  TerminalPanel.pendingInputAcks.set('poll-input', { clientSentAt: 2000 });
+  TerminalPanel.handleInputAck({
+    inputId: 'poll-input',
+    serverReceivedAt: 3000,
+    serverSentAt: 3003,
+    transport: 'polling',
+  });
+
+  let diagnostic = TerminalPanel.getDiagnosticState();
+  assert.equal(diagnostic.transport, 'polling');
+  assert.equal(diagnostic.inputAck.last, 20);
+  assert.equal(diagnostic.inputAck.sampleCount, 1);
+  assert.equal(diagnostic.serverProcess.last, 3);
+
+  TerminalPanel.setTransportName('websocket');
+  diagnostic = TerminalPanel.getDiagnosticState();
+  assert.equal(diagnostic.inputAck.last, 120);
+  assert.equal(diagnostic.inputAck.sampleCount, 1);
+  assert.equal(diagnostic.serverProcess.last, 7);
+});
+
+test('TerminalPanel keeps tabs for rate and backpressure warnings and marks pty_exited non-writable', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_flow',
+    title: 'Flow shell',
+    processStatus: 'running',
+  });
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_flow',
+    code: 'pty_exited',
+  });
+  const before = emitted.length;
+  TerminalPanel.terms.get('term_flow').onDataHandler('x');
+  assert.equal(TerminalPanel.state.getSession('term_flow').processStatus, 'exited');
+  assert.equal(emitted.slice(before).some((entry) => entry.event === 'terminal:input'), false);
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_flow',
+    code: 'terminal_input_rate_limited',
+  });
+  assert.notEqual(TerminalPanel.state.getSession('term_flow'), null);
+  assert.match(elements.get('terminalStatus').textContent, /输入过快/);
+  socketHandlers.get('terminal:warning')({
+    sessionId: 'term_flow',
+    code: 'terminal_output_backpressure',
+  });
+  assert.notEqual(TerminalPanel.state.getSession('term_flow'), null);
+  assert.match(elements.get('terminalWarning').textContent, /输出拥塞/);
+});
+
+test('TerminalPanel applies canonical and legacy session aliases once', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  const calls = { snapshot: 0, attach: 0, close: 0 };
+  const applySnapshot = TerminalPanel.applyPoolSnapshot.bind(TerminalPanel);
+  const attach = TerminalPanel.attachSessionState.bind(TerminalPanel);
+  const close = TerminalPanel.handleSessionClosed.bind(TerminalPanel);
+  TerminalPanel.applyPoolSnapshot = (payload) => { calls.snapshot += 1; applySnapshot(payload); };
+  TerminalPanel.attachSessionState = (payload) => { calls.attach += 1; attach(payload); };
+  TerminalPanel.handleSessionClosed = (payload) => { calls.close += 1; close(payload); };
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+
+  const snapshot = { sessions: [], defaultSessionId: null };
+  socketHandlers.get('terminal:pool_snapshot')(snapshot);
+  socketHandlers.get('terminal:snapshot')(snapshot);
+  const session = { sessionId: 'term_alias', title: 'Alias shell', processStatus: 'running' };
+  TerminalPanel.ensureSession(session);
+  socketHandlers.get('terminal:session_attached')(session);
+  socketHandlers.get('terminal:attached')(session);
+  socketHandlers.get('terminal:session_closed')(session);
+  socketHandlers.get('terminal:closed')(session);
+
+  assert.deepEqual(calls, { snapshot: 1, attach: 1, close: 1 });
 });
