@@ -203,7 +203,7 @@ const TerminalPanel = {
   fitTimer: null,
   softWarnSessionCount: 4,
   isVisible: false,
-  pendingCreateClientId: null,
+  pendingCreateRequestId: null,
   socketAuthToken: null,
   socketState: 'idle',
   socketStatusBaseText: '',
@@ -419,6 +419,7 @@ const TerminalPanel = {
       this.pendingInputAcks.clear();
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
+      this.pendingCreateRequestId = null;
       this.setStatus('断线重连中', 'warning');
       this.state.getSessions().forEach((session) => this.state.updateStatus(session.sessionId, 'detached'));
       this.render();
@@ -519,6 +520,10 @@ const TerminalPanel = {
     return `${sessionId || 'term'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   },
 
+  makeCreateRequestId() {
+    return `create_${Date.now()}_${Math.random().toString(16).slice(2)}`.slice(0, 128);
+  },
+
   getTransportName() {
     return String(this.transportName || this.socket?.io?.engine?.transport?.name || 'unknown');
   },
@@ -607,8 +612,9 @@ const TerminalPanel = {
       this.setWarning(`Terminal 会话已达到上限 (${this.poolCapacity.maxSessions})`);
       return;
     }
-    this.pendingCreateClientId = this.getBrowserSessionId();
+    this.pendingCreateRequestId = this.makeCreateRequestId();
     this.socket.emit('terminal:create_session', {
+      requestId: this.pendingCreateRequestId,
       cols: 120,
       rows: 32,
       title: `Shared shell ${this.state.sessionCount() + 1}`,
@@ -692,11 +698,13 @@ const TerminalPanel = {
   handleSessionCreated(session) {
     const lastActiveSessionId = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
     const createdByCurrentClient = this.didCurrentClientCreateSession(session);
+    if (this.state.getSession(session.sessionId) && !createdByCurrentClient) {
+      return;
+    }
     const shouldActivate = createdByCurrentClient
-      || (!this.state.activeSessionId() && !this.pendingCreateClientId)
       || session.sessionId === lastActiveSessionId;
     if (createdByCurrentClient) {
-      this.pendingCreateClientId = null;
+      this.pendingCreateRequestId = null;
       this.pendingAttachSessionIds.delete(session.sessionId);
       this.attachedSessionIds.add(session.sessionId);
     }
@@ -715,16 +723,12 @@ const TerminalPanel = {
   },
 
   attachSessionState(session) {
-    const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY)
-      || Boolean(this.pendingCreateClientId);
+    const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
     this.pendingAttachSessionIds.delete(session.sessionId);
     this.attachedSessionIds.add(session.sessionId);
     this.ensureSession(session, {
       activate: shouldActivate,
     });
-    if (this.pendingCreateClientId) {
-      this.pendingCreateClientId = null;
-    }
     this.state.updateSession(session.sessionId, {
       status: session.status || 'attached',
       processStatus: normalizeProcessStatus(
@@ -999,6 +1003,7 @@ const TerminalPanel = {
     this.transportName = 'unknown';
     this.stopLatencyProbeLoop();
     this.pendingInputAcks.clear();
+    this.pendingCreateRequestId = null;
     this.resetEchoControllers('destroy-socket');
   },
 
@@ -1008,9 +1013,9 @@ const TerminalPanel = {
 
   didCurrentClientCreateSession(session = {}) {
     return Boolean(
-      session.creatorClientId
-      && this.pendingCreateClientId
-      && session.creatorClientId === this.pendingCreateClientId
+      typeof session.requestId === 'string'
+      && this.pendingCreateRequestId
+      && session.requestId === this.pendingCreateRequestId
     );
   },
 

@@ -360,7 +360,7 @@ test('TerminalPanel focuses the active terminal after create and attach', () => 
   socketHandlers.get('connect')();
 
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
-  socketHandlers.get('terminal:created')(session);
+  socketHandlers.get('terminal:attached')(session);
 
   const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_keep');
   const textarea = node.querySelector('.xterm-helper-textarea');
@@ -424,7 +424,7 @@ test('TerminalPanel retries focus when xterm helper is attached after a delay', 
   socketHandlers.get('connect')();
 
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
-  socketHandlers.get('terminal:created')(session);
+  socketHandlers.get('terminal:attached')(session);
 
   const deadline = Date.now() + 1000;
   let textarea = null;
@@ -486,7 +486,7 @@ test('TerminalPanel keeps retrying until terminal helper becomes the active elem
   socketHandlers.get('connect')();
 
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
-  socketHandlers.get('terminal:created')(session);
+  socketHandlers.get('terminal:attached')(session);
 
   await new Promise((resolve) => setTimeout(resolve, 160));
 
@@ -549,7 +549,7 @@ test('TerminalPanel blurs the new-session button so terminal focus can take over
 
   context.document.activeElement = newButton;
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
-  socketHandlers.get('terminal:created')(session);
+  socketHandlers.get('terminal:attached')(session);
 
   await new Promise((resolve) => setTimeout(resolve, 120));
 
@@ -582,7 +582,7 @@ test('TerminalPanel retries fit after terminal creation while layout settles', a
   socketHandlers.get('connect')();
 
   const session = { sessionId: 'term_keep', title: 'Build shell', status: 'attached' };
-  socketHandlers.get('terminal:created')(session);
+  socketHandlers.get('terminal:attached')(session);
 
   await new Promise((resolve) => setTimeout(resolve, 260));
 
@@ -1051,7 +1051,7 @@ test('TerminalPanel replay restore replaces existing rendered output on same-pag
   assert.equal(term.buffer, 'npm test\r\n');
 });
 
-test('foreign terminal:session_created must not steal active selection after this client clicks 新建', () => {
+test('create request correlation activates only the local response and handles aliases idempotently', () => {
   const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');
   TerminalPanel.cacheElements();
@@ -1064,16 +1064,43 @@ test('foreign terminal:session_created must not steal active selection after thi
 
   TerminalPanel.createSession();
 
-  assert.equal(emitted.some((entry) => entry.event === 'terminal:create_session'), true);
+  const createMessage = emitted.find((entry) => entry.event === 'terminal:create_session');
+  assert.equal(typeof createMessage.payload.requestId, 'string');
+  assert.equal(createMessage.payload.requestId.length <= 128, true);
 
   socketHandlers.get('terminal:session_created')({
     sessionId: 'term_foreign',
     title: 'Foreign shared shell',
-    creatorClientId: 'browser_other',
+    requestId: 'another-browser-request',
   });
-
   assert.equal(TerminalPanel.state.activeSessionId(), 'term_existing');
   assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_existing');
+
+  socketHandlers.get('terminal:created')({
+    sessionId: 'term_without_request',
+    title: 'Uncorrelated shared shell',
+  });
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_existing');
+
+  const localCreated = {
+    sessionId: 'term_local',
+    title: 'Local shared shell',
+    requestId: createMessage.payload.requestId,
+  };
+  socketHandlers.get('terminal:session_created')(localCreated);
+  const sessionCountAfterCanonical = TerminalPanel.state.sessionCount();
+  const termCountAfterCanonical = TerminalPanel.terms.size;
+  socketHandlers.get('terminal:created')({
+    ...localCreated,
+    title: 'Duplicate alias must be ignored',
+  });
+
+  assert.equal(TerminalPanel.state.activeSessionId(), 'term_local');
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_local');
+  assert.equal(TerminalPanel.pendingCreateRequestId, null);
+  assert.equal(TerminalPanel.state.getSession('term_local').title, 'Local shared shell');
+  assert.equal(TerminalPanel.state.sessionCount(), sessionCountAfterCanonical);
+  assert.equal(TerminalPanel.terms.size, termCountAfterCanonical);
 });
 
 test('stale token connect_error then reauthorize recreates the terminal socket with the new token', async () => {

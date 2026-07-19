@@ -86,6 +86,7 @@ function createTerminalSessionManager(options = {}) {
   const cancelTimeout = options.clearTimeout || clearTimeout;
   const sessions = new Map();
   const cleanupQuarantine = new Map();
+  const systemCloseCapability = Object.freeze({});
   const pool = {
     poolId: 'default',
     title: 'Shared Terminal Pool',
@@ -707,6 +708,15 @@ function createTerminalSessionManager(options = {}) {
 
   function closeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    const isSystemClose = input.systemCapability === systemCloseCapability;
+    if (!isSystemClose && !isObserverAttached(sessionId, input)) {
+      throw Object.assign(new Error('terminal_session_not_attached'), {
+        code: 'terminal_session_not_attached',
+      });
+    }
+    const closeReason = isSystemClose
+      ? (input.systemReason === 'system:shutdown' ? 'system:shutdown' : 'system:idle-timeout')
+      : 'user-close';
     clearStartupTimer(session);
     session.processStatus = transitionProcessState(session.processStatus, 'close');
     session.exitHandled = true;
@@ -724,7 +734,7 @@ function createTerminalSessionManager(options = {}) {
       throw makeTerminalError('pty_cleanup_failed', { sessionId });
     }
     session.status = 'detached';
-    session.detachedReason = input.reason || 'closed';
+    session.detachedReason = closeReason;
     session.lastActiveAt = timestamp();
     session.observers.clear();
     session.activePresenterClientId = null;
@@ -737,6 +747,13 @@ function createTerminalSessionManager(options = {}) {
       poolId: pool.poolId,
     });
     return snapshotSession(session);
+  }
+
+  function closeSessionAsSystem(sessionId, systemReason) {
+    return closeSession(sessionId, {
+      systemCapability: systemCloseCapability,
+      systemReason,
+    });
   }
 
   function listSessions() {
@@ -760,7 +777,7 @@ function createTerminalSessionManager(options = {}) {
         && currentTime - lastActiveTime > config.idleTimeoutMs
       ) {
         try {
-          closeSession(session.sessionId, { reason: 'idle-timeout' });
+          closeSessionAsSystem(session.sessionId, 'system:idle-timeout');
           reaped.push(session.sessionId);
         } catch (error) {
           if (error?.code !== 'pty_cleanup_failed') throw error;

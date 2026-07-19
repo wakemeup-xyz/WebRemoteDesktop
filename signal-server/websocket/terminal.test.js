@@ -103,6 +103,14 @@ function makeIo() {
               }
             }
             connectedSockets.push(socket);
+            socket.broadcast = {
+              emit(event, data) {
+                connectedSockets
+                  .filter((connectedSocket) => connectedSocket !== socket)
+                  .forEach((connectedSocket) => connectedSocket.emit(event, data));
+                return true;
+              },
+            };
             if (this.connectionHandler) {
               this.connectionHandler(socket);
             }
@@ -127,6 +135,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
   const sessionManager = createTerminalSessionManager({
     ptyFactory: (...args) => ptyFactory(...args),
     logger: { info() {}, warn() {}, error() {} },
+    now: harnessOptions.now,
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
@@ -197,7 +206,7 @@ test('terminal namespace broadcasts shared session output and presence to multip
   adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  assert.equal(created.creatorClientId, 'admin-a-client');
+  assert.equal(created.creatorClientId, 'admin-a');
   adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
   getPty(created.sessionId).emitData('pwd\r\n');
 
@@ -206,6 +215,77 @@ test('terminal namespace broadcasts shared session output and presence to multip
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 2);
+});
+
+test('socket identity prevents equal browser labels from merging observers or granting session actions', () => {
+  const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness();
+  const longSharedLabel = 'shared-browser-label-'.repeat(20);
+  const adminA = namespace.connect(new FakeSocket('admin-a', 'admin', 'admin', longSharedLabel));
+  const adminB = namespace.connect(new FakeSocket('admin-b', 'admin', 'admin', longSharedLabel));
+
+  adminA.trigger('terminal:create_session', { title: 'Identity-bound shell' });
+  const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  const pty = getPty(created.sessionId);
+
+  assert.equal(created.creatorClientId, 'admin-a');
+  assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
+  assert.equal(auditEvents.find((entry) => entry.event === 'terminal_socket_connected').meta.clientLabel.length, 128);
+
+  adminB.trigger('terminal:input', { sessionId: created.sessionId, data: 'forged\n' });
+  adminB.trigger('terminal:set_active_presenter', { sessionId: created.sessionId });
+  adminB.trigger('terminal:close_session', { sessionId: created.sessionId });
+
+  assert.deepEqual(pty.writeCalls, []);
+  assert.equal(sessionManager._getSession(created.sessionId).activePresenterClientId, 'admin-a');
+  assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
+  assert.equal(
+    adminB.sent.some((message) => (
+      message.event === 'terminal:error'
+      && message.data.code === 'terminal_session_not_attached'
+    )),
+    true,
+  );
+  assert.notEqual(sessionManager._getSession(created.sessionId), null);
+});
+
+test('create requestId is bounded and returned only to the creator on both aliases', () => {
+  const { namespace } = buildTerminalHarness();
+  const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const observer = namespace.connect(new FakeSocket('admin-b', 'admin'));
+  creator.sent.length = 0;
+  observer.sent.length = 0;
+  const requestId = 'request-'.repeat(30);
+
+  creator.trigger('terminal:create_session', { title: 'Correlated shell', requestId });
+
+  for (const event of ['terminal:session_created', 'terminal:created']) {
+    const creatorMessages = creator.sent.filter((message) => message.event === event);
+    const observerMessages = observer.sent.filter((message) => message.event === event);
+    assert.equal(creatorMessages.length, 1);
+    assert.equal(creatorMessages[0].data.requestId, requestId.slice(0, 128));
+    assert.equal(observerMessages.length, 1);
+    assert.equal(Object.hasOwn(observerMessages[0].data, 'requestId'), false);
+  }
+  for (const socket of [creator, observer]) {
+    const snapshot = socket.sent.findLast((message) => message.event === 'terminal:pool_snapshot').data;
+    assert.equal(snapshot.sessions.some((session) => Object.hasOwn(session, 'requestId')), false);
+  }
+});
+
+test('browser close reasons cannot spoof system authority', () => {
+  const { namespace } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  admin.trigger('terminal:create_session', { title: 'User shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  admin.trigger('terminal:close_session', {
+    sessionId: created.sessionId,
+    reason: 'system:shutdown',
+    system: true,
+  });
+
+  const closed = admin.sent.find((message) => message.event === 'terminal:session_closed');
+  assert.equal(closed.data.detachedReason, 'user-close');
 });
 
 test('synchronous PTY output is emitted once after session creation with the authoritative session id', () => {
@@ -430,7 +510,7 @@ test('shared observers may send input and must use the websocket active-presente
   assert.deepEqual(session.pty.writeCalls, ['ls\n']);
   assert.deepEqual(session.pty.resizeCalls, [{ cols: 144, rows: 40 }]);
   assert.equal(adminB.sent.some((message) => message.data?.code === 'terminal_resize_out_of_range'), true);
-  assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b-client'), true);
+  assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b'), true);
 });
 
 test('terminal namespace responds to terminal:ping and terminal:input with latency metadata', () => {

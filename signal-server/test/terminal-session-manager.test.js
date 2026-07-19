@@ -72,7 +72,7 @@ test('shared session manager enforces a hard session ceiling and reports bounded
     maxReplayBytes: 2048,
   });
 
-  manager.closeSession(first.sessionId, { reason: 'user-close' });
+  manager.closeSession(first.sessionId, { clientId: 'browser-a', reason: 'user-close' });
   manager.createSession({ clientId: 'browser-a' });
   assert.equal(ptys.length, 3);
 });
@@ -80,10 +80,15 @@ test('shared session manager enforces a hard session ceiling and reports bounded
 test('idle detached sessions are reaped using the configured timeout', () => {
   let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
   const pty = createFakePty();
+  const events = [];
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
     now: () => new Date(nowMs),
-    logger: { warn() {}, info() {}, error() {} },
+    audit: {
+      info(event, meta) { events.push({ event, meta }); },
+      warn() {},
+      error() {},
+    },
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
@@ -98,6 +103,38 @@ test('idle detached sessions are reaped using the configured timeout', () => {
   assert.deepEqual(manager.reapIdleSessions(), [created.sessionId]);
   assert.equal(manager.listSessions().length, 0);
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.equal(
+    events.some((entry) => (
+      entry.event === 'terminal_session_closed'
+      && entry.meta.reason === 'system:idle-timeout'
+    )),
+    true,
+  );
+});
+
+test('closeSession rejects a known session when the caller is not an attached observer', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+  const created = manager.createSession({ clientId: 'socket-a', socketId: 'socket-a' });
+
+  assert.throws(
+    () => manager.closeSession(created.sessionId, {
+      clientId: 'socket-b',
+      socketId: 'socket-b',
+      reason: 'system:shutdown',
+      system: true,
+    }),
+    (error) => error.code === 'terminal_session_not_attached',
+  );
+  assert.notEqual(manager._getSession(created.sessionId), null);
+  assert.deepEqual(pty.killCalls, []);
 });
 
 test('idle reaping retains failed cleanup sessions and continues with later sessions', () => {
@@ -311,7 +348,7 @@ test('shared session manager retains the newest replay chunk even when it alone 
   assert.deepEqual(attached.replay.map((entry) => entry.data), ['1234567890']);
 });
 
-test('shared session manager keeps PTY alive after last observer detaches and only kills on explicit close', () => {
+test('shared session manager keeps PTY alive after detach and requires reattach before explicit close', () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -334,6 +371,13 @@ test('shared session manager keeps PTY alive after last observer detaches and on
   assert.equal(manager.getPoolSnapshot().sessions[0].observerCount, 0);
   assert.equal(pty.killCalls.length, 0);
 
+  assert.throws(
+    () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
+    (error) => error.code === 'terminal_session_not_attached',
+  );
+  assert.equal(pty.killCalls.length, 0);
+
+  manager.attachSession(created.sessionId, { clientId: 'browser-a' });
   manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
   assert.equal(pty.killCalls.length, 1);
 });
@@ -783,7 +827,7 @@ test('PTY startup timeout fails once, kills once, notifies once, and retains rep
   assert.equal(errors.length, 1);
   assert.equal(errors[0].code, 'pty_startup_timeout');
   assert.equal(exits.length, 1);
-  manager.closeSession(created.sessionId, { reason: 'user-close' });
+  manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
   assert.throws(
     () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
@@ -838,7 +882,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
   assert.equal(exits.length, 1);
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
-  assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'user-close' }));
+  assert.doesNotThrow(() => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }));
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
   assert.equal(manager.listSessions().length, 0);
   assert.equal(errors.length, 1);
@@ -888,7 +932,7 @@ for (const terminalState of ['running', 'exited']) {
     }
 
     assert.throws(
-      () => manager.closeSession(created.sessionId, { reason: 'user-close' }),
+      () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
       (error) => error.code === 'pty_cleanup_failed' && !error.message.includes('SECRET_VALUE'),
     );
     assert.equal(session.processStatus, 'closed');
@@ -900,7 +944,7 @@ for (const terminalState of ['running', 'exited']) {
     assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
     assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 
-    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'retry-close' }));
+    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'retry-close' }));
     assert.equal(session.status, 'detached');
     assert.equal(session.observers.size, 0);
     assert.equal(manager.listSessions().length, 0);

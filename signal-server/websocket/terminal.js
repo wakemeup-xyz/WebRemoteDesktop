@@ -7,8 +7,11 @@ function getToken(socket) {
   return socket.handshake?.auth?.token || null;
 }
 
-function getClientId(socket) {
-  return socket.handshake?.auth?.clientId || socket.id;
+function getClientLabel(socket) {
+  const rawLabel = socket.handshake?.auth?.clientId;
+  return rawLabel === undefined || rawLabel === null
+    ? null
+    : String(rawLabel).slice(0, 128);
 }
 
 function authenticate(socket) {
@@ -69,12 +72,14 @@ function setupTerminal(io, options = {}) {
 
   terminalNamespace.on('connection', (socket) => {
     const user = socket.user;
-    const clientId = getClientId(socket);
+    const clientId = socket.id;
     const socketId = socket.id;
+    const clientLabel = getClientLabel(socket);
     const getTransportName = () => String(socket.conn?.transport?.name || 'unknown');
     audit.info('terminal_socket_connected', {
       socketId,
       clientId,
+      clientLabel,
       subject: user?.sub || '',
       role: user?.role || '',
       transport: getTransportName(),
@@ -84,6 +89,7 @@ function setupTerminal(io, options = {}) {
         audit.info('terminal_socket_transport_upgrade', {
           socketId,
           clientId,
+          clientLabel,
           transport: String(transport?.name || 'unknown'),
         });
       });
@@ -160,6 +166,9 @@ function setupTerminal(io, options = {}) {
 
     function handleCreate(payload = {}) {
       try {
+        const requestId = typeof payload.requestId === 'string'
+          ? payload.requestId.slice(0, 128)
+          : null;
         const sessionRef = { sessionId: null };
         const pendingLifecycleEvents = [];
         const emitLifecycleEvent = (event, eventPayload) => {
@@ -202,8 +211,11 @@ function setupTerminal(io, options = {}) {
           },
         });
         sessionRef.sessionId = created.sessionId;
-        terminalNamespace.emit('terminal:session_created', created);
-        terminalNamespace.emit('terminal:created', created);
+        const creatorPayload = { ...created, requestId };
+        socket.emit('terminal:session_created', creatorPayload);
+        socket.emit('terminal:created', creatorPayload);
+        socket.broadcast.emit('terminal:session_created', created);
+        socket.broadcast.emit('terminal:created', created);
         for (const pending of pendingLifecycleEvents) {
           socket.emit(pending.event, {
             ...pending.payload,
@@ -276,7 +288,7 @@ function setupTerminal(io, options = {}) {
         const closed = sessionManager.closeSession(payload.sessionId, {
           clientId,
           socketId,
-          reason: payload.reason || 'user-close',
+          reason: 'user-close',
         });
         terminalNamespace.emit('terminal:session_closed', closed);
         terminalNamespace.emit('terminal:closed', closed);
@@ -454,6 +466,7 @@ function setupTerminal(io, options = {}) {
       audit.info('terminal_socket_disconnected', {
         socketId,
         clientId,
+        clientLabel,
         subject: user?.sub || '',
       });
     });
