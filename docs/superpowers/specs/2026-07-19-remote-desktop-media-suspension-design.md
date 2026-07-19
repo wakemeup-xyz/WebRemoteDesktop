@@ -123,7 +123,7 @@ Signal Server 负责：
 2. `state` 只允许 `active` 或 `suspended`。
 3. reasons 只允许 `manual-pause`、`terminal-active`、`page-hidden`、`page-hide`，去重后最多四项。
 4. generation 必须是非负安全整数。
-5. 丢弃同一 viewer 小于等于最后已转发 generation 的消息。
+5. 丢弃同一 viewer、同一 connectionAttemptId 下小于等于最后已转发 generation 的消息；connectionAttemptId 变化时建立新的 generation 序列，允许当前 snapshot 重新同步。
 6. 附加可信 `viewerId` 后转发给 Host；不信任客户端提供的 viewerId。
 
 Host 回传 `media-activity-ack`：
@@ -222,6 +222,8 @@ Host 对 relay stop 继续校验 viewerId，不能让旧 relay-viewer 停止当�
 为避免未来多 Viewer 演进时出现全局暂停错误，Host 的媒体活动状态必须包含 viewerId 和 generation，不能只保存一个无归属布尔值。若未来支持同时观看，Signal Server 必须按消费者需求聚合，只有所有活动消费者都 suspended 时才暂停共享采集；该聚合不在本轮范围内。
 
 Viewer disconnect、Host reconnect、新 offer 和网络模式切换都会生成新的连接上下文。新 PeerConnection 默认 active，并从当前 controller snapshot 立即同步一次；旧 connectionAttemptId 的 ack 只记录诊断，不改变当前 UI 状态。
+
+为建立该归属关系，Viewer 的 `offer` payload 必须携带当前 `connectionAttemptId`，Signal Server 校验并转发，Host 在接受 offer 时保存为 `current_connection_attempt_id`。`media-activity-change` 和 ack 使用同一个值；没有匹配 attempt id 的控制消息不得改变当前 sender。
 
 ## 12. 可观测性
 
