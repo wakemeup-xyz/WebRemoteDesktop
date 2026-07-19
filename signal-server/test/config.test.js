@@ -139,6 +139,17 @@ test('loadConfig defaults file rotation to ten MiB and three backups', () => {
   }
 });
 
+test('loadConfig applies canonical terminal validation through its public adapter', () => {
+  const previousEnv = { ...process.env };
+  process.env.WRD_TERMINAL_MAX_SESSIONS = 'NaN';
+
+  try {
+    assert.throws(() => loadConfig(), /WRD_TERMINAL_MAX_SESSIONS/);
+  } finally {
+    process.env = previousEnv;
+  }
+});
+
 test('/api/webrtc-config returns ICE settings plus capability and public entry metadata', async () => {
   const runtime = createServerApp({
     config: {
