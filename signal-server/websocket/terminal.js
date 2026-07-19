@@ -139,11 +139,11 @@ function setupTerminal(io, options = {}) {
 
     function bindSessionCallbacks(sessionId) {
       return {
-        onData: (data, metadata = {}) => {
+        onData: (data, metadata, acknowledge) => {
           socket.emit('terminal:output', {
-            sessionId: metadata.sessionId || sessionId,
+            sessionId: metadata?.sessionId || sessionId,
             data,
-          });
+          }, acknowledge);
         },
         onError: (error, metadata = {}) => {
           socket.emit('terminal:error', {
@@ -183,15 +183,20 @@ function setupTerminal(io, options = {}) {
           : null;
         const sessionRef = { sessionId: null };
         const pendingLifecycleEvents = [];
-        const emitLifecycleEvent = (event, eventPayload) => {
+        const emitLifecycleEvent = (event, eventPayload, acknowledge) => {
           if (!sessionRef.sessionId) {
-            pendingLifecycleEvents.push({ event, payload: eventPayload });
+            pendingLifecycleEvents.push({ event, payload: eventPayload, acknowledge });
             return;
           }
-          socket.emit(event, {
+          const correlatedPayload = {
             ...eventPayload,
             sessionId: eventPayload.sessionId || sessionRef.sessionId,
-          });
+          };
+          if (typeof acknowledge === 'function') {
+            socket.emit(event, correlatedPayload, acknowledge);
+          } else {
+            socket.emit(event, correlatedPayload);
+          }
         };
         const created = sessionManager.createSession({
           clientId,
@@ -199,11 +204,11 @@ function setupTerminal(io, options = {}) {
           title: payload.title,
           cols: payload.cols,
           rows: payload.rows,
-          onData: (data, metadata = {}) => {
+          onData: (data, metadata, acknowledge) => {
             emitLifecycleEvent('terminal:output', {
-              sessionId: metadata.sessionId || null,
+              sessionId: metadata?.sessionId || null,
               data,
-            });
+            }, acknowledge);
           },
           onError: (error, metadata = {}) => {
             emitLifecycleEvent('terminal:error', {
@@ -241,10 +246,15 @@ function setupTerminal(io, options = {}) {
         socket.broadcast.emit('terminal:session_created', created);
         socket.broadcast.emit('terminal:created', created);
         for (const pending of pendingLifecycleEvents) {
-          socket.emit(pending.event, {
+          const correlatedPayload = {
             ...pending.payload,
             sessionId: pending.payload.sessionId || created.sessionId,
-          });
+          };
+          if (typeof pending.acknowledge === 'function') {
+            socket.emit(pending.event, correlatedPayload, pending.acknowledge);
+          } else {
+            socket.emit(pending.event, correlatedPayload);
+          }
         }
         pendingLifecycleEvents.length = 0;
         emitPoolSnapshot();

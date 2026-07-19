@@ -445,13 +445,17 @@ const TerminalPanel = {
     this.socket.on('terminal:created', handleSessionCreated);
     this.socket.on('terminal:session_attached', handleSessionAttached);
     this.socket.on('terminal:attached', handleSessionAttached);
-    this.socket.on('terminal:output', (payload) => {
-      const session = this.state.getSession(payload.sessionId);
-      if (session?.processStatus === 'starting') {
-        this.state.updateSession(payload.sessionId, { processStatus: 'running' });
-        this.render();
+    this.socket.on('terminal:output', (payload, acknowledge) => {
+      try {
+        const session = this.state.getSession(payload.sessionId);
+        if (session?.processStatus === 'starting') {
+          this.state.updateSession(payload.sessionId, { processStatus: 'running' });
+          this.render();
+        }
+        this.writeOutput(payload.sessionId, payload.data);
+      } finally {
+        if (typeof acknowledge === 'function') acknowledge();
       }
-      this.writeOutput(payload.sessionId, payload.data);
     });
     this.socket.on('terminal:input_ack', (payload) => {
       this.handleInputAck(payload);

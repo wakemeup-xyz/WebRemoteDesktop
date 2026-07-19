@@ -1509,3 +1509,42 @@ test('TerminalPanel disables optimistic local echo while the terminal is in the 
 
   assert.deepEqual(writes, ['\u001b[?1049h']);
 });
+
+test('TerminalPanel acknowledges terminal output once after processing, including failures', () => {
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    sessionStorageMap,
+    tokenKey,
+  } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'terminal-admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_ack',
+    title: 'Ack shell',
+    status: 'attached',
+    processStatus: 'running',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+
+  let acknowledgements = 0;
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_ack',
+    data: 'ok',
+  }, () => { acknowledgements += 1; });
+  assert.equal(acknowledgements, 1);
+
+  TerminalPanel.writeOutput = () => { throw new Error('render failed'); };
+  assert.throws(
+    () => socketHandlers.get('terminal:output')({
+      sessionId: 'term_ack',
+      data: 'still-ack',
+    }, () => { acknowledgements += 1; }),
+    /render failed/,
+  );
+  assert.equal(acknowledgements, 2);
+});

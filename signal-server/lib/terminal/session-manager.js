@@ -100,6 +100,9 @@ function createTerminalSessionManager(options = {}) {
     ),
   };
   const now = options.now || (() => new Date());
+  const inputBucketNow = typeof options.inputNow === 'function'
+    ? options.inputNow
+    : (typeof options.now === 'function' ? () => now().getTime() : null);
   const logger = options.logger || console;
   const audit = options.audit || createTerminalAudit(logger);
   const ptyFactory = options.ptyFactory || defaultPtyFactory;
@@ -212,14 +215,24 @@ function createTerminalSessionManager(options = {}) {
       onPresence: typeof input.onPresence === 'function' ? input.onPresence : existing.onPresence || null,
       inputBucket: existing.inputBucket || new TerminalInputBucket({
         ...config.inputRate,
-        now: () => now().getTime(),
+        ...(inputBucketNow ? { now: inputBucketNow } : {}),
       }),
       attachedAt: existing.attachedAt || timestamp(),
       lastAttachedAt: timestamp(),
     });
     session.outputDispatcher.attach(observerId, {
-      onData(data, metadata) {
-        session.observers.get(observerId)?.onData?.(data, metadata);
+      onData(data, metadata, acknowledge) {
+        const onData = session.observers.get(observerId)?.onData;
+        if (typeof onData !== 'function') {
+          acknowledge();
+          return;
+        }
+        const autoAcknowledge = onData.length < 3;
+        try {
+          onData(data, metadata, acknowledge);
+        } finally {
+          if (autoAcknowledge) acknowledge();
+        }
       },
       onWarning(warning) {
         const observer = session.observers.get(observerId);

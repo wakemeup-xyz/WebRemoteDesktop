@@ -1305,7 +1305,7 @@ test('session manager detaches only an overflowing observer after replaying the 
   assert.equal(JSON.stringify(overflowAudit).includes('12345'), false);
   assert.equal(JSON.stringify(slowWarnings).includes('12345'), false);
 
-  scheduled.shift()();
+  while (scheduled.length > 0) scheduled.shift()();
   assert.deepEqual(fastOutput, ['x']);
   assert.equal(manager.getPresence(created.sessionId).observerCount, 1);
 

@@ -24,14 +24,22 @@ class FakeSocket extends EventEmitter {
       headers: { 'user-agent': 'test-agent' },
     };
     this.sent = [];
+    this.autoAcknowledgeOutput = true;
     this.conn = {
       transport: { name: 'websocket' },
       on() {},
     };
   }
 
-  emit(event, data) {
-    this.sent.push({ event, data });
+  emit(event, data, acknowledge) {
+    this.sent.push({ event, data, acknowledge });
+    if (
+      event === 'terminal:output'
+      && this.autoAcknowledgeOutput
+      && typeof acknowledge === 'function'
+    ) {
+      acknowledge();
+    }
     return true;
   }
 
@@ -761,14 +769,12 @@ test('terminal websocket reports input rate limits without ack or raw input and 
 });
 
 test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', () => {
-  const scheduled = [];
   const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness({
     terminalMaxObserverQueueBytes: 5,
-  }, {
-    outputSchedule: (drain) => scheduled.push(drain),
   });
   const slow = namespace.connect(new FakeSocket('admin-slow', 'admin'));
   const fast = namespace.connect(new FakeSocket('admin-fast', 'admin'));
+  slow.autoAcknowledgeOutput = false;
   slow.trigger('terminal:create_session', { title: 'Backpressure shell' });
   const created = slow.sent.find((message) => message.event === 'terminal:session_created').data;
   const pty = getPty(created.sessionId);
@@ -791,15 +797,20 @@ test('terminal websocket warns and detaches only a slow observer while replay re
   assert.equal(sessionManager.isObserverAttached(created.sessionId, { socketId: 'admin-fast' }), true);
   assert.deepEqual(pty.killCalls, []);
 
-  scheduled.shift()();
   assert.equal(fast.sent.some((message) => (
     message.event === 'terminal:output' && message.data.data === 'x'
   )), true);
+  const slowOutput = slow.sent.find((message) => message.event === 'terminal:output');
+  assert.equal(typeof slowOutput.acknowledge, 'function');
   assert.equal(slow.sent.some((message) => (
     message.event === 'terminal:presence' && message.data.observerCount === 1
   )), true);
   assert.equal(JSON.stringify(warning).includes('12345'), false);
   assert.equal(JSON.stringify(auditEvents).includes('12345'), false);
+
+  slowOutput.acknowledge();
+  slowOutput.acknowledge();
+  assert.equal(sessionManager.isObserverAttached(created.sessionId, { socketId: 'admin-slow' }), false);
 
   slow.trigger('terminal:attach_session', { sessionId: created.sessionId });
   const replay = slow.sent.findLast((message) => message.event === 'terminal:replay').data.replay;

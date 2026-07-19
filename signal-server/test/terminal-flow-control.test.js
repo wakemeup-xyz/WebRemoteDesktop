@@ -50,7 +50,7 @@ test('TerminalInputBucket charges UTF-8 bytes and exposes numeric-only state', (
   assert.equal(JSON.stringify(bucket.snapshot()).includes('\u4f60'), false);
 });
 
-test('TerminalInputBucket ignores a backwards clock without minting tokens', () => {
+test('TerminalInputBucket rebases a backwards clock so future refill resumes immediately', () => {
   let nowMs = 1000;
   const bucket = new TerminalInputBucket({
     bytesPerSecond: 10,
@@ -61,7 +61,7 @@ test('TerminalInputBucket ignores a backwards clock without minting tokens', () 
 
   nowMs = 500;
   assert.equal(bucket.consume(1).accepted, false);
-  nowMs = 1100;
+  nowMs = 600;
   assert.equal(bucket.consume(1).accepted, true);
 });
 
@@ -96,7 +96,7 @@ test('TerminalOutputDispatcher preserves complete UTF-8 chunks and observer orde
   assert.equal(scheduled.length, 1);
   assert.equal(dispatcher.queuedBytes('observer-a'), 5);
 
-  scheduled.shift()();
+  while (scheduled.length > 0) scheduled.shift()();
 
   assert.deepEqual(delivered, [
     { data: '\u4f60', metadata: { replaySeq: 1 } },
@@ -139,6 +139,48 @@ test('TerminalOutputDispatcher warns once and detaches only the overflowing obse
   assert.equal(JSON.stringify(warnings).includes('secret-output'), false);
   assert.equal(dispatcher.queuedBytes('slow'), 0);
 
-  scheduled.shift()();
+  while (scheduled.length > 0) scheduled.shift()();
   assert.deepEqual(delivered, [['fast', 'abc']]);
+});
+
+test('TerminalOutputDispatcher retains in-flight bytes until ack and drains observers independently', () => {
+  const scheduled = [];
+  const slowAcks = [];
+  const delivered = [];
+  const warnings = [];
+  const dispatcher = new TerminalOutputDispatcher({
+    maxQueueBytes: 5,
+    schedule: (drain) => scheduled.push(drain),
+  });
+  dispatcher.attach('slow', {
+    onData(data, metadata, acknowledge) {
+      delivered.push(['slow', data]);
+      slowAcks.push(acknowledge);
+    },
+    onWarning: (warning) => warnings.push(warning),
+  });
+  dispatcher.attach('fast', {
+    onData(data, metadata, acknowledge) {
+      delivered.push(['fast', data]);
+      acknowledge();
+    },
+  });
+
+  dispatcher.enqueue('slow', '12345');
+  dispatcher.enqueue('fast', 'a');
+  dispatcher.enqueue('fast', 'b');
+  while (scheduled.length > 0) scheduled.shift()();
+
+  assert.deepEqual(delivered, [['slow', '12345'], ['fast', 'a'], ['fast', 'b']]);
+  assert.equal(dispatcher.queuedBytes('slow'), 5);
+  assert.equal(dispatcher.queuedBytes('fast'), 0);
+  assert.equal(dispatcher.enqueue('slow', 'x'), false);
+  assert.deepEqual(warnings, [{
+    code: 'terminal_output_backpressure',
+    stats: { queuedBytes: 5, droppedChunks: 1 },
+  }]);
+
+  slowAcks[0]();
+  slowAcks[0]();
+  assert.equal(dispatcher.queuedBytes('slow'), 0);
 });
