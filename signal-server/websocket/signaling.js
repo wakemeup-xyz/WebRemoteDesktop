@@ -648,7 +648,7 @@ function setupSignaling(io, options = {}) {
       if (role === 'relay-viewer') {
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
         if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) {
-          clearLegacyRelayCompanion(boundOwnerId);
+          clearLegacyRelayCompanion(boundOwnerId, { stop: true });
         }
         viewerId = hasActiveLegacyRelayOwner(boundOwnerId)
           ? boundOwnerId

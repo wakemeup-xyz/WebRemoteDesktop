@@ -825,6 +825,55 @@ test('legacy relay-viewer remains unbound when more than one main viewer is onli
   assert.equal(host.sent.some((entry) => entry.event === 'relay-stream-control'), false);
 });
 
+test('legacy relay companion ambiguity stops the host relay and rejects later frames', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const mainViewer = new FakeSocket('legacy-main', 'viewer');
+  const relayViewer = new FakeSocket('legacy-relay', 'relay-viewer');
+  io.connect(host); io.connect(mainViewer); io.connect(relayViewer);
+
+  mainViewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  relayViewer.trigger('relay-stream-control', { enabled: true });
+  const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
+
+  io.connect(new FakeSocket('legacy-observer', 'viewer'));
+  relayViewer.trigger('relay-stream-control', { enabled: true });
+  assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
+    enabled: false,
+    viewerId: 'legacy-main',
+  });
+  host.trigger('relay-frame', { viewerId: 'legacy-main', frameId: 2, data: 'stale' });
+  assert.equal(relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length, relayedFramesBefore);
+});
+
+test('legacy controller disconnect stops its bound relay companion and rejects later frames', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const mainViewer = new FakeSocket('legacy-main', 'viewer');
+  const relayViewer = new FakeSocket('legacy-relay', 'relay-viewer');
+  io.connect(host); io.connect(mainViewer); io.connect(relayViewer);
+
+  mainViewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  relayViewer.trigger('relay-stream-control', { enabled: true });
+  const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
+
+  mainViewer.trigger('disconnect');
+  assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
+    enabled: false,
+    viewerId: 'legacy-main',
+  });
+  host.trigger('relay-frame', { viewerId: 'legacy-main', frameId: 2, data: 'stale' });
+  assert.equal(relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length, relayedFramesBefore);
+});
+
 test('v2 main viewer relay control remains strictly lease-authorized', () => {
   resetConnections();
   const io = makeIo();
