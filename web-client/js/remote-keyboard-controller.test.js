@@ -307,6 +307,7 @@ test('a ten-second hold remains pressed until real keyup and a failed keyup requ
   failed.controller.handleDomEvent(keyEvent('keyup', { code: 'KeyL', key: 'l' }));
   assert.equal(failed.controller.getSnapshot().pressedKeyCount, 0);
   assert.equal(failed.sent.at(-1).action, 'reset');
+  assert.equal(failed.controller.getSnapshot().state, 'RESET_REQUIRED');
 });
 
 test('mode change clears state through a reset barrier before exposing the new mode', () => {

@@ -143,13 +143,15 @@
         inputIds: [inputId],
       };
       const record = { inputId, seq, adapter: adapterName, reset: Boolean(isReset) };
+      let delivered = false;
+      try {
+        delivered = adapters[adapterName](payload) === true;
+      } catch (_) {
+        delivered = false;
+      }
+      if (!delivered) return null;
       pending.set(inputId, record);
       trimPending();
-      try {
-        adapters[adapterName](payload);
-      } catch (_) {
-        // Delivery feedback is asynchronous; a synchronous adapter failure does not reject input.
-      }
       return record;
     }
 
@@ -167,12 +169,19 @@
       if (!leaseId) return null;
       invalidateBeforeReset();
       const adapterName = chooseAdapter(true);
-      if (!adapterName) return null;
+      if (!adapterName) {
+        requireReacquire();
+        return null;
+      }
       const record = sendThrough(adapterName, {
         type: 'keyboard',
         action: 'reset',
         payload: { reason },
       }, true);
+      if (!record) {
+        requireReacquire();
+        return null;
+      }
       barrier = { inputId: record.inputId, seq: record.seq, deadline: now() + ackTimeoutMs };
       return record.inputId;
     }
@@ -200,6 +209,10 @@
       if (!adapterName) return null;
       const identity = keyIdentity(message);
       const record = sendThrough(adapterName, normalizeLegacyKey(message), false);
+      if (!record) {
+        markAdapterUnavailable(adapterName);
+        return null;
+      }
       if (isKeyDown(message) && identity) {
         pressed.add(identity);
         pinnedAdapter = adapterName;
@@ -211,6 +224,7 @@
     }
 
     function resetBarrier(reason) {
+      if (barrier) return barrier.inputId;
       return sendReset(reason || 'unspecified');
     }
 

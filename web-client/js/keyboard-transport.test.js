@@ -12,11 +12,15 @@ function createHarness(options = {}) {
   const transport = KeyboardTransport.create({
     sendDataChannel(payload) {
       dataChannel.push(payload);
-      return options.dataChannelResult;
+      return typeof options.dataChannelResult === 'function'
+        ? options.dataChannelResult(payload)
+        : options.dataChannelResult ?? true;
     },
     sendSocket(payload) {
       socket.push(payload);
-      return options.socketResult;
+      return typeof options.socketResult === 'function'
+        ? options.socketResult(payload)
+        : options.socketResult ?? true;
     },
     now: () => time,
     makeInputId: () => `input-${++nextId}`,
@@ -175,14 +179,54 @@ test('expired reset barrier requires lease reacquisition before accepting new in
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyR' } }), 'input-2');
 });
 
-test('pending ledger is bounded at 256 and adapter rejections do not reject input', () => {
-  const h = createHarness({ dataChannelResult: false });
+test('pending ledger is bounded at 256', () => {
+  const h = createHarness();
   for (let index = 0; index < 300; index += 1) {
     const id = h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: `Key${index}` } });
     assert.equal(id, `input-${index + 1}`);
   }
   assert.equal(h.transport.getSnapshot().pendingCount, 256);
   assert.equal(h.dataChannel.length, 300);
+});
+
+test('a rejected DataChannel keyup fails closed through one Socket reset barrier', () => {
+  for (const rejectRelease of [
+    () => false,
+    () => { throw new Error('DataChannel rejected release'); },
+  ]) {
+    const h = createHarness({
+      dataChannelResult(payload) {
+        return payload.seq === 2 ? rejectRelease() : true;
+      },
+    });
+    assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } }), 'input-1');
+
+    assert.equal(h.transport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyA' } }), null);
+    assert.equal(h.dataChannel.length, 2);
+    assert.equal(h.socket.length, 1);
+    assert.equal(h.socket[0].action, 'reset');
+    assert.equal(h.socket[0].seq, 3);
+    assert.deepEqual(h.socket[0].payload, { reason: 'transport-change' });
+    assert.equal(h.transport.canSendNewInput(), false);
+    assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
+
+    h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' });
+    assert.equal(h.transport.canSendNewInput(), true);
+  }
+});
+
+test('a rejected Socket reset requires lease reacquisition', () => {
+  const h = createHarness({
+    dataChannelResult(payload) { return payload.seq === 1; },
+    socketResult: false,
+  });
+  h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+
+  assert.equal(h.transport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyA' } }), null);
+  assert.equal(h.socket.length, 1);
+  assert.equal(h.socket[0].action, 'reset');
+  assert.equal(h.transport.getSnapshot().state, 'reacquire-required');
+  assert.equal(h.transport.canSendNewInput(), false);
 });
 
 test('lease revocation disables sends and snapshots never expose the lease token', () => {
