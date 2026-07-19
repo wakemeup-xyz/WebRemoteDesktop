@@ -2,6 +2,7 @@ const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
+const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
 
 // Kept deliberately static during the protocol migration. Do not add an
@@ -128,10 +129,91 @@ function setupSignaling(io, options = {}) {
   }
 
   const intervalFactory = options.scheduler?.setInterval || options.setInterval || setInterval;
+  const setTimeoutFn = options.scheduler?.setTimeout || options.setTimeout || setTimeout;
+  const clearTimeoutFn = options.scheduler?.clearTimeout || options.clearTimeout || clearTimeout;
   const interval = intervalFactory(() => {
     dispatchLeaseEffect(desktopLease.expire());
   }, 1000);
   interval?.unref?.();
+
+  const resetRetry = options.controlTransitionRetry || new ControlTransitionRetry({
+    setTimeoutFn,
+    clearTimeoutFn,
+  });
+
+  function emitControlEvent(type, fields = {}) {
+    const payload = {
+      type,
+      ...fields,
+    };
+    // Bounded non-secret fields only — never lease tokens, input, SDP, candidates.
+    if (structuredLogger && typeof structuredLogger.info === 'function') {
+      structuredLogger.info(payload);
+    }
+    recentEventStore?.append?.(payload);
+  }
+
+  function isResetOnlyPending(snapshot = controlSnapshot()) {
+    return snapshot.state === 'REVOKING' && snapshot.pendingViewerId === null
+      && Number.isSafeInteger(snapshot.leaseEpoch);
+  }
+
+  function cancelResetRetry() {
+    resetRetry.cancel();
+  }
+
+  function reemitResetOnlyTransition(leaseEpoch, attempt = 0) {
+    if (!connections.host || !Number.isSafeInteger(leaseEpoch)) return false;
+    const hostTransition = desktopLease.transitionForHost({ leaseEpoch });
+    // Only re-emit tokenless reset-only barriers (no viewerId/leaseId).
+    if (!hostTransition || hostTransition.viewerId != null || hostTransition.leaseId) return false;
+    const reason = hostTransition.reason || 'reset-retry';
+    connections.host.emit('control-transition', {
+      type: 'control-transition',
+      leaseEpoch,
+      reason,
+    });
+    emitControlEvent('control_reset_retry', {
+      leaseEpoch,
+      attempt,
+      reason,
+    });
+    return true;
+  }
+
+  function startResetRetry(leaseEpoch, reason = 'transition-failed') {
+    if (!Number.isSafeInteger(leaseEpoch)) return;
+    if (!isResetOnlyPending()) return;
+    resetRetry.start({
+      leaseEpoch,
+      onRetry: ({ leaseEpoch: epoch, attempt }) => {
+        const snapshot = desktopLease.snapshot();
+        if (snapshot.state !== 'REVOKING' || snapshot.pendingViewerId !== null
+          || snapshot.leaseEpoch !== epoch) {
+          cancelResetRetry();
+          return;
+        }
+        reemitResetOnlyTransition(epoch, attempt);
+      },
+      onBlocked: ({ leaseEpoch: epoch, attempt }) => {
+        const snapshot = desktopLease.snapshot();
+        if (snapshot.state !== 'REVOKING' || snapshot.pendingViewerId !== null
+          || snapshot.leaseEpoch !== epoch) {
+          return;
+        }
+        emitControlEvent('control_reset_blocked', {
+          leaseEpoch: epoch,
+          attempt,
+          reason: 'reset-blocked',
+        });
+        broadcastControlState('reset-blocked');
+      },
+    });
+    emitControlEvent('control_transition_failed_closed', {
+      leaseEpoch,
+      reason,
+    });
+  }
 
   function controlSnapshot() {
     return withLeaseExpiry(() => desktopLease.snapshot());
@@ -231,17 +313,28 @@ function setupSignaling(io, options = {}) {
 
   function dispatchLeaseEffect(effect, reason = effect?.reason) {
     if (!effect || (!effect.reason && !effect.transition)) return false;
+    const snapshotAfter = (() => {
+      // Prefer lease snapshot after the mutation that produced this effect.
+      return desktopLease.snapshot();
+    })();
     const resetOnlyBarrier = effect.state === 'REVOKING'
-      && effect.transition
-      && controlSnapshot().pendingViewerId === null;
+      && snapshotAfter.pendingViewerId === null;
     if (effect.state === 'FREE' || resetOnlyBarrier) {
       clearPendingInputs();
       pendingControllerProtocolVersion = null;
       legacyControllerViewerId = null;
       clearAllLegacyRelayCompanions({ stop: true });
     }
+    if (effect.state === 'FREE') {
+      cancelResetRetry();
+    }
     broadcastControlState(reason);
     sendControlTransition(effect);
+    if (resetOnlyBarrier && Number.isSafeInteger(snapshotAfter.leaseEpoch)) {
+      // Candidate failures produce a fresh reset-only transition; reset-only
+      // failures stay on the same epoch. Both need bounded recovery retries.
+      startResetRetry(snapshotAfter.leaseEpoch, reason || effect.reason || 'transition-failed');
+    }
     return true;
   }
 
@@ -320,12 +413,22 @@ function setupSignaling(io, options = {}) {
         previousHost.disconnect(true);
       }
       if (previousHost && previousHost.id !== socket.id) {
+        cancelResetRetry();
         desktopLease.hostDisconnected();
         clearPendingInputs();
         pendingControllerProtocolVersion = null;
         legacyControllerViewerId = null;
         clearAllLegacyRelayCompanions({ stop: true });
         broadcastControlState('host-replaced');
+      } else {
+        // Fresh Host socket on an unresolved reset-only barrier: re-issue the
+        // current tokenless reset before any controller can write.
+        const snapshot = desktopLease.snapshot();
+        if (snapshot.state === 'REVOKING' && snapshot.pendingViewerId === null
+          && Number.isSafeInteger(snapshot.leaseEpoch)) {
+          reemitResetOnlyTransition(snapshot.leaseEpoch, 0);
+          startResetRetry(snapshot.leaseEpoch, snapshot.reason || 'host-reconnect');
+        }
       }
       clearHostCapabilities();
       socket.emit('connected', { role: 'host', status: 'ok', inputProtocolVersion: socket.inputProtocolVersion });
@@ -430,9 +533,18 @@ function setupSignaling(io, options = {}) {
 
     socket.on('control-transition-ack', (data = {}) => {
       if (role !== 'host' || connections.host !== socket) return;
-      const result = withLeaseExpiry(() => (data.status === 'applied'
+      const status = data.status === 'applied' ? 'applied' : 'rejected';
+      const result = withLeaseExpiry(() => (status === 'applied'
         ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
-        : desktopLease.rejectTransition({ leaseEpoch: data.leaseEpoch, reason: data.reason })));
+        : desktopLease.failTransition({
+          leaseEpoch: data.leaseEpoch,
+          reason: data.reason || 'transition-failed',
+        })));
+      if (status === 'applied' && result.state === 'FREE') {
+        cancelResetRetry();
+      } else if (status === 'applied' && result.lease) {
+        cancelResetRetry();
+      }
       if (result.lease) {
         if (legacyControllerViewerId) clearLegacyRelayCompanion(legacyControllerViewerId, { stop: true });
         legacyControllerViewerId = pendingControllerProtocolVersion === 1
@@ -825,6 +937,7 @@ function setupSignaling(io, options = {}) {
         if (connections.host && connections.host.id === socket.id) {
           connections.host = null;
           clearHostCapabilities();
+          cancelResetRetry();
           const leaseResult = desktopLease.hostDisconnected();
           clearPendingInputs();
           pendingControllerProtocolVersion = null;

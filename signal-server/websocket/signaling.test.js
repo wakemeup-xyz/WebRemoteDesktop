@@ -1348,3 +1348,111 @@ test('control logs redact lease token and text payload', () => {
   assert.equal(text.includes(grant.leaseId), false);
   assert.equal(text.includes('SecretText'), false);
 });
+
+
+test('blocked reset cannot grant a new controller and retries are same-epoch bounded', () => {
+  resetConnections();
+  const io = makeIo();
+  const timers = new Map();
+  let nextTimerId = 1;
+  let now = 0;
+  const setTimeoutFn = (fn, delay) => {
+    const id = nextTimerId++;
+    timers.set(id, { fn, due: now + delay });
+    return id;
+  };
+  const clearTimeoutFn = (id) => { timers.delete(id); };
+  const advance = (ms) => {
+    const target = now + ms;
+    while (timers.size > 0) {
+      let nextDue = Infinity;
+      for (const t of timers.values()) nextDue = Math.min(nextDue, t.due);
+      if (nextDue > target) break;
+      now = nextDue;
+      for (const [id, t] of [...timers.entries()].filter(([, t]) => t.due <= now)) {
+        timers.delete(id);
+        t.fn();
+      }
+    }
+    now = target;
+  };
+  const events = [];
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    scheduler: { setInterval: () => ({ unref() {} }), setTimeout: setTimeoutFn, clearTimeout: clearTimeoutFn },
+    structuredLogger: { info: (payload) => events.push(payload) },
+  });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  io.connect(viewerB);
+
+  viewer.trigger('control-acquire', { requestId: 'a1' });
+  const first = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', {
+    leaseEpoch: first.leaseEpoch, status: 'rejected', reason: 'reset-failed',
+  });
+  const blockedState = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(blockedState.state, 'REVOKING');
+  assert.equal(blockedState.pendingViewerId, null);
+  const barrierEpoch = blockedState.leaseEpoch;
+  assert.equal(Number.isSafeInteger(barrierEpoch), true);
+
+  const transitionsBefore = host.sent.filter((entry) => entry.event === 'control-transition').length;
+  advance(1000);
+  advance(2000);
+  advance(4000);
+  const retries = host.sent.filter((entry) => entry.event === 'control-transition').slice(transitionsBefore);
+  assert.equal(retries.length, 3);
+  assert.equal(retries.every((entry) => entry.data.leaseEpoch === barrierEpoch), true);
+  assert.equal(retries.every((entry) => entry.data.leaseId === undefined), true);
+  assert.equal(events.some((e) => e.type === 'control_reset_blocked'), true);
+
+  const afterBlocked = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(afterBlocked.state, 'REVOKING');
+  assert.equal(afterBlocked.reason, 'reset-blocked');
+
+  viewerB.trigger('control-acquire', { requestId: 'should-block' });
+  const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
+  assert.equal(acquire.state, 'REVOKING');
+  assert.equal(acquire.reason, 'occupied');
+
+  // No timer storm after blocked.
+  const timerCount = timers.size;
+  advance(60_000);
+  assert.equal(timers.size, timerCount);
+});
+
+test('applied reset-only ack cancels retries and frees the barrier', () => {
+  resetConnections();
+  const io = makeIo();
+  const timers = new Map();
+  let nextTimerId = 1;
+  let now = 0;
+  const setTimeoutFn = (fn, delay) => {
+    const id = nextTimerId++;
+    timers.set(id, { fn, due: now + delay });
+    return id;
+  };
+  const clearTimeoutFn = (id) => { timers.delete(id); };
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    scheduler: { setInterval: () => ({ unref() {} }), setTimeout: setTimeoutFn, clearTimeout: clearTimeoutFn },
+  });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'a1' });
+  const first = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', {
+    leaseEpoch: first.leaseEpoch, status: 'rejected', reason: 'reset-failed',
+  });
+  const epoch = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data.leaseEpoch;
+  assert.equal(timers.size > 0, true);
+  host.trigger('control-transition-ack', { leaseEpoch: epoch, status: 'applied' });
+  assert.equal(viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'FREE');
+  assert.equal(timers.size, 0);
+});

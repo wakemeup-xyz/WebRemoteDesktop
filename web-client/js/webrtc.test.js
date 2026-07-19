@@ -312,11 +312,24 @@ test('read-only control UI requests takeover only when another viewer owns the l
 test('transitional control states disable requests and label the viewer as switching', () => {
   const { WebRTC, elements } = loadWebRTC();
   for (const state of ['GRANTING', 'REVOKING']) {
-    WebRTC.handleControlState({ state, controller: false });
-    assert.equal(elements.get('controlStatus').textContent, '正在切换');
+    WebRTC.handleControlState({ state, controller: false, reason: null });
+    assert.equal(elements.get('controlStatus').textContent, '控制权正在切换');
     assert.equal(elements.get('requestControlBtn').hidden, true);
     assert.equal(elements.get('requestControlBtn').disabled, true);
   }
+});
+
+test('reset-blocked control state locks requests without looping acquire', () => {
+  const emitted = [];
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState.hostOnline = true;
+  WebRTC.handleControlState({ state: 'REVOKING', controller: false, reason: 'reset-blocked' });
+  assert.equal(elements.get('controlStatus').textContent, 'Host 输入复位未确认，控制已安全锁定');
+  assert.equal(elements.get('requestControlBtn').hidden, true);
+  assert.equal(elements.get('requestControlBtn').disabled, true);
+  assert.equal(WebRTC.requestControl(), false);
+  assert.equal(emitted.some((entry) => entry[0] === 'control-acquire'), false);
 });
 
 test('relay control and frame acknowledgements require and carry the active v2 lease', () => {

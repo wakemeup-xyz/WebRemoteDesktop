@@ -1178,10 +1178,14 @@ const WebRTC = {
 
   requestControl() {
     if (!this.socket?.connected || !this.controlState.hostOnline) return false;
+    if (this.isControlResetBlocked() || this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING') {
+      this.updateControlUI();
+      return false;
+    }
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
     const takeover = this.controlState.state === 'ACTIVE' && !this.controlState.controller;
     this.socket.emit('control-acquire', { requestId, takeover });
-    this.updateControlUI('正在切换');
+    this.updateControlUI('控制权正在切换');
     return true;
   },
 
@@ -1248,16 +1252,34 @@ const WebRTC = {
     window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
   },
 
+  isControlResetBlocked() {
+    const reason = this.controlState?.reason;
+    return this.controlState?.state === 'REVOKING'
+      && (reason === 'reset-blocked'
+        || reason === 'reset-failed'
+        || reason === 'transition-timeout'
+        || reason === 'execution-failed'
+        || reason === 'transition-failed');
+  },
+
   updateControlUI(status) {
     const transitioning = this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING';
-    if (!status && !this.controlState.controller) status = transitioning ? '正在切换' : '只读';
-    const label = status || (this.hasActiveControl() ? '已控制' : this.controlState.state === 'FREE' ? '只读' : '正在切换');
+    const resetBlocked = this.isControlResetBlocked();
+    if (!status && !this.controlState.controller) {
+      if (resetBlocked) status = 'Host 输入复位未确认，控制已安全锁定';
+      else if (transitioning) status = '控制权正在切换';
+      else status = '只读';
+    }
+    const label = status
+      || (this.hasActiveControl()
+        ? '已控制'
+        : (this.controlState.state === 'FREE' ? '只读' : (resetBlocked ? 'Host 输入复位未确认，控制已安全锁定' : '控制权正在切换')));
     const statusEl = document.getElementById('controlStatus');
     const button = document.getElementById('requestControlBtn');
     if (statusEl) statusEl.textContent = label;
     if (button) {
-      button.hidden = this.hasActiveControl() || transitioning;
-      button.disabled = transitioning;
+      button.hidden = this.hasActiveControl() || transitioning || resetBlocked;
+      button.disabled = transitioning || resetBlocked;
       button.textContent = this.controlState.state === 'ACTIVE' && !this.controlState.controller ? '请求接管' : '请求控制';
       const dataset = button.dataset || (button.dataset = {});
       if (!dataset.controlBound) {
