@@ -265,6 +265,39 @@ body.tunnel-relay-active #remoteVideo {
   transition: opacity var(--transition-base);
 }
 
+.control-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.text-input-modal {
+  width: min(440px, calc(100vw - 32px));
+}
+
+#remoteTextInput {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 10px;
+}
+
+.text-input-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .view-tabs {
   display: inline-flex;
   flex: 0 0 auto;

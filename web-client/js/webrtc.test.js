@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 function makeElement() {
   const classes = new Set();
+  const listeners = new Map();
   return {
     textContent: '',
     style: {},
@@ -31,7 +32,8 @@ function makeElement() {
         return true;
       },
     },
-    addEventListener() {},
+    listeners,
+    addEventListener(type, handler) { listeners.set(type, handler); },
     removeAttribute() {},
     setAttribute() {},
   };
@@ -123,6 +125,7 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
   WebRTC.socket = {
     on(event, handler) { socketHandlers.set(event, handler); },
   };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
   WebRTC.createInputChannel();
   WebRTC.setupSocketListeners();
 
@@ -131,6 +134,74 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
 
   assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
   clearTimeout(WebRTC._dcTimeout);
+});
+
+test('viewer waits for an active control lease before starting an offer and routes acknowledgements to transport first', () => {
+  const socketHandlers = new Map();
+  const emitted = [];
+  const order = [];
+  let socketOptions = null;
+  const { WebRTC } = loadWebRTC({
+    io(_base, options) {
+      socketOptions = options;
+      return {
+        connected: true,
+        on(event, handler) { socketHandlers.set(event, handler); },
+        emit(...args) { emitted.push(args); },
+        disconnect() {},
+      };
+    },
+    Input: {
+      init() {},
+      setActive() {},
+      setControlLease() {},
+      acceptKeyboardAck() { order.push('transport'); },
+    },
+    LatencyMonitor: { onInputAck() { order.push('latency'); } },
+  });
+  WebRTC.networkMode = 'auto';
+  WebRTC.createPeerConnection = () => {};
+  let offers = 0;
+  WebRTC.createOffer = () => { offers += 1; };
+  WebRTC.createSignalingSocket(true);
+  WebRTC.setupSocketListeners();
+
+  assert.equal(socketOptions.auth.inputProtocolVersion, 2);
+  socketHandlers.get('connected')({ hostOnline: true });
+  assert.equal(offers, 0);
+  assert.equal(emitted.at(-1)[0], 'control-acquire');
+
+  socketHandlers.get('control-grant')({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 4 });
+  assert.equal(offers, 1);
+  socketHandlers.get('input-ack')({ schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
+  assert.deepEqual(order, ['transport', 'latency']);
+  WebRTC.stopControlHeartbeat();
+});
+
+test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.tunnelRelayActive = true;
+
+  WebRTC.emitRelayStreamControl();
+
+  assert.equal(emitted[0][0], 'relay-stream-control');
+  assert.equal(Object.prototype.hasOwnProperty.call(WebRTC, 'relaySocket'), false);
+});
+
+test('read-only control UI requests takeover only when another viewer owns the lease', () => {
+  const emitted = [];
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState.hostOnline = true;
+  WebRTC.handleControlState({ state: 'FREE', controller: false });
+  assert.equal(elements.get('controlStatus').textContent, '只读');
+  elements.get('requestControlBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(emitted.at(-1)[1].takeover, false);
+  WebRTC.handleControlState({ state: 'ACTIVE', controller: false });
+  elements.get('requestControlBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(emitted.at(-1)[1].takeover, true);
 });
 
 test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
@@ -501,6 +572,7 @@ test('stale createOffer completion does not clear newer offer progress', async (
     connected: true,
     emit() {},
   };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
   WebRTC.pc = {
     getTransceivers: () => [],
     addTransceiver: () => ({}),
@@ -553,7 +625,7 @@ test('base64 relay frames ack after the browser image loads', () => {
 
   WebRTC.networkMode = 'tunnel';
   WebRTC.tunnelRelayActive = true;
-  WebRTC.relaySocket = {
+  WebRTC.socket = {
     connected: true,
     emit(event, payload) {
       emitted.push({ event, payload });
@@ -578,28 +650,21 @@ test('base64 relay frames ack after the browser image loads', () => {
   assert.equal(typeof emitted[0].payload.latencyMs, 'number');
 });
 
-test('relay socket connect emits start control during auto tunnel fallback', () => {
-  const handlers = new Map();
+test('main viewer socket emits start control during auto tunnel fallback', () => {
   const emitted = [];
-  const relaySocket = {
-    connected: false,
-    on(event, callback) {
-      handlers.set(event, callback);
-    },
+  const socket = {
+    connected: true,
     emit(...args) {
       emitted.push(args);
     },
-    disconnect() {},
   };
-  const { WebRTC, context } = loadWebRTC({
-    io: () => relaySocket,
-  });
+  const { WebRTC } = loadWebRTC();
 
   WebRTC.networkMode = 'auto';
   WebRTC.tunnelRelayActive = true;
+  WebRTC.socket = socket;
 
-  WebRTC.ensureRelaySocket();
-  handlers.get('connect')();
+  WebRTC.emitRelayStreamControl();
 
   assert.equal(
     emitted.some(([event]) => event === 'relay-stream-control'),

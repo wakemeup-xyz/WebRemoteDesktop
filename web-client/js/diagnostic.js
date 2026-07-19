@@ -97,17 +97,12 @@ const Diagnostic = {
     const sendBtn = document.getElementById('sendDiagBtn');
     const clearBtn = document.getElementById('clearDiagBtn');
     const area = document.getElementById('diagLogArea');
-    const keyArea = document.getElementById('keyboardDebugArea');
 
     if (!diagBtn) return;
 
     diagBtn.addEventListener('click', () => {
       area.value = this.logs.map((entry) => this.formatLogEntry(entry)).join('\n');
       area.scrollTop = area.scrollHeight;
-      if (keyArea && typeof Input !== 'undefined') {
-        keyArea.value = Input.getKeyboardDebugEntries().join('\n');
-        keyArea.scrollTop = keyArea.scrollHeight;
-      }
       modal.classList.remove('hidden');
     });
 
@@ -216,15 +211,21 @@ const Diagnostic = {
       trigger: meta.trigger || 'manual',
       reason: meta.reason || null,
       network: this.getNetworkSnapshot(),
-      keyboardDebug: [],
       keyboardMode: inputState?.keyboardMode || null,
       terminal: terminalState,
       inputState: inputState ? {
         keyboardMode: inputState.keyboardMode || null,
-        pendingKeys: Array.isArray(inputState.pendingKeys) ? inputState.pendingKeys.length : 0,
-        lastReleaseAllReason: inputState.lastReleaseAllReason || null,
-        lastKeyboardResetReason: inputState.lastKeyboardResetReason || null,
-        recentInputEvents: Array.isArray(inputState.recentInputEvents) ? inputState.recentInputEvents.slice(-20) : [],
+        keyboard: inputState.keyboard ? {
+          leaseState: inputState.keyboard.leaseState || null,
+          epoch: Number(inputState.keyboard.epoch || 0),
+          lastSent: Number(inputState.keyboard.lastSent || 0),
+          lastApplied: Number(inputState.keyboard.lastApplied || 0),
+          pendingCount: Number(inputState.keyboard.pendingCount || 0),
+          pressedCount: Number(inputState.keyboard.pressedCount || 0),
+          modifierMask: Number(inputState.keyboard.modifierMask || 0),
+          adapter: inputState.keyboard.adapter || null,
+          lastResetReason: inputState.keyboard.lastResetReason || null,
+        } : null,
       } : null,
       inputChannelTimeline: this.getInputChannelTimeline()
     };

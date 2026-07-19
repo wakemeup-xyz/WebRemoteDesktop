@@ -1,7 +1,10 @@
 const WebRTC = {
   pc: null,
   socket: null,
-  relaySocket: null,
+  controlState: { state: 'FREE', controller: false, lease: null, hostOnline: false },
+  _controlHeartbeatTimer: null,
+  _controlRequestId: 0,
+  _controlLifecycleBound: false,
   remoteStream: null,
   statsTimer: null,
   _statsSampler: null,
@@ -397,11 +400,8 @@ const WebRTC = {
     this.configureNetworkControls();
     this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
     this.createSignalingSocket(true);
-    if (this.networkMode === 'tunnel') {
-      this.startTunnelRelay();
-      return;
-    }
-    this.createPeerConnection();
+    this.bindControlLifecycle();
+    if (this.networkMode !== 'tunnel') this.createPeerConnection();
   },
 
   createSignalingSocket(forceRecreate = false) {
@@ -420,7 +420,7 @@ const WebRTC = {
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
     this.socket = io(socketBase, {
-      auth: { token, role: 'viewer' }
+      auth: { token, role: 'viewer', inputProtocolVersion: 2 }
     });
     this.setupSocketListeners();
     return this.socket;
@@ -634,8 +634,9 @@ const WebRTC = {
       console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
+      this.controlState.hostOnline = Boolean(data.hostOnline);
       if (data.hostOnline) {
-        this.createOffer();
+        this.requestControl();
       } else {
         updateLoadingText('等待Host上线...');
       }
@@ -645,6 +646,7 @@ const WebRTC = {
       console.log('[OFFER-DBG] host-status event: online=%s offerInProgress=%s pc=%s',
         data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
+        this.controlState.hostOnline = true;
         updateLoadingText('Host已上线，正在连接...');
         if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
           this.createPeerConnection();
@@ -654,8 +656,10 @@ const WebRTC = {
           console.warn('[NETWORK] Host came online but offerInProgress=true; forcing new offer');
           this.offerInProgress = false;
         }
-        this.createOffer();
+        this.requestControl();
       } else {
+        this.controlState.hostOnline = false;
+        this.freezeControl('host-offline');
         updateConnectionStatus('disconnected');
         updateLoadingText('Host已离线');
       }
@@ -689,6 +693,9 @@ const WebRTC = {
     });
 
     this.socket.on('input-ack', (data) => {
+      if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+        Input.acceptKeyboardAck(data);
+      }
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onInputAck(data);
       }
@@ -698,6 +705,7 @@ const WebRTC = {
       console.log('Signaling disconnected');
       updateConnectionStatus('disconnected');
       document.getElementById('remoteVideo').classList.remove('connected');
+      this.freezeControl('signal-disconnect');
       if (this.networkMode === 'tunnel' && !this.manualDisconnect) {
         this.scheduleReconnect('signal-disconnected');
       }
@@ -706,6 +714,104 @@ const WebRTC = {
     this.socket.on('relay-frame', (data) => {
       this.handleRelayFrame(data);
     });
+    this.socket.on('control-state', (data) => this.handleControlState(data));
+    this.socket.on('control-grant', (data) => this.handleControlGrant(data));
+    this.socket.on('control-revoked', () => this.freezeControl('control-revoked'));
+    this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
+    this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
+  },
+
+  hasActiveControl() {
+    return Boolean(this.controlState?.controller && this.controlState?.state === 'ACTIVE' && this.controlState?.lease);
+  },
+
+  requestControl() {
+    if (!this.socket?.connected || !this.controlState.hostOnline) return false;
+    const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
+    const takeover = this.controlState.state === 'ACTIVE' && !this.controlState.controller;
+    this.socket.emit('control-acquire', { requestId, takeover });
+    this.updateControlUI('正在切换');
+    return true;
+  },
+
+  handleControlState(data = {}) {
+    this.controlState = { ...this.controlState, ...data, lease: data.controller ? this.controlState.lease : null };
+    if (!data.controller) this.freezeControl(data.reason || 'control-readonly', false);
+    this.updateControlUI();
+  },
+
+  handleControlGrant(data = {}) {
+    if (!data.controller || typeof data.leaseId !== 'string' || !Number.isInteger(data.leaseEpoch)) {
+      this.freezeControl('invalid-control-grant');
+      return;
+    }
+    this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
+    if (typeof Input !== 'undefined') {
+      Input.init();
+      Input.setControlLease(this.controlState.lease);
+      Input.setActive(true);
+    }
+    this.startControlHeartbeat();
+    this.updateControlUI();
+    if (this.networkMode === 'tunnel') this.startTunnelRelay();
+    else this.createOffer();
+  },
+
+  freezeControl(reason, reset = true) {
+    if (reset && typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
+    this.stopControlHeartbeat();
+    if (typeof Input !== 'undefined') {
+      Input.setActive(false);
+      Input.setControlLease(null);
+    }
+    this.controlState = { ...this.controlState, controller: false, lease: null };
+    this.updateControlUI();
+  },
+
+  startControlHeartbeat() {
+    this.stopControlHeartbeat();
+    this._controlHeartbeatTimer = setInterval(() => {
+      const lease = this.controlState.lease;
+      if (this.hasActiveControl() && this.socket?.connected) {
+        this.socket.emit('control-heartbeat', { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch });
+      }
+    }, 3000);
+  },
+
+  stopControlHeartbeat() {
+    if (this._controlHeartbeatTimer) clearInterval(this._controlHeartbeatTimer);
+    this._controlHeartbeatTimer = null;
+  },
+
+  releaseControl(reason) {
+    const wasActive = this.hasActiveControl();
+    if (typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
+    if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
+    this.freezeControl(reason, false);
+  },
+
+  bindControlLifecycle() {
+    if (this._controlLifecycleBound) return;
+    this._controlLifecycleBound = true;
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseControl('visibility-hidden'); });
+    window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
+  },
+
+  updateControlUI(status) {
+    if (!status && !this.controlState.controller) status = '只读';
+    const label = status || (this.hasActiveControl() ? '已控制' : this.controlState.state === 'FREE' ? '只读' : '正在切换');
+    const statusEl = document.getElementById('controlStatus');
+    const button = document.getElementById('requestControlBtn');
+    if (statusEl) statusEl.textContent = label;
+    if (button) {
+      button.hidden = this.hasActiveControl();
+      button.textContent = this.controlState.state === 'ACTIVE' && !this.controlState.controller ? '请求接管' : '请求控制';
+      const dataset = button.dataset || (button.dataset = {});
+      if (!dataset.controlBound) {
+        dataset.controlBound = 'true';
+        button.addEventListener('click', (event) => { event.preventDefault(); this.requestControl(); });
+      }
+    }
   },
   
   createPeerConnection() {
@@ -809,7 +915,7 @@ const WebRTC = {
         }
         if (typeof Input !== 'undefined') {
           Input.init();
-          Input.setActive(true);
+          Input.setActive(this.hasActiveControl());
         }
         // Start latency clock sync after connection is stable
         setTimeout(() => {
@@ -1021,6 +1127,9 @@ const WebRTC = {
           return;
         }
         if (data.type === 'input_ack') {
+          if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+            Input.acceptKeyboardAck(data);
+          }
           if (typeof LatencyMonitor !== 'undefined') {
             LatencyMonitor.onInputAck(data);
           }
@@ -1075,6 +1184,10 @@ const WebRTC = {
   },
 
   startTunnelRelay() {
+    if (!this.hasActiveControl()) {
+      this.requestControl();
+      return;
+    }
     if (!this.socket || !this.socket.connected) {
       return;
     }
@@ -1092,54 +1205,14 @@ const WebRTC = {
     updateLoadingText('正在启动隧道中继...');
     updateConnectionStatus('connecting');
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
-    this.ensureRelaySocket();
-    if (this.relaySocket?.connected) {
-      this.emitRelayStreamControl();
-    }
-    if (typeof Input !== 'undefined') {
-      Input.init();
-      Input.setActive(true);
-    }
-  },
-
-  ensureRelaySocket() {
-    if (this.relaySocket && this.relaySocket.connected) {
-      return;
-    }
-    if (this.relaySocket) {
-      this.relaySocket.disconnect();
-      this.relaySocket = null;
-    }
-    const token = Auth.getToken();
-    const socketBase = (typeof RuntimeConfig !== 'undefined')
-      ? RuntimeConfig.getSocketBase()
-      : window.location.origin;
-    this.relaySocket = io(socketBase, {
-      auth: { token, role: 'relay-viewer' },
-      transports: ['websocket', 'polling']
-    });
-    this.relaySocket.on('connect', () => {
-      console.log('[TUNNEL] Relay socket connected');
-      if (this.tunnelRelayActive) {
-        this.emitRelayStreamControl();
-      }
-    });
-    this.relaySocket.on('relay-frame', (data) => {
-      this.handleRelayFrame(data);
-    });
-    this.relaySocket.on('disconnect', () => {
-      console.log('[TUNNEL] Relay socket disconnected');
-      if (this.tunnelRelayActive && !this.manualDisconnect) {
-        this.scheduleReconnect('relay-disconnected');
-      }
-    });
+    this.emitRelayStreamControl();
   },
 
   emitRelayStreamControl() {
     const width = Math.min(this.currentResolution.width || 960, 1280);
     const height = Math.min(this.currentResolution.height || 540, 720);
     const fps = width > 960 || height > 540 ? 6 : 8;
-    this.relaySocket.emit('relay-stream-control', {
+    this.socket?.emit('relay-stream-control', {
       enabled: true,
       width,
       height,
@@ -1148,14 +1221,8 @@ const WebRTC = {
   },
 
   stopTunnelRelay() {
-    if (this.relaySocket && this.relaySocket.connected && this.tunnelRelayActive) {
-      this.relaySocket.emit('relay-stream-control', { enabled: false });
-    }
+    if (this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { enabled: false });
     this.tunnelRelayActive = false;
-    if (this.relaySocket) {
-      this.relaySocket.disconnect();
-      this.relaySocket = null;
-    }
     document.body.classList.remove('tunnel-relay-active');
     const relayImage = document.getElementById('relayImage');
     if (relayImage) {
@@ -1199,8 +1266,8 @@ const WebRTC = {
         this.tunnelLastObjectUrl = objectUrl;
         this.tunnelPendingObjectUrl = '';
       }
-      if (this.relaySocket && this.relaySocket.connected) {
-        this.relaySocket.emit('relay-frame-ack', {
+      if (this.socket?.connected) {
+        this.socket.emit('relay-frame-ack', {
           frameId: frameId || this.tunnelLastFrameId,
           renderedAt: Date.now(),
           latencyMs: data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0
@@ -1249,6 +1316,10 @@ const WebRTC = {
   async createOffer() {
     console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
       this.networkMode, !!this.pc, this.offerInProgress);
+    if (!this.hasActiveControl()) {
+      this.requestControl();
+      return;
+    }
     if (this.networkMode === 'tunnel') {
       console.log('[OFFER-DBG] createOffer: tunnel mode, starting relay');
       this.startTunnelRelay();
@@ -1288,7 +1359,8 @@ const WebRTC = {
       if (epoch !== this._offerEpoch) return;
 
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
-      this.socket.emit('offer', { offer: this.pc.localDescription, epoch: epoch });
+      this.socket.emit('offer', { offer: this.pc.localDescription, epoch, schemaVersion: 2,
+        leaseId: this.controlState.lease.leaseId, leaseEpoch: this.controlState.lease.leaseEpoch });
       console.log('Offer sent (epoch=%d)', epoch);
     } catch (err) {
       console.error('Failed to create offer:', err);
@@ -1690,9 +1762,7 @@ const WebRTC = {
     this.inputMoveChannel = null;
     this._iceRestartAttempts = 0;
     this.stopMediaTelemetry();
-    if (typeof Input !== 'undefined') {
-      Input.setActive(false);
-    }
+    if (typeof Input !== 'undefined') Input.setActive(false);
 
     this._refreshing = false;
 
@@ -1822,9 +1892,7 @@ const WebRTC = {
       clearTimeout(this._dcReconnectTimer);
       this._dcReconnectTimer = null;
     }
-    if (typeof Input !== 'undefined') {
-      Input.setActive(false);
-    }
+    this.releaseControl('viewer-disconnect');
     this.stopMediaTelemetry();
     this.stopTunnelRelay();
     if (this.pc) {

@@ -21,7 +21,10 @@
     <span id="fpsDisplay">0 FPS</span>
     <span id="latencyDisplay">0 ms</span>
     <span id="candidateDisplay">链路 -</span>
-    <span id="keyInputDisplay" class="key-input-display">-</span>
+    <span id="keyInputDisplay" class="key-input-display">INACTIVE</span>
+    <span id="controlStatus" class="control-status">只读</span>
+    <button id="requestControlBtn" class="control-btn">请求控制</button>
+    <button id="textInputBtn" class="control-btn">文本输入</button>
     <button id="refreshBtn" class="control-btn">刷新画面</button>
     <button id="diagBtn" class="control-btn">诊断日志</button>
     <button id="toggleControlsBtn" class="control-btn">隐藏控件</button>
@@ -206,15 +209,22 @@
         </div>
         <div id="latencySync" style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">时钟同步: 未同步</div>
       </div>
-      <div id="keyboardDebugPanel" style="margin-bottom: 12px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: var(--radius-md);">
-        <h4 style="margin: 0 0 8px 0; color: var(--text-primary); font-size: 13px;">键盘链路视图</h4>
-        <textarea id="keyboardDebugArea" readonly style="width: 100%; height: 140px; background: rgba(0,0,0,0.4); color: #89ddff; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
-      </div>
       <textarea id="diagLogArea" readonly style="width: 100%; height: 320px; background: rgba(0,0,0,0.4); color: #c3e88d; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
       <div style="display: flex; gap: 10px; margin-top: 16px;">
         <button id="sendDiagBtn" class="modal-btn primary">发送日志到服务端</button>
         <button id="clearDiagBtn" class="modal-btn">清空日志</button>
         <button id="closeDiagBtn" class="modal-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="textInputModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="文本输入">
+    <div class="modal-content text-input-modal">
+      <h3>文本输入</h3>
+      <textarea id="remoteTextInput" maxlength="4096" rows="5" spellcheck="false" autocomplete="off"></textarea>
+      <div class="text-input-actions">
+        <button id="textInputSubmitBtn" class="modal-btn primary">发送</button>
+        <button id="textInputCancelBtn" class="modal-btn">取消</button>
       </div>
     </div>
   </div>
@@ -225,6 +235,8 @@
   <script src="js/link-quality-controller.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input-geometry.js"></script>
+  <script src="js/keyboard-transport.js"></script>
+  <script src="js/remote-keyboard-controller.js"></script>
   <script src="js/input.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/latency-monitor.js"></script>
