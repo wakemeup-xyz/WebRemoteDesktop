@@ -939,6 +939,7 @@ const WebRTC = {
         this.createPeerConnection();
         console.log('[OFFER-DBG] Created new PC on reconnect, pcState=%s', this.pc?.connectionState);
       }
+      this.renderPortSearchStatus();
     });
 
     this.socket.on('connected', (data) => {
@@ -946,6 +947,7 @@ const WebRTC = {
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
       this.controlState.hostOnline = Boolean(data.hostOnline);
+      this.renderPortSearchStatus();
       if (data.hostOnline) {
         this.requestControl();
       } else {

@@ -1674,6 +1674,33 @@ test('manual port search rejects non-direct modes and offline prerequisites', ()
   assert.equal(actions.length, 0);
 });
 
+test('socket connected event enables port search button when host is online', () => {
+  const socketHandlers = new Map();
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.networkMode = 'stun';
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit() {},
+    disconnect() {},
+  };
+  WebRTC.controlState = {
+    hostOnline: false,
+    controller: false,
+    state: 'FREE',
+    lease: null,
+  };
+  WebRTC.requestControl = () => {};
+  WebRTC.setupSocketListeners();
+  WebRTC.renderPortSearchStatus();
+  assert.equal(context.document.getElementById('portSearchBtn').disabled, true);
+
+  socketHandlers.get('connected')({ hostOnline: true });
+  assert.equal(WebRTC.controlState.hostOnline, true);
+  assert.equal(context.document.getElementById('portSearchBtn').disabled, false);
+  assert.equal(context.document.getElementById('portSearchBtn').textContent, '搜索端口');
+});
+
 test('active port search uses full refresh and does not call restartIce or tunnel fallback', async () => {
   const { WebRTC } = loadWebRTC();
   const actions = [];
