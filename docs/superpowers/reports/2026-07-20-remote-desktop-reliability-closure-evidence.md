@@ -78,35 +78,47 @@ Result: **82 pass / 0 fail**
 
 ## Runtime acceptance (Task 9)
 
-Live truth at 2026-07-20 (status-safe-wrd.sh):
+### Live truth (after loading this branch into local services)
 
-- formal public entry: `https://link.stockhub.wiki`
+- formal public entry: `https://link.stockhub.wiki` (`/health` ok)
 - local health: ok; `hostOnline: true`
-- safe signal-server: **stale pid** (running process does **not** prove this branch is loaded)
-- safe host: pid file missing (hostOnline still true via live socket)
-- safe URL file: `https://memo-patterns-curve-contacted.trycloudflare.com`
-- safe URL reachability: **http-invalid**
+- safe signal-server: **running** from worktree
+  `.../.worktrees/reliability-closure/signal-server` (pid recorded in `/tmp/wrd-safe-signal.pid`)
+- Host: `hostOnline:true` against the same local signal; Host LaunchAgent plist was temporarily pointed at the worktree for acceptance, then restored to the main checkout path for future restarts
+- safe URL file: `https://memo-patterns-curve-contacted.trycloudflare.com` (**unchanged** across local restarts)
+- safe URL reachability: **http-invalid** → public tunnel media remains BLOCKED by policy (no rebuild)
 - security warning: cloudflared token found in process arguments (pre-existing; not mutated)
+- served `viewer.html` includes `media-activity-runtime.js` (branch assets confirmed)
 
-Runtime rows:
+Artifacts (local only, not committed):
 
-| Gate | Status | Reason |
-|------|--------|--------|
-| 9A Dual Viewer ownership / port-search / takeover | NOT RUN | Requires Viewer sessions against **this branch** build; user must restart local signal-server + Host from `feat/remote-desktop-reliability-closure` without rebuilding tunnel |
-| 9A reset-blocked fault injection | NOT RUN | No safe runtime fault hook exercised; automated coverage only |
-| 9B WebRTC media suspend/resume P95 | NOT RUN | Needs live branch-loaded Host/Viewer |
-| 9C Ordinary-browser keyboard K-01–K-13 | NOT RUN | Needs ordinary Chrome + real Host |
-| 9C physical-keyboard / os-reserved | NOT RUN | Requires user physical assistance |
-| 9D Public tunnel media / viewport | BLOCKED | `/tmp/wrd-safe-current-url.txt` present but reachability `http-invalid`; tunnel not rebuilt per policy |
+- report: `/tmp/wrd-acceptance/task9-local-report.json`
+- screenshots: `/tmp/wrd-acceptance/A-*.png`, `/tmp/wrd-acceptance/B-*.png`
+- harness: `scripts/runtime_reliability_acceptance.py` (two independent Chromium contexts)
 
-Honest labels: `NOT RUN` / `BLOCKED` — not rewritten as pass.
+### Runtime rows
 
-Labels to use when filled later:
+| Gate | Status | Evidence / reason |
+|------|--------|-------------------|
+| 9A Dual Viewer single writer | **PASS** (`browser-protocol`) | A ACTIVE controller + lease; B read-only on same Host |
+| 9A read-only port search no-op | **PASS** | B `startPortSearch()=false`, no `control-acquire`, no timers/search |
+| 9A read-only port-search button disabled | **PASS** | B button disabled |
+| 9A controller canStartPortSearch | **PASS** | A predicate true while ACTIVE controller |
+| 9A takeover stops old search | **PASS** | A started search; B takeover; A loses controller and search stops |
+| 9A reset-blocked fault injection | **NOT RUN** | no safe runtime fault hook; automated unit/integration only |
+| 9B WebRTC connected | **PASS** (`browser-protocol`) | Chromium PeerConnection path runs after Start |
+| 9B media suspend applied phase | **PASS** | controller enters `suspending`/`suspended`, health suppressed, input/search gated |
+| 9B media resume applied phase | **PASS** | returns to `resuming`/`active` after clear + rendered-frame note |
+| 9B WebRTC suspend 15s / resume P95≤1500ms | **NOT RUN** | not timed over 15s/P95 matrix in this harness |
+| 9C keyboard controller ready | **PASS** (`browser-protocol`) | Input module + active lease present; not a full K-01–K-13 matrix |
+| 9C keyboard K-01–K-13 ordinary Chrome | **NOT RUN** | full matrix not executed |
+| 9C physical-keyboard | **NOT RUN** | requires user physical presses |
+| 9C os-reserved | **NOT RUN** | OS/browser may intercept before page |
+| 9C Terminal UI present | **PASS** | terminal panel present; full Terminal authority matrix not re-run |
+| 9D public tunnel media / viewport | **BLOCKED** | safe URL `http-invalid`; tunnel not rebuilt |
+| 9D formal entry health | **PASS** | `https://link.stockhub.wiki/health` ok |
 
-- `browser-protocol`
-- `physical-keyboard`
-- `os-reserved`
-- `PASS` / `FAIL` / `BLOCKED` / `NOT RUN`
+Honest labels kept: open rows remain **NOT RUN** / **BLOCKED**, not rewritten as full product acceptance.
 
 ## Constraints preserved
 
