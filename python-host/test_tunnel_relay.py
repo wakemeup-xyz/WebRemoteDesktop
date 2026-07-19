@@ -70,6 +70,31 @@ def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback():
     assert relay.profile_name == "low"
 
 
+def test_tunnel_relay_initial_profile_never_starts_on_high():
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+
+    assert relay._pick_initial_profile(1280, 720, 8) == "medium"
+    assert relay._pick_initial_profile(960, 540, 6) == "medium"
+    assert relay._pick_initial_profile(854, 480, 4) == "low"
+    assert relay._pick_initial_profile(640, 360, 2) == "survival"
+    assert relay._pick_initial_profile(1920, 1080, 30) == "medium"
+
+
+def test_tunnel_relay_step_up_caps_at_medium():
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+    relay._apply_profile("low", reason="test", log=False)
+
+    relay.good_ack_streak = 3
+    relay.ack(10, latency_ms=50)
+    assert relay.profile_name == "medium"
+
+    relay.good_ack_streak = 3
+    relay.ack(11, latency_ms=20)
+    assert relay.profile_name == "medium"
+
+
 def test_select_capture_monitor_skips_zero_sized_entries():
     monitor = select_capture_monitor([
         {"left": 0, "top": 0, "width": 0, "height": 0},

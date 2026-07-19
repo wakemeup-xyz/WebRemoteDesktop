@@ -79,12 +79,12 @@ const WebRTC = {
     relay: {
       label: '外网中继',
       state: '最稳',
-      hint: '适合公司网、校园网、跨运营商、蜂窝热点或 ICE 失败场景。需要服务端配置 TURN；若 TURN 不可用，只会提示你手动改用隧道中继。'
+      hint: '适合公司网、校园网、跨运营商、蜂窝热点或 ICE 失败场景。强制走 TURN，延迟通常明显高于直连。本机或同网访问请优先用本地直连/自动穿透。需要服务端配置 TURN；若 TURN 不可用，只会提示手动改用隧道中继。'
     },
     tunnel: {
       label: '隧道中继',
       state: '兜底',
-      hint: '最终兜底模式。视频通过 Cloudflare/Socket.IO 转发，FPS 较低但不依赖 UDP。'
+      hint: '最终兜底模式。视频经 Cloudflare/Socket.IO 转发 JPEG，默认从 540p 起推，FPS 较低但不依赖 UDP。本机访问请优先用本地直连/自动穿透。'
     }
   },
 
@@ -197,12 +197,13 @@ const WebRTC = {
 
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      const tunnelSize = this.getTunnelRelayRequestSize();
       this.socket.emit('relay-stream-control', {
         ...lease,
         enabled: desired === 'active',
-        width: Math.min(this.currentResolution.width || 960, 1280),
-        height: Math.min(this.currentResolution.height || 540, 720),
-        fps: 8,
+        width: tunnelSize.width,
+        height: tunnelSize.height,
+        fps: tunnelSize.fps,
       });
       // Tunnel path: treat stream control as the request; synthetic applied after emit.
       this.handleMediaActivityAck({
@@ -331,6 +332,12 @@ const WebRTC = {
       return this.serverConfig?.turnStatus === 'misconfigured'
         ? 'TURN 配置不完整，当前无法建立真实外网中继。'
         : '当前未配置 TURN，外网中继暂时不可用。';
+    }
+    if (this.networkMode === 'relay' && !this.isPublicOrigin()) {
+      return '当前页面在本机打开。外网中继会强制走 TURN，RTT 通常到数百毫秒且更容易卡顿/黑屏；同机访问请优先用“本地直连”或“自动穿透”。';
+    }
+    if (this.networkMode === 'tunnel' && !this.isPublicOrigin()) {
+      return '当前页面在本机打开。隧道中继是禁 UDP 外网的 Socket.IO 兜底；同机访问请优先用“本地直连”或“自动穿透”。';
     }
     if (this.networkMode === 'auto' && !this.hasTurnConfigured()) {
       return '当前为 STUN-only 自动模式。系统会保持你的选择不变；若直连失败，请按建议手动改用“隧道中继”。';
@@ -1920,12 +1927,22 @@ const WebRTC = {
     this.emitRelayStreamControl();
   },
 
+  getTunnelRelayRequestSize() {
+    // Cap at medium profile dimensions. Host never starts tunnel at "high";
+    // adaptive ACK feedback can step up later if the path is healthy.
+    const width = Math.min(Number(this.currentResolution?.width) || 960, 960);
+    const height = Math.min(Number(this.currentResolution?.height) || 540, 540);
+    return {
+      width: Math.max(320, width),
+      height: Math.max(180, height),
+      fps: 6,
+    };
+  },
+
   emitRelayStreamControl() {
     const lease = this.activeLeaseEnvelope();
     if (!lease || !this.socket?.connected) return false;
-    const width = Math.min(this.currentResolution.width || 960, 1280);
-    const height = Math.min(this.currentResolution.height || 540, 720);
-    const fps = width > 960 || height > 540 ? 6 : 8;
+    const { width, height, fps } = this.getTunnelRelayRequestSize();
     this.socket?.emit('relay-stream-control', {
       ...lease,
       enabled: true,

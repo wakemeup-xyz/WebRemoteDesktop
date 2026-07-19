@@ -467,11 +467,14 @@ class TunnelRelayStreamer:
             return TUNNEL_RELAY_PROFILE_ORDER.index("medium")
 
     def _pick_initial_profile(self, width, height, fps):
+        """Pick a conservative start profile.
+
+        Never open on "high": JPEG-over-Socket.IO easily backpressures at 1280x720,
+        which freezes the stream at survival. Stable ACK feedback can still step up.
+        """
         width = int(width or 0)
         height = int(height or 0)
         fps = int(fps or 0)
-        if width >= 1200 or height >= 680 or fps >= 8:
-            return "high"
         if width >= 900 or height >= 500 or fps >= 6:
             return "medium"
         if width >= 760 or height >= 420 or fps >= 4:
@@ -509,7 +512,10 @@ class TunnelRelayStreamer:
 
     def step_up_profile(self, reason):
         current = self._profile_index(self.profile_name)
-        next_index = max(0, current - 1)
+        # Never auto-promote above medium. High (1280x720 JPEG) frequently
+        # reintroduces pre-capture-backpressure even after a short good-ack streak.
+        floor_index = self._profile_index("medium")
+        next_index = max(floor_index, current - 1)
         return self._apply_profile(TUNNEL_RELAY_PROFILE_ORDER[next_index], reason)
 
     def pending_frame_count(self):

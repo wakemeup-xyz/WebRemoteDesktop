@@ -295,6 +295,43 @@ test('tunnel relay uses the authenticated viewer socket instead of a second rela
   assert.equal(Object.prototype.hasOwnProperty.call(WebRTC, 'relaySocket'), false);
 });
 
+test('tunnel relay stream control caps request size to medium profile', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '720p' };
+
+  const size = WebRTC.getTunnelRelayRequestSize();
+  assert.equal(size.width, 960);
+  assert.equal(size.height, 540);
+  assert.equal(size.fps, 6);
+
+  WebRTC.emitRelayStreamControl();
+  const payload = emitted.at(-1)[1];
+  assert.equal(payload.width, 960);
+  assert.equal(payload.height, 540);
+  assert.equal(payload.fps, 6);
+});
+
+test('local origin guidance warns against forced relay or tunnel', () => {
+  const { WebRTC } = loadWebRTC({
+    window: { location: { origin: 'http://127.0.0.1:8080', hostname: '127.0.0.1' }, RTCRtpReceiver: null },
+  });
+  WebRTC.serverConfig = {
+    turnConfigured: true,
+    turnStatus: 'ok',
+    iceServers: [{ urls: 'turn:144.225.130.238:3478?transport=udp', username: 'u', credential: 'p' }],
+  };
+
+  WebRTC.networkMode = 'relay';
+  assert.match(WebRTC.getDefaultNetworkGuidance(), /本机打开/);
+  assert.match(WebRTC.getDefaultNetworkGuidance(), /本地直连|自动穿透/);
+
+  WebRTC.networkMode = 'tunnel';
+  assert.match(WebRTC.getDefaultNetworkGuidance(), /本机打开/);
+});
+
 test('read-only control UI requests takeover only when another viewer owns the lease', () => {
   const emitted = [];
   const { WebRTC, elements } = loadWebRTC();
