@@ -12,6 +12,7 @@ function makeElement() {
     style: {},
     src: '',
     dataset: {},
+    disabled: false,
     classList: {
       add(...tokens) { tokens.forEach((token) => classes.add(token)); },
       remove(...tokens) { tokens.forEach((token) => classes.delete(token)); },
@@ -88,9 +89,46 @@ function loadWebRTC(overrides = {}) {
   }
   context.globalThis = context;
   vm.createContext(context);
+  if (!overrides.StunPortSearchController) {
+    const controllerSource = fs.readFileSync(
+      path.join(__dirname, 'stun-port-search-controller.js'),
+      'utf8',
+    );
+    vm.runInContext(controllerSource, context);
+    // Controller IIFE binds to window when present; mirror onto the sandbox global.
+    if (!context.StunPortSearchController && context.window?.StunPortSearchController) {
+      context.StunPortSearchController = context.window.StunPortSearchController;
+    }
+  }
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
   return { WebRTC: context.__WebRTC, context, elements };
+}
+
+function preparePortSearch(WebRTC, extras = {}) {
+  if (typeof WebRTC.stopPortSearch === 'function') {
+    WebRTC.stopPortSearch('test-reset');
+  }
+  WebRTC.networkMode = extras.networkMode || 'stun';
+  WebRTC.socket = extras.socket || {
+    connected: true,
+    emit() {},
+    disconnect() { this.connected = false; },
+    on() {},
+  };
+  WebRTC.controlState = extras.controlState || {
+    hostOnline: true,
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.manualDisconnect = false;
+  WebRTC._refreshing = false;
+  WebRTC.reconnectTimer = null;
+  // Keep timers short in tests so leftover deadlines cannot hang the runner.
+  WebRTC.PORT_SEARCH_ROUND_MS = extras.roundMs ?? 50;
+  WebRTC.PORT_SEARCH_RETRY_DELAY_MS = extras.retryDelayMs ?? 5;
+  return WebRTC;
 }
 
 function loadLinkQualityController() {
@@ -183,6 +221,23 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
 
   assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
   clearTimeout(WebRTC._dcTimeout);
+});
+
+test('DataChannel keyboard envelopes remain within the strict v2 protocol shape', () => {
+  const sent = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.inputChannel = {
+    readyState: 'open',
+    bufferedAmount: 0,
+    send(value) { sent.push(JSON.parse(value)); },
+  };
+
+  assert.equal(WebRTC.sendInput({
+    type: 'keyboard', action: 'reset', schemaVersion: 2,
+    leaseId: 'lease-000000000001', leaseEpoch: 4, seq: 1,
+    inputIds: ['input-1'], payload: { reason: 'manual' },
+  }), true);
+  assert.equal(Object.hasOwn(sent[0], 'transport'), false);
 });
 
 test('viewer waits for an active control lease before starting an offer and routes acknowledgements to transport first', () => {
@@ -1583,6 +1638,191 @@ test('public origin without TURN no longer forces tunnel mode during init', asyn
   assert.ok(uiMessages.every((message) => !String(message).includes('当前是公网入口且未配置 TURN')));
 });
 
+test('manual port search starts only when explicitly requested in stun mode', () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startPortSearch();
+  assert.equal(WebRTC.isPortSearchActive(), true);
+  assert.equal(actions.length, 1);
+  WebRTC.stopPortSearch('test');
+  assert.equal(WebRTC.isPortSearchActive(), false);
+});
+
+test('manual port search rejects non-direct modes and offline prerequisites', () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+  WebRTC.refresh = () => actions.push('refresh');
+
+  preparePortSearch(WebRTC, { networkMode: 'relay' });
+  assert.equal(WebRTC.startPortSearch(), false);
+  assert.equal(WebRTC.isPortSearchActive(), false);
+
+  preparePortSearch(WebRTC, { socket: { connected: false } });
+  assert.equal(WebRTC.startPortSearch(), false);
+
+  preparePortSearch(WebRTC, {
+    controlState: {
+      hostOnline: false,
+      controller: false,
+      state: 'FREE',
+      lease: null,
+    },
+  });
+  assert.equal(WebRTC.startPortSearch(), false);
+  assert.equal(actions.length, 0);
+});
+
+test('active port search uses full refresh and does not call restartIce or tunnel fallback', async () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+  preparePortSearch(WebRTC);
+  WebRTC.PORT_SEARCH_RETRY_DELAY_MS = 5;
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startPortSearch();
+  WebRTC.pc = {
+    restartIce() { actions.push('restartIce'); },
+    close() {},
+  };
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startTunnelRelay = () => actions.push('tunnel');
+  WebRTC.scheduleReconnect('ice-failed');
+  assert.equal(actions.includes('restartIce'), false);
+  assert.equal(actions.includes('tunnel'), false);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(actions.includes('refresh'), true);
+  WebRTC.stopPortSearch('cleanup');
+});
+
+test('port status renders ports and never renders candidate IP addresses', () => {
+  const { WebRTC, context } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => {};
+  WebRTC.startPortSearch();
+  WebRTC.recordPortSearchCandidate('viewer', {
+    candidate: 'candidate:1 1 udp 1 192.168.1.10 53114 typ host',
+  });
+  WebRTC.recordPortSearchCandidate('host', {
+    candidate: 'candidate:2 1 udp 1 203.0.113.10 49702 typ srflx',
+  });
+  const text = context.document.getElementById('candidateDisplay').textContent;
+  assert.match(text, /53114/);
+  assert.match(text, /49702/);
+  assert.equal(text.includes('192.168.1.10'), false);
+  assert.equal(text.includes('203.0.113.10'), false);
+  WebRTC.stopPortSearch('cleanup');
+});
+
+test('port search round timeout advances once and ignores stale generation', async () => {
+  const { WebRTC } = loadWebRTC();
+  const actions = [];
+  preparePortSearch(WebRTC);
+  WebRTC.PORT_SEARCH_ROUND_MS = 20;
+  WebRTC.PORT_SEARCH_RETRY_DELAY_MS = 5;
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startPortSearch();
+  assert.equal(actions.length, 1);
+  WebRTC.pc = { close() {} };
+  WebRTC.armPortSearchDeadline();
+
+  // Stale generation must not advance the search.
+  const staleGeneration = WebRTC._portSearchGeneration;
+  WebRTC._portSearchGeneration = staleGeneration + 1;
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(actions.length, 1);
+
+  // Restore generation and arm a fresh deadline that should advance.
+  WebRTC._portSearchGeneration = staleGeneration;
+  WebRTC.pc = { close() {} };
+  WebRTC.armPortSearchDeadline();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(actions.length >= 2, `expected timeout refresh, got ${actions.length}`);
+  WebRTC.stopPortSearch('cleanup');
+});
+
+test('port search success and stop restore button and clear timers', () => {
+  const { WebRTC, context } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => {};
+  WebRTC.startPortSearch();
+  assert.equal(WebRTC.isPortSearchActive(), true);
+  const btn = context.document.getElementById('portSearchBtn');
+  assert.equal(btn.textContent, '停止搜索');
+
+  const good = { selectedCandidateType: 'srflx', framesDecoded: 12, fps: 12 };
+  WebRTC.handlePortSearchMedia(good);
+  WebRTC.handlePortSearchMedia(good);
+  WebRTC.handlePortSearchMedia(good);
+  assert.equal(WebRTC.isPortSearchActive(), false);
+  assert.match(context.document.getElementById('candidateDisplay').textContent, /成功|端口搜索/);
+  assert.equal(btn.textContent, '搜索端口');
+  assert.equal(WebRTC._portSearchRoundTimer, null);
+
+  preparePortSearch(WebRTC);
+  WebRTC.startPortSearch();
+  WebRTC.stopPortSearch('user');
+  assert.equal(WebRTC.isPortSearchActive(), false);
+  assert.equal(btn.textContent, '搜索端口');
+});
+
+test('port search cancels on mode switch and disconnect and never tunnels on exhaustion', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const actions = [];
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startTunnelRelay = () => actions.push('tunnel');
+  WebRTC.startPortSearch();
+  assert.equal(WebRTC.isPortSearchActive(), true);
+
+  WebRTC.serverConfig = {
+    stunUrls: ['stun:stun.example.com:3478'],
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example.com:3478'],
+    iceServers: [{ urls: ['turn:turn.example.com:3478'], username: 'u', credential: 'p' }],
+  };
+  WebRTC.setNetworkMode('relay');
+  assert.equal(WebRTC.isPortSearchActive(), false);
+
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startPortSearch();
+  WebRTC.disconnect();
+  assert.equal(WebRTC.isPortSearchActive(), false);
+
+  // Exhaustion path: limit=1 so the first failure ends the search without tunnel.
+  preparePortSearch(WebRTC);
+  WebRTC.portSearchController = null;
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.startTunnelRelay = () => actions.push('tunnel');
+  // Reuse already-loaded controller factory from context.
+  WebRTC.portSearchController = context.StunPortSearchController.create({ limit: 1 });
+  WebRTC.portSearchController.start();
+  WebRTC.portSearchController.beginAttempt('manual');
+  WebRTC.schedulePortSearchRetry('timeout');
+  assert.equal(WebRTC.isPortSearchActive(), false);
+  assert.equal(WebRTC.portSearchController.snapshot().status, 'exhausted');
+  assert.equal(actions.includes('tunnel'), false);
+});
+
+test('collectNetworkSnapshot includes stunPortSearch without candidate IPs', () => {
+  const { WebRTC } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => {};
+  WebRTC.startPortSearch();
+  WebRTC.recordPortSearchCandidate('viewer', {
+    candidate: 'candidate:1 1 udp 1 10.0.0.8 40000 typ host',
+  });
+  const snapshot = WebRTC.collectNetworkSnapshot();
+  assert.ok(snapshot.stunPortSearch);
+  assert.equal(snapshot.stunPortSearch.status, 'searching');
+  // Compare via JSON to avoid vm-realm Array identity quirks under deepStrictEqual.
+  assert.equal(JSON.stringify(snapshot.stunPortSearch.viewerPorts), JSON.stringify([40000]));
+  const encoded = JSON.stringify(snapshot.stunPortSearch);
+  assert.equal(encoded.includes('10.0.0.8'), false);
+  WebRTC.stopPortSearch('cleanup');
+});
 
 test('UI init tolerates missing optional elements', () => {
   const fs = require('node:fs');

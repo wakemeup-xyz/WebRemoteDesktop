@@ -46,7 +46,14 @@ const WebRTC = {
     remote: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
     samples: { local: [], remote: [] }
   },
-  
+  portSearchController: null,
+  _portSearchGeneration: 0,
+  _portSearchRoundTimer: null,
+  _portSearchRetryTimer: null,
+  _portSearchRefreshOwned: false,
+  PORT_SEARCH_ROUND_MS: 10000,
+  PORT_SEARCH_RETRY_DELAY_MS: 250,
+
   config: {
     iceServers: []
   },
@@ -647,6 +654,7 @@ const WebRTC = {
       turnStatus: this.serverConfig?.turnStatus || 'unknown',
       selectedCandidatePair: this.selectedCandidatePair,
       candidateSummary: this.candidateSummary,
+      stunPortSearch: this.portSearchController?.snapshot() || null,
       pc: this.pc ? {
         connectionState: this.pc.connectionState || null,
         iceConnectionState: this.pc.iceConnectionState || null,
@@ -654,6 +662,264 @@ const WebRTC = {
         signalingState: this.pc.signalingState || null,
       } : null,
     };
+  },
+
+  ensurePortSearchController() {
+    if (this.portSearchController) {
+      return this.portSearchController;
+    }
+    const factory = (typeof StunPortSearchController !== 'undefined' && StunPortSearchController)
+      || (typeof window !== 'undefined' && window.StunPortSearchController)
+      || null;
+    if (!factory || typeof factory.create !== 'function') {
+      return null;
+    }
+    this.portSearchController = factory.create();
+    return this.portSearchController;
+  },
+
+  isPortSearchActive() {
+    const snap = this.portSearchController?.snapshot?.();
+    return Boolean(snap && snap.status === 'searching');
+  },
+
+  clearPortSearchTimers() {
+    if (this._portSearchRoundTimer) {
+      clearTimeout(this._portSearchRoundTimer);
+      this._portSearchRoundTimer = null;
+    }
+    if (this._portSearchRetryTimer) {
+      clearTimeout(this._portSearchRetryTimer);
+      this._portSearchRetryTimer = null;
+    }
+  },
+
+  extractCandidatePort(candidateLike) {
+    if (candidateLike && candidateLike.port != null) {
+      const structured = Number(candidateLike.port);
+      if (Number.isInteger(structured) && structured >= 1 && structured <= 65535) {
+        return structured;
+      }
+    }
+    const candidateString = typeof candidateLike === 'string'
+      ? candidateLike
+      : candidateLike?.candidate || '';
+    if (!candidateString) {
+      return null;
+    }
+    const raw = candidateString.startsWith('candidate:')
+      ? candidateString.slice(10)
+      : candidateString;
+    const parts = raw.trim().split(/\s+/);
+    if (parts.length < 6) {
+      return null;
+    }
+    const port = Number(parts[5]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return null;
+    }
+    return port;
+  },
+
+  renderPortSearchStatus() {
+    const btn = document.getElementById('portSearchBtn');
+    const candidateEl = document.getElementById('candidateDisplay');
+    const snap = this.portSearchController?.snapshot?.() || null;
+    const searching = snap?.status === 'searching';
+    const canStart = ['auto', 'stun'].includes(this.networkMode)
+      && Boolean(this.socket?.connected)
+      && Boolean(this.controlState?.hostOnline);
+
+    if (btn) {
+      btn.textContent = searching ? '停止搜索' : '搜索端口';
+      btn.disabled = searching ? false : !canStart;
+    }
+
+    if (!candidateEl || !snap) {
+      return;
+    }
+
+    const viewerPort = (snap.current?.viewerPorts || snap.viewerPorts || [])[0];
+    const hostPort = (snap.current?.hostPorts || snap.hostPorts || [])[0];
+    const viewerText = viewerPort ? `Viewer UDP ${viewerPort}` : 'Viewer UDP 分配中';
+    const hostText = hostPort ? `Host UDP ${hostPort}` : 'Host UDP 分配中';
+    const uniqueCount = Number(snap.uniquePortCount || 0);
+
+    if (snap.status === 'searching') {
+      candidateEl.textContent = `端口搜索 ${snap.attempt}/${snap.limit} · ${viewerText} · ${hostText} · 唯一端口 ${uniqueCount}`;
+    } else if (snap.status === 'succeeded') {
+      candidateEl.textContent = `端口搜索成功 第${snap.attempt}轮 · ${viewerText} · ${hostText} · 唯一端口 ${uniqueCount}`;
+    } else if (snap.status === 'exhausted') {
+      candidateEl.textContent = `端口搜索失败：已尝试 ${snap.limit} 轮`;
+    }
+  },
+
+  startPortSearch() {
+    if (!['auto', 'stun'].includes(this.networkMode)) {
+      this.updateNetworkUI('端口搜索仅在“自动穿透”或“外网直连”模式下可用，请先手动切换到直连模式。', 'warning');
+      this.renderPortSearchStatus();
+      return false;
+    }
+    if (!this.socket || !this.socket.connected) {
+      this.updateNetworkUI('信令未连接，无法开始端口搜索。', 'warning');
+      this.renderPortSearchStatus();
+      return false;
+    }
+    if (!this.controlState?.hostOnline) {
+      this.updateNetworkUI('Host 未上线，无法开始端口搜索。', 'warning');
+      this.renderPortSearchStatus();
+      return false;
+    }
+
+    const controller = this.ensurePortSearchController();
+    if (!controller) {
+      console.warn('[PORT-SEARCH] StunPortSearchController unavailable');
+      return false;
+    }
+
+    this.clearPortSearchTimers();
+    controller.start();
+    const attempt = controller.beginAttempt('manual');
+    if (!attempt.accepted) {
+      this.renderPortSearchStatus();
+      return false;
+    }
+
+    this._portSearchGeneration += 1;
+    this.renderPortSearchStatus();
+    this._portSearchRefreshOwned = true;
+    try {
+      this.refresh();
+    } finally {
+      this._portSearchRefreshOwned = false;
+    }
+    this.armPortSearchDeadline();
+    return true;
+  },
+
+  stopPortSearch(reason = 'user') {
+    if (this.portSearchController) {
+      const snap = this.portSearchController.snapshot();
+      if (snap.status === 'searching') {
+        this.portSearchController.stop(reason);
+      }
+    }
+    this.clearPortSearchTimers();
+    this._portSearchGeneration += 1;
+    this.renderPortSearchStatus();
+  },
+
+  recordPortSearchCandidate(side, candidateLike) {
+    if (!this.isPortSearchActive() || !this.portSearchController) {
+      return;
+    }
+    const port = this.extractCandidatePort(candidateLike);
+    if (port == null) {
+      return;
+    }
+    if (this.portSearchController.recordPort(side, port)) {
+      this.renderPortSearchStatus();
+    }
+  },
+
+  armPortSearchDeadline() {
+    if (!this.isPortSearchActive()) {
+      return;
+    }
+    if (this._portSearchRoundTimer) {
+      clearTimeout(this._portSearchRoundTimer);
+      this._portSearchRoundTimer = null;
+    }
+    const generation = this._portSearchGeneration;
+    const pc = this.pc;
+    const deadlineMs = Number(this.PORT_SEARCH_ROUND_MS) || 10000;
+    this._portSearchRoundTimer = setTimeout(() => {
+      this._portSearchRoundTimer = null;
+      if (generation !== this._portSearchGeneration) {
+        return;
+      }
+      if (pc && this.pc && pc !== this.pc) {
+        return;
+      }
+      if (!this.isPortSearchActive()) {
+        return;
+      }
+      this.schedulePortSearchRetry('timeout');
+    }, deadlineMs);
+  },
+
+  schedulePortSearchRetry(reason) {
+    if (!this.isPortSearchActive() || this.manualDisconnect) {
+      return;
+    }
+    if (this._portSearchRetryTimer) {
+      return;
+    }
+    if (this._portSearchRoundTimer) {
+      clearTimeout(this._portSearchRoundTimer);
+      this._portSearchRoundTimer = null;
+    }
+
+    const controller = this.portSearchController;
+    if (!controller) {
+      return;
+    }
+
+    const failed = controller.failAttempt(reason || 'retry');
+    if (!failed.accepted || failed.status === 'exhausted') {
+      this._portSearchGeneration += 1;
+      this.renderPortSearchStatus();
+      this.updateNetworkUI('端口搜索已达上限，未自动切换 TURN 或媒体隧道。', 'danger');
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+        Diagnostic.autoSendFailure('stun-port-search-exhausted');
+      }
+      return;
+    }
+
+    const generation = this._portSearchGeneration;
+    const delayMs = Number(this.PORT_SEARCH_RETRY_DELAY_MS) || 250;
+    this._portSearchRetryTimer = setTimeout(() => {
+      this._portSearchRetryTimer = null;
+      if (generation !== this._portSearchGeneration) {
+        return;
+      }
+      if (!this.isPortSearchActive() || this.manualDisconnect) {
+        return;
+      }
+      const next = controller.beginAttempt(reason || 'retry');
+      if (!next.accepted) {
+        this._portSearchGeneration += 1;
+        this.renderPortSearchStatus();
+        this.updateNetworkUI('端口搜索已达上限，未自动切换 TURN 或媒体隧道。', 'danger');
+        return;
+      }
+      this._portSearchGeneration += 1;
+      this.renderPortSearchStatus();
+      this._portSearchRefreshOwned = true;
+      try {
+        this.refresh();
+      } finally {
+        this._portSearchRefreshOwned = false;
+      }
+      this.armPortSearchDeadline();
+    }, delayMs);
+  },
+
+  handlePortSearchMedia(stats) {
+    if (!this.isPortSearchActive() || !this.portSearchController) {
+      return;
+    }
+    const snap = this.portSearchController.observeMedia(stats || {});
+    if (snap.status === 'succeeded') {
+      this.clearPortSearchTimers();
+      this._portSearchGeneration += 1;
+      this.renderPortSearchStatus();
+      console.log('[PORT-SEARCH] succeeded at attempt', snap.attempt);
+      return;
+    }
+    if (this.isPortSearchActive()) {
+      this.renderPortSearchStatus();
+    }
   },
   
   setupSocketListeners() {
@@ -692,6 +958,7 @@ const WebRTC = {
         data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
         this.controlState.hostOnline = true;
+        this.renderPortSearchStatus();
         updateLoadingText('Host已上线，正在连接...');
         if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
           this.createPeerConnection();
@@ -704,6 +971,11 @@ const WebRTC = {
         this.requestControl();
       } else {
         this.controlState.hostOnline = false;
+        if (this.isPortSearchActive()) {
+          this.stopPortSearch('host-offline');
+        } else {
+          this.renderPortSearchStatus();
+        }
         this.freezeControl('host-offline');
         updateConnectionStatus('disconnected');
         updateLoadingText('Host已离线');
@@ -730,6 +1002,7 @@ const WebRTC = {
         return;
       }
       try {
+        this.recordPortSearchCandidate('host', data.candidate);
         this.addCandidateSample('remote', data.candidate);
         await this.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } catch (err) {
@@ -894,6 +1167,7 @@ const WebRTC = {
     this.pc.onicecandidate = (event) => {
       console.log('Viewer ICE candidate:', event.candidate);
       if (event.candidate) {
+        this.recordPortSearchCandidate('viewer', event.candidate);
         this.addCandidateSample('local', event.candidate);
         this.socket.emit('ice-candidate', {
           target: 'host',
@@ -950,6 +1224,9 @@ const WebRTC = {
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
         this._iceRestartAttempts = 0;
+        if (this.isPortSearchActive()) {
+          this.armPortSearchDeadline();
+        }
 
         // Safety net: hide loading spinner (primary hide is in ontrack via video events)
         const loadingEl = document.getElementById('loading');
@@ -1234,10 +1511,7 @@ const WebRTC = {
       return false;
     }
 
-    channel.send(JSON.stringify({
-      ...data,
-      transport: 'datachannel'
-    }));
+    channel.send(JSON.stringify(data));
     return true;
   },
 
@@ -1555,6 +1829,9 @@ const WebRTC = {
     if (!this.networkModes[mode]) {
       return;
     }
+    if (this.isPortSearchActive()) {
+      this.stopPortSearch('mode-switch');
+    }
     this.clearFailureRecommendation();
     if (mode !== 'tunnel') {
       this._tunnelLockUntil = 0;
@@ -1569,11 +1846,13 @@ const WebRTC = {
     );
     if (modeState.unavailable) {
       this.enterUnavailableRelayState(modeState.reason);
+      this.renderPortSearchStatus();
       return;
     }
     if (this.socket && this.socket.connected) {
       this.refresh();
     }
+    this.renderPortSearchStatus();
   },
 
   updateNetworkUI(message, severity = '') {
@@ -1697,11 +1976,16 @@ const WebRTC = {
         latencyEl.textContent = latencyMs > 0 ? `${latencyMs} ms` : '- ms';
       }
       const candidateEl = document.getElementById('candidateDisplay');
-      if (candidateEl) {
+      if (candidateEl && !this.isPortSearchActive()) {
         const linkLabel = selectedCandidateType === 'relay' ? 'TURN中继' : selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx' ? 'STUN直连' : selectedCandidateType === 'host' ? '本地直连' : selectedCandidateType || '-';
         candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
       }
       this.lastCandidateType = selectedCandidateType || '';
+      this.handlePortSearchMedia({
+        selectedCandidateType,
+        framesDecoded,
+        fps,
+      });
 
       if (framesReceived === 0 && framesDecoded === 0 && !selectedCandidateType) {
         this.noMediaTicks += 1;
@@ -1780,6 +2064,9 @@ const WebRTC = {
 
   async refresh() {
     console.log('Refreshing WebRTC connection...');
+    if (!this._portSearchRefreshOwned && this.isPortSearchActive()) {
+      this.stopPortSearch('manual-refresh');
+    }
     this._refreshing = true;
     this.manualDisconnect = false;
     this.offerInProgress = false;
@@ -1850,6 +2137,14 @@ const WebRTC = {
 
   scheduleReconnect(reason) {
     if (this.manualDisconnect || this.reconnectTimer || this._refreshing) {
+      return;
+    }
+    if (this.isPortSearchActive()) {
+      if (this._portSearchRetryTimer || this._portSearchRefreshOwned) {
+        return;
+      }
+      console.warn(`[PORT-SEARCH] Routing reconnect to port-search retry after ${reason}`);
+      this.schedulePortSearchRetry(reason);
       return;
     }
     console.warn(`[RECOVERY] Scheduling WebRTC reconnect after ${reason}`);
@@ -1939,6 +2234,7 @@ const WebRTC = {
   },
 
   disconnect() {
+    this.stopPortSearch('disconnect');
     this.manualDisconnect = true;
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -2024,6 +2320,18 @@ document.addEventListener('DOMContentLoaded', () => {
       lastRefreshTime = now;
       WebRTC.refresh();
     });
+  }
+
+  const portSearchBtn = document.getElementById('portSearchBtn');
+  if (portSearchBtn) {
+    portSearchBtn.addEventListener('click', () => {
+      if (WebRTC.isPortSearchActive()) {
+        WebRTC.stopPortSearch('user');
+      } else {
+        WebRTC.startPortSearch();
+      }
+    });
+    WebRTC.renderPortSearchStatus();
   }
 
   // Resolution modal
