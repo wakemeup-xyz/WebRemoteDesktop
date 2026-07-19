@@ -42,10 +42,15 @@ function existingAbsoluteDirectory(name, raw) {
 }
 
 function parsePathEntries(raw) {
-  const entries = String(raw || '')
+  const value = String(raw || '');
+  if (!value) return [];
+
+  const entries = value
     .split(path.delimiter)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+    .map((entry) => entry.trim());
+  if (entries.some((entry) => !entry)) {
+    throw new Error('[config] WRD_TERMINAL_PATH_EXTRA must not contain empty directory entries');
+  }
 
   const normalizedEntries = entries.map((entry) => (
     existingAbsoluteDirectory('WRD_TERMINAL_PATH_EXTRA', entry)
@@ -133,7 +138,11 @@ function parseTerminalConfig(env = process.env) {
 }
 
 function loadTerminalConfig() {
-  return parseTerminalConfig(process.env);
+  const canonical = parseTerminalConfig(process.env);
+  return {
+    ...canonical,
+    recordIo: canonical.recordIoMetadata,
+  };
 }
 
 module.exports = {

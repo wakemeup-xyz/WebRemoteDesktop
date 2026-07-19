@@ -9,7 +9,7 @@ process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test
 process.env.HOST_SHARED_SECRET = process.env.HOST_SHARED_SECRET || 'test-host-secret';
 
 const { loadConfig } = require('../lib/config');
-const { parseTerminalConfig } = require('../lib/terminal/config');
+const { loadTerminalConfig, parseTerminalConfig } = require('../lib/terminal/config');
 
 const TERMINAL_ENV_KEYS = [
   'WRD_ENABLE_TERMINAL',
@@ -36,6 +36,25 @@ function terminalEnv(overrides = {}) {
     delete env[key];
   }
   return { ...env, ...overrides };
+}
+
+function withTerminalProcessEnv(overrides, callback) {
+  const previous = new Map(TERMINAL_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of TERMINAL_ENV_KEYS) {
+    delete process.env[key];
+  }
+  Object.assign(process.env, overrides);
+  try {
+    return callback();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 test('loadConfig exposes terminal defaults', () => {
@@ -116,6 +135,15 @@ test('parseTerminalConfig exposes normalized defaults', () => {
     allowPolling: false,
     auditLog: '',
     recordIoMetadata: false,
+  });
+});
+
+test('loadTerminalConfig preserves the direct-consumer recordIo alias', () => {
+  withTerminalProcessEnv({ WRD_TERMINAL_RECORD_IO: '1' }, () => {
+    const config = loadTerminalConfig();
+
+    assert.equal(config.recordIoMetadata, true);
+    assert.equal(config.recordIo, true);
   });
 });
 
@@ -216,6 +244,9 @@ for (const { key, value } of [
   { key: 'WRD_TERMINAL_PATH_EXTRA', value: 'relative/path' },
   { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/definitely/not/wrd-terminal' },
   { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/tmp:/private/tmp:/tmp' },
+  { key: 'WRD_TERMINAL_PATH_EXTRA', value: ':/tmp' },
+  { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/tmp:' },
+  { key: 'WRD_TERMINAL_PATH_EXTRA', value: '/tmp::/' },
 ]) {
   test(`parseTerminalConfig rejects invalid ${key}=${value}`, () => {
     assert.throws(
