@@ -1,0 +1,140 @@
+{
+  "valid": [
+    {
+      "name": "keyboard key down",
+      "input": {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": "lease-0123456789abcdef",
+        "leaseEpoch": 7,
+        "seq": 1,
+        "payload": {
+          "phase": "down",
+          "code": "KeyA",
+          "location": 0,
+          "repeat": false,
+          "modifiers": { "altKey": false, "ctrlKey": false, "metaKey": false, "shiftKey": false },
+          "locks": { "capsLock": false }
+        }
+      }
+    },
+    {
+      "name": "keyboard key repeat",
+      "input": {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": "lease-0123456789abcdef",
+        "leaseEpoch": 7,
+        "seq": 2,
+        "payload": {
+          "phase": "down",
+          "code": "ArrowDown",
+          "location": 0,
+          "repeat": true,
+          "modifiers": { "altKey": false, "ctrlKey": false, "metaKey": false, "shiftKey": false },
+          "locks": { "capsLock": false }
+        }
+      }
+    },
+    {
+      "name": "unicode text",
+      "input": {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "text",
+        "leaseId": "lease-0123456789abcdef",
+        "leaseEpoch": 7,
+        "seq": 3,
+        "payload": { "text": "A😀中" }
+      }
+    },
+    {
+      "name": "keyboard batch",
+      "input": {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "batch",
+        "leaseId": "lease-0123456789abcdef",
+        "leaseEpoch": 7,
+        "seq": 4,
+        "payload": {
+          "steps": [
+            {
+              "phase": "down",
+              "code": "ControlLeft",
+              "location": 1,
+              "repeat": false,
+              "modifiers": { "altKey": false, "ctrlKey": true, "metaKey": false, "shiftKey": false },
+              "locks": { "capsLock": false }
+            },
+            {
+              "phase": "up",
+              "code": "ControlLeft",
+              "location": 1,
+              "repeat": false,
+              "modifiers": { "altKey": false, "ctrlKey": false, "metaKey": false, "shiftKey": false },
+              "locks": { "capsLock": false }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "keyboard reset",
+      "input": {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "reset",
+        "leaseId": "lease-0123456789abcdef",
+        "leaseEpoch": 7,
+        "seq": 5,
+        "payload": { "reason": "window-blur" }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "invalid schema",
+      "expectedCode": "INVALID_SCHEMA_VERSION",
+      "input": { "schemaVersion": 3, "type": "keyboard", "action": "reset", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": { "reason": "manual" } }
+    },
+    {
+      "name": "missing lease",
+      "expectedCode": "MISSING_LEASE_ID",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "reset", "leaseEpoch": 1, "seq": 1, "payload": { "reason": "manual" } }
+    },
+    {
+      "name": "invalid seq",
+      "expectedCode": "INVALID_SEQ",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "reset", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 0, "payload": { "reason": "manual" } }
+    },
+    {
+      "name": "malformed physical code",
+      "expectedCode": "INVALID_PHYSICAL_CODE",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "key", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": { "phase": "down", "code": "key-a!", "location": 0, "repeat": false, "modifiers": { "altKey": false, "ctrlKey": false, "metaKey": false, "shiftKey": false }, "locks": { "capsLock": false } } }
+    },
+    {
+      "name": "text over 4096 Unicode scalars",
+      "expectedCode": "TEXT_TOO_LONG",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "text", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": { "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" } }
+    },
+    {
+      "name": "batch over 16",
+      "expectedCode": "BATCH_TOO_LARGE",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "batch", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": { "steps": [] } },
+      "batchSteps": 17
+    },
+    {
+      "name": "unknown reset reason",
+      "expectedCode": "INVALID_RESET_REASON",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "reset", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": { "reason": "unexpected" } }
+    },
+    {
+      "name": "unknown action",
+      "expectedCode": "UNKNOWN_ACTION",
+      "input": { "schemaVersion": 2, "type": "keyboard", "action": "paste", "leaseId": "lease-0123456789abcdef", "leaseEpoch": 1, "seq": 1, "payload": {} }
+    }
+  ]
+}
