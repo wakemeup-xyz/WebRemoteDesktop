@@ -63,6 +63,35 @@ test('takeover freezes old controller until host transition ack grants new lease
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...activeA.lease }), false);
 });
 
+test('takeover candidate disconnect preserves the reset barrier until host confirmation', () => {
+  const lease = makeLease();
+  const first = lease.requestControl({ viewerId: 'viewer-a' });
+  const activeA = lease.confirmTransition({ leaseEpoch: first.transition.leaseEpoch });
+  const takeover = lease.requestControl({ viewerId: 'viewer-b', takeover: true });
+
+  const disconnected = lease.viewerDisconnected('viewer-b');
+  assert.equal(disconnected.state, 'REVOKING');
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().controllerViewerId, null);
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...activeA.lease }), false);
+
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: takeover.transition.leaseEpoch }), {
+    state: 'FREE', reason: 'controller-disconnect',
+  });
+
+  const leaseForCancel = makeLease();
+  const firstForCancel = leaseForCancel.requestControl({ viewerId: 'viewer-a' });
+  leaseForCancel.confirmTransition({ leaseEpoch: firstForCancel.transition.leaseEpoch });
+  const takeoverForCancel = leaseForCancel.requestControl({ viewerId: 'viewer-b', takeover: true });
+  const cancelled = leaseForCancel.beginRelease({ viewerId: 'viewer-b', reason: 'manual' });
+  assert.equal(cancelled.state, 'REVOKING');
+  assert.equal(leaseForCancel.snapshot().controllerViewerId, null);
+  assert.deepEqual(leaseForCancel.confirmTransition({ leaseEpoch: takeoverForCancel.transition.leaseEpoch }), {
+    state: 'FREE', reason: 'manual',
+  });
+});
+
 test('stale transition acknowledgements cannot grant or alter the current transition', () => {
   const lease = makeLease();
   const first = lease.requestControl({ viewerId: 'viewer-a' });

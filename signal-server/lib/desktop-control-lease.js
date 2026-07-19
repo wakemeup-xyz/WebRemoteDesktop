@@ -123,6 +123,22 @@ class DesktopControlLease {
         transition: { type: 'control-transition', leaseEpoch, reason: reason || 'released' },
       };
     }
+    if (this._state === 'REVOKING' && this._pending && this._pending.viewerId === viewerId) {
+      this._pending = {
+        viewerId: null,
+        leaseEpoch: this._pending.leaseEpoch,
+        reason: reason || 'released',
+      };
+      return {
+        state: 'REVOKING',
+        reason: reason || 'released',
+        transition: {
+          type: 'control-transition',
+          leaseEpoch: this._pending.leaseEpoch,
+          reason: reason || 'released',
+        },
+      };
+    }
     if (this._pending && this._pending.viewerId === viewerId) {
       return this._free(reason || 'released');
     }
@@ -131,6 +147,22 @@ class DesktopControlLease {
 
   viewerDisconnected(viewerId) {
     this._expire();
+    if (this._state === 'REVOKING' && this._pending && this._pending.viewerId === viewerId) {
+      this._pending = {
+        viewerId: null,
+        leaseEpoch: this._pending.leaseEpoch,
+        reason: 'controller-disconnect',
+      };
+      return {
+        state: 'REVOKING',
+        reason: 'controller-disconnect',
+        transition: {
+          type: 'control-transition',
+          leaseEpoch: this._pending.leaseEpoch,
+          reason: 'controller-disconnect',
+        },
+      };
+    }
     if ((this._active && this._active.viewerId === viewerId)
       || (this._pending && this._pending.viewerId === viewerId)) {
       return this._free('controller-disconnect');
