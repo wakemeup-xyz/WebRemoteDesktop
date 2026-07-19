@@ -710,3 +710,109 @@ async def test_input_from_stale_viewer_is_ignored():
     })
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_media_activity_rejects_stale_lease_and_generation():
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+        "connectionGeneration": 1,
+    }
+    host._media_activity_binding = {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": "wrd-1",
+        "generation": 2,
+        "state": "active",
+    }
+    host._media_activity_suspended = False
+    host._media_activity_lock = asyncio.Lock()
+    acks = []
+
+    class FakeSio:
+        async def emit(self, event, payload):
+            acks.append((event, payload))
+
+    host.sio = FakeSio()
+
+    # Stale generation
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 2,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert acks[-1][0] == "media-activity-ack"
+    assert acks[-1][1]["applied"] is False
+    assert acks[-1][1]["reason"] == "stale-generation"
+    assert "leaseId" not in acks[-1][1]
+
+    # Wrong lease
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 3,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000099",
+        "leaseEpoch": 3,
+    })
+    assert acks[-1][1]["applied"] is False
+    assert acks[-1][1]["reason"] == "stale-lease"
+
+    # Valid newer generation
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 3,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert acks[-1][1]["applied"] is True
+    assert acks[-1][1]["generation"] == 3
+    assert host._media_activity_suspended is True
+    assert host._media_activity_binding["generation"] == 3
+
+
+@pytest.mark.asyncio
+async def test_media_activity_rejects_read_only_viewer_without_touching_binding():
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = {
+        "viewerId": "controller",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 1,
+    }
+    host._media_activity_binding = None
+    host._media_activity_suspended = False
+    host._media_activity_lock = asyncio.Lock()
+    acks = []
+
+    class FakeSio:
+        async def emit(self, event, payload):
+            acks.append((event, payload))
+
+    host.sio = FakeSio()
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "readonly",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 1,
+    })
+    assert acks[-1][1]["applied"] is False
+    assert acks[-1][1]["reason"] == "viewer-mismatch"
+    assert host._media_activity_binding is None

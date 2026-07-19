@@ -1157,12 +1157,16 @@ class WebRemoteHost:
         self._input_lifecycle_tasks = set()
         self._control_transition_lock = asyncio.Lock()
         self._offer_lock = asyncio.Lock()
+        self._media_activity_lock = asyncio.Lock()
         self._offer_epoch = 0
         self._reconnecting = False
         self._last_diag_network = None
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
         self._input_event_count = 0
         self._last_input_at_monotonic = None
+        # Per-offer media demand binding: generation is monotonic per attempt.
+        self._media_activity_binding = None
+        self._media_activity_suspended = False
 
     async def authenticate(self):
         try:
@@ -1205,6 +1209,7 @@ class WebRemoteHost:
         sio.on('viewer-stats', self.on_viewer_stats)
         sio.on('resolution-change', self.on_resolution_change)
         sio.on('media-profile-change', self.on_media_profile_change)
+        sio.on('media-activity-change', self.on_media_activity_change)
         sio.on('relay-stream-control', self.on_relay_stream_control)
         sio.on('relay-frame-ack', self.on_relay_frame_ack)
         return sio
@@ -2088,6 +2093,120 @@ class WebRemoteHost:
                 self.screen_track.apply_media_profile(next_profile)
         except Exception as e:
             logger.error(f"Error handling media profile change: {e}")
+
+    def _validate_media_activity_request(self, data):
+        """Pure validation for Signal-forwarded media-activity-change (no side effects)."""
+        if not isinstance(data, dict):
+            return False, "invalid-envelope", None
+        if data.get("schemaVersion") != 1:
+            return False, "invalid-schema", None
+        state = data.get("state")
+        if state not in ("active", "suspended"):
+            return False, "invalid-state", None
+        generation = data.get("generation")
+        if not isinstance(generation, int) or generation < 1:
+            return False, "invalid-generation", None
+        attempt_id = data.get("connectionAttemptId")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            return False, "invalid-attempt", None
+        viewer_id = data.get("viewerId")
+        if not isinstance(viewer_id, str) or not viewer_id:
+            return False, "invalid-viewer", None
+        lease_id = data.get("leaseId")
+        lease_epoch = data.get("leaseEpoch")
+        if not isinstance(lease_id, str) or len(lease_id) < 16:
+            return False, "invalid-lease", None
+        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+            return False, "invalid-lease", None
+
+        binding = getattr(self, "_active_input_binding", None)
+        if not isinstance(binding, dict):
+            return False, "no-active-binding", None
+        if binding.get("viewerId") != viewer_id:
+            return False, "viewer-mismatch", None
+        if binding.get("leaseId") != lease_id or binding.get("leaseEpoch") != lease_epoch:
+            return False, "stale-lease", None
+
+        current = getattr(self, "_media_activity_binding", None)
+        if isinstance(current, dict):
+            if (
+                current.get("connectionAttemptId") == attempt_id
+                and isinstance(current.get("generation"), int)
+                and generation <= current["generation"]
+            ):
+                return False, "stale-generation", None
+
+        return True, None, {
+            "schemaVersion": 1,
+            "state": state,
+            "generation": generation,
+            "connectionAttemptId": attempt_id,
+            "viewerId": viewer_id,
+            "leaseEpoch": lease_epoch,
+            "reasons": data.get("reasons") if isinstance(data.get("reasons"), list) else [],
+        }
+
+    async def on_media_activity_change(self, data):
+        """Apply lease-bound media suspend/resume demand from the active controller."""
+        lock = getattr(self, "_media_activity_lock", None)
+        if lock is None:
+            lock = self._media_activity_lock = asyncio.Lock()
+        async with lock:
+            ok, reason, normalized = self._validate_media_activity_request(data)
+            if not ok:
+                await self._emit_media_activity_ack(
+                    viewer_id=data.get("viewerId") if isinstance(data, dict) else None,
+                    state=data.get("state") if isinstance(data, dict) else "suspended",
+                    generation=data.get("generation") if isinstance(data, dict) else None,
+                    connection_attempt_id=data.get("connectionAttemptId") if isinstance(data, dict) else None,
+                    applied=False,
+                    reject_reason=reason,
+                )
+                return
+
+            # Task 4: validate and acknowledge binding only. Capture/sender
+            # suspension side effects land in Task 5.
+            self._media_activity_binding = {
+                "viewerId": normalized["viewerId"],
+                "connectionAttemptId": normalized["connectionAttemptId"],
+                "generation": normalized["generation"],
+                "state": normalized["state"],
+            }
+            self._media_activity_suspended = normalized["state"] == "suspended"
+            await self._emit_media_activity_ack(
+                viewer_id=normalized["viewerId"],
+                state=normalized["state"],
+                generation=normalized["generation"],
+                connection_attempt_id=normalized["connectionAttemptId"],
+                applied=True,
+            )
+
+    async def _emit_media_activity_ack(
+        self,
+        viewer_id,
+        state,
+        generation,
+        connection_attempt_id,
+        applied,
+        reject_reason=None,
+        keyframe_requested=False,
+    ):
+        sio = getattr(self, "sio", None)
+        if sio is None:
+            return
+        payload = {
+            "schemaVersion": 1,
+            "state": "active" if state == "active" else "suspended",
+            "generation": generation if isinstance(generation, int) else None,
+            "connectionAttemptId": connection_attempt_id if isinstance(connection_attempt_id, str) else None,
+            "applied": bool(applied),
+            "keyframeRequested": bool(keyframe_requested),
+            "viewerId": viewer_id if isinstance(viewer_id, str) else None,
+        }
+        if reject_reason:
+            payload["reason"] = str(reject_reason)[:64]
+        # Never echo leaseId.
+        await sio.emit("media-activity-ack", payload)
 
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""

@@ -1456,3 +1456,85 @@ test('applied reset-only ack cancels retries and frees the barrier', () => {
   assert.equal(viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'FREE');
   assert.equal(timers.size, 0);
 });
+
+
+test('media-activity-change requires active lease and monotonic generation', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  io.connect(viewerB);
+
+  const base = {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'wrd-1',
+    leaseId: 'lease-000000000001',
+    leaseEpoch: 1,
+  };
+
+  // No lease yet.
+  viewer.trigger('media-activity-change', base);
+  assert.equal(host.sent.some((e) => e.event === 'media-activity-change'), false);
+  assert.equal(viewer.sent.some((e) => e.event === 'media-activity-rejected'), true);
+
+  viewer.trigger('control-acquire', { requestId: 'm1' });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((e) => e.event === 'control-grant').data;
+
+  const ok = {
+    ...base,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  };
+  viewer.trigger('media-activity-change', ok);
+  const forwarded = host.sent.filter((e) => e.event === 'media-activity-change').at(-1);
+  assert.equal(Boolean(forwarded), true);
+  assert.equal(forwarded.data.viewerId, 'viewer-1');
+  assert.equal(forwarded.data.generation, 1);
+  assert.equal(forwarded.data.leaseId, grant.leaseId);
+
+  // Stale generation rejected.
+  viewer.trigger('media-activity-change', { ...ok, generation: 1, state: 'active' });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
+    'stale-generation',
+  );
+
+  // Read-only viewer cannot write.
+  viewerB.trigger('media-activity-change', {
+    ...ok,
+    generation: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'media-activity-change' && e.data.viewerId === 'viewer-2').length,
+    0,
+  );
+
+  // Host ack is routed without echoing secrets beyond lease-free fields.
+  host.trigger('media-activity-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'wrd-1',
+    applied: true,
+    viewerId: 'viewer-1',
+    leaseId: grant.leaseId,
+  });
+  const ack = viewer.sent.filter((e) => e.event === 'media-activity-ack').at(-1).data;
+  assert.equal(ack.applied, true);
+  assert.equal(ack.generation, 1);
+  assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+});

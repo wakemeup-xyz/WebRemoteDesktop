@@ -4,6 +4,10 @@ const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
+const {
+  validateMediaActivityRequest,
+  summarizeMediaActivity,
+} = require('../lib/media-activity-contract');
 
 // Kept deliberately static during the protocol migration. Do not add an
 // environment override: deployment must not silently re-enable v1 after its
@@ -140,6 +144,8 @@ function setupSignaling(io, options = {}) {
     setTimeoutFn,
     clearTimeoutFn,
   });
+  // viewerId -> { connectionAttemptId, generation }
+  const mediaActivityProgress = new Map();
 
   function emitControlEvent(type, fields = {}) {
     const payload = {
@@ -828,6 +834,64 @@ function setupSignaling(io, options = {}) {
       }
     });
 
+    socket.on('media-activity-change', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      const validated = validateMediaActivityRequest(data);
+      if (!validated.ok) {
+        socket.emit('media-activity-rejected', { reason: validated.code });
+        return;
+      }
+      const value = validated.value;
+      if (!authorizeViewer(socket, {
+        schemaVersion: 2,
+        leaseId: value.leaseId,
+        leaseEpoch: value.leaseEpoch,
+      }, { legacy: false })) {
+        socket.emit('media-activity-rejected', { reason: 'unauthorized' });
+        return;
+      }
+      const prior = mediaActivityProgress.get(socket.id);
+      if (prior
+        && prior.connectionAttemptId === value.connectionAttemptId
+        && value.generation <= prior.generation) {
+        socket.emit('media-activity-rejected', { reason: 'stale-generation' });
+        return;
+      }
+      mediaActivityProgress.set(socket.id, {
+        connectionAttemptId: value.connectionAttemptId,
+        generation: value.generation,
+      });
+      const summary = summarizeMediaActivity(value);
+      emitControlEvent('media_activity_requested', {
+        ...summary,
+        viewerId: socket.id,
+      });
+      if (!connections.host) {
+        socket.emit('media-activity-rejected', { reason: 'host-offline' });
+        return;
+      }
+      connections.host.emit('media-activity-change', {
+        ...value,
+        viewerId: socket.id,
+      });
+    });
+
+    socket.on('media-activity-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) return;
+      const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
+      if (!viewerId) return;
+      const viewerSocket = connections.viewers.get(viewerId);
+      if (!viewerSocket) return;
+      viewerSocket.emit('media-activity-ack', {
+        schemaVersion: 1,
+        state: data.state === 'active' ? 'active' : 'suspended',
+        generation: Number.isSafeInteger(data.generation) ? data.generation : null,
+        connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
+        applied: data.applied === true,
+        keyframeRequested: data.keyframeRequested === true,
+      });
+    });
+
     socket.on('relay-stream-control', (data) => {
       if (role !== 'viewer' && role !== 'relay-viewer') {
         console.warn(`Relay stream control rejected: role=${role} from ${socket.id}`);
@@ -953,6 +1017,7 @@ function setupSignaling(io, options = {}) {
         }
       } else if (role === 'viewer') {
         clearPendingInputs(socket.id);
+        mediaActivityProgress.delete(socket.id);
         const priorControl = controlSnapshot();
         const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
         clearLegacyRelayCompanion(socket.id, { stop: true });
