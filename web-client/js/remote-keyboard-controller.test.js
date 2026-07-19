@@ -21,6 +21,10 @@ function makeController(options = {}) {
       ready = false;
       return { accepted: true, seq: sent.length };
     },
+    acceptAck(ack) {
+      if (ack && ack.status === 'applied') ready = true;
+      return { status: ack && ack.status };
+    },
     canSendNewInput() { return ready; },
     getSnapshot() { return { state: ready ? 'ready' : 'blocked', pendingCount: 0 }; },
   };
@@ -33,6 +37,7 @@ function makeController(options = {}) {
   return {
     controller,
     sent,
+    acceptAck(ack) { return transport.acceptAck(ack); },
     setReady(value) { ready = value; },
     advance(ms) { time += ms; },
   };
@@ -308,6 +313,20 @@ test('a ten-second hold remains pressed until real keyup and a failed keyup requ
   assert.equal(failed.controller.getSnapshot().pressedKeyCount, 0);
   assert.equal(failed.sent.at(-1).action, 'reset');
   assert.equal(failed.controller.getSnapshot().state, 'RESET_REQUIRED');
+});
+
+test('controller resumes after the transport applies a failed-keyup reset barrier', () => {
+  const { controller, sent, acceptAck } = makeController({
+    failAction: (item, items) => item.action === 'key' && items.length === 2,
+  });
+  controller.handleDomEvent(keyEvent('keydown', { code: 'KeyL', key: 'l' }));
+  controller.handleDomEvent(keyEvent('keyup', { code: 'KeyL', key: 'l' }));
+  assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+  assert.equal(sent.at(-1).action, 'reset');
+
+  assert.deepEqual(acceptAck({ status: 'applied' }), { status: 'applied' });
+  assert.equal(controller.getSnapshot().state, 'READY');
+  assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyN', key: 'n' })), true);
 });
 
 test('mode change clears state through a reset barrier before exposing the new mode', () => {

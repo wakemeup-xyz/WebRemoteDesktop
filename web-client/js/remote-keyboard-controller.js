@@ -15,6 +15,7 @@
     let mode = MODE_VALUES.has(config.mode) ? config.mode : 'mac';
     let leaseActive = false;
     let resetRequired = false;
+    let resetBarrierPending = false;
     let pendingMode = null;
     let downSequence = 0;
     let altGrArmedUntil = 0;
@@ -30,10 +31,14 @@
     }
 
     function reconcilePendingMode() {
-      if (pendingMode && transportReady()) {
+      if (!transportReady()) return;
+      if (pendingMode) {
         mode = pendingMode;
         pendingMode = null;
+      }
+      if (resetRequired && resetBarrierPending) {
         resetRequired = false;
+        resetBarrierPending = false;
       }
     }
 
@@ -147,11 +152,13 @@
     function beginReset(reason) {
       pressed.clear();
       resetRequired = true;
+      resetBarrierPending = false;
       if (!leaseActive || !transport || typeof transport.resetBarrier !== 'function') {
         notify();
         return null;
       }
       const result = transport.resetBarrier(reason || 'manual');
+      resetBarrierPending = accepted(result);
       reconcilePendingMode();
       notify();
       return result;
@@ -239,6 +246,7 @@
       if (!leaseActive) {
         pressed.clear();
         resetRequired = false;
+        resetBarrierPending = false;
         pendingMode = null;
       }
       reconcilePendingMode();
