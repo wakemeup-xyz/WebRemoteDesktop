@@ -272,6 +272,7 @@ test('only the active presenter may resize the shared PTY', () => {
   });
 
   const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  pty.emitData('ready');
   manager.attachSession(created.sessionId, { clientId: 'browser-b' });
   manager.setActivePresenter(created.sessionId, { clientId: 'browser-a' });
   manager.resizeSession(created.sessionId, { clientId: 'browser-b', cols: 100, rows: 40 });
@@ -303,6 +304,7 @@ test('session manager exposes public observer, input, presenter, and resize meth
     cols: 80,
     rows: 24,
   });
+  pty.emitData('ready');
   manager.attachSession(created.sessionId, {
     clientId: 'browser-b',
     socketId: 'socket-b',
@@ -320,6 +322,157 @@ test('session manager exposes public observer, input, presenter, and resize meth
 
   assert.deepEqual(pty.writeCalls, ['pwd\n']);
   assert.deepEqual(pty.resizeCalls, [{ cols: 100, rows: 30 }]);
+});
+
+test('synchronous PTY spawn failure is stable, audited without raw secrets, and never pooled', () => {
+  const events = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory() {
+      throw new Error('spawn exploded with SECRET_VALUE');
+    },
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed' && !error.message.includes('SECRET_VALUE'),
+  );
+  assert.equal(manager.listSessions().length, 0);
+  assert.equal(events.some((entry) => entry.event === 'terminal_pty_spawn_failed'), true);
+  assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+test('first PTY output marks a starting session ready exactly once and clears its startup timer', () => {
+  let nowMs = Date.parse('2026-07-19T00:00:00.000Z');
+  const timers = [];
+  const cleared = [];
+  const events = [];
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    now: () => new Date(nowMs),
+    setTimeout(handler, delay) {
+      const timer = { handler, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) { cleared.push(timer); },
+    audit: {
+      info(event, meta) { events.push({ event, meta }); },
+      warn() {},
+      error() {},
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  const created = manager.createSession({ clientId: 'browser-a' });
+  assert.equal(created.status, 'attached');
+  assert.equal(created.processStatus, 'starting');
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 10000);
+
+  nowMs += 250;
+  pty.emitData('prompt$ ');
+  pty.emitData('next');
+
+  assert.equal(manager.getPoolSnapshot().sessions[0].processStatus, 'running');
+  assert.equal(cleared.length, 1);
+  const readyEvents = events.filter((entry) => entry.event === 'terminal_pty_ready');
+  assert.equal(readyEvents.length, 1);
+  assert.equal(readyEvents[0].meta.startupDurationMs, 250);
+});
+
+test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', () => {
+  let startupHandler;
+  const pty = createFakePty();
+  const errors = [];
+  const exits = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler) { startupHandler = handler; return { id: 1 }; },
+    clearTimeout() {},
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 1000,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    onError: (error) => errors.push(error),
+    onExit: (payload) => exits.push(payload),
+  });
+  startupHandler();
+  pty.emitExit({ exitCode: 1, signal: 1 });
+  pty.emitExit({ exitCode: 1, signal: 1 });
+
+  const retained = manager.attachSession(created.sessionId, { clientId: 'browser-b' });
+  assert.equal(retained.processStatus, 'failed');
+  assert.equal(manager.listSessions().length, 1);
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, 'pty_startup_timeout');
+  assert.equal(exits.length, 1);
+  manager.closeSession(created.sessionId, { reason: 'user-close' });
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+});
+
+test('PTY exit is processed once and exited sessions reject write and resize without touching the PTY', () => {
+  const pty = createFakePty();
+  const exits = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+  const created = manager.createSession({ clientId: 'browser-a', onExit: (payload) => exits.push(payload) });
+  pty.emitData('ready');
+  pty.emitExit({ exitCode: 7, signal: 0 });
+  pty.emitExit({ exitCode: 9, signal: 1 });
+
+  assert.throws(
+    () => manager.writeInput(created.sessionId, { clientId: 'browser-a', data: 'nope' }),
+    (error) => error.code === 'pty_exited',
+  );
+  assert.throws(
+    () => manager.resizeSession(created.sessionId, { clientId: 'browser-a', cols: 100, rows: 30 }),
+    (error) => error.code === 'pty_exited',
+  );
+  assert.deepEqual(pty.writeCalls, []);
+  assert.deepEqual(pty.resizeCalls, []);
+  assert.equal(exits.length, 1);
+  assert.equal(manager.getPoolSnapshot().sessions[0].status, 'attached');
+  assert.equal(manager.getPoolSnapshot().sessions[0].processStatus, 'exited');
+  assert.equal(manager._getSession(created.sessionId).exitCode, 7);
 });
 
 test('terminal session manager emits structured create, attach, and detach audit events', () => {

@@ -308,12 +308,13 @@ test('legacy terminal:detach and terminal:close aliases still map into shared se
 });
 
 test('shared observers may send input and must use the websocket active-presenter flow before resize mutates the PTY', () => {
-  const { namespace, sessionManager } = buildTerminalHarness();
+  const { namespace, sessionManager, getPty } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
   adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
+  getPty(created.sessionId).emitData('ready');
   adminB.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 120, rows: 32 });
 
   adminB.trigger('terminal:input', {
@@ -348,11 +349,12 @@ test('shared observers may send input and must use the websocket active-presente
 });
 
 test('terminal namespace responds to terminal:ping and terminal:input with latency metadata', () => {
-  const { namespace } = buildTerminalHarness();
+  const { namespace, getPty } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
   admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  getPty(created.sessionId).emitData('ready');
 
   admin.trigger('terminal:ping', {
     nonce: 'ping-1',
@@ -380,6 +382,31 @@ test('terminal namespace responds to terminal:ping and terminal:input with laten
   assert.equal(ack.data.bytes, Buffer.byteLength('pwd\n', 'utf8'));
   assert.equal(typeof ack.data.serverReceivedAt, 'number');
   assert.equal(typeof ack.data.serverSentAt, 'number');
+});
+
+test('terminal websocket sends lifecycle errors without acknowledging rejected input', () => {
+  const { namespace, getPty } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { title: 'Exited shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  const pty = getPty(created.sessionId);
+  pty.emitData('ready');
+  pty.emitExit({ exitCode: 0, signal: 0 });
+  const ackCountBefore = admin.sent.filter((message) => message.event === 'terminal:input_ack').length;
+
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'must-not-write',
+    inputId: 'rejected-input',
+  });
+
+  assert.equal(pty.writeCalls.length, 0);
+  assert.equal(admin.sent.filter((message) => message.event === 'terminal:input_ack').length, ackCountBefore);
+  assert.equal(
+    admin.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'pty_exited'),
+    true,
+  );
 });
 
 test('terminal:set_active_presenter rejects callers that are not attached observers', () => {

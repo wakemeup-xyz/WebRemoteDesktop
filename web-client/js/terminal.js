@@ -1,5 +1,23 @@
 const TERMINAL_ADMIN_TOKEN_KEY = 'wrd_terminal_admin_token';
 const LAST_ACTIVE_SESSION_KEY = 'wrd_terminal_last_active_session_id';
+const PROCESS_STATUSES = new Set(['starting', 'running', 'exited', 'failed', 'closed']);
+const TERMINAL_ERROR_MESSAGES = Object.freeze({
+  pty_starting: '终端正在启动',
+  pty_exited: '终端进程已退出',
+  pty_spawn_failed: '终端启动失败',
+  pty_startup_timeout: '终端启动超时',
+});
+
+function normalizeProcessStatus(value, fallback = 'running') {
+  return PROCESS_STATUSES.has(value) ? value : fallback;
+}
+
+function processStatusLabel(status) {
+  if (status === 'starting') return '启动中';
+  if (status === 'exited') return '已退出';
+  if (status === 'failed') return '启动失败';
+  return '';
+}
 
 function createLatencySeries(maxSamples = 20) {
   const samples = [];
@@ -53,6 +71,10 @@ function createTerminalState(options = {}) {
       sessionId: session.sessionId,
       title: session.title || previous.title || `Terminal ${fallbackIndex}`,
       status: session.status || previous.status || 'running',
+      processStatus: normalizeProcessStatus(
+        session.processStatus,
+        normalizeProcessStatus(previous.processStatus, 'running'),
+      ),
       warning: session.warning || previous.warning || '',
       observerCount: Number(session.observerCount ?? previous.observerCount ?? 0),
       activePresenterClientId: session.activePresenterClientId ?? previous.activePresenterClientId ?? null,
@@ -421,6 +443,11 @@ const TerminalPanel = {
     this.socket.on('terminal:session_attached', handleSessionAttached);
     this.socket.on('terminal:attached', handleSessionAttached);
     this.socket.on('terminal:output', (payload) => {
+      const session = this.state.getSession(payload.sessionId);
+      if (session?.processStatus === 'starting') {
+        this.state.updateSession(payload.sessionId, { processStatus: 'running' });
+        this.render();
+      }
       this.writeOutput(payload.sessionId, payload.data);
     });
     this.socket.on('terminal:input_ack', (payload) => {
@@ -433,7 +460,12 @@ const TerminalPanel = {
       this.writeReplay(payload.sessionId, payload.replay);
     });
     this.socket.on('terminal:exit', (payload) => {
-      this.state.updateStatus(payload.sessionId, 'exited');
+      this.state.updateSession(payload.sessionId, {
+        processStatus: normalizeProcessStatus(
+          payload.processStatus,
+          payload.errorCode ? 'failed' : 'exited',
+        ),
+      });
       this.writeOutput(payload.sessionId, `\r\n[process exited: ${payload.exitCode ?? ''} ${payload.signal || ''}]\r\n`);
       this.render();
     });
@@ -446,7 +478,14 @@ const TerminalPanel = {
       this.setWarning(payload.message || '终端会话较多，可能影响性能');
     });
     this.socket.on('terminal:error', (payload) => {
-      this.setStatus(payload.message || payload.code || 'Terminal error', 'error');
+      if (payload.sessionId && ['pty_spawn_failed', 'pty_startup_timeout'].includes(payload.code)) {
+        this.state.updateSession(payload.sessionId, { processStatus: 'failed' });
+        this.render();
+      }
+      this.setStatus(
+        TERMINAL_ERROR_MESSAGES[payload.code] || payload.message || payload.code || 'Terminal error',
+        'error',
+      );
     });
   },
 
@@ -672,6 +711,10 @@ const TerminalPanel = {
     }
     this.state.updateSession(session.sessionId, {
       status: session.status || 'attached',
+      processStatus: normalizeProcessStatus(
+        session.processStatus,
+        this.state.getSession(session.sessionId)?.processStatus || 'running',
+      ),
       observerCount: Number(session.observerCount ?? this.state.getSession(session.sessionId)?.observerCount ?? 0),
       activePresenterClientId: session.activePresenterClientId ?? this.state.getSession(session.sessionId)?.activePresenterClientId ?? null,
     });
@@ -742,7 +785,10 @@ const TerminalPanel = {
       term.open(container);
       this.getEchoController(sessionId);
       term.onData((data) => {
-        if (this.socket?.connected) {
+        if (
+          this.socket?.connected
+          && this.state.getSession(sessionId)?.processStatus === 'running'
+        ) {
           const inputId = this.makeInputId(sessionId);
           const clientSentAt = Date.now();
           this.pendingInputAcks.set(inputId, {
@@ -759,7 +805,10 @@ const TerminalPanel = {
         }
       });
       term.onResize((size) => {
-        if (this.socket?.connected) {
+        if (
+          this.socket?.connected
+          && this.state.getSession(sessionId)?.processStatus === 'running'
+        ) {
           this.socket.emit('terminal:resize', {
             sessionId,
             cols: size.cols,
@@ -986,6 +1035,7 @@ const TerminalPanel = {
   focusActiveTerminal() {
     const active = this.state.activeSessionId();
     if (!active) return false;
+    if (this.state.getSession(active)?.processStatus !== 'running') return false;
     const node = this.elements.workspace?.querySelector(`[data-session-id="${active}"]`);
     const isFocusedWithinNode = () => {
       const activeElement = document.activeElement;
@@ -1054,7 +1104,8 @@ const TerminalPanel = {
         button.className = 'terminal-session-tab';
         button.classList.toggle('active', session.sessionId === activeId);
         const observerLabel = session.observerCount > 0 ? ` · ${session.observerCount}人` : '';
-        button.textContent = `${session.title || session.sessionId}${observerLabel}`;
+        const processLabel = processStatusLabel(session.processStatus);
+        button.textContent = `${session.title || session.sessionId}${observerLabel}${processLabel ? ` · ${processLabel}` : ''}`;
         button.addEventListener('click', () => this.activateSession(session.sessionId));
 
         const close = document.createElement('span');
@@ -1071,6 +1122,12 @@ const TerminalPanel = {
 
     this.elements.workspace?.querySelectorAll('.terminal-instance').forEach((node) => {
       node.classList.toggle('hidden', node.dataset.sessionId !== activeId);
+      const session = this.state.getSession(node.dataset.sessionId);
+      const writable = session?.processStatus === 'running';
+      const helper = node.querySelector?.('.xterm-helper-textarea');
+      if (helper) helper.disabled = !writable;
+      const term = this.terms.get(node.dataset.sessionId);
+      if (term?.options) term.options.disableStdin = !writable;
     });
 
     this.setWarning(this.state.getWarning());

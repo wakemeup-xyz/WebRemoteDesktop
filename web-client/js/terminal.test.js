@@ -293,6 +293,17 @@ test('TerminalUI tracks multiple tabs and active attachment', () => {
   assert.equal(ui.activeSessionId(), 'term_1');
   assert.equal(ui.sessionCount(), 2);
   assert.equal(ui.getSession('term_1').status, 'attached');
+  assert.equal(ui.getSession('term_1').processStatus, 'running');
+});
+
+test('TerminalUI normalizes explicit PTY process state without changing observer presence', () => {
+  const { TerminalUI } = loadTerminal();
+  const ui = TerminalUI.create();
+
+  ui.openTab({ sessionId: 'term-exit', status: 'detached', processStatus: 'exited' });
+
+  assert.equal(ui.getSession('term-exit').status, 'detached');
+  assert.equal(ui.getSession('term-exit').processStatus, 'exited');
 });
 
 test('TerminalUI exposes a soft warning without blocking extra tabs', () => {
@@ -667,6 +678,81 @@ test('TerminalPanel restores replayed output after reattach using the last activ
   assert.ok(term, 'shared terminal instance should exist');
   assert.equal(term.buffer, 'npm test\r\n');
   assert.equal(TerminalPanel.state.getSession('term_keep').status, 'attached');
+});
+
+test('TerminalPanel keeps exited and failed sessions replayable and closable while disabling xterm input and resize', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_exit',
+    title: 'Finished shell',
+    status: 'attached',
+    processStatus: 'running',
+    creatorClientId: TerminalPanel.getBrowserSessionId(),
+  });
+  socketHandlers.get('terminal:exit')({ sessionId: 'term_exit', exitCode: 0, signal: 0 });
+  socketHandlers.get('terminal:replay')({
+    sessionId: 'term_exit',
+    replay: [{ seq: 1, data: 'finished\r\n' }],
+  });
+
+  const term = TerminalPanel.terms.get('term_exit');
+  const before = emitted.length;
+  term.onDataHandler('x');
+  term.onResizeHandler({ cols: 100, rows: 30 });
+
+  assert.equal(TerminalPanel.state.getSession('term_exit').status, 'attached');
+  assert.equal(TerminalPanel.state.getSession('term_exit').processStatus, 'exited');
+  assert.equal(emitted.slice(before).some((entry) => entry.event === 'terminal:input'), false);
+  assert.equal(emitted.slice(before).some((entry) => entry.event === 'terminal:resize'), false);
+  const node = elements.get('terminalWorkspace').__children.find((child) => child.dataset.sessionId === 'term_exit');
+  assert.equal(node.querySelector('.xterm-helper-textarea').disabled, true);
+  const tab = elements.get('terminalSessionTabs').__children.at(-1);
+  assert.match(tab.textContent, /已退出/);
+  assert.equal(tab.__children.some((child) => child.className === 'terminal-session-close'), true);
+
+  socketHandlers.get('terminal:session_created')({
+    sessionId: 'term_failed',
+    title: 'Failed shell',
+    status: 'attached',
+    processStatus: 'failed',
+  });
+  const failedTerm = TerminalPanel.terms.get('term_failed');
+  const failedBefore = emitted.length;
+  failedTerm.onDataHandler('x');
+  failedTerm.onResizeHandler({ cols: 100, rows: 30 });
+  assert.equal(emitted.slice(failedBefore).some((entry) => entry.event === 'terminal:input'), false);
+  assert.equal(emitted.slice(failedBefore).some((entry) => entry.event === 'terminal:resize'), false);
+  assert.equal(TerminalPanel.state.getSession('term_failed').processStatus, 'failed');
+  const failedTabs = elements.get('terminalSessionTabs').__children;
+  assert.match(failedTabs.at(-1).textContent, /启动失败/);
+  assert.equal(
+    failedTabs.at(-1).__children.some((child) => child.className === 'terminal-session-close'),
+    true,
+  );
+});
+
+test('TerminalPanel maps stable PTY errors to concise Chinese status', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  socketHandlers.get('terminal:error')({ code: 'pty_startup_timeout' });
+  assert.match(elements.get('terminalStatus').textContent, /启动超时/);
+  socketHandlers.get('terminal:error')({ code: 'pty_spawn_failed' });
+  assert.match(elements.get('terminalStatus').textContent, /启动失败/);
+  socketHandlers.get('terminal:error')({ code: 'pty_starting' });
+  assert.match(elements.get('terminalStatus').textContent, /正在启动/);
+  socketHandlers.get('terminal:error')({ code: 'pty_exited' });
+  assert.match(elements.get('terminalStatus').textContent, /已退出/);
 });
 
 test('TerminalPanel auto-attaches the default shared session from a fresh pool snapshot', () => {

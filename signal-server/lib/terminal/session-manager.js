@@ -2,6 +2,12 @@ const crypto = require('node:crypto');
 const { createTerminalAudit } = require('./audit');
 const { loadTerminalConfig } = require('./config');
 const { buildTerminalEnvironment, getTerminalShellArgs } = require('./environment');
+const {
+  PROCESS_STATUS,
+  assertProcessWritable,
+  makeTerminalError,
+  transitionProcessState,
+} = require('./lifecycle');
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -72,6 +78,8 @@ function createTerminalSessionManager(options = {}) {
   const logger = options.logger || console;
   const audit = options.audit || createTerminalAudit(logger);
   const ptyFactory = options.ptyFactory || defaultPtyFactory;
+  const scheduleTimeout = options.setTimeout || setTimeout;
+  const cancelTimeout = options.clearTimeout || clearTimeout;
   const sessions = new Map();
   const pool = {
     poolId: 'default',
@@ -93,6 +101,7 @@ function createTerminalSessionManager(options = {}) {
       cols: session.cols,
       rows: session.rows,
       status: session.status,
+      processStatus: session.processStatus,
       createdAt: session.createdAt,
       lastActiveAt: session.lastActiveAt,
       detachedReason: session.detachedReason || null,
@@ -100,6 +109,8 @@ function createTerminalSessionManager(options = {}) {
       activePresenterClientId: session.activePresenterClientId || null,
       creatorClientId: session.creatorClientId || null,
       lastReplaySeq: session.replayBuffer.lastSeq(),
+      exitCode: session.exitCode ?? null,
+      signal: session.signal ?? null,
     };
   }
 
@@ -164,6 +175,7 @@ function createTerminalSessionManager(options = {}) {
       socketId,
       onData: typeof input.onData === 'function' ? input.onData : existing.onData || null,
       onExit: typeof input.onExit === 'function' ? input.onExit : existing.onExit || null,
+      onError: typeof input.onError === 'function' ? input.onError : existing.onError || null,
       attachedAt: existing.attachedAt || timestamp(),
       lastAttachedAt: timestamp(),
     });
@@ -186,9 +198,84 @@ function createTerminalSessionManager(options = {}) {
     }
   }
 
+  function emitError(session, error) {
+    for (const observer of session.observers.values()) {
+      observer.onError?.(error);
+    }
+  }
+
+  function clearStartupTimer(session) {
+    if (session.startupTimer === null) return false;
+    const timer = session.startupTimer;
+    session.startupTimer = null;
+    cancelTimeout(timer);
+    return true;
+  }
+
+  function killPtyOnce(session) {
+    if (session.killRequested) return false;
+    session.killRequested = true;
+    if (session.pty && typeof session.pty.kill === 'function') {
+      session.pty.kill('SIGHUP');
+    }
+    return true;
+  }
+
+  function markPtyReady(session) {
+    if (session.processStatus !== PROCESS_STATUS.STARTING) return false;
+    session.processStatus = transitionProcessState(session.processStatus, 'ready');
+    clearStartupTimer(session);
+    const duration = Math.round(now().getTime() - session.startedAtMs);
+    const startupDurationMs = Math.min(
+      config.startupTimeoutMs,
+      Math.max(0, Number.isFinite(duration) ? duration : 0),
+    );
+    audit.info('terminal_pty_ready', {
+      sessionId: session.sessionId,
+      clientId: session.creatorClientId,
+      startupDurationMs,
+    });
+    return true;
+  }
+
+  function handleStartupTimeout(session) {
+    if (session.processStatus !== PROCESS_STATUS.STARTING || session.exitHandled) return;
+    clearStartupTimer(session);
+    session.processStatus = transitionProcessState(session.processStatus, 'timeout');
+    session.exitHandled = true;
+    session.exitCode = null;
+    session.signal = null;
+    session.lastActiveAt = timestamp();
+    const error = makeTerminalError('pty_startup_timeout', {
+      sessionId: session.sessionId,
+    });
+    audit.error('terminal_pty_startup_timeout', {
+      sessionId: session.sessionId,
+      clientId: session.creatorClientId,
+      code: error.code,
+      startupTimeoutMs: config.startupTimeoutMs,
+    });
+    killPtyOnce(session);
+    emitError(session, error);
+    emitExit(session, {
+      exitCode: null,
+      signal: null,
+      errorCode: error.code,
+      processStatus: session.processStatus,
+    });
+  }
+
   function wirePty(session, pty) {
     if (typeof pty.onData === 'function') {
       pty.onData((data) => {
+        if (
+          session.processStatus === PROCESS_STATUS.EXITED
+          || session.processStatus === PROCESS_STATUS.FAILED
+          || session.processStatus === PROCESS_STATUS.CLOSED
+        ) {
+          return;
+        }
+        markPtyReady(session);
         session.lastActiveAt = timestamp();
         if (config.recordIo) {
           audit.info('terminal_output_observed', {
@@ -203,11 +290,25 @@ function createTerminalSessionManager(options = {}) {
     }
     if (typeof pty.onExit === 'function') {
       pty.onExit(({ exitCode, signal }) => {
-        session.status = 'exited';
+        if (session.exitHandled) return;
+        session.exitHandled = true;
+        clearStartupTimer(session);
+        session.processStatus = transitionProcessState(session.processStatus, 'exit');
         session.exitCode = exitCode;
         session.signal = signal;
         session.lastActiveAt = timestamp();
-        emitExit(session, { exitCode, signal });
+        audit.info('terminal_pty_exited', {
+          sessionId: session.sessionId,
+          clientId: session.creatorClientId,
+          exitCode,
+          signal,
+          processStatus: session.processStatus,
+        });
+        emitExit(session, {
+          exitCode,
+          signal,
+          processStatus: session.processStatus,
+        });
       });
     }
   }
@@ -236,16 +337,29 @@ function createTerminalSessionManager(options = {}) {
     const cols = Number(input.cols || 80);
     const rows = Number(input.rows || 24);
     const title = String(input.title || 'Terminal ' + (sessions.size + 1));
-    const pty = ptyFactory(config.shell, getTerminalShellArgs(config.shell), {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: config.cwd || undefined,
-      env: buildTerminalEnvironment(process.env, {
-        pathEntries: config.pathEntries,
+    let pty;
+    try {
+      pty = ptyFactory(config.shell, getTerminalShellArgs(config.shell), {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: config.cwd || undefined,
+        env: buildTerminalEnvironment(process.env, {
+          pathEntries: config.pathEntries,
+          shell: config.shell,
+        }),
+      });
+    } catch {
+      audit.error('terminal_pty_spawn_failed', {
+        clientId: String(input.clientId || '').trim() || null,
+        socketId: String(input.socketId || '').trim() || null,
+        code: 'pty_spawn_failed',
         shell: config.shell,
-      }),
-    });
+        cwd: config.cwd || null,
+      });
+      throw makeTerminalError('pty_spawn_failed');
+    }
+    const startedAtMs = now().getTime();
     const session = {
       sessionId,
       title,
@@ -254,6 +368,7 @@ function createTerminalSessionManager(options = {}) {
       cols,
       rows,
       status: 'detached',
+      processStatus: PROCESS_STATUS.STARTING,
       createdAt: timestamp(),
       lastActiveAt: timestamp(),
       detachedReason: null,
@@ -262,11 +377,22 @@ function createTerminalSessionManager(options = {}) {
       replayBuffer: createReplayBuffer(config.replayBufferBytes),
       activePresenterClientId: null,
       creatorClientId: String(input.clientId || '').trim() || null,
+      startedAtMs,
+      startupTimer: null,
+      exitHandled: false,
+      killRequested: false,
+      exitCode: null,
+      signal: null,
     };
 
     wirePty(session, pty);
     addObserver(session, input);
     sessions.set(sessionId, session);
+    session.startupTimer = scheduleTimeout(
+      () => handleStartupTimeout(session),
+      config.startupTimeoutMs,
+    );
+    session.startupTimer?.unref?.();
     if (!pool.defaultSessionId) {
       pool.defaultSessionId = sessionId;
     }
@@ -289,7 +415,12 @@ function createTerminalSessionManager(options = {}) {
   function attachSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     addObserver(session, input);
-    if (input.cols && input.rows && session.activePresenterClientId === input.clientId) {
+    if (
+      session.processStatus === PROCESS_STATUS.RUNNING
+      && input.cols
+      && input.rows
+      && session.activePresenterClientId === input.clientId
+    ) {
       resizeSession(sessionId, {
         clientId: input.clientId,
         cols: input.cols,
@@ -393,6 +524,7 @@ function createTerminalSessionManager(options = {}) {
 
   function writeInput(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    assertProcessWritable(session.processStatus);
     if (!isObserverAttached(sessionId, input)) {
       throw Object.assign(new Error('terminal_session_not_found'), { code: 'terminal_session_not_found' });
     }
@@ -406,6 +538,7 @@ function createTerminalSessionManager(options = {}) {
 
   function resizeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    assertProcessWritable(session.processStatus);
     const clientId = String(input.clientId || '').trim();
     const socketId = String(input.socketId || '').trim();
     const cols = Number(input.cols || 0);
@@ -430,10 +563,11 @@ function createTerminalSessionManager(options = {}) {
 
   function closeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
-    if (session.pty && typeof session.pty.kill === 'function') {
-      session.pty.kill('SIGHUP');
-    }
-    session.status = 'closed';
+    clearStartupTimer(session);
+    session.processStatus = transitionProcessState(session.processStatus, 'close');
+    session.exitHandled = true;
+    killPtyOnce(session);
+    session.status = 'detached';
     session.detachedReason = input.reason || 'closed';
     session.lastActiveAt = timestamp();
     session.observers.clear();

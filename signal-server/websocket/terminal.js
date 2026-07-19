@@ -139,11 +139,20 @@ function setupTerminal(io, options = {}) {
             data,
           });
         },
-        onExit: ({ exitCode, signal }) => {
+        onError: (error) => {
+          socket.emit('terminal:error', {
+            sessionId,
+            code: error.code || 'terminal_process_failed',
+            message: error.message,
+          });
+        },
+        onExit: ({ exitCode, signal, errorCode, processStatus }) => {
           socket.emit('terminal:exit', {
             sessionId,
             exitCode,
             signal,
+            errorCode,
+            processStatus,
           });
         },
       };
@@ -164,11 +173,20 @@ function setupTerminal(io, options = {}) {
               data,
             });
           },
-          onExit: ({ exitCode, signal }) => {
+          onError: (error) => {
+            socket.emit('terminal:error', {
+              sessionId: sessionRef.sessionId,
+              code: error.code || 'terminal_process_failed',
+              message: error.message,
+            });
+          },
+          onExit: ({ exitCode, signal, errorCode, processStatus }) => {
             socket.emit('terminal:exit', {
               sessionId: sessionRef.sessionId,
               exitCode,
               signal,
+              errorCode,
+              processStatus,
             });
           },
         });
