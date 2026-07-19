@@ -16,11 +16,29 @@ const SYSTEM_PATH_ENTRIES = [
   '/usr/sbin',
   '/sbin',
 ];
+const ASCII_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 function getTerminalShellArgs(shell) {
   if (shell === '/bin/zsh') return ['-f', '-i'];
   if (shell === '/bin/bash') return ['--noprofile', '--norc', '-i'];
   throw new Error(`[terminal] unsupported shell: ${shell}`);
+}
+
+function validateSafePathValue(fieldName, rawValue, allowEmpty = false) {
+  const value = String(rawValue ?? '');
+  const isUnsafe = (
+    (!value && !allowEmpty) ||
+    (value && !path.isAbsolute(value)) ||
+    value.includes(path.delimiter) ||
+    ASCII_CONTROL_CHARACTER.test(value)
+  );
+  if (isUnsafe) {
+    const message = fieldName === 'HOME'
+      ? '[terminal] HOME must be an absolute path without delimiters or control characters'
+      : '[terminal] pathEntries must contain absolute paths without delimiters or control characters';
+    throw new Error(message);
+  }
+  return value;
 }
 
 function normalizeExplicitPathEntries(pathEntries) {
@@ -30,11 +48,8 @@ function normalizeExplicitPathEntries(pathEntries) {
   }
 
   return pathEntries.map((entry) => {
-    const normalized = String(entry || '').trim();
-    if (!normalized || !path.isAbsolute(normalized)) {
-      throw new Error('[terminal] pathEntries must contain absolute non-empty directories');
-    }
-    return path.normalize(normalized);
+    const validated = validateSafePathValue('pathEntries', entry);
+    return path.normalize(validated);
   });
 }
 
@@ -47,12 +62,12 @@ function buildTerminalEnvironment(baseEnv = process.env, options = {}) {
     }
   }
 
-  const home = String(source.HOME || '').trim();
+  const home = validateSafePathValue('HOME', source.HOME, true);
   const originalPathEntries = String(source.PATH || '')
     .split(path.delimiter)
     .map((entry) => entry.trim())
     .filter((entry) => path.isAbsolute(entry));
-  const userPathEntries = path.isAbsolute(home) ? [
+  const userPathEntries = home ? [
     path.join(home, '.homebrew', 'bin'),
     path.join(home, '.homebrew', 'sbin'),
     path.join(home, '.homebrew', 'opt', 'python@3.11', 'libexec', 'bin'),

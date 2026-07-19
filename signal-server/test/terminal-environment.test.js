@@ -62,17 +62,51 @@ test('buildTerminalEnvironment keeps only terminal-safe values and builds a dete
 test('buildTerminalEnvironment rejects invalid explicit PATH entries', () => {
   assert.equal(typeof buildTerminalEnvironment, 'function');
 
-  for (const entry of ['', 'relative/bin']) {
+  for (const entry of [
+    '',
+    'relative/bin',
+    `/trusted${path.delimiter}/attacker`,
+    '/trusted\0attacker',
+    '/trusted\nattacker',
+  ]) {
     assert.throws(
       () => buildTerminalEnvironment({ HOME: '/Users/tester' }, { pathEntries: [entry] }),
-      /absolute non-empty directories/,
+      (error) => {
+        assert.equal(
+          error.message,
+          '[terminal] pathEntries must contain absolute paths without delimiters or control characters',
+        );
+        if (entry) assert.equal(error.message.includes(entry), false);
+        return true;
+      },
     );
   }
 });
 
-test('buildTerminalEnvironment ignores relative inherited PATH sources', () => {
+test('buildTerminalEnvironment rejects unsafe HOME without disclosing its value', () => {
+  for (const home of [
+    'relative/home',
+    `/Users/tester${path.delimiter}/attacker`,
+    '/Users/tester\0attacker',
+    '/Users/tester\u001fattacker',
+  ]) {
+    assert.throws(
+      () => buildTerminalEnvironment({ HOME: home }),
+      (error) => {
+        assert.equal(
+          error.message,
+          '[terminal] HOME must be an absolute path without delimiters or control characters',
+        );
+        assert.equal(error.message.includes(home), false);
+        return true;
+      },
+    );
+  }
+});
+
+test('buildTerminalEnvironment allows empty HOME and ignores relative inherited PATH entries', () => {
   const env = buildTerminalEnvironment({
-    HOME: 'relative/home',
+    HOME: '',
     PATH: 'relative/bin:/usr/bin',
   });
 
