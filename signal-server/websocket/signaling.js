@@ -1018,28 +1018,17 @@ function setupSignaling(io, options = {}) {
       } else if (role === 'viewer') {
         clearPendingInputs(socket.id);
         mediaActivityProgress.delete(socket.id);
-        const priorControl = controlSnapshot();
         const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
         clearLegacyRelayCompanion(socket.id, { stop: true });
         legacyRelayOwnerIds.delete(socket.id);
         if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
         if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
+        // ACTIVE disconnect must go through the formal DesktopControlLease
+        // reset-only barrier (dispatchLeaseEffect). Never bypass with a
+        // side-channel sendControlTransition after FREE.
         if (leaseResult.transition) {
           dispatchLeaseEffect(leaseResult, leaseResult.reason || 'viewer-disconnected');
-        } else if (priorControl.controllerViewerId === socket.id
-          && Number.isSafeInteger(priorControl.leaseEpoch)) {
-          // Active disconnects free the Signal lease immediately. The Host
-          // still needs a same-epoch reset barrier before its pressed state
-          // may be reused by a subsequent controller.
-          sendControlTransition({
-            transition: {
-              type: 'control-transition',
-              leaseEpoch: priorControl.leaseEpoch,
-              reason: leaseResult.reason || 'controller-disconnect',
-            },
-          });
-        }
-        if (!leaseResult.transition) {
+        } else {
           broadcastControlState(leaseResult.reason || 'viewer-disconnected');
         }
         connections.viewers.delete(socket.id);
