@@ -11,6 +11,7 @@ const ERROR_MESSAGES = Object.freeze({
   pty_starting: 'Terminal process is still starting',
   pty_startup_timeout: 'Terminal process startup timed out',
   pty_exited: 'Terminal process has exited',
+  pty_cleanup_failed: 'Unable to clean up terminal process',
 });
 
 const TRANSITIONS = Object.freeze({

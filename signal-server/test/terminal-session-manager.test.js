@@ -615,7 +615,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
   pty.kill = function kill(signal) {
     this.killCalls.push(signal);
     killAttempts += 1;
-    if (killAttempts === 1) {
+    if (killAttempts <= 2) {
       throw new Error('kill SECRET_VALUE');
     }
   };
@@ -652,20 +652,24 @@ test('PTY startup timeout kill failure is retried successfully by close before p
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
   assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'user-close' }));
-  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
   assert.equal(manager.listSessions().length, 0);
   assert.equal(errors.length, 1);
   assert.equal(exits.length, 1);
 });
 
 for (const terminalState of ['running', 'exited']) {
-  test(`explicit close completes cleanup when ${terminalState} PTY kill throws`, () => {
+  test(`explicit close retains ${terminalState} session after two failed kills and a later close retries`, () => {
     const activeTimers = new Set();
     const events = [];
     const pty = createFakePty();
+    let killAttempts = 0;
     pty.kill = function kill(signal) {
       this.killCalls.push(signal);
-      throw new Error('close kill SECRET_VALUE');
+      killAttempts += 1;
+      if (killAttempts <= 2) {
+        throw new Error('close kill SECRET_VALUE');
+      }
     };
     const manager = createTerminalSessionManager({
       ptyFactory: () => pty,
@@ -696,15 +700,29 @@ for (const terminalState of ['running', 'exited']) {
       pty.emitExit({ exitCode: 0, signal: 0 });
     }
 
-    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'user-close' }));
+    assert.throws(
+      () => manager.closeSession(created.sessionId, { reason: 'user-close' }),
+      (error) => error.code === 'pty_cleanup_failed' && !error.message.includes('SECRET_VALUE'),
+    );
     assert.equal(session.processStatus, 'closed');
-    assert.equal(session.status, 'detached');
-    assert.equal(session.observers.size, 0);
+    assert.equal(session.status, 'attached');
+    assert.equal(session.observers.size, 1);
     assert.equal(activeTimers.size, 0);
-    assert.equal(manager.listSessions().length, 0);
-    assert.deepEqual(pty.killCalls, ['SIGHUP']);
+    assert.equal(manager.listSessions().length, 1);
+    assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
     assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
     assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+
+    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'retry-close' }));
+    assert.equal(session.status, 'detached');
+    assert.equal(session.observers.size, 0);
+    assert.equal(manager.listSessions().length, 0);
+    assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
+    assert.throws(
+      () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
+      (error) => error.code === 'terminal_session_not_found',
+    );
+    assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
   });
 }
 

@@ -50,4 +50,8 @@ test('terminal lifecycle creates stable errors without exposing mutable detail o
   assert.equal(error.message, 'Unable to start terminal');
   assert.deepEqual(error.details, details);
   assert.notEqual(error.details, details);
+
+  const cleanupError = makeTerminalError('pty_cleanup_failed');
+  assert.equal(cleanupError.code, 'pty_cleanup_failed');
+  assert.equal(cleanupError.message, 'Unable to clean up terminal process');
 });

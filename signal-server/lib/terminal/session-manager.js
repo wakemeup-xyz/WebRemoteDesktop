@@ -9,7 +9,8 @@ const {
   transitionProcessState,
 } = require('./lifecycle');
 
-const MAX_PTY_KILL_ATTEMPTS = 2;
+const MAX_PTY_CLEANUP_ATTEMPTS = 2;
+const MAX_AUDIT_KILL_ATTEMPTS = 9999;
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -229,7 +230,6 @@ function createTerminalSessionManager(options = {}) {
     }
     if (
       session.killState === 'in_progress'
-      || session.killAttemptCount >= MAX_PTY_KILL_ATTEMPTS
     ) {
       return { attempted: false, killed: false, attemptCount: session.killAttemptCount };
     }
@@ -240,7 +240,7 @@ function createTerminalSessionManager(options = {}) {
 
     session.killState = 'in_progress';
     session.killAttemptCount = Math.min(
-      MAX_PTY_KILL_ATTEMPTS,
+      MAX_AUDIT_KILL_ATTEMPTS,
       session.killAttemptCount + 1,
     );
     try {
@@ -258,6 +258,24 @@ function createTerminalSessionManager(options = {}) {
       });
       return { attempted: true, killed: false, attemptCount: session.killAttemptCount };
     }
+  }
+
+  function cleanupPty(session, maxAttempts = MAX_PTY_CLEANUP_ATTEMPTS) {
+    let operationAttemptCount = 0;
+    let result = {
+      attempted: false,
+      killed: session.killState === 'confirmed',
+      attemptCount: session.killAttemptCount,
+    };
+    while (!result.killed && operationAttemptCount < maxAttempts) {
+      result = killPtyOnce(session);
+      if (!result.attempted) break;
+      operationAttemptCount += 1;
+    }
+    return {
+      ...result,
+      operationAttemptCount,
+    };
   }
 
   function removeSessionFromPool(sessionId) {
@@ -454,16 +472,14 @@ function createTerminalSessionManager(options = {}) {
       clearStartupTimer(session);
       session.processStatus = transitionProcessState(session.processStatus, 'close');
       session.exitHandled = true;
-      let cleanupResult = killPtyOnce(session);
-      if (!cleanupResult.killed) {
-        cleanupResult = killPtyOnce(session);
-      }
+      const cleanupResult = cleanupPty(session);
       if (!cleanupResult.killed) {
         audit.error('terminal_pty_cleanup_failed', {
           sessionId,
           clientId: session.creatorClientId,
           code: 'pty_cleanup_failed',
-          attemptCount: Math.min(MAX_PTY_KILL_ATTEMPTS, session.killAttemptCount),
+          attemptCount: cleanupResult.operationAttemptCount,
+          totalAttemptCount: session.killAttemptCount,
         });
       }
       session.status = 'detached';
@@ -643,7 +659,19 @@ function createTerminalSessionManager(options = {}) {
     clearStartupTimer(session);
     session.processStatus = transitionProcessState(session.processStatus, 'close');
     session.exitHandled = true;
-    killPtyOnce(session);
+    const cleanupResult = cleanupPty(session);
+    if (!cleanupResult.killed) {
+      session.lastActiveAt = timestamp();
+      audit.error('terminal_pty_cleanup_failed', {
+        sessionId,
+        clientId: String(input.clientId || '').trim() || session.creatorClientId,
+        socketId: String(input.socketId || '').trim() || null,
+        code: 'pty_cleanup_failed',
+        attemptCount: cleanupResult.operationAttemptCount,
+        totalAttemptCount: session.killAttemptCount,
+      });
+      throw makeTerminalError('pty_cleanup_failed', { sessionId });
+    }
     session.status = 'detached';
     session.detachedReason = input.reason || 'closed';
     session.lastActiveAt = timestamp();
