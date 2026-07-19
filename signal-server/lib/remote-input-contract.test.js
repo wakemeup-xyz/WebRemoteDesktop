@@ -21,17 +21,6 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function keyStep(code = 'KeyA') {
-  return {
-    phase: 'down',
-    code,
-    location: 0,
-    repeat: false,
-    modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
-    locks: { capsLock: false },
-  };
-}
-
 test('valid v2 fixtures validate and preserve protocol envelope values', () => {
   for (const fixture of fixtures.valid) {
     const result = validateRemoteInput(fixture.input);
@@ -45,7 +34,6 @@ test('valid v2 fixtures validate and preserve protocol envelope values', () => {
 test('invalid v2 fixtures return their declared error code', () => {
   for (const fixture of fixtures.invalid) {
     const input = clone(fixture.input);
-    if (fixture.batchSteps) input.payload.steps = Array.from({ length: fixture.batchSteps }, () => keyStep());
     const result = validateRemoteInput(input);
     assert.deepEqual(result, { ok: false, code: fixture.expectedCode }, fixture.name);
   }
@@ -87,6 +75,12 @@ test('accepts ContextMenu, Convert, and NonConvert physical code shapes', () => 
     input.payload.code = code;
     assert.equal(validateRemoteInput(input).ok, true, code);
   }
+});
+
+test('rejects malformed one-character physical code', () => {
+  const input = clone(fixtures.valid[0].input);
+  input.payload.code = 'A';
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_PHYSICAL_CODE' });
 });
 
 test('exports the protocol limits', () => {

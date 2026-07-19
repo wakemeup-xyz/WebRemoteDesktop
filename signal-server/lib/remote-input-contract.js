@@ -38,7 +38,7 @@ function validateKeyPayload(payload) {
   if (!hasOnlyFields(payload, KEY_FIELDS)) return 'UNKNOWN_FIELD';
   if (payload.phase !== 'down' && payload.phase !== 'up') return 'INVALID_KEY_PHASE';
   if (typeof payload.code !== 'string' || payload.code.length === 0 || payload.code.length > 32
-    || !/^[A-Z][A-Za-z0-9]*$/.test(payload.code)) return 'INVALID_PHYSICAL_CODE';
+    || !/^[A-Z][A-Za-z0-9]+$/.test(payload.code)) return 'INVALID_PHYSICAL_CODE';
   if (!Number.isInteger(payload.location) || payload.location < 0 || payload.location > 3) return 'INVALID_LOCATION';
   if (typeof payload.repeat !== 'boolean') return 'INVALID_REPEAT';
   if (!isExactBooleanRecord(payload.modifiers, MODIFIER_FIELDS)) return 'INVALID_MODIFIERS';
