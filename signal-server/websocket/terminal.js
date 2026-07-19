@@ -161,6 +161,18 @@ function setupTerminal(io, options = {}) {
             processStatus,
           });
         },
+        onWarning: ({ code, stats }) => {
+          socket.emit('terminal:warning', {
+            sessionId,
+            code,
+            stats,
+          });
+        },
+        onPresence: ({ presence, pool }) => {
+          terminalNamespace.emit('terminal:presence', presence);
+          terminalNamespace.emit('terminal:pool_snapshot', pool);
+          terminalNamespace.emit('terminal:snapshot', pool);
+        },
       };
     }
 
@@ -208,6 +220,17 @@ function setupTerminal(io, options = {}) {
               errorCode,
               processStatus,
             });
+          },
+          onWarning: ({ code, stats }) => {
+            emitLifecycleEvent('terminal:warning', {
+              code,
+              stats,
+            });
+          },
+          onPresence: ({ presence, pool }) => {
+            terminalNamespace.emit('terminal:presence', presence);
+            terminalNamespace.emit('terminal:pool_snapshot', pool);
+            terminalNamespace.emit('terminal:snapshot', pool);
           },
         });
         sessionRef.sessionId = created.sessionId;
@@ -405,17 +428,32 @@ function setupTerminal(io, options = {}) {
           transport: getTransportName(),
         });
       } catch (err) {
-        audit.error('terminal_error', {
-          sessionId: payload.sessionId || null,
-          clientId,
-          socketId,
-          action: 'input',
-          code: err.code || 'terminal_input_failed',
-          message: err.message,
-        });
+        const code = err.code || 'terminal_input_failed';
+        if (code === 'terminal_input_rate_limited') {
+          audit.warn('terminal_input_rate_limited', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            code,
+            retryAfterMs: err.details?.retryAfterMs,
+            remainingBytes: err.details?.remainingBytes,
+            bytes: err.details?.bytes,
+          });
+        } else {
+          audit.error('terminal_error', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            action: 'input',
+            code,
+            message: err.message,
+          });
+        }
         socket.emit('terminal:error', {
-          code: err.code || 'terminal_input_failed',
+          sessionId: payload.sessionId || null,
+          code,
           message: err.message,
+          ...(err.details ? { details: err.details } : {}),
         });
       }
     });

@@ -259,6 +259,7 @@ test('shared session manager broadcasts PTY output to every attached observer an
   const deliveredB = [];
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
+    outputSchedule: (drain) => drain(),
     logger: { warn() {}, info() {}, error() {} },
     config: {
       enableTerminal: true,
@@ -536,6 +537,7 @@ test('synchronous PTY data during callback registration clears the timer and rea
   pty.onData = (handler) => handler('instant prompt');
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
+    outputSchedule: (drain) => drain(),
     setTimeout(handler, delay) {
       const timer = { handler, delay };
       activeTimers.add(timer);
@@ -1152,4 +1154,171 @@ test('session manager carries the legacy terminalPathEntries alias into the PTY 
   manager.createSession({ clientId: 'browser-a' });
 
   assert.equal(spawnedEnvironment.PATH.split(path.delimiter).at(-1), '/opt/legacy-tools');
+});
+
+test('session manager rate limits each attached observer by UTF-8 bytes and refills without detaching', () => {
+  let nowMs = 0;
+  const pty = createFakePty();
+  const auditEvents = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    now: () => new Date(nowMs),
+    outputSchedule: (drain) => drain(),
+    audit: {
+      info(event, meta) { auditEvents.push({ level: 'info', event, meta }); },
+      warn(event, meta) { auditEvents.push({ level: 'warn', event, meta }); },
+      error(event, meta) { auditEvents.push({ level: 'error', event, meta }); },
+    },
+    config: {
+      enabled: true,
+      adminPassword: 'test-terminal-admin-password',
+      inputRate: { bytesPerSecond: 10, burstBytes: 10 },
+    },
+  });
+  const created = manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
+  pty.emitData('ready');
+
+  manager.writeInput(created.sessionId, {
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    data: '\u4f60\u4f60\u4f60x',
+  });
+  assert.throws(
+    () => manager.writeInput(created.sessionId, {
+      clientId: 'browser-a',
+      socketId: 'socket-a',
+      data: 'SECRET_INPUT',
+    }),
+    (error) => {
+      assert.equal(error.code, 'terminal_input_rate_limited');
+      assert.deepEqual(error.details, {
+        retryAfterMs: 1200,
+        remainingBytes: 0,
+        bytes: 12,
+      });
+      return true;
+    },
+  );
+  assert.deepEqual(pty.writeCalls, ['\u4f60\u4f60\u4f60x']);
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'socket-a' }), true);
+
+  const rateAudit = auditEvents.find((entry) => entry.event === 'terminal_input_rate_limited');
+  assert.deepEqual(rateAudit.meta, {
+    sessionId: created.sessionId,
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    code: 'terminal_input_rate_limited',
+    retryAfterMs: 1200,
+    remainingBytes: 0,
+    bytes: 12,
+  });
+  assert.equal(JSON.stringify(rateAudit).includes('SECRET_INPUT'), false);
+
+  nowMs = 1200;
+  manager.writeInput(created.sessionId, {
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    data: 'accepted',
+  });
+  assert.deepEqual(pty.writeCalls, ['\u4f60\u4f60\u4f60x', 'accepted']);
+});
+
+test('session manager accepts legacy input-rate aliases and retains the bucket while attached', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    now: () => new Date(0),
+    outputSchedule: (drain) => drain(),
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalInputBytesPerSecond: 2,
+      terminalInputBurstBytes: 2,
+    },
+  });
+  const created = manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
+  pty.emitData('ready');
+  manager.writeInput(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a', data: 'a' });
+  manager.attachSession(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a' });
+  manager.writeInput(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a', data: 'b' });
+
+  assert.throws(
+    () => manager.writeInput(created.sessionId, {
+      clientId: 'browser-a', socketId: 'socket-a', data: 'c',
+    }),
+    (error) => error.code === 'terminal_input_rate_limited',
+  );
+});
+
+test('session manager detaches only an overflowing observer after replaying the full chunk', () => {
+  const pty = createFakePty();
+  const scheduled = [];
+  const slowWarnings = [];
+  const fastOutput = [];
+  const auditEvents = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    outputSchedule: (drain) => scheduled.push(drain),
+    audit: {
+      info(event, meta) { auditEvents.push({ level: 'info', event, meta }); },
+      warn(event, meta) { auditEvents.push({ level: 'warn', event, meta }); },
+      error(event, meta) { auditEvents.push({ level: 'error', event, meta }); },
+    },
+    config: {
+      enabled: true,
+      adminPassword: 'test-terminal-admin-password',
+      maxObserverQueueBytes: 5,
+      replayBufferBytes: 64,
+    },
+  });
+  const created = manager.createSession({
+    clientId: 'slow-client',
+    socketId: 'slow-socket',
+    onWarning: (warning) => slowWarnings.push(warning),
+  });
+  pty.emitData('12345');
+  manager.attachSession(created.sessionId, {
+    clientId: 'fast-client',
+    socketId: 'fast-socket',
+    onData: (data) => fastOutput.push(data),
+  });
+
+  pty.emitData('x');
+
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'slow-socket' }), false);
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'fast-socket' }), true);
+  assert.deepEqual(pty.killCalls, []);
+  assert.deepEqual(slowWarnings, [{
+    code: 'terminal_output_backpressure',
+    stats: { queuedBytes: 5, droppedChunks: 1 },
+  }]);
+  const overflowAudit = auditEvents.find((entry) => entry.event === 'terminal_output_backpressure');
+  assert.deepEqual(overflowAudit.meta, {
+    sessionId: created.sessionId,
+    clientId: 'slow-client',
+    socketId: 'slow-socket',
+    code: 'terminal_output_backpressure',
+    queuedBytes: 5,
+    droppedChunks: 1,
+  });
+  assert.equal(JSON.stringify(overflowAudit).includes('12345'), false);
+  assert.equal(JSON.stringify(slowWarnings).includes('12345'), false);
+
+  scheduled.shift()();
+  assert.deepEqual(fastOutput, ['x']);
+  assert.equal(manager.getPresence(created.sessionId).observerCount, 1);
+
+  const reattached = manager.attachSession(created.sessionId, {
+    clientId: 'slow-client',
+    socketId: 'slow-socket',
+  });
+  assert.deepEqual(reattached.replay.map((entry) => entry.data), ['12345', 'x']);
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'slow-socket' }), true);
+  manager.writeInput(created.sessionId, {
+    clientId: 'slow-client',
+    socketId: 'slow-socket',
+    data: 'fresh',
+  });
+  assert.deepEqual(pty.writeCalls, ['fresh']);
 });

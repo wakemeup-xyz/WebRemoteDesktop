@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { createTerminalAudit } = require('./audit');
 const { loadTerminalConfig } = require('./config');
 const { buildTerminalEnvironment, getTerminalShellArgs } = require('./environment');
+const { TerminalInputBucket, TerminalOutputDispatcher } = require('./flow-control');
 const {
   PROCESS_STATUS,
   assertProcessWritable,
@@ -58,6 +59,7 @@ function createTerminalSessionManager(options = {}) {
     rawConfig.terminalRecordIo ??
     false
   );
+  const rawInputRate = rawConfig.inputRate ?? rawConfig.terminalInputRate ?? {};
   const config = {
     enabled: Boolean(
       rawConfig.enabled ??
@@ -77,6 +79,25 @@ function createTerminalSessionManager(options = {}) {
     recordIoMetadata,
     recordIo: recordIoMetadata,
     replayBufferBytes: Number(rawConfig.replayBufferBytes ?? rawConfig.terminalReplayBufferBytes ?? 262144),
+    inputRate: {
+      bytesPerSecond: Number(
+        rawInputRate.bytesPerSecond
+        ?? rawConfig.inputBytesPerSecond
+        ?? rawConfig.terminalInputBytesPerSecond
+        ?? 65536
+      ),
+      burstBytes: Number(
+        rawInputRate.burstBytes
+        ?? rawConfig.inputBurstBytes
+        ?? rawConfig.terminalInputBurstBytes
+        ?? 131072
+      ),
+    },
+    maxObserverQueueBytes: Number(
+      rawConfig.maxObserverQueueBytes
+      ?? rawConfig.terminalMaxObserverQueueBytes
+      ?? 524288
+    ),
   };
   const now = options.now || (() => new Date());
   const logger = options.logger || console;
@@ -84,6 +105,7 @@ function createTerminalSessionManager(options = {}) {
   const ptyFactory = options.ptyFactory || defaultPtyFactory;
   const scheduleTimeout = options.setTimeout || setTimeout;
   const cancelTimeout = options.clearTimeout || clearTimeout;
+  const outputSchedule = options.outputSchedule || setImmediate;
   const sessions = new Map();
   const cleanupQuarantine = new Map();
   const systemCloseCapability = Object.freeze({});
@@ -186,8 +208,42 @@ function createTerminalSessionManager(options = {}) {
       onData: typeof input.onData === 'function' ? input.onData : existing.onData || null,
       onExit: typeof input.onExit === 'function' ? input.onExit : existing.onExit || null,
       onError: typeof input.onError === 'function' ? input.onError : existing.onError || null,
+      onWarning: typeof input.onWarning === 'function' ? input.onWarning : existing.onWarning || null,
+      onPresence: typeof input.onPresence === 'function' ? input.onPresence : existing.onPresence || null,
+      inputBucket: existing.inputBucket || new TerminalInputBucket({
+        ...config.inputRate,
+        now: () => now().getTime(),
+      }),
       attachedAt: existing.attachedAt || timestamp(),
       lastAttachedAt: timestamp(),
+    });
+    session.outputDispatcher.attach(observerId, {
+      onData(data, metadata) {
+        session.observers.get(observerId)?.onData?.(data, metadata);
+      },
+      onWarning(warning) {
+        const observer = session.observers.get(observerId);
+        if (!observer) return;
+        audit.warn('terminal_output_backpressure', {
+          sessionId: session.sessionId,
+          clientId: observer.clientId || null,
+          socketId: observer.socketId || null,
+          code: warning.code,
+          queuedBytes: warning.stats.queuedBytes,
+          droppedChunks: warning.stats.droppedChunks,
+        });
+        observer.onWarning?.(warning);
+      },
+      onDetach(reason) {
+        const observer = session.observers.get(observerId);
+        if (!observer) return;
+        const onPresence = observer.onPresence;
+        detachObserver(session.sessionId, { observerId, reason });
+        onPresence?.({
+          presence: getPresence(session.sessionId),
+          pool: getPoolSnapshot(),
+        });
+      },
     });
     if (!session.activePresenterClientId) {
       session.activePresenterClientId = clientId;
@@ -202,7 +258,7 @@ function createTerminalSessionManager(options = {}) {
       replaySeq: replayEntry.seq,
     });
     for (const observer of session.observers.values()) {
-      observer.onData?.(replayEntry.data, metadata);
+      session.outputDispatcher.enqueue(observer.observerId, replayEntry.data, metadata);
     }
   }
 
@@ -494,6 +550,10 @@ function createTerminalSessionManager(options = {}) {
       pty,
       observers: new Map(),
       replayBuffer: createReplayBuffer(config.replayBufferBytes),
+      outputDispatcher: new TerminalOutputDispatcher({
+        maxQueueBytes: config.maxObserverQueueBytes,
+        schedule: outputSchedule,
+      }),
       activePresenterClientId: null,
       creatorClientId: String(input.clientId || '').trim() || null,
       startedAtMs,
@@ -533,6 +593,9 @@ function createTerminalSessionManager(options = {}) {
       }
       session.status = 'detached';
       session.detachedReason = 'registration-failed';
+      for (const observerId of session.observers.keys()) {
+        session.outputDispatcher.detach(observerId);
+      }
       session.observers.clear();
       session.activePresenterClientId = null;
       removeSessionFromPool(sessionId);
@@ -595,11 +658,13 @@ function createTerminalSessionManager(options = {}) {
     if (observerId && session.observers.has(observerId)) {
       removedClientId = session.observers.get(observerId)?.clientId || '';
       session.observers.delete(observerId);
+      session.outputDispatcher.detach(observerId);
     } else if (socketId) {
       for (const [key, observer] of session.observers.entries()) {
         if (observer.socketId === socketId) {
           removedClientId = observer.clientId || '';
           session.observers.delete(key);
+          session.outputDispatcher.detach(key);
           break;
         }
       }
@@ -608,6 +673,7 @@ function createTerminalSessionManager(options = {}) {
         if (observer.clientId === clientId) {
           removedClientId = observer.clientId || '';
           session.observers.delete(key);
+          session.outputDispatcher.detach(key);
           break;
         }
       }
@@ -634,6 +700,9 @@ function createTerminalSessionManager(options = {}) {
 
   function detachSession(sessionId, reason = 'detached') {
     const session = ensureSession(sessionId);
+    for (const observerId of session.observers.keys()) {
+      session.outputDispatcher.detach(observerId);
+    }
     session.observers.clear();
     session.activePresenterClientId = null;
     updatePresence(session, reason);
@@ -654,26 +723,48 @@ function createTerminalSessionManager(options = {}) {
 
   function isObserverAttached(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    return Boolean(findObserver(session, input));
+  }
+
+  function findObserver(session, input = {}) {
     const clientId = String(input.clientId || '').trim();
     const socketId = String(input.socketId || '').trim();
     if (!clientId && !socketId) {
-      return false;
+      return null;
     }
-    return Array.from(session.observers.values()).some((observer) => {
+    return Array.from(session.observers.values()).find((observer) => {
       if (socketId) {
         return observer.socketId === socketId;
       }
       return observer.clientId === clientId;
-    });
+    }) || null;
   }
 
   function writeInput(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     assertProcessWritable(session.processStatus);
-    if (!isObserverAttached(sessionId, input)) {
+    const observer = findObserver(session, input);
+    if (!observer) {
       throw Object.assign(new Error('terminal_session_not_found'), { code: 'terminal_session_not_found' });
     }
     const data = String(input.data || '');
+    const bytes = Buffer.byteLength(data, 'utf8');
+    const consumption = observer.inputBucket.consume(bytes);
+    if (!consumption.accepted) {
+      const details = {
+        retryAfterMs: consumption.retryAfterMs,
+        remainingBytes: consumption.remainingBytes,
+        bytes,
+      };
+      audit.warn('terminal_input_rate_limited', {
+        sessionId: session.sessionId,
+        clientId: observer.clientId || null,
+        socketId: observer.socketId || null,
+        code: 'terminal_input_rate_limited',
+        ...details,
+      });
+      throw makeTerminalError('terminal_input_rate_limited', details);
+    }
     if (session.pty && typeof session.pty.write === 'function') {
       session.pty.write(data);
     }
@@ -736,6 +827,9 @@ function createTerminalSessionManager(options = {}) {
     session.status = 'detached';
     session.detachedReason = closeReason;
     session.lastActiveAt = timestamp();
+    for (const observerId of session.observers.keys()) {
+      session.outputDispatcher.detach(observerId);
+    }
     session.observers.clear();
     session.activePresenterClientId = null;
     removeSessionFromPool(sessionId);

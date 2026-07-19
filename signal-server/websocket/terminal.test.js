@@ -136,6 +136,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
     ptyFactory: (...args) => ptyFactory(...args),
     logger: { info() {}, warn() {}, error() {} },
     now: harnessOptions.now,
+    outputSchedule: harnessOptions.outputSchedule || ((drain) => drain()),
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
@@ -662,4 +663,103 @@ test('terminal websocket returns a stable error when the hard session limit is r
     admin.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'terminal_session_limit'),
     true,
   );
+});
+
+test('terminal websocket reports input rate limits without ack or raw input and accepts after refill', () => {
+  let nowMs = 0;
+  const { namespace, getPty, auditEvents } = buildTerminalHarness({
+    terminalInputBytesPerSecond: 10,
+    terminalInputBurstBytes: 10,
+  }, {
+    now: () => new Date(nowMs),
+  });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  admin.trigger('terminal:create_session', { title: 'Rate limited shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  const pty = getPty(created.sessionId);
+  pty.emitData('ready');
+
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: '1234567890',
+    inputId: 'accepted-first',
+  });
+  const ackCount = admin.sent.filter((message) => message.event === 'terminal:input_ack').length;
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'SECRET_INPUT',
+    inputId: 'rejected',
+  });
+
+  const error = admin.sent.findLast((message) => (
+    message.event === 'terminal:error'
+    && message.data.code === 'terminal_input_rate_limited'
+  ));
+  assert.deepEqual(error.data.details, {
+    retryAfterMs: 1200,
+    remainingBytes: 0,
+    bytes: 12,
+  });
+  assert.equal(admin.sent.filter((message) => message.event === 'terminal:input_ack').length, ackCount);
+  assert.deepEqual(pty.writeCalls, ['1234567890']);
+  assert.equal(JSON.stringify(error).includes('SECRET_INPUT'), false);
+  assert.equal(JSON.stringify(auditEvents).includes('SECRET_INPUT'), false);
+
+  nowMs = 1200;
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'accepted',
+    inputId: 'accepted-after-refill',
+  });
+  assert.deepEqual(pty.writeCalls, ['1234567890', 'accepted']);
+  assert.equal(admin.sent.some((message) => (
+    message.event === 'terminal:input_ack'
+    && message.data.inputId === 'accepted-after-refill'
+  )), true);
+});
+
+test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', () => {
+  const scheduled = [];
+  const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness({
+    terminalMaxObserverQueueBytes: 5,
+  }, {
+    outputSchedule: (drain) => scheduled.push(drain),
+  });
+  const slow = namespace.connect(new FakeSocket('admin-slow', 'admin'));
+  const fast = namespace.connect(new FakeSocket('admin-fast', 'admin'));
+  slow.trigger('terminal:create_session', { title: 'Backpressure shell' });
+  const created = slow.sent.find((message) => message.event === 'terminal:session_created').data;
+  const pty = getPty(created.sessionId);
+
+  pty.emitData('12345');
+  fast.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  pty.emitData('x');
+
+  const warning = slow.sent.find((message) => (
+    message.event === 'terminal:warning'
+    && message.data.code === 'terminal_output_backpressure'
+  ));
+  assert.deepEqual(warning.data, {
+    sessionId: created.sessionId,
+    code: 'terminal_output_backpressure',
+    stats: { queuedBytes: 5, droppedChunks: 1 },
+  });
+  assert.equal(fast.sent.some((message) => message.event === 'terminal:warning'), false);
+  assert.equal(sessionManager.isObserverAttached(created.sessionId, { socketId: 'admin-slow' }), false);
+  assert.equal(sessionManager.isObserverAttached(created.sessionId, { socketId: 'admin-fast' }), true);
+  assert.deepEqual(pty.killCalls, []);
+
+  scheduled.shift()();
+  assert.equal(fast.sent.some((message) => (
+    message.event === 'terminal:output' && message.data.data === 'x'
+  )), true);
+  assert.equal(slow.sent.some((message) => (
+    message.event === 'terminal:presence' && message.data.observerCount === 1
+  )), true);
+  assert.equal(JSON.stringify(warning).includes('12345'), false);
+  assert.equal(JSON.stringify(auditEvents).includes('12345'), false);
+
+  slow.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  const replay = slow.sent.findLast((message) => message.event === 'terminal:replay').data.replay;
+  assert.deepEqual(replay.map((entry) => entry.data), ['12345', 'x']);
 });
