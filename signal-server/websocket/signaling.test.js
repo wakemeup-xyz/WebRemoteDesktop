@@ -1084,6 +1084,52 @@ test('takeover freezes controller A until host ack and grants B', () => {
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
+test('lease expiry sends a newer reset-only transition before releasing host state', () => {
+  resetConnections();
+  let currentTime = 0;
+  let tick = null;
+  const io = makeIo();
+  setupSignaling(io, {
+    now: () => currentTime,
+    makeLeaseId: () => 'lease-000000000001',
+    scheduler: {
+      setInterval(callback) {
+        tick = callback;
+        return { unref() {} };
+      },
+    },
+  });
+  const host = new FakeSocket('host-expiry', 'host');
+  const viewer = new FakeSocket('viewer-expiry', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'expiry' });
+  const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: grantTransition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  viewer.trigger('input', v2Key({ leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+
+  currentTime = 12_000;
+  tick();
+  const resetTransition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.deepEqual(resetTransition, {
+    type: 'control-transition',
+    leaseEpoch: grant.leaseEpoch + 1,
+    reason: 'lease-expired',
+  });
+  assert.equal(JSON.stringify(resetTransition).includes(grant.leaseId), false);
+
+  viewer.trigger('input', v2Key({ leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch, seq: 2 }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+  host.trigger('control-transition-ack', { leaseEpoch: resetTransition.leaseEpoch, status: 'applied' });
+  const state = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(state.state, 'FREE');
+  assert.equal(JSON.stringify(state).includes(grant.leaseId), false);
+});
+
 test('control logs redact lease token and text payload', () => {
   resetConnections();
   const io = makeIo();

@@ -84,13 +84,14 @@ function setupSignaling(io, options = {}) {
   const interval = intervalFactory(() => {
     const result = desktopLease.expire();
     if (result?.reason) {
-      if (result.state === 'FREE') {
+      if (result.state === 'FREE' || result.transition) {
         pendingInputs.clear();
         pendingControllerProtocolVersion = null;
         legacyControllerViewerId = null;
         clearAllLegacyRelayCompanions({ stop: true });
       }
       broadcastControlState(result.reason);
+      sendControlTransition(result);
     }
   }, 1000);
   interval?.unref?.();

@@ -129,14 +129,21 @@ test('heartbeat accepts the active credential and refreshes expiry through 11999
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), true);
 });
 
-test('expiry at exactly expiresAfterMs releases the active lease', () => {
+test('expiry at exactly expiresAfterMs starts a newer reset-only transition', () => {
   const lease = makeLease();
   const request = lease.requestControl({ viewerId: 'viewer-a' });
   const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
 
   lease.advanceTo(12_000);
-  assert.deepEqual(lease.expire(), { state: 'FREE', reason: 'lease-expired' });
+  const expired = lease.expire();
+  assert.equal(expired.state, 'REVOKING');
+  assert.equal(expired.reason, 'lease-expired');
+  assert.equal(expired.transition.leaseEpoch > active.lease.leaseEpoch, true);
+  assert.equal(Object.hasOwn(expired.transition, 'leaseId'), false);
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: expired.transition.leaseEpoch }), {
+    state: 'FREE', reason: 'lease-expired',
+  });
 });
 
 test('controller disconnect releases the lease and rejects its old credential', () => {

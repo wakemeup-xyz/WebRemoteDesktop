@@ -112,16 +112,7 @@ class DesktopControlLease {
   beginRelease({ viewerId, reason }) {
     this._expire();
     if (this._state === 'ACTIVE' && this._active && this._active.viewerId === viewerId) {
-      this._active = null;
-      this._activeDeadline = null;
-      this._state = 'REVOKING';
-      const leaseEpoch = ++this._epoch;
-      this._pending = { viewerId: null, leaseEpoch, reason: reason || 'released' };
-      this._transitionDeadline = this._now() + this._transitionTimeoutMs;
-      return {
-        state: 'REVOKING',
-        transition: { type: 'control-transition', leaseEpoch, reason: reason || 'released' },
-      };
+      return this._beginResetTransition(reason || 'released');
     }
     if ((this._state === 'GRANTING' || this._state === 'REVOKING')
       && this._pending && this._pending.viewerId === viewerId) {
@@ -218,7 +209,7 @@ class DesktopControlLease {
       return { state: 'FREE', reason: 'transition-timeout' };
     }
     if (this._state === 'ACTIVE' && this._activeDeadline !== null && now >= this._activeDeadline) {
-      return this._free('lease-expired');
+      return this._beginResetTransition('lease-expired');
     }
     return null;
   }
@@ -230,6 +221,20 @@ class DesktopControlLease {
     this._activeDeadline = null;
     this._transitionDeadline = null;
     return { state: 'FREE', reason };
+  }
+
+  _beginResetTransition(reason) {
+    this._active = null;
+    this._activeDeadline = null;
+    this._state = 'REVOKING';
+    const leaseEpoch = ++this._epoch;
+    this._pending = { viewerId: null, leaseEpoch, reason };
+    this._transitionDeadline = this._now() + this._transitionTimeoutMs;
+    return {
+      state: 'REVOKING',
+      reason,
+      transition: { type: 'control-transition', leaseEpoch, reason },
+    };
   }
 }
 
