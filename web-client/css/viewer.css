@@ -303,7 +303,7 @@ body.tunnel-relay-active #remoteVideo {
   position: fixed;
   inset: 56px 0 0;
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 14px;
   background: #050508;
@@ -475,6 +475,50 @@ body.tunnel-relay-active #remoteVideo {
   border-radius: var(--radius-md);
   overflow: hidden;
   background: #050508;
+}
+
+.terminal-composer {
+  display: grid;
+  gap: 8px;
+}
+
+.terminal-composer textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.78);
+  color: var(--text-primary);
+  resize: vertical;
+  font: 13px/1.45 'JetBrains Mono', monospace;
+  outline: none;
+}
+
+.terminal-composer textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.terminal-composer textarea:focus {
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.terminal-composer textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.terminal-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal-composer-hint {
+  color: var(--text-muted);
+  font: 12px 'JetBrains Mono', monospace;
 }
 
 .terminal-instance,

@@ -1,5 +1,27 @@
 const TERMINAL_ADMIN_TOKEN_KEY = 'wrd_terminal_admin_token';
 const LAST_ACTIVE_SESSION_KEY = 'wrd_terminal_last_active_session_id';
+const TERMINAL_COMPOSER_DEFAULT_HINT = 'Shift+Enter 换行 · Enter 发送';
+const TERMINAL_COMPOSER_RAW_HINT = '当前程序未启用 bracketed paste，多行将按原始换行提交';
+const TERMINAL_MODE_SEQUENCE_MAX_LENGTH = 256;
+const TERMINAL_INPUT_MAX_BYTES = 64 * 1024;
+const TERMINAL_COMPOSER_INPUT_LIMIT_ERROR = '终端输入超过 64 KiB UTF-8 限制，请缩短后重试';
+
+function getTerminalComposerApi() {
+  return (typeof window !== 'undefined' && window.TerminalComposer)
+    || (typeof globalThis !== 'undefined' && globalThis.TerminalComposer)
+    || null;
+}
+
+function createFallbackTerminalDraftStore() {
+  return {
+    get() {
+      return '';
+    },
+    set() {},
+    delete() {},
+    clear() {},
+  };
+}
 
 function createLatencySeries(maxSamples = 20) {
   const samples = [];
@@ -191,8 +213,14 @@ const TerminalPanel = {
   latencyProbeTimer: null,
   pendingLatencyProbes: new Map(),
   pendingInputAcks: new Map(),
+  pendingComposerInputIdsBySession: new Map(),
+  composerPreflightError: null,
   echoControllersBySession: new Map(),
   alternateScreenSessionIds: new Set(),
+  bracketedPasteSessionIds: new Set(),
+  terminalModeTailsBySession: new Map(),
+  composerDrafts: (getTerminalComposerApi()?.createTerminalDraftStore?.() || createFallbackTerminalDraftStore()),
+  renderedComposerSessionId: null,
   poolCapacity: null,
 
   init() {
@@ -217,6 +245,9 @@ const TerminalPanel = {
       status: document.getElementById('terminalStatus'),
       warning: document.getElementById('terminalWarning'),
       workspace: document.getElementById('terminalWorkspace'),
+      composer: document.getElementById('terminalComposer'),
+      composerSubmit: document.getElementById('terminalComposerSubmit'),
+      composerHint: document.getElementById('terminalComposerHint'),
     };
   },
 
@@ -228,6 +259,9 @@ const TerminalPanel = {
       this.authorize();
     });
     this.elements.newButton?.addEventListener('click', () => this.createSession());
+    this.elements.composer?.addEventListener('input', () => this.handleComposerInput());
+    this.elements.composer?.addEventListener('keydown', (event) => this.handleComposerKeydown(event));
+    this.elements.composerSubmit?.addEventListener('click', () => this.submitComposer());
     window.addEventListener('resize', () => {
       this.fitActiveTerminal();
       this.scheduleFitActiveTerminal();
@@ -392,6 +426,8 @@ const TerminalPanel = {
       this.socketState = 'disconnected';
       this.stopLatencyProbeLoop();
       this.pendingInputAcks.clear();
+      this.pendingComposerInputIdsBySession.clear();
+      this.composerPreflightError = null;
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
       this.setStatus('断线重连中', 'warning');
@@ -408,6 +444,7 @@ const TerminalPanel = {
         return;
       }
       this.setStatus(`连接失败：${err.message}`, 'error');
+      this.refreshComposer();
     });
     const applyPoolSnapshot = (payload) => this.applyPoolSnapshot(payload);
     const handleSessionCreated = (session) => this.handleSessionCreated(session);
@@ -462,6 +499,29 @@ const TerminalPanel = {
 
   makeInputId(sessionId) {
     return `${sessionId || 'term'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  },
+
+  emitTerminalInput(sessionId, data, options = {}) {
+    if (!this.socket?.connected || !sessionId) {
+      return null;
+    }
+    const inputId = this.makeInputId(sessionId);
+    const clientSentAt = Date.now();
+    this.pendingInputAcks.set(inputId, {
+      sessionId,
+      clientSentAt,
+      ...options.pendingAckMeta,
+    });
+    if (options.optimisticEcho) {
+      this.applyOptimisticLocalEcho(sessionId, data);
+    }
+    this.socket.emit('terminal:input', {
+      sessionId,
+      data,
+      inputId,
+      clientSentAt,
+    });
+    return { inputId, clientSentAt };
   },
 
   getTransportName() {
@@ -524,6 +584,24 @@ const TerminalPanel = {
     const clientSentAt = pending?.clientSentAt;
     if (inputId) {
       this.pendingInputAcks.delete(inputId);
+    }
+    if (pending?.composerSubmission) {
+      const sessionId = pending.sessionId;
+      const preflightError = this.composerPreflightError;
+      this.forgetPendingComposerSubmission(sessionId, { onlyIfInputId: inputId, dropPendingAck: false });
+      if (preflightError?.sessionId === sessionId) {
+        this.composerPreflightError = null;
+        if (this.socketStatusKind === 'error' && this.socketStatusBaseText === preflightError.message) {
+          this.setStatus('共享控制台已连接', 'connected');
+        }
+      }
+      const shouldClearDraft = this.composerDrafts.get(sessionId) === pending.composerDraftSnapshot;
+      if (shouldClearDraft) {
+        this.composerDrafts.set(sessionId, '');
+      }
+      if (sessionId === this.state.activeSessionId()) {
+        this.refreshComposer({ forceValueSync: shouldClearDraft });
+      }
     }
     if (!Number.isFinite(clientSentAt)) {
       return;
@@ -742,21 +820,7 @@ const TerminalPanel = {
       term.open(container);
       this.getEchoController(sessionId);
       term.onData((data) => {
-        if (this.socket?.connected) {
-          const inputId = this.makeInputId(sessionId);
-          const clientSentAt = Date.now();
-          this.pendingInputAcks.set(inputId, {
-            sessionId,
-            clientSentAt,
-          });
-          this.applyOptimisticLocalEcho(sessionId, data);
-          this.socket.emit('terminal:input', {
-            sessionId,
-            data,
-            inputId,
-            clientSentAt,
-          });
-        }
+        this.emitTerminalInput(sessionId, data, { optimisticEcho: true });
       });
       term.onResize((size) => {
         if (this.socket?.connected) {
@@ -794,17 +858,32 @@ const TerminalPanel = {
     if (term?.dispose) term.dispose();
     this.terms.delete(sessionId);
     this.fitAddons.delete(sessionId);
+    this.forgetPendingComposerSubmission(sessionId);
     this.echoControllersBySession.get(sessionId)?.reset('destroy');
     this.echoControllersBySession.delete(sessionId);
     this.alternateScreenSessionIds.delete(sessionId);
+    this.bracketedPasteSessionIds.delete(sessionId);
+    this.terminalModeTailsBySession.delete(sessionId);
+    this.composerDrafts.delete(sessionId);
+    if (this.composerPreflightError?.sessionId === sessionId) {
+      this.composerPreflightError = null;
+    }
     const node = this.elements.workspace?.querySelector(`[data-session-id="${sessionId}"]`);
     node?.remove();
+    this.refreshComposer();
   },
 
   writeOutput(sessionId, data) {
     const term = this.terms.get(sessionId);
-    this.trackAlternateScreen(sessionId, String(data || ''));
-    const normalized = this.consumeOptimisticLocalEcho(sessionId, String(data || ''));
+    const text = String(data || '');
+    const wasBracketedPasteEnabled = this.bracketedPasteSessionIds.has(sessionId);
+    this.trackTerminalModes(sessionId, text);
+    const isBracketedPasteEnabled = this.bracketedPasteSessionIds.has(sessionId);
+    if (sessionId === this.state.activeSessionId() && wasBracketedPasteEnabled !== isBracketedPasteEnabled) {
+      this.refreshComposer();
+    }
+    this.trackAlternateScreen(sessionId, text);
+    const normalized = this.consumeOptimisticLocalEcho(sessionId, text);
     if (term?.write && normalized) {
       term.write(normalized);
     }
@@ -847,6 +926,7 @@ const TerminalPanel = {
     this.render();
     this.fitActiveTerminal();
     this.scheduleFitActiveTerminal();
+    this.refreshComposer();
   },
 
   announceActivePresenter(sessionId) {
@@ -888,6 +968,27 @@ const TerminalPanel = {
     return this.getEchoController(sessionId).onRemoteOutput(data);
   },
 
+  isComposerSubmissionPending(sessionId = this.state.activeSessionId()) {
+    return Boolean(sessionId && this.pendingComposerInputIdsBySession.get(sessionId));
+  },
+
+  forgetPendingComposerSubmission(sessionId, options = {}) {
+    if (!sessionId) {
+      return;
+    }
+    const currentInputId = this.pendingComposerInputIdsBySession.get(sessionId);
+    if (!currentInputId) {
+      return;
+    }
+    if (options.onlyIfInputId && currentInputId !== options.onlyIfInputId) {
+      return;
+    }
+    this.pendingComposerInputIdsBySession.delete(sessionId);
+    if (options.dropPendingAck !== false) {
+      this.pendingInputAcks.delete(currentInputId);
+    }
+  },
+
   trackAlternateScreen(sessionId, data) {
     const text = String(data || '');
     if (/\u001b\[\?(?:1049|1047|47)h/.test(text)) {
@@ -898,6 +999,138 @@ const TerminalPanel = {
       this.alternateScreenSessionIds.delete(sessionId);
       this.getEchoController(sessionId).setAlternateScreen(false);
     }
+  },
+
+  trackTerminalModes(sessionId, data) {
+    const text = String(data || '');
+    const previousTail = this.terminalModeTailsBySession.get(sessionId) || '';
+    const combined = `${previousTail}${text}`;
+    const modePattern = /\u001b\[\?([0-9;]+)([hl])/g;
+    let match = modePattern.exec(combined);
+    while (match) {
+      const privateModes = String(match[1] || '').split(';');
+      if (privateModes.includes('2004')) {
+        if (match[2] === 'h') {
+          this.bracketedPasteSessionIds.add(sessionId);
+        } else {
+          this.bracketedPasteSessionIds.delete(sessionId);
+        }
+      }
+      match = modePattern.exec(combined);
+    }
+    let unfinishedSequence = '';
+    const lastEscapeIndex = combined.lastIndexOf('\u001b');
+    if (lastEscapeIndex !== -1) {
+      const candidate = combined.slice(lastEscapeIndex);
+      const isShortEnough = candidate.length <= TERMINAL_MODE_SEQUENCE_MAX_LENGTH;
+      const isBarePrefix = candidate === '\u001b' || candidate === '\u001b[' || candidate === '\u001b[?';
+      const isParameterPrefix = candidate.startsWith('\u001b[?') && /^[\u001b\[\?0-9;]+$/.test(candidate);
+      if (isShortEnough && (isBarePrefix || isParameterPrefix)) {
+        unfinishedSequence = candidate;
+      }
+    }
+    this.terminalModeTailsBySession.set(sessionId, unfinishedSequence);
+  },
+
+  isComposerReady() {
+    const activeSessionId = this.state.activeSessionId();
+    return Boolean(
+      this.socket?.connected
+      && activeSessionId
+      && this.attachedSessionIds.has(activeSessionId)
+    );
+  },
+
+  refreshComposer(options = {}) {
+    const composer = this.elements?.composer;
+    const submit = this.elements?.composerSubmit;
+    const hint = this.elements?.composerHint;
+    if (!composer || !submit || !hint) {
+      return;
+    }
+    const activeSessionId = this.state.activeSessionId() || null;
+    const nextValue = activeSessionId ? this.composerDrafts.get(activeSessionId) : '';
+    const composerFocused = document.activeElement === composer;
+    const sameSession = this.renderedComposerSessionId === activeSessionId;
+    if ((options.forceValueSync || !composerFocused || !sameSession) && composer.value !== nextValue) {
+      composer.value = nextValue;
+    }
+    this.renderedComposerSessionId = activeSessionId;
+    const enabled = this.isComposerReady();
+    const pendingComposerSubmission = this.isComposerSubmissionPending(activeSessionId);
+    composer.disabled = !enabled;
+    submit.disabled = !enabled || pendingComposerSubmission;
+    const bracketedPasteEnabled = Boolean(activeSessionId && this.bracketedPasteSessionIds.has(activeSessionId));
+    hint.textContent = enabled && !bracketedPasteEnabled
+      ? TERMINAL_COMPOSER_RAW_HINT
+      : TERMINAL_COMPOSER_DEFAULT_HINT;
+  },
+
+  handleComposerInput() {
+    const composer = this.elements?.composer;
+    const activeSessionId = this.state.activeSessionId();
+    if (!composer || !activeSessionId) {
+      return;
+    }
+    const terminalComposer = getTerminalComposerApi();
+    const normalized = terminalComposer?.normalizeTerminalComposerText
+      ? terminalComposer.normalizeTerminalComposerText(composer.value)
+      : String(composer.value || '');
+    if (normalized !== composer.value) {
+      composer.value = normalized;
+    }
+    this.composerDrafts.set(activeSessionId, normalized);
+  },
+
+  handleComposerKeydown(event) {
+    const terminalComposer = getTerminalComposerApi();
+    const shouldSubmit = terminalComposer?.shouldSubmitTerminalComposerKey
+      ? terminalComposer.shouldSubmitTerminalComposerKey(event)
+      : false;
+    if (!shouldSubmit) {
+      return;
+    }
+    event.preventDefault();
+    this.submitComposer();
+  },
+
+  submitComposer() {
+    if (!this.isComposerReady()) {
+      return false;
+    }
+    const terminalComposer = getTerminalComposerApi();
+    const activeSessionId = this.state.activeSessionId();
+    const composer = this.elements?.composer;
+    if (!terminalComposer || !activeSessionId || !composer || this.isComposerSubmissionPending(activeSessionId)) {
+      return false;
+    }
+    const draft = terminalComposer.normalizeTerminalComposerText(composer.value);
+    const payload = terminalComposer.serializeTerminalComposerInput(draft, {
+      bracketedPasteEnabled: this.bracketedPasteSessionIds.has(activeSessionId),
+    });
+    this.composerDrafts.set(activeSessionId, draft);
+    if (terminalComposer.getTerminalComposerUtf8ByteLength(payload) > TERMINAL_INPUT_MAX_BYTES) {
+      this.composerPreflightError = {
+        sessionId: activeSessionId,
+        message: TERMINAL_COMPOSER_INPUT_LIMIT_ERROR,
+      };
+      this.setStatus(TERMINAL_COMPOSER_INPUT_LIMIT_ERROR, 'error');
+      this.refreshComposer();
+      return false;
+    }
+    const emitted = this.emitTerminalInput(activeSessionId, payload, {
+      optimisticEcho: false,
+      pendingAckMeta: {
+        composerSubmission: true,
+        composerDraftSnapshot: draft,
+      },
+    });
+    if (!emitted) {
+      return false;
+    }
+    this.pendingComposerInputIdsBySession.set(activeSessionId, emitted.inputId);
+    this.refreshComposer();
+    return true;
   },
 
   getDiagnosticState() {
@@ -929,7 +1162,10 @@ const TerminalPanel = {
     this.transportName = 'unknown';
     this.stopLatencyProbeLoop();
     this.pendingInputAcks.clear();
+    this.pendingComposerInputIdsBySession.clear();
+    this.composerPreflightError = null;
     this.resetEchoControllers('destroy-socket');
+    this.refreshComposer();
   },
 
   syncPersistedActiveSession() {
@@ -1074,6 +1310,7 @@ const TerminalPanel = {
     });
 
     this.setWarning(this.state.getWarning());
+    this.refreshComposer();
   },
 };
 

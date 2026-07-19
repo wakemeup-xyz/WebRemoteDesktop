@@ -92,6 +92,22 @@
     <div id="terminalStatus" class="terminal-status" data-state="warning">需要 admin 二次授权</div>
     <div id="terminalWarning" class="terminal-warning hidden"></div>
     <div id="terminalWorkspace" class="terminal-workspace"></div>
+    <div class="terminal-composer" aria-label="多行终端命令编辑器">
+      <textarea
+        id="terminalComposer"
+        rows="3"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="输入命令；Shift+Enter 换行，Enter 发送"
+        aria-label="Terminal command editor"
+        aria-describedby="terminalComposerHint"
+        disabled
+      ></textarea>
+      <div class="terminal-composer-actions">
+        <span id="terminalComposerHint" class="terminal-composer-hint" role="status" aria-live="polite">Shift+Enter 换行 · Enter 发送</span>
+        <button id="terminalComposerSubmit" class="terminal-primary-btn" type="button" disabled>发送</button>
+      </div>
+    </div>
   </section>
   
   <div id="resolutionModal" class="modal hidden">
@@ -214,6 +230,7 @@
   <script src="js/latency-monitor.js"></script>
   <script src="js/diagnostic.js"></script>
   <script src="js/terminal-echo-controller.js"></script>
+  <script src="js/terminal-composer.js"></script>
   <script src="js/terminal.js"></script>
 </body>
 </html>
