@@ -65,6 +65,7 @@ test('shared session manager enforces a hard session ceiling and reports bounded
   assert.equal(ptys.length, 2);
   assert.deepEqual(manager.getPoolSnapshot().capacity, {
     sessionCount: 2,
+    cleanupPendingCount: 0,
     maxSessions: 2,
     availableSessions: 0,
     replayBufferBytesPerSession: 1024,
@@ -97,6 +98,89 @@ test('idle detached sessions are reaped using the configured timeout', () => {
   assert.deepEqual(manager.reapIdleSessions(), [created.sessionId]);
   assert.equal(manager.listSessions().length, 0);
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
+});
+
+test('idle reaping retains failed cleanup sessions and continues with later sessions', () => {
+  let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
+  const events = [];
+  const failedPty = createFakePty();
+  failedPty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('idle cleanup SECRET_VALUE');
+  };
+  const successfulPty = createFakePty();
+  const ptys = [failedPty, successfulPty];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => ptys.shift(),
+    now: () => new Date(nowMs),
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 3,
+      terminalIdleTimeoutMs: 1000,
+    },
+  });
+  const failed = manager.createSession({ clientId: 'browser-a' });
+  const successful = manager.createSession({ clientId: 'browser-b' });
+  manager.detachSession(failed.sessionId, 'test-detach');
+  manager.detachSession(successful.sessionId, 'test-detach');
+
+  nowMs += 1001;
+  assert.deepEqual(manager.reapIdleSessions(), [successful.sessionId]);
+  assert.deepEqual(manager.listSessions().map((session) => session.sessionId), [failed.sessionId]);
+  assert.deepEqual(failedPty.killCalls, ['SIGHUP', 'SIGHUP']);
+  assert.deepEqual(successfulPty.killCalls, ['SIGHUP']);
+  const cleanupFailure = events.find((entry) => (
+    entry.event === 'terminal_pty_cleanup_failed'
+    && entry.meta.sessionId === failed.sessionId
+  ));
+  assert.equal(cleanupFailure.meta.code, 'pty_cleanup_failed');
+  assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+test('createSession contains idle cleanup failures while successful reaping frees capacity', () => {
+  let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
+  const failedPty = createFakePty();
+  failedPty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('idle cleanup SECRET_VALUE');
+  };
+  const successfulPty = createFakePty();
+  const replacementPty = createFakePty();
+  const ptys = [failedPty, successfulPty, replacementPty];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => ptys.shift(),
+    now: () => new Date(nowMs),
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 2,
+      terminalIdleTimeoutMs: 1000,
+    },
+  });
+  const failed = manager.createSession({ clientId: 'browser-a' });
+  const successful = manager.createSession({ clientId: 'browser-b' });
+  manager.detachSession(failed.sessionId, 'test-detach');
+  manager.detachSession(successful.sessionId, 'test-detach');
+
+  nowMs += 1001;
+  const replacement = manager.createSession({ clientId: 'browser-c' });
+
+  assert.deepEqual(manager.listSessions().map((session) => session.sessionId), [
+    failed.sessionId,
+    replacement.sessionId,
+  ]);
+  assert.equal(manager.getPoolSnapshot().capacity.sessionCount, 2);
+  assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 0);
+  assert.deepEqual(failedPty.killCalls, ['SIGHUP', 'SIGHUP']);
+  assert.deepEqual(successfulPty.killCalls, ['SIGHUP']);
 });
 
 test('shared session manager stores sessions in the default pool and no longer exposes ownerSub ownership', () => {
@@ -559,6 +643,109 @@ test('PTY callback registration cleanup stops after two failed kill attempts and
   const cleanupFailure = events.find((entry) => entry.event === 'terminal_pty_cleanup_failed');
   assert.equal(cleanupFailure.meta.attemptCount, 2);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+test('failed registration cleanup is quarantined and one scheduled retry restores capacity', () => {
+  const timers = [];
+  const pty = createFakePty();
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  let cleanupCanSucceed = false;
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    if (!cleanupCanSucceed) {
+      throw new Error('cleanup SECRET_VALUE');
+    }
+  };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler, delay) {
+      const timer = {
+        handler,
+        delay,
+        cancelled: false,
+        unrefCalled: false,
+        unref() { this.unrefCalled = true; },
+      };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) { timer.cancelled = true; },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 2,
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed',
+  );
+  const cleanupTimers = timers.filter((timer) => timer.delay === 1000);
+  assert.equal(manager.listSessions().length, 0);
+  assert.equal(manager._getCleanupPendingCount(), 1);
+  assert.deepEqual(manager.getPoolSnapshot().capacity, {
+    sessionCount: 0,
+    cleanupPendingCount: 1,
+    maxSessions: 2,
+    availableSessions: 1,
+    replayBufferBytesPerSession: 262144,
+    maxReplayBytes: 524288,
+  });
+  assert.equal(cleanupTimers.length, 1);
+  assert.equal(cleanupTimers[0].unrefCalled, true);
+
+  cleanupCanSucceed = true;
+  cleanupTimers[0].handler();
+
+  assert.equal(manager._getCleanupPendingCount(), 0);
+  assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 2);
+  assert.equal(timers.filter((timer) => timer.delay === 1000).length, 1);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
+});
+
+test('failed scheduled quarantine retry retains the PTY reference without rescheduling', () => {
+  const timers = [];
+  const pty = createFakePty();
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('cleanup SECRET_VALUE');
+  };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    setTimeout(handler, delay) {
+      const timer = { handler, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout() {},
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 1,
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed',
+  );
+  const cleanupTimer = timers.find((timer) => timer.delay === 1000);
+  cleanupTimer.handler();
+
+  assert.equal(manager._getCleanupPendingCount(), 1);
+  assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 0);
+  assert.equal(timers.filter((timer) => timer.delay === 1000).length, 1);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP']);
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-b' }),
+    (error) => error.code === 'terminal_session_limit',
+  );
 });
 
 test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', () => {
