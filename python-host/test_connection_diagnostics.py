@@ -122,6 +122,12 @@ def test_turn_env_is_ignored_under_strict_stun_policy(monkeypatch):
 async def test_host_input_logs_metadata_without_payload_or_cross_clock_delay(caplog):
     host = object.__new__(WebRemoteHost)
     host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 12,
+        "connectionGeneration": 1,
+    }
     host.overlay = SimpleNamespace(send=lambda _payload: None)
     host.screen_track = None
 
@@ -168,6 +174,12 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
     sent = []
     host = object.__new__(WebRemoteHost)
     host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 12,
+        "connectionGeneration": 1,
+    }
     host.overlay = SimpleNamespace(send=lambda _payload: None)
     host.screen_track = None
     host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
@@ -190,6 +202,7 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
         "type": "keyboard",
         "action": "keydown",
         "transport": "datachannel",
+        "leaseId": "lease-000000000001",
         "leaseEpoch": 12,
         "seq": 7,
         "inputIds": ["input-1"],

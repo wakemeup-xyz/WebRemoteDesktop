@@ -1136,7 +1136,17 @@ class WebRemoteHost:
                 logger.warning(f"Invalid input data type: {type(data)}")
                 return
             viewer_id = data.get("viewerId")
-            if viewer_id and self.current_viewer_id and viewer_id != self.current_viewer_id:
+            is_v2 = data.get("schemaVersion") == 2
+            if is_v2:
+                binding = getattr(self, "_active_input_binding", None)
+                if not isinstance(binding, dict) or (
+                    viewer_id != binding.get("viewerId")
+                    or data.get("leaseId") != binding.get("leaseId")
+                    or data.get("leaseEpoch") != binding.get("leaseEpoch")
+                ):
+                    logger.warning("Ignoring input that does not match the active lease binding")
+                    return
+            elif viewer_id and self.current_viewer_id and viewer_id != self.current_viewer_id:
                 logger.warning(
                     "Ignoring input from stale viewer %s (current=%s)",
                     viewer_id,

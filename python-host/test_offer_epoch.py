@@ -92,6 +92,45 @@ def test_old_datachannel_and_mismatched_lease_are_rejected_after_takeover():
 
 
 @pytest.mark.asyncio
+async def test_v2_input_uses_active_lease_binding_instead_of_legacy_offer_viewer():
+    binding = {
+        "viewerId": "viewer-b",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionGeneration": 4,
+    }
+    applied = []
+
+    async def apply_keyboard(data):
+        applied.append(data)
+        return {"inputIds": []}
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-a"
+    host._active_input_binding = binding
+    host.input_handler = SimpleNamespace(apply_keyboard=apply_keyboard)
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host.sio = None
+
+    v2_input = {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "viewerId": "viewer-b",
+        "leaseId": binding["leaseId"],
+        "leaseEpoch": binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-1"],
+        "payload": {},
+    }
+    await host.on_input(v2_input)
+    await host.on_input({**v2_input, "viewerId": "viewer-forged"})
+
+    assert applied == [v2_input]
+
+
+@pytest.mark.asyncio
 async def test_input_move_close_does_not_reset_bound_keyboard_but_input_close_does():
     binding = {
         "viewerId": "viewer-1",
