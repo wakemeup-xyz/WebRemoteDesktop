@@ -301,6 +301,26 @@ Viewer 和 Host 都使用 8 秒阈值。普通键 auto-repeat 会刷新 Viewer p
 
 应把输入源策略变成显式、可观测、可恢复的 adapter，或者至少保存启动前状态并在 Host 退出时恢复。不能把“强制 ABC 成功”当作键盘模块的隐含前置条件。
 
+### K-01 至 K-13 整改证据矩阵（2026-07-19）
+
+下表将已提交代码、自动化测试和真实运行验收分开记录。`未执行（Task12）` 不等于问题已经关闭；在 Task12 取得浏览器和真实 Quartz 证据前，需求文档不得使用“完整验收完成”的表述。
+
+| 编号 | 当前整改代码/提交 | 自动化测试证据 | 真实运行验收 |
+|---|---|---|---|
+| K-01 | `64744ae` Windows modifier 归一化 | `web-client/js/remote-keyboard-controller.test.js` 的 Windows Ctrl/Meta 矩阵 | 未执行（Task12） |
+| K-02 | `67e2729` 统一 tracked key 状态 | `web-client/js/remote-keyboard-controller.test.js` 的 modal/keyup 路径 | 未执行（Task12） |
+| K-03 | `dc650a9`、`b83788f` v2 seq/ack/reset barrier；本次 legacy transport reset 兼容补充 | `web-client/js/keyboard-transport.test.js`；`python-host/test_remote_keyboard_state.py::test_legacy_adapter_resets_before_the_first_event_on_a_new_transport` | 未执行（Task12） |
+| K-04 | `67e2729` controller batch | `web-client/js/remote-keyboard-controller.test.js` 的 batch/blur 状态用例 | 未执行（Task12） |
+| K-05 | `2260bb0`、`e8d091f` 从 pressed codes 推导 modifier flags | `python-host/test_remote_keyboard_state.py::test_sided_modifier_mask_comes_only_from_pressed_physical_codes` | 未执行（Task12） |
+| K-06 | lease/reset 已替代全局事件时间作为主要释放路径；per-key watchdog 真实行为仍需核验 | `python-host/test_remote_keyboard_state.py` 的 reset/transition 状态用例 | 未执行（Task12） |
+| K-07 | `ad5127f`、`c277049` desktop lease；本次补充 Host/Viewer capability、legacy 单 controller 和 `legacy-takeover` reset | `signal-server/websocket/signaling.test.js` 的 legacy lazy acquire、旧 Host 拒绝 v2、single-writer/takeover 用例 | 未执行（Task12） |
+| K-08 | `7e04e76` Host 串行 control transition | `python-host/test_offer_epoch.py` 的 transition/reset serialization 用例 | 未执行（Task12） |
+| K-09 | v2 `key` 与 `text` 分流已定义；Dead/AltGraph 的真实输入语义仍未关闭 | `web-client/js/remote-keyboard-controller.test.js` 与 `python-host/test_remote_keyboard_state.py` 的 text 合约用例 | 未执行（Task12） |
+| K-10 | `f33ade2` Quartz adapter；当前映射含 ISO/JIS/Numpad 扩展 | `python-host/test_quartz_keyboard_adapter.py` 映射矩阵 | 未执行（Task12） |
+| K-11 | `64744ae` / `e8d091f` modifier 自身 flags 由 pressed set 派生 | `web-client/js/remote-keyboard-controller.test.js`、`python-host/test_remote_keyboard_state.py` | 未执行（Task12） |
+| K-12 | `b83788f` reset timeout 后要求重新 acquire；合法长按的真实行为仍未关闭 | `web-client/js/keyboard-transport.test.js` 的 reset timeout 用例 | 未执行（Task12） |
+| K-13 | `f33ade2` Quartz adapter 不再在启动时修改输入源 | `python-host/test_quartz_keyboard_adapter.py::test_no_startup_input_method_side_effects_remain` | 未执行（Task12） |
+
 ## 6. P3 与文档/测试问题
 
 ### K-14 需求中的固定 20ms 间隔与当前实现冲突，且不宜直接恢复

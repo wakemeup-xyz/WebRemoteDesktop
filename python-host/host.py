@@ -1121,7 +1121,10 @@ class WebRemoteHost:
                 self.sio = self._build_socket_client()
                 self.relay_streamer = TunnelRelayStreamer(self.sio)
 
-            await self.sio.connect(SERVER_URL, auth={"token": self.token, "role": "host"})
+            await self.sio.connect(
+                SERVER_URL,
+                auth={"token": self.token, "role": "host", "inputProtocolVersion": 2},
+            )
             logger.info("Connected to signaling server")
             return True
         except Exception as e:

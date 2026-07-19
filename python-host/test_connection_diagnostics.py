@@ -17,6 +17,23 @@ class ListHandler(logging.Handler):
 
 
 @pytest.mark.asyncio
+async def test_host_advertises_input_protocol_v2_when_connecting():
+    calls = []
+    host = object.__new__(WebRemoteHost)
+    host.token = "host-token"
+
+    async def connect(url, *, auth):
+        calls.append((url, auth))
+
+    host.sio = SimpleNamespace(connected=False, connect=connect)
+
+    assert await host.connect() is True
+    assert calls == [(host_module.SERVER_URL, {
+        "token": "host-token", "role": "host", "inputProtocolVersion": 2,
+    })]
+
+
+@pytest.mark.asyncio
 async def test_host_reauthenticates_before_reconnecting_after_signal_restart():
     calls = []
     host = object.__new__(WebRemoteHost)

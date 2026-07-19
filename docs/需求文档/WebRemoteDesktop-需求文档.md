@@ -84,11 +84,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ### 3.3 键盘输入
 
 - [x] **单键输入**：字母、数字、标点、功能键 F1-F12
-- [ ] **组合键完整性**：Command/Control/Shift/Alt 基础组合已实现；Dead/AltGraph、左右同类 modifier、跨 transport 和异常释放仍需整改
+- [ ] **组合键真实验收**：Command/Control/Shift/Alt 的 v2 状态机、batch 与 reset barrier 已有自动化覆盖；真实 macOS Quartz、IME 和长按验收仍待 Task12 执行
 - [x] **虚拟按钮**：回车、上下左右方向键、复制(Command+C)、粘贴(Command+V)
 - [x] **输入记录**：顶部状态栏实时显示发送的按键信息
 - [x] **防重复绑定**：`Input.init()` 通过 `_listenersBound` 标志防止重复注册事件监听器
-- [ ] **Windows 访问兼容**：已提供 Mac / Windows 模式切换，但当前发送层仍会丢失 Ctrl -> Command 的归一化 modifiers，需整改后重新验收
+- [ ] **Windows 访问兼容**：Mac / Windows 模式会把 Windows 左右 Ctrl 归一化为对应 Meta；真实浏览器与 Quartz 组合键验收仍待 Task12 执行
 - [x] **DataChannel 输入**：键盘和点击优先通过可靠有序 `input` WebRTC DataChannel 发送，Socket.IO 仅用于兜底
 
 **关键技术约束**：
@@ -96,13 +96,22 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - Web `keyCode`（ASCII 值）与 macOS `keyCode`（USB HID）不兼容，不可直接使用
 - modifier 键（Control/Shift/Alt/Command）自己的 keydown / keyup **不应携带自己的 modifier flag**
 - 虚拟按钮发送组合键时，必须发送完整的 4 步序列：modifier down → char down → char up → modifier up
-- 键盘事件必须串行处理，每次事件间隔 ~20ms，确保 Quartz 正确识别时序
+- 键盘事件必须严格有序；不得以统一固定 sleep 取代状态机。只有 Quartz 实测证明需要时，才允许在 Host adapter 为特定 batch 步骤配置有界间隔
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport` 和端到端发送延迟，便于区分 DataChannel 与 Socket.IO 兜底路径
 - 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT
 
-> 2026-07-19 键盘专项审计：US/Mac 常用键位具备基础能力，但 Windows modifiers、tracked keyup、虚拟组合键、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约及 ISO/JIS 映射尚未闭环。完整证据与整改门槛见 `docs/superpowers/reports/2026-07-19-remote-keyboard-mapping-stuck-key-systemic-analysis.md`。
+#### 3.3.1 键盘协议、映射与兼容契约
+
+- **映射边界**：物理按键只接受 `KeyboardEvent.code`。Host 当前精确支持 `KeyA-KeyZ`、`Digit0-Digit9`、`F1-F20`、Enter/Escape/Backspace/Tab/Space、方向/导航键、左右 Control/Alt/Shift/Meta、常用 ANSI 标点、`IntlBackslash`/`IntlYen`/`IntlRo`/`Lang1`/`Lang2`/`KanaMode` 及小键盘数字/运算键。`ContextMenu`、`Convert`、`NonConvert` 明确返回 `unsupported-code`；任何未列出的 code 也不得回退为字符猜测。文本输入只使用 `keyboard/text` 的 Unicode adapter，不冒充物理按键。
+- **v2 envelope**：`schemaVersion: 2` 的键盘消息必须是 `keyboard/key`、`keyboard/text`、`keyboard/batch` 或 `keyboard/reset`，并带有效 `leaseId`、`leaseEpoch`、严格递增 `seq` 和有界 `inputIds`。`key` 使用 `down/up + code + location + repeat + modifiers + locks`；`batch` 在同一个 Host 串行队列中执行；`reset` 释放该 lease 的全部已按下按键并成为后续输入的确认屏障。
+- **控制与认证**：Viewer 与 Host Socket.IO 都声明 `inputProtocolVersion`。v2 Viewer 只能在 Host 同样声明 v2 后获得控制；旧 Host 必须收到/返回 `host-protocol-too-old`，不得降级为无租约输入。direct WebRTC offer 和 tunnel Socket 输入都先经过已认证 Viewer 身份及 desktop-control lease；同一时刻只有一个主 Viewer 可写，第二个 legacy Viewer 只读。`relay-viewer` 只是主 Viewer 的媒体 relay companion，不能取得独立桌面控制权或发送输入。
+- **长按与释放**：合法长按不以固定 8 秒阈值强制 keyup；lease heartbeat、Viewer/transport teardown、模式切换、失焦和显式 release 都进入同一 reset 路径。v2 接管 legacy controller 时，Host 必须先完成 `legacy-takeover` reset，再发新 grant。
+- **v1 迁移**：`LEGACY_INPUT_COMPAT_ENABLED` 当前在 Signal Server 中固定为 `true`，不是环境变量，禁止用部署配置绕过 v2 约束。legacy direct/tunnel 的首个输入惰性申请同一 lease，只有 lease controller 的输入可转发；Host 的单个 `LegacyInputAdapter` 同时处理 legacy DataChannel 与 Socket 输入，transport 变化必须先应用 `transport-change` reset 再处理新事件。移除该常量的条件是：所有受支持 Viewer 和 Host 都声明 v2、连续发布周期内无 v1 连接、direct/tunnel/relay 的 v2 合约与真实 Host 验收均通过；移除后 v1 必须明确拒绝，不能恢复 env 开关。
+- **脱敏与运行剩余项**：日志、ack 和诊断只保留协议版本、lease epoch、seq、动作、transport、payload byte count、input ID hash 与本机耗时，不记录 key/code/text、lease token 或坐标。Task12 之前不把真实 Host/Quartz、长按、IME、ISO/JIS 和公网多 Viewer 运行验证标记为已完成。
+
+> 2026-07-19 键盘专项整改：自动化状态机和协议迁移已覆盖 v2 lease、legacy 单控制者与跨 transport reset；完整真实运行证据和剩余门槛见 `docs/superpowers/reports/2026-07-19-remote-keyboard-mapping-stuck-key-systemic-analysis.md`。
 
 ### 3.4 控制栏
 
@@ -172,6 +181,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - Terminal 默认只记录结构化审计事件，不记录完整 IO 原文；仅在 `WRD_TERMINAL_RECORD_IO=1` 时允许详细 IO 记录
 - Host 默认只记录浏览器诊断摘要；仅在 `WRD_HOST_VERBOSE_DIAGNOSTICS=1` 时允许逐行输出 Viewer 详细日志
 - Viewer、Host 和 Signal Server 默认不记录 key、code、文本、鼠标坐标或完整 input payload；只保留 action、transport、payload byte count、input ID hash 和本机耗时。Viewer 控制台与自动诊断日志同样只保留输入元数据
+- `inputProtocolVersion`、lease epoch 和 seq 可作为不含秘密的协议诊断元数据记录；lease token、键值、文本和坐标仍必须脱敏
 - Host/Signal/Terminal audit file 使用 `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 轮转，默认 10 MiB / 3 个备份
 - `host_event_loop_lag` 只记录有界状态/资源摘要，20ms 为 warning、100ms 为 critical，普通告警按 5 秒聚合
 
@@ -214,6 +224,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_TERMINAL_AUDIT_LOG` | signal-server | 可选 Terminal 独立审计 JSONL 文件路径；为空时仍进入统一运行日志 |
 | `WRD_TERMINAL_RECORD_IO` | signal-server | 是否记录完整输入输出，默认 `0` |
 | `WRD_HOST_VERBOSE_DIAGNOSTICS` | python-host | 是否额外逐行输出 Viewer 诊断日志，默认 `0` |
+
+`LEGACY_INPUT_COMPAT_ENABLED` 是 Signal Server 源码中的迁移常量，不是环境变量；不得在运行配置中添加同名开关。
 
 ### 4.2 启动顺序
 
@@ -361,3 +373,4 @@ WebRemoteDesktop/
 | 2026-07-18 | 完成远程连接与延迟整改：入口健康真相、Pointer 输入契约、媒体 stats/timing v2、自适应恢复、独立桌面 input ack、Terminal 同钟 RTT 与密码安全 echo、session/replay/idle 资源保护、输入日志脱敏与 10 MiB/3 份轮转、named tunnel credentials-file 安全告警及 event-loop lag 上下文 |
 | 2026-07-19 | 完成真实普通浏览器验收；修复 Chromium 双击计数、首轮媒体预热/profile 同步、Terminal 关闭后迟到事件崩溃和 Signal 重启后的 Host 过期 token 重连；保留首帧 P50 与公网 Terminal RTT 未达目标的诚实结论 |
 | 2026-07-19 | 完成键盘映射与卡键专项审计；确认 Windows Ctrl -> Command、tracked keyup、跨 transport reset、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约和国际键盘映射仍需整改，不再把组合键与 Windows 模式标记为完整验收 |
+| 2026-07-19 | 补齐键盘 v1/v2 迁移契约：Host/Viewer 版本能力协商、旧 Host 拒绝 v2 激活、legacy 单 controller 与 transport-change reset；真实 Host/Quartz 运行验收保留至 Task12 |

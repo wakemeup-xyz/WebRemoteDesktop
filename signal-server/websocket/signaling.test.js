@@ -240,6 +240,7 @@ test('v2 viewers cannot forward unleased media writes and active media writes ar
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-v2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
   viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
@@ -481,6 +482,8 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
   const host = new FakeSocket('host-1', 'host');
   const owner = new FakeSocket('viewer-owner', 'viewer');
   const observer = new FakeSocket('viewer-observer', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  owner.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(owner);
   io.connect(observer);
@@ -701,6 +704,8 @@ test('input is not relayed before control transition ack, then valid v2 input re
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
 
@@ -743,6 +748,115 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
   assert.equal(host.sent.filter((entry) => entry.event === 'input').at(-1).data.viewerId, 'viewer-a');
   viewerB.trigger('input', legacyInput);
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+});
+
+test('legacy direct offer and tunnel input share one lazy lease', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('legacy-main', 'viewer');
+  io.connect(host); io.connect(viewer);
+
+  viewer.trigger('offer', { offer: { type: 'offer', sdp: 'v=0' }, epoch: 1 });
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, 1);
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
+  assert.equal(host.sent.filter((entry) => entry.event === 'offer').length, 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'offer').at(-1).data.leaseEpoch, transition.leaseEpoch);
+});
+
+test('legacy relay-viewer is a media companion and cannot acquire a second controller', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const mainViewer = new FakeSocket('legacy-main', 'viewer');
+  const relayViewer = new FakeSocket('legacy-relay', 'relay-viewer');
+  io.connect(host); io.connect(mainViewer); io.connect(relayViewer);
+
+  relayViewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  assert.equal(host.sent.some((entry) => entry.event === 'control-transition'), false);
+  mainViewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, 1);
+});
+
+test('legacy controller disconnect sends a reset-only transition for its active lease', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('legacy-main', 'viewer');
+  io.connect(host); io.connect(viewer);
+
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: grantTransition.leaseEpoch, status: 'applied' });
+  viewer.trigger('disconnect');
+
+  assert.deepEqual(host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data, {
+    type: 'control-transition',
+    leaseEpoch: grantTransition.leaseEpoch,
+    reason: 'controller-disconnect',
+  });
+});
+
+test('v2 activation advertises capabilities and refuses an older host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-v1', 'host');
+  const viewer = new FakeSocket('viewer-v2', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  assert.deepEqual(host.sent.find((entry) => entry.event === 'connected').data, {
+    role: 'host', status: 'ok', inputProtocolVersion: 1,
+  });
+  assert.deepEqual(viewer.sent.find((entry) => entry.event === 'connected').data, {
+    role: 'viewer', status: 'ok', hostOnline: true,
+    inputProtocolVersion: 2, hostInputProtocolVersion: 1,
+  });
+
+  viewer.trigger('control-acquire', { requestId: 'v2-on-v1' });
+  assert.deepEqual(viewer.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data, {
+    state: 'FREE', reason: 'host-protocol-too-old', requestId: 'v2-on-v1',
+  });
+  assert.equal(host.sent.some((entry) => entry.event === 'control-transition'), false);
+});
+
+test('legacy controller is single-writer and a v2 takeover resets it before grant', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })() });
+  const host = new FakeSocket('host-v2', 'host');
+  host.handshake.auth.inputProtocolVersion = 2;
+  const legacyViewer = new FakeSocket('legacy-viewer', 'viewer');
+  const secondLegacyViewer = new FakeSocket('legacy-readonly', 'viewer');
+  const v2Viewer = new FakeSocket('v2-viewer', 'viewer');
+  v2Viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(legacyViewer); io.connect(secondLegacyViewer); io.connect(v2Viewer);
+
+  const legacyInput = { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } };
+  legacyViewer.trigger('input', legacyInput);
+  let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+
+  secondLegacyViewer.trigger('input', legacyInput);
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+  assert.equal(secondLegacyViewer.sent.some((entry) => entry.event === 'control-grant'), false);
+
+  v2Viewer.trigger('control-acquire', { requestId: 'take-legacy', takeover: true });
+  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(transition.reason, 'legacy-takeover');
+  assert.equal(v2Viewer.sent.some((entry) => entry.event === 'control-grant'), false);
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  assert.equal(v2Viewer.sent.some((entry) => entry.event === 'control-grant'), true);
 });
 
 test('pending legacy input queue retains only the first input during granting', () => {
@@ -802,6 +916,9 @@ test('takeover freezes controller A until host ack and grants B', () => {
   const host = new FakeSocket('host-1', 'host');
   const viewerA = new FakeSocket('viewer-a', 'viewer');
   const viewerB = new FakeSocket('viewer-b', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewerA.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
   io.connect(host); io.connect(viewerA); io.connect(viewerB);
   viewerA.trigger('control-acquire', { requestId: 'a' });
   let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
@@ -824,6 +941,8 @@ test('control logs redact lease token and text payload', () => {
   setupSignaling(io, { logger: { log: (...values) => lines.push(values.join(' ')), warn() {}, info() {}, error() {} }, makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(host); io.connect(viewer);
   viewer.trigger('control-acquire', { requestId: 'req' });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;

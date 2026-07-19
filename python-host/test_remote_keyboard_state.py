@@ -271,3 +271,25 @@ def test_legacy_adapter_issues_sequences_and_resets_before_new_transport():
     assert legacy.apply({"type": "keyboard", "action": "keyup", "payload": {"code": "KeyA"}}, transport="datachannel").status == "applied"
     assert [event[:2] for event in adapter.events] == [("KeyA", True), ("KeyA", False)]
     assert state.snapshot().last_applied_seq == 3
+
+
+def test_legacy_adapter_resets_before_the_first_event_on_a_new_transport():
+    adapter = RecordingKeyboardAdapter()
+    state = RemoteKeyboardState(adapter)
+    legacy = LegacyInputAdapter(state)
+    legacy.bind(connection_generation=1, lease_id=LEASE_ID, lease_epoch=1)
+
+    assert legacy.apply(
+        {"type": "keyboard", "action": "keydown", "payload": {"code": "KeyA"}},
+        transport="socket",
+    ).status == "applied"
+    assert legacy.apply(
+        {"type": "keyboard", "action": "keydown", "payload": {"code": "KeyB"}},
+        transport="datachannel",
+    ).status == "applied"
+
+    assert [event[:2] for event in adapter.events] == [
+        ("KeyA", True), ("KeyA", False), ("KeyB", True),
+    ]
+    assert state.snapshot().pressed_codes == frozenset({"KeyB"})
+    assert state.snapshot().last_applied_seq == 3
