@@ -133,22 +133,22 @@ function setupTerminal(io, options = {}) {
 
     function bindSessionCallbacks(sessionId) {
       return {
-        onData: (data) => {
+        onData: (data, metadata = {}) => {
           socket.emit('terminal:output', {
-            sessionId,
+            sessionId: metadata.sessionId || sessionId,
             data,
           });
         },
-        onError: (error) => {
+        onError: (error, metadata = {}) => {
           socket.emit('terminal:error', {
-            sessionId,
+            sessionId: metadata.sessionId || error.details?.sessionId || sessionId,
             code: error.code || 'terminal_process_failed',
             message: error.message,
           });
         },
-        onExit: ({ exitCode, signal, errorCode, processStatus }) => {
+        onExit: ({ sessionId: callbackSessionId, exitCode, signal, errorCode, processStatus }) => {
           socket.emit('terminal:exit', {
-            sessionId,
+            sessionId: callbackSessionId || sessionId,
             exitCode,
             signal,
             errorCode,
@@ -161,28 +161,39 @@ function setupTerminal(io, options = {}) {
     function handleCreate(payload = {}) {
       try {
         const sessionRef = { sessionId: null };
+        const pendingLifecycleEvents = [];
+        const emitLifecycleEvent = (event, eventPayload) => {
+          if (!sessionRef.sessionId) {
+            pendingLifecycleEvents.push({ event, payload: eventPayload });
+            return;
+          }
+          socket.emit(event, {
+            ...eventPayload,
+            sessionId: eventPayload.sessionId || sessionRef.sessionId,
+          });
+        };
         const created = sessionManager.createSession({
           clientId,
           socketId,
           title: payload.title,
           cols: payload.cols,
           rows: payload.rows,
-          onData: (data) => {
-            socket.emit('terminal:output', {
-              sessionId: sessionRef.sessionId,
+          onData: (data, metadata = {}) => {
+            emitLifecycleEvent('terminal:output', {
+              sessionId: metadata.sessionId || null,
               data,
             });
           },
-          onError: (error) => {
-            socket.emit('terminal:error', {
-              sessionId: sessionRef.sessionId,
+          onError: (error, metadata = {}) => {
+            emitLifecycleEvent('terminal:error', {
+              sessionId: metadata.sessionId || error.details?.sessionId || null,
               code: error.code || 'terminal_process_failed',
               message: error.message,
             });
           },
-          onExit: ({ exitCode, signal, errorCode, processStatus }) => {
-            socket.emit('terminal:exit', {
-              sessionId: sessionRef.sessionId,
+          onExit: ({ sessionId, exitCode, signal, errorCode, processStatus }) => {
+            emitLifecycleEvent('terminal:exit', {
+              sessionId: sessionId || null,
               exitCode,
               signal,
               errorCode,
@@ -193,6 +204,13 @@ function setupTerminal(io, options = {}) {
         sessionRef.sessionId = created.sessionId;
         terminalNamespace.emit('terminal:session_created', created);
         terminalNamespace.emit('terminal:created', created);
+        for (const pending of pendingLifecycleEvents) {
+          socket.emit(pending.event, {
+            ...pending.payload,
+            sessionId: pending.payload.sessionId || created.sessionId,
+          });
+        }
+        pendingLifecycleEvents.length = 0;
         emitPoolSnapshot();
         emitPresence(created.sessionId);
         if (sessionManager.getPoolSnapshot().sessions.length > config.terminalSoftWarnSessionCount) {

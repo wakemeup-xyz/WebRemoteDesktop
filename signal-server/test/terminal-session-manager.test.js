@@ -426,11 +426,14 @@ test('synchronous PTY data during callback registration clears the timer and rea
 
   const created = manager.createSession({
     clientId: 'browser-a',
-    onData: (data) => delivered.push(data),
+    onData: (data, metadata) => delivered.push({ data, metadata }),
   });
 
   assert.equal(created.processStatus, 'running');
-  assert.deepEqual(delivered, ['instant prompt']);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].data, 'instant prompt');
+  assert.equal(delivered[0].metadata.sessionId, created.sessionId);
+  assert.equal(delivered[0].metadata.replaySeq, 1);
   assert.equal(activeTimers.size, 0);
   assert.equal(manager.listSessions().length, 1);
 });
@@ -466,6 +469,7 @@ test('synchronous PTY exit during callback registration notifies the creator and
   assert.equal(created.processStatus, 'failed');
   assert.equal(created.exitCode, 2);
   assert.equal(exits.length, 1);
+  assert.equal(exits[0].sessionId, created.sessionId);
   assert.equal(exits[0].processStatus, 'failed');
   assert.equal(activeTimers.size, 0);
   assert.equal(manager.listSessions().length, 1);

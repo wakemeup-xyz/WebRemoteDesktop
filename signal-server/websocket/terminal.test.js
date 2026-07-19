@@ -116,14 +116,14 @@ function makeIo() {
   };
 }
 
-function buildTerminalHarness(configOverrides = {}) {
+function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
   const io = makeIo();
   const ptyBySessionId = new Map();
   const auditEvents = [];
-  const ptyFactory = () => {
+  const ptyFactory = harnessOptions.ptyFactory || (() => {
     const pty = createFakePty();
     return pty;
-  };
+  });
   const sessionManager = createTerminalSessionManager({
     ptyFactory: (...args) => ptyFactory(...args),
     logger: { info() {}, warn() {}, error() {} },
@@ -206,6 +206,46 @@ test('terminal namespace broadcasts shared session output and presence to multip
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.observerCount === 2), true);
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 2);
+});
+
+test('synchronous PTY output is emitted once after session creation with the authoritative session id', () => {
+  const pty = createFakePty();
+  pty.onData = (handler) => handler('instant prompt');
+  const { namespace } = buildTerminalHarness({}, { ptyFactory: () => pty });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { title: 'Instant shell' });
+
+  const createdIndex = admin.sent.findIndex((message) => message.event === 'terminal:session_created');
+  const outputIndexes = admin.sent
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.event === 'terminal:output');
+  const created = admin.sent[createdIndex].data;
+  assert.equal(outputIndexes.length, 1);
+  assert.equal(createdIndex < outputIndexes[0].index, true);
+  assert.equal(outputIndexes[0].message.data.sessionId, created.sessionId);
+  assert.notEqual(outputIndexes[0].message.data.sessionId, null);
+  assert.equal(outputIndexes[0].message.data.data, 'instant prompt');
+});
+
+test('synchronous PTY exit is emitted once after session creation with the authoritative session id', () => {
+  const pty = createFakePty();
+  pty.onExit = (handler) => handler({ exitCode: 2, signal: 0 });
+  const { namespace } = buildTerminalHarness({}, { ptyFactory: () => pty });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+
+  admin.trigger('terminal:create_session', { title: 'Immediate exit shell' });
+
+  const createdIndex = admin.sent.findIndex((message) => message.event === 'terminal:session_created');
+  const exitIndexes = admin.sent
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.event === 'terminal:exit');
+  const created = admin.sent[createdIndex].data;
+  assert.equal(exitIndexes.length, 1);
+  assert.equal(createdIndex < exitIndexes[0].index, true);
+  assert.equal(exitIndexes[0].message.data.sessionId, created.sessionId);
+  assert.notEqual(exitIndexes[0].message.data.sessionId, null);
+  assert.equal(exitIndexes[0].message.data.processStatus, 'failed');
 });
 
 test('socket disconnect detaches only the disconnected socket observer without closing the shared PTY', () => {

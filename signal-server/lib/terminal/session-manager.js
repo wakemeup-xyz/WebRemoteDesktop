@@ -187,20 +187,29 @@ function createTerminalSessionManager(options = {}) {
 
   function emitOutput(session, data) {
     const replayEntry = session.replayBuffer.push(data);
+    const metadata = Object.freeze({
+      sessionId: session.sessionId,
+      replaySeq: replayEntry.seq,
+    });
     for (const observer of session.observers.values()) {
-      observer.onData?.(replayEntry.data);
+      observer.onData?.(replayEntry.data, metadata);
     }
   }
 
   function emitExit(session, payload) {
+    const correlatedPayload = {
+      ...payload,
+      sessionId: session.sessionId,
+    };
     for (const observer of session.observers.values()) {
-      observer.onExit?.(payload);
+      observer.onExit?.(correlatedPayload);
     }
   }
 
   function emitError(session, error) {
+    const metadata = Object.freeze({ sessionId: session.sessionId });
     for (const observer of session.observers.values()) {
-      observer.onError?.(error);
+      observer.onError?.(error, metadata);
     }
   }
 
