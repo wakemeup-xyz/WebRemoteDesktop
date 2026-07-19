@@ -92,6 +92,20 @@ test('takeover candidate disconnect preserves the reset barrier until host confi
   });
 });
 
+test('granting candidate disconnect preserves the host reset barrier', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+
+  const disconnected = lease.viewerDisconnected('viewer-a');
+  assert.equal(disconnected.state, 'GRANTING');
+  assert.equal(disconnected.transition.leaseEpoch, request.transition.leaseEpoch);
+  assert.equal(lease.snapshot().state, 'GRANTING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }), {
+    state: 'FREE', reason: 'controller-disconnect',
+  });
+});
+
 test('stale transition acknowledgements cannot grant or alter the current transition', () => {
   const lease = makeLease();
   const first = lease.requestControl({ viewerId: 'viewer-a' });
