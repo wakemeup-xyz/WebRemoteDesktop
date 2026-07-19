@@ -283,19 +283,11 @@ class RemoteKeyboardState:
                 return
             if not payload["repeat"] and code in self._pressed_codes:
                 return
+            self._adapter.post_key(code, True, self._modifier_mask())
             self._pressed_codes.add(code)
-            try:
-                self._adapter.post_key(code, True, self._modifier_mask())
-            except Exception:
-                self._pressed_codes.discard(code)
-                raise
         elif code in self._pressed_codes:
+            self._adapter.post_key(code, False, self._modifier_mask())
             self._pressed_codes.remove(code)
-            try:
-                self._adapter.post_key(code, False, self._modifier_mask())
-            except Exception:
-                self._pressed_codes.add(code)
-                raise
         desired_caps_lock = payload["locks"]["capsLock"]
         if desired_caps_lock is not None and hasattr(self._adapter, "set_caps_lock"):
             self._adapter.set_caps_lock(desired_caps_lock)

@@ -157,6 +157,20 @@ def test_sided_modifier_mask_comes_only_from_pressed_physical_codes():
     assert adapter.last_modifier_mask == SHIFT_MASK
 
 
+def test_modifier_event_masks_follow_action_before_semantics():
+    adapter = RecordingKeyboardAdapter()
+    state = active_state(adapter)
+    state.apply(key_envelope(seq=1, phase="down", code="ShiftLeft"))
+    state.apply(key_envelope(seq=2, phase="down", code="KeyA"))
+    state.apply(key_envelope(seq=3, phase="up", code="ShiftLeft"))
+
+    assert [(code, is_down, mask) for code, is_down, mask in adapter.events] == [
+        ("ShiftLeft", True, 0),
+        ("KeyA", True, SHIFT_MASK),
+        ("ShiftLeft", False, SHIFT_MASK),
+    ]
+
+
 def test_duplicate_gap_stale_stolen_token_and_future_epoch_do_not_execute():
     adapter = RecordingKeyboardAdapter()
     state = active_state(adapter)
