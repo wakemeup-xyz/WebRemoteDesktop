@@ -305,6 +305,8 @@ Viewer 和 Host 都使用 8 秒阈值。普通键 auto-repeat 会刷新 Viewer p
 
 下表将已提交代码、自动化测试和真实运行验收分开记录。`未执行（Task12）` 不等于问题已经关闭；在 Task12 取得浏览器和真实 Quartz 证据前，需求文档不得使用“完整验收完成”的表述。
 
+2026-07-20：最终代码基线为 `2419dcbfa9c035335888bd345983452d1b588dba`。Task12 运行服务尚未加载该提交，K-01 至 K-13 均保持“代码完成/运行未验收”；自动化汇总和待执行案例见 [运行时验收记录](2026-07-19-remote-keyboard-runtime-acceptance.md)。
+
 | 编号 | 当前整改代码/提交 | 自动化测试证据 | 真实运行验收 |
 |---|---|---|---|
 | K-01 | `64744ae` Windows modifier 归一化 | `web-client/js/remote-keyboard-controller.test.js` 的 Windows Ctrl/Meta 矩阵 | 未执行（Task12） |
