@@ -3,6 +3,7 @@ const { createTerminalAudit } = require('./audit');
 const { loadTerminalConfig } = require('./config');
 const { buildTerminalEnvironment, getTerminalShellArgs } = require('./environment');
 const { TerminalInputBucket, TerminalOutputDispatcher } = require('./flow-control');
+const { TerminalMetrics } = require('./metrics');
 const {
   PROCESS_STATUS,
   assertProcessWritable,
@@ -77,7 +78,6 @@ function createTerminalSessionManager(options = {}) {
     auditLog: rawConfig.auditLog ?? rawConfig.terminalAuditLog ?? '',
     pathEntries: rawConfig.pathEntries ?? rawConfig.terminalPathEntries ?? [],
     recordIoMetadata,
-    recordIo: recordIoMetadata,
     replayBufferBytes: Number(rawConfig.replayBufferBytes ?? rawConfig.terminalReplayBufferBytes ?? 262144),
     inputRate: {
       bytesPerSecond: Number(
@@ -105,6 +105,7 @@ function createTerminalSessionManager(options = {}) {
     : (typeof options.now === 'function' ? () => now().getTime() : null);
   const logger = options.logger || console;
   const audit = options.audit || createTerminalAudit(logger);
+  const metrics = options.metrics || new TerminalMetrics();
   const ptyFactory = options.ptyFactory || defaultPtyFactory;
   const scheduleTimeout = options.setTimeout || setTimeout;
   const cancelTimeout = options.clearTimeout || clearTimeout;
@@ -245,6 +246,7 @@ function createTerminalSessionManager(options = {}) {
           queuedBytes: warning.stats.queuedBytes,
           droppedChunks: warning.stats.droppedChunks,
         });
+        metrics.recordCounter('output_backpressure');
         observer.onWarning?.(warning);
       },
       onDetach(reason) {
@@ -265,6 +267,8 @@ function createTerminalSessionManager(options = {}) {
   }
 
   function emitOutput(session, data) {
+    metrics.recordCounter('output_bytes', Buffer.byteLength(String(data || ''), 'utf8'));
+    metrics.recordCounter('output_chunks');
     const replayEntry = session.replayBuffer.push(data);
     const metadata = Object.freeze({
       sessionId: session.sessionId,
@@ -421,6 +425,7 @@ function createTerminalSessionManager(options = {}) {
       clientId: session.creatorClientId,
       startupDurationMs,
     });
+    metrics.recordLatency('pty_ready_ms', startupDurationMs);
     return true;
   }
 
@@ -441,6 +446,7 @@ function createTerminalSessionManager(options = {}) {
       code: error.code,
       startupTimeoutMs: config.startupTimeoutMs,
     });
+    metrics.recordCounter('pty_startup_timeout');
     killPtyOnce(session);
     emitError(session, error);
     emitExit(session, {
@@ -463,7 +469,7 @@ function createTerminalSessionManager(options = {}) {
         }
         markPtyReady(session);
         session.lastActiveAt = timestamp();
-        if (config.recordIo) {
+        if (config.recordIoMetadata) {
           audit.info('terminal_output_observed', {
             sessionId: session.sessionId,
             clientId: session.activePresenterClientId,
@@ -490,6 +496,7 @@ function createTerminalSessionManager(options = {}) {
           signal,
           processStatus: session.processStatus,
         });
+        metrics.recordCounter('pty_exited');
         emitExit(session, {
           exitCode,
           signal,
@@ -538,6 +545,7 @@ function createTerminalSessionManager(options = {}) {
         }),
       });
     } catch {
+      metrics.recordCounter('pty_spawn_failed');
       audit.error('terminal_pty_spawn_failed', {
         clientId: String(input.clientId || '').trim() || null,
         socketId: String(input.socketId || '').trim() || null,
@@ -591,6 +599,7 @@ function createTerminalSessionManager(options = {}) {
     try {
       wirePty(session, pty);
     } catch {
+      metrics.recordCounter('pty_spawn_failed');
       audit.error('terminal_pty_registration_failed', {
         sessionId,
         clientId: session.creatorClientId,
@@ -618,6 +627,7 @@ function createTerminalSessionManager(options = {}) {
       throw makeTerminalError('pty_spawn_failed');
     }
     maybeWarnSessionCount();
+    metrics.recordCounter('session_created');
     audit.info('terminal_session_created', {
       sessionId,
       poolId: pool.poolId,
@@ -628,12 +638,13 @@ function createTerminalSessionManager(options = {}) {
       cols,
       rows,
       observerCount: session.observers.size,
-      ioRecording: config.recordIo,
+      ioRecording: config.recordIoMetadata,
     });
     return snapshotSession(session);
   }
 
   function attachSession(sessionId, input = {}) {
+    const attachStartedAt = Date.now();
     const session = ensureSession(sessionId);
     addObserver(session, input);
     if (
@@ -655,6 +666,8 @@ function createTerminalSessionManager(options = {}) {
       socketId: String(input.socketId || '').trim() || null,
       observerCount: session.observers.size,
     });
+    metrics.recordCounter('session_attach');
+    metrics.recordLatency('attach_ms', Math.max(0, Date.now() - attachStartedAt));
     return {
       ...snapshotSession(session),
       replay: session.replayBuffer.snapshot(),
@@ -667,17 +680,20 @@ function createTerminalSessionManager(options = {}) {
     const socketId = String(input.socketId || '').trim();
     const clientId = String(input.clientId || '').trim();
     let removedClientId = '';
+    let removedObserver = false;
 
     if (observerId && session.observers.has(observerId)) {
       removedClientId = session.observers.get(observerId)?.clientId || '';
       session.observers.delete(observerId);
       session.outputDispatcher.detach(observerId);
+      removedObserver = true;
     } else if (socketId) {
       for (const [key, observer] of session.observers.entries()) {
         if (observer.socketId === socketId) {
           removedClientId = observer.clientId || '';
           session.observers.delete(key);
           session.outputDispatcher.detach(key);
+          removedObserver = true;
           break;
         }
       }
@@ -687,6 +703,7 @@ function createTerminalSessionManager(options = {}) {
           removedClientId = observer.clientId || '';
           session.observers.delete(key);
           session.outputDispatcher.detach(key);
+          removedObserver = true;
           break;
         }
       }
@@ -708,6 +725,7 @@ function createTerminalSessionManager(options = {}) {
       observerCount: session.observers.size,
       reason: input.reason || 'detached',
     });
+    if (removedObserver) metrics.recordCounter('session_detach');
     return snapshotSession(session);
   }
 
@@ -776,12 +794,14 @@ function createTerminalSessionManager(options = {}) {
         code: 'terminal_input_rate_limited',
         ...details,
       });
+      metrics.recordCounter('input_rate_limited');
       throw makeTerminalError('terminal_input_rate_limited', details);
     }
     if (session.pty && typeof session.pty.write === 'function') {
       session.pty.write(data);
     }
     session.lastActiveAt = timestamp();
+    metrics.recordCounter('input_accepted');
     return snapshotSession(session);
   }
 
@@ -853,6 +873,7 @@ function createTerminalSessionManager(options = {}) {
       reason: session.detachedReason,
       poolId: pool.poolId,
     });
+    metrics.recordCounter('session_closed');
     return snapshotSession(session);
   }
 
@@ -969,6 +990,7 @@ function createTerminalSessionManager(options = {}) {
     resizeSession,
     reapIdleSessions,
     handleSocketDisconnect,
+    metrics,
     _getSession: getSession,
     _getCleanupPendingCount: () => cleanupQuarantine.size,
   };

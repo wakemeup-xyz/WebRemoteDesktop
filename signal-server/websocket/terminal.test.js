@@ -7,6 +7,7 @@ process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test
 process.env.HOST_SHARED_SECRET = process.env.HOST_SHARED_SECRET || 'test-host-secret';
 
 const { signAccessToken } = require('../lib/auth');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
 const { setupTerminal } = require('./terminal');
 
@@ -152,6 +153,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
     return pty;
   });
   const sessionManager = createTerminalSessionManager({
+    metrics: harnessOptions.metrics,
     ptyFactory: (...args) => ptyFactory(...args),
     logger: { info() {}, warn() {}, error() {} },
     audit,
@@ -185,6 +187,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
       terminalSoftWarnSessionCount: 1,
     },
     sessionManager,
+    metrics: harnessOptions.metrics,
     audit,
     logger: { info() {}, warn() {}, error() {} },
   });
@@ -193,6 +196,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
     namespace: io.of('/terminal'),
     sessionManager,
     auditEvents,
+    metrics: harnessOptions.metrics,
     getPty(sessionId) {
       return ptyBySessionId.get(sessionId);
     },
@@ -766,6 +770,40 @@ test('terminal websocket reports input rate limits without ack or raw input and 
     message.event === 'terminal:input_ack'
     && message.data.inputId === 'accepted-after-refill'
   )), true);
+});
+
+test('terminal websocket records socket and input metrics once on the shared instance', () => {
+  let nowMs = 0;
+  const metrics = new TerminalMetrics();
+  const { namespace, getPty } = buildTerminalHarness({
+    terminalInputBytesPerSecond: 1,
+    terminalInputBurstBytes: 1,
+  }, {
+    metrics,
+    now: () => new Date(nowMs),
+  });
+  const admin = namespace.connect(new FakeSocket('admin-metrics', 'admin'));
+  admin.trigger('terminal:create_session', { title: 'Metrics shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  getPty(created.sessionId).emitData('ready');
+
+  admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'x' });
+  admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'SECRET_INPUT' });
+  admin.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'x'.repeat(65 * 1024),
+  });
+  nowMs = 3;
+  admin.trigger('disconnect');
+
+  const snapshot = metrics.snapshot();
+  assert.equal(snapshot.counters.socket_connected, 1);
+  assert.equal(snapshot.counters.socket_disconnected, 1);
+  assert.equal(snapshot.counters.input_accepted, 1);
+  assert.equal(snapshot.counters.input_rate_limited, 1);
+  assert.equal(snapshot.counters.input_rejected, 1);
+  assert.equal(snapshot.latencies.server_input_process_ms.sampleCount, 2);
+  assert.equal(JSON.stringify(snapshot).includes('SECRET_INPUT'), false);
 });
 
 test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', () => {

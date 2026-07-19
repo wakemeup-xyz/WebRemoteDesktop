@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const test = require('node:test');
 const express = require('express');
 const authModule = require('../routes/auth');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 const authRoutes = authModule;
 const { createAuthRouter } = authModule;
 
@@ -15,6 +16,7 @@ process.env.WRD_TERMINAL_ADMIN_PASSWORD = 'test-terminal-admin-password';
 
 async function withServer(runTest, options = {}) {
   const app = express();
+  if (options.trustProxy !== undefined) app.set('trust proxy', options.trustProxy);
   app.use(express.json());
   const router = options.router
     || (typeof createAuthRouter === 'function'
@@ -29,6 +31,14 @@ async function withServer(runTest, options = {}) {
   } finally {
     await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }
+}
+
+async function requestJson(baseUrl, route, body, headers = {}) {
+  return fetch(baseUrl + route, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
 }
 
 test('/api/auth/login/admin returns an admin token for the configured password', async () => {
@@ -152,4 +162,85 @@ test('/api/auth/login/admin emits audit events when terminal login is disabled o
     },
   });
   assert.equal(misconfiguredEvents.some((entry) => entry.event === 'terminal_admin_auth_misconfigured'), true);
+});
+
+test('route-specific auth limiters enforce viewer, host, and verify ceilings independently', async () => {
+  await withServer(async (baseUrl) => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      assert.equal((await requestJson(baseUrl, '/api/auth/login/viewer', {})).status, 400);
+    }
+    const limited = await requestJson(baseUrl, '/api/auth/login/viewer', {});
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: 'Too many requests' });
+  });
+
+  await withServer(async (baseUrl) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      assert.equal((await requestJson(baseUrl, '/api/auth/login/host', {})).status, 400);
+    }
+    assert.equal((await requestJson(baseUrl, '/api/auth/login/host', {})).status, 429);
+  });
+
+  await withServer(async (baseUrl) => {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      assert.equal((await fetch(baseUrl + '/api/auth/verify')).status, 401);
+    }
+    assert.equal((await fetch(baseUrl + '/api/auth/verify')).status, 429);
+  });
+});
+
+test('viewer attempts do not consume the five-request admin bucket', async () => {
+  await withServer(async (baseUrl) => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      assert.equal((await requestJson(baseUrl, '/api/auth/login/viewer', {})).status, 400);
+    }
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.equal((await requestJson(baseUrl, '/api/auth/login/admin', {
+        password: 'wrong-password',
+      })).status, 401);
+    }
+    const limited = await requestJson(baseUrl, '/api/auth/login/admin', {
+      password: 'wrong-password',
+    });
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: 'Too many requests' });
+  });
+});
+
+test('admin login has a process-wide one-hundred-request ceiling across IPs', async () => {
+  await withServer(async (baseUrl) => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const response = await requestJson(
+        baseUrl,
+        '/api/auth/login/admin',
+        { password: 'wrong-password' },
+        { 'x-forwarded-for': `198.51.100.${Math.floor(attempt / 250) + 1}, 203.0.113.${(attempt % 250) + 1}` },
+      );
+      assert.equal(response.status, 401);
+    }
+    const limited = await requestJson(
+      baseUrl,
+      '/api/auth/login/admin',
+      { password: 'wrong-password' },
+      { 'x-forwarded-for': '192.0.2.250' },
+    );
+    assert.equal(limited.status, 429);
+  }, { trustProxy: 1 });
+});
+
+test('admin authentication records bounded success and rejection counters without secrets', async () => {
+  const terminalMetrics = new TerminalMetrics();
+  await withServer(async (baseUrl) => {
+    assert.equal((await requestJson(baseUrl, '/api/auth/login/admin', {
+      password: 'wrong-password-SECRET_VALUE',
+    })).status, 401);
+    assert.equal((await requestJson(baseUrl, '/api/auth/login/admin', {
+      password: 'test-terminal-admin-password',
+    })).status, 200);
+  }, { terminalMetrics });
+
+  const snapshot = terminalMetrics.snapshot();
+  assert.equal(snapshot.counters.auth_rejected, 1);
+  assert.equal(snapshot.counters.auth_success, 1);
+  assert.equal(JSON.stringify(snapshot).includes('SECRET_VALUE'), false);
 });

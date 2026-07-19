@@ -2,6 +2,7 @@ const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
 const { createTerminalAudit } = require('../lib/terminal/audit');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 
 function getToken(socket) {
   return socket.handshake?.auth?.token || null;
@@ -30,11 +31,14 @@ function authenticate(socket) {
 function setupTerminal(io, options = {}) {
   const config = options.config || loadConfig();
   const audit = options.audit || createTerminalAudit(options.logger || console);
+  const metrics = options.metrics || options.sessionManager?.metrics || new TerminalMetrics();
   const sessionManager = options.sessionManager || createTerminalSessionManager({
     config,
     logger: options.logger || console,
     audit,
+    metrics,
   });
+  const metricNow = typeof options.metricNow === 'function' ? options.metricNow : () => performance.now();
 
   const terminalNamespace = io.of('/terminal');
   let idleReaperTimer = null;
@@ -76,6 +80,7 @@ function setupTerminal(io, options = {}) {
     const socketId = socket.id;
     const clientLabel = getClientLabel(socket);
     const getTransportName = () => String(socket.conn?.transport?.name || 'unknown');
+    metrics.recordCounter('socket_connected');
     audit.info('terminal_socket_connected', {
       socketId,
       clientId,
@@ -402,10 +407,12 @@ function setupTerminal(io, options = {}) {
 
     socket.on('terminal:input', (payload = {}) => {
       if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected')) {
+        metrics.recordCounter('input_rejected');
         return;
       }
       const data = String(payload.data || '');
       if (Buffer.byteLength(data, 'utf8') > 64 * 1024) {
+        metrics.recordCounter('input_rejected');
         audit.warn('terminal_input_rejected', {
           sessionId: payload.sessionId,
           clientId,
@@ -420,6 +427,7 @@ function setupTerminal(io, options = {}) {
         });
         return;
       }
+      const processingStartedAt = metricNow();
       try {
         const serverReceivedAt = Date.now();
         sessionManager.writeInput(payload.sessionId, {
@@ -441,6 +449,9 @@ function setupTerminal(io, options = {}) {
       } catch (err) {
         const code = err.code || 'terminal_input_failed';
         if (code !== 'terminal_input_rate_limited') {
+          metrics.recordCounter('input_rejected');
+        }
+        if (code !== 'terminal_input_rate_limited') {
           audit.error('terminal_error', {
             sessionId: payload.sessionId || null,
             clientId,
@@ -456,6 +467,11 @@ function setupTerminal(io, options = {}) {
           message: err.message,
           ...(err.details ? { details: err.details } : {}),
         });
+      } finally {
+        metrics.recordLatency(
+          'server_input_process_ms',
+          Math.max(0, Number(metricNow()) - Number(processingStartedAt)),
+        );
       }
     });
 
@@ -505,6 +521,7 @@ function setupTerminal(io, options = {}) {
     });
 
     socket.on('disconnect', () => {
+      metrics.recordCounter('socket_disconnected');
       const disconnected = sessionManager.handleSocketDisconnect({
         clientId,
         socketId,
@@ -526,6 +543,7 @@ function setupTerminal(io, options = {}) {
   return {
     namespace: terminalNamespace,
     sessionManager,
+    metrics,
     close() {
       if (idleReaperTimer) clearInterval(idleReaperTimer);
       idleReaperTimer = null;

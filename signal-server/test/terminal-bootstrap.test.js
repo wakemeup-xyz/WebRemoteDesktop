@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
+const { TerminalMetrics } = require('../lib/terminal/metrics');
 const { createServerApp } = require('../server');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
@@ -131,6 +132,7 @@ test('/api/terminal/bootstrap returns terminal pool metadata for admin tokens', 
     assert.equal(response.status, 200);
     assert.equal(body.enabled, true);
     assert.equal(body.softWarnSessionCount, 3);
+    assert.equal(body.allowPolling, false);
     assert.equal(body.pool.poolId, 'default');
     assert.deepEqual(body.pool.sessions, []);
   } finally {
@@ -139,6 +141,8 @@ test('/api/terminal/bootstrap returns terminal pool metadata for admin tokens', 
 });
 
 test('/api/terminal/bootstrap returns the live shared pool snapshot after a session exists', async () => {
+  const terminalMetrics = new TerminalMetrics();
+  terminalMetrics.recordCounter('session_created');
   const sessionManager = createTerminalSessionManager({
     ptyFactory: () => createFakePty(),
     logger: { log() {}, info() {}, warn() {}, error() {} },
@@ -176,10 +180,12 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
       terminalStartupTimeoutMs: 10000,
       terminalAuditLog: '',
       terminalRecordIo: false,
+      terminalAllowPolling: true,
     },
     terminal: {
       sessionManager,
     },
+    terminalMetrics,
     logger: { log() {}, info() {}, warn() {}, error() {} },
   });
   await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
@@ -202,6 +208,20 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
     assert.equal(body.pool.sessions.length, 1);
     assert.equal(body.pool.sessions[0].sessionId, created.sessionId);
     assert.equal(body.pool.sessions[0].title, 'Shared shell');
+    assert.equal(body.allowPolling, true);
+
+    const viewerMetricsResponse = await fetch(baseUrl + '/api/admin/terminal/metrics', {
+      headers: { Authorization: `Bearer ${signAccessToken('viewer', 'metrics-viewer')}` },
+    });
+    assert.equal(viewerMetricsResponse.status, 403);
+
+    const metricsResponse = await fetch(baseUrl + '/api/admin/terminal/metrics', {
+      headers: { Authorization: `Bearer ${signAccessToken('admin', 'metrics-admin')}` },
+    });
+    const metricsBody = await metricsResponse.json();
+    assert.equal(metricsResponse.status, 200);
+    assert.equal(metricsBody.metrics.counters.session_created, 1);
+    assert.equal(metricsBody.pool.sessions[0].sessionId, created.sessionId);
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }
