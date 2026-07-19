@@ -6,6 +6,7 @@ const TERMINAL_ERROR_MESSAGES = Object.freeze({
   pty_exited: '终端进程已退出',
   pty_spawn_failed: '终端启动失败',
   pty_startup_timeout: '终端启动超时',
+  pty_cleanup_failed: '终端进程清理失败，请重试',
 });
 
 function normalizeProcessStatus(value, fallback = 'running') {
@@ -197,6 +198,7 @@ const TerminalPanel = {
   fitAddons: new Map(),
   attachedSessionIds: new Set(),
   pendingAttachSessionIds: new Set(),
+  pendingCloseSessionIds: new Set(),
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
@@ -397,6 +399,7 @@ const TerminalPanel = {
       this.transportName = this.socket.io?.engine?.transport?.name || 'websocket';
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
+      this.pendingCloseSessionIds.clear();
       this.setStatus('共享控制台已连接', 'connected');
       this.startLatencyProbeLoop();
       if (typeof this.socket.io?.engine?.on === 'function') {
@@ -480,6 +483,19 @@ const TerminalPanel = {
     this.socket.on('terminal:error', (payload) => {
       if (payload.sessionId && ['pty_spawn_failed', 'pty_startup_timeout'].includes(payload.code)) {
         this.state.updateSession(payload.sessionId, { processStatus: 'failed' });
+        this.render();
+      }
+      if (
+        payload.sessionId
+        && ['pty_cleanup_failed', 'terminal_close_failed'].includes(payload.code)
+      ) {
+        this.pendingCloseSessionIds.delete(payload.sessionId);
+        if (payload.code === 'pty_cleanup_failed') {
+          this.ensureSession({
+            sessionId: payload.sessionId,
+            processStatus: 'closed',
+          });
+        }
         this.render();
       }
       this.setStatus(
@@ -733,8 +749,12 @@ const TerminalPanel = {
   },
 
   handleSessionClosed(session) {
+    this.pendingCloseSessionIds.delete(session.sessionId);
     this.pendingAttachSessionIds.delete(session.sessionId);
     this.attachedSessionIds.delete(session.sessionId);
+    if (!this.state.getSession(session.sessionId) && !this.terms.has(session.sessionId)) {
+      return;
+    }
     this.destroyTerm(session.sessionId);
     this.state.closeTab(session.sessionId);
     this.syncPersistedActiveSession();
@@ -874,12 +894,13 @@ const TerminalPanel = {
   },
 
   closeSession(sessionId) {
-    if (this.socket?.connected) {
-      this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
+    if (!this.socket?.connected) {
+      this.setStatus('终端连接不可用，请稍后重试', 'warning');
+      return;
     }
-    this.destroyTerm(sessionId);
-    this.state.closeTab(sessionId);
-    this.syncPersistedActiveSession();
+    if (!sessionId || this.pendingCloseSessionIds.has(sessionId)) return;
+    this.pendingCloseSessionIds.add(sessionId);
+    this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
     this.render();
   },
 

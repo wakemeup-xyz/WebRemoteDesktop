@@ -900,6 +900,85 @@ test('TerminalPanel persists the replacement active session when the active shar
   assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term_1');
 });
 
+test('TerminalPanel keeps a requested close tab and terminal until server confirmation', () => {
+  let disposeCalls = 0;
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) { this.onDataHandler = handler; },
+      onResize(handler) { this.onResizeHandler = handler; },
+      write() {},
+      dispose() { disposeCalls += 1; },
+    };
+  }
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal({
+    Terminal: TrackingTerminal,
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_close', processStatus: 'running' });
+
+  TerminalPanel.closeSession('term_close');
+  TerminalPanel.closeSession('term_close');
+
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:close_session').length, 1);
+  assert.notEqual(TerminalPanel.state.getSession('term_close'), null);
+  assert.equal(TerminalPanel.terms.has('term_close'), true);
+  assert.equal(disposeCalls, 0);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_close'), true);
+
+  socketHandlers.get('terminal:session_closed')({ sessionId: 'term_close' });
+  socketHandlers.get('terminal:closed')({ sessionId: 'term_close' });
+
+  assert.equal(TerminalPanel.state.getSession('term_close'), null);
+  assert.equal(TerminalPanel.terms.has('term_close'), false);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_close'), false);
+  assert.equal(disposeCalls, 1);
+});
+
+test('TerminalPanel cleanup failure retains closed tab and allows a second close request', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_retry', title: 'Retry shell', processStatus: 'running' });
+  TerminalPanel.closeSession('term_retry');
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_retry',
+    code: 'pty_cleanup_failed',
+    message: 'Unable to clean up terminal process',
+  });
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term_retry',
+    sessions: [{
+      sessionId: 'term_retry',
+      title: 'Retry shell',
+      status: 'attached',
+      processStatus: 'closed',
+      observerCount: 1,
+    }],
+  });
+
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_retry'), false);
+  assert.equal(TerminalPanel.state.getSession('term_retry').processStatus, 'closed');
+  assert.equal(TerminalPanel.terms.has('term_retry'), true);
+  assert.match(elements.get('terminalStatus').textContent, /清理失败.*重试/);
+  const retryTab = elements.get('terminalSessionTabs').__children.at(-1);
+  assert.equal(retryTab.__children.some((child) => child.className === 'terminal-session-close'), true);
+
+  TerminalPanel.closeSession('term_retry');
+
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:close_session').length, 2);
+});
+
 test('TerminalPanel persists the replacement active session when a pool snapshot removes the active shared session', () => {
   const { TerminalPanel, localStorageMap } = loadTerminal();
   TerminalPanel.cacheElements();

@@ -296,6 +296,51 @@ test('terminal:detach_session detaches only the calling observer and terminal:cl
   assert.equal(sessionManager._getSession(created.sessionId), null);
 });
 
+test('terminal close cleanup failure retains the session snapshot and retry success broadcasts closed', () => {
+  const pty = createFakePty();
+  let killAttempts = 0;
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    killAttempts += 1;
+    if (killAttempts <= 2) {
+      throw new Error('cleanup SECRET_VALUE');
+    }
+  };
+  const { namespace, sessionManager } = buildTerminalHarness({}, { ptyFactory: () => pty });
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  admin.trigger('terminal:create_session', { title: 'Retry close shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  pty.emitData('ready');
+  const closedBefore = admin.sent.filter((message) => message.event === 'terminal:session_closed').length;
+
+  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+
+  const cleanupError = admin.sent.findLast((message) => (
+    message.event === 'terminal:error' && message.data.code === 'pty_cleanup_failed'
+  ));
+  assert.equal(cleanupError.data.sessionId, created.sessionId);
+  assert.equal(cleanupError.data.message.includes('SECRET_VALUE'), false);
+  assert.equal(
+    admin.sent.filter((message) => message.event === 'terminal:session_closed').length,
+    closedBefore,
+  );
+  const retainedSnapshot = admin.sent
+    .filter((message) => message.event === 'terminal:pool_snapshot')
+    .at(-1).data;
+  assert.equal(retainedSnapshot.sessions[0].sessionId, created.sessionId);
+  assert.equal(retainedSnapshot.sessions[0].processStatus, 'closed');
+  assert.notEqual(sessionManager._getSession(created.sessionId), null);
+
+  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+
+  assert.equal(
+    admin.sent.filter((message) => message.event === 'terminal:session_closed').length,
+    closedBefore + 1,
+  );
+  assert.equal(sessionManager._getSession(created.sessionId), null);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
+});
+
 test('late Terminal events after session close return stable errors without escaping the handlers', () => {
   const { namespace, auditEvents } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
