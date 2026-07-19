@@ -7,56 +7,59 @@
   ];
   const ALLOWED_REASONS = new Set(REASON_ORDER);
 
-  class MediaActivityController {
-    constructor(options = {}) {
-      this.onChange = typeof options.onChange === 'function' ? options.onChange : null;
-      this.reasons = new Set();
-      this.generation = 0;
-    }
-
-    suspend(reason) {
-      this.validateReason(reason);
-      if (this.reasons.has(reason)) {
-        return false;
-      }
-      this.reasons.add(reason);
-      this.notifyChange();
-      return true;
-    }
-
-    resume(reason) {
-      this.validateReason(reason);
-      if (!this.reasons.has(reason)) {
-        return false;
-      }
-      this.reasons.delete(reason);
-      this.notifyChange();
-      return true;
-    }
-
-    getSnapshot() {
-      const reasons = REASON_ORDER.filter((reason) => this.reasons.has(reason));
-      return {
-        active: reasons.length === 0,
-        suspended: reasons.length > 0,
-        reasons,
-        generation: this.generation,
-      };
-    }
-
-    validateReason(reason) {
+  function validateReason(reason) {
       if (!ALLOWED_REASONS.has(reason)) {
         throw new Error(`Unknown media suspension reason: ${reason}`);
       }
-    }
-
-    notifyChange() {
-      this.generation += 1;
-      if (this.onChange) {
-        this.onChange(this.getSnapshot());
-      }
-    }
   }
+
+  const MediaActivityController = {
+    create(options = {}) {
+      const onChange = typeof options.onChange === 'function' ? options.onChange : null;
+      const reasons = new Set();
+      let generation = 0;
+
+      function snapshot() {
+        const orderedReasons = REASON_ORDER.filter((reason) => reasons.has(reason));
+        return {
+          state: orderedReasons.length === 0 ? 'active' : 'suspended',
+          reasons: orderedReasons,
+          generation,
+        };
+      }
+
+      function notifyChange() {
+        generation += 1;
+        if (onChange) {
+          onChange(snapshot());
+        }
+      }
+
+      return {
+        setReason(reason, enabled) {
+          validateReason(reason);
+          const shouldEnable = Boolean(enabled);
+          if (reasons.has(reason) === shouldEnable) {
+            return false;
+          }
+          if (shouldEnable) {
+            reasons.add(reason);
+          } else {
+            reasons.delete(reason);
+          }
+          notifyChange();
+          return true;
+        },
+
+        hasReason(reason) {
+          validateReason(reason);
+          return reasons.has(reason);
+        },
+
+        snapshot,
+      };
+    },
+  };
 
   const api = { MediaActivityController };
   globalObject.MediaActivityController = api;

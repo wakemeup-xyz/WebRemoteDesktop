@@ -4,27 +4,26 @@ const test = require('node:test');
 const { MediaActivityController } = require('./media-activity-controller.js');
 
 test('starts active with generation zero and no suspension reasons', () => {
-  const controller = new MediaActivityController();
+  const controller = MediaActivityController.create();
 
-  assert.deepEqual(controller.getSnapshot(), {
-    active: true,
-    suspended: false,
+  assert.deepEqual(controller.snapshot(), {
+    state: 'active',
     reasons: [],
     generation: 0,
   });
 });
 
 test('suspends media for recognized reasons in deterministic order', () => {
-  const controller = new MediaActivityController();
+  const controller = MediaActivityController.create();
 
-  controller.suspend('page-hide');
-  controller.suspend('manual-pause');
-  controller.suspend('terminal-active');
-  controller.suspend('page-hidden');
+  controller.setReason('page-hide', true);
+  controller.setReason('manual-pause', true);
+  controller.setReason('terminal-active', true);
+  controller.setReason('page-hidden', true);
 
-  assert.deepEqual(controller.getSnapshot(), {
-    active: false,
-    suspended: true,
+  assert.equal(controller.hasReason('terminal-active'), true);
+  assert.deepEqual(controller.snapshot(), {
+    state: 'suspended',
     reasons: ['manual-pause', 'terminal-active', 'page-hidden', 'page-hide'],
     generation: 4,
   });
@@ -32,37 +31,38 @@ test('suspends media for recognized reasons in deterministic order', () => {
 
 test('increments generation and calls onChange only for state changes', () => {
   const changes = [];
-  const controller = new MediaActivityController({
+  const controller = MediaActivityController.create({
     onChange(snapshot) {
       changes.push(snapshot);
     },
   });
 
-  controller.suspend('manual-pause');
-  controller.suspend('manual-pause');
-  controller.resume('manual-pause');
-  controller.resume('manual-pause');
+  controller.setReason('manual-pause', true);
+  controller.setReason('manual-pause', true);
+  controller.setReason('manual-pause', false);
+  controller.setReason('manual-pause', false);
 
-  assert.equal(controller.getSnapshot().generation, 2);
+  assert.equal(controller.snapshot().generation, 2);
   assert.deepEqual(changes, [
     {
-      active: false,
-      suspended: true,
+      state: 'suspended',
       reasons: ['manual-pause'],
       generation: 1,
     },
     {
-      active: true,
-      suspended: false,
+      state: 'active',
       reasons: [],
       generation: 2,
     },
   ]);
 });
 
-test('rejects unknown suspension reasons', () => {
-  const controller = new MediaActivityController();
+test('rejects unknown reasons without mutating an already-suspended controller', () => {
+  const controller = MediaActivityController.create();
+  controller.setReason('page-hidden', true);
+  const before = controller.snapshot();
 
-  assert.throws(() => controller.suspend('network-lost'), /Unknown media suspension reason: network-lost/);
-  assert.throws(() => controller.resume('network-lost'), /Unknown media suspension reason: network-lost/);
+  assert.throws(() => controller.setReason('network-lost', true), /Unknown media suspension reason: network-lost/);
+  assert.throws(() => controller.hasReason('network-lost'), /Unknown media suspension reason: network-lost/);
+  assert.deepEqual(controller.snapshot(), before);
 });
