@@ -51,6 +51,19 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
   assert.equal(keyId, 'input-1');
 });
 
+test('a DataChannel adapter can be re-enabled after an initial unavailable state', () => {
+  const h = createHarness();
+  h.transport.markAdapterUnavailable('dataChannel');
+  h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'applied' });
+
+  h.transport.markAdapterAvailable('dataChannel');
+  h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyD' } });
+
+  assert.equal(h.dataChannel.length, 1);
+  assert.equal(h.dataChannel[0].payload.code, 'KeyD');
+  assert.equal(h.socket.length, 1);
+});
+
 test('reset barrier blocks new input until its applied or duplicate acknowledgement', () => {
   const h = createHarness();
   const resetId = h.transport.resetBarrier('focus-lost');

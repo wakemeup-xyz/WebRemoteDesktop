@@ -112,6 +112,43 @@ test('only one keyboard transport and controller are created for an input instan
   assert.equal(Input.keyboardController, first);
 });
 
+test('keyboard initialization before DataChannel open uses Socket.IO then restores DataChannel delivery', () => {
+  const { Input, context, socketEvents } = loadInput();
+  const dataChannelPayloads = [];
+  context.WebRTC.inputChannel = { readyState: 'connecting' };
+  context.WebRTC.sendInput = (payload) => {
+    dataChannelPayloads.push(payload);
+    return true;
+  };
+  activate(Input, context);
+
+  Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyS' } });
+  assert.equal(socketEvents.at(-1).payload.payload.code, 'KeyS');
+
+  context.WebRTC.inputChannel.readyState = 'open';
+  Input.setKeyboardDataChannelAvailable(true);
+  Input.keyboardTransport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyS' } });
+  Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyD' } });
+
+  assert.equal(dataChannelPayloads.length, 1);
+  assert.equal(dataChannelPayloads[0].payload.code, 'KeyD');
+});
+
+test('DataChannel loss with a held key uses a Socket.IO reset barrier before further input', () => {
+  const { Input, context, socketEvents } = loadInput();
+  context.WebRTC.inputChannel = { readyState: 'open' };
+  context.WebRTC.sendInput = () => true;
+  activate(Input, context);
+
+  Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyC' } });
+  Input.setKeyboardDataChannelAvailable(false);
+
+  assert.equal(socketEvents.at(-1).payload.action, 'reset');
+  assert.equal(socketEvents.at(-1).payload.payload.reason, 'transport-change');
+  assert.equal(Input.keyboardTransport.canSendNewInput(), false);
+  assert.equal(Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyV' } }), null);
+});
+
 test('blur resets keyboard state but leaves control ownership to WebRTC', () => {
   const { Input, context, windowListeners, socketEvents } = loadInput();
   activate(Input, context);

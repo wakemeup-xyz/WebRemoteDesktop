@@ -250,8 +250,17 @@
     function markAdapterUnavailable(name) {
       const adapterName = name;
       if (!adapters[adapterName]) return;
+      const wasAvailable = !unavailable.has(adapterName);
       unavailable.add(adapterName);
-      if (adapterName === pinnedAdapter || adapterName === 'dataChannel') sendReset('transport-change');
+      if (wasAvailable && !barrier && (adapterName === pinnedAdapter || adapterName === 'dataChannel')) {
+        sendReset('transport-change');
+      }
+    }
+
+    function markAdapterAvailable(name) {
+      const adapterName = name;
+      if (!adapters[adapterName]) return;
+      unavailable.delete(adapterName);
     }
 
     function canSendNewInput() {
@@ -275,6 +284,7 @@
       resetBarrier,
       acceptAck,
       markAdapterUnavailable,
+      markAdapterAvailable,
       canSendNewInput,
       getSnapshot,
     };

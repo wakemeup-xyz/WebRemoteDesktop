@@ -1084,6 +1084,7 @@ const WebRTC = {
     this.inputChannel.onopen = () => {
       console.log('[INPUT-DC] DataChannel open');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
     };
     this.inputChannel.onclose = () => {
@@ -1093,6 +1094,7 @@ const WebRTC = {
         this.pc ? this.pc.connectionState : 'no-pc',
         this.pc ? this.pc.iceConnectionState : 'no-pc');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Defer reconnect to avoid cascading on brief DC hiccups
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
@@ -1107,6 +1109,7 @@ const WebRTC = {
     };
     this.inputChannel.onerror = (event) => {
       console.warn('[INPUT-DC] DataChannel error:', event);
+      if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Error typically precedes close; defer reconnect to avoid cascading
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {

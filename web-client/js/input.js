@@ -56,6 +56,14 @@ const Input = {
     return this.keyboardController;
   },
 
+  setKeyboardDataChannelAvailable(available) {
+    this.initKeyboardController();
+    if (!this.keyboardTransport) return;
+    if (available) this.keyboardTransport.markAdapterAvailable('dataChannel');
+    else this.keyboardTransport.markAdapterUnavailable('dataChannel');
+    this.updateKeyboardUI();
+  },
+
   sendKeyboardDataChannel(payload) {
     if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') return false;
     const accepted = WebRTC.sendInput(payload);

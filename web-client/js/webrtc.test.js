@@ -252,6 +252,29 @@ test('DataChannel open updates current keyboard UI without calling removed raw d
   assert.doesNotThrow(() => WebRTC.inputChannel.onopen());
 });
 
+test('DataChannel lifecycle updates keyboard transport availability before reconnect handling', () => {
+  const lifecycle = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      setKeyboardDataChannelAvailable(available) { lifecycle.push(available); },
+      updateKeyboardUI() {},
+    },
+  });
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel() { return { readyState: 'connecting', bufferedAmount: 0, send() {} }; },
+  };
+  WebRTC.createInputChannel();
+
+  WebRTC.inputChannel.onopen();
+  WebRTC.inputChannel.onclose();
+  WebRTC.inputChannel.onerror({});
+
+  assert.deepEqual(lifecycle, [true, false, false]);
+  clearTimeout(WebRTC._dcTimeout);
+  clearTimeout(WebRTC._dcReconnectTimer);
+});
+
 test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const controller = LinkQualityController.create();
