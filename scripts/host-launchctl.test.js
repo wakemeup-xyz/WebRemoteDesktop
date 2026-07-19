@@ -22,6 +22,9 @@ function prepareRunnerProject() {
   fs.mkdirSync(binDir, { recursive: true });
   fs.copyFileSync(runnerPath, path.join(scriptsDir, 'run-host-launchctl.sh'));
   fs.chmodSync(path.join(scriptsDir, 'run-host-launchctl.sh'), 0o755);
+  // run-host-launchctl.sh sources scripts/lib-turn-env.sh; fixture must copy it.
+  const turnEnvPath = path.join(__dirname, 'lib-turn-env.sh');
+  fs.copyFileSync(turnEnvPath, path.join(scriptsDir, 'lib-turn-env.sh'));
 
   const fakePythonPath = path.join(projectDir, 'fake-python.sh');
   fs.writeFileSync(
