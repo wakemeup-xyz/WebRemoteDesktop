@@ -24,7 +24,10 @@ from Quartz import (
 )
 import screeninfo
 
-from quartz_keyboard_adapter import MAC_KEY_CODE_BY_DOM_CODE
+from quartz_keyboard_adapter import (
+    UnsupportedPhysicalCode,
+    mac_key_code_for_dom_code,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -172,7 +175,9 @@ class InputHandler:
                         }
                     to_thread_start = time.perf_counter()
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(self._input_thread_pool, self._handle_keyboard, action, payload)
+                    keyboard_status = await loop.run_in_executor(
+                        self._input_thread_pool, self._handle_keyboard, action, payload
+                    )
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                     i2 = time.perf_counter()
                     logger.info("keyboard_executed action=%s thread_ms=%.1f", action, to_thread_ms)
@@ -181,7 +186,7 @@ class InputHandler:
                         "appliedSeq": data.get("seq"),
                         "receiveTime": i1,
                         "executeTime": i2,
-                        "status": "applied",
+                        "status": keyboard_status or "applied",
                         "pressedKeyCount": len(self._pressed_key_codes),
                         "modifierMask": int(self._modifier_flags),
                     }
@@ -512,13 +517,19 @@ class InputHandler:
         # Determine key code: prefer 'code' (physical key), then 'key' name,
         # then single-char fallback.
         mapped = False
-        if code in MAC_KEY_CODE_BY_DOM_CODE:
-            key_code = MAC_KEY_CODE_BY_DOM_CODE[code]
-            mapped = True
-        elif key_char in key_map:
+        if code:
+            try:
+                physical_key_code = mac_key_code_for_dom_code(code)
+            except UnsupportedPhysicalCode:
+                logger.warning("keyboard_unsupported_physical_code action=%s", action)
+                return "unsupported-code"
+            if physical_key_code is not None:
+                key_code = physical_key_code
+                mapped = True
+        if not mapped and key_char in key_map:
             key_code = key_map[key_char]
             mapped = True
-        elif len(key_char) == 1 and key_char in char_to_code:
+        elif not mapped and len(key_char) == 1 and key_char in char_to_code:
             key_code = char_to_code[key_char]
             mapped = True
 

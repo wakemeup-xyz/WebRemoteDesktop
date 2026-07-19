@@ -55,6 +55,8 @@ MAC_KEY_CODE_BY_DOM_CODE = {
     "NumLock": 71, "NumpadComma": 95,
 }
 
+UNSUPPORTED_DOM_CODES = frozenset({"ContextMenu", "Convert", "NonConvert"})
+
 _MAX_UNICODE_UTF16_UNITS = 1024
 
 
@@ -73,6 +75,12 @@ def _unicode_chunks(text: str):
         yield "".join(chunk)
 
 
+def mac_key_code_for_dom_code(code: str):
+    if code in UNSUPPORTED_DOM_CODES:
+        raise UnsupportedPhysicalCode(code)
+    return MAC_KEY_CODE_BY_DOM_CODE.get(code)
+
+
 class QuartzKeyboardAdapter:
     """Posts physical keys and Unicode text through Quartz's HID event tap."""
 
@@ -84,7 +92,7 @@ class QuartzKeyboardAdapter:
         self.step_delay_ms = max(0.0, min(float(step_delay_ms), 12.0))
 
     def post_key(self, code: str, is_down: bool, modifier_mask: int) -> None:
-        mac_code = MAC_KEY_CODE_BY_DOM_CODE.get(code)
+        mac_code = mac_key_code_for_dom_code(code)
         if mac_code is None:
             raise UnsupportedPhysicalCode(code)
         event = CGEventCreateKeyboardEvent(self._source, mac_code, is_down)

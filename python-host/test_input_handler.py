@@ -14,6 +14,45 @@ def test_input_method_switch_remains_an_explicit_quartz_command():
     assert "ctypes" not in source
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ("ContextMenu", "Convert", "NonConvert"))
+async def test_unsupported_physical_codes_do_not_fall_back_to_legacy_key_names(monkeypatch, code):
+    posted = []
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateKeyboardEvent",
+        lambda _source, key_code, is_down: {"key_code": key_code, "is_down": is_down},
+    )
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler._running = True
+    result = await handler.handle_input({
+        "type": "keyboard",
+        "action": "keydown",
+        "payload": {"code": code, "key": code, "modifiers": {}},
+    })
+
+    assert result["status"] == "unsupported-code"
+    assert posted == []
+
+
+def test_unknown_physical_code_keeps_legacy_key_name_fallback(monkeypatch):
+    posted = []
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateKeyboardEvent",
+        lambda _source, key_code, is_down: {"key_code": key_code, "is_down": is_down},
+    )
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    InputHandler()._handle_keyboard(
+        "keydown", {"code": "Unidentified", "key": "Enter", "modifiers": {}}
+    )
+
+    assert [(event["key_code"], event["is_down"]) for event in posted] == [(36, True)]
+
+
 def test_release_all_modifiers_posts_stuck_alt_keyup(monkeypatch):
     posted = []
 
