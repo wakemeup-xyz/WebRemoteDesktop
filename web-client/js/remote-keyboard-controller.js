@@ -115,6 +115,7 @@
         location: Number.isInteger(event.location) ? event.location : 0,
         modifiers: flags,
         locks: lockSnapshot(event),
+        altGr,
       };
     }
 
@@ -159,7 +160,10 @@
     function trackedKeyup(event) {
       const record = pressed.get(event.code);
       if (!record) return false;
-      const result = send('key', payload(record, 'up', false));
+      const modifiers = isModifierCode(record.code) && !record.altGr
+        ? modifierFlagsFromCodes([...pressed.values()].map((item) => item.code))
+        : record.modifiers;
+      const result = send('key', payload({ ...record, modifiers }, 'up', false));
       pressed.delete(event.code);
       if (!accepted(result)) beginReset('transport-change');
 
@@ -217,6 +221,9 @@
         downSeq: ++downSequence,
         adapter: null,
       };
+      if (isModifierCode(record.code) && !record.altGr) {
+        record.modifiers = modifierFlagsFromCodes([...pressed.values()].map((item) => item.code));
+      }
       const result = send('key', payload(record, 'down', false));
       if (!accepted(result)) return false;
       record.adapter = result && typeof result === 'object' ? result.adapter || null : null;

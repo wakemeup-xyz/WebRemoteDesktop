@@ -99,6 +99,24 @@ test('windows ControlRight maps once to MetaRight for down, suppressed modifier 
     ['down', 'MetaRight', false], ['up', 'MetaRight', false],
   ]);
   assert.deepEqual(keyActions(sent)[0].payload.modifiers, {
+    altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+  });
+  assert.deepEqual(keyActions(sent)[1].payload.modifiers, {
+    altKey: false, ctrlKey: false, metaKey: true, shiftKey: false,
+  });
+});
+
+test('Windows ControlRight keydown uses prior modifier state while later keys observe MetaRight', () => {
+  const { controller, sent } = makeController({ mode: 'windows' });
+  controller.handleDomEvent(keyEvent('keydown', {
+    code: 'ControlRight', key: 'Control', location: 2, ctrlKey: true,
+  }));
+  controller.handleDomEvent(keyEvent('keydown', { code: 'KeyC', key: 'c', ctrlKey: true }));
+
+  assert.deepEqual(keyActions(sent)[0].payload.modifiers, {
+    altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+  });
+  assert.deepEqual(keyActions(sent)[1].payload.modifiers, {
     altKey: false, ctrlKey: false, metaKey: true, shiftKey: false,
   });
 });
