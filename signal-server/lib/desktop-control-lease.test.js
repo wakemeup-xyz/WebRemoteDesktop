@@ -228,15 +228,106 @@ test('host disconnect releases both active and pending transitions', () => {
   assert.equal(lease.authorize({ viewerId: 'viewer-b', ...active.lease }), false);
 });
 
-test('pending transition timeout returns to free and rejects its ack', () => {
+test('pending candidate transition timeout enters reset-only REVOKING and rejects old ack', () => {
   const lease = makeLease();
   const request = lease.requestControl({ viewerId: 'viewer-a' });
 
   lease.advanceTo(2_999);
   assert.equal(lease.expire().state, 'GRANTING');
   lease.advanceTo(3_000);
-  assert.deepEqual(lease.expire(), { state: 'FREE', reason: 'transition-timeout' });
+  const failed = lease.expire();
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(failed.reason, 'transition-timeout');
+  assert.equal(failed.transition.type, 'control-transition');
+  assert.equal(failed.transition.leaseEpoch > request.transition.leaseEpoch, true);
+  assert.equal(Object.hasOwn(failed.transition, 'leaseId'), false);
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.snapshot().leaseEpoch, failed.transition.leaseEpoch);
+  assert.equal(lease.snapshot().reason, 'transition-timeout');
   assert.equal(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }).reason, 'stale-transition');
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+});
+
+test('candidate GRANTING rejection discards token, increments epoch, and enters reset-only REVOKING', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const candidateEpoch = request.transition.leaseEpoch;
+  const hostMaterial = lease.transitionForHost({ leaseEpoch: candidateEpoch });
+  assert.equal(Boolean(hostMaterial.leaseId), true);
+
+  const failed = lease.failTransition({ leaseEpoch: candidateEpoch, reason: 'reset-failed' });
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(failed.reason, 'reset-failed');
+  assert.equal(failed.transition.leaseEpoch, candidateEpoch + 1);
+  assert.equal(Object.hasOwn(failed.transition, 'leaseId'), false);
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.snapshot().leaseEpoch, candidateEpoch + 1);
+  assert.equal(lease.snapshot().reason, 'reset-failed');
+  assert.equal(JSON.stringify(lease.snapshot()).includes('lease-'), false);
+  assert.equal(lease.authorize({
+    viewerId: 'viewer-a',
+    leaseId: hostMaterial.leaseId,
+    leaseEpoch: candidateEpoch,
+  }), false);
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+  assert.equal(lease.confirmTransition({ leaseEpoch: candidateEpoch }).reason, 'stale-transition');
+});
+
+test('reset-only REVOKING rejection stays on the same epoch and does not enter FREE', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+  const release = lease.beginRelease({ viewerId: 'viewer-a', reason: 'manual' });
+  const epoch = release.transition.leaseEpoch;
+
+  const failed = lease.failTransition({ leaseEpoch: epoch, reason: 'reset-failed' });
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(failed.reason, 'reset-failed');
+  assert.equal(Object.hasOwn(failed, 'transition'), false);
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.snapshot().leaseEpoch, epoch);
+  assert.equal(lease.snapshot().reason, 'reset-failed');
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+});
+
+test('reset-only applied ack is the only ack path into FREE after fail-closed barrier', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const failed = lease.failTransition({ leaseEpoch: request.transition.leaseEpoch, reason: 'execution-failed' });
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }).reason, 'stale-transition');
+  assert.equal(lease.snapshot().state, 'REVOKING');
+
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: failed.transition.leaseEpoch }), {
+    state: 'FREE', reason: 'execution-failed',
+  });
+  assert.equal(lease.snapshot().state, 'FREE');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+});
+
+test('stale failTransition epoch has no state mutation', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const before = lease.snapshot();
+  assert.deepEqual(lease.failTransition({ leaseEpoch: request.transition.leaseEpoch - 1, reason: 'reset-failed' }), {
+    state: 'GRANTING', reason: 'stale-transition',
+  });
+  assert.deepEqual(lease.snapshot(), before);
+  assert.equal(lease.snapshot().state, 'GRANTING');
+  assert.equal(lease.snapshot().pendingViewerId, 'viewer-a');
+});
+
+test('rejectTransition is a thin alias of failTransition', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const failed = lease.rejectTransition({ leaseEpoch: request.transition.leaseEpoch, reason: 'reset-failed' });
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(failed.reason, 'reset-failed');
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
 });
 
 test('release is owner-only, freezes authorization, and waits for host reset confirmation', () => {

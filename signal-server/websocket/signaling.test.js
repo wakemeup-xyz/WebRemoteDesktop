@@ -1170,23 +1170,37 @@ test('disconnect clears pending legacy input before transition ack', () => {
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
 });
 
-test('rejected transition clears pending legacy input and cannot replay on late ack', () => {
+test('rejected transition stays fail-closed in REVOKING and cannot replay on late ack', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
   io.connect(host);
   io.connect(viewer);
+  io.connect(viewerB);
   viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'stale', code: 'KeyA' } });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'rejected', reason: 'reset-failed' });
   const state = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
-  assert.equal(state.state, 'FREE');
+  assert.equal(state.state, 'REVOKING');
   assert.equal(state.reason, 'reset-failed');
+  assert.equal(state.pendingViewerId, null);
   assert.equal(viewer.sent.some((entry) => entry.event === 'control-grant'), false);
-  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+
+  // Late applied on the discarded candidate epoch must not free or grant.
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  assert.equal(viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'REVOKING');
+  assert.equal(viewer.sent.some((entry) => entry.event === 'control-grant'), false);
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+
+  // New acquire stays blocked while the reset-only barrier is unresolved.
+  viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
+  const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
+  assert.equal(acquire.state, 'REVOKING');
+  assert.equal(acquire.reason, 'occupied');
 });
 
 test('takeover freezes controller A until host ack and grants B', () => {

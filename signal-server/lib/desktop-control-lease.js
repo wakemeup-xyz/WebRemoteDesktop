@@ -23,6 +23,7 @@ class DesktopControlLease {
     this._pending = null;
     this._activeDeadline = null;
     this._transitionDeadline = null;
+    this._barrierReason = null;
   }
 
   requestControl({ viewerId, takeover = false }) {
@@ -62,6 +63,7 @@ class DesktopControlLease {
     const pending = this._pending;
     this._pending = null;
     this._transitionDeadline = null;
+    this._barrierReason = null;
     if (pending.viewerId === null) {
       this._state = 'FREE';
       this._active = null;
@@ -77,25 +79,49 @@ class DesktopControlLease {
     };
   }
 
-  rejectTransition({ leaseEpoch, reason }) {
+  failTransition({ leaseEpoch, reason = 'transition-failed' }) {
     if (!this._pending || this._pending.leaseEpoch !== leaseEpoch) {
       return { state: this._state, reason: 'stale-transition' };
     }
+
+    const failureReason = reason || 'transition-failed';
+
+    // Reset-only barrier: Host outcome is unknown/failed. Stay fail-closed on
+    // the same epoch; never manufacture FREE/ACTIVE. Clear the deadline so
+    // expire() does not re-fire until a retry adapter schedules work.
     if (this._pending.viewerId === null) {
-      const releaseReason = this._pending.reason || reason || 'released';
-      this._pending = null;
-      this._transitionDeadline = null;
-      this._state = 'FREE';
+      this._state = 'REVOKING';
       this._active = null;
       this._activeDeadline = null;
-      return { state: 'FREE', reason: releaseReason };
+      this._transitionDeadline = null;
+      this._pending.reason = failureReason;
+      this._barrierReason = failureReason;
+      return { state: 'REVOKING', reason: failureReason };
     }
-    this._pending = null;
-    this._transitionDeadline = null;
-    this._state = 'FREE';
+
+    // Candidate GRANTING/REVOKING with a viewer: discard the candidate token,
+    // bump epoch once, and open a reset-only REVOKING barrier.
     this._active = null;
     this._activeDeadline = null;
-    return { state: 'FREE', reason: reason || 'transition-rejected' };
+    this._state = 'REVOKING';
+    const nextEpoch = ++this._epoch;
+    this._pending = { viewerId: null, leaseEpoch: nextEpoch, reason: failureReason };
+    this._transitionDeadline = this._now() + this._transitionTimeoutMs;
+    this._barrierReason = failureReason;
+    return {
+      state: 'REVOKING',
+      reason: failureReason,
+      transition: {
+        type: 'control-transition',
+        leaseEpoch: nextEpoch,
+        reason: failureReason,
+      },
+    };
+  }
+
+  // Compatibility alias: all rejection/timeout paths use fail-closed semantics.
+  rejectTransition({ leaseEpoch, reason }) {
+    return this.failTransition({ leaseEpoch, reason });
   }
 
   heartbeat({ viewerId, leaseId, leaseEpoch }) {
@@ -163,6 +189,7 @@ class DesktopControlLease {
     this._pending = null;
     this._activeDeadline = null;
     this._transitionDeadline = null;
+    this._barrierReason = null;
     this._state = 'FREE';
     return { state: 'FREE', reason: 'host-disconnect' };
   }
@@ -182,14 +209,22 @@ class DesktopControlLease {
   }
 
   snapshot() {
-    return {
+    let leaseEpoch = null;
+    if (this._state === 'ACTIVE' && this._active) {
+      leaseEpoch = this._active.leaseEpoch;
+    } else if (this._pending) {
+      leaseEpoch = this._pending.leaseEpoch;
+    }
+    const snapshot = {
       state: STATES.has(this._state) ? this._state : 'FREE',
       controllerViewerId: this._state === 'ACTIVE' && this._active ? this._active.viewerId : null,
       pendingViewerId: this._pending ? this._pending.viewerId : null,
-      leaseEpoch: this._state === 'ACTIVE' && this._active ? this._active.leaseEpoch : null,
+      leaseEpoch,
       heartbeatIntervalMs: this._heartbeatIntervalMs,
       expiresAfterMs: this._expiresAfterMs,
     };
+    if (this._barrierReason) snapshot.reason = this._barrierReason;
+    return snapshot;
   }
 
   transitionForHost({ leaseEpoch }) {
@@ -211,19 +246,12 @@ class DesktopControlLease {
   _expire() {
     const now = this._now();
     if (this._pending && this._transitionDeadline !== null && now >= this._transitionDeadline) {
-      if (this._state === 'REVOKING' && this._pending.viewerId === null) {
-        // A reset-only transition is a Host acknowledgement barrier. Timing
-        // out the Signal-side wait must not let a new controller reuse Host
-        // input state before that reset has been confirmed.
-        this._transitionDeadline = null;
-        return { state: 'REVOKING', reason: 'transition-timeout' };
-      }
-      this._pending = null;
-      this._transitionDeadline = null;
-      this._active = null;
-      this._activeDeadline = null;
-      this._state = 'FREE';
-      return { state: 'FREE', reason: 'transition-timeout' };
+      // Candidate and reset-only timeouts both converge through failTransition:
+      // unknown Host outcome never opens FREE.
+      return this.failTransition({
+        leaseEpoch: this._pending.leaseEpoch,
+        reason: 'transition-timeout',
+      });
     }
     if (this._state === 'ACTIVE' && this._activeDeadline !== null && now >= this._activeDeadline) {
       return this._beginResetTransition('lease-expired');
@@ -237,6 +265,7 @@ class DesktopControlLease {
     this._pending = null;
     this._activeDeadline = null;
     this._transitionDeadline = null;
+    this._barrierReason = null;
     return { state: 'FREE', reason };
   }
 
@@ -247,6 +276,7 @@ class DesktopControlLease {
     const leaseEpoch = ++this._epoch;
     this._pending = { viewerId: null, leaseEpoch, reason };
     this._transitionDeadline = this._now() + this._transitionTimeoutMs;
+    this._barrierReason = null;
     return {
       state: 'REVOKING',
       reason,
