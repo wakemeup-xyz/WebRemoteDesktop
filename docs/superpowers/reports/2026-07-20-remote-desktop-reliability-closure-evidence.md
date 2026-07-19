@@ -76,18 +76,32 @@ Result: **82 pass / 0 fail**
 | Tunnel production suspend | automated-closed | no capture/JPEG/relay while suspended |
 | Tunnel viewport stability | automated-closed | CSS contain box; geometry test with 960/640/480 |
 
-## Runtime acceptance (Task 9) — pending
+## Runtime acceptance (Task 9)
 
-The following rows remain **runtime pending** until dual Viewer / ordinary Chrome / public tunnel evidence is collected on live services:
+Live truth at 2026-07-20 (status-safe-wrd.sh):
 
-- Dual Viewer ownership / takeover / reset-blocked UI
-- Ordinary-browser keyboard K-01–K-13
-- Physical keyboard / OS-reserved shortcuts
-- WebRTC first-frame / suspend 15s / resume P95 ≤1500ms
-- Tunnel public URL first-frame / suspend / resume P95 ≤2500ms
-- Mouse double-click/drag, Terminal coexistence with pause
+- formal public entry: `https://link.stockhub.wiki`
+- local health: ok; `hostOnline: true`
+- safe signal-server: **stale pid** (running process does **not** prove this branch is loaded)
+- safe host: pid file missing (hostOnline still true via live socket)
+- safe URL file: `https://memo-patterns-curve-contacted.trycloudflare.com`
+- safe URL reachability: **http-invalid**
+- security warning: cloudflared token found in process arguments (pre-existing; not mutated)
 
-Labels to use when filled:
+Runtime rows:
+
+| Gate | Status | Reason |
+|------|--------|--------|
+| 9A Dual Viewer ownership / port-search / takeover | NOT RUN | Requires Viewer sessions against **this branch** build; user must restart local signal-server + Host from `feat/remote-desktop-reliability-closure` without rebuilding tunnel |
+| 9A reset-blocked fault injection | NOT RUN | No safe runtime fault hook exercised; automated coverage only |
+| 9B WebRTC media suspend/resume P95 | NOT RUN | Needs live branch-loaded Host/Viewer |
+| 9C Ordinary-browser keyboard K-01–K-13 | NOT RUN | Needs ordinary Chrome + real Host |
+| 9C physical-keyboard / os-reserved | NOT RUN | Requires user physical assistance |
+| 9D Public tunnel media / viewport | BLOCKED | `/tmp/wrd-safe-current-url.txt` present but reachability `http-invalid`; tunnel not rebuilt per policy |
+
+Honest labels: `NOT RUN` / `BLOCKED` — not rewritten as pass.
+
+Labels to use when filled later:
 
 - `browser-protocol`
 - `physical-keyboard`
