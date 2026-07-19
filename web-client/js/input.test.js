@@ -149,6 +149,16 @@ test('DataChannel loss with a held key uses a Socket.IO reset barrier before fur
   assert.equal(Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyV' } }), null);
 });
 
+test('Socket.IO keyboard envelopes remain within the strict v2 protocol shape', () => {
+  const { Input, context, socketEvents } = loadInput();
+  context.WebRTC.inputChannel = { readyState: 'connecting' };
+  activate(Input, context);
+
+  Input.keyboardTransport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyS' } });
+
+  assert.equal(Object.hasOwn(socketEvents.at(-1).payload, 'transport'), false);
+});
+
 test('blur resets keyboard state but leaves control ownership to WebRTC', () => {
   const { Input, context, windowListeners, socketEvents } = loadInput();
   activate(Input, context);

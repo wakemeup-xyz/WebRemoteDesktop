@@ -126,7 +126,15 @@ class InputHandler:
 
             def apply():
                 if envelope.get("schemaVersion") == 2:
-                    return self._remote_keyboard.apply(envelope)
+                    protocol_envelope = {
+                        field: envelope[field]
+                        for field in (
+                            "schemaVersion", "type", "action", "leaseId",
+                            "leaseEpoch", "seq", "inputIds", "payload",
+                        )
+                        if field in envelope
+                    }
+                    return self._remote_keyboard.apply(protocol_envelope)
                 return self._legacy_keyboard.apply(
                     envelope,
                     transport=str(transport or envelope.get("transport") or "socket"),

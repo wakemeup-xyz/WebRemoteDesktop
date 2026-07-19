@@ -74,7 +74,7 @@ const Input = {
   sendKeyboardSocket(payload) {
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (!socket || !socket.connected) return false;
-    socket.emit('input', { ...payload, transport: 'socket' });
+    socket.emit('input', payload);
     this.recordLatency(payload);
     return true;
   },

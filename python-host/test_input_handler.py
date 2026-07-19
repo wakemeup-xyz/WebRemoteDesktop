@@ -89,6 +89,30 @@ async def test_disconnect_reset_is_serialized_after_inflight_keydown():
 
 
 @pytest.mark.asyncio
+async def test_v2_keyboard_state_ignores_host_routing_metadata():
+    adapter = RecordingAdapter()
+    handler = InputHandler(keyboard_adapter=adapter)
+    handler._running = True
+    await handler.transition_keyboard(
+        connection_generation=1,
+        lease_id=LEASE_ID,
+        lease_epoch=1,
+    )
+    routed = key_envelope(seq=1, phase="down")
+    routed.update({
+        "viewerId": "viewer-1",
+        "connectionGeneration": 1,
+        "transport": "datachannel",
+    })
+
+    result = await handler.apply_keyboard(routed)
+
+    assert result["status"] == "applied"
+    assert result["pressedKeyCount"] == 1
+    assert adapter.events == [("KeyA", True, 0)]
+
+
+@pytest.mark.asyncio
 async def test_legacy_keyboard_uses_leased_executor_and_resets_before_transport_switch(monkeypatch):
     adapter = RecordingAdapter()
     handler = InputHandler(keyboard_adapter=adapter)
