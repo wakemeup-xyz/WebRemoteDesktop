@@ -35,6 +35,7 @@ import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import H264VideoToolboxEncoder
 from observability import configure_host_logging, emit_host_event, summarize_input_event
+from aiortc_media_sender import AiortcMediaSender
 
 if __name__ == "__main__":
     configure_host_logging()
@@ -833,6 +834,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._capture_seq = 0
         self._last_consumed_seq = -1
         self._capture_running = True
+        self._activity_condition = threading.Condition()
+        self._suspended = False
+        self._capture_generation = 0
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
@@ -861,15 +865,27 @@ class ScreenCaptureTrack(VideoStreamTrack):
         """Continuously capture screenshots in background thread.
         Capture pacing follows the current media profile to avoid wasted work."""
         while self._capture_running:
+            with self._activity_condition:
+                while self._capture_running and self._suspended:
+                    self._activity_condition.wait(timeout=0.2)
+                if not self._capture_running:
+                    break
             with self._target_lock:
                 target_fps = self._target_fps
             _min_interval = 1.0 / self.capture_fps_for_target(target_fps)
             t0 = time.perf_counter()
             try:
+                # Gate again immediately before MSS grab.
+                if self._suspended or not self._capture_running:
+                    continue
                 shot = self.sct.grab(self.monitor)
                 with self._capture_lock:
+                    if self._suspended:
+                        continue
                     self._capture_buffer = shot
                     self._capture_seq += 1
+                with self._activity_condition:
+                    self._activity_condition.notify_all()
             except Exception:
                 time.sleep(0.005)
                 continue
@@ -878,9 +894,42 @@ class ScreenCaptureTrack(VideoStreamTrack):
             if sleep_time > 0.001:
                 time.sleep(sleep_time)
 
+    def set_suspended(self, suspended):
+        """Gate MSS capture/conversion. Returns capture_seq baseline at transition."""
+        suspended = bool(suspended)
+        with self._activity_condition:
+            was = self._suspended
+            self._suspended = suspended
+            if was != suspended:
+                self._capture_generation += 1
+            self._activity_condition.notify_all()
+        if suspended:
+            with self._capture_lock:
+                self._capture_buffer = None
+                self._last_img = None
+            with self._pending_input_lock:
+                self._pending_input_ids.clear()
+                self._pending_input_data.clear()
+        else:
+            self._last_frame_time = 0
+        return int(self._capture_seq or 0)
+
+    def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._activity_condition:
+            while self._capture_running and not self._suspended and self._capture_seq <= after_seq:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._activity_condition.wait(timeout=remaining)
+        return self._capture_seq > after_seq
+
     async def shutdown(self):
         """Async shutdown: never blocks the event loop."""
-        self._capture_running = False
+        with self._activity_condition:
+            self._capture_running = False
+            self._suspended = False
+            self._activity_condition.notify_all()
         if self._capture_thread and self._capture_thread.is_alive():
             try:
                 await asyncio.to_thread(self._capture_thread.join, timeout=2.0)
@@ -901,6 +950,16 @@ class ScreenCaptureTrack(VideoStreamTrack):
         loop = asyncio.get_event_loop()
         recv_start = time.perf_counter()
         sleep_time = 0.0
+
+        # Suspended: wake and yield a zero-cost frame without new MSS/encode work.
+        if self._suspended:
+            await asyncio.sleep(0.05)
+            pts, time_base = await self.next_timestamp()
+            blank = np.zeros((max(1, self._max_height // 4), max(1, self._max_width // 4), 3), dtype=np.uint8)
+            frame = VideoFrame.from_ndarray(blank, format="rgb24")
+            frame.pts = pts
+            frame.time_base = time_base
+            return frame
 
         # Frame-rate control
         now = time.time()
@@ -1145,6 +1204,8 @@ class WebRemoteHost:
         self.pc = None
         self.token = None
         self.screen_track = None
+        self.video_sender = None
+        self.media_sender = AiortcMediaSender()
         self.current_viewer_id = None
         self.pending_candidates = []
         self.input_handler = InputHandler()
@@ -1827,7 +1888,9 @@ class WebRemoteHost:
                     max_height=self.media_profile["height"],
                 )
                 self.screen_track._host_ref = self
-                self.pc.addTrack(self.screen_track)
+                self.video_sender = self.pc.addTrack(self.screen_track)
+                self.media_sender = AiortcMediaSender()
+                self.media_sender.bind(self.video_sender, self.screen_track)
                 self._prefer_h264_transceivers()
                 logger.info("Added video track")
 
@@ -2164,21 +2227,112 @@ class WebRemoteHost:
                 )
                 return
 
-            # Task 4: validate and acknowledge binding only. Capture/sender
-            # suspension side effects land in Task 5.
+            applied = False
+            keyframe_requested = False
+            screen_track = getattr(self, "screen_track", None)
+            capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
+            try:
+                if normalized["state"] == "suspended":
+                    # 1) freeze desktop input for this attempt
+                    try:
+                        if getattr(self, "input_handler", None) is not None:
+                            self.input_handler.release_all_mouse_buttons(reason="media-suspended")
+                            if hasattr(self.input_handler, "release_all_keys"):
+                                self.input_handler.release_all_keys(reason="media-suspended")
+                    except Exception as exc:
+                        logger.warning("media suspend input freeze failed: %s", type(exc).__name__)
+                    # 2) suspend sender
+                    sender_adapter = getattr(self, "media_sender", None)
+                    if sender_adapter is None:
+                        sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))
+                    sender_adapter.suspend()
+                    self.media_sender = sender_adapter
+                    # 3) suspend capture and clear buffers
+                    if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                        capture_seq = screen_track.set_suspended(True)
+                    # 4) stop tunnel production if active (best-effort; full tunnel gate in Task 7)
+                    relay = getattr(self, "relay_streamer", None)
+                    if relay is not None and getattr(relay, "running", False):
+                        try:
+                            await relay.stop()
+                        except Exception:
+                            pass
+                    self._media_activity_suspended = True
+                    applied = True
+                    emit_host_event(
+                        logger,
+                        event="host_media_suspended",
+                        message="Host media suspended",
+                        meta={
+                            "generation": normalized["generation"],
+                            "connectionAttemptId": normalized["connectionAttemptId"],
+                            "captureSeq": capture_seq,
+                            "senderEnabled": False,
+                            "keyframeRequested": False,
+                        },
+                    )
+                else:
+                    # Resume: capture ready, then sender/keyframe.
+                    if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                        baseline = screen_track.set_suspended(False)
+                        if hasattr(screen_track, "wait_for_fresh_capture"):
+                            await asyncio.to_thread(
+                                screen_track.wait_for_fresh_capture,
+                                baseline,
+                                0.5,
+                            )
+                        capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
+                    sender_adapter = getattr(self, "media_sender", None)
+                    if sender_adapter is None:
+                        sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))
+                    resume_result = sender_adapter.resume(screen_track)
+                    self.media_sender = sender_adapter
+                    keyframe_requested = bool(resume_result.get("keyframeRequested"))
+                    # Resume without a live sender/track still counts as applied for
+                    # binding purposes when capture gate succeeded or neither exists.
+                    self._media_activity_suspended = False
+                    applied = bool(resume_result.get("ok", True)) or (
+                        getattr(self, "video_sender", None) is None and screen_track is None
+                    )
+                    if getattr(self, "video_sender", None) is None and screen_track is None:
+                        applied = True
+                    emit_host_event(
+                        logger,
+                        event="host_media_resumed",
+                        message="Host media resumed",
+                        meta={
+                            "generation": normalized["generation"],
+                            "connectionAttemptId": normalized["connectionAttemptId"],
+                            "captureSeq": capture_seq,
+                            "senderEnabled": True,
+                            "keyframeRequested": keyframe_requested,
+                        },
+                    )
+            except Exception as exc:
+                logger.error("media activity apply failed: %s", type(exc).__name__)
+                applied = False
+                # Stay safe/suspended on failure.
+                self._media_activity_suspended = True
+                try:
+                    screen_track = getattr(self, "screen_track", None)
+                    if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                        screen_track.set_suspended(True)
+                except Exception:
+                    pass
+
             self._media_activity_binding = {
                 "viewerId": normalized["viewerId"],
                 "connectionAttemptId": normalized["connectionAttemptId"],
                 "generation": normalized["generation"],
-                "state": normalized["state"],
+                "state": "suspended" if self._media_activity_suspended else normalized["state"],
             }
-            self._media_activity_suspended = normalized["state"] == "suspended"
             await self._emit_media_activity_ack(
                 viewer_id=normalized["viewerId"],
-                state=normalized["state"],
+                state="suspended" if self._media_activity_suspended else normalized["state"],
                 generation=normalized["generation"],
                 connection_attempt_id=normalized["connectionAttemptId"],
-                applied=True,
+                applied=applied,
+                keyframe_requested=keyframe_requested,
             )
 
     async def _emit_media_activity_ack(
