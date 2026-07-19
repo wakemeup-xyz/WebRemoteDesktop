@@ -386,6 +386,11 @@ class LegacyInputAdapter:
                 },
                 "locks": {"capsLock": None},
             }
+        if action == "reset":
+            reason = payload.get("reason")
+            return "reset", {
+                "reason": reason if reason in _RESET_REASONS else "unspecified",
+            }
         if action in _ACTIONS:
             return action, payload
         return "reset", {"reason": "unspecified"}

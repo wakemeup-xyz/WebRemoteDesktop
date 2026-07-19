@@ -6,6 +6,7 @@ import threading
 import time
 import pytest
 from input_handler import InputHandler
+from remote_keyboard_state import LegacyInputAdapter
 
 
 LEASE_ID = "lease-000000000001"
@@ -124,6 +125,48 @@ async def test_legacy_keyboard_uses_leased_executor_and_resets_before_transport_
         ("KeyB", True, 0),
     ]
     assert handler.get_keyboard_snapshot().pressed_codes == frozenset({"KeyB"})
+
+
+@pytest.mark.asyncio
+async def test_legacy_reset_normalizes_unknown_reason_and_releases_leased_key_state():
+    adapter = RecordingAdapter()
+    handler = InputHandler(keyboard_adapter=adapter)
+    handler._running = True
+    await handler.transition_keyboard(
+        connection_generation=1,
+        lease_id=LEASE_ID,
+        lease_epoch=1,
+    )
+
+    await handler.apply_keyboard({
+        "type": "keyboard",
+        "action": "keydown",
+        "payload": {"code": "KeyA"},
+        "inputIds": ["legacy-down"],
+    }, transport="socket")
+    reset = await handler.apply_keyboard({
+        "type": "keyboard",
+        "action": "reset",
+        "payload": {"reason": "activated"},
+        "inputIds": ["legacy-reset"],
+    }, transport="socket")
+
+    assert reset["status"] == "applied"
+    assert adapter.events == [("KeyA", True, 0), ("KeyA", False, 0)]
+    snapshot = handler.get_keyboard_snapshot()
+    assert snapshot.pressed_key_count == 0
+    assert snapshot.last_applied_seq == 2
+
+
+def test_legacy_reset_reason_keeps_known_values_and_normalizes_unknown_values():
+    assert LegacyInputAdapter._normalise({
+        "action": "reset",
+        "payload": {"reason": "window-blur"},
+    }) == ("reset", {"reason": "window-blur"})
+    assert LegacyInputAdapter._normalise({
+        "action": "reset",
+        "payload": {"reason": "activated"},
+    }) == ("reset", {"reason": "unspecified"})
 
 
 def test_input_method_switch_remains_an_explicit_quartz_command():
