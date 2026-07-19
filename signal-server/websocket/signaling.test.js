@@ -10,6 +10,26 @@ process.env.HOST_PASSWORD = process.env.HOST_PASSWORD || 'test-host-password';
 
 const { setupSignaling, connections } = require('./signaling');
 
+function v2Key(overrides = {}) {
+  return {
+    schemaVersion: 2,
+    type: 'keyboard',
+    action: 'key',
+    leaseId: 'lease-000000000001',
+    leaseEpoch: 1,
+    seq: 1,
+    payload: {
+      phase: 'down',
+      code: 'KeyA',
+      location: 0,
+      repeat: false,
+      modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+      locks: { capsLock: false },
+    },
+    ...overrides,
+  };
+}
+
 class FakeSocket extends EventEmitter {
   constructor(id, role, tokenRole = role === 'relay-viewer' ? 'viewer' : role) {
     super();
@@ -544,4 +564,64 @@ test('viewer connection cannot claim host role metadata', () => {
 
   assert.equal(connections.host.id, 'host-1');
   assert.equal(connections.viewers.has('viewer-1'), true);
+});
+
+test('input is not relayed before control transition ack, then valid v2 input relays once', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'req-1' });
+  viewer.trigger('input', v2Key());
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const granted = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  viewer.trigger('input', v2Key({ leaseId: granted.leaseId, leaseEpoch: granted.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+});
+
+test('takeover freezes controller A until host ack and grants B', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })() });
+  const host = new FakeSocket('host-1', 'host');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+  viewerA.trigger('control-acquire', { requestId: 'a' });
+  let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grantA = viewerA.sent.find((entry) => entry.event === 'control-grant').data;
+  viewerB.trigger('control-acquire', { requestId: 'b', takeover: true });
+  viewerA.trigger('input', v2Key({ leaseId: grantA.leaseId, leaseEpoch: grantA.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 0);
+  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grantB = viewerB.sent.find((entry) => entry.event === 'control-grant').data;
+  viewerB.trigger('input', v2Key({ leaseId: grantB.leaseId, leaseEpoch: grantB.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+});
+
+test('control logs redact lease token and text payload', () => {
+  resetConnections();
+  const io = makeIo();
+  const lines = [];
+  setupSignaling(io, { logger: { log: (...values) => lines.push(values.join(' ')), warn() {}, info() {}, error() {} }, makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host); io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'req' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  viewer.trigger('input', v2Key({ leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch, action: 'text', payload: { text: 'SecretText' } }));
+  const text = lines.join('\n');
+  assert.equal(text.includes(grant.leaseId), false);
+  assert.equal(text.includes('SecretText'), false);
 });

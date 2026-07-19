@@ -1,6 +1,8 @@
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
+const { DesktopControlLease } = require('../lib/desktop-control-lease');
+const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
 
 // Store connections
 const connections = {
@@ -57,6 +59,67 @@ function setupSignaling(io, options = {}) {
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
   const structuredLogger = options.structuredLogger || null;
+  const desktopLease = options.desktopControlLease || new DesktopControlLease({
+    now: options.now || Date.now,
+    makeLeaseId: options.makeLeaseId || (() => `lease-${require('node:crypto').randomUUID()}`),
+  });
+  const intervalFactory = options.scheduler?.setInterval || options.setInterval || setInterval;
+  const interval = intervalFactory(() => {
+    const result = desktopLease.expire();
+    if (result?.reason) broadcastControlState(result.reason);
+  }, 1000);
+  interval?.unref?.();
+
+  function controlSnapshot() {
+    return desktopLease.snapshot();
+  }
+
+  function broadcastControlState(reason = null) {
+    const snapshot = controlSnapshot();
+    connections.viewers.forEach((viewerSocket) => {
+      viewerSocket.emit('control-state', {
+        ...snapshot,
+        controller: snapshot.controllerViewerId === viewerSocket.id,
+        reason,
+      });
+    });
+  }
+
+  function sendControlTransition(effect) {
+    if (!effect || !connections.host || !effect.transition) return false;
+    connections.host.emit('control-transition', effect.transition);
+    return true;
+  }
+
+  function sendGrant(viewerId, lease) {
+    const viewerSocket = connections.viewers.get(viewerId);
+    if (!viewerSocket || !lease) return;
+    viewerSocket.emit('control-grant', { controller: true, ...lease });
+    broadcastControlState('granted');
+  }
+
+  function authorizeViewer(socket, data = {}, { legacy = true } = {}) {
+    if (data && data.schemaVersion === 2) {
+      return desktopLease.authorize({
+        viewerId: socket.id,
+        leaseId: data.leaseId,
+        leaseEpoch: data.leaseEpoch,
+      });
+    }
+    return legacy;
+  }
+  const pendingOffers = new Map();
+
+  function forwardOffer(socket, data) {
+    if (!connections.host) return false;
+    connections.host.emit('offer', {
+      offer: data.offer,
+      viewerId: socket.id,
+      epoch: data.epoch,
+      leaseEpoch: data.schemaVersion === 2 ? data.leaseEpoch : desktopLease.snapshot().leaseEpoch,
+    });
+    return true;
+  }
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -90,6 +153,10 @@ function setupSignaling(io, options = {}) {
         console.warn(`Replacing stale host connection: ${previousHost.id} -> ${socket.id}`);
         previousHost.disconnect(true);
       }
+      if (previousHost && previousHost.id !== socket.id) {
+        desktopLease.hostDisconnected();
+        broadcastControlState('host-replaced');
+      }
       socket.emit('connected', { role: 'host', status: 'ok' });
       emitViewerStatus('host-connected');
       // Notify all viewers that host is online
@@ -104,6 +171,11 @@ function setupSignaling(io, options = {}) {
         hostOnline: connections.host !== null
       });
       emitViewerStatus('viewer-connected', socket);
+      socket.emit('control-state', {
+        ...controlSnapshot(),
+        controller: controlSnapshot().controllerViewerId === socket.id,
+        reason: 'viewer-connected',
+      });
     } else if (role === 'relay-viewer') {
       connections.relayViewers.set(socket.id, socket);
       socket.emit('connected', {
@@ -112,6 +184,59 @@ function setupSignaling(io, options = {}) {
         hostOnline: connections.host !== null
       });
     }
+
+    socket.on('control-acquire', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      if (!connections.host) {
+        socket.emit('control-acquire-result', { state: 'FREE', reason: 'host-offline', requestId: data.requestId || null });
+        return;
+      }
+      const previousController = desktopLease.snapshot().controllerViewerId;
+      const result = desktopLease.requestControl({ viewerId: socket.id, takeover: data.takeover === true });
+      if (result.transition) {
+        if (data.takeover === true && previousController && previousController !== socket.id) {
+          connections.viewers.get(previousController)?.emit('control-revoked', { reason: 'takeover' });
+        }
+        socket.emit('control-acquire-result', { state: result.state, requestId: data.requestId || null });
+        broadcastControlState('transition');
+        sendControlTransition(result);
+      } else {
+        socket.emit('control-acquire-result', { ...result, requestId: data.requestId || null });
+      }
+    });
+
+    socket.on('control-heartbeat', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      const result = desktopLease.heartbeat({ viewerId: socket.id, leaseId: data.leaseId, leaseEpoch: data.leaseEpoch });
+      if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
+    });
+
+    socket.on('control-release', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      const result = desktopLease.beginRelease({ viewerId: socket.id, reason: data.reason || 'released' });
+      if (result.transition) {
+        broadcastControlState('released');
+        sendControlTransition(result);
+      }
+    });
+
+    socket.on('control-transition-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) return;
+      const result = data.status === 'applied'
+        ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
+        : desktopLease.rejectTransition({ leaseEpoch: data.leaseEpoch, reason: data.reason });
+      if (result.lease) sendGrant(desktopLease.snapshot().controllerViewerId, result.lease);
+      broadcastControlState(result.reason || result.state.toLowerCase());
+      if (result.lease) {
+        const queued = pendingOffers.get(desktopLease.snapshot().controllerViewerId);
+        if (queued) {
+          pendingOffers.delete(desktopLease.snapshot().controllerViewerId);
+          queued.forEach(({ socket: queuedSocket, data: queuedData }) => {
+            if (isActiveViewerSocket(queuedSocket)) forwardOffer(queuedSocket, queuedData);
+          });
+        }
+      }
+    });
 
     // WebRTC signaling
     socket.on('offer', (data) => {
@@ -123,14 +248,25 @@ function setupSignaling(io, options = {}) {
         console.warn(`Offer rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      if (data?.schemaVersion !== 2) {
+        const snapshot = desktopLease.snapshot();
+        if (snapshot.state !== 'ACTIVE' || snapshot.controllerViewerId !== socket.id) {
+          if (snapshot.state === 'FREE' && connections.host) {
+            const result = desktopLease.requestControl({ viewerId: socket.id });
+            if (result.transition) {
+              pendingOffers.set(socket.id, [{ socket, data }]);
+              broadcastControlState('transition');
+              sendControlTransition(result);
+            }
+          }
+          return;
+        }
+      }
       console.log(`[OFFER] Received from ${role}=${socket.id} epoch=${data.epoch} hostConnected=${Boolean(connections.host)}`);
       if (connections.host) {
         console.log(`[OFFER] Forwarding to host ${connections.host.id} epoch=${data.epoch}`);
-        connections.host.emit('offer', {
-          offer: data.offer,
-          viewerId: socket.id,
-          epoch: data.epoch
-        });
+        forwardOffer(socket, data);
       } else {
         console.warn(`[OFFER] No host connected, dropping offer from ${socket.id} epoch=${data.epoch}`);
       }
@@ -177,6 +313,14 @@ function setupSignaling(io, options = {}) {
       if (!isActiveViewerSocket(socket)) {
         console.warn(`Input rejected: disconnected viewer ${socket.id}`);
         return;
+      }
+      if (data?.schemaVersion === 2) {
+        const validation = validateRemoteInput(data);
+        if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
+          logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
+          return;
+        }
+        logger.log?.(`[INPUT] relay viewer=${socket.id} ${JSON.stringify(summarizeRemoteInput(data))}`);
       }
       if (data.type !== 'mouse' || data.action !== 'move') {
         const inputType = ['mouse', 'keyboard', 'command'].includes(data.type) ? data.type : 'unknown';
@@ -269,6 +413,7 @@ function setupSignaling(io, options = {}) {
         console.warn(`Media profile change rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
       const allowedProfiles = new Set(['high', 'medium', 'low', 'survival']);
       const profile = allowedProfiles.has(data.profile) ? data.profile : 'medium';
       const sanitized = {
@@ -295,6 +440,7 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay stream control rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
       if (connections.host) {
         connections.host.emit('relay-stream-control', {
           ...data,
@@ -319,6 +465,7 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (connections.host) {
+        if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
         connections.host.emit('relay-frame-ack', {
           ...data,
           viewerId: socket.id
@@ -335,6 +482,7 @@ function setupSignaling(io, options = {}) {
         console.warn(`Resolution change rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
       const width = Number(data.width);
       const height = Number(data.height);
       if (!Number.isFinite(width) || !Number.isFinite(height) || width < 320 || height < 180) {
@@ -355,6 +503,8 @@ function setupSignaling(io, options = {}) {
       if (role === 'host') {
         if (connections.host && connections.host.id === socket.id) {
           connections.host = null;
+          const leaseResult = desktopLease.hostDisconnected();
+          broadcastControlState(leaseResult.reason);
           connections.viewers.forEach((viewerSocket) => {
             viewerSocket.emit('host-status', { online: false });
           });
@@ -363,6 +513,9 @@ function setupSignaling(io, options = {}) {
           console.log(`Ignoring stale host disconnect: ${socket.id}`);
         }
       } else if (role === 'viewer') {
+        const leaseResult = desktopLease.viewerDisconnected(socket.id);
+        if (leaseResult.transition) sendControlTransition(leaseResult);
+        broadcastControlState(leaseResult.reason || 'viewer-disconnected');
         connections.viewers.delete(socket.id);
         emitViewerStatus('viewer-disconnected', socket);
       } else if (role === 'relay-viewer') {
