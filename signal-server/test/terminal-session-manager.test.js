@@ -475,11 +475,19 @@ test('synchronous PTY exit during callback registration notifies the creator and
   assert.equal(manager.listSessions().length, 1);
 });
 
-test('PTY callback registration failure leaves no pooled session or live timer', () => {
+test('PTY callback registration failure retries one failed kill before removing the session', () => {
   const activeTimers = new Set();
   const events = [];
   const pty = createFakePty();
   pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  let killAttempts = 0;
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    killAttempts += 1;
+    if (killAttempts === 1) {
+      throw new Error('registration kill SECRET_VALUE');
+    }
+  };
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
     setTimeout(handler, delay) {
@@ -509,8 +517,47 @@ test('PTY callback registration failure leaves no pooled session or live timer',
   );
   assert.equal(manager.listSessions().length, 0);
   assert.equal(activeTimers.size, 0);
-  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_registration_failed'), true);
+  const killFailure = events.find((entry) => entry.event === 'terminal_pty_kill_failed');
+  assert.equal(killFailure.meta.attemptCount, 1);
+  assert.equal(events.some((entry) => entry.event === 'terminal_pty_cleanup_failed'), false);
+  assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+test('PTY callback registration cleanup stops after two failed kill attempts and audits bounded failure', () => {
+  const events = [];
+  const pty = createFakePty();
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('cleanup SECRET_VALUE');
+  };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalStartupTimeoutMs: 10000,
+    },
+  });
+
+  assert.throws(
+    () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed',
+  );
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
+  assert.equal(manager.listSessions().length, 0);
+  const cleanupFailure = events.find((entry) => entry.event === 'terminal_pty_cleanup_failed');
+  assert.equal(cleanupFailure.meta.attemptCount, 2);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 });
 
@@ -551,17 +598,26 @@ test('PTY startup timeout fails once, kills once, notifies once, and retains rep
   assert.equal(exits.length, 1);
   manager.closeSession(created.sessionId, { reason: 'user-close' });
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.throws(
+    () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
+    (error) => error.code === 'terminal_session_not_found',
+  );
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
 });
 
-test('PTY startup timeout still notifies and retains failed state when kill throws', () => {
+test('PTY startup timeout kill failure is retried successfully by close before pool removal', () => {
   let startupHandler;
   const events = [];
   const errors = [];
   const exits = [];
   const pty = createFakePty();
+  let killAttempts = 0;
   pty.kill = function kill(signal) {
     this.killCalls.push(signal);
-    throw new Error('kill SECRET_VALUE');
+    killAttempts += 1;
+    if (killAttempts === 1) {
+      throw new Error('kill SECRET_VALUE');
+    }
   };
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -595,6 +651,11 @@ test('PTY startup timeout still notifies and retains failed state when kill thro
   assert.equal(exits.length, 1);
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+  assert.doesNotThrow(() => manager.closeSession(created.sessionId, { reason: 'user-close' }));
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
+  assert.equal(manager.listSessions().length, 0);
+  assert.equal(errors.length, 1);
+  assert.equal(exits.length, 1);
 });
 
 for (const terminalState of ['running', 'exited']) {
