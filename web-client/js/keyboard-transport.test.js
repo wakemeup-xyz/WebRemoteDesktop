@@ -41,6 +41,8 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
   assert.equal(h.socket.length, 1);
   assert.equal(h.socket[0].action, 'reset');
   assert.equal(h.socket[0].seq, 2);
+  assert.deepEqual(h.socket[0].payload, { reason: 'transport-change' });
+  assert.equal(validateRemoteInput(h.socket[0]).ok, true);
   assert.equal(h.transport.canSendNewInput(), false);
 
   h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'applied' });
@@ -97,10 +99,21 @@ test('resync-required and sequence gaps preserve one Socket reset barrier', () =
   assert.equal(h.socket.length, 1);
   assert.equal(h.socket[0].action, 'reset');
   assert.equal(h.socket[0].seq, 2);
+  assert.deepEqual(h.socket[0].payload, { reason: 'transport-change' });
+  assert.equal(validateRemoteInput(h.socket[0]).ok, true);
   assert.equal(h.transport.canSendNewInput(), false);
   assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' }).status, 'resync-required');
   assert.equal(h.socket.length, 1);
   assert.equal(h.transport.canSendNewInput(), false);
+});
+
+test('sequence gaps emit a validator-valid transport-change reset', () => {
+  const h = createHarness();
+  h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' }).status, 'resync-required');
+  assert.deepEqual(h.socket[0].payload, { reason: 'transport-change' });
+  assert.equal(validateRemoteInput(h.socket[0]).ok, true);
 });
 
 test('expired reset barrier requires lease reacquisition before accepting new input', () => {

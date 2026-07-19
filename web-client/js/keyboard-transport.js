@@ -211,7 +211,7 @@
         return { status: 'stale' };
       }
       if (payload.status === 'resync-required') {
-        if (!barrier) sendReset('remote-resync-required');
+        if (!barrier) sendReset('transport-change');
         return { status: 'resync-required' };
       }
       if ((payload.status !== 'applied' && payload.status !== 'duplicate')
@@ -221,7 +221,7 @@
       }
       if (payload.appliedSeq < lastApplied) return { status: 'stale' };
       if (payload.appliedSeq > lastSent) {
-        if (!barrier) sendReset('sequence-gap');
+        if (!barrier) sendReset('transport-change');
         return { status: 'resync-required' };
       }
       if (barrier && payload.appliedSeq < barrier.seq) return { status: 'resync-required' };
@@ -237,7 +237,7 @@
       const adapterName = name;
       if (!adapters[adapterName]) return;
       unavailable.add(adapterName);
-      if (adapterName === pinnedAdapter || adapterName === 'dataChannel') sendReset('adapter-unavailable');
+      if (adapterName === pinnedAdapter || adapterName === 'dataChannel') sendReset('transport-change');
     }
 
     function canSendNewInput() {
