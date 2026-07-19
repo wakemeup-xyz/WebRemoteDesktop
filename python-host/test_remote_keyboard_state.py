@@ -180,6 +180,21 @@ def test_transition_releases_pressed_keys_and_connection_generation_controls_epo
     assert state.snapshot().lease_epoch == 1
 
 
+def test_transition_rejects_replayed_epoch_in_same_connection_without_resetting_state():
+    adapter = RecordingKeyboardAdapter()
+    state = active_state(adapter, generation=1, epoch=1)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+
+    result = state.transition(
+        connection_generation=1, lease_id="lease-000000000002", lease_epoch=1
+    )
+
+    assert result.status == "stale-lease"
+    assert state.snapshot().pressed_codes == frozenset({"KeyA"})
+    assert state.snapshot().last_applied_seq == 1
+    assert [event[:2] for event in adapter.events] == [("KeyA", True)]
+
+
 def test_key_phases_and_repeat_preserve_one_physical_pressed_code():
     adapter = RecordingKeyboardAdapter()
     state = active_state(adapter)

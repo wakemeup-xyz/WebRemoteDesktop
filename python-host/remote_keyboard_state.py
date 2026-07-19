@@ -206,7 +206,7 @@ class RemoteKeyboardState:
             return self._result("stale-lease")
         if type(lease_epoch) is not int or lease_epoch < 1:
             return self._result("invalid-input")
-        if connection_generation == self._connection_generation and lease_epoch < self._lease_epoch:
+        if connection_generation == self._connection_generation and lease_epoch <= self._lease_epoch:
             return self._result("stale-lease")
         self._release_all("lease-transition")
         self._connection_generation = connection_generation
