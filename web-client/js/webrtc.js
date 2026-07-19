@@ -315,11 +315,13 @@ const WebRTC = {
   },
 
   applyMediaProfile(profile, reason) {
-    if (!profile) return;
+    const lease = this.activeLeaseEnvelope();
+    if (!profile || !lease) return false;
     console.warn(`[MEDIA] applying profile ${profile.name} size=${profile.width}x${profile.height} fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps reason=${reason}`);
     this.currentResolution = { width: profile.width, height: profile.height, label: `${profile.width}x${profile.height}` };
     if (this.socket && this.socket.connected) {
       this.socket.emit('media-profile-change', {
+        ...lease,
         profile: profile.name,
         width: profile.width,
         height: profile.height,
@@ -332,6 +334,7 @@ const WebRTC = {
     if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.record === 'function') {
       ConnectionTrace.record('media-profile-change', { profile: profile.name, reason });
     }
+    return true;
   },
 
   proactiveIceRestart(reason) {
@@ -1436,13 +1439,16 @@ const WebRTC = {
   },
   
   async requestResolution(width, height) {
+    const lease = this.activeLeaseEnvelope();
+    if (!lease) return false;
     this.currentResolution = { width, height, label: `${width}x${height}` };
-    if (this.socket) {
-      this.socket.emit('resolution-change', { width, height });
+    if (this.socket?.connected) {
+      this.socket.emit('resolution-change', { ...lease, width, height });
     }
     if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {
       this.startTunnelRelay();
     }
+    return true;
   },
 
   configureNetworkControls() {

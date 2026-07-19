@@ -404,6 +404,7 @@ test('WebRTC syncs the adaptive profile when a new media connection becomes acti
       emitted.push({ event, payload });
     },
   };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 } };
 
   WebRTC.syncMediaProfile();
 
@@ -412,6 +413,28 @@ test('WebRTC syncs the adaptive profile when a new media connection becomes acti
   assert.equal(emitted[0].payload.profile, 'high');
   assert.equal(emitted[0].payload.targetFps, 20);
   assert.equal(emitted[0].payload.mediaPolicy, 'strict-stun');
+  assert.equal(emitted[0].payload.schemaVersion, 2);
+  assert.equal(emitted[0].payload.leaseId, 'lease-000000000001');
+});
+
+test('media profile and resolution changes no-op without a lease and emit v2 envelopes when active', async () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  const initialResolution = { ...WebRTC.currentResolution };
+
+  WebRTC.applyMediaProfile({ name: 'medium', width: 960, height: 540, fps: 15, bitrateKbps: 1400 }, 'test');
+  await WebRTC.requestResolution(1280, 720);
+  assert.equal(emitted.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.currentResolution)), initialResolution);
+
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
+  WebRTC.applyMediaProfile({ name: 'medium', width: 960, height: 540, fps: 15, bitrateKbps: 1400 }, 'test');
+  await WebRTC.requestResolution(1280, 720);
+  assert.deepEqual(emitted.map(({ event }) => event), ['media-profile-change', 'resolution-change']);
+  emitted.forEach(({ payload }) => assert.deepEqual({ schemaVersion: payload.schemaVersion, leaseId: payload.leaseId, leaseEpoch: payload.leaseEpoch }, {
+    schemaVersion: 2, leaseId: 'lease-000000000001', leaseEpoch: 9,
+  }));
 });
 
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
@@ -1253,6 +1276,7 @@ test('WebRTC applies degraded media profile without starting tunnel in auto mode
 
   WebRTC.networkMode = 'auto';
   WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 } };
   let tunnelStarted = false;
   WebRTC.startTunnelRelay = () => { tunnelStarted = true; };
   WebRTC.ensureLinkQualityController();

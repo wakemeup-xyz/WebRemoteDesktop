@@ -234,6 +234,34 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   assert.equal(message.data.extra, undefined);
 });
 
+test('v2 viewers cannot forward unleased media writes and active media writes are bounded', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-v2', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('media-profile-change', { profile: 'high', width: 99999, height: 99999 });
+  viewer.trigger('resolution-change', { width: 99999, height: 99999 });
+  assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change' || entry.event === 'resolution-change'), false);
+
+  viewer.trigger('control-acquire', { requestId: 'media-control' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('media-profile-change', { ...lease, profile: 'high', width: 99999, height: 99999, targetFps: 99, videoBitrateKbps: 99999 });
+  viewer.trigger('resolution-change', { ...lease, width: 99999, height: 99999 });
+
+  const profile = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
+  const resolution = host.sent.filter((entry) => entry.event === 'resolution-change').at(-1).data;
+  assert.deepEqual([profile.width, profile.height, profile.targetFps, profile.videoBitrateKbps], [1920, 1080, 30, 5000]);
+  assert.deepEqual([resolution.width, resolution.height], [1920, 1080]);
+});
+
 test('non-viewer media-profile-change is ignored', () => {
   resetConnections();
   const io = makeIo();

@@ -148,6 +148,7 @@ function setupSignaling(io, options = {}) {
       return next(new Error('Invalid token'));
     }
     socket.user = decoded;
+    socket.inputProtocolVersion = Number.parseInt(socket.handshake.auth?.inputProtocolVersion, 10) === 2 ? 2 : 1;
     const claimedRole = socket.handshake.auth?.role;
     socket.userRole = decoded.role === 'viewer' && claimedRole === 'relay-viewer'
       ? 'relay-viewer'
@@ -487,7 +488,9 @@ function setupSignaling(io, options = {}) {
         console.warn(`Media profile change rejected: disconnected viewer ${socket.id}`);
         return;
       }
-      if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      if (socket.inputProtocolVersion === 2) {
+        if (data?.schemaVersion !== 2 || !authorizeViewer(socket, data, { legacy: false })) return;
+      } else if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
       const allowedProfiles = new Set(['high', 'medium', 'low', 'survival']);
       const profile = allowedProfiles.has(data.profile) ? data.profile : 'medium';
       const sanitized = {
@@ -556,17 +559,21 @@ function setupSignaling(io, options = {}) {
         console.warn(`Resolution change rejected: disconnected viewer ${socket.id}`);
         return;
       }
-      if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
-      const width = Number(data.width);
-      const height = Number(data.height);
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 320 || height < 180) {
+      if (socket.inputProtocolVersion === 2) {
+        if (data?.schemaVersion !== 2 || !authorizeViewer(socket, data, { legacy: false })) return;
+      } else if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      const requestedWidth = Number(data.width);
+      const requestedHeight = Number(data.height);
+      if (!Number.isFinite(requestedWidth) || !Number.isFinite(requestedHeight) || requestedWidth < 320 || requestedHeight < 180) {
         console.warn(`[RESOLUTION] Invalid request from ${socket.id}:`, data);
         return;
       }
+      const width = clampInt(requestedWidth, 320, 1920, 960);
+      const height = clampInt(requestedHeight, 180, 1080, 540);
       if (connections.host) {
         connections.host.emit('resolution-change', {
-          width: Math.round(width),
-          height: Math.round(height),
+          width,
+          height,
           viewerId: socket.id
         });
       }
