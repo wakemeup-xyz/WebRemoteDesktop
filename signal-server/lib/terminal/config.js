@@ -50,7 +50,15 @@ function parsePathEntries(raw) {
   const normalizedEntries = entries.map((entry) => (
     existingAbsoluteDirectory('WRD_TERMINAL_PATH_EXTRA', entry)
   ));
-  if (new Set(normalizedEntries).size !== normalizedEntries.length) {
+  const realpath = fs.realpathSync.native || fs.realpathSync;
+  const directoryIdentities = normalizedEntries.map((entry) => {
+    try {
+      return realpath(entry);
+    } catch {
+      throw new Error('[config] WRD_TERMINAL_PATH_EXTRA must contain existing absolute directories');
+    }
+  });
+  if (new Set(directoryIdentities).size !== directoryIdentities.length) {
     throw new Error('[config] WRD_TERMINAL_PATH_EXTRA must not contain duplicate directories');
   }
   return normalizedEntries;

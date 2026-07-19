@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
@@ -122,7 +125,7 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     WRD_TERMINAL_ADMIN_PASSWORD: ' terminal-admin-password ',
     WRD_TERMINAL_SHELL: '/bin/bash',
     WRD_TERMINAL_CWD: '/tmp',
-    WRD_TERMINAL_PATH_EXTRA: '/tmp:/private/tmp',
+    WRD_TERMINAL_PATH_EXTRA: '/tmp:/',
     WRD_TERMINAL_MAX_SESSIONS: '12',
     WRD_TERMINAL_SOFT_WARN_SESSION_COUNT: '7',
     WRD_TERMINAL_REPLAY_BUFFER_BYTES: '131072',
@@ -141,7 +144,7 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     adminPassword: 'terminal-admin-password',
     shell: '/bin/bash',
     cwd: '/tmp',
-    pathEntries: ['/tmp', '/private/tmp'],
+    pathEntries: ['/tmp', '/'],
     maxSessions: 12,
     softWarnSessionCount: 7,
     replayBufferBytes: 131072,
@@ -156,6 +159,44 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     auditLog: '/var/log/terminal.log',
     recordIoMetadata: true,
   });
+});
+
+test('parseTerminalConfig rejects trailing-slash aliases of the same directory', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-terminal-config-'));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const target = path.join(tempRoot, 'target');
+  fs.mkdirSync(target);
+
+  assert.throws(
+    () => parseTerminalConfig(terminalEnv({
+      WRD_TERMINAL_PATH_EXTRA: `${target}${path.delimiter}${target}${path.sep}`,
+    })),
+    /WRD_TERMINAL_PATH_EXTRA/,
+  );
+});
+
+test('parseTerminalConfig rejects symlink aliases of the same directory', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-terminal-config-'));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const target = path.join(tempRoot, 'target');
+  const alias = path.join(tempRoot, 'alias');
+  fs.mkdirSync(target);
+  try {
+    fs.symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (['EACCES', 'ENOSYS', 'EPERM'].includes(error.code)) {
+      t.skip(`symlink creation is unavailable: ${error.code}`);
+      return;
+    }
+    throw error;
+  }
+
+  assert.throws(
+    () => parseTerminalConfig(terminalEnv({
+      WRD_TERMINAL_PATH_EXTRA: `${target}${path.delimiter}${alias}`,
+    })),
+    /WRD_TERMINAL_PATH_EXTRA/,
+  );
 });
 
 for (const { key, value } of [
