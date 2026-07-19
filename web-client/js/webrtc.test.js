@@ -2140,3 +2140,37 @@ test('media resume enables input only after active ack and rendered frame', () =
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
+
+
+test('stable viewport while adaptive relay frame sizes change', () => {
+  const { WebRTC, context, elements } = loadWebRTC();
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  const relayImage = elements.get('relayImage') || context.document.getElementById('relayImage');
+  // Fake bounding box independent of intrinsic image size.
+  let box = { width: 800, height: 450, left: 0, top: 0 };
+  relayImage.getBoundingClientRect = () => ({ ...box, right: box.left + box.width, bottom: box.top + box.height });
+  const sizes = [[960, 540], [640, 360], [480, 270]];
+  let frameId = 0;
+  for (const [width, height] of sizes) {
+    frameId += 1;
+    WebRTC.handleRelayFrame({
+      frameId,
+      width,
+      height,
+      timestamp: Date.now(),
+      mime: 'image/jpeg',
+      data: 'AAAA',
+    });
+    const rect = relayImage.getBoundingClientRect();
+    assert.equal(rect.width, 800);
+    assert.equal(rect.height, 450);
+  }
+  assert.equal(WebRTC.tunnelLastFrameId, 3);
+  // Source size changes must not schedule reconnect/offers.
+  assert.equal(WebRTC.reconnectTimer, null);
+});

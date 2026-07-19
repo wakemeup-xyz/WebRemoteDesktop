@@ -91,3 +91,19 @@ def test_select_capture_monitor_falls_back_to_screeninfo_when_mss_is_zero_sized(
     )
 
     assert monitor == {"left": 32, "top": 64, "width": 1728, "height": 1117}
+
+
+def test_tunnel_relay_suspend_blocks_production():
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+    relay.enabled = True
+    relay.viewer_id = "viewer-1"
+    relay.inflight_frames = {1: {"sent_at_ms": 1.0}}
+    gen = relay.set_suspended(True)
+    assert relay.suspended is True
+    assert relay.inflight_frames == {}
+    assert gen >= 1
+    # running property reflects suspension
+    assert relay.running is False
+    relay.set_suspended(False)
+    assert relay.suspended is False

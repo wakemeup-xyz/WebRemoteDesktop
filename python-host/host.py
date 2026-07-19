@@ -429,6 +429,8 @@ class TunnelRelayStreamer:
         self.task = None
         self.viewer_id = None
         self.enabled = False
+        self.suspended = False
+        self.production_generation = 0
         self.width = 960
         self.height = 540
         self.fps = 8
@@ -450,6 +452,10 @@ class TunnelRelayStreamer:
         self.last_ack_latency_ms = None
         self.max_in_flight_frames = 2
         self._apply_profile("medium", reason="init", log=False)
+
+    @property
+    def running(self):
+        return bool(self.enabled and self.task is not None and not self.suspended)
 
     def _profile_spec(self, profile_name):
         return TUNNEL_RELAY_PROFILES.get(profile_name) or TUNNEL_RELAY_PROFILES["medium"]
@@ -554,6 +560,8 @@ class TunnelRelayStreamer:
         self.stats_timeout_count = 0
         self.good_ack_streak = 0
         self.last_ack_latency_ms = None
+        self.suspended = False
+        self.production_generation += 1
         self.enabled = True
         self.task = asyncio.create_task(self._run())
         logger.info(
@@ -569,6 +577,8 @@ class TunnelRelayStreamer:
 
     async def stop(self):
         self.enabled = False
+        self.suspended = False
+        self.inflight_frames = {}
         if self.task:
             self.task.cancel()
             try:
@@ -576,6 +586,20 @@ class TunnelRelayStreamer:
             except asyncio.CancelledError:
                 pass
             self.task = None
+
+    def set_suspended(self, suspended):
+        """Pause production without tearing down the relay task lifecycle."""
+        suspended = bool(suspended)
+        self.suspended = suspended
+        if suspended:
+            # Invalidate queued work; tolerate one already in-flight emit.
+            self.inflight_frames = {}
+            self.production_generation += 1
+            self.ack_event.set()
+        else:
+            self.production_generation += 1
+            self.ack_event.set()
+        return self.production_generation
 
     def ack(self, frame_id, latency_ms=None):
         try:
@@ -607,6 +631,10 @@ class TunnelRelayStreamer:
             while self.enabled and self.viewer_id:
                 frame_interval = 1 / max(1, self.fps)
                 ack_timeout = max(0.35, min(1.5, frame_interval * 4))
+                if self.suspended:
+                    # No new capture/encode/emit while media is intentionally suspended.
+                    await asyncio.sleep(max(0.05, frame_interval))
+                    continue
                 if self.should_wait_before_capture():
                     try:
                         await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
@@ -624,8 +652,13 @@ class TunnelRelayStreamer:
                         continue
 
                 started = time.time()
+                production_generation = self.production_generation
                 try:
+                    if self.suspended:
+                        continue
                     shot = sct.grab(monitor)
+                    if self.suspended or production_generation != self.production_generation:
+                        continue
                     # Fast path: numpy stride downsample then PIL JPEG encode
                     img = np.array(shot)  # BGRA
                     h, w = img.shape[:2]
@@ -654,6 +687,9 @@ class TunnelRelayStreamer:
                         "width": image.width,
                         "height": image.height,
                     }
+                    if self.suspended or production_generation != self.production_generation:
+                        self.inflight_frames.pop(frame_id, None)
+                        continue
                     try:
                         await self.sio.emit("relay-frame", {
                             "viewerId": self.viewer_id,
@@ -666,6 +702,7 @@ class TunnelRelayStreamer:
                             "profile": self.profile_name,
                             "quality": self.jpeg_quality,
                             "maxInFlightFrames": self.max_in_flight_frames,
+                            "productionGeneration": production_generation,
                             "data": jpeg_bytes,
                         })
                         self.stats_frames += 1
@@ -2250,9 +2287,11 @@ class WebRemoteHost:
                     # 3) suspend capture and clear buffers
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
                         capture_seq = screen_track.set_suspended(True)
-                    # 4) stop tunnel production if active (best-effort; full tunnel gate in Task 7)
+                    # 4) suspend tunnel production without tearing down control/terminal.
                     relay = getattr(self, "relay_streamer", None)
-                    if relay is not None and getattr(relay, "running", False):
+                    if relay is not None and hasattr(relay, "set_suspended"):
+                        relay.set_suspended(True)
+                    elif relay is not None and getattr(relay, "enabled", False):
                         try:
                             await relay.stop()
                         except Exception:
@@ -2272,7 +2311,7 @@ class WebRemoteHost:
                         },
                     )
                 else:
-                    # Resume: capture ready, then sender/keyframe.
+                    # Resume: capture ready, then sender/keyframe, then tunnel.
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
                         baseline = screen_track.set_suspended(False)
                         if hasattr(screen_track, "wait_for_fresh_capture"):
@@ -2288,6 +2327,9 @@ class WebRemoteHost:
                     resume_result = sender_adapter.resume(screen_track)
                     self.media_sender = sender_adapter
                     keyframe_requested = bool(resume_result.get("keyframeRequested"))
+                    relay = getattr(self, "relay_streamer", None)
+                    if relay is not None and hasattr(relay, "set_suspended"):
+                        relay.set_suspended(False)
                     # Resume without a live sender/track still counts as applied for
                     # binding purposes when capture gate succeeded or neither exists.
                     self._media_activity_suspended = False

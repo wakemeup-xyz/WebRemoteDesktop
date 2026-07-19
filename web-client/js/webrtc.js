@@ -1912,6 +1912,10 @@ const WebRTC = {
     if (!this.tunnelRelayActive) {
       return;
     }
+    if (this.isMediaHealthSuppressed() && this.getMediaAppliedPhase() === 'suspended') {
+      // Intentional suspension: drop late frames without reviving FPS/health.
+      return;
+    }
     const relayImage = document.getElementById('relayImage');
     if (!relayImage || !data?.data) {
       return;
@@ -1935,6 +1939,9 @@ const WebRTC = {
         this.tunnelLastObjectUrl = objectUrl;
         this.tunnelPendingObjectUrl = '';
       }
+      if (this._mediaResumeFramePending) {
+        this.noteMediaRenderedFrame();
+      }
       const lease = this.activeLeaseEnvelope();
       if (lease && this.socket?.connected) {
         this.socket.emit('relay-frame-ack', {
@@ -1946,6 +1953,15 @@ const WebRTC = {
       }
     };
 
+    // Revoke any previous pending load before accepting a newer generation frame.
+    if (relayImage.onload) {
+      relayImage.onload = null;
+    }
+    if (this.tunnelPendingObjectUrl) {
+      URL.revokeObjectURL(this.tunnelPendingObjectUrl);
+      this.tunnelPendingObjectUrl = '';
+    }
+
     if (typeof data.data === 'string') {
       relayImage.onload = () => ackLoadedFrame();
       relayImage.src = `data:${data.mime || 'image/jpeg'};base64,${data.data}`;
@@ -1953,14 +1969,12 @@ const WebRTC = {
       const blob = data.data instanceof Blob
         ? data.data
         : new Blob([data.data], { type: data.mime || 'image/jpeg' });
-      if (this.tunnelPendingObjectUrl) {
-        URL.revokeObjectURL(this.tunnelPendingObjectUrl);
-      }
       this.tunnelPendingObjectUrl = URL.createObjectURL(blob);
       const objectUrl = this.tunnelPendingObjectUrl;
       relayImage.onload = () => ackLoadedFrame(objectUrl);
       relayImage.src = this.tunnelPendingObjectUrl;
     }
+    // Keep the media element box mounted; only toggle visibility class.
     relayImage.classList.remove('hidden');
     document.getElementById('loading')?.classList.add('hidden');
     document.body.classList.add('stream-connected');
@@ -1975,11 +1989,14 @@ const WebRTC = {
       candidateEl.textContent = '链路 tunnel';
     }
     if (data.width && data.height) {
+      // Source resolution may adapt; viewport size stays stable via CSS contain.
       document.getElementById('resolutionDisplay').textContent = `tunnel (${data.width}x${data.height})`;
     }
-    this.tunnelFrameCount += 1;
-    const elapsed = Math.max(1, (performance.now() - this.tunnelStartedAt) / 1000);
-    document.getElementById('fpsDisplay').textContent = `${Math.round(this.tunnelFrameCount / elapsed)} FPS`;
+    if (!this.isMediaHealthSuppressed()) {
+      this.tunnelFrameCount += 1;
+      const elapsed = Math.max(1, (performance.now() - this.tunnelStartedAt) / 1000);
+      document.getElementById('fpsDisplay').textContent = `${Math.round(this.tunnelFrameCount / elapsed)} FPS`;
+    }
     this.clearFailureRecommendation();
     this.updateNetworkUI(`隧道中继已连接。当前经 Cloudflare/Socket.IO 转发，延迟约 ${latency || '-'} ms。`, 'warning');
   },
