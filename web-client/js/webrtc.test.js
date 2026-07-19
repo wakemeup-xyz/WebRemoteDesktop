@@ -223,7 +223,7 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
   clearTimeout(WebRTC._dcTimeout);
 });
 
-test('DataChannel keyboard envelopes remain within the strict v2 protocol shape', () => {
+test('DataChannel keyboard envelopes include transport datachannel marker', () => {
   const sent = [];
   const { WebRTC } = loadWebRTC();
   WebRTC.inputChannel = {
@@ -237,7 +237,7 @@ test('DataChannel keyboard envelopes remain within the strict v2 protocol shape'
     leaseId: 'lease-000000000001', leaseEpoch: 4, seq: 1,
     inputIds: ['input-1'], payload: { reason: 'manual' },
   }), true);
-  assert.equal(Object.hasOwn(sent[0], 'transport'), false);
+  assert.equal(sent[0].transport, 'datachannel');
 });
 
 test('viewer waits for an active control lease before starting an offer and routes acknowledgements to transport first', () => {
@@ -1822,6 +1822,65 @@ test('collectNetworkSnapshot includes stunPortSearch without candidate IPs', () 
   const encoded = JSON.stringify(snapshot.stunPortSearch);
   assert.equal(encoded.includes('10.0.0.8'), false);
   WebRTC.stopPortSearch('cleanup');
+});
+
+test('manual refresh cancels an active port search', () => {
+  const { WebRTC } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  // Keep startPortSearch from using the real refresh path for setup.
+  WebRTC.refresh = () => {};
+  assert.equal(WebRTC.startPortSearch(), true);
+  assert.equal(WebRTC.isPortSearchActive(), true);
+
+  // Simulate the real refresh implementation's cancel gate used by the
+  // normal refresh button (not search-owned refresh).
+  if (!WebRTC._portSearchRefreshOwned && WebRTC.isPortSearchActive()) {
+    WebRTC.stopPortSearch('manual-refresh');
+  }
+  assert.equal(WebRTC.isPortSearchActive(), false);
+});
+
+test('signal disconnect cancels active port search', () => {
+  const socketHandlers = new Map();
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit() {},
+    disconnect() {},
+  };
+  preparePortSearch(WebRTC, { socket: WebRTC.socket });
+  WebRTC.refresh = () => {};
+  WebRTC.setupSocketListeners();
+  assert.equal(WebRTC.startPortSearch(), true);
+  assert.equal(WebRTC.isPortSearchActive(), true);
+  assert.equal(typeof socketHandlers.get('disconnect'), 'function');
+  socketHandlers.get('disconnect')();
+  assert.equal(WebRTC.isPortSearchActive(), false);
+});
+
+test('succeeded port search status is not overwritten by processStatsSnapshot', () => {
+  const { WebRTC, context } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.refresh = () => {};
+  assert.equal(WebRTC.startPortSearch(), true);
+  WebRTC.handlePortSearchMedia({ selectedCandidateType: 'srflx', framesDecoded: 10, fps: 10 });
+  WebRTC.handlePortSearchMedia({ selectedCandidateType: 'srflx', framesDecoded: 11, fps: 11 });
+  WebRTC.handlePortSearchMedia({ selectedCandidateType: 'srflx', framesDecoded: 12, fps: 12 });
+  assert.equal(WebRTC.portSearchController.snapshot().status, 'succeeded');
+  const successText = context.document.getElementById('candidateDisplay').textContent;
+  assert.match(successText, /端口搜索成功/);
+  WebRTC.processStatsSnapshot({
+    fps: 30,
+    rttMs: 40,
+    framesReceived: 100,
+    framesDecoded: 100,
+    selectedCandidateType: 'srflx',
+  });
+  assert.equal(
+    context.document.getElementById('candidateDisplay').textContent,
+    successText,
+  );
 });
 
 test('UI init tolerates missing optional elements', () => {

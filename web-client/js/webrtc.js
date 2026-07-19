@@ -1024,6 +1024,11 @@ const WebRTC = {
       updateConnectionStatus('disconnected');
       document.getElementById('remoteVideo').classList.remove('connected');
       this.freezeControl('signal-disconnect');
+      if (this.isPortSearchActive()) {
+        this.stopPortSearch('signal-disconnect');
+      } else {
+        this.renderPortSearchStatus();
+      }
       if (this.networkMode === 'tunnel' && !this.manualDisconnect) {
         this.scheduleReconnect('signal-disconnected');
       }
@@ -1511,7 +1516,10 @@ const WebRTC = {
       return false;
     }
 
-    channel.send(JSON.stringify(data));
+    channel.send(JSON.stringify({
+      ...data,
+      transport: 'datachannel'
+    }));
     return true;
   },
 
@@ -1976,7 +1984,11 @@ const WebRTC = {
         latencyEl.textContent = latencyMs > 0 ? `${latencyMs} ms` : '- ms';
       }
       const candidateEl = document.getElementById('candidateDisplay');
-      if (candidateEl && !this.isPortSearchActive()) {
+      const portSearchStatus = this.portSearchController?.snapshot?.()?.status || null;
+      const portSearchOwnsDisplay = portSearchStatus === 'searching'
+        || portSearchStatus === 'succeeded'
+        || portSearchStatus === 'exhausted';
+      if (candidateEl && !portSearchOwnsDisplay) {
         const linkLabel = selectedCandidateType === 'relay' ? 'TURN中继' : selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx' ? 'STUN直连' : selectedCandidateType === 'host' ? '本地直连' : selectedCandidateType || '-';
         candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
       }
