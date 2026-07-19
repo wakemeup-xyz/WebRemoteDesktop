@@ -33,6 +33,8 @@ const WebRTC = {
   linkQualityController: null,
   mediaActivityController: null,
   mediaActivityLifecycle: null,
+  mediaActivityRuntime: null,
+  _mediaResumeFramePending: false,
   adaptiveMediaEnabled: true,
   noMediaTicks: 0,
   lastCandidateType: '',
@@ -104,6 +106,11 @@ const WebRTC = {
       });
       this.mediaActivityLifecycle.start();
     }
+    if (typeof MediaActivityRuntime !== 'undefined' && !this.mediaActivityRuntime) {
+      this.mediaActivityRuntime = MediaActivityRuntime.create({
+        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+      });
+    }
     return this.mediaActivityController.snapshot();
   },
 
@@ -122,8 +129,131 @@ const WebRTC = {
       : { state: 'active', reasons: [], generation: 0 };
   },
 
-  applyMediaActivity(snapshot) {
+  getMediaAppliedPhase() {
+    return this.mediaActivityRuntime?.phase || 'active';
+  },
+
+  isMediaHealthSuppressed() {
+    return Boolean(this.mediaActivityRuntime?.isHealthSuppressed?.());
+  },
+
+  canEnableDesktopInput() {
+    return this.hasActiveControl()
+      && !this.manualDisconnect
+      && Boolean(this.mediaActivityRuntime?.canEnableDesktopInput?.() ?? true)
+      && this.getMediaActivitySnapshot().state === 'active';
+  },
+
+  applyMediaActivity(snapshot = this.getMediaActivitySnapshot()) {
+    this.initializeMediaActivity();
+    if (!this.mediaActivityRuntime && typeof MediaActivityRuntime !== 'undefined') {
+      this.mediaActivityRuntime = MediaActivityRuntime.create({
+        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+      });
+    }
+    const desired = snapshot?.state === 'suspended' ? 'suspended' : 'active';
+    const generation = Number(snapshot?.generation) || 0;
+    if (generation < 1) return snapshot;
+
+    // Immediate local gates on suspend.
+    if (desired === 'suspended') {
+      if (typeof Input !== 'undefined') {
+        Input.setActive(false);
+        Input.resetKeyboard?.('media-suspended');
+      }
+      if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
+      this.noMediaTicks = 0;
+      this._mediaResumeFramePending = false;
+    }
+
+    const runtime = this.mediaActivityRuntime;
+    if (runtime) {
+      runtime.beginDesired(desired, {
+        generation,
+        connectionAttemptId: this.currentConnectionAttemptId || null,
+      });
+    }
+
+    this.sendMediaActivityRequest(desired, snapshot);
+    this.syncDesktopInputGate();
     return snapshot;
+  },
+
+  sendMediaActivityRequest(desired, snapshot) {
+    const lease = this.activeLeaseEnvelope();
+    if (!lease || !this.socket?.connected) return false;
+    if (!this.currentConnectionAttemptId) {
+      this.currentConnectionAttemptId = `wrd-${Date.now()}`;
+    }
+    const payload = {
+      schemaVersion: 1,
+      state: desired,
+      reasons: Array.isArray(snapshot?.reasons) ? snapshot.reasons.slice(0, 8) : [],
+      generation: Number(snapshot?.generation) || 1,
+      connectionAttemptId: this.currentConnectionAttemptId,
+      leaseId: lease.leaseId,
+      leaseEpoch: lease.leaseEpoch,
+    };
+
+    // networkMode selects one adapter: WebRTC contract or tunnel relay control.
+    if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      this.socket.emit('relay-stream-control', {
+        ...lease,
+        enabled: desired === 'active',
+        width: Math.min(this.currentResolution.width || 960, 1280),
+        height: Math.min(this.currentResolution.height || 540, 720),
+        fps: 8,
+      });
+      // Tunnel path: treat stream control as the request; synthetic applied after emit.
+      this.handleMediaActivityAck({
+        schemaVersion: 1,
+        state: desired,
+        generation: payload.generation,
+        connectionAttemptId: payload.connectionAttemptId,
+        applied: true,
+      });
+      return true;
+    }
+
+    this.socket.emit('media-activity-change', payload);
+    return true;
+  },
+
+  handleMediaActivityAck(data = {}) {
+    if (!this.mediaActivityRuntime) return;
+    const result = this.mediaActivityRuntime.applyAck({
+      state: data.state,
+      generation: data.generation,
+      connectionAttemptId: data.connectionAttemptId,
+      applied: data.applied === true,
+      keyframeRequested: data.keyframeRequested === true,
+    });
+    if (!result.accepted) return;
+    if (result.phase === 'resuming') {
+      this._mediaResumeFramePending = true;
+    }
+    if (result.phase === 'suspended') {
+      this._mediaResumeFramePending = false;
+    }
+    this.syncDesktopInputGate();
+  },
+
+  noteMediaRenderedFrame() {
+    if (!this.mediaActivityRuntime) return;
+    const result = this.mediaActivityRuntime.noteRenderedFrame({
+      connectionAttemptId: this.currentConnectionAttemptId || null,
+    });
+    if (result.accepted) {
+      this._mediaResumeFramePending = false;
+      this.noMediaTicks = 0;
+      this.syncDesktopInputGate();
+    }
+  },
+
+  syncDesktopInputGate() {
+    if (typeof Input === 'undefined') return;
+    const enable = this.canEnableDesktopInput();
+    Input.setActive(enable);
   },
 
   hasTurnConfigured() {
@@ -1198,6 +1328,11 @@ const WebRTC = {
     this.socket.on('control-revoked', () => this.freezeControl('control-revoked'));
     this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
     this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
+    this.socket.on('media-activity-ack', (data) => this.handleMediaActivityAck(data));
+    this.socket.on('media-activity-rejected', () => {
+      // Keep fail-closed local gates; do not re-enable input on rejection.
+      this.syncDesktopInputGate();
+    });
   },
 
   hasActiveControl() {
@@ -2210,13 +2345,21 @@ const WebRTC = {
         fps,
       });
 
-      if (framesReceived === 0 && framesDecoded === 0 && !selectedCandidateType) {
+      if (this.isMediaHealthSuppressed()) {
+        this.noMediaTicks = 0;
+      } else if (framesReceived === 0 && framesDecoded === 0 && !selectedCandidateType) {
         this.noMediaTicks += 1;
       } else {
         this.noMediaTicks = 0;
       }
 
-      if (selectedCandidateType === 'relay') {
+      if (framesDecoded > 0 && this._mediaResumeFramePending) {
+        this.noteMediaRenderedFrame();
+      }
+
+      if (this.isMediaHealthSuppressed()) {
+        // Intentional suspension must not trigger degraded quality recovery.
+      } else if (selectedCandidateType === 'relay') {
         this.clearFailureRecommendation();
         this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
       } else if (selectedCandidateType === 'host') {
@@ -2366,6 +2509,9 @@ const WebRTC = {
   },
 
   scheduleReconnect(reason) {
+    if (this.isMediaHealthSuppressed()) {
+      return;
+    }
     if (this.manualDisconnect || this.reconnectTimer || this._refreshing) {
       return;
     }

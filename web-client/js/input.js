@@ -163,6 +163,10 @@ const Input = {
       this.releasePointer('deactivated');
       this.resetKeyboard('deactivated');
     }
+    // Desktop writes remain gated by WebRTC.canEnableDesktopInput when available.
+    if (active && typeof WebRTC !== 'undefined' && typeof WebRTC.canEnableDesktopInput === 'function') {
+      active = WebRTC.canEnableDesktopInput();
+    }
     this.isActive = Boolean(active);
     if (this.isActive && this.videoElement) this.videoElement.focus();
     this.updateKeyboardUI();

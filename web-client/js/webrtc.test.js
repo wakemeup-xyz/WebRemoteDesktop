@@ -2064,3 +2064,79 @@ test('UI init tolerates missing optional elements', () => {
   const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
   assert.doesNotThrow(() => vm.runInContext(source, context));
 });
+
+
+test('applyMediaActivity suspends input and suppresses health recovery', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  // Provide runtime in sandbox.
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = {
+    connected: true,
+    emit(...args) { emitted.push(args); },
+    on() {},
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.networkMode = 'stun';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  const inputCalls = [];
+  globalThis.Input = {
+    setActive(v) { inputCalls.push(['setActive', v]); },
+    resetKeyboard(r) { inputCalls.push(['reset', r]); },
+    setControlLease() {},
+  };
+  // In vm context Input may need to be on context
+  context.Input = globalThis.Input;
+
+  const snap = { state: 'suspended', reasons: ['manual-pause'], generation: 2 };
+  WebRTC.applyMediaActivity(snap);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspending');
+  assert.equal(WebRTC.isMediaHealthSuppressed(), true);
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+  assert.equal(emitted.some((e) => e[0] === 'media-activity-change'), true);
+  const payload = emitted.find((e) => e[0] === 'media-activity-change')[1];
+  assert.equal(payload.leaseId, 'lease-000000000001');
+  assert.equal(payload.generation, 2);
+  assert.equal(payload.connectionAttemptId, 'wrd-1');
+
+  WebRTC.handleMediaActivityAck({
+    state: 'suspended', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspended');
+  assert.equal(WebRTC.scheduleReconnect('media-stalled') === undefined, true);
+});
+
+test('media resume enables input only after active ack and rendered frame', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = {
+    active: false,
+    setActive(v) { this.active = v; },
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  WebRTC.handleMediaActivityAck({ state: 'suspended', generation: 1, connectionAttemptId: 'wrd-1', applied: true });
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+  WebRTC.handleMediaActivityAck({ state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true });
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+  WebRTC.noteMediaRenderedFrame();
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
+  assert.equal(WebRTC.canEnableDesktopInput(), true);
+});
