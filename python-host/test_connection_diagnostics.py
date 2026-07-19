@@ -244,6 +244,31 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
     assert "payload" not in ack
 
 
+@pytest.mark.asyncio
+async def test_host_v2_ack_normalizes_unknown_status_without_echoing_input():
+    sent = []
+    host = object.__new__(WebRemoteHost)
+    host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+
+    await host._send_input_ack({
+        "schemaVersion": 2,
+        "transport": "datachannel",
+        "leaseEpoch": 12,
+        "seq": 7,
+        "payload": {"key": "SecretKey"},
+    }, {
+        "inputIds": ["input-1"],
+        "appliedSeq": 7,
+        "status": "unexpected-status",
+    }, 9.0)
+
+    ack = __import__("json").loads(sent[0])
+    assert ack["status"] == "execution-failed"
+    assert "payload" not in ack
+    assert "key" not in ack
+
+
 def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
     host = object.__new__(WebRemoteHost)
     host.media_profile = {"profile": "survival", "target_fps": 8}

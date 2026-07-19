@@ -116,6 +116,36 @@ test('sequence gaps emit a validator-valid transport-change reset', () => {
   assert.equal(validateRemoteInput(h.socket[0]).ok, true);
 });
 
+test('a sequence-gap acknowledgement enters one reset barrier before accepting new input', () => {
+  const h = createHarness();
+  h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+
+  assert.equal(h.transport.acceptAck({
+    schemaVersion: 2, leaseEpoch: 7, appliedSeq: 0, status: 'sequence-gap',
+  }).status, 'resync-required');
+  assert.equal(h.socket.length, 1);
+  assert.equal(h.socket[0].action, 'reset');
+  assert.equal(h.transport.getSnapshot().state, 'blocked');
+  assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
+});
+
+test('terminal v2 acknowledgement errors revoke the local lease without advancing pending input', () => {
+  const terminalStatuses = ['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed'];
+
+  for (const status of terminalStatuses) {
+    const h = createHarness();
+    h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+
+    assert.equal(h.transport.acceptAck({
+      schemaVersion: 2, leaseEpoch: 7, appliedSeq: 0, status,
+    }).status, 'reacquire-required');
+    assert.equal(h.transport.getSnapshot().state, 'reacquire-required');
+    assert.equal(h.transport.getSnapshot().lastApplied, 0);
+    assert.equal(h.transport.getSnapshot().pendingCount, 1);
+    assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
+  }
+});
+
 test('expired reset barrier requires lease reacquisition before accepting new input', () => {
   const h = createHarness({ ackTimeoutMs: 50 });
   h.transport.resetBarrier('test-timeout');

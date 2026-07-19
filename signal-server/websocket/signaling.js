@@ -8,6 +8,16 @@ const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-inp
 // environment override: deployment must not silently re-enable v1 after its
 // documented removal criteria are met.
 const LEGACY_INPUT_COMPAT_ENABLED = true;
+const V2_INPUT_ACK_STATUSES = new Set([
+  'applied',
+  'duplicate',
+  'stale-lease',
+  'sequence-gap',
+  'resync-required',
+  'invalid-input',
+  'unsupported-code',
+  'execution-failed',
+]);
 
 // Store connections
 const connections = {
@@ -530,7 +540,7 @@ function setupSignaling(io, options = {}) {
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
         const validSeq = Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0;
-        const validStatus = ['applied', 'duplicate', 'resync-required'].includes(data.status);
+        const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
         const validPressed = Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0;
         const validModifiers = Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0;
         if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers) {

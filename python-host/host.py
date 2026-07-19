@@ -42,6 +42,17 @@ else:
     logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+V2_INPUT_ACK_STATUSES = frozenset({
+    "applied",
+    "duplicate",
+    "stale-lease",
+    "sequence-gap",
+    "resync-required",
+    "invalid-input",
+    "unsupported-code",
+    "execution-failed",
+})
+
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
     import aiortc.codecs as _aiortc_codecs
@@ -1236,12 +1247,15 @@ class WebRemoteHost:
                 pressed_key_count = len(getattr(self.input_handler, "_pressed_key_codes", ()))
             if not isinstance(modifier_mask, int):
                 modifier_mask = int(getattr(self.input_handler, "_modifier_flags", 0) or 0)
+            status = result.get("status") or "applied"
+            if status not in V2_INPUT_ACK_STATUSES:
+                status = "execution-failed"
             ack = {
                 "type": "input_ack",
                 "schemaVersion": 2,
                 "leaseEpoch": data.get("leaseEpoch"),
                 "appliedSeq": result.get("appliedSeq", data.get("seq")),
-                "status": result.get("status") or "applied",
+                "status": status,
                 "pressedKeyCount": max(0, pressed_key_count),
                 "modifierMask": max(0, modifier_mask),
                 "inputIds": list(input_ids),

@@ -385,6 +385,38 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
   assert.equal('payload' in ack, false);
 });
 
+test('v2 host acknowledgement forwards every documented error status without raw input data', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  const statuses = ['stale-lease', 'sequence-gap', 'resync-required', 'invalid-input', 'unsupported-code', 'execution-failed'];
+
+  for (const [index, status] of statuses.entries()) {
+    host.trigger('input-ack', {
+      viewerId: 'viewer-1',
+      schemaVersion: 2,
+      leaseEpoch: 12,
+      appliedSeq: index,
+      status,
+      pressedKeyCount: 0,
+      modifierMask: 0,
+      inputIds: [`input-${index}`],
+      payload: { key: 'SecretKey' },
+    });
+  }
+
+  const acks = viewer.sent.filter((message) => message.event === 'input-ack').map((message) => message.data);
+  assert.deepEqual(acks.map((ack) => ack.status), statuses);
+  acks.forEach((ack) => {
+    assert.equal('payload' in ack, false);
+    assert.equal('key' in ack, false);
+  });
+});
+
 test('signal input relay logs metadata without raw input payload values', () => {
   resetConnections();
   const io = makeIo();

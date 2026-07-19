@@ -57,6 +57,15 @@
       lastApplied = 0;
     }
 
+    function requireReacquire() {
+      leaseId = null;
+      leaseEpoch = 0;
+      pressed.clear();
+      pinnedAdapter = null;
+      barrier = null;
+      reacquireRequired = true;
+    }
+
     function chooseAdapter(forceSocket) {
       if (forceSocket && adapterAvailable('socket')) return 'socket';
       if (pinnedAdapter && adapterAvailable(pinnedAdapter)) return pinnedAdapter;
@@ -211,9 +220,13 @@
       if (!leaseId || payload.schemaVersion !== 2 || payload.leaseEpoch !== leaseEpoch) {
         return { status: 'stale' };
       }
-      if (payload.status === 'resync-required') {
+      if (payload.status === 'resync-required' || payload.status === 'sequence-gap') {
         if (!barrier) sendReset('transport-change');
         return { status: 'resync-required' };
+      }
+      if (['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed'].includes(payload.status)) {
+        requireReacquire();
+        return { status: 'reacquire-required' };
       }
       if ((payload.status !== 'applied' && payload.status !== 'duplicate')
           || !Number.isInteger(payload.appliedSeq)
