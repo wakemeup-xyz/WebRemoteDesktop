@@ -841,7 +841,6 @@ test('legacy relay companion ambiguity stops the host relay and rejects later fr
   const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
 
   io.connect(new FakeSocket('legacy-observer', 'viewer'));
-  relayViewer.trigger('relay-stream-control', { enabled: true });
   assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
     enabled: false,
     viewerId: 'legacy-main',

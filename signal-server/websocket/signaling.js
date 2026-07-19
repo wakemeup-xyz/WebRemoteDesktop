@@ -261,6 +261,7 @@ function setupSignaling(io, options = {}) {
       });
     } else if (role === 'viewer') {
       connections.viewers.set(socket.id, socket);
+      if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
       socket.emit('connected', {
         role: 'viewer',
         status: 'ok',
