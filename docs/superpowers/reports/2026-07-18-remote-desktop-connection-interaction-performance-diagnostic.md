@@ -650,3 +650,16 @@ Batch C 的自动化生命周期测试覆盖连续 50 次 start/stop 后无残�
 ## Reliability closure update (2026-07-20)
 
 Automated items closed on branch `feat/remote-desktop-reliability-closure` (see `2026-07-20-remote-desktop-reliability-closure-evidence.md`): reset fail-closed, port-search lease gate, media suspend WebRTC+tunnel, viewport stability. Dual Viewer / physical keyboard / public tunnel remain runtime pending.
+
+### Review remediation (same day, post-4faf271)
+
+Additional automated closures on `worktree-reliability-closure-p1` (see recalibrated evidence report):
+
+- ACTIVE controller disconnect no longer opens a FREE window; formal reset-only REVOKING barrier only.
+- Media activity bound to `connectionAttemptId` from offer through Signal and Host.
+- Resume input unlock requires real fresh decoded/rendered frames (not cumulative `framesDecoded > 0`).
+- Tunnel media control waits for Host applied ack; Viewer synthetic applied removed.
+- Host media apply aggregates input/sender/capture/relay and fail-closes to suspended on any applicable failure.
+- launchctl fixture restored by copying `lib-turn-env.sh`.
+
+**Withdrawn over-claims:** resume P95≈333ms (synthetic frame note), formal tunnel suspend/resume PASS without Host applied ack, and disconnect reset barrier “closed” while FREE-on-disconnect remained. Those rows are now **NOT RUN** or recalibrated automated-closed only. No tunnel rebuild in this work.

@@ -395,3 +395,4 @@ WebRemoteDesktop/
 | 2026-07-20 | 补充手动 STUN 端口搜索：仅按钮触发最多 500 轮全量重建；成功需 selected pair + 连续 3 次解码采样；UI 只显示数字端口；不覆盖 Strict STUN，耗尽不自动 TURN/tunnel；端口仍由系统分配 |
 | 2026-07-20 | 立项 TURN 全链路接入：`turn.json`/env 双源、Host 注入与会话级 relay ICE、页面选择与自检、Terminal 默认 Socket.IO + 可选 `webrtc-turn`；设计 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`，计划 `docs/superpowers/plans/2026-07-20-turn-integration-plan.md` |
 | 2026-07-20 | 可靠性闭环：reset barrier fail-closed + 1s/2s/4s 有界重试与 reset-blocked；端口搜索租约门禁；媒体暂停端到端（WebRTC sender/capture + tunnel JPEG + Viewer applied phase/输入门禁/健康抑制）；tunnel 自适应分辨率下外层 viewport 稳定 |
+| 2026-07-20 | 可靠性闭环 review 整改：ACTIVE controller disconnect 不再 FREE 窗口、媒体绑定 connectionAttemptId、resume 需真实新帧、tunnel Host applied ack（禁 synthetic applied）、Host 媒体 apply 失败 fail-closed、launchctl fixture 修复；真实验收 P95/双 Viewer/Terminal 重新标为 NOT RUN，不以旧 synthetic 结论宣称 PASS |
