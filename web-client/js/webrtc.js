@@ -1052,10 +1052,11 @@ const WebRTC = {
       return;
     }
 
-    this.inputChannel = this.pc.createDataChannel('input', {
+    const inputChannel = this.pc.createDataChannel('input', {
       ordered: true
     });
-    this.inputChannel.bufferedAmountLowThreshold = 32 * 1024;
+    this.inputChannel = inputChannel;
+    inputChannel.bufferedAmountLowThreshold = 32 * 1024;
     this.inputMoveChannel = this.pc.createDataChannel('input-move', {
       ordered: false,
       maxRetransmits: 0
@@ -1081,13 +1082,15 @@ const WebRTC = {
     };
     this._dcTimeout = setTimeout(checkDcTimeout, 10000);
 
-    this.inputChannel.onopen = () => {
+    inputChannel.onopen = () => {
+      if (this.inputChannel !== inputChannel) return;
       console.log('[INPUT-DC] DataChannel open');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
     };
-    this.inputChannel.onclose = () => {
+    inputChannel.onclose = () => {
+      if (this.inputChannel !== inputChannel) return;
       const sctpState = this.pc && this.pc.sctp ? this.pc.sctp.state : 'no-sctp';
       console.log('[INPUT-DC] DataChannel closed, sctp=%s pc=%s ice=%s',
         sctpState,
@@ -1107,7 +1110,8 @@ const WebRTC = {
         }, 3000);
       }
     };
-    this.inputChannel.onerror = (event) => {
+    inputChannel.onerror = (event) => {
+      if (this.inputChannel !== inputChannel) return;
       console.warn('[INPUT-DC] DataChannel error:', event);
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Error typically precedes close; defer reconnect to avoid cascading
@@ -1121,7 +1125,7 @@ const WebRTC = {
         }, 3000);
       }
     };
-    this.inputChannel.onmessage = (event) => {
+    inputChannel.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 

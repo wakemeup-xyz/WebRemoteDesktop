@@ -275,6 +275,44 @@ test('DataChannel lifecycle updates keyboard transport availability before recon
   clearTimeout(WebRTC._dcReconnectTimer);
 });
 
+test('stale DataChannel lifecycle callbacks cannot invalidate a replacement channel', () => {
+  const lifecycle = [];
+  const channels = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      setKeyboardDataChannelAvailable(available) { lifecycle.push(available); },
+      updateKeyboardUI() {},
+    },
+  });
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.push(channel);
+      return channel;
+    },
+  };
+  WebRTC.createInputChannel();
+  const oldInputChannel = channels.find(({ label }) => label === 'input');
+  oldInputChannel.onopen();
+
+  WebRTC.inputChannel = null;
+  WebRTC.inputMoveChannel = null;
+  WebRTC.createInputChannel();
+  const currentInputChannel = channels.filter(({ label }) => label === 'input').at(-1);
+  currentInputChannel.onopen();
+
+  oldInputChannel.onclose();
+  oldInputChannel.onerror({});
+  assert.deepEqual(lifecycle, [true, true]);
+  assert.equal(Boolean(WebRTC._dcReconnectTimer), false);
+
+  currentInputChannel.onclose();
+  assert.deepEqual(lifecycle, [true, true, false]);
+  clearTimeout(WebRTC._dcTimeout);
+  clearTimeout(WebRTC._dcReconnectTimer);
+});
+
 test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const controller = LinkQualityController.create();
