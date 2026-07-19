@@ -63,10 +63,21 @@ function setupSignaling(io, options = {}) {
     now: options.now || Date.now,
     makeLeaseId: options.makeLeaseId || (() => `lease-${require('node:crypto').randomUUID()}`),
   });
+  const pendingOffers = new Map();
+  const pendingInputs = new Map();
+
+  function clearPendingInputs(viewerId = null) {
+    if (viewerId === null) pendingInputs.clear();
+    else pendingInputs.delete(viewerId);
+  }
+
   const intervalFactory = options.scheduler?.setInterval || options.setInterval || setInterval;
   const interval = intervalFactory(() => {
     const result = desktopLease.expire();
-    if (result?.reason) broadcastControlState(result.reason);
+    if (result?.reason) {
+      if (result.state === 'FREE') pendingInputs.clear();
+      broadcastControlState(result.reason);
+    }
   }, 1000);
   interval?.unref?.();
 
@@ -112,9 +123,6 @@ function setupSignaling(io, options = {}) {
     }
     return legacy;
   }
-  const pendingOffers = new Map();
-  const pendingInputs = new Map();
-
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
     connections.host.emit('offer', {
@@ -160,6 +168,7 @@ function setupSignaling(io, options = {}) {
       }
       if (previousHost && previousHost.id !== socket.id) {
         desktopLease.hostDisconnected();
+        clearPendingInputs();
         broadcastControlState('host-replaced');
       }
       socket.emit('connected', { role: 'host', status: 'ok' });
@@ -230,6 +239,7 @@ function setupSignaling(io, options = {}) {
       const result = data.status === 'applied'
         ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
         : desktopLease.rejectTransition({ leaseEpoch: data.leaseEpoch, reason: data.reason });
+      if (result.state === 'FREE' && !result.lease) clearPendingInputs();
       if (result.lease) sendGrant(desktopLease.snapshot().controllerViewerId, result.lease);
       broadcastControlState(result.reason || result.state.toLowerCase());
       if (result.lease) {
@@ -538,6 +548,7 @@ function setupSignaling(io, options = {}) {
         if (connections.host && connections.host.id === socket.id) {
           connections.host = null;
           const leaseResult = desktopLease.hostDisconnected();
+          clearPendingInputs();
           broadcastControlState(leaseResult.reason);
           connections.viewers.forEach((viewerSocket) => {
             viewerSocket.emit('host-status', { online: false });
@@ -547,6 +558,7 @@ function setupSignaling(io, options = {}) {
           console.log(`Ignoring stale host disconnect: ${socket.id}`);
         }
       } else if (role === 'viewer') {
+        clearPendingInputs(socket.id);
         const leaseResult = desktopLease.viewerDisconnected(socket.id);
         if (leaseResult.transition) sendControlTransition(leaseResult);
         broadcastControlState(leaseResult.reason || 'viewer-disconnected');

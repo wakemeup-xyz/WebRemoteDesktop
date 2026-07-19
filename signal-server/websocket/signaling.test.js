@@ -640,6 +640,36 @@ test('pending legacy input queue retains only the first input during granting', 
   assert.equal(relayed[0].data.payload.key, 'first');
 });
 
+test('disconnect clears pending legacy input before transition ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'stale', code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  viewer.trigger('disconnect');
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+});
+
+test('rejected transition clears pending legacy input and cannot replay on late ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'stale', code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'rejected', reason: 'reset-failed' });
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+});
+
 test('takeover freezes controller A until host ack and grants B', () => {
   resetConnections();
   const io = makeIo();
