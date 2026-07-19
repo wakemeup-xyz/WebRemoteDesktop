@@ -102,7 +102,7 @@ function setupTerminal(io, options = {}) {
       terminalNamespace.emit('terminal:presence', sessionManager.getPresence(sessionId));
     }
 
-    function requireAttachedSession(sessionId, rejectionEvent) {
+    function requireAttachedSession(sessionId, rejectionEvent, errorContext = {}) {
       let attached = false;
       try {
         attached = Boolean(
@@ -127,8 +127,16 @@ function setupTerminal(io, options = {}) {
       socket.emit('terminal:error', {
         code: 'terminal_session_not_found',
         message: 'Terminal session not found',
+        ...errorContext,
       });
       return false;
+    }
+
+    function getInputErrorContext(payload = {}) {
+      return {
+        sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : null,
+        inputId: typeof payload.inputId === 'string' ? payload.inputId : null,
+      };
     }
 
     function bindSessionCallbacks(sessionId) {
@@ -305,7 +313,8 @@ function setupTerminal(io, options = {}) {
     });
 
     socket.on('terminal:input', (payload = {}) => {
-      if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected')) {
+      const inputErrorContext = getInputErrorContext(payload);
+      if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected', inputErrorContext)) {
         return;
       }
       const data = String(payload.data || '');
@@ -321,6 +330,7 @@ function setupTerminal(io, options = {}) {
         socket.emit('terminal:error', {
           code: 'terminal_input_too_large',
           message: 'Terminal input exceeds 64KB',
+          ...inputErrorContext,
         });
         return;
       }
@@ -354,6 +364,7 @@ function setupTerminal(io, options = {}) {
         socket.emit('terminal:error', {
           code: err.code || 'terminal_input_failed',
           message: err.message,
+          ...inputErrorContext,
         });
       }
     });

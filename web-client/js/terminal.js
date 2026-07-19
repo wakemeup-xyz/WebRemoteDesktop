@@ -483,7 +483,7 @@ const TerminalPanel = {
       this.setWarning(payload.message || '终端会话较多，可能影响性能');
     });
     this.socket.on('terminal:error', (payload) => {
-      this.setStatus(payload.message || payload.code || 'Terminal error', 'error');
+      this.handleTerminalError(payload);
     });
   },
 
@@ -614,6 +614,19 @@ const TerminalPanel = {
       this.terminalServerProcessLatency.record(Math.max(0, serverSentAt - serverReceivedAt));
     }
     this.refreshStatus();
+  },
+
+  handleTerminalError(payload = {}) {
+    const inputId = typeof payload.inputId === 'string' ? payload.inputId : '';
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+    const pending = inputId ? this.pendingInputAcks.get(inputId) : null;
+    if (pending?.composerSubmission && pending.sessionId === sessionId) {
+      this.forgetPendingComposerSubmission(sessionId, { onlyIfInputId: inputId });
+      if (sessionId === this.state.activeSessionId()) {
+        this.refreshComposer();
+      }
+    }
+    this.setStatus(payload.message || payload.code || 'Terminal error', 'error');
   },
 
   createSession() {

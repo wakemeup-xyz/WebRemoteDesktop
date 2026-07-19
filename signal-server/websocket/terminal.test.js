@@ -288,6 +288,56 @@ test('late Terminal events after session close return stable errors without esca
   assert.equal(JSON.stringify(auditEvents).includes('late-sensitive-input'), false);
 });
 
+test('terminal input rejections preserve input correlation for unattached, closed, and failed PTY writes', () => {
+  const { namespace, getPty } = buildTerminalHarness();
+  const owner = namespace.connect(new FakeSocket('owner', 'admin'));
+  const observer = namespace.connect(new FakeSocket('observer', 'admin'));
+
+  owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Input failures' });
+  const created = owner.sent.find((message) => message.event === 'terminal:session_created').data;
+
+  observer.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'unattached draft',
+    inputId: 'input-unattached',
+  });
+  owner.trigger('terminal:close_session', { sessionId: created.sessionId });
+  owner.trigger('terminal:input', {
+    sessionId: created.sessionId,
+    data: 'closed draft',
+    inputId: 'input-closed',
+  });
+
+  owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Write failure' });
+  const writable = owner.sent.filter((message) => message.event === 'terminal:session_created').at(-1).data;
+  getPty(writable.sessionId).write = () => {
+    throw Object.assign(new Error('PTY write failed'), { code: 'terminal_write_failed' });
+  };
+  owner.trigger('terminal:input', {
+    sessionId: writable.sessionId,
+    data: 'retryable draft',
+    inputId: 'input-write-failed',
+  });
+
+  const unattachedError = observer.sent.find((message) => message.event === 'terminal:error' && message.data.inputId === 'input-unattached');
+  const closedError = owner.sent.find((message) => message.event === 'terminal:error' && message.data.inputId === 'input-closed');
+  const writeError = owner.sent.find((message) => message.event === 'terminal:error' && message.data.inputId === 'input-write-failed');
+
+  assert.deepEqual(
+    { sessionId: unattachedError.data.sessionId, inputId: unattachedError.data.inputId },
+    { sessionId: created.sessionId, inputId: 'input-unattached' },
+  );
+  assert.deepEqual(
+    { sessionId: closedError.data.sessionId, inputId: closedError.data.inputId },
+    { sessionId: created.sessionId, inputId: 'input-closed' },
+  );
+  assert.deepEqual(
+    { sessionId: writeError.data.sessionId, inputId: writeError.data.inputId },
+    { sessionId: writable.sessionId, inputId: 'input-write-failed' },
+  );
+  assert.equal(writeError.data.code, 'terminal_write_failed');
+});
+
 test('legacy terminal:detach and terminal:close aliases still map into shared session semantics', () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));

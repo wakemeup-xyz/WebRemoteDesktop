@@ -1039,6 +1039,52 @@ test('TerminalPanel preserves later composer edits when the older submit finally
   assert.equal(elements.get('terminalComposerSubmit').disabled, false);
 });
 
+test('TerminalPanel unlocks a rejected composer submission only for its matching session and input, then retries with a new input id', () => {
+  const { TerminalPanel, elements, emitted } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term-retry', status: 'attached' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term-retry');
+  TerminalPanel.activateSession('term-retry');
+  elements.get('terminalComposer').value = 'retryable draft';
+  TerminalPanel.handleComposerInput();
+  assert.equal(TerminalPanel.submitComposer(), true);
+
+  const firstInput = emitted.at(-1).payload;
+  TerminalPanel.handleTerminalError({
+    sessionId: 'other-session',
+    inputId: firstInput.inputId,
+    code: 'terminal_session_not_found',
+    message: 'Unrelated rejection',
+  });
+  assert.equal(TerminalPanel.isComposerSubmissionPending('term-retry'), true);
+  assert.equal(elements.get('terminalComposerSubmit').disabled, true);
+  assert.equal(elements.get('terminalComposer').value, 'retryable draft');
+
+  TerminalPanel.handleTerminalError({
+    sessionId: 'term-retry',
+    inputId: firstInput.inputId,
+    code: 'terminal_session_not_found',
+    message: 'Terminal session not found',
+  });
+  assert.equal(TerminalPanel.isComposerSubmissionPending('term-retry'), false);
+  assert.equal(TerminalPanel.pendingInputAcks.has(firstInput.inputId), false);
+  assert.equal(elements.get('terminalComposerSubmit').disabled, false);
+  assert.equal(elements.get('terminalComposer').value, 'retryable draft');
+
+  assert.equal(TerminalPanel.submitComposer(), true);
+  const retryInput = emitted.at(-1).payload;
+  assert.notEqual(retryInput.inputId, firstInput.inputId);
+  assert.equal(retryInput.data, firstInput.data);
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:input').length, 2);
+});
+
 test('TerminalPanel preserves focused composer value and caret during same-session rerenders', () => {
   const { TerminalPanel, elements } = loadTerminal();
   TerminalPanel.cacheElements();
