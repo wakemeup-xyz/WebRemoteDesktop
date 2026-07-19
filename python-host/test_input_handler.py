@@ -2,8 +2,78 @@ import input_handler
 import asyncio
 import inspect
 import logging
+import threading
+import time
 import pytest
 from input_handler import InputHandler
+
+
+LEASE_ID = "lease-000000000001"
+
+
+class BlockingAdapter:
+    def __init__(self):
+        self.events = []
+        self.started = threading.Event()
+        self.allow = threading.Event()
+
+    def post_key(self, code, is_down, modifier_mask):
+        self.started.set()
+        while not self.allow.is_set():
+            time.sleep(0.001)
+        self.events.append((code, is_down, modifier_mask))
+
+    def post_text(self, text):
+        self.events.append(("text", text))
+
+
+def key_envelope(*, seq, phase, code="KeyA", epoch=1, lease_id=LEASE_ID):
+    return {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": lease_id,
+        "leaseEpoch": epoch,
+        "seq": seq,
+        "inputIds": [f"input-{seq}"],
+        "payload": {
+            "phase": phase,
+            "code": code,
+            "location": 0,
+            "repeat": False,
+            "modifiers": {
+                "altKey": False,
+                "ctrlKey": False,
+                "metaKey": False,
+                "shiftKey": False,
+            },
+            "locks": {"capsLock": False},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_disconnect_reset_is_serialized_after_inflight_keydown():
+    async def run_case():
+        adapter = BlockingAdapter()
+        handler = InputHandler(keyboard_adapter=adapter)
+        handler._running = True
+        await handler.transition_keyboard(
+            connection_generation=1,
+            lease_id=LEASE_ID,
+            lease_epoch=1,
+        )
+        apply_task = asyncio.create_task(handler.apply_keyboard(key_envelope(seq=1, phase="down")))
+        assert await asyncio.to_thread(adapter.started.wait, 1)
+        reset_task = asyncio.create_task(handler.reset_keyboard(reason="signal-disconnect"))
+        adapter.allow.set()
+        await asyncio.gather(apply_task, reset_task)
+        return handler, adapter
+
+    handler, adapter = await asyncio.wait_for(run_case(), timeout=1)
+
+    assert adapter.events[-1][:2] == ("KeyA", False)
+    assert handler.get_keyboard_snapshot().pressed_key_count == 0
 
 
 def test_input_method_switch_remains_an_explicit_quartz_command():

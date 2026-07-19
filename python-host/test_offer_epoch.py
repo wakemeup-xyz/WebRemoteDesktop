@@ -29,6 +29,67 @@ def test_same_viewer_duplicate_epoch_is_rejected():
     assert host._offer_epoch == 2
 
 
+def test_direct_datachannel_input_inherits_only_offer_binding():
+    host = object.__new__(WebRemoteHost)
+    binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 7,
+        "connectionGeneration": 4,
+    }
+    host._active_input_binding = binding
+
+    data = host._prepare_bound_datachannel_input(binding, {
+        "viewerId": "attacker",
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": binding["leaseId"],
+        "leaseEpoch": binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-1"],
+        "payload": {},
+    })
+
+    assert data["viewerId"] == "viewer-1"
+    assert data["leaseId"] == binding["leaseId"]
+    assert data["leaseEpoch"] == binding["leaseEpoch"]
+    assert data["connectionGeneration"] == 4
+    assert data["transport"] == "datachannel"
+
+
+def test_old_datachannel_and_mismatched_lease_are_rejected_after_takeover():
+    host = object.__new__(WebRemoteHost)
+    old_binding = {
+        "viewerId": "viewer-old",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 7,
+        "connectionGeneration": 4,
+    }
+    host._active_input_binding = {
+        "viewerId": "viewer-new",
+        "leaseId": "lease-000000000002",
+        "leaseEpoch": 8,
+        "connectionGeneration": 5,
+    }
+    v2 = {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": old_binding["leaseId"],
+        "leaseEpoch": old_binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-1"],
+        "payload": {},
+    }
+
+    assert host._prepare_bound_datachannel_input(old_binding, v2) is None
+    assert host._prepare_bound_datachannel_input(host._active_input_binding, {
+        **v2,
+        "leaseId": "lease-not-bound",
+    }) is None
+
+
 @pytest.mark.asyncio
 async def test_ice_candidate_from_stale_viewer_is_ignored():
     host = make_host(current_viewer_id="viewer-1", offer_epoch=1, pc_state="connected")
@@ -68,8 +129,11 @@ async def test_viewer_status_zero_closes_stale_peer_connection():
     host._input_datachannel = object()
     host.pending_candidates = [{"candidate": "old"}]
     host.relay_streamer = None
+    async def reset_keyboard(**_kwargs):
+        return {"status": "applied"}
+
     host.input_handler = SimpleNamespace(
-        release_all_keys=lambda reason: None,
+        reset_keyboard=reset_keyboard,
         release_all_mouse_buttons=lambda reason: None,
     )
     host.overlay = SimpleNamespace(send=lambda event: None)

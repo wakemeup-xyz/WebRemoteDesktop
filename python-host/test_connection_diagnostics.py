@@ -172,7 +172,7 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
     host.screen_track = None
     host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
 
-    async def handle_input(_data):
+    async def apply_keyboard(_data):
         return {
             "inputIds": ["input-1"],
             "receiveTime": 20.0,
@@ -183,7 +183,7 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
             "modifierMask": 0x100000,
         }
 
-    host.input_handler = SimpleNamespace(handle_input=handle_input)
+    host.input_handler = SimpleNamespace(apply_keyboard=apply_keyboard)
     await host.on_input({
         "viewerId": "viewer-1",
         "schemaVersion": 2,

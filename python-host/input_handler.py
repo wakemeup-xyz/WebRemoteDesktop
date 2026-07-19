@@ -25,9 +25,11 @@ from Quartz import (
 import screeninfo
 
 from quartz_keyboard_adapter import (
+    QuartzKeyboardAdapter,
     UnsupportedPhysicalCode,
     mac_key_code_for_dom_code,
 )
+from remote_keyboard_state import RemoteKeyboardState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,20 +38,23 @@ logger = logging.getLogger(__name__)
 class InputHandler:
     """Handles mouse and keyboard input from remote viewer using macOS native APIs"""
 
-    def __init__(self):
+    def __init__(self, *, keyboard_adapter=None):
         self._running = False
         self.monitor = None
         self.source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
         self._input_lock = asyncio.Lock()
         self._input_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="input")
+        self._keyboard_lock = asyncio.Lock()
+        self._keyboard_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="keyboard")
+        self._keyboard_adapter = keyboard_adapter or QuartzKeyboardAdapter(source=self.source)
+        self._remote_keyboard = RemoteKeyboardState(self._keyboard_adapter)
+        self._keyboard_connection_generation = 0
         self._modifier_flags = 0
         self._pressed_modifier_key_codes = set()
         self._pressed_key_codes = set()
         self._last_modifier_event_time = 0.0
-        self._last_key_event_time = 0.0
         self._last_key_flags = {}
         self._modifier_stale_seconds = 8.0
-        self._key_stale_seconds = 8.0  # Must exceed longest normal key-hold (> 5s)
         self._lock_waiters = 0
         self._lock_contention_logged = False
         self._pressed_mouse_button = None  # Track pressed button for drag events
@@ -92,12 +97,64 @@ class InputHandler:
         self.release_all_keys(reason="handler-stop")
         logger.info("Input handler stopped")
 
-    async def check_stale_keys(self):
-        """Periodically release stuck keys when no mouse activity occurs."""
-        if not self._running:
-            return
-        async with self._input_lock:
-            self._release_stale_keys()
+    async def transition_keyboard(self, *, connection_generation, lease_id, lease_epoch):
+        """Install Signal-owned keyboard authority before accepting v2 input."""
+        async with self._keyboard_lock:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                self._keyboard_executor,
+                lambda: self._remote_keyboard.transition(
+                    connection_generation=connection_generation,
+                    lease_id=lease_id,
+                    lease_epoch=lease_epoch,
+                ),
+            )
+            if result.status == "applied":
+                self._keyboard_connection_generation = connection_generation
+            return self._keyboard_result(result)
+
+    async def apply_keyboard(self, envelope):
+        """Apply one validated v2 keyboard envelope on the ordered keyboard worker."""
+        async with self._keyboard_lock:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                self._keyboard_executor, self._remote_keyboard.apply, envelope
+            )
+            return self._keyboard_result(result, input_ids=envelope.get("inputIds", []))
+
+    async def reset_keyboard(self, reason="manual", lease_epoch=None):
+        """Release keyboard state in the same queue as key execution."""
+        async with self._keyboard_lock:
+            loop = asyncio.get_running_loop()
+
+            def reset():
+                effective_epoch = (
+                    self._remote_keyboard.snapshot().lease_epoch
+                    if lease_epoch is None else lease_epoch
+                )
+                return self._remote_keyboard.reset(
+                    lease_epoch=effective_epoch,
+                    reason=reason,
+                )
+
+            result = await loop.run_in_executor(self._keyboard_executor, reset)
+            return self._keyboard_result(result)
+
+    def get_keyboard_snapshot(self):
+        """Return the last ordered keyboard state for diagnostics and tests."""
+        return self._remote_keyboard.snapshot()
+
+    @staticmethod
+    def _keyboard_result(result, *, input_ids=None):
+        return {
+            "inputIds": list(input_ids or []),
+            "appliedSeq": result.applied_seq,
+            "status": result.status,
+            "pressedKeyCount": result.pressed_key_count,
+            "modifierMask": result.modifier_mask,
+            "receiveTime": time.perf_counter(),
+            "executeTime": time.perf_counter(),
+        }
 
     async def handle_input(self, data):
         """Handle incoming input commands"""
@@ -109,6 +166,12 @@ class InputHandler:
             input_type = data.get('type')
             action = data.get('action')
             payload = data.get('payload', {})
+
+            if input_type == 'keyboard' and data.get('schemaVersion') == 2:
+                return await self.apply_keyboard(data)
+
+            if input_type == 'keyboard' and action == 'reset':
+                return await self.reset_keyboard(reason=payload.get("reason", "manual"))
 
             if input_type == 'mouse' and action == 'move' and (
                 self._input_lock.locked() or self._lock_waiters > 0
@@ -147,8 +210,6 @@ class InputHandler:
                     self._lock_contention_logged = False
 
                 if input_type == 'mouse':
-                    if action in ('down', 'up', 'click', 'dblclick'):
-                        self._release_stale_keys()
                     to_thread_start = time.perf_counter()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(self._input_thread_pool, self._handle_mouse, action, payload)
@@ -160,19 +221,6 @@ class InputHandler:
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
                 elif input_type == 'keyboard':
                     input_ids = data.get("inputIds", [])
-                    if action == 'reset':
-                        logger.info("keyboard_reset")
-                        self.release_all_keys(reason=payload.get("reason", "remote-reset"))
-                        i2 = time.perf_counter()
-                        return {
-                            "inputIds": input_ids,
-                            "appliedSeq": data.get("seq"),
-                            "receiveTime": i1,
-                            "executeTime": i2,
-                            "status": "applied",
-                            "pressedKeyCount": len(self._pressed_key_codes),
-                            "modifierMask": int(self._modifier_flags),
-                        }
                     to_thread_start = time.perf_counter()
                     loop = asyncio.get_running_loop()
                     keyboard_status = await loop.run_in_executor(
@@ -579,7 +627,6 @@ class InputHandler:
             elif self._modifier_flags and key_code not in _ime_nav_keys:
                 flags = self._modifier_flags
             self._pressed_key_codes.add(key_code)
-            self._last_key_event_time = time.monotonic()
             self._last_key_flags[key_code] = payload_flags
 
             event = CGEventCreateKeyboardEvent(self.source, key_code, True)
@@ -602,7 +649,6 @@ class InputHandler:
             elif self._modifier_flags and key_code not in _ime_nav_keys and self._should_apply_sticky_flags(key_code, payload_flags, action):
                 flags = self._modifier_flags
             self._pressed_key_codes.discard(key_code)
-            self._last_key_event_time = time.monotonic()
             self._last_key_flags.pop(key_code, None)
 
             event = CGEventCreateKeyboardEvent(self.source, key_code, False)
@@ -617,13 +663,6 @@ class InputHandler:
         if action == 'keydown':
             return bool(payload_flags)
         return bool(payload_flags) and self._last_key_flags.get(key_code) == payload_flags
-
-    def _release_stale_keys(self):
-        if not self._last_key_event_time:
-            return
-        age = time.monotonic() - self._last_key_event_time
-        if age >= self._key_stale_seconds:
-            self.release_all_keys(reason=f"stale-{age:.1f}s")
 
     def release_all_modifiers(self, reason="manual"):
         """Release host-side modifier state when a browser keyup is lost."""
@@ -684,7 +723,6 @@ class InputHandler:
 
         self.release_all_modifiers(reason=reason)
         self._pressed_key_codes.clear()
-        self._last_key_event_time = 0.0
 
 
 if __name__ == "__main__":

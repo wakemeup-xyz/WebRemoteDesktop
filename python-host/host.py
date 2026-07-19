@@ -1056,6 +1056,9 @@ class WebRemoteHost:
         self.overlay = OverlayNotifier()
         self.relay_streamer = None
         self._input_datachannel = None
+        self._active_input_binding = None
+        self._connection_generation = 0
+        self._input_lifecycle_tasks = set()
         self._offer_lock = asyncio.Lock()
         self._offer_epoch = 0
         self._reconnecting = False
@@ -1098,6 +1101,7 @@ class WebRemoteHost:
         sio.on('host-status', self.on_host_status)
         sio.on('disconnect', self.on_disconnect)
         sio.on('input', self.on_input)
+        sio.on('control-transition', self.on_control_transition)
         sio.on('ice-candidate', self.on_ice_candidate)
         sio.on('diagnostic', self.on_diagnostic)
         sio.on('viewer-status', self.on_viewer_status)
@@ -1174,7 +1178,10 @@ class WebRemoteHost:
                     "text": format_keyboard_command(action, payload),
                     "viewerId": data.get("viewerId")
                 })
-            result = await self.input_handler.handle_input(data)
+            if input_type == 'keyboard' and data.get('schemaVersion') == 2:
+                result = await self.input_handler.apply_keyboard(data)
+            else:
+                result = await self.input_handler.handle_input(data)
             if result and isinstance(result, dict):
                 receive_time = result.get("receiveTime")
                 execute_time = result.get("executeTime")
@@ -1337,7 +1344,92 @@ class WebRemoteHost:
         self.current_viewer_id = viewer_id
         return True
 
+    @staticmethod
+    def _binding_matches(left, right):
+        return bool(left) and bool(right) and all(
+            left.get(field) == right.get(field)
+            for field in ("viewerId", "leaseId", "leaseEpoch", "connectionGeneration")
+        )
+
+    def _prepare_bound_datachannel_input(self, binding, data):
+        """Apply immutable offer context to one direct DataChannel message."""
+        if not isinstance(data, dict) or not self._binding_matches(
+            binding, getattr(self, "_active_input_binding", None)
+        ):
+            return None
+        if data.get("schemaVersion") == 2 and (
+            data.get("leaseId") != binding["leaseId"]
+            or data.get("leaseEpoch") != binding["leaseEpoch"]
+        ):
+            return None
+        bound = dict(data)
+        bound.update({
+            "viewerId": binding["viewerId"],
+            "leaseId": binding["leaseId"],
+            "leaseEpoch": binding["leaseEpoch"],
+            "connectionGeneration": binding["connectionGeneration"],
+            "transport": "datachannel",
+        })
+        return bound
+
+    def _schedule_input_lifecycle(self, coroutine):
+        """Keep callback-created work bounded and observable during teardown."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        task = loop.create_task(coroutine)
+        tasks = getattr(self, "_input_lifecycle_tasks", None)
+        if tasks is None:
+            tasks = self._input_lifecycle_tasks = set()
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return task
+
+    async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
+        handler = getattr(self, "input_handler", None)
+        if handler is None:
+            return None
+        result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
+        handler.release_all_mouse_buttons(reason=reason)
+        return result
+
+    async def on_control_transition(self, data):
+        """Acknowledge Signal's reset barrier before any new keyboard lease is active."""
+        if not isinstance(data, dict):
+            return
+        lease_epoch = data.get("leaseEpoch")
+        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+            return
+        self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
+        await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
+        lease_id = data.get("leaseId")
+        viewer_id = data.get("viewerId")
+        if isinstance(lease_id, str) and len(lease_id) >= 16 and viewer_id:
+            binding = {
+                "viewerId": viewer_id,
+                "leaseId": lease_id,
+                "leaseEpoch": lease_epoch,
+                "connectionGeneration": self._connection_generation,
+            }
+            result = await self.input_handler.transition_keyboard(
+                connection_generation=binding["connectionGeneration"],
+                lease_id=binding["leaseId"],
+                lease_epoch=binding["leaseEpoch"],
+            )
+            if result.get("status") != "applied":
+                return
+            self._active_input_binding = binding
+        else:
+            self._active_input_binding = None
+        if self.sio is not None:
+            await self.sio.emit("control-transition-ack", {
+                "leaseEpoch": lease_epoch,
+                "status": "applied",
+            })
+
     async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
+        await self._reset_keyboard_lifecycle(reason)
         if self.pc:
             logger.info("Closing peer connection reason=%s", reason)
             await self.pc.close()
@@ -1348,6 +1440,7 @@ class WebRemoteHost:
             self.screen_track = None
 
         self._input_datachannel = None
+        self._active_input_binding = None
         self.pending_candidates = []
 
         if reset_offer_state:
@@ -1366,6 +1459,29 @@ class WebRemoteHost:
 
             try:
                 await self._close_peer_connection(reason="new-offer", reset_offer_state=False)
+
+                lease_id = data.get("leaseId")
+                lease_epoch = data.get("leaseEpoch")
+                if isinstance(lease_id, str) and len(lease_id) >= 16 and isinstance(lease_epoch, int) and lease_epoch >= 1:
+                    self._connection_generation = max(
+                        int(getattr(self, "_connection_generation", 0) or 0) + 1,
+                        int(data.get("connectionGeneration") or 0),
+                    )
+                    binding = {
+                        "viewerId": viewer_id,
+                        "leaseId": lease_id,
+                        "leaseEpoch": lease_epoch,
+                        "connectionGeneration": self._connection_generation,
+                    }
+                    result = await self.input_handler.transition_keyboard(
+                        connection_generation=binding["connectionGeneration"],
+                        lease_id=binding["leaseId"],
+                        lease_epoch=binding["leaseEpoch"],
+                    )
+                    if result.get("status") != "applied":
+                        logger.warning("Ignoring offer with rejected keyboard binding")
+                        return
+                    self._active_input_binding = binding
 
                 # Create peer connection
                 config = RTCConfiguration(iceServers=build_ice_servers())
@@ -1405,8 +1521,9 @@ class WebRemoteHost:
                     if state == 'connected':
                         logger.info("WebRTC CONNECTED!")
                     elif state in ('failed', 'closed', 'disconnected'):
-                        self.input_handler.release_all_mouse_buttons(reason=f"webrtc-{state}")
-                        self.input_handler.release_all_keys(reason=f"webrtc-{state}")
+                        self._schedule_input_lifecycle(
+                            self._reset_keyboard_lifecycle(f"webrtc-{state}")
+                        )
                         if state == 'failed':
                             logger.error("WebRTC FAILED")
 
@@ -1417,6 +1534,7 @@ class WebRemoteHost:
                 @self.pc.on("datachannel")
                 def on_datachannel(channel):
                     logger.info("DataChannel received: label=%s id=%s", channel.label, channel.id)
+                    binding = dict(self._active_input_binding or {})
                     if channel.label == "input":
                         self._input_datachannel = channel
 
@@ -1428,6 +1546,13 @@ class WebRemoteHost:
                                        channel.label, pc_state, ice_state)
                         if channel.label == "input":
                             self._input_datachannel = None
+                        if binding:
+                            self._schedule_input_lifecycle(
+                                self._reset_keyboard_lifecycle(
+                                    "datachannel-closed",
+                                    lease_epoch=binding.get("leaseEpoch"),
+                                )
+                            )
 
                     @channel.on("message")
                     def on_message(message):
@@ -1453,9 +1578,11 @@ class WebRemoteHost:
                                 channel.send(json.dumps(resp))
                                 return
 
-                            data.setdefault("viewerId", viewer_id)
-                            data["transport"] = "datachannel"
-                            asyncio.ensure_future(self.on_input(data))
+                            bound = self._prepare_bound_datachannel_input(binding, data)
+                            if bound is None:
+                                logger.warning("Ignoring unbound or stale DataChannel input")
+                                return
+                            self._schedule_input_lifecycle(self.on_input(bound))
                         except Exception as e:
                             logger.error(f"DataChannel input parse error: {e}")
 
@@ -1773,8 +1900,6 @@ class WebRemoteHost:
         try:
             logger.info(f"Viewer status: {data.get('onlineCount', 0)} online")
             if data.get("onlineCount", 0) == 0:
-                self.input_handler.release_all_mouse_buttons(reason="viewer-disconnected")
-                self.input_handler.release_all_keys(reason="viewer-disconnected")
                 if self.relay_streamer:
                     await self.relay_streamer.stop()
                 await self._close_peer_connection(
@@ -1960,16 +2085,6 @@ class WebRemoteHost:
 
         lag_task = asyncio.create_task(monitor_event_loop_lag())
 
-        async def monitor_input_stale():
-            while True:
-                await asyncio.sleep(2)
-                try:
-                    await self.input_handler.check_stale_keys()
-                except Exception as e:
-                    logger.debug(f"Input stale check error: {e}")
-
-        stale_task = asyncio.create_task(monitor_input_stale())
-
         try:
             while True:
                 await asyncio.sleep(1)
@@ -1979,11 +2094,12 @@ class WebRemoteHost:
             logger.info("Shutting down...")
         finally:
             lag_task.cancel()
-            stale_task.cancel()
             if self.relay_streamer:
                 await self.relay_streamer.stop()
-            if self.pc:
-                await self.pc.close()
+            await self._close_peer_connection(reason="host-stop", reset_offer_state=True)
+            lifecycle_tasks = list(self._input_lifecycle_tasks)
+            if lifecycle_tasks:
+                await asyncio.gather(*lifecycle_tasks, return_exceptions=True)
             if self.sio and self.sio.connected:
                 await self.sio.disconnect()
             self.overlay.stop()
