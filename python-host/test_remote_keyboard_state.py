@@ -155,6 +155,7 @@ def test_sided_modifier_mask_comes_only_from_pressed_physical_codes():
     assert state.apply(key_envelope(seq=3, phase="up", code="ShiftLeft")).status == "applied"
     assert state.snapshot().pressed_codes == frozenset({"ShiftRight"})
     assert adapter.last_modifier_mask == SHIFT_MASK
+    assert adapter.events[-1] == ("ShiftLeft", False, SHIFT_MASK)
 
 
 def test_modifier_event_masks_follow_action_before_semantics():
@@ -167,7 +168,7 @@ def test_modifier_event_masks_follow_action_before_semantics():
     assert [(code, is_down, mask) for code, is_down, mask in adapter.events] == [
         ("ShiftLeft", True, 0),
         ("KeyA", True, SHIFT_MASK),
-        ("ShiftLeft", False, SHIFT_MASK),
+        ("ShiftLeft", False, 0),
     ]
 
 

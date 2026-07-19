@@ -269,9 +269,11 @@ class RemoteKeyboardState:
             modifier_mask=self._modifier_mask(),
         )
 
-    def _modifier_mask(self) -> int:
+    def _modifier_mask(self, *, excluding: Optional[str] = None) -> int:
         mask = 0
         for code in self._pressed_codes:
+            if code == excluding:
+                continue
             mask |= _MODIFIER_MASK_BY_CODE.get(code, 0)
         return mask
 
@@ -286,7 +288,7 @@ class RemoteKeyboardState:
             self._adapter.post_key(code, True, self._modifier_mask())
             self._pressed_codes.add(code)
         elif code in self._pressed_codes:
-            self._adapter.post_key(code, False, self._modifier_mask())
+            self._adapter.post_key(code, False, self._modifier_mask(excluding=code))
             self._pressed_codes.remove(code)
         desired_caps_lock = payload["locks"]["capsLock"]
         if desired_caps_lock is not None and hasattr(self._adapter, "set_caps_lock"):
