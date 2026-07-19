@@ -35,6 +35,22 @@ test('first acquire stays granting until transition ack and returns a lease', ()
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...granted.lease }), true);
 });
 
+test('Host transition materialization includes only the pending lease token', () => {
+  const lease = makeLease();
+  const requested = lease.requestControl({ viewerId: 'viewer-a' });
+
+  assert.equal(Object.hasOwn(requested.transition, 'leaseId'), false);
+  assert.deepEqual(lease.transitionForHost({ leaseEpoch: requested.transition.leaseEpoch }), {
+    type: 'control-transition',
+    viewerId: 'viewer-a',
+    leaseId: 'lease-0000000000000001',
+    leaseEpoch: requested.transition.leaseEpoch,
+  });
+  assert.equal(JSON.stringify(lease.snapshot()).includes('lease-'), false);
+  lease.confirmTransition({ leaseEpoch: requested.transition.leaseEpoch });
+  assert.equal(lease.transitionForHost({ leaseEpoch: requested.transition.leaseEpoch }), null);
+});
+
 test('occupied lease denies read-only acquisition', () => {
   const lease = makeLease();
   const first = lease.requestControl({ viewerId: 'viewer-a' });

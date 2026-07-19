@@ -182,7 +182,13 @@ function setupSignaling(io, options = {}) {
 
   function sendControlTransition(effect) {
     if (!effect || !connections.host || !effect.transition) return false;
-    connections.host.emit('control-transition', effect.transition);
+    const hostTransition = desktopLease.transitionForHost({
+      leaseEpoch: effect.transition.leaseEpoch,
+    });
+    connections.host.emit('control-transition', {
+      ...hostTransition,
+      ...effect.transition,
+    });
     return true;
   }
 

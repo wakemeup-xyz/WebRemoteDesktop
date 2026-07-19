@@ -192,6 +192,22 @@ class DesktopControlLease {
     };
   }
 
+  transitionForHost({ leaseEpoch }) {
+    if (!Number.isSafeInteger(leaseEpoch)
+      || !this._pending
+      || this._pending.leaseEpoch !== leaseEpoch) return null;
+    const transition = {
+      type: 'control-transition',
+      leaseEpoch: this._pending.leaseEpoch,
+    };
+    if (this._pending.viewerId !== null) {
+      transition.viewerId = this._pending.viewerId;
+      transition.leaseId = this._pending.leaseId;
+    }
+    if (this._pending.reason) transition.reason = this._pending.reason;
+    return transition;
+  }
+
   _expire() {
     const now = this._now();
     if (this._pending && this._transitionDeadline !== null && now >= this._transitionDeadline) {

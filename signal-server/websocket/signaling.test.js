@@ -743,6 +743,38 @@ test('input is not relayed before control transition ack, then valid v2 input re
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
+test('fresh v2 tunnel input matches the Host transition lease without leaking it to viewers or logs', () => {
+  resetConnections();
+  const io = makeIo();
+  const lines = [];
+  setupSignaling(io, {
+    logger: { log: (...values) => lines.push(values.join(' ')), warn: () => {}, info: () => {}, error: () => {} },
+    makeLeaseId: () => 'lease-000000000001',
+  });
+  const host = new FakeSocket('host-tunnel-v2', 'host');
+  const viewer = new FakeSocket('viewer-tunnel-v2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'tunnel-v2' });
+  const hostTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  assert.equal(hostTransition.leaseId, 'lease-000000000001');
+  host.trigger('control-transition-ack', { leaseEpoch: hostTransition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  assert.equal(grant.leaseId, hostTransition.leaseId);
+
+  viewer.trigger('input', v2Key({
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  }));
+  const input = host.sent.filter((entry) => entry.event === 'input').at(-1).data;
+  assert.equal(input.leaseId, hostTransition.leaseId);
+  assert.equal(input.leaseEpoch, hostTransition.leaseEpoch);
+  assert.equal(JSON.stringify(viewer.sent.filter((entry) => entry.event === 'control-state')).includes(grant.leaseId), false);
+  assert.equal(lines.join('\n').includes(grant.leaseId), false);
+});
+
 test('legacy input lazily acquires control and stays blocked until host ack', () => {
   resetConnections();
   const io = makeIo();
