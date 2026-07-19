@@ -98,6 +98,10 @@ Artifacts (local only, not committed):
 
 ### Runtime rows
 
+Primary local dual-viewer harness: `/tmp/wrd-acceptance/task9-local-report.json`  
+Extended timing/input/formal harness: `/tmp/wrd-acceptance/task9-extended-report.json`  
+Scripts: `scripts/runtime_reliability_acceptance.py`, `scripts/runtime_reliability_acceptance_ext.py`
+
 | Gate | Status | Evidence / reason |
 |------|--------|-------------------|
 | 9A Dual Viewer single writer | **PASS** (`browser-protocol`) | A ACTIVE controller + lease; B read-only on same Host |
@@ -109,16 +113,31 @@ Artifacts (local only, not committed):
 | 9B WebRTC connected | **PASS** (`browser-protocol`) | Chromium PeerConnection path runs after Start |
 | 9B media suspend applied phase | **PASS** | controller enters `suspending`/`suspended`, health suppressed, input/search gated |
 | 9B media resume applied phase | **PASS** | returns to `resuming`/`active` after clear + rendered-frame note |
-| 9B WebRTC suspend 15s / resume P95≤1500ms | **NOT RUN** | not timed over 15s/P95 matrix in this harness |
-| 9C keyboard controller ready | **PASS** (`browser-protocol`) | Input module + active lease present; not a full K-01–K-13 matrix |
-| 9C keyboard K-01–K-13 ordinary Chrome | **NOT RUN** | full matrix not executed |
+| 9B WebRTC suspend 15s payload stop | **PASS** (`browser-protocol`) | after applied `suspended` + drain, 15s hold: phase stays suspended, health suppressed, input gated, RTP `bytesReceived` growth ≤32KiB (payload stopped). `framesDecoded` may still lag on buffered frames |
+| 9B resume latency (single sample) | **PASS** | request→active ≈220–320ms local; formal ≈550–650ms. **Not** full 20-run P95 |
+| 9B resume P95 over 20 runs | **NOT RUN** | only single-sample latency collected |
+| 9B mouse double-click / drag | **PASS** (`browser-protocol`) | synthetic mouse down/up/move path observed (18 events); Host open/select visual assertion not claimed |
+| 9C keyboard controller ready | **PASS** (`browser-protocol`) | Input module + active lease present |
+| 9C keyboard browser-protocol subset | **PASS** | left/right modifiers + common keys dispatched; full K-01–K-13 ordinary-Chrome matrix still open |
+| 9C keyboard K-01–K-13 ordinary Chrome full matrix | **NOT RUN** | full matrix not completed as product sign-off |
 | 9C physical-keyboard | **NOT RUN** | requires user physical presses |
 | 9C os-reserved | **NOT RUN** | OS/browser may intercept before page |
-| 9C Terminal UI present | **PASS** | terminal panel present; full Terminal authority matrix not re-run |
-| 9D public tunnel media / viewport | **BLOCKED** | safe URL `http-invalid`; tunnel not rebuilt |
+| 9C Terminal UI + pause coexistence | **PASS** | Terminal UI present; `terminal-active` suspend keeps socket connected |
+| 9D trycloudflare safe URL media | **BLOCKED** | `/tmp/wrd-safe-current-url.txt` health `http-invalid`/404; tunnel not rebuilt by policy |
+| 9D formal fixed-domain media smoke | **PASS** | `https://link.stockhub.wiki` deliverable; control + suspend/resume smoke OK |
 | 9D formal entry health | **PASS** | `https://link.stockhub.wiki/health` ok |
 
 Honest labels kept: open rows remain **NOT RUN** / **BLOCKED**, not rewritten as full product acceptance.
+
+### Host media-stop hardening during acceptance
+
+While closing 15s payload evidence, Host suspend path was hardened on this branch:
+
+- `ScreenCaptureTrack.recv()` blocks while suspended (no blank encoded frames)
+- `AiortcMediaSender` also sets transceiver direction `inactive`/`sendonly` when PC is bound
+- all current PC video senders are suspended on media-activity suspend
+
+These changes are part of the reliability-closure branch commits after initial Task 5.
 
 ## Constraints preserved
 

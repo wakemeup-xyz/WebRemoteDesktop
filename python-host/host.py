@@ -988,9 +988,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
         recv_start = time.perf_counter()
         sleep_time = 0.0
 
-        # Suspended: wake and yield a zero-cost frame without new MSS/encode work.
-        if self._suspended:
+        # Suspended: block until resumed/stop. Do not return blank frames that
+        # would still be encoded and inflate RTP while media is paused.
+        while self._suspended and self._capture_running:
             await asyncio.sleep(0.05)
+        if not self._capture_running:
             pts, time_base = await self.next_timestamp()
             blank = np.zeros((max(1, self._max_height // 4), max(1, self._max_width // 4), 3), dtype=np.uint8)
             frame = VideoFrame.from_ndarray(blank, format="rgb24")
@@ -1004,17 +1006,38 @@ class ScreenCaptureTrack(VideoStreamTrack):
         if elapsed < self._frame_interval:
             sleep_time = self._frame_interval - elapsed
             await asyncio.sleep(sleep_time)
+        # Re-check after pacing sleep: suspension may have started mid-wait.
+        if self._suspended:
+            while self._suspended and self._capture_running:
+                await asyncio.sleep(0.05)
+            if not self._capture_running:
+                pts, time_base = await self.next_timestamp()
+                blank = np.zeros((max(1, self._max_height // 4), max(1, self._max_width // 4), 3), dtype=np.uint8)
+                frame = VideoFrame.from_ndarray(blank, format="rgb24")
+                frame.pts = pts
+                frame.time_base = time_base
+                return frame
         self._last_frame_time = time.time()
 
         capture_prepare_start = time.perf_counter()
 
         # Zero-wait: grab latest capture from background thread
         with self._capture_lock:
-            screenshot = self._capture_buffer
-            seq = self._capture_seq
-            self._capture_buffer = None
+            if self._suspended:
+                screenshot = None
+                seq = self._capture_seq
+            else:
+                screenshot = self._capture_buffer
+                seq = self._capture_seq
+                self._capture_buffer = None
 
         capture_wait = 0.0  # never block — capture runs independently
+
+        if self._suspended:
+            while self._suspended and self._capture_running:
+                await asyncio.sleep(0.05)
+            # After resume, fall through to capture a fresh frame on next loop.
+            return await self.recv()
 
         if screenshot is not None and seq != self._last_consumed_seq:
             # Fresh frame available: process it
@@ -1927,7 +1950,7 @@ class WebRemoteHost:
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)
                 self.media_sender = AiortcMediaSender()
-                self.media_sender.bind(self.video_sender, self.screen_track)
+                self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
                 self._prefer_h264_transceivers()
                 logger.info("Added video track")
 
@@ -2278,13 +2301,26 @@ class WebRemoteHost:
                                 self.input_handler.release_all_keys(reason="media-suspended")
                     except Exception as exc:
                         logger.warning("media suspend input freeze failed: %s", type(exc).__name__)
-                    # 2) suspend sender
+                    # 2) suspend every live video sender on the current PC
                     sender_adapter = getattr(self, "media_sender", None)
                     if sender_adapter is None:
                         sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))
                     sender_adapter.suspend()
                     self.media_sender = sender_adapter
-                    # 3) suspend capture and clear buffers
+                    pc = getattr(self, "pc", None)
+                    if pc is not None and hasattr(pc, "getSenders"):
+                        try:
+                            for sender in list(pc.getSenders() or []):
+                                track = getattr(sender, "track", None)
+                                if track is None and sender is getattr(self, "video_sender", None):
+                                    AiortcMediaSender(sender).suspend()
+                                    continue
+                                kind = getattr(track, "kind", None) if track is not None else None
+                                if kind == "video" or sender is getattr(self, "video_sender", None) or track is screen_track:
+                                    AiortcMediaSender(sender).suspend()
+                        except Exception as exc:
+                            logger.warning("media suspend getSenders failed: %s", type(exc).__name__)
+                    # 3) suspend capture and clear buffers (before any further recv work)
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
                         capture_seq = screen_track.set_suspended(True)
                     # 4) suspend tunnel production without tearing down control/terminal.

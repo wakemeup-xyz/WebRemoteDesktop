@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 class AiortcMediaSender:
-    def __init__(self, sender=None):
+    def __init__(self, sender=None, pc=None):
         self._sender = sender
         self._enabled = True
         self._track = None
+        self._pc = pc
 
     @property
     def sender(self):
@@ -25,16 +26,32 @@ class AiortcMediaSender:
     def enabled(self):
         return self._enabled
 
-    def bind(self, sender, track=None):
+    def bind(self, sender, track=None, pc=None):
         self._sender = sender
         if track is not None:
             self._track = track
+        if pc is not None:
+            self._pc = pc
         self._enabled = True
 
     def invalidate(self):
         self._sender = None
         self._track = None
+        self._pc = None
         self._enabled = False
+
+    def _set_transceiver_direction(self, direction: str) -> None:
+        sender = self._sender
+        pc = self._pc
+        if sender is None or pc is None or not hasattr(pc, "getTransceivers"):
+            return
+        try:
+            for tr in list(pc.getTransceivers() or []):
+                if getattr(tr, "sender", None) is sender:
+                    tr.direction = direction
+                    return
+        except Exception as exc:
+            logger.debug("transceiver direction set failed: %s", type(exc).__name__)
 
     def suspend(self) -> bool:
         sender = self._sender
@@ -42,7 +59,14 @@ class AiortcMediaSender:
             self._enabled = False
             return False
         try:
+            track = getattr(sender, "track", None)
+            if track is not None and hasattr(track, "enabled"):
+                try:
+                    track.enabled = False
+                except Exception:
+                    pass
             sender.replaceTrack(None)
+            self._set_transceiver_direction("inactive")
             self._enabled = False
             return True
         except Exception as exc:
@@ -59,6 +83,12 @@ class AiortcMediaSender:
             self._enabled = False
             return {"ok": False, "keyframeRequested": False}
         try:
+            if hasattr(track, "enabled"):
+                try:
+                    track.enabled = True
+                except Exception:
+                    pass
+            self._set_transceiver_direction("sendonly")
             sender.replaceTrack(track)
             self._enabled = True
             keyframe = self.request_keyframe()
