@@ -1437,6 +1437,15 @@ class WebRemoteHost:
         handler.release_all_mouse_buttons(reason=reason)
         return result
 
+    async def _emit_control_transition_ack(self, lease_epoch, status, reason=None):
+        sio = getattr(self, "sio", None)
+        if sio is None:
+            return
+        payload = {"leaseEpoch": lease_epoch, "status": status}
+        if reason is not None:
+            payload["reason"] = reason
+        await sio.emit("control-transition-ack", payload)
+
     async def on_control_transition(self, data):
         """Acknowledge Signal's reset barrier before any new keyboard lease is active."""
         lock = getattr(self, "_control_transition_lock", None)
@@ -1476,7 +1485,26 @@ class WebRemoteHost:
         # no old Socket.IO or DataChannel input remains executable mid-handoff.
         self._active_input_binding = None
         self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
-        await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
+
+        async def reject_transition():
+            self._active_input_binding = None
+            logger.warning("Rejecting keyboard control transition epoch=%s", lease_epoch)
+            await self._emit_control_transition_ack(
+                lease_epoch,
+                "rejected",
+                reason="reset-failed",
+            )
+
+        try:
+            reset_result = await self._reset_keyboard_lifecycle(
+                data.get("reason") or "pending-reset"
+            )
+        except Exception:
+            await reject_transition()
+            return
+        if not isinstance(reset_result, dict) or reset_result.get("status") != "applied":
+            await reject_transition()
+            return
         if has_binding_identity:
             binding = {
                 "viewerId": viewer_id,
@@ -1484,12 +1512,17 @@ class WebRemoteHost:
                 "leaseEpoch": lease_epoch,
                 "connectionGeneration": self._connection_generation,
             }
-            result = await self.input_handler.transition_keyboard(
-                connection_generation=binding["connectionGeneration"],
-                lease_id=binding["leaseId"],
-                lease_epoch=binding["leaseEpoch"],
-            )
-            if result.get("status") != "applied":
+            try:
+                result = await self.input_handler.transition_keyboard(
+                    connection_generation=binding["connectionGeneration"],
+                    lease_id=binding["leaseId"],
+                    lease_epoch=binding["leaseEpoch"],
+                )
+            except Exception:
+                await reject_transition()
+                return
+            if not isinstance(result, dict) or result.get("status") != "applied":
+                await reject_transition()
                 return
             self._active_input_binding = binding
         elif isinstance(viewer_id, str) and viewer_id:
@@ -1502,21 +1535,22 @@ class WebRemoteHost:
                 "leaseEpoch": lease_epoch,
                 "connectionGeneration": self._connection_generation,
             }
-            result = await self.input_handler.transition_keyboard(
-                connection_generation=binding["connectionGeneration"],
-                lease_id=binding["leaseId"],
-                lease_epoch=binding["leaseEpoch"],
-            )
-            if result.get("status") != "applied":
+            try:
+                result = await self.input_handler.transition_keyboard(
+                    connection_generation=binding["connectionGeneration"],
+                    lease_id=binding["leaseId"],
+                    lease_epoch=binding["leaseEpoch"],
+                )
+            except Exception:
+                await reject_transition()
+                return
+            if not isinstance(result, dict) or result.get("status") != "applied":
+                await reject_transition()
                 return
             self._active_input_binding = binding
         else:
             self._active_input_binding = None
-        if self.sio is not None:
-            await self.sio.emit("control-transition-ack", {
-                "leaseEpoch": lease_epoch,
-                "status": "applied",
-            })
+        await self._emit_control_transition_ack(lease_epoch, "applied")
 
     async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
         closing_pc = getattr(self, "pc", None)

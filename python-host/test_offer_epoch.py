@@ -565,6 +565,49 @@ async def test_newer_reset_only_control_transition_still_resets_and_acknowledges
 
 
 @pytest.mark.asyncio
+async def test_failed_keyboard_transition_rejects_with_safe_ack_and_clears_binding():
+    sent = []
+
+    async def emit(event, payload):
+        sent.append((event, payload))
+
+    class FailingInputHandler:
+        async def reset_keyboard(self, **_kwargs):
+            return {"status": "applied"}
+
+        async def transition_keyboard(self, **_kwargs):
+            return {"status": "execution-failed", "raw": "Secret keyboard failure"}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = {
+        "viewerId": "viewer-old",
+        "leaseId": "lease-0000000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 1,
+    }
+    host._connection_generation = 1
+    host.input_handler = FailingInputHandler()
+    host.sio = SimpleNamespace(emit=emit)
+
+    await host.on_control_transition({
+        "viewerId": "viewer-new",
+        "leaseId": "lease-0000000000000002",
+        "leaseEpoch": 2,
+    })
+
+    assert host._active_input_binding is None
+    assert sent == [("control-transition-ack", {
+        "leaseEpoch": 2,
+        "status": "rejected",
+        "reason": "reset-failed",
+    })]
+    assert "Secret" not in repr(sent)
+
+
+@pytest.mark.asyncio
 async def test_ice_candidate_from_stale_viewer_is_ignored():
     host = make_host(current_viewer_id="viewer-1", offer_epoch=1, pc_state="connected")
     host.pending_candidates = []

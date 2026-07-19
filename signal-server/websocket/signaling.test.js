@@ -1087,6 +1087,10 @@ test('rejected transition clears pending legacy input and cannot replay on late 
   viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'stale', code: 'KeyA' } });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'rejected', reason: 'reset-failed' });
+  const state = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(state.state, 'FREE');
+  assert.equal(state.reason, 'reset-failed');
+  assert.equal(viewer.sent.some((entry) => entry.event === 'control-grant'), false);
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
 });
