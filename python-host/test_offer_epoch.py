@@ -197,6 +197,108 @@ async def test_newer_transition_freezes_prior_v2_lease_before_reset_completes():
 
 
 @pytest.mark.asyncio
+async def test_peer_teardown_freezes_old_lease_without_clobbering_replacement():
+    old_binding = {
+        "viewerId": "viewer-a",
+        "leaseId": "lease-0000000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 1,
+    }
+    new_binding = {
+        "viewerId": "viewer-b",
+        "leaseId": "lease-0000000000000002",
+        "leaseEpoch": 2,
+        "connectionGeneration": 2,
+    }
+
+    class FakePeer:
+        def __init__(self):
+            self.close_calls = 0
+
+        async def close(self):
+            self.close_calls += 1
+
+    class FakeTrack:
+        def __init__(self):
+            self.shutdown_calls = 0
+
+        async def shutdown(self):
+            self.shutdown_calls += 1
+
+    class BlockingInputHandler:
+        def __init__(self):
+            self.reset_started = asyncio.Event()
+            self.allow_reset = asyncio.Event()
+            self.applied = []
+
+        async def reset_keyboard(self, **_kwargs):
+            self.reset_started.set()
+            await self.allow_reset.wait()
+            return {"status": "applied"}
+
+        async def apply_keyboard(self, data):
+            self.applied.append(data)
+            return {"inputIds": []}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    old_peer, new_peer = FakePeer(), FakePeer()
+    old_track, new_track = FakeTrack(), FakeTrack()
+    old_channel, new_channel = object(), object()
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-a"
+    host._offer_epoch = 1
+    host._active_input_binding = old_binding
+    host._input_datachannel = old_channel
+    host.pending_candidates = [{"candidate": "old"}]
+    host.pc = old_peer
+    host.screen_track = old_track
+    host.input_handler = BlockingInputHandler()
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.sio = None
+
+    teardown = asyncio.create_task(
+        host._close_peer_connection(reason="viewer-disconnected", reset_offer_state=True)
+    )
+    await asyncio.wait_for(host.input_handler.reset_started.wait(), timeout=1)
+    await host.on_input({
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "viewerId": old_binding["viewerId"],
+        "leaseId": old_binding["leaseId"],
+        "leaseEpoch": old_binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-old"],
+        "payload": {},
+    })
+
+    host.current_viewer_id = "viewer-b"
+    host._offer_epoch = 2
+    host._active_input_binding = new_binding
+    host._input_datachannel = new_channel
+    host.pending_candidates = [{"candidate": "new"}]
+    host.pc = new_peer
+    host.screen_track = new_track
+    host.input_handler.allow_reset.set()
+    await teardown
+
+    assert host.input_handler.applied == []
+    assert old_peer.close_calls == 1
+    assert old_track.shutdown_calls == 1
+    assert new_peer.close_calls == 0
+    assert new_track.shutdown_calls == 0
+    assert host.pc is new_peer
+    assert host.screen_track is new_track
+    assert host._input_datachannel is new_channel
+    assert host._active_input_binding == new_binding
+    assert host.pending_candidates == [{"candidate": "new"}]
+    assert host.current_viewer_id == "viewer-b"
+    assert host._offer_epoch == 2
+
+
+@pytest.mark.asyncio
 async def test_input_move_close_does_not_reset_bound_keyboard_but_input_close_does():
     binding = {
         "viewerId": "viewer-1",

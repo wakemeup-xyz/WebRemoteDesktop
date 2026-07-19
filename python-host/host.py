@@ -1484,21 +1484,38 @@ class WebRemoteHost:
             })
 
     async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
-        await self._reset_keyboard_lifecycle(reason)
-        if self.pc:
+        closing_pc = getattr(self, "pc", None)
+        closing_track = getattr(self, "screen_track", None)
+        closing_channel = getattr(self, "_input_datachannel", None)
+        closing_candidates = getattr(self, "pending_candidates", None)
+        closing_binding = getattr(self, "_active_input_binding", None)
+        closing_epoch = (
+            closing_binding.get("leaseEpoch")
+            if isinstance(closing_binding, dict) else None
+        )
+
+        # Freeze this connection's lease before yielding to the reset worker.
+        self._active_input_binding = None
+        if self._input_datachannel is closing_channel:
+            self._input_datachannel = None
+        await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+
+        if closing_pc:
             logger.info("Closing peer connection reason=%s", reason)
-            await self.pc.close()
+            await closing_pc.close()
+        owns_peer = self.pc is closing_pc
+        if owns_peer and self.pc is closing_pc:
             self.pc = None
 
-        if self.screen_track:
-            await self.screen_track.shutdown()
+        if closing_track:
+            await closing_track.shutdown()
+        if self.screen_track is closing_track:
             self.screen_track = None
 
-        self._input_datachannel = None
-        self._active_input_binding = None
-        self.pending_candidates = []
+        if self.pending_candidates is closing_candidates:
+            self.pending_candidates = []
 
-        if reset_offer_state:
+        if reset_offer_state and owns_peer:
             self.current_viewer_id = None
             self._offer_epoch = 0
 
