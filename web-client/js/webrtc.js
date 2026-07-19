@@ -496,17 +496,53 @@ const WebRTC = {
     );
   },
 
+  linkQualityPathForMode(mode = this.networkMode) {
+    return mode === 'relay' ? 'relay' : 'direct';
+  },
+
   ensureLinkQualityController() {
     if (!this.linkQualityController && typeof LinkQualityController !== 'undefined') {
-      this.linkQualityController = LinkQualityController.create();
+      this.linkQualityController = LinkQualityController.create({
+        path: this.linkQualityPathForMode(),
+      });
     }
     return this.linkQualityController;
+  },
+
+  /**
+   * Keep adaptive path (direct vs TURN relay) aligned with networkMode.
+   * Relay uses lower start bitrate and ignores structural 300–600ms RTT as critical.
+   */
+  syncLinkQualityPath({ applyProfile = false, reason = 'path-sync' } = {}) {
+    const controller = this.ensureLinkQualityController();
+    if (!controller) return null;
+    const path = this.linkQualityPathForMode();
+    const changed = typeof controller.setPath === 'function'
+      ? controller.setPath(path, { resetProfile: true })
+      : { changed: false, path, profile: controller.currentProfile };
+    if (applyProfile && (changed?.changed || reason === 'connection-sync')) {
+      const profileName = controller.currentProfile;
+      const profile = typeof LinkQualityController !== 'undefined'
+        ? LinkQualityController.profiles?.[profileName]
+        : null;
+      if (profile) {
+        this.applyMediaProfile(profile, reason);
+      }
+    }
+    return changed;
   },
 
   handleReceiverStats(stats) {
     const controller = this.ensureLinkQualityController();
     if (!controller || !this.adaptiveMediaEnabled) return;
-    if (this.networkMode === 'tunnel' || this.networkMode === 'relay') return;
+    // Tunnel JPEG has its own backpressure/profile path; WebRTC adaptive stays off.
+    if (this.networkMode === 'tunnel') return;
+
+    // Relay was previously excluded entirely, which left high/2500kbps on ~400ms
+    // TURN paths. Use relay-aware thresholds instead of skipping adaptation.
+    if (typeof controller.setPath === 'function') {
+      controller.setPath(this.linkQualityPathForMode(), { resetProfile: false });
+    }
 
     const result = controller.observe({
       ...stats,
@@ -547,7 +583,12 @@ const WebRTC = {
 
   syncMediaProfile() {
     const controller = this.ensureLinkQualityController();
-    const profileName = controller?.currentProfile;
+    if (!controller) return;
+    // Align path before first profile push so relay starts at low, not high.
+    if (typeof controller.setPath === 'function') {
+      controller.setPath(this.linkQualityPathForMode(), { resetProfile: true });
+    }
+    const profileName = controller.currentProfile;
     const profile = typeof LinkQualityController !== 'undefined'
       ? LinkQualityController.profiles?.[profileName]
       : null;
@@ -582,6 +623,11 @@ const WebRTC = {
 
   proactiveIceRestart(reason) {
     if (!this.pc || typeof this.pc.restartIce !== 'function') return;
+    // Structural TURN RTT is not recoverable via ICE restart.
+    if (this.networkMode === 'relay' && String(reason || '').includes('rtt')) {
+      console.warn(`[RECOVERY] skip ICE restart on relay path reason=${reason}`);
+      return;
+    }
     if (this._iceRestartAttempts >= 1) return;
     this._iceRestartAttempts += 1;
     if (this.linkQualityController?.markIceRestartAttempted) {
@@ -617,6 +663,8 @@ const WebRTC = {
   enforceSupportedNetworkMode(preferredMode = this.networkMode) {
     this.networkMode = preferredMode;
     localStorage.setItem('wrdNetworkMode', preferredMode);
+    // Keep adaptive ceilings/thresholds aligned as soon as mode is chosen.
+    this.syncLinkQualityPath({ applyProfile: false, reason: 'mode-change' });
     if (preferredMode === 'relay' && !this.hasTurnConfigured()) {
       console.warn('[NETWORK] Relay mode requested without TURN; keeping relay selection and surfacing guidance');
       this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
@@ -2278,6 +2326,7 @@ const WebRTC = {
     if (!this._statsSampler) {
       const pc = this.pc;
       this._statsPc = pc;
+      this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
       this.ensureLinkQualityController()?.beginConnection?.();
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),

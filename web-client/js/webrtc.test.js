@@ -554,6 +554,115 @@ test('LinkQualityController ignores two startup zero-fps samples before evaluati
   assert.equal(controller.snapshot().currentProfile, 'survival');
 });
 
+test('LinkQualityController relay path starts low and treats structural TURN RTT as non-critical', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create({ path: 'relay' });
+
+  assert.equal(controller.currentProfile, 'low');
+  assert.equal(controller.maxProfile, 'medium');
+
+  // ~430ms is normal for LA TURN; must not force survival or ICE restart.
+  let result = controller.observe({
+    fps: 12,
+    rttMs: 430,
+    jitterBufferMs: 20,
+    packetsLost: 0,
+    framesDecoded: 12,
+    selectedCandidateType: 'relay',
+    interval: true,
+  });
+  assert.equal(result.action, 'hold');
+  assert.equal(result.profile, 'low');
+  assert.equal(result.shouldRestartIce || false, false);
+
+  result = controller.observe({
+    fps: 12,
+    rttMs: 450,
+    jitterBufferMs: 25,
+    packetsLost: 0,
+    framesDecoded: 24,
+    selectedCandidateType: 'relay',
+    interval: true,
+  });
+  assert.equal(result.action, 'hold');
+  assert.equal(result.profile, 'low');
+  assert.equal(result.shouldRestartIce || false, false);
+  assert.equal(controller.snapshot().currentProfile, 'low');
+});
+
+test('LinkQualityController relay path degrades on loss but never restarts ICE for high RTT alone', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create({ path: 'relay' });
+  const lossy = {
+    fps: 4,
+    rttMs: 500,
+    jitterBufferMs: 40,
+    packetsLost: 40,
+    framesDecoded: 4,
+    selectedCandidateType: 'relay',
+    interval: true,
+  };
+
+  assert.equal(controller.observe(lossy).action, 'hold');
+  const degraded = controller.observe(lossy);
+  assert.equal(degraded.action, 'degrade');
+  assert.equal(degraded.profile, 'survival');
+  assert.equal(degraded.shouldRestartIce, false);
+
+  // Structural very-high RTT still does not request ICE restart on relay.
+  const veryHighRtt = {
+    fps: 10,
+    rttMs: 1300,
+    jitterBufferMs: 30,
+    packetsLost: 0,
+    framesDecoded: 20,
+    selectedCandidateType: 'relay',
+    interval: true,
+  };
+  controller.observe(veryHighRtt);
+  const criticalRtt = controller.observe(veryHighRtt);
+  assert.equal(criticalRtt.shouldRestartIce || false, false);
+  assert.notEqual(criticalRtt.action, 'critical');
+});
+
+test('LinkQualityController relay path caps upgrades at medium', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  let now = 0;
+  const controller = LinkQualityController.create({ path: 'relay', initialProfile: 'survival', now: () => now });
+  const good = {
+    fps: 15,
+    rttMs: 400,
+    jitterBufferMs: 20,
+    packetsLost: 0,
+    framesDecoded: 15,
+    selectedCandidateType: 'relay',
+    interval: true,
+  };
+
+  // 400ms is below relay highRtt threshold (700), so samples count as good.
+  for (let index = 0; index < 10; index += 1) {
+    now += 1000;
+    assert.equal(controller.observe(good).action, 'hold');
+  }
+  now = 16000;
+  assert.equal(controller.observe(good).profile, 'low');
+  for (let index = 0; index < 10; index += 1) {
+    now += 1000;
+    controller.observe(good);
+  }
+  now += 16000;
+  const toMedium = controller.observe(good);
+  assert.equal(toMedium.action, 'upgrade');
+  assert.equal(toMedium.profile, 'medium');
+
+  for (let index = 0; index < 12; index += 1) {
+    now += 1000;
+    const held = controller.observe(good);
+    assert.equal(held.profile, 'medium');
+    assert.notEqual(held.action, 'upgrade');
+  }
+});
+
 test('WebRTC configures a finite numeric video playout delay hint', () => {
   const { WebRTC } = loadWebRTC();
   const values = [];
@@ -575,6 +684,7 @@ test('WebRTC syncs the adaptive profile when a new media connection becomes acti
   const { LinkQualityController } = loadLinkQualityController();
   const { WebRTC } = loadWebRTC({ LinkQualityController });
   const emitted = [];
+  WebRTC.networkMode = 'auto';
   WebRTC.linkQualityController = LinkQualityController.create();
   WebRTC.socket = {
     connected: true,
@@ -593,6 +703,78 @@ test('WebRTC syncs the adaptive profile when a new media connection becomes acti
   assert.equal(emitted[0].payload.mediaPolicy, 'strict-stun');
   assert.equal(emitted[0].payload.schemaVersion, 2);
   assert.equal(emitted[0].payload.leaseId, 'lease-000000000001');
+});
+
+test('WebRTC relay mode syncs low media profile instead of high', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
+  const emitted = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.linkQualityController = null;
+  WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 } };
+
+  WebRTC.syncMediaProfile();
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].event, 'media-profile-change');
+  assert.equal(emitted[0].payload.profile, 'low');
+  assert.equal(emitted[0].payload.targetFps, 12);
+  assert.equal(emitted[0].payload.videoBitrateKbps, 900);
+  assert.equal(WebRTC.linkQualityController.path, 'relay');
+});
+
+test('WebRTC relay mode adapts on packet loss without ICE restart for structural RTT', () => {
+  const emitted = [];
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
+  let restartCalls = 0;
+
+  WebRTC.networkMode = 'relay';
+  WebRTC.linkQualityController = LinkQualityController.create({ path: 'relay' });
+  WebRTC.socket = {
+    connected: true,
+    emit(event, payload) {
+      emitted.push({ event, payload });
+    },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 } };
+  WebRTC.pc = {
+    restartIce() { restartCalls += 1; },
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+  };
+
+  WebRTC.handleReceiverStats({
+    fps: 4,
+    rttMs: 430,
+    jitterBufferMs: 20,
+    packetsLost: 40,
+    framesDecoded: 4,
+    framesReceived: 4,
+    selectedCandidateType: 'relay',
+    interval: true,
+  });
+  WebRTC.handleReceiverStats({
+    fps: 4,
+    rttMs: 430,
+    jitterBufferMs: 20,
+    packetsLost: 40,
+    framesDecoded: 8,
+    framesReceived: 8,
+    selectedCandidateType: 'relay',
+    interval: true,
+  });
+
+  const profileEvent = emitted.find((entry) => entry.event === 'media-profile-change');
+  assert.equal(Boolean(profileEvent), true);
+  assert.equal(profileEvent.payload.profile, 'survival');
+  assert.equal(restartCalls, 0);
 });
 
 test('media profile and resolution changes no-op without a lease and emit v2 envelopes when active', async () => {
