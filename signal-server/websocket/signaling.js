@@ -92,22 +92,20 @@ function setupSignaling(io, options = {}) {
 
   const intervalFactory = options.scheduler?.setInterval || options.setInterval || setInterval;
   const interval = intervalFactory(() => {
-    const result = desktopLease.expire();
-    if (result?.reason) {
-      if (result.state === 'FREE' || result.transition) {
-        pendingInputs.clear();
-        pendingControllerProtocolVersion = null;
-        legacyControllerViewerId = null;
-        clearAllLegacyRelayCompanions({ stop: true });
-      }
-      broadcastControlState(result.reason);
-      sendControlTransition(result);
-    }
+    dispatchLeaseEffect(desktopLease.expire());
   }, 1000);
   interval?.unref?.();
 
   function controlSnapshot() {
-    return desktopLease.snapshot();
+    return withLeaseExpiry(() => desktopLease.snapshot());
+  }
+
+  // Expiry is advanced only through this wrapper. Lease accessors themselves
+  // never begin an unobservable reset transition, and every REVOKING effect
+  // reaches the Host through dispatchLeaseEffect below.
+  function withLeaseExpiry(operation) {
+    dispatchLeaseEffect(desktopLease.expire());
+    return operation();
   }
 
   function hostInputProtocolVersion() {
@@ -188,6 +186,22 @@ function setupSignaling(io, options = {}) {
     return true;
   }
 
+  function dispatchLeaseEffect(effect, reason = effect?.reason) {
+    if (!effect || (!effect.reason && !effect.transition)) return false;
+    const resetOnlyBarrier = effect.state === 'REVOKING'
+      && effect.transition
+      && controlSnapshot().pendingViewerId === null;
+    if (effect.state === 'FREE' || resetOnlyBarrier) {
+      clearPendingInputs();
+      pendingControllerProtocolVersion = null;
+      legacyControllerViewerId = null;
+      clearAllLegacyRelayCompanions({ stop: true });
+    }
+    broadcastControlState(reason);
+    sendControlTransition(effect);
+    return true;
+  }
+
   function sendGrant(viewerId, lease) {
     const viewerSocket = connections.viewers.get(viewerId);
     if (!viewerSocket || !lease) return;
@@ -197,14 +211,14 @@ function setupSignaling(io, options = {}) {
 
   function authorizeViewer(socket, data = {}, { legacy = true } = {}) {
     if (data && data.schemaVersion === 2) {
-      return desktopLease.authorize({
+      return withLeaseExpiry(() => desktopLease.authorize({
         viewerId: socket.id,
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
-      });
+      }));
     }
     if (!legacy) {
-      const snapshot = desktopLease.snapshot();
+      const snapshot = withLeaseExpiry(() => desktopLease.snapshot());
       return snapshot.state === 'ACTIVE' && snapshot.controllerViewerId === socket.id;
     }
     return legacy;
@@ -215,7 +229,7 @@ function setupSignaling(io, options = {}) {
       offer: data.offer,
       viewerId: socket.id,
       epoch: data.epoch,
-      leaseEpoch: data.schemaVersion === 2 ? data.leaseEpoch : desktopLease.snapshot().leaseEpoch,
+      leaseEpoch: data.schemaVersion === 2 ? data.leaseEpoch : controlSnapshot().leaseEpoch,
     };
     // v2 offers have already passed authorizeViewer(), so this opaque token
     // is safe to forward solely to the Host for its direct DataChannel binding.
@@ -318,8 +332,11 @@ function setupSignaling(io, options = {}) {
         });
         return;
       }
-      const previousController = desktopLease.snapshot().controllerViewerId;
-      const result = desktopLease.requestControl({ viewerId: socket.id, takeover: data.takeover === true });
+      const previousController = controlSnapshot().controllerViewerId;
+      const result = withLeaseExpiry(() => desktopLease.requestControl({
+        viewerId: socket.id,
+        takeover: data.takeover === true,
+      }));
       if (result.transition) {
         rememberPendingController(socket.inputProtocolVersion);
         annotateLegacyTakeover(result, previousController);
@@ -330,8 +347,7 @@ function setupSignaling(io, options = {}) {
           connections.viewers.get(previousController)?.emit('control-revoked', { reason: 'takeover' });
         }
         socket.emit('control-acquire-result', { state: result.state, requestId: data.requestId || null });
-        broadcastControlState('transition');
-        sendControlTransition(result);
+        dispatchLeaseEffect(result, 'transition');
       } else {
         socket.emit('control-acquire-result', { ...result, requestId: data.requestId || null });
       }
@@ -339,51 +355,51 @@ function setupSignaling(io, options = {}) {
 
     socket.on('control-heartbeat', (data = {}) => {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
-      const result = desktopLease.heartbeat({ viewerId: socket.id, leaseId: data.leaseId, leaseEpoch: data.leaseEpoch });
+      const result = withLeaseExpiry(() => desktopLease.heartbeat({
+        viewerId: socket.id,
+        leaseId: data.leaseId,
+        leaseEpoch: data.leaseEpoch,
+      }));
       if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
     });
 
     socket.on('control-release', (data = {}) => {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
-      const result = desktopLease.beginRelease({ viewerId: socket.id, reason: data.reason || 'released' });
+      const result = withLeaseExpiry(() => desktopLease.beginRelease({
+        viewerId: socket.id,
+        reason: data.reason || 'released',
+      }));
       if (result.transition) {
-        broadcastControlState('released');
-        sendControlTransition(result);
+        dispatchLeaseEffect(result, 'released');
       }
     });
 
     socket.on('control-transition-ack', (data = {}) => {
       if (role !== 'host' || connections.host !== socket) return;
-      const result = data.status === 'applied'
+      const result = withLeaseExpiry(() => (data.status === 'applied'
         ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
-        : desktopLease.rejectTransition({ leaseEpoch: data.leaseEpoch, reason: data.reason });
-      if (result.state === 'FREE' && !result.lease) {
-        clearPendingInputs();
-        pendingControllerProtocolVersion = null;
-        legacyControllerViewerId = null;
-        clearAllLegacyRelayCompanions({ stop: true });
-      }
+        : desktopLease.rejectTransition({ leaseEpoch: data.leaseEpoch, reason: data.reason })));
       if (result.lease) {
         if (legacyControllerViewerId) clearLegacyRelayCompanion(legacyControllerViewerId, { stop: true });
         legacyControllerViewerId = pendingControllerProtocolVersion === 1
-          ? desktopLease.snapshot().controllerViewerId
+          ? controlSnapshot().controllerViewerId
           : null;
         if (legacyControllerViewerId) legacyRelayOwnerIds.add(legacyControllerViewerId);
         pendingControllerProtocolVersion = null;
-        sendGrant(desktopLease.snapshot().controllerViewerId, result.lease);
+        sendGrant(controlSnapshot().controllerViewerId, result.lease);
       }
-      broadcastControlState(result.reason || result.state.toLowerCase());
+      dispatchLeaseEffect(result, result.reason || result.state.toLowerCase());
       if (result.lease) {
-        const queued = pendingOffers.get(desktopLease.snapshot().controllerViewerId);
+        const queued = pendingOffers.get(controlSnapshot().controllerViewerId);
         if (queued) {
-          pendingOffers.delete(desktopLease.snapshot().controllerViewerId);
+          pendingOffers.delete(controlSnapshot().controllerViewerId);
           queued.forEach(({ socket: queuedSocket, data: queuedData }) => {
             if (isActiveViewerSocket(queuedSocket)) forwardOffer(queuedSocket, queuedData);
           });
         }
-        const queuedInputs = pendingInputs.get(desktopLease.snapshot().controllerViewerId);
+        const queuedInputs = pendingInputs.get(controlSnapshot().controllerViewerId);
         if (queuedInputs) {
-          pendingInputs.delete(desktopLease.snapshot().controllerViewerId);
+          pendingInputs.delete(controlSnapshot().controllerViewerId);
           queuedInputs.forEach(({ socket: queuedSocket, data: queuedData }) => {
             if (!isActiveViewerSocket(queuedSocket)) return;
             if (!authorizeViewer(queuedSocket, queuedData, { legacy: true })) return;
@@ -413,15 +429,14 @@ function setupSignaling(io, options = {}) {
       if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
       if (data?.schemaVersion !== 2) {
         if (!LEGACY_INPUT_COMPAT_ENABLED) return;
-        const snapshot = desktopLease.snapshot();
+        const snapshot = controlSnapshot();
         if (snapshot.state !== 'ACTIVE' || snapshot.controllerViewerId !== socket.id) {
           if (snapshot.state === 'FREE' && connections.host) {
-            const result = desktopLease.requestControl({ viewerId: socket.id });
+            const result = withLeaseExpiry(() => desktopLease.requestControl({ viewerId: socket.id }));
             if (result.transition) {
               rememberPendingController(1);
               pendingOffers.set(socket.id, [{ socket, data }]);
-              broadcastControlState('transition');
-              sendControlTransition(result);
+              dispatchLeaseEffect(result, 'transition');
             }
           }
           return;
@@ -485,15 +500,14 @@ function setupSignaling(io, options = {}) {
       }
       if (data?.schemaVersion !== 2) {
         if (!LEGACY_INPUT_COMPAT_ENABLED) return;
-        const snapshot = desktopLease.snapshot();
+        const snapshot = controlSnapshot();
         if (!authorizeViewer(socket, data, { legacy: false })) {
           if (snapshot.state === 'FREE' && connections.host) {
-            const result = desktopLease.requestControl({ viewerId: socket.id });
+            const result = withLeaseExpiry(() => desktopLease.requestControl({ viewerId: socket.id }));
             if (result.transition) {
               rememberPendingController(1);
               pendingInputs.set(socket.id, [{ socket, data }]);
-              broadcastControlState('transition');
-              sendControlTransition(result);
+              dispatchLeaseEffect(result, 'transition');
             }
           } else if (snapshot.state === 'GRANTING' && snapshot.pendingViewerId === socket.id) {
             const queued = pendingInputs.get(socket.id) || [];
@@ -764,13 +778,13 @@ function setupSignaling(io, options = {}) {
       } else if (role === 'viewer') {
         clearPendingInputs(socket.id);
         const priorControl = controlSnapshot();
-        const leaseResult = desktopLease.viewerDisconnected(socket.id);
+        const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
         clearLegacyRelayCompanion(socket.id, { stop: true });
         legacyRelayOwnerIds.delete(socket.id);
         if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
         if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
         if (leaseResult.transition) {
-          sendControlTransition(leaseResult);
+          dispatchLeaseEffect(leaseResult, leaseResult.reason || 'viewer-disconnected');
         } else if (priorControl.controllerViewerId === socket.id
           && Number.isSafeInteger(priorControl.leaseEpoch)) {
           // Active disconnects free the Signal lease immediately. The Host
@@ -784,7 +798,9 @@ function setupSignaling(io, options = {}) {
             },
           });
         }
-        broadcastControlState(leaseResult.reason || 'viewer-disconnected');
+        if (!leaseResult.transition) {
+          broadcastControlState(leaseResult.reason || 'viewer-disconnected');
+        }
         connections.viewers.delete(socket.id);
         emitViewerStatus('viewer-disconnected', socket);
       } else if (role === 'relay-viewer') {

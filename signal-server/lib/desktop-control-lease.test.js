@@ -146,6 +146,49 @@ test('expiry at exactly expiresAfterMs starts a newer reset-only transition', ()
   });
 });
 
+test('accessors reject an expired lease without starting an unobservable transition', () => {
+  for (const accessor of ['heartbeat', 'authorize', 'snapshot', 'requestControl']) {
+    const lease = makeLease();
+    const request = lease.requestControl({ viewerId: 'viewer-a' });
+    const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+    lease.advanceTo(12_000);
+
+    if (accessor === 'heartbeat') {
+      assert.equal(lease.heartbeat({ viewerId: 'viewer-a', ...active.lease }).ok, false);
+    } else if (accessor === 'authorize') {
+      assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+    } else if (accessor === 'snapshot') {
+      assert.equal(lease.snapshot().state, 'ACTIVE');
+    } else {
+      assert.deepEqual(lease.requestControl({ viewerId: 'viewer-b' }), {
+        state: 'ACTIVE', reason: 'lease-expired',
+      });
+    }
+
+    const transition = lease.expire().transition;
+    assert.deepEqual(transition, {
+      type: 'control-transition',
+      leaseEpoch: active.lease.leaseEpoch + 1,
+      reason: 'lease-expired',
+    }, accessor);
+    assert.equal(lease.snapshot().state, 'REVOKING');
+  }
+});
+
+test('reset transition timeout never releases an expired lease to FREE', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+  lease.advanceTo(12_000);
+  lease.expire();
+  lease.advanceTo(15_000);
+
+  assert.deepEqual(lease.expire(), { state: 'REVOKING', reason: 'transition-timeout' });
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+});
+
 test('controller disconnect releases the lease and rejects its old credential', () => {
   const lease = makeLease();
   const request = lease.requestControl({ viewerId: 'viewer-a' });

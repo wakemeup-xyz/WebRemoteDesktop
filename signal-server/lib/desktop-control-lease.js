@@ -26,8 +26,8 @@ class DesktopControlLease {
   }
 
   requestControl({ viewerId, takeover = false }) {
-    this._expire();
     if (!viewerId) return { state: this._state, reason: 'invalid-viewer' };
+    if (this._isActiveExpired()) return { state: this._state, reason: 'lease-expired' };
 
     if (this._state !== 'FREE') {
       if (!takeover || this._state !== 'ACTIVE') {
@@ -56,7 +56,6 @@ class DesktopControlLease {
   }
 
   confirmTransition({ leaseEpoch }) {
-    this._expire();
     if (!this._pending || this._pending.leaseEpoch !== leaseEpoch) {
       return { state: this._state, reason: 'stale-transition' };
     }
@@ -79,7 +78,6 @@ class DesktopControlLease {
   }
 
   rejectTransition({ leaseEpoch, reason }) {
-    this._expire();
     if (!this._pending || this._pending.leaseEpoch !== leaseEpoch) {
       return { state: this._state, reason: 'stale-transition' };
     }
@@ -101,7 +99,6 @@ class DesktopControlLease {
   }
 
   heartbeat({ viewerId, leaseId, leaseEpoch }) {
-    this._expire();
     if (!this.authorize({ viewerId, leaseId, leaseEpoch })) {
       return { state: this._state, ok: false, reason: 'unauthorized' };
     }
@@ -110,7 +107,6 @@ class DesktopControlLease {
   }
 
   beginRelease({ viewerId, reason }) {
-    this._expire();
     if (this._state === 'ACTIVE' && this._active && this._active.viewerId === viewerId) {
       return this._beginResetTransition(reason || 'released');
     }
@@ -138,7 +134,6 @@ class DesktopControlLease {
   }
 
   viewerDisconnected(viewerId) {
-    this._expire();
     if ((this._state === 'GRANTING' || this._state === 'REVOKING')
       && this._pending && this._pending.viewerId === viewerId) {
       this._pending = {
@@ -178,16 +173,15 @@ class DesktopControlLease {
   }
 
   authorize({ viewerId, leaseId, leaseEpoch }) {
-    this._expire();
     return this._state === 'ACTIVE'
       && this._active !== null
+      && !this._isActiveExpired()
       && this._active.viewerId === viewerId
       && this._active.leaseId === leaseId
       && this._active.leaseEpoch === leaseEpoch;
   }
 
   snapshot() {
-    this._expire();
     return {
       state: STATES.has(this._state) ? this._state : 'FREE',
       controllerViewerId: this._state === 'ACTIVE' && this._active ? this._active.viewerId : null,
@@ -201,6 +195,13 @@ class DesktopControlLease {
   _expire() {
     const now = this._now();
     if (this._pending && this._transitionDeadline !== null && now >= this._transitionDeadline) {
+      if (this._state === 'REVOKING' && this._pending.viewerId === null) {
+        // A reset-only transition is a Host acknowledgement barrier. Timing
+        // out the Signal-side wait must not let a new controller reuse Host
+        // input state before that reset has been confirmed.
+        this._transitionDeadline = null;
+        return { state: 'REVOKING', reason: 'transition-timeout' };
+      }
       this._pending = null;
       this._transitionDeadline = null;
       this._active = null;
@@ -235,6 +236,12 @@ class DesktopControlLease {
       reason,
       transition: { type: 'control-transition', leaseEpoch, reason },
     };
+  }
+
+  _isActiveExpired() {
+    return this._state === 'ACTIVE'
+      && this._activeDeadline !== null
+      && this._now() >= this._activeDeadline;
   }
 }
 

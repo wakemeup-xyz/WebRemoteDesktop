@@ -1162,6 +1162,61 @@ test('lease expiry sends a newer reset-only transition before releasing host sta
   assert.equal(JSON.stringify(state).includes(grant.leaseId), false);
 });
 
+test('heartbeat expiry is dispatched once before a later scheduler tick and keeps the reset barrier', () => {
+  resetConnections();
+  let currentTime = 0;
+  let tick = null;
+  const io = makeIo();
+  setupSignaling(io, {
+    now: () => currentTime,
+    makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })(),
+    scheduler: {
+      setInterval(callback) {
+        tick = callback;
+        return { unref() {} };
+      },
+    },
+  });
+  const host = new FakeSocket('host-expiry-race', 'host');
+  const viewerA = new FakeSocket('viewer-expiry-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-expiry-b', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewerA.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+
+  viewerA.trigger('control-acquire', { requestId: 'a' });
+  const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: grantTransition.leaseEpoch, status: 'applied' });
+  const grantA = viewerA.sent.find((entry) => entry.event === 'control-grant').data;
+
+  currentTime = 12_000;
+  viewerA.trigger('control-heartbeat', { leaseId: grantA.leaseId, leaseEpoch: grantA.leaseEpoch });
+  tick();
+  const resetTransitions = host.sent.filter((entry) => entry.event === 'control-transition')
+    .filter((entry) => entry.data.reason === 'lease-expired');
+  assert.equal(resetTransitions.length, 1);
+  assert.deepEqual(resetTransitions[0].data, {
+    type: 'control-transition',
+    leaseEpoch: grantA.leaseEpoch + 1,
+    reason: 'lease-expired',
+  });
+  assert.equal(JSON.stringify(resetTransitions[0].data).includes(grantA.leaseId), false);
+
+  viewerA.trigger('input', v2Key({ leaseId: grantA.leaseId, leaseEpoch: grantA.leaseEpoch }));
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+  viewerB.trigger('control-acquire', { requestId: 'b' });
+  assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
+
+  currentTime = 15_000;
+  tick();
+  viewerB.trigger('control-acquire', { requestId: 'b-after-timeout' });
+  assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
+
+  host.trigger('control-transition-ack', { leaseEpoch: resetTransitions[0].data.leaseEpoch, status: 'applied' });
+  assert.equal(viewerA.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'FREE');
+});
+
 test('control logs redact lease token and text payload', () => {
   resetConnections();
   const io = makeIo();
