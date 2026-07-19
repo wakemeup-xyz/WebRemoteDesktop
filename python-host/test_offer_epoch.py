@@ -237,6 +237,82 @@ async def test_same_epoch_reset_only_control_transition_clears_and_acknowledges(
 
 
 @pytest.mark.asyncio
+async def test_grant_and_same_epoch_revoke_are_serialized_without_late_rebind():
+    class BlockingInputHandler:
+        def __init__(self):
+            self.reset_started = asyncio.Event()
+            self.allow_first_reset = asyncio.Event()
+            self.reset_calls = []
+            self.transition_calls = []
+
+        async def reset_keyboard(self, **kwargs):
+            self.reset_calls.append(kwargs)
+            if len(self.reset_calls) == 1:
+                self.reset_started.set()
+                await self.allow_first_reset.wait()
+            return {"status": "applied"}
+
+        async def transition_keyboard(self, **kwargs):
+            self.transition_calls.append(kwargs)
+            return {"status": "applied"}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    sent = []
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = {
+        "viewerId": "viewer-old",
+        "leaseId": "lease-0000000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 1,
+    }
+    host._connection_generation = 1
+    host.input_handler = BlockingInputHandler()
+
+    async def emit(event, payload):
+        binding = host._active_input_binding
+        sent.append((event, payload, dict(binding) if binding else None))
+
+    host.sio = SimpleNamespace(emit=emit)
+    grant = asyncio.create_task(host.on_control_transition({
+        "viewerId": "viewer-new",
+        "leaseId": "lease-0000000000000002",
+        "leaseEpoch": 2,
+    }))
+    await asyncio.wait_for(host.input_handler.reset_started.wait(), timeout=1)
+    revoke = asyncio.create_task(host.on_control_transition({
+        "leaseEpoch": 2,
+        "reason": "control-revoked",
+    }))
+    await asyncio.sleep(0)
+    assert not revoke.done()
+
+    host.input_handler.allow_first_reset.set()
+    await asyncio.gather(grant, revoke)
+
+    assert host._active_input_binding is None
+    assert host.input_handler.transition_calls == [{
+        "connection_generation": 2,
+        "lease_id": "lease-0000000000000002",
+        "lease_epoch": 2,
+    }]
+    assert [call["reason"] for call in host.input_handler.reset_calls] == [
+        "pending-reset",
+        "control-revoked",
+    ]
+    assert sent == [
+        ("control-transition-ack", {"leaseEpoch": 2, "status": "applied"}, {
+            "viewerId": "viewer-new",
+            "leaseId": "lease-0000000000000002",
+            "leaseEpoch": 2,
+            "connectionGeneration": 2,
+        }),
+        ("control-transition-ack", {"leaseEpoch": 2, "status": "applied"}, None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_newer_reset_only_control_transition_still_resets_and_acknowledges():
     binding = {
         "viewerId": "viewer-1",

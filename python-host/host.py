@@ -1059,6 +1059,7 @@ class WebRemoteHost:
         self._active_input_binding = None
         self._connection_generation = 0
         self._input_lifecycle_tasks = set()
+        self._control_transition_lock = asyncio.Lock()
         self._offer_lock = asyncio.Lock()
         self._offer_epoch = 0
         self._reconnecting = False
@@ -1411,6 +1412,13 @@ class WebRemoteHost:
 
     async def on_control_transition(self, data):
         """Acknowledge Signal's reset barrier before any new keyboard lease is active."""
+        lock = getattr(self, "_control_transition_lock", None)
+        if lock is None:
+            lock = self._control_transition_lock = asyncio.Lock()
+        async with lock:
+            await self._apply_control_transition(data)
+
+    async def _apply_control_transition(self, data):
         if not isinstance(data, dict):
             return
         lease_epoch = data.get("leaseEpoch")
