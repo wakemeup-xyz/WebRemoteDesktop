@@ -259,6 +259,23 @@ test('virtual chord owns only its virtual modifiers and emits one ordered batch'
   assert.equal(controller.getSnapshot().pressedKeyCount, 1);
 });
 
+test('Windows ControlRight ownership prevents a chord from injecting either Meta side', () => {
+  const { controller, sent } = makeController({ mode: 'windows' });
+  controller.handleDomEvent(keyEvent('keydown', {
+    code: 'ControlRight', key: 'Control', location: 2, ctrlKey: true,
+  }));
+  assert.equal(controller.sendChord({ code: 'KeyC', modifiers: { ctrl: true } }), true);
+
+  const batch = sent.at(-1);
+  assert.equal(batch.action, 'batch');
+  assert.deepEqual(batch.payload.steps.map((step) => [step.phase, step.code]), [
+    ['down', 'KeyC'], ['up', 'KeyC'],
+  ]);
+  assert.deepEqual(batch.payload.steps[0].modifiers, {
+    altKey: false, ctrlKey: false, metaKey: true, shiftKey: false,
+  });
+});
+
 test('a ten-second hold remains pressed until real keyup and a failed keyup requires reset', () => {
   const hold = makeController();
   hold.controller.handleDomEvent(keyEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight' }));

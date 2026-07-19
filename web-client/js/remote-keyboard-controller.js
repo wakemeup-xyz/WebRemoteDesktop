@@ -254,6 +254,14 @@
       return 'MetaLeft';
     }
 
+    function modifierFamily(code) {
+      if (code.startsWith('Control')) return 'ctrl';
+      if (code.startsWith('Shift')) return 'shift';
+      if (code.startsWith('Alt')) return 'alt';
+      if (code.startsWith('Meta')) return 'meta';
+      return null;
+    }
+
     function chordModifiers(value) {
       const source = value || {};
       return MODIFIER_ORDER.filter((name) => Boolean(source[name]
@@ -265,7 +273,10 @@
       reconcilePendingMode();
       if (!chord || !stableCode(chord) || !transportReady() || resetRequired) return false;
       const physicalCodes = new Set([...pressed.values()].map((item) => item.code));
-      const owned = chordModifiers(chord.modifiers).filter((name) => !physicalCodes.has(chordModifierCode(name)));
+      const owned = chordModifiers(chord.modifiers).filter((name) => {
+        const family = modifierFamily(chordModifierCode(name));
+        return ![...physicalCodes].some((code) => modifierFamily(code) === family);
+      });
       const virtualCodes = new Set(physicalCodes);
       const steps = [];
       const locks = { capsLock: false };
