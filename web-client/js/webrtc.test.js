@@ -1687,7 +1687,78 @@ test('manual port search rejects non-direct modes and offline prerequisites', ()
   assert.equal(actions.length, 0);
 });
 
-test('socket connected event enables port search button when host is online', () => {
+test('read-only and transitional viewers cannot start port search or request control via search', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const emitted = [];
+  const actions = [];
+  let creates = 0;
+  const originalCreate = context.StunPortSearchController?.create;
+  if (context.StunPortSearchController) {
+    context.StunPortSearchController.create = (...args) => {
+      creates += 1;
+      return originalCreate(...args);
+    };
+  }
+  WebRTC.refresh = () => actions.push('refresh');
+  WebRTC.createOffer = () => actions.push('createOffer');
+  WebRTC.requestControl = () => {
+    actions.push('requestControl');
+    return true;
+  };
+
+  const disallowed = [
+    { state: 'FREE', controller: false, lease: null },
+    { state: 'ACTIVE', controller: false, lease: null },
+    { state: 'GRANTING', controller: false, lease: null },
+    { state: 'REVOKING', controller: false, lease: null, reason: 'reset-blocked' },
+    { state: 'ACTIVE', controller: true, lease: null },
+  ];
+  for (const controlState of disallowed) {
+    preparePortSearch(WebRTC, {
+      controlState: { hostOnline: true, ...controlState },
+      socket: {
+        connected: true,
+        emit(...args) { emitted.push(args); },
+        disconnect() { this.connected = false; },
+        on() {},
+      },
+    });
+    WebRTC.portSearchController = null;
+    assert.equal(WebRTC.startPortSearch(), false, JSON.stringify(controlState));
+    assert.equal(WebRTC.isPortSearchActive(), false);
+  }
+  assert.equal(actions.length, 0);
+  assert.equal(creates, 0);
+  assert.equal(emitted.some((entry) => entry[0] === 'control-acquire'), false);
+  assert.equal(WebRTC._portSearchRoundTimer, null);
+  assert.equal(WebRTC._portSearchRetryTimer, null);
+});
+
+test('control loss during active port search stops search without reacquire', () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  preparePortSearch(WebRTC, {
+    socket: {
+      connected: true,
+      emit(...args) { emitted.push(args); },
+      disconnect() { this.connected = false; },
+      on() {},
+    },
+  });
+  WebRTC.refresh = () => {};
+  assert.equal(WebRTC.startPortSearch(), true);
+  assert.equal(WebRTC.isPortSearchActive(), true);
+  const generation = WebRTC._portSearchGeneration;
+
+  WebRTC.handleControlState({ state: 'ACTIVE', controller: false, reason: 'takeover' });
+  assert.equal(WebRTC.isPortSearchActive(), false);
+  assert.equal(WebRTC._portSearchGeneration > generation, true);
+  assert.equal(WebRTC._portSearchRoundTimer, null);
+  assert.equal(WebRTC._portSearchRetryTimer, null);
+  assert.equal(emitted.some((entry) => entry[0] === 'control-acquire'), false);
+});
+
+test('socket connected event enables port search button only for active controller', () => {
   const socketHandlers = new Map();
   const { WebRTC, context } = loadWebRTC();
   WebRTC.networkMode = 'stun';
@@ -1710,6 +1781,16 @@ test('socket connected event enables port search button when host is online', ()
 
   socketHandlers.get('connected')({ hostOnline: true });
   assert.equal(WebRTC.controlState.hostOnline, true);
+  // Host online alone is not enough without ACTIVE control lease.
+  assert.equal(context.document.getElementById('portSearchBtn').disabled, true);
+
+  WebRTC.controlState = {
+    hostOnline: true,
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.renderPortSearchStatus();
   assert.equal(context.document.getElementById('portSearchBtn').disabled, false);
   assert.equal(context.document.getElementById('portSearchBtn').textContent, '搜索端口');
 });

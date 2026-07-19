@@ -834,18 +834,45 @@ const WebRTC = {
     return port;
   },
 
+  canStartPortSearch() {
+    return ['auto', 'stun'].includes(this.networkMode)
+      && Boolean(this.socket?.connected)
+      && Boolean(this.controlState?.hostOnline)
+      && this.controlState?.state === 'ACTIVE'
+      && this.controlState?.controller === true
+      && Boolean(this.activeLeaseEnvelope())
+      && !this.manualDisconnect
+      && this.getMediaActivitySnapshot().state === 'active';
+  },
+
+  portSearchGateReason() {
+    if (!['auto', 'stun'].includes(this.networkMode)) return '当前模式不支持';
+    if (!this.socket?.connected) return '信令未连接';
+    if (!this.controlState?.hostOnline) return 'Host 离线';
+    if (this.manualDisconnect) return '已手动断开';
+    if (this.getMediaActivitySnapshot().state !== 'active') return '媒体已暂停';
+    if (this.controlState?.state === 'GRANTING' || this.controlState?.state === 'REVOKING') {
+      return '控制权正在切换';
+    }
+    if (!(this.controlState?.state === 'ACTIVE' && this.controlState?.controller === true && this.activeLeaseEnvelope())) {
+      return '需要控制权';
+    }
+    return null;
+  },
+
   renderPortSearchStatus() {
     const btn = document.getElementById('portSearchBtn');
     const candidateEl = document.getElementById('candidateDisplay');
     const snap = this.portSearchController?.snapshot?.() || null;
     const searching = snap?.status === 'searching';
-    const canStart = ['auto', 'stun'].includes(this.networkMode)
-      && Boolean(this.socket?.connected)
-      && Boolean(this.controlState?.hostOnline);
+    const canStart = this.canStartPortSearch();
+    const gateReason = searching ? null : this.portSearchGateReason();
 
     if (btn) {
       btn.textContent = searching ? '停止搜索' : '搜索端口';
       btn.disabled = searching ? false : !canStart;
+      if (gateReason) btn.title = gateReason;
+      else if (!searching) btn.title = '搜索可用 STUN 端口';
     }
 
     if (!candidateEl || !snap) {
@@ -868,18 +895,25 @@ const WebRTC = {
   },
 
   startPortSearch() {
-    if (!['auto', 'stun'].includes(this.networkMode)) {
-      this.updateNetworkUI('端口搜索仅在“自动穿透”或“外网直连”模式下可用，请先手动切换到直连模式。', 'warning');
-      this.renderPortSearchStatus();
-      return false;
-    }
-    if (!this.socket || !this.socket.connected) {
-      this.updateNetworkUI('信令未连接，无法开始端口搜索。', 'warning');
-      this.renderPortSearchStatus();
-      return false;
-    }
-    if (!this.controlState?.hostOnline) {
-      this.updateNetworkUI('Host 未上线，无法开始端口搜索。', 'warning');
+    // Strict no-op unless the current ACTIVE controller holds a lease.
+    // Must not create controllers, arm timers, close PC, refresh, or acquire control.
+    if (!this.canStartPortSearch()) {
+      const reason = this.portSearchGateReason();
+      if (reason === '当前模式不支持') {
+        this.updateNetworkUI('端口搜索仅在“自动穿透”或“外网直连”模式下可用，请先手动切换到直连模式。', 'warning');
+      } else if (reason === '信令未连接') {
+        this.updateNetworkUI('信令未连接，无法开始端口搜索。', 'warning');
+      } else if (reason === 'Host 离线') {
+        this.updateNetworkUI('Host 未上线，无法开始端口搜索。', 'warning');
+      } else if (reason === '需要控制权') {
+        this.updateNetworkUI('请先请求控制后再搜索端口。', 'warning');
+      } else if (reason === '控制权正在切换') {
+        this.updateNetworkUI('控制权正在切换，暂不可搜索端口。', 'warning');
+      } else if (reason === '媒体已暂停') {
+        this.updateNetworkUI('媒体已暂停，暂不可搜索端口。', 'warning');
+      } else if (reason) {
+        this.updateNetworkUI(`无法开始端口搜索：${reason}`, 'warning');
+      }
       this.renderPortSearchStatus();
       return false;
     }
@@ -1192,6 +1226,12 @@ const WebRTC = {
   handleControlState(data = {}) {
     this.controlState = { ...this.controlState, ...data, lease: data.controller ? this.controlState.lease : null };
     if (!data.controller) this.freezeControl(data.reason || 'control-readonly', false);
+    if (this.isPortSearchActive() && !this.canStartPortSearch()) {
+      this.stopPortSearch('control-lost');
+      this.updateNetworkUI('端口搜索已停止：控制权已失效', 'warning');
+    } else {
+      this.renderPortSearchStatus();
+    }
     this.updateControlUI();
   },
 
@@ -1220,6 +1260,11 @@ const WebRTC = {
       Input.setControlLease(null);
     }
     this.controlState = { ...this.controlState, controller: false, lease: null };
+    if (this.isPortSearchActive()) {
+      this.stopPortSearch(reason === 'host-offline' ? 'host-offline' : 'control-lost');
+    } else {
+      this.renderPortSearchStatus();
+    }
     this.updateControlUI();
   },
 
