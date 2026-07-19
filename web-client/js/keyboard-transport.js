@@ -19,6 +19,7 @@
     const unavailable = new Set();
     const pending = new Map();
     const pressed = new Set();
+    const stateListeners = new Set();
     let leaseId = null;
     let leaseEpoch = 0;
     let lastSent = 0;
@@ -38,6 +39,24 @@
       return barrier ? 'blocked' : 'ready';
     }
 
+    function notifyState() {
+      const snapshot = getSnapshot();
+      for (const listener of stateListeners) {
+        try {
+          listener(snapshot);
+        } catch (_) {
+          // State observers cannot interfere with transport delivery.
+        }
+      }
+    }
+
+    function subscribeState(listener) {
+      if (typeof listener !== 'function') return () => {};
+      stateListeners.add(listener);
+      listener(getSnapshot());
+      return () => stateListeners.delete(listener);
+    }
+
     function expireBarrier() {
       if (!barrier || now() <= barrier.deadline) return;
       leaseId = null;
@@ -45,7 +64,9 @@
       pending.clear();
       pressed.clear();
       pinnedAdapter = null;
+      barrier = null;
       reacquireRequired = true;
+      notifyState();
     }
 
     function clearSession() {
@@ -64,6 +85,7 @@
       pinnedAdapter = null;
       barrier = null;
       reacquireRequired = true;
+      notifyState();
     }
 
     function chooseAdapter(forceSocket) {
@@ -183,6 +205,7 @@
         return null;
       }
       barrier = { inputId: record.inputId, seq: record.seq, deadline: now() + ackTimeoutMs };
+      notifyState();
       return record.inputId;
     }
 
@@ -200,6 +223,7 @@
       leaseEpoch = nextLeaseEpoch;
       reacquireRequired = false;
       clearSession();
+      notifyState();
     }
 
     function send(message) {
@@ -257,7 +281,10 @@
         if (record.seq <= payload.appliedSeq) pending.delete(inputId);
       }
       lastApplied = Math.max(lastApplied, payload.appliedSeq);
-      if (barrier && payload.appliedSeq >= barrier.seq) barrier = null;
+      if (barrier && payload.appliedSeq >= barrier.seq) {
+        barrier = null;
+        notifyState();
+      }
       return { status: payload.status };
     }
 
@@ -301,6 +328,7 @@
       markAdapterAvailable,
       canSendNewInput,
       getSnapshot,
+      subscribeState,
     };
   }
 

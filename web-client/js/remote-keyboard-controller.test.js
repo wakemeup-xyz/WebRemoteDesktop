@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { RemoteKeyboardController } = require('./remote-keyboard-controller.js');
+const KeyboardTransport = require('./keyboard-transport.js');
 
 function makeController(options = {}) {
   const sent = [];
@@ -72,6 +73,20 @@ function modalInputTarget() {
 
 function keyActions(sent) {
   return sent.filter((item) => item.action === 'key');
+}
+
+function makeControllerTransportIntegration() {
+  const dataChannel = [];
+  const socket = [];
+  let nextId = 0;
+  const transport = KeyboardTransport.create({
+    sendDataChannel(payload) { dataChannel.push(payload); return true; },
+    sendSocket(payload) { socket.push(payload); return true; },
+    makeInputId: () => `controller-${++nextId}`,
+  });
+  const controller = RemoteKeyboardController.create({ transport });
+  controller.setLease({ leaseId: 'lease-000000000001', leaseEpoch: 1 });
+  return { controller, transport, dataChannel, socket };
 }
 
 test('tracked keyup releases before modal ignore rules and leaves no pressed state', () => {
@@ -327,6 +342,22 @@ test('controller resumes after the transport applies a failed-keyup reset barrie
   assert.deepEqual(acceptAck({ status: 'applied' }), { status: 'applied' });
   assert.equal(controller.getSnapshot().state, 'READY');
   assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyN', key: 'n' })), true);
+});
+
+test('external transport reset clears controller state before accepting the same key again', () => {
+  const { controller, transport, socket } = makeControllerTransportIntegration();
+  controller.handleDomEvent(keyEvent('keydown', { code: 'KeyR', key: 'r' }));
+  assert.equal(controller.getSnapshot().pressedKeyCount, 1);
+
+  transport.markAdapterUnavailable('dataChannel');
+  assert.equal(socket.at(-1).action, 'reset');
+  assert.equal(controller.getSnapshot().pressedKeyCount, 0);
+  assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+
+  transport.acceptAck({ schemaVersion: 2, leaseEpoch: 1, appliedSeq: 2, status: 'applied' });
+  assert.equal(controller.getSnapshot().state, 'READY');
+  assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyR', key: 'r' })), true);
+  assert.equal(controller.getSnapshot().pressedKeyCount, 1);
 });
 
 test('mode change clears state through a reset barrier before exposing the new mode', () => {

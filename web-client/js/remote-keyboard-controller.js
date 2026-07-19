@@ -57,6 +57,32 @@
       }
     }
 
+    function syncTransportState(snapshot) {
+      if (!leaseActive || !snapshot) return;
+      if (snapshot.state === 'blocked') {
+        pressed.clear();
+        resetRequired = true;
+        resetBarrierPending = true;
+        notify();
+        return;
+      }
+      if (snapshot.state === 'reacquire-required' || snapshot.state === 'revoked') {
+        pressed.clear();
+        resetRequired = true;
+        resetBarrierPending = false;
+        notify();
+        return;
+      }
+      if (snapshot.state === 'ready') {
+        reconcilePendingMode();
+        notify();
+      }
+    }
+
+    if (transport && typeof transport.subscribeState === 'function') {
+      transport.subscribeState(syncTransportState);
+    }
+
     function stableCode(event) {
       return typeof event.code === 'string' && event.code.length > 0 && event.code !== 'Unidentified';
     }
