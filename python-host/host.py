@@ -1416,6 +1416,15 @@ class WebRemoteHost:
         lease_epoch = data.get("leaseEpoch")
         if not isinstance(lease_epoch, int) or lease_epoch < 1:
             return
+        active_binding = getattr(self, "_active_input_binding", None)
+        active_epoch = active_binding.get("leaseEpoch") if isinstance(active_binding, dict) else None
+        if isinstance(active_epoch, int) and lease_epoch <= active_epoch:
+            logger.warning(
+                "Ignoring stale control transition epoch=%s active_epoch=%s",
+                lease_epoch,
+                active_epoch,
+            )
+            return
         self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
         await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
         lease_id = data.get("leaseId")
