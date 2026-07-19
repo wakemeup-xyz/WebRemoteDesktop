@@ -1,8 +1,17 @@
 import input_handler
 import asyncio
+import inspect
 import logging
 import pytest
 from input_handler import InputHandler
+
+
+def test_input_method_switch_remains_an_explicit_quartz_command():
+    source = inspect.getsource(input_handler)
+
+    assert "switchInputMethod" in source
+    assert "TISSelectInputSource" not in source
+    assert "ctypes" not in source
 
 
 def test_release_all_modifiers_posts_stuck_alt_keyup(monkeypatch):

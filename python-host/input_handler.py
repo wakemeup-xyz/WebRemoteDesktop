@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """macOS Input Controller using Quartz"""
 import asyncio
-import ctypes
 import logging
-import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +23,8 @@ from Quartz import (
     kCGMouseEventClickState
 )
 import screeninfo
+
+from quartz_keyboard_adapter import MAC_KEY_CODE_BY_DOM_CODE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,8 +55,6 @@ class InputHandler:
     def start(self):
         """Start the input handler"""
         self._running = True
-        # Disable macOS Press-and-Hold accent picker and switch to ABC keyboard
-        self._setup_macos_input()
         # Get primary monitor
         try:
             monitors = screeninfo.get_monitors()
@@ -69,175 +67,20 @@ class InputHandler:
             logger.error(f"Failed to get monitor info: {e}")
             self.monitor = None
 
-    def _setup_macos_input(self):
-        """Disable Press-and-Hold and switch to ABC keyboard to prevent IME interference."""
-        # 1. Disable Press-and-Hold (accent character picker)
-        try:
-            subprocess.run(
-                ['defaults', 'write', '-g', 'ApplePressAndHoldEnabled', '-bool', 'false'],
-                check=True, capture_output=True
-            )
-            logger.info("Disabled macOS Press-and-Hold (ApplePressAndHoldEnabled=false)")
-        except Exception as e:
-            logger.warning(f"Failed to disable Press-and-Hold: {e}")
-
-        # 2. Switch input source to ABC (English) keyboard to bypass Chinese IME
-        try:
-            self._switch_to_abc_keyboard()
-        except Exception as e:
-            logger.warning(f"Failed to switch input source: {e}")
-
-    def _switch_to_abc_keyboard(self):
-        """Switch macOS input source to ABC English keyboard using Carbon TIS API."""
-        carbon = ctypes.cdll.LoadLibrary(
-            '/System/Library/Frameworks/Carbon.framework/Carbon'
-        )
-        cf = ctypes.cdll.LoadLibrary(
-            '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
-        )
-
-        kCFStringEncodingUTF8 = 0x08000100
-
-        CFStringCreateWithCString = cf.CFStringCreateWithCString
-        CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
-        CFStringCreateWithCString.restype = ctypes.c_void_p
-
-        CFStringGetCString = cf.CFStringGetCString
-        CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
-        CFStringGetCString.restype = ctypes.c_bool
-
-        TISCreateInputSourceList = carbon.TISCreateInputSourceList
-        TISCreateInputSourceList.argtypes = [ctypes.c_void_p, ctypes.c_bool]
-        TISCreateInputSourceList.restype = ctypes.c_void_p
-
-        TISGetInputSourceProperty = carbon.TISGetInputSourceProperty
-        TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        TISGetInputSourceProperty.restype = ctypes.c_void_p
-
-        TISSelectInputSource = carbon.TISSelectInputSource
-        TISSelectInputSource.argtypes = [ctypes.c_void_p]
-        TISSelectInputSource.restype = ctypes.c_int32
-
-        CFArrayGetCount = cf.CFArrayGetCount
-        CFArrayGetCount.argtypes = [ctypes.c_void_p]
-        CFArrayGetCount.restype = ctypes.c_long
-
-        CFArrayGetValueAtIndex = cf.CFArrayGetValueAtIndex
-        CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
-        CFArrayGetValueAtIndex.restype = ctypes.c_void_p
-
-        id_key = CFStringCreateWithCString(None, b'TISPropertyInputSourceID', kCFStringEncodingUTF8)
-        sources = TISCreateInputSourceList(None, False)
-        count = CFArrayGetCount(sources)
-
-        for i in range(count):
-            src = CFArrayGetValueAtIndex(sources, i)
-            prop = TISGetInputSourceProperty(src, id_key)
-            if not prop:
-                continue
-            buf = ctypes.create_string_buffer(256)
-            if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
-                src_id = buf.value.decode()
-                if src_id == 'com.apple.keylayout.ABC':
-                    result = TISSelectInputSource(src)
-                    logger.info(f"Switched input source to ABC (result={result})")
-                    return
-
-        logger.warning("ABC keyboard layout not found, keeping current input source")
-
     def _switch_input_method(self):
-        """Toggle input method between ABC (English) and Chinese Pinyin keyboard on macOS."""
-        carbon = ctypes.cdll.LoadLibrary(
-            '/System/Library/Frameworks/Carbon.framework/Carbon'
+        """Invoke the user's configured macOS input-source shortcut."""
+        steps = (
+            (59, True, 0),
+            (49, True, kCGEventFlagMaskControl),
+            (49, False, kCGEventFlagMaskControl),
+            (59, False, 0),
         )
-        cf = ctypes.cdll.LoadLibrary(
-            '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
-        )
-
-        kCFStringEncodingUTF8 = 0x08000100
-
-        CFStringCreateWithCString = cf.CFStringCreateWithCString
-        CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
-        CFStringCreateWithCString.restype = ctypes.c_void_p
-
-        CFStringGetCString = cf.CFStringGetCString
-        CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
-        CFStringGetCString.restype = ctypes.c_bool
-
-        TISCreateInputSourceList = carbon.TISCreateInputSourceList
-        TISCreateInputSourceList.argtypes = [ctypes.c_void_p, ctypes.c_bool]
-        TISCreateInputSourceList.restype = ctypes.c_void_p
-
-        TISGetInputSourceProperty = carbon.TISGetInputSourceProperty
-        TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        TISGetInputSourceProperty.restype = ctypes.c_void_p
-
-        TISSelectInputSource = carbon.TISSelectInputSource
-        TISSelectInputSource.argtypes = [ctypes.c_void_p]
-        TISSelectInputSource.restype = ctypes.c_int32
-
-        TISCopyCurrentKeyboardInputSource = carbon.TISCopyCurrentKeyboardInputSource
-        TISCopyCurrentKeyboardInputSource.argtypes = []
-        TISCopyCurrentKeyboardInputSource.restype = ctypes.c_void_p
-
-        CFArrayGetCount = cf.CFArrayGetCount
-        CFArrayGetCount.argtypes = [ctypes.c_void_p]
-        CFArrayGetCount.restype = ctypes.c_long
-
-        CFArrayGetValueAtIndex = cf.CFArrayGetValueAtIndex
-        CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
-        CFArrayGetValueAtIndex.restype = ctypes.c_void_p
-
-        CFRelease = cf.CFRelease
-        CFRelease.argtypes = [ctypes.c_void_p]
-        CFRelease.restype = None
-
-        id_key = CFStringCreateWithCString(None, b'TISPropertyInputSourceID', kCFStringEncodingUTF8)
-
-        # Get current input source to know which way to toggle
-        current_id = None
-        current_src = TISCopyCurrentKeyboardInputSource()
-        if current_src:
-            prop = TISGetInputSourceProperty(current_src, id_key)
-            if prop:
-                buf = ctypes.create_string_buffer(256)
-                if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
-                    current_id = buf.value.decode()
-            CFRelease(current_src)
-
-        logger.info("Switch input method: current=%s", current_id)
-
-        # Chinese input source IDs to try (Simplified Chinese first, then Traditional)
-        chinese_ids = [
-            'com.apple.inputmethod.SCIM.ITABC',     # Pinyin - Simplified
-            'com.apple.inputmethod.SCIM.Shuangpin',  # Shuangpin
-            'com.apple.inputmethod.TCIM.Pinyin',     # Pinyin - Traditional
-        ]
-
-        if current_id == 'com.apple.keylayout.ABC':
-            # Currently ABC → switch to Chinese
-            sources = TISCreateInputSourceList(None, False)
-            count = CFArrayGetCount(sources)
-            target_src = None
-            for i in range(count):
-                src = CFArrayGetValueAtIndex(sources, i)
-                prop = TISGetInputSourceProperty(src, id_key)
-                if not prop:
-                    continue
-                buf = ctypes.create_string_buffer(256)
-                if CFStringGetCString(prop, buf, 256, kCFStringEncodingUTF8):
-                    src_id = buf.value.decode()
-                    if src_id in chinese_ids:
-                        target_src = src
-                        logger.info("Switch input: ABC → %s", src_id)
-                        break
-            if target_src:
-                TISSelectInputSource(target_src)
-            else:
-                logger.warning("No Chinese input source found to switch to")
-        else:
-            # Currently not ABC → switch to ABC
-            self._switch_to_abc_keyboard()
+        for key_code, is_down, flags in steps:
+            event = CGEventCreateKeyboardEvent(self.source, key_code, is_down)
+            if flags:
+                CGEventSetFlags(event, flags)
+            CGEventPost(kCGHIDEventTap, event)
+        logger.info("Requested input method switch with Control+Space")
 
     def stop(self):
         """Stop the input handler"""
@@ -666,68 +509,11 @@ class InputHandler:
             flags |= kCGEventFlagMaskControl
         payload_flags = flags
 
-        # Map from Web KeyboardEvent.code (physical key) to macOS keyCode.
-        # This is more reliable than keyCode or key values because 'code'
-        # represents the physical key location (USB HID Usage) which is
-        # consistent across platforms.
-        code_map = {
-            # Letters
-            'KeyA': 0, 'KeyB': 11, 'KeyC': 8, 'KeyD': 2, 'KeyE': 14,
-            'KeyF': 3, 'KeyG': 5, 'KeyH': 4, 'KeyI': 34, 'KeyJ': 38,
-            'KeyK': 40, 'KeyL': 37, 'KeyM': 46, 'KeyN': 45, 'KeyO': 31,
-            'KeyP': 35, 'KeyQ': 12, 'KeyR': 15, 'KeyS': 1, 'KeyT': 17,
-            'KeyU': 32, 'KeyV': 9, 'KeyW': 13, 'KeyX': 7, 'KeyY': 16,
-            'KeyZ': 6,
-            # Digits
-            'Digit0': 29, 'Digit1': 18, 'Digit2': 19, 'Digit3': 20,
-            'Digit4': 21, 'Digit5': 23, 'Digit6': 22, 'Digit7': 26,
-            'Digit8': 28, 'Digit9': 25,
-            # Function keys
-            'F1': 122, 'F2': 120, 'F3': 99, 'F4': 118, 'F5': 96,
-            'F6': 97, 'F7': 98, 'F8': 100, 'F9': 101, 'F10': 109,
-            'F11': 103, 'F12': 111,
-            'F13': 105, 'F14': 107, 'F15': 113, 'F16': 106,
-            'F17': 64, 'F18': 79, 'F19': 80, 'F20': 90,
-            # Control / navigation
-            'Enter': 36, 'NumpadEnter': 36,
-            'Escape': 53,
-            'Backspace': 51,
-            'Tab': 48,
-            'Space': 49,
-            'ArrowUp': 126, 'ArrowDown': 125,
-            'ArrowLeft': 123, 'ArrowRight': 124,
-            'ControlLeft': 59, 'ControlRight': 62,
-            'AltLeft': 58, 'AltRight': 61,
-            'ShiftLeft': 56, 'ShiftRight': 60,
-            'MetaLeft': 55, 'MetaRight': 54,
-            'CapsLock': 57,
-            'Delete': 117,
-            'Home': 115, 'End': 119,
-            'PageUp': 116, 'PageDown': 121,
-            'Insert': 114,
-            'ContextMenu': 119,
-            # Punctuation / symbols
-            'Period': 47, 'Comma': 43, 'Semicolon': 41,
-            'Quote': 39, 'Slash': 44, 'Backslash': 42,
-            'BracketLeft': 33, 'BracketRight': 30,
-            'Backquote': 50, 'Minus': 27, 'Equal': 24,
-            'IntlBackslash': 42,
-            # Numpad
-            'Numpad0': 82, 'Numpad1': 83, 'Numpad2': 84, 'Numpad3': 85,
-            'Numpad4': 86, 'Numpad5': 87, 'Numpad6': 88, 'Numpad7': 89,
-            'Numpad8': 91, 'Numpad9': 92,
-            'NumpadMultiply': 67, 'NumpadAdd': 69,
-            'NumpadSubtract': 78, 'NumpadDecimal': 65,
-            'NumpadDivide': 75, 'NumpadEqual': 81,
-            'NumpadClear': 71, 'NumLock': 71,
-            'NumpadComma': 65,
-        }
-
         # Determine key code: prefer 'code' (physical key), then 'key' name,
         # then single-char fallback.
         mapped = False
-        if code in code_map:
-            key_code = code_map[code]
+        if code in MAC_KEY_CODE_BY_DOM_CODE:
+            key_code = MAC_KEY_CODE_BY_DOM_CODE[code]
             mapped = True
         elif key_char in key_map:
             key_code = key_map[key_char]
