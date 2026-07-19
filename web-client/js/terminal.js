@@ -235,6 +235,13 @@ const TerminalPanel = {
   socketStatusBaseText: '',
   socketStatusKind: '',
   transportName: 'unknown',
+  preferredTransport: localStorage.getItem('wrdTerminalTransport') || 'socketio',
+  webrtcCapability: { available: false, reason: 'unknown' },
+  webrtcPc: null,
+  webrtcDc: null,
+  webrtcReady: false,
+  webrtcOutputReady: false,
+  webrtcState: 'idle',
   terminalSocketLatency: createLatencySeries(),
   terminalInputAckLatency: createLatencySeries(),
   terminalServerProcessLatency: createLatencySeries(),
@@ -260,6 +267,11 @@ const TerminalPanel = {
     this.cacheElements();
     if (!this.elements.root) return;
     this.bindEvents();
+    if (this.elements.transportSelect) {
+      this.elements.transportSelect.value = this.preferredTransport === 'webrtc-turn'
+        ? 'webrtc-turn'
+        : 'socketio';
+    }
     this.render();
   },
 
@@ -281,6 +293,9 @@ const TerminalPanel = {
       composer: document.getElementById('terminalComposer'),
       composerSubmit: document.getElementById('terminalComposerSubmit'),
       composerHint: document.getElementById('terminalComposerHint'),
+      transportSelect: document.getElementById('terminalTransportSelect'),
+      transportStatus: document.getElementById('terminalTransportStatus'),
+      transportTestBtn: document.getElementById('terminalTransportTestBtn'),
     };
   },
 
@@ -295,6 +310,14 @@ const TerminalPanel = {
     this.elements.composer?.addEventListener('input', () => this.handleComposerInput());
     this.elements.composer?.addEventListener('keydown', (event) => this.handleComposerKeydown(event));
     this.elements.composerSubmit?.addEventListener('click', () => this.submitComposer());
+    this.elements.transportSelect?.addEventListener('change', (event) => {
+      this.setPreferredTransport(event.target.value);
+    });
+    this.elements.transportTestBtn?.addEventListener('click', () => {
+      this.testPreferredTransport().catch((err) => {
+        this.setTransportStatus(`传输测试失败：${err?.message || err}`, 'error');
+      });
+    });
     window.addEventListener('resize', () => {
       this.fitActiveTerminal();
       this.scheduleFitActiveTerminal();
@@ -451,7 +474,9 @@ const TerminalPanel = {
     this.socket.on('connect', () => {
       this.resetEchoControllers('reconnect');
       this.socketState = 'connected';
-      this.setTransportName(this.socket.io?.engine?.transport?.name || 'websocket');
+      if (this.preferredTransport !== 'webrtc-turn') {
+        this.setTransportName(this.socket.io?.engine?.transport?.name || 'websocket');
+      }
       this.attachedSessionIds.clear();
       this.pendingAttachSessionIds.clear();
       this.pendingCloseSessionIds.clear();
@@ -459,16 +484,26 @@ const TerminalPanel = {
       this.startLatencyProbeLoop();
       if (typeof this.socket.io?.engine?.on === 'function') {
         this.socket.io.engine.on('upgrade', (transport) => {
-          this.setTransportName(transport?.name || this.transportName || 'unknown');
+          if (this.preferredTransport !== 'webrtc-turn') {
+            this.setTransportName(transport?.name || this.transportName || 'unknown');
+          }
           this.refreshStatus();
         });
       }
       this.socket.emit('terminal:list', {});
+      if (this.preferredTransport === 'webrtc-turn') {
+        this.startWebRtcTransport().catch((err) => {
+          this.setTransportStatus(`TURN DataChannel 建立失败：${err?.message || err}`, 'error');
+        });
+      } else {
+        this.setTransportStatus('使用 Socket.IO 传输', 'connected');
+      }
       this.render();
     });
     this.socket.on('disconnect', () => {
       this.resetEchoControllers('disconnect');
       this.socketState = 'disconnected';
+      this.stopWebRtcTransport('socket-disconnect');
       this.stopLatencyProbeLoop();
       this.pendingInputAcks.clear();
       this.pendingComposerInputIdsBySession.clear();
@@ -513,6 +548,11 @@ const TerminalPanel = {
     this.socket.on('terminal:attached', handleSessionAttached);
     this.socket.on('terminal:output', (payload, acknowledge) => {
       try {
+        // While TURN DC output is preferred and healthy, suppress Socket.IO output
+        // to avoid double-writing the same PTY bytes.
+        if (this.shouldPreferWebRtcOutput(payload.sessionId)) {
+          return;
+        }
         const session = this.state.getSession(payload.sessionId);
         if (session?.processStatus === 'starting') {
           this.state.updateSession(payload.sessionId, { processStatus: 'running' });
@@ -525,6 +565,33 @@ const TerminalPanel = {
     });
     this.socket.on('terminal:input_ack', (payload) => {
       this.handleInputAck(payload);
+    });
+    this.socket.on('terminal:webrtc_capability', (payload = {}) => {
+      this.webrtcCapability = {
+        available: payload.available === true,
+        reason: payload.reason || (payload.available ? 'ready' : 'unavailable'),
+        iceTransportPolicy: payload.iceTransportPolicy || 'relay',
+      };
+      if (this.elements.transportSelect) {
+        const webrtcOption = this.elements.transportSelect.querySelector('option[value="webrtc-turn"]');
+        if (webrtcOption) {
+          webrtcOption.disabled = !this.webrtcCapability.available;
+        }
+      }
+      if (!this.webrtcCapability.available && this.preferredTransport === 'webrtc-turn') {
+        this.setTransportStatus(`TURN DataChannel 不可用：${this.webrtcCapability.reason}`, 'error');
+      }
+    });
+    this.socket.on('terminal:webrtc_ice', async (payload = {}) => {
+      if (!this.webrtcPc || !payload?.candidate) return;
+      try {
+        await this.webrtcPc.addIceCandidate({
+          candidate: payload.candidate,
+          sdpMid: payload.mid || '0',
+        });
+      } catch (error) {
+        console.warn('[terminal] addIceCandidate failed', error);
+      }
     });
     this.socket.on('terminal:pong', (payload) => {
       this.handleLatencyPong(payload);
@@ -625,13 +692,272 @@ const TerminalPanel = {
     if (options.optimisticEcho) {
       this.applyOptimisticLocalEcho(sessionId, data);
     }
+
+    if (this.preferredTransport === 'webrtc-turn' && this.webrtcReady && this.webrtcDc?.readyState === 'open') {
+      try {
+        this.webrtcDc.send(JSON.stringify({
+          t: 'in',
+          sid: sessionId,
+          data,
+          inputId,
+          clientSentAt,
+        }));
+        return { inputId, clientSentAt, path: 'webrtc-turn' };
+      } catch (error) {
+        this.setTransportStatus(`TURN DataChannel 发送失败：${error?.message || error}`, 'error');
+        // Explicit policy: do not silently fall back to socketio.
+        return null;
+      }
+    }
+
     this.socket.emit('terminal:input', {
       sessionId,
       data,
       inputId,
       clientSentAt,
     });
-    return { inputId, clientSentAt };
+    return { inputId, clientSentAt, path: 'socketio' };
+  },
+
+  setPreferredTransport(mode) {
+    const next = mode === 'webrtc-turn' ? 'webrtc-turn' : 'socketio';
+    this.preferredTransport = next;
+    localStorage.setItem('wrdTerminalTransport', next);
+    if (this.elements.transportSelect) {
+      this.elements.transportSelect.value = next;
+    }
+    if (next === 'webrtc-turn') {
+      this.startWebRtcTransport().catch((err) => {
+        this.setTransportStatus(`TURN DataChannel 不可用：${err?.message || err}`, 'error');
+      });
+    } else {
+      this.stopWebRtcTransport('switch-to-socketio');
+      this.setTransportName(this.socket?.io?.engine?.transport?.name || 'websocket');
+      this.setTransportStatus('使用 Socket.IO 传输', 'connected');
+    }
+    this.refreshStatus();
+  },
+
+  setTransportStatus(text, kind = '') {
+    if (this.elements.transportStatus) {
+      this.elements.transportStatus.textContent = text;
+      this.elements.transportStatus.dataset.state = kind || '';
+    }
+  },
+
+  stopWebRtcTransport(reason = 'stop') {
+    this.webrtcReady = false;
+    this.webrtcOutputReady = false;
+    this.webrtcState = 'idle';
+    try { this.webrtcDc?.close?.(); } catch (_err) { /* ignore */ }
+    try { this.webrtcPc?.close?.(); } catch (_err) { /* ignore */ }
+    this.webrtcDc = null;
+    this.webrtcPc = null;
+    if (this.socket?.connected) {
+      this.socket.emit('terminal:webrtc_close', { reason });
+    }
+  },
+
+  shouldPreferWebRtcOutput(sessionId) {
+    if (this.preferredTransport !== 'webrtc-turn') return false;
+    if (!this.webrtcReady || !this.webrtcOutputReady) return false;
+    if (!this.webrtcDc || this.webrtcDc.readyState !== 'open') return false;
+    const activeId = this.state.activeSessionId();
+    if (sessionId && activeId && sessionId !== activeId) {
+      // Only suppress for the active bound session; other sessions keep Socket.IO.
+      return false;
+    }
+    return true;
+  },
+
+  async startWebRtcTransport() {
+    if (!this.socket?.connected) {
+      throw new Error('terminal socket not connected');
+    }
+    if (!this.webrtcCapability?.available) {
+      throw new Error(this.webrtcCapability?.reason || 'webrtc-turn unavailable');
+    }
+    if (typeof RTCPeerConnection === 'undefined') {
+      throw new Error('RTCPeerConnection unavailable');
+    }
+
+    this.stopWebRtcTransport('restart');
+    this.webrtcState = 'connecting';
+    this.setTransportStatus('正在建立 TURN DataChannel…', 'warning');
+
+    // Reuse desktop TURN iceServers from WebRTC config when present.
+    let iceServers = [];
+    if (typeof WebRTC !== 'undefined') {
+      if (!WebRTC.serverConfig) {
+        await WebRTC.loadServerConfig?.();
+      }
+      iceServers = (WebRTC.serverConfig?.iceServers || []).filter((server) => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        return urls.some((url) => /^turns?:/i.test(String(url || '')));
+      });
+    }
+    if (!iceServers.length) {
+      throw new Error('TURN iceServers unavailable');
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceTransportPolicy: 'relay',
+    });
+    this.webrtcPc = pc;
+    const dc = pc.createDataChannel('terminal', { ordered: true });
+    this.webrtcDc = dc;
+
+    dc.onopen = () => {
+      this.webrtcReady = true;
+      this.webrtcOutputReady = false;
+      this.webrtcState = 'connected';
+      this.setTransportName('webrtc-turn');
+      this.setTransportStatus('TURN DataChannel 已连接', 'connected');
+      try {
+        dc.send(JSON.stringify({
+          t: 'bind',
+          clientId: this.getBrowserSessionId(),
+          sid: this.state.activeSessionId() || '',
+          preferDcOutput: true,
+        }));
+      } catch (_err) { /* ignore */ }
+      this.refreshStatus();
+    };
+    dc.onclose = () => {
+      this.webrtcReady = false;
+      this.webrtcOutputReady = false;
+      this.webrtcState = 'closed';
+      if (this.preferredTransport === 'webrtc-turn') {
+        this.setTransportStatus('TURN DataChannel 已断开（未静默回退 Socket.IO）', 'error');
+      }
+      this.refreshStatus();
+    };
+    dc.onmessage = (event) => {
+      this.handleWebRtcMessage(event.data);
+    };
+
+    pc.onicecandidate = (event) => {
+      if (!event.candidate || !this.socket?.connected) return;
+      this.socket.emit('terminal:webrtc_ice', {
+        candidate: event.candidate.candidate,
+        mid: event.candidate.sdpMid || '0',
+      });
+    };
+
+    const answerWaiter = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('webrtc answer timeout')), 10000);
+      const onAnswer = (payload) => {
+        clearTimeout(timer);
+        this.socket.off('terminal:webrtc_answer', onAnswer);
+        resolve(payload);
+      };
+      this.socket.on('terminal:webrtc_answer', onAnswer);
+    });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    this.socket.emit('terminal:webrtc_offer', {
+      offer: { type: offer.type, sdp: offer.sdp },
+    });
+    const answer = await answerWaiter;
+    await pc.setRemoteDescription({
+      type: answer.type || 'answer',
+      sdp: answer.sdp || answer,
+    });
+    return true;
+  },
+
+  handleWebRtcMessage(raw) {
+    let message = raw;
+    if (typeof raw === 'string') {
+      try { message = JSON.parse(raw); } catch (_err) { return; }
+    }
+    const type = String(message?.t || '');
+    if (type === 'pong') {
+      // Reuse existing latency machinery with synthetic payload.
+      this.handleLatencyPong({
+        nonce: message.echo || null,
+        clientSentAt: Number(message.echo) || null,
+        serverReceivedAt: Number(message.ts) || Date.now(),
+        serverSentAt: Number(message.ts) || Date.now(),
+        transport: 'webrtc-turn',
+      });
+      return;
+    }
+    if (type === 'ack') {
+      this.handleInputAck({
+        sessionId: message.sid,
+        inputId: message.inputId,
+        clientSentAt: null,
+        serverReceivedAt: Date.now(),
+        serverSentAt: Date.now(),
+        transport: 'webrtc-turn',
+        serverProcessMs: message.serverProcessMs,
+      });
+      return;
+    }
+    if (type === 'out') {
+      const sessionId = message.sid || this.state.activeSessionId();
+      if (!sessionId) return;
+      const session = this.state.getSession(sessionId);
+      if (session?.processStatus === 'starting') {
+        this.state.updateSession(sessionId, { processStatus: 'running' });
+        this.render();
+      }
+      this.writeOutput(sessionId, message.data || '');
+      return;
+    }
+    if (type === 'output_bound') {
+      this.webrtcOutputReady = true;
+      this.setTransportStatus('TURN DataChannel 输入/输出已绑定', 'connected');
+      return;
+    }
+    if (type === 'output_fallback') {
+      this.webrtcOutputReady = false;
+      this.setTransportStatus('TURN 输出失败，已恢复 Socket.IO 输出（输入仍保持 TURN 策略）', 'warning');
+      return;
+    }
+    if (type === 'exit') {
+      const sessionId = message.sid || this.state.activeSessionId();
+      if (!sessionId) return;
+      this.state.updateSession(sessionId, {
+        processStatus: normalizeProcessStatus(
+          message.processStatus,
+          message.exitCode != null ? 'exited' : 'failed',
+        ),
+      });
+      this.writeOutput(
+        sessionId,
+        `\r\n[process exited: ${message.exitCode ?? ''} ${message.signal || ''}]\r\n`,
+      );
+      this.render();
+      return;
+    }
+    if (type === 'error') {
+      this.setTransportStatus(`TURN 传输错误：${message.code || message.message || 'unknown'}`, 'error');
+      return;
+    }
+    if (type === 'ready' || type === 'bound') {
+      this.webrtcReady = true;
+      if (message.output) this.webrtcOutputReady = true;
+      this.setTransportStatus('TURN DataChannel 就绪', 'connected');
+    }
+  },
+
+  async testPreferredTransport() {
+    if (this.preferredTransport !== 'webrtc-turn') {
+      this.setTransportStatus('当前为 Socket.IO；可用延迟探针验证连接', 'connected');
+      return { ok: true, transport: 'socketio' };
+    }
+    await this.startWebRtcTransport();
+    if (!this.webrtcDc || this.webrtcDc.readyState !== 'open') {
+      throw new Error('datachannel not open');
+    }
+    const ts = Date.now();
+    this.webrtcDc.send(JSON.stringify({ t: 'ping', ts }));
+    this.setTransportStatus('已发送 TURN ping', 'warning');
+    return { ok: true, transport: 'webrtc-turn' };
   },
 
   makeCreateRequestId() {

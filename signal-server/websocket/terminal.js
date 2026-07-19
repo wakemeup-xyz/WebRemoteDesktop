@@ -3,6 +3,7 @@ const { verifyAccessToken } = require('../lib/auth');
 const { createTerminalSessionManager } = require('../lib/terminal/session-manager');
 const { createTerminalAudit } = require('../lib/terminal/audit');
 const { TerminalMetrics } = require('../lib/terminal/metrics');
+const { createTerminalWebRtcGateway } = require('../lib/terminal/webrtc-gateway');
 
 function getToken(socket) {
   return socket.handshake?.auth?.token || null;
@@ -43,6 +44,13 @@ function setupTerminal(io, options = {}) {
     metrics,
   });
   const metricNow = typeof options.metricNow === 'function' ? options.metricNow : () => performance.now();
+  const webrtcGateway = options.webrtcGateway || createTerminalWebRtcGateway({
+    config,
+    logger: options.logger || console,
+    audit,
+    sessionManager,
+    metricNow,
+  });
 
   const terminalNamespace = io.of('/terminal');
   let idleReaperTimer = null;
@@ -387,6 +395,7 @@ function setupTerminal(io, options = {}) {
     const initialSnapshot = sessionManager.getPoolSnapshot();
     socket.emit('terminal:pool_snapshot', initialSnapshot);
     socket.emit('terminal:snapshot', initialSnapshot);
+    socket.emit('terminal:webrtc_capability', webrtcGateway.capability());
 
     socket.on('terminal:list', () => {
       const snapshot = sessionManager.getPoolSnapshot();
@@ -498,6 +507,51 @@ function setupTerminal(io, options = {}) {
       }
     });
 
+    socket.on('terminal:webrtc_offer', (payload = {}) => {
+      try {
+        webrtcGateway.acceptOffer({
+          socketId,
+          clientId,
+          offer: payload.offer || payload,
+          onLocalDescription: (desc) => {
+            socket.emit('terminal:webrtc_answer', {
+              type: desc.type,
+              sdp: desc.sdp,
+            });
+          },
+          onLocalCandidate: (candidate) => {
+            socket.emit('terminal:webrtc_ice', candidate);
+          },
+        });
+        metrics.recordCounter('webrtc_offer_accepted');
+        audit.info('terminal_webrtc_offer_accepted', {
+          socketId,
+          clientId,
+          subject: user?.sub || '',
+        });
+      } catch (err) {
+        metrics.recordCounter('webrtc_offer_rejected');
+        audit.warn('terminal_webrtc_offer_rejected', {
+          socketId,
+          clientId,
+          code: err.code || 'terminal_webrtc_offer_failed',
+          message: err.message,
+        });
+        socket.emit('terminal:error', {
+          code: err.code || 'terminal_webrtc_offer_failed',
+          message: err.message,
+        });
+      }
+    });
+
+    socket.on('terminal:webrtc_ice', (payload = {}) => {
+      webrtcGateway.addRemoteCandidate(socketId, payload);
+    });
+
+    socket.on('terminal:webrtc_close', () => {
+      webrtcGateway.closePeer(socketId, 'client-close');
+    });
+
     socket.on('terminal:resize', (payload = {}) => {
       if (!requireAttachedSession(payload.sessionId, 'terminal_resize_rejected')) {
         return;
@@ -545,6 +599,7 @@ function setupTerminal(io, options = {}) {
 
     socket.on('disconnect', () => {
       metrics.recordCounter('socket_disconnected');
+      webrtcGateway.closePeer(socketId, 'socket-disconnect');
       const disconnected = sessionManager.handleSocketDisconnect({
         clientId,
         socketId,
@@ -567,9 +622,11 @@ function setupTerminal(io, options = {}) {
     namespace: terminalNamespace,
     sessionManager,
     metrics,
+    webrtcGateway,
     close() {
       if (idleReaperTimer) clearInterval(idleReaperTimer);
       idleReaperTimer = null;
+      webrtcGateway.closeAll('setup-close');
     },
   };
 }
