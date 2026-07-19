@@ -408,7 +408,6 @@ const TerminalPanel = {
           this.refreshStatus();
         });
       }
-      this.reattachSessions();
       this.socket.emit('terminal:list', {});
       this.render();
     });
@@ -631,18 +630,6 @@ const TerminalPanel = {
       if (typeof element?.blur === 'function') {
         element.blur();
       }
-    });
-  },
-
-  reattachSessions() {
-    if (!this.socket?.connected) return;
-    const lastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    if (lastActive && this.state.getSession(lastActive)) {
-      this.requestAttachSession(lastActive);
-      return;
-    }
-    this.state.getSessions().forEach((session) => {
-      this.requestAttachSession(session.sessionId);
     });
   },
 

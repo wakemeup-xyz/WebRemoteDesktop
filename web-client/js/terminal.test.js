@@ -333,19 +333,43 @@ test('TerminalPanel requires admin authorization before opening a socket', () =>
   assert.equal(elements.get('terminalStatus').textContent, '需要 admin 授权');
 });
 
-test('TerminalPanel reconnect reattaches existing sessions by original session id', () => {
-  const { TerminalPanel, fakeSocket, socketHandlers, emitted, sessionStorageMap, tokenKey } = loadTerminal();
+test('TerminalPanel reconnect waits for a fresh pool snapshot before attaching a live preferred session', () => {
+  const {
+    TerminalPanel,
+    fakeSocket,
+    socketHandlers,
+    emitted,
+    sessionStorageMap,
+    localStorageMap,
+    tokenKey,
+  } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');
   TerminalPanel.cacheElements();
-  TerminalPanel.ensureSession({ sessionId: 'term_keep', title: 'Build shell' });
+  TerminalPanel.ensureSession({ sessionId: 'term_stale', title: 'Stale shell' });
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term_stale');
 
   TerminalPanel.connectSocket();
   fakeSocket.connected = true;
   socketHandlers.get('connect')();
 
+  assert.equal(emitted.filter((item) => item.event === 'terminal:list').length, 1);
+  assert.equal(emitted.filter((item) => item.event === 'terminal:attach_session').length, 0);
+
+  socketHandlers.get('terminal:pool_snapshot')({ sessions: [], defaultSessionId: null });
+  assert.equal(TerminalPanel.state.getSession('term_stale'), null);
+  assert.equal(emitted.filter((item) => item.event === 'terminal:attach_session').length, 0);
+
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term_live');
+  const liveSnapshot = {
+    sessions: [{ sessionId: 'term_live', title: 'Live shell' }],
+    defaultSessionId: 'term_live',
+  };
+  socketHandlers.get('terminal:pool_snapshot')(liveSnapshot);
+  socketHandlers.get('terminal:snapshot')(liveSnapshot);
+
   assert.deepEqual(
     emitted.filter((item) => item.event === 'terminal:attach_session').map((item) => item.payload.sessionId),
-    ['term_keep']
+    ['term_live'],
   );
 });
 
@@ -883,6 +907,12 @@ test('TerminalPanel persists the last active shared session id and reattaches on
   TerminalPanel.connectSocket();
   fakeSocket.connected = true;
   socketHandlers.get('connect')();
+
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:attach_session'), false);
+  socketHandlers.get('terminal:pool_snapshot')({
+    sessions: [{ sessionId: 'term_keep', title: 'Shared shell' }],
+    defaultSessionId: 'term_keep',
+  });
 
   assert.equal(emitted.some((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_keep'), true);
 });
