@@ -5,6 +5,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+import hashlib
 import json
 import socketio
 import requests
@@ -16,7 +17,6 @@ import subprocess
 import io
 import os
 import resource
-import sys
 from mss import mss as MSS
 import numpy as np
 import av
@@ -188,6 +188,82 @@ def is_strict_stun_policy():
     return media_policy == "strict-stun"
 
 
+def normalize_network_mode(mode):
+    value = str(mode or "").strip().lower()
+    if value in {"lan", "auto", "stun", "relay", "tunnel"}:
+        return value
+    return ""
+
+
+def should_include_turn_for_mode(mode):
+    """Session-scoped TURN: always on for relay; optional for auto; never for lan/stun/tunnel."""
+    normalized = normalize_network_mode(mode)
+    if normalized == "relay":
+        return True
+    if normalized in {"lan", "stun", "tunnel"}:
+        return False
+    # auto / unknown: include TURN only when not under strict-stun default policy
+    return not is_strict_stun_policy()
+
+
+def normalize_turn_url(url):
+    """Match signal-server normalizeTurnUrl so env/json fingerprints agree."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    match = re.match(r"^(turns?):([^?]+)(?:\?(.*))?$", raw, flags=re.IGNORECASE)
+    if not match:
+        return raw
+    scheme = match.group(1).lower()
+    host_port = match.group(2).strip()
+    query = match.group(3) or ""
+    transport = "udp"
+    for part in query.split("&"):
+        if not part:
+            continue
+        key, _, value = part.partition("=")
+        if key.strip().lower() == "transport" and value.strip():
+            candidate = value.strip().lower()
+            transport = candidate if candidate in {"udp", "tcp"} else "udp"
+            break
+    return f"{scheme}:{host_port}?transport={transport}"
+
+
+def normalize_turn_urls(value):
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value if str(item or "").strip()]
+    else:
+        items = split_env_list(value)
+    normalized = []
+    for item in items:
+        url = normalize_turn_url(item)
+        if url and url not in normalized:
+            normalized.append(url)
+    return normalized
+
+
+def get_turn_fingerprint(turn_urls=None, username=None):
+    raw_urls = turn_urls if turn_urls is not None else os.environ.get("TURN_URLS")
+    urls = sorted(normalize_turn_urls(raw_urls))
+    user = str(username if username is not None else os.environ.get("TURN_USERNAME") or "").strip()
+    if not urls:
+        return ""
+    material = f"{','.join(urls)}|{user}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def get_host_turn_capability():
+    turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
+    turn_username = str(os.environ.get("TURN_USERNAME") or "").strip()
+    turn_credential = str(os.environ.get("TURN_CREDENTIAL") or "").strip()
+    turn_ready = bool(turn_urls and turn_username and turn_credential)
+    return {
+        "turnReady": turn_ready,
+        "turnFingerprint": get_turn_fingerprint(turn_urls, turn_username) if turn_ready else "",
+        "supportsSessionTurn": True,
+    }
+
+
 def format_diag_value(value):
     if isinstance(value, (dict, list, tuple)):
         try:
@@ -205,8 +281,8 @@ def clamp_int(value, minimum, maximum, fallback):
     return max(minimum, min(maximum, parsed))
 
 
-def build_ice_servers():
-    """Build Host ICE config from env so external viewers can use TURN relay."""
+def build_ice_servers(mode="auto"):
+    """Build Host ICE config from env; TURN inclusion is session/mode scoped."""
     ice_servers = []
     stun_urls = split_env_list(
         os.environ.get("STUN_URLS", "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302")
@@ -214,15 +290,19 @@ def build_ice_servers():
     if stun_urls:
         ice_servers.append(RTCIceServer(urls=stun_urls))
 
-    turn_urls = split_env_list(os.environ.get("TURN_URLS"))
+    turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
     turn_username = os.environ.get("TURN_USERNAME")
     turn_credential = os.environ.get("TURN_CREDENTIAL")
-    if turn_urls and is_strict_stun_policy():
-        logger.warning(
-            "WRD_POLICY_WARNING turn_ignored_strict_stun turn_urls=%s",
+    include_turn = should_include_turn_for_mode(mode)
+    normalized_mode = normalize_network_mode(mode) or "auto"
+
+    if turn_urls and not include_turn:
+        logger.info(
+            "WRD_POLICY_INFO turn_omitted_for_mode mode=%s turn_urls=%s",
+            normalized_mode,
             ",".join(turn_urls),
         )
-    elif turn_urls and turn_username and turn_credential:
+    elif turn_urls and turn_username and turn_credential and include_turn:
         ice_servers.append(
             RTCIceServer(
                 urls=turn_urls,
@@ -230,8 +310,13 @@ def build_ice_servers():
                 credential=turn_credential,
             )
         )
-        logger.info("TURN relay configured for Host ICE: %s", ",".join(turn_urls))
-    elif turn_urls:
+        logger.info(
+            "TURN relay configured for Host ICE: mode=%s urls=%s fingerprint=%s",
+            normalized_mode,
+            ",".join(turn_urls),
+            get_turn_fingerprint(turn_urls, turn_username)[:12],
+        )
+    elif turn_urls and include_turn:
         logger.warning("TURN_URLS is set but TURN_USERNAME/TURN_CREDENTIAL is missing; TURN disabled")
 
     return ice_servers
@@ -1137,6 +1222,16 @@ class WebRemoteHost:
                 auth={"token": self.token, "role": "host", "inputProtocolVersion": 2},
             )
             logger.info("Connected to signaling server")
+            try:
+                capability = get_host_turn_capability()
+                await self.sio.emit("host-capabilities", capability)
+                logger.info(
+                    "Host capabilities reported turnReady=%s fingerprint=%s",
+                    capability.get("turnReady"),
+                    (capability.get("turnFingerprint") or "")[:12] or "-",
+                )
+            except Exception as cap_err:
+                logger.warning("Failed to report host capabilities: %s", cap_err)
             return True
         except Exception as e:
             logger.error(f"Connection failed: {e}")
@@ -1624,8 +1719,9 @@ class WebRemoteHost:
                         return
                     self._active_input_binding = binding
 
-                # Create peer connection
-                config = RTCConfiguration(iceServers=build_ice_servers())
+                # Create peer connection with session-scoped ICE (relay always allows TURN)
+                network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
+                config = RTCConfiguration(iceServers=build_ice_servers(network_mode))
                 self.pc = RTCPeerConnection(configuration=config)
 
                 # Setup handlers BEFORE setting local description

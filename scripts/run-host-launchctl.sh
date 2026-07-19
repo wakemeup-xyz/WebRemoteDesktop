@@ -16,6 +16,12 @@ if [ -f "$PROJECT_DIR/signal-server/.env" ]; then
   set +a
 fi
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib-turn-env.sh"
+# Must run in-process (not command-substitution) so TURN_* exports stick.
+wrd_turn_export_for_host >/dev/null
+TURN_ENV_SUMMARY="${TURN_ENV_SUMMARY:-TURN env: configured=0 source=none}"
+
 export SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
 export WRD_HOST_LOG_FILE="$HOST_RUNTIME_LOG"
 export PYTHONPATH="/Users/macstudio1/.homebrew/lib/python3.11/site-packages:/Users/macstudio1/Library/Python/3.11/lib/python/site-packages${PYTHONPATH:+:$PYTHONPATH}"
@@ -69,6 +75,8 @@ wait_for_host_auth() {
 cd "$PROJECT_DIR/python-host"
 trim_launch_log
 echo "=== LaunchAgent starting host ===" >> "$LOG_FILE"
+echo "$TURN_ENV_SUMMARY" >> "$LOG_FILE"
+
 if ! wait_for_signal_server; then
   echo "Signal server health check failed: $HEALTH_URL" >> "$LOG_FILE"
   exit 0

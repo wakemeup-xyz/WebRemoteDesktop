@@ -116,6 +116,8 @@ def test_turn_env_is_ignored_under_strict_stun_policy(monkeypatch):
     monkeypatch.setenv("TURN_URLS", "turn:relay.example.com:3478")
     monkeypatch.setenv("TURN_USERNAME", "user")
     monkeypatch.setenv("TURN_CREDENTIAL", "secret")
+    monkeypatch.delenv("WRD_MEDIA_POLICY", raising=False)
+    monkeypatch.delenv("MEDIA_POLICY", raising=False)
 
     handler = ListHandler()
     logger = logging.getLogger("host")
@@ -124,15 +126,44 @@ def test_turn_env_is_ignored_under_strict_stun_policy(monkeypatch):
     logger.setLevel(logging.INFO)
 
     try:
-        ice_servers = build_ice_servers()
+        ice_servers = build_ice_servers("auto")
     finally:
         logger.removeHandler(handler)
         logger.setLevel(original_level)
 
     messages = [record.getMessage() for record in handler.records]
-    assert any("WRD_POLICY_WARNING turn_ignored_strict_stun" in msg for msg in messages)
+    assert any("WRD_POLICY_INFO turn_omitted_for_mode" in msg for msg in messages)
     assert len(ice_servers) == 1
     assert all("turn:" not in repr(server) for server in ice_servers)
+
+
+def test_turn_env_is_included_for_relay_even_under_strict_stun(monkeypatch):
+    monkeypatch.setenv("TURN_URLS", "turn:relay.example.com:3478")
+    monkeypatch.setenv("TURN_USERNAME", "user")
+    monkeypatch.setenv("TURN_CREDENTIAL", "secret")
+    monkeypatch.setenv("WRD_MEDIA_POLICY", "strict-stun")
+
+    ice_servers = build_ice_servers("relay")
+    assert len(ice_servers) >= 2
+    assert any("turn:" in repr(server) for server in ice_servers)
+
+
+def test_turn_fingerprint_matches_node_normalization_vector(monkeypatch):
+    from host import get_turn_fingerprint, normalize_turn_url
+
+    assert normalize_turn_url("turn:relay.example.com:3478") == (
+        "turn:relay.example.com:3478?transport=udp"
+    )
+    bare = get_turn_fingerprint(
+        ["turn:relay.example.com:3478"],
+        "user",
+    )
+    with_query = get_turn_fingerprint(
+        ["turn:relay.example.com:3478?transport=udp"],
+        "user",
+    )
+    assert bare == with_query
+    assert len(bare) == 64
 
 
 @pytest.mark.asyncio
