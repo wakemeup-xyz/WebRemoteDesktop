@@ -752,16 +752,23 @@ test('failed registration cleanup is quarantined and one scheduled retry restore
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
 });
 
-test('failed scheduled quarantine retry retains the PTY reference without rescheduling', () => {
+test('failed scheduled quarantine cleanup retries with bounded backoff until capacity is restored', () => {
   const timers = [];
   const pty = createFakePty();
   pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  let cleanupCanSucceed = false;
+  let ptyFactoryCalls = 0;
   pty.kill = function kill(signal) {
     this.killCalls.push(signal);
-    throw new Error('cleanup SECRET_VALUE');
+    if (!cleanupCanSucceed) {
+      throw new Error('cleanup SECRET_VALUE');
+    }
   };
   const manager = createTerminalSessionManager({
-    ptyFactory: () => pty,
+    ptyFactory() {
+      ptyFactoryCalls += 1;
+      return ptyFactoryCalls === 1 ? pty : createFakePty();
+    },
     setTimeout(handler, delay) {
       const timer = { handler, delay, unref() {} };
       timers.push(timer);
@@ -787,11 +794,18 @@ test('failed scheduled quarantine retry retains the PTY reference without resche
   assert.equal(manager._getCleanupPendingCount(), 1);
   assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 0);
   assert.equal(timers.filter((timer) => timer.delay === 1000).length, 1);
+  assert.equal(timers.filter((timer) => timer.delay === 2000).length, 1);
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP']);
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-b' }),
-    (error) => error.code === 'terminal_session_limit',
-  );
+
+  cleanupCanSucceed = true;
+  timers.find((timer) => timer.delay === 2000).handler();
+
+  assert.equal(manager._getCleanupPendingCount(), 0);
+  assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 1);
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP']);
+  const created = manager.createSession({ clientId: 'browser-b' });
+  assert.ok(created.sessionId);
+  assert.equal(manager.listSessions().length, 1);
 });
 
 test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', () => {

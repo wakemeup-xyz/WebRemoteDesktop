@@ -793,6 +793,16 @@ test('terminal websocket records socket and input metrics once on the shared ins
     sessionId: created.sessionId,
     data: 'x'.repeat(65 * 1024),
   });
+  admin.trigger('terminal:client_metrics', {
+    name: 'socket_rtt_ms',
+    transport: 'websocket',
+    value: 42,
+  });
+  admin.trigger('terminal:client_metrics', {
+    name: 'input_ack_rtt_ms',
+    transport: 'polling',
+    value: 84,
+  });
   nowMs = 3;
   admin.trigger('disconnect');
 
@@ -803,6 +813,8 @@ test('terminal websocket records socket and input metrics once on the shared ins
   assert.equal(snapshot.counters.input_rate_limited, 1);
   assert.equal(snapshot.counters.input_rejected, 1);
   assert.equal(snapshot.latencies.server_input_process_ms.sampleCount, 2);
+  assert.equal(snapshot.transports.websocket.latencies.socket_rtt_ms.last, 42);
+  assert.equal(snapshot.transports.polling.latencies.input_ack_rtt_ms.last, 84);
   assert.equal(JSON.stringify(snapshot).includes('SECRET_INPUT'), false);
 });
 

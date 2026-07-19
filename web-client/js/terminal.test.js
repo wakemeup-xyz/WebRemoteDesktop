@@ -1304,14 +1304,16 @@ test('TerminalPanel records terminal latency state and suppresses duplicated rem
   assert.equal(diagnostic.pendingLocalEchoBytes, 0);
 });
 
-test('TerminalPanel measures input ack RTT in the browser clock and server processing separately', () => {
+test('TerminalPanel measures input ack RTT in the browser clock and reports transport metrics separately', () => {
   let now = 1120;
   class FakeDate extends Date {
     static now() {
       return now;
     }
   }
-  const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  const { TerminalPanel, emitted, fakeSocket } = loadTerminal({ Date: FakeDate });
+  fakeSocket.connected = true;
+  TerminalPanel.socket = fakeSocket;
   TerminalPanel.setTransportName('websocket');
   TerminalPanel.pendingInputAcks.set('input-skew', {
     sessionId: 'term-skew',
@@ -1330,6 +1332,10 @@ test('TerminalPanel measures input ack RTT in the browser clock and server proce
   assert.equal(diagnostic.inputAck.last, 120);
   assert.equal(diagnostic.serverProcess.last, 7);
   assert.equal(TerminalPanel.pendingInputAcks.has('input-skew'), false);
+  const inputMetric = emitted.find((entry) => entry.event === 'terminal:client_metrics');
+  assert.equal(inputMetric.payload.name, 'input_ack_rtt_ms');
+  assert.equal(inputMetric.payload.transport, 'websocket');
+  assert.equal(inputMetric.payload.value, 120);
 
   now = 1130;
 });
@@ -1340,7 +1346,9 @@ test('TerminalPanel socket RTT trusts the local pending probe instead of echoed 
       return 1120;
     }
   }
-  const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  const { TerminalPanel, emitted, fakeSocket } = loadTerminal({ Date: FakeDate });
+  fakeSocket.connected = true;
+  TerminalPanel.socket = fakeSocket;
   TerminalPanel.setTransportName('websocket');
   TerminalPanel.pendingLatencyProbes.set('ping-skew', 1000);
 
@@ -1353,6 +1361,10 @@ test('TerminalPanel socket RTT trusts the local pending probe instead of echoed 
   });
 
   assert.equal(TerminalPanel.getDiagnosticState().socketRtt.last, 120);
+  const socketMetric = emitted.find((entry) => entry.event === 'terminal:client_metrics');
+  assert.equal(socketMetric.payload.name, 'socket_rtt_ms');
+  assert.equal(socketMetric.payload.transport, 'websocket');
+  assert.equal(socketMetric.payload.value, 120);
 });
 
 test('TerminalPanel suppresses echoed input even when remote output starts with a control sequence', () => {

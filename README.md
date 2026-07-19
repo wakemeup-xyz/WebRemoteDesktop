@@ -267,7 +267,7 @@ http://127.0.0.1:8080
 - Terminal 进程状态分为 `starting/running/exited/failed/closed`；starting、exited、failed 不接受输入，也不会发送成功 ack。输出按 observer 独立限流，慢 observer 会单独 detach，PTY 和其他 observer 继续运行并可通过 replay 恢复
 - `WRD_TERMINAL_RECORD_IO=1` 只记录 metadata（字节数、chunk 数、延迟和状态），不记录原始命令、密码或完整输出。管理员可读取 `GET /api/admin/terminal/metrics`，该接口只返回有界计数、p50/p95 摘要和 pool 容量
 - Terminal transport 默认只用 WebSocket；只有显式设置 `WRD_TERMINAL_ALLOW_POLLING=1` 才启用 polling fallback。polling 与 websocket latency 样本分开统计
-- 公网入口的 Cloudflare/边缘 RTT 不由 Terminal 代码消除；runtime checker 只读验证本地 health、Terminal metrics、Python 路径和环境键，不会重启或重建 tunnel
+- 公网入口的 Cloudflare/边缘 RTT 不由 Terminal 代码消除；runtime checker 只读验证本地 health、Terminal metrics、Python 路径、环境键和 exited-input；设置 `WRD_TERMINAL_PROBE_TOKEN` 时会创建并关闭一个临时 Terminal，并确认 safe URL 没有变化，不会重启或重建 tunnel
 - `http://localhost:5173/` 仅用于前端开发映射和 API 代理；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式入口
 - 连接失败会直接报错，并把前端诊断日志发送到后端，便于排查
 

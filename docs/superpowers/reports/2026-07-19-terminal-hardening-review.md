@@ -100,3 +100,31 @@ Tasks 1-7 are implemented in the isolated `feat/terminal-hardening` worktree. Th
 Task 8 documentation and checker changes are pending final review and runtime proof. Do not claim the live Terminal acceptance is complete until Task 9's local process, Python resolution, metrics, exited-input, and unchanged URL checks are run against user-managed services.
 
 文档可以进入实现，但每个任务必须先写失败测试，并在 Task 9 用真实新建 Terminal 做 environment、Python、exited input、metrics 和 URL unchanged 验收。没有这些运行时证据，不能宣称 Terminal 加固完成。
+
+## 8. Final implementation review follow-up
+
+独立 whole-implementation reviewer 对 `4991e0b..HEAD` 发现的 5 项问题已逐项处理：
+
+1. `scripts/terminal-runtime-check.sh` 不再用 `output` 子串拦截合法的 `output_bytes`、`output_chunks` 和 `output_backpressure`，改为 JSON 结构检查；新增回归测试覆盖合法 metrics 响应。
+2. PTY cleanup quarantine 改为持续有界退避重试，初始 1 秒、最高 60 秒；清理成功后才释放 pending capacity，新增失败后继续重试并恢复容量的测试。
+3. 新增 `scripts/terminal-runtime-probe.js`，在显式提供 `WRD_TERMINAL_PROBE_TOKEN` 时通过真实 Socket.IO Terminal 创建临时会话，执行 `command -v python3`、`/usr/bin/env python3`、敏感环境键探测，并验证 exited 后 input 无成功 ack；URL 文件前后内容由 shell checker 比较。
+   - 复审发现的 PTY `starting` 竞态已修复：probe 等待首个 `terminal:output` 或 `processStatus=running` 后再发送命令，并由异步启动测试覆盖。
+4. Terminal metrics 新增 websocket/polling 分桶的 `socket_rtt_ms` 与 `input_ack_rtt_ms`，浏览器在本地计算后上报数值，服务端只接受固定名称、固定 transport 和有界样本。
+5. `session-manager.js` 仍保留 legacy/canonical config adapter，以兼容既有内部测试和 direct consumer；生产入口的 `loadConfig()` 已使用 `parseTerminalConfig()` 作为唯一环境真相。该 adapter 是低风险兼容尾项，不改变生产配置边界。
+
+## 9. Verification evidence
+
+- Signal Server 全量：`193/193` 通过。
+- Terminal UI：`44/44` 通过；Echo controller：`5/5` 通过。
+- Runtime checker/probe tests：`4/4` 通过；`bash -n` 和 `git diff --check` 通过。
+- 隔离 worktree 的真实 Socket.IO probe：创建临时 PTY、收到 `pty_exited`、exited 后 input 被拒绝且没有 input ack。
+- 当前用户管理的 8080 进程只读验收：`/health` 返回 `status=ok`，`/api/status` 返回 `hostOnline=true`，`/tmp/wrd-safe-current-url.txt` 前后未变化。
+- 当前 8080 进程的 cwd 是主 checkout，不是 `feat/terminal-hardening` worktree；因此它不代表本分支代码。其现状 probe 记录为：shell `/bin/zsh`，`command -v python3` 仍为 alias，`/usr/bin/env python3` 解析到 Command Line Tools Python；这正是本次分支修复的原始运行时问题。
+- 当前部署态 `/api/admin/terminal/metrics` 返回 HTTP 404，说明运行中的主 checkout 尚未部署 metrics endpoint；不能将该结果归因于隔离 worktree。
+- 本次操作没有启动、停止、重启或重建 signal-server、Host、Cloudflare tunnel，也没有改写 safe URL 文件。
+
+## 10. Final verdict
+
+最终 reviewer 复审结论为 `PASS WITH LOW DOCUMENTED RESIDUAL`：probe 启动竞态已消除，剩余仅是 `session-manager.js` 为 legacy/direct consumer 保留的配置兼容 adapter；若未来要求严格“一处 parser”，可再独立收敛该 adapter。
+
+隔离 worktree 的实现、测试和静态审查已闭合；当前运行服务仍是旧 checkout，必须由用户按既有安全 runbook 手动部署/重启本地服务后，才能把 runtime probe 的 PASS 归因到新代码。Tunnel 生命周期不属于本次实现范围。

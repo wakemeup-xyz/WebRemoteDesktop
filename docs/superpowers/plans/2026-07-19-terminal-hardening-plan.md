@@ -499,6 +499,8 @@ git commit -m "fix(terminal): expose explicit lifecycle and transport states"
 - Modify: `signal-server/.env.example`
 - Create: `scripts/terminal-runtime-check.sh`
 - Test: `scripts/terminal-runtime-check.test.js`
+- Create: `scripts/terminal-runtime-probe.js`
+- Test: `scripts/terminal-runtime-probe.test.js`
 
 - [ ] **Step 1: Add the runtime-check failing test**
 
@@ -516,7 +518,7 @@ Document allowlisted PTY environment, no-rc shell behavior, Homebrew Python path
 
 ```bash
 bash -n scripts/terminal-runtime-check.sh
-node --test scripts/terminal-runtime-check.test.js
+node --test scripts/terminal-runtime-check.test.js scripts/terminal-runtime-probe.test.js
 git diff --check
 ```
 
@@ -545,7 +547,7 @@ Expected: all tests pass with no unhandled rejection or leaked timer.
 
 ```bash
 node --test web-client/js/terminal.test.js web-client/js/terminal-echo-controller.test.js
-node --test scripts/terminal-runtime-check.test.js
+node --test scripts/terminal-runtime-check.test.js scripts/terminal-runtime-probe.test.js
 bash -n scripts/terminal-runtime-check.sh scripts/run-signal.sh scripts/start-safe-wrd.sh scripts/run-host-launchctl.sh
 git diff --check
 ```

@@ -596,6 +596,15 @@ const TerminalPanel = {
     this.terminalServerProcessLatency = latency.server;
   },
 
+  reportTransportMetric(name, value, transport = this.getTransportName()) {
+    if (!this.socket?.connected || !Number.isFinite(value)) return;
+    this.socket.emit('terminal:client_metrics', {
+      name,
+      transport: String(transport || 'unknown'),
+      value: Math.max(0, value),
+    });
+  },
+
   applyBootstrap(payload = {}) {
     this.allowPolling = payload.allowPolling === true;
     if (Number.isFinite(Number(payload.softWarnSessionCount))) {
@@ -680,8 +689,11 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    const latency = this.getTransportLatency(payload.transport || this.getTransportName());
-    latency.socket.record(Date.now() - clientSentAt);
+    const transport = payload.transport || this.getTransportName();
+    const value = Math.max(0, Date.now() - clientSentAt);
+    const latency = this.getTransportLatency(transport);
+    latency.socket.record(value);
+    this.reportTransportMetric('socket_rtt_ms', value, transport);
     this.refreshStatus();
   },
 
@@ -695,8 +707,11 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    const latency = this.getTransportLatency(payload.transport || this.getTransportName());
-    latency.input.record(Math.max(0, Date.now() - clientSentAt));
+    const transport = payload.transport || this.getTransportName();
+    const value = Math.max(0, Date.now() - clientSentAt);
+    const latency = this.getTransportLatency(transport);
+    latency.input.record(value);
+    this.reportTransportMetric('input_ack_rtt_ms', value, transport);
     const serverReceivedAt = Number(payload.serverReceivedAt);
     const serverSentAt = Number(payload.serverSentAt);
     if (Number.isFinite(serverReceivedAt) && Number.isFinite(serverSentAt)) {

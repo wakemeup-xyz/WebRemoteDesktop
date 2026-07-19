@@ -409,6 +409,14 @@ function setupTerminal(io, options = {}) {
       });
     });
 
+    socket.on('terminal:client_metrics', (payload = {}) => {
+      metrics.recordTransportLatency(
+        typeof payload.name === 'string' ? payload.name : '',
+        typeof payload.transport === 'string' ? payload.transport : '',
+        Number(payload.value),
+      );
+    });
+
     socket.on('terminal:input', (payload = {}) => {
       if (!requireAttachedSession(payload.sessionId, 'terminal_input_rejected')) {
         metrics.recordCounter('input_rejected');

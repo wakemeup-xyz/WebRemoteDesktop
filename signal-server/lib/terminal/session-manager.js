@@ -14,6 +14,7 @@ const {
 const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
 const CLEANUP_RETRY_DELAY_MS = 1000;
+const MAX_CLEANUP_RETRY_DELAY_MS = 60 * 1000;
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -380,9 +381,11 @@ function createTerminalSessionManager(options = {}) {
     const cleanupResult = cleanupPty(session);
     if (cleanupResult.killed) {
       cleanupQuarantine.delete(session.sessionId);
+      session.cleanupRetryDelayMs = null;
       return true;
     }
     auditCleanupFailure(session, cleanupResult);
+    scheduleQuarantineRetry(session);
     return false;
   }
 
@@ -392,16 +395,30 @@ function createTerminalSessionManager(options = {}) {
     }
   }
 
+  function scheduleQuarantineRetry(session) {
+    if (!cleanupQuarantine.has(session.sessionId) || session.cleanupRetryTimer !== null) {
+      return;
+    }
+    const delay = Math.min(
+      Math.max(CLEANUP_RETRY_DELAY_MS, Number(session.cleanupRetryDelayMs) || CLEANUP_RETRY_DELAY_MS),
+      MAX_CLEANUP_RETRY_DELAY_MS,
+    );
+    session.cleanupRetryDelayMs = Math.min(delay * 2, MAX_CLEANUP_RETRY_DELAY_MS);
+    session.cleanupRetryTimer = scheduleTimeout(() => {
+      session.cleanupRetryTimer = null;
+      retryQuarantinedSession(session, { fromScheduledRetry: true });
+    }, delay);
+    session.cleanupRetryTimer?.unref?.();
+  }
+
   function quarantineSession(session) {
     if (cleanupQuarantine.size >= config.maxSessions) {
       throw makeTerminalError('terminal_session_limit');
     }
     session.cleanupRetryTimer = null;
+    session.cleanupRetryDelayMs = CLEANUP_RETRY_DELAY_MS;
     cleanupQuarantine.set(session.sessionId, session);
-    session.cleanupRetryTimer = scheduleTimeout(() => {
-      retryQuarantinedSession(session, { fromScheduledRetry: true });
-    }, CLEANUP_RETRY_DELAY_MS);
-    session.cleanupRetryTimer?.unref?.();
+    scheduleQuarantineRetry(session);
   }
 
   function removeSessionFromPool(sessionId) {

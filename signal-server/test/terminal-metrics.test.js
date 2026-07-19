@@ -25,6 +25,17 @@ const COUNTER_NAMES = [
 ];
 
 const LATENCY_NAMES = ['attach_ms', 'pty_ready_ms', 'server_input_process_ms'];
+const TRANSPORT_NAMES = ['websocket', 'polling'];
+const TRANSPORT_LATENCY_NAMES = ['socket_rtt_ms', 'input_ack_rtt_ms'];
+
+function emptyLatency() {
+  return {
+    sampleCount: 0,
+    p50: null,
+    p95: null,
+    last: null,
+  };
+}
 
 function createFakePty() {
   const dataHandlers = [];
@@ -75,10 +86,10 @@ test('TerminalMetrics exposes only fixed counters and bounded latency summaries'
   assert.deepEqual(metrics.snapshot(), {
     counters: Object.fromEntries(COUNTER_NAMES.map((name) => [name, 0])),
     latencies: Object.fromEntries(LATENCY_NAMES.map((name) => [name, {
-      sampleCount: 0,
-      p50: null,
-      p95: null,
-      last: null,
+      ...emptyLatency(),
+    }])),
+    transports: Object.fromEntries(TRANSPORT_NAMES.map((transport) => [transport, {
+      latencies: Object.fromEntries(TRANSPORT_LATENCY_NAMES.map((name) => [name, emptyLatency()])),
     }])),
   });
 });
@@ -88,8 +99,11 @@ test('TerminalMetrics ignores unknown names and invalid numeric values consisten
 
   assert.equal(metrics.recordCounter('output_bytes', 12), true);
   assert.equal(metrics.recordLatency('attach_ms', 8), true);
+  assert.equal(metrics.recordTransportLatency('socket_rtt_ms', 'websocket', 12), true);
   assert.equal(metrics.recordCounter('password', 1), false);
   assert.equal(metrics.recordLatency('token', 1), false);
+  assert.equal(metrics.recordTransportLatency('socket_rtt_ms', 'polling', 15), true);
+  assert.equal(metrics.recordTransportLatency('socket_rtt_ms', 'quic', 15), false);
   assert.equal(metrics.recordCounter('output_bytes', -1), false);
   assert.equal(metrics.recordCounter('output_bytes', Number.POSITIVE_INFINITY), false);
   assert.equal(metrics.recordLatency('attach_ms', Number.NaN), false);
@@ -103,6 +117,8 @@ test('TerminalMetrics ignores unknown names and invalid numeric values consisten
     p95: 8,
     last: 8,
   });
+  assert.equal(snapshot.transports.websocket.latencies.socket_rtt_ms.last, 12);
+  assert.equal(snapshot.transports.polling.latencies.socket_rtt_ms.last, 15);
   assert.equal(JSON.stringify(snapshot).includes('password'), false);
   assert.equal(JSON.stringify(snapshot).includes('token'), false);
 });
