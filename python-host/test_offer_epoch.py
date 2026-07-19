@@ -101,7 +101,7 @@ async def test_v2_input_uses_active_lease_binding_instead_of_legacy_offer_viewer
     }
     applied = []
 
-    async def apply_keyboard(data):
+    async def apply_keyboard(data, **_kwargs):
         applied.append(data)
         return {"inputIds": []}
 

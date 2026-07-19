@@ -131,14 +131,14 @@ async def test_host_input_logs_metadata_without_payload_or_cross_clock_delay(cap
     host.overlay = SimpleNamespace(send=lambda _payload: None)
     host.screen_track = None
 
-    async def handle_input(_data):
+    async def apply_keyboard(_data, **_kwargs):
         return {
             "inputIds": ["input-Secret123"],
             "receiveTime": 10.0,
             "executeTime": 10.012,
         }
 
-    host.input_handler = SimpleNamespace(handle_input=handle_input)
+    host.input_handler = SimpleNamespace(apply_keyboard=apply_keyboard)
     payload = {
         "viewerId": "viewer-1",
         "type": "keyboard",
@@ -184,7 +184,7 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
     host.screen_track = None
     host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
 
-    async def apply_keyboard(_data):
+    async def apply_keyboard(_data, **_kwargs):
         return {
             "inputIds": ["input-1"],
             "receiveTime": 20.0,

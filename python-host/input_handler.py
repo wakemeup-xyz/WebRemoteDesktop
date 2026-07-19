@@ -29,7 +29,7 @@ from quartz_keyboard_adapter import (
     UnsupportedPhysicalCode,
     mac_key_code_for_dom_code,
 )
-from remote_keyboard_state import RemoteKeyboardState
+from remote_keyboard_state import LegacyInputAdapter, RemoteKeyboardState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class InputHandler:
         self._keyboard_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="keyboard")
         self._keyboard_adapter = keyboard_adapter or QuartzKeyboardAdapter(source=self.source)
         self._remote_keyboard = RemoteKeyboardState(self._keyboard_adapter)
+        self._legacy_keyboard = LegacyInputAdapter(self._remote_keyboard)
         self._keyboard_connection_generation = 0
         self._modifier_flags = 0
         self._pressed_modifier_key_codes = set()
@@ -101,24 +102,38 @@ class InputHandler:
         """Install Signal-owned keyboard authority before accepting v2 input."""
         async with self._keyboard_lock:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                self._keyboard_executor,
-                lambda: self._remote_keyboard.transition(
+
+            def bind():
+                self._legacy_keyboard = LegacyInputAdapter(self._remote_keyboard)
+                return self._legacy_keyboard.bind(
                     connection_generation=connection_generation,
                     lease_id=lease_id,
                     lease_epoch=lease_epoch,
-                ),
+                )
+
+            result = await loop.run_in_executor(
+                self._keyboard_executor,
+                bind,
             )
             if result.status == "applied":
                 self._keyboard_connection_generation = connection_generation
             return self._keyboard_result(result)
 
-    async def apply_keyboard(self, envelope):
-        """Apply one validated v2 keyboard envelope on the ordered keyboard worker."""
+    async def apply_keyboard(self, envelope, *, transport=None):
+        """Apply v2 or lease-bound legacy keyboard input on the ordered worker."""
         async with self._keyboard_lock:
             loop = asyncio.get_running_loop()
+
+            def apply():
+                if envelope.get("schemaVersion") == 2:
+                    return self._remote_keyboard.apply(envelope)
+                return self._legacy_keyboard.apply(
+                    envelope,
+                    transport=str(transport or envelope.get("transport") or "socket"),
+                )
+
             result = await loop.run_in_executor(
-                self._keyboard_executor, self._remote_keyboard.apply, envelope
+                self._keyboard_executor, apply
             )
             return self._keyboard_result(result, input_ids=envelope.get("inputIds", []))
 
@@ -167,11 +182,8 @@ class InputHandler:
             action = data.get('action')
             payload = data.get('payload', {})
 
-            if input_type == 'keyboard' and data.get('schemaVersion') == 2:
-                return await self.apply_keyboard(data)
-
-            if input_type == 'keyboard' and action == 'reset':
-                return await self.reset_keyboard(reason=payload.get("reason", "manual"))
+            if input_type == 'keyboard':
+                return await self.apply_keyboard(data, transport=data.get("transport"))
 
             if input_type == 'mouse' and action == 'move' and (
                 self._input_lock.locked() or self._lock_waiters > 0
@@ -219,25 +231,6 @@ class InputHandler:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(self._input_thread_pool, self._handle_command, action, payload)
                     to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
-                elif input_type == 'keyboard':
-                    input_ids = data.get("inputIds", [])
-                    to_thread_start = time.perf_counter()
-                    loop = asyncio.get_running_loop()
-                    keyboard_status = await loop.run_in_executor(
-                        self._input_thread_pool, self._handle_keyboard, action, payload
-                    )
-                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
-                    i2 = time.perf_counter()
-                    logger.info("keyboard_executed action=%s thread_ms=%.1f", action, to_thread_ms)
-                    return {
-                        "inputIds": input_ids,
-                        "appliedSeq": data.get("seq"),
-                        "receiveTime": i1,
-                        "executeTime": i2,
-                        "status": keyboard_status or "applied",
-                        "pressedKeyCount": len(self._pressed_key_codes),
-                        "modifierMask": int(self._modifier_flags),
-                    }
                 else:
                     to_thread_ms = 0
             finally:

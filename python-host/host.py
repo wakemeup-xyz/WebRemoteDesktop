@@ -1189,8 +1189,8 @@ class WebRemoteHost:
                     "text": format_keyboard_command(action, payload),
                     "viewerId": data.get("viewerId")
                 })
-            if input_type == 'keyboard' and data.get('schemaVersion') == 2:
-                result = await self.input_handler.apply_keyboard(data)
+            if input_type == 'keyboard':
+                result = await self.input_handler.apply_keyboard(data, transport=transport)
             else:
                 result = await self.input_handler.handle_input(data)
             if result and isinstance(result, dict):
@@ -1464,6 +1464,24 @@ class WebRemoteHost:
             binding = {
                 "viewerId": viewer_id,
                 "leaseId": lease_id,
+                "leaseEpoch": lease_epoch,
+                "connectionGeneration": self._connection_generation,
+            }
+            result = await self.input_handler.transition_keyboard(
+                connection_generation=binding["connectionGeneration"],
+                lease_id=binding["leaseId"],
+                lease_epoch=binding["leaseEpoch"],
+            )
+            if result.get("status") != "applied":
+                return
+            self._active_input_binding = binding
+        elif isinstance(viewer_id, str) and viewer_id:
+            # Signal deliberately withholds the v2 token during transition.
+            # Legacy input gets an opaque Host-internal lease until its offer
+            # arrives; it is never sent to the viewer or accepted as v2 input.
+            binding = {
+                "viewerId": viewer_id,
+                "leaseId": f"legacy-host-{lease_epoch}-{viewer_id}",
                 "leaseEpoch": lease_epoch,
                 "connectionGeneration": self._connection_generation,
             }

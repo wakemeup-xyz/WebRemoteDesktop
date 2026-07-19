@@ -27,6 +27,17 @@ class BlockingAdapter:
         self.events.append(("text", text))
 
 
+class RecordingAdapter:
+    def __init__(self):
+        self.events = []
+
+    def post_key(self, code, is_down, modifier_mask):
+        self.events.append((code, is_down, modifier_mask))
+
+    def post_text(self, text):
+        self.events.append(("text", text))
+
+
 def key_envelope(*, seq, phase, code="KeyA", epoch=1, lease_id=LEASE_ID):
     return {
         "schemaVersion": 2,
@@ -76,6 +87,45 @@ async def test_disconnect_reset_is_serialized_after_inflight_keydown():
     assert handler.get_keyboard_snapshot().pressed_key_count == 0
 
 
+@pytest.mark.asyncio
+async def test_legacy_keyboard_uses_leased_executor_and_resets_before_transport_switch(monkeypatch):
+    adapter = RecordingAdapter()
+    handler = InputHandler(keyboard_adapter=adapter)
+    handler._running = True
+    await handler.transition_keyboard(
+        connection_generation=1,
+        lease_id=LEASE_ID,
+        lease_epoch=1,
+    )
+    monkeypatch.setattr(
+        handler,
+        "_handle_keyboard",
+        lambda *_args: pytest.fail("legacy keyboard bypassed the leased executor"),
+    )
+
+    first = await handler.apply_keyboard({
+        "type": "keyboard",
+        "action": "keydown",
+        "payload": {"code": "KeyA"},
+        "inputIds": ["legacy-a"],
+    }, transport="socket")
+    second = await handler.apply_keyboard({
+        "type": "keyboard",
+        "action": "keydown",
+        "payload": {"code": "KeyB"},
+        "inputIds": ["legacy-b"],
+    }, transport="datachannel")
+
+    assert first["status"] == "applied"
+    assert second["status"] == "applied"
+    assert adapter.events == [
+        ("KeyA", True, 0),
+        ("KeyA", False, 0),
+        ("KeyB", True, 0),
+    ]
+    assert handler.get_keyboard_snapshot().pressed_codes == frozenset({"KeyB"})
+
+
 def test_input_method_switch_remains_an_explicit_quartz_command():
     source = inspect.getsource(input_handler)
 
@@ -97,6 +147,11 @@ async def test_unsupported_physical_codes_do_not_fall_back_to_legacy_key_names(m
 
     handler = InputHandler()
     handler._running = True
+    await handler.transition_keyboard(
+        connection_generation=1,
+        lease_id=LEASE_ID,
+        lease_epoch=1,
+    )
     result = await handler.handle_input({
         "type": "keyboard",
         "action": "keydown",
@@ -304,7 +359,7 @@ async def test_cancelled_input_waiter_does_not_leave_stale_waiter_count(monkeypa
     handler = InputHandler()
     handler._running = True
 
-    await handler._input_lock.acquire()
+    await handler._keyboard_lock.acquire()
     try:
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
@@ -316,7 +371,7 @@ async def test_cancelled_input_waiter_does_not_leave_stale_waiter_count(monkeypa
                 timeout=0.01,
             )
     finally:
-        handler._input_lock.release()
+        handler._keyboard_lock.release()
 
     assert handler._lock_waiters == 0
 
