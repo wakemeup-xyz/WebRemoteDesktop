@@ -25,6 +25,7 @@
     let lastApplied = 0;
     let pinnedAdapter = null;
     let barrier = null;
+    let reacquireRequired = false;
 
     function adapterAvailable(name) {
       return Boolean(adapters[name]) && !unavailable.has(name);
@@ -32,12 +33,19 @@
 
     function state() {
       expireBarrier();
+      if (reacquireRequired) return 'reacquire-required';
       if (!leaseId) return 'revoked';
       return barrier ? 'blocked' : 'ready';
     }
 
     function expireBarrier() {
-      if (barrier && now() > barrier.deadline) barrier = null;
+      if (!barrier || now() <= barrier.deadline) return;
+      leaseId = null;
+      leaseEpoch = 0;
+      pending.clear();
+      pressed.clear();
+      pinnedAdapter = null;
+      reacquireRequired = true;
     }
 
     function clearSession() {
@@ -113,6 +121,7 @@
     }
 
     function sendReset(reason) {
+      expireBarrier();
       if (!leaseId) return null;
       invalidateBeforeReset();
       const adapterName = chooseAdapter(true);
@@ -135,9 +144,10 @@
         && nextLease.leaseEpoch >= 0;
       const nextLeaseId = validLease ? nextLease.leaseId : null;
       const nextLeaseEpoch = validLease ? nextLease.leaseEpoch : 0;
-      if (nextLeaseId === leaseId && nextLeaseEpoch === leaseEpoch) return;
+      if (nextLeaseId === leaseId && nextLeaseEpoch === leaseEpoch && !reacquireRequired) return;
       leaseId = nextLeaseId;
       leaseEpoch = nextLeaseEpoch;
+      reacquireRequired = false;
       clearSession();
     }
 

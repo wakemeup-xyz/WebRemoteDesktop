@@ -100,12 +100,20 @@ test('resync-required and sequence gaps preserve one Socket reset barrier', () =
   assert.equal(h.transport.canSendNewInput(), false);
 });
 
-test('expired reset barrier permits a fresh input attempt', () => {
+test('expired reset barrier requires lease reacquisition before accepting new input', () => {
   const h = createHarness({ ackTimeoutMs: 50 });
   h.transport.resetBarrier('test-timeout');
   assert.equal(h.transport.canSendNewInput(), false);
   h.advance(51);
+  assert.equal(h.transport.canSendNewInput(), false);
+  const expired = h.transport.getSnapshot();
+  assert.equal(expired.state, 'reacquire-required');
+  assert.equal(expired.pendingCount, 0);
+  assert.equal(JSON.stringify(expired).includes('lease-for-test'), false);
+
+  h.transport.setLease({ leaseId: 'renewed-lease', leaseEpoch: 8 });
   assert.equal(h.transport.canSendNewInput(), true);
+  assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyR' } }), 'input-2');
 });
 
 test('pending ledger is bounded at 256 and adapter rejections do not reject input', () => {
