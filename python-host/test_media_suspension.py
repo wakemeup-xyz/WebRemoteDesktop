@@ -147,3 +147,170 @@ async def test_host_applies_suspend_and_resume_with_sender_and_capture():
     assert host.video_sender.keyframes == 1
     assert host.sio.events[-1][1]["applied"] is True
     assert host.sio.events[-1][1]["keyframeRequested"] is True
+
+
+def _make_media_host(*, sender=None, track=None, relay=None, pc=None):
+    host = object.__new__(WebRemoteHost)
+    host.sio = FakeSocket()
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+        "connectionGeneration": 1,
+        "connectionAttemptId": "wrd-1",
+    }
+    host._media_activity_binding = {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": "wrd-1",
+        "generation": 0,
+        "state": "active",
+    }
+    host._media_activity_suspended = False
+    host._media_activity_lock = __import__("asyncio").Lock()
+    host.video_sender = sender
+    host.media_sender = AiortcMediaSender(sender) if sender is not None else None
+    if host.media_sender is not None and track is not None:
+        host.media_sender.bind(sender, track)
+    host.screen_track = track
+    host.relay_streamer = relay
+    host.pc = pc
+    host.input_handler = type("Input", (), {
+        "release_all_mouse_buttons": lambda self, reason: None,
+        "release_all_keys": lambda self, reason: None,
+    })()
+    return host
+
+
+@pytest.mark.asyncio
+async def test_media_suspend_fails_closed_when_replaceTrack_raises():
+    class BoomSender(FakeSender):
+        def replaceTrack(self, track):
+            raise RuntimeError("replaceTrack boom")
+
+    host = _make_media_host(sender=BoomSender(), track=FakeTrack())
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+    assert host.screen_track.suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_suspend_fails_closed_when_getSenders_raises():
+    class BoomPC:
+        def getSenders(self):
+            raise RuntimeError("getSenders boom")
+
+    host = _make_media_host(sender=FakeSender(), track=FakeTrack(), pc=BoomPC())
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_suspend_fails_closed_when_capture_set_suspended_raises():
+    class BoomTrack(FakeTrack):
+        def set_suspended(self, value):
+            raise RuntimeError("capture boom")
+
+    host = _make_media_host(sender=FakeSender(), track=BoomTrack())
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_suspend_fails_closed_when_relay_set_suspended_raises():
+    class BoomRelay:
+        def set_suspended(self, suspended):
+            raise RuntimeError("relay boom")
+
+    host = _make_media_host(sender=FakeSender(), track=FakeTrack(), relay=BoomRelay())
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "suspended",
+        "reasons": ["manual-pause"],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_resume_fails_closed_when_sender_attach_fails():
+    class BoomSender(FakeSender):
+        def replaceTrack(self, track):
+            if track is not None:
+                raise RuntimeError("resume attach boom")
+            self.tracks.append(track)
+
+    host = _make_media_host(sender=BoomSender(), track=FakeTrack())
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+    assert host.screen_track.suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_resume_fails_closed_on_fresh_capture_timeout():
+    class TimeoutTrack(FakeTrack):
+        def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+            raise TimeoutError("fresh capture timeout")
+
+    host = _make_media_host(sender=FakeSender(), track=TimeoutTrack())
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host._media_activity_suspended is True
+    assert host.screen_track.suspended is True
