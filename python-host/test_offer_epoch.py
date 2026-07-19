@@ -192,6 +192,51 @@ async def test_stale_control_transition_preserves_active_keyboard_binding_withou
 
 
 @pytest.mark.asyncio
+async def test_same_epoch_reset_only_control_transition_clears_and_acknowledges():
+    binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionGeneration": 4,
+    }
+
+    class FakeInputHandler:
+        def __init__(self):
+            self.pressed_key_count = 1
+            self.reset_calls = []
+
+        async def reset_keyboard(self, **kwargs):
+            self.reset_calls.append(kwargs)
+            self.pressed_key_count = 0
+            return {"status": "applied"}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    sent = []
+
+    async def emit(event, payload):
+        sent.append((event, payload))
+
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = binding
+    host._connection_generation = 4
+    host.input_handler = FakeInputHandler()
+    host.sio = SimpleNamespace(emit=emit)
+
+    await host.on_control_transition({"leaseEpoch": 2, "reason": "control-revoked"})
+
+    assert host._active_input_binding is None
+    assert host._connection_generation == 5
+    assert host.input_handler.pressed_key_count == 0
+    assert host.input_handler.reset_calls == [{
+        "reason": "control-revoked",
+        "lease_epoch": None,
+    }]
+    assert sent == [("control-transition-ack", {"leaseEpoch": 2, "status": "applied"})]
+
+
+@pytest.mark.asyncio
 async def test_newer_reset_only_control_transition_still_resets_and_acknowledges():
     binding = {
         "viewerId": "viewer-1",

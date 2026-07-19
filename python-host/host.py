@@ -1416,9 +1416,21 @@ class WebRemoteHost:
         lease_epoch = data.get("leaseEpoch")
         if not isinstance(lease_epoch, int) or lease_epoch < 1:
             return
+        lease_id = data.get("leaseId")
+        viewer_id = data.get("viewerId")
+        has_binding_identity = (
+            isinstance(lease_id, str)
+            and len(lease_id) >= 16
+            and isinstance(viewer_id, str)
+            and bool(viewer_id)
+        )
         active_binding = getattr(self, "_active_input_binding", None)
         active_epoch = active_binding.get("leaseEpoch") if isinstance(active_binding, dict) else None
-        if isinstance(active_epoch, int) and lease_epoch <= active_epoch:
+        is_stale = isinstance(active_epoch, int) and (
+            lease_epoch < active_epoch
+            or (lease_epoch == active_epoch and has_binding_identity)
+        )
+        if is_stale:
             logger.warning(
                 "Ignoring stale control transition epoch=%s active_epoch=%s",
                 lease_epoch,
@@ -1427,9 +1439,7 @@ class WebRemoteHost:
             return
         self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
         await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
-        lease_id = data.get("leaseId")
-        viewer_id = data.get("viewerId")
-        if isinstance(lease_id, str) and len(lease_id) >= 16 and viewer_id:
+        if has_binding_identity:
             binding = {
                 "viewerId": viewer_id,
                 "leaseId": lease_id,
