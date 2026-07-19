@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
-const path = require('node:path');
 const { createTerminalAudit } = require('./audit');
 const { loadTerminalConfig } = require('./config');
+const { buildTerminalEnvironment, getTerminalShellArgs } = require('./environment');
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -9,26 +9,7 @@ function defaultPtyFactory() {
 }
 
 function buildTerminalEnv(baseEnv = process.env) {
-  const env = { ...baseEnv };
-  const home = String(env.HOME || '').trim();
-  const existingPath = String(env.PATH || '').trim();
-  const preferred = [
-    path.dirname(process.execPath),
-    home ? path.join(home, '.bun', 'bin') : '',
-    home ? path.join(home, '.homebrew', 'bin') : '',
-    home ? path.join(home, '.homebrew', 'sbin') : '',
-    home ? path.join(home, '.local', 'bin') : '',
-  ].filter(Boolean);
-
-  const merged = [];
-  for (const entry of preferred.concat(existingPath.split(':'))) {
-    const normalized = String(entry || '').trim();
-    if (!normalized || merged.includes(normalized)) continue;
-    merged.push(normalized);
-  }
-
-  env.PATH = merged.join(':');
-  return env;
+  return buildTerminalEnvironment(baseEnv);
 }
 
 function createReplayBuffer(limitBytes = 262144) {
@@ -60,6 +41,13 @@ function createReplayBuffer(limitBytes = 262144) {
 
 function createTerminalSessionManager(options = {}) {
   const rawConfig = options.config || loadTerminalConfig();
+  const recordIoMetadata = Boolean(
+    rawConfig.recordIoMetadata ??
+    rawConfig.recordIo ??
+    rawConfig.terminalRecordIoMetadata ??
+    rawConfig.terminalRecordIo ??
+    false
+  );
   const config = {
     enabled: Boolean(
       rawConfig.enabled ??
@@ -75,7 +63,9 @@ function createTerminalSessionManager(options = {}) {
     idleTimeoutMs: Number(rawConfig.idleTimeoutMs ?? rawConfig.terminalIdleTimeoutMs ?? 0),
     startupTimeoutMs: Number(rawConfig.startupTimeoutMs ?? rawConfig.terminalStartupTimeoutMs ?? 10000),
     auditLog: rawConfig.auditLog ?? rawConfig.terminalAuditLog ?? '',
-    recordIo: Boolean(rawConfig.recordIo ?? rawConfig.terminalRecordIo ?? false),
+    pathEntries: rawConfig.pathEntries ?? rawConfig.terminalPathEntries ?? [],
+    recordIoMetadata,
+    recordIo: recordIoMetadata,
     replayBufferBytes: Number(rawConfig.replayBufferBytes ?? rawConfig.terminalReplayBufferBytes ?? 262144),
   };
   const now = options.now || (() => new Date());
@@ -246,12 +236,15 @@ function createTerminalSessionManager(options = {}) {
     const cols = Number(input.cols || 80);
     const rows = Number(input.rows || 24);
     const title = String(input.title || 'Terminal ' + (sessions.size + 1));
-    const pty = ptyFactory(config.shell, [], {
+    const pty = ptyFactory(config.shell, getTerminalShellArgs(config.shell), {
       name: 'xterm-256color',
       cols,
       rows,
       cwd: config.cwd || undefined,
-      env: buildTerminalEnv(process.env),
+      env: buildTerminalEnvironment(process.env, {
+        pathEntries: config.pathEntries,
+        shell: config.shell,
+      }),
     });
     const session = {
       sessionId,

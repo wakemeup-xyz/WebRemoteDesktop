@@ -378,46 +378,108 @@ test('terminal session manager emits structured create, attach, and detach audit
   assert.equal(events[2].meta.reason, 'manual-detach');
 });
 
-test('buildTerminalEnv prepends executable and user bin paths while preserving existing PATH entries', () => {
+test('buildTerminalEnv compatibility export uses the secure environment allowlist', () => {
   const env = buildTerminalEnv({
     HOME: '/Users/tester',
-    PATH: '/usr/local/bin:/usr/bin:/bin',
+    USER: 'tester',
+    LC_CTYPE: 'UTF-8',
+    PATH: '/untrusted/bin:/usr/local/bin:/usr/bin:/bin',
+    JWT_SECRET: 'jwt-secret',
   });
 
   const entries = env.PATH.split(':');
-  assert.equal(entries.includes(path.dirname(process.execPath)), true);
-  assert.equal(entries.includes('/Users/tester/.bun/bin'), true);
-  assert.equal(entries.includes('/Users/tester/.homebrew/bin'), true);
-  assert.equal(entries.includes('/Users/tester/.homebrew/sbin'), true);
-  assert.equal(entries.includes('/Users/tester/.local/bin'), true);
-  assert.equal(entries.includes('/usr/local/bin'), true);
-  assert.equal(entries.includes('/usr/bin'), true);
-  assert.equal(entries.includes('/bin'), true);
+  assert.deepEqual(entries, [
+    path.dirname(process.execPath),
+    '/Users/tester/.homebrew/bin',
+    '/Users/tester/.homebrew/sbin',
+    '/Users/tester/.homebrew/opt/python@3.11/libexec/bin',
+    '/Users/tester/.local/bin',
+    '/Users/tester/.bun/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ]);
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.equal(env.LC_CTYPE, 'UTF-8');
+  assert.equal(env.JWT_SECRET, undefined);
 });
 
-test('session manager passes the normalized PATH into the pty factory', () => {
+test('session manager passes isolated environment, shell args, and canonical config into the pty factory', () => {
   const spawnCalls = [];
+  const previousEnv = { ...process.env };
+  process.env.HOME = '/Users/tester';
+  process.env.PATH = '/untrusted/bin:/usr/local/bin:/usr/bin:/bin';
+  process.env.LC_CTYPE = 'UTF-8';
+  process.env.JWT_SECRET = 'jwt-secret';
+  process.env.WRD_TERMINAL_ADMIN_PASSWORD = 'terminal-password';
+  process.env.HTTPS_PROXY = 'http://proxy.test';
+  process.env.ANTHROPIC_AUTH_TOKEN = 'anthropic-token';
+  try {
+    const manager = createTerminalSessionManager({
+      ptyFactory: (shell, args, options) => {
+        spawnCalls.push({ shell, args, options });
+        return createFakePty();
+      },
+      logger: { warn() {}, info() {}, error() {} },
+      config: {
+        enabled: true,
+        adminPassword: 'test-terminal-admin-password',
+        shell: '/bin/zsh',
+        cwd: '/tmp',
+        pathEntries: ['/opt/wrd-tools'],
+        recordIoMetadata: false,
+      },
+    });
+
+    manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+  }
+
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].shell, '/bin/zsh');
+  assert.deepEqual(spawnCalls[0].args, ['-f', '-i']);
+  assert.equal(spawnCalls[0].options.name, 'xterm-256color');
+  assert.equal(spawnCalls[0].options.cwd, '/tmp');
+  assert.equal(spawnCalls[0].options.env.TERM, 'xterm-256color');
+  assert.equal(spawnCalls[0].options.env.LC_CTYPE, 'UTF-8');
+  assert.equal(spawnCalls[0].options.env.JWT_SECRET, undefined);
+  assert.equal(spawnCalls[0].options.env.WRD_TERMINAL_ADMIN_PASSWORD, undefined);
+  assert.equal(spawnCalls[0].options.env.HTTPS_PROXY, undefined);
+  assert.equal(spawnCalls[0].options.env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.deepEqual(spawnCalls[0].options.env.PATH.split(path.delimiter), [
+    path.dirname(process.execPath),
+    '/Users/tester/.homebrew/bin',
+    '/Users/tester/.homebrew/sbin',
+    '/Users/tester/.homebrew/opt/python@3.11/libexec/bin',
+    '/Users/tester/.local/bin',
+    '/Users/tester/.bun/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/opt/wrd-tools',
+  ]);
+});
+
+test('session manager carries the legacy terminalPathEntries alias into the PTY environment', () => {
+  let spawnedEnvironment;
   const manager = createTerminalSessionManager({
     ptyFactory: (shell, args, options) => {
-      spawnCalls.push({ shell, args, options });
+      spawnedEnvironment = options.env;
       return createFakePty();
     },
     logger: { warn() {}, info() {}, error() {} },
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
-      terminalShell: '/bin/zsh',
-      terminalCwd: '/tmp',
-      terminalSoftWarnSessionCount: 4,
-      terminalIdleTimeoutMs: 0,
-      terminalStartupTimeoutMs: 10000,
-      terminalRecordIo: false,
+      terminalShell: '/bin/bash',
+      terminalPathEntries: ['/opt/legacy-tools'],
+      terminalRecordIoMetadata: false,
     },
   });
 
-  manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  manager.createSession({ clientId: 'browser-a' });
 
-  const envPath = spawnCalls[0].options.env.PATH;
-  assert.equal(envPath.includes(path.dirname(process.execPath)), true);
-  assert.equal(envPath.includes('/usr/bin'), true);
+  assert.equal(spawnedEnvironment.PATH.split(path.delimiter).at(-1), '/opt/legacy-tools');
 });
