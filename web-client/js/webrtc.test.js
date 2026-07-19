@@ -11,6 +11,7 @@ function makeElement() {
     textContent: '',
     style: {},
     src: '',
+    dataset: {},
     classList: {
       add(...tokens) { tokens.forEach((token) => classes.add(token)); },
       remove(...tokens) { tokens.forEach((token) => classes.delete(token)); },
@@ -435,6 +436,46 @@ test('media profile and resolution changes no-op without a lease and emit v2 env
   emitted.forEach(({ payload }) => assert.deepEqual({ schemaVersion: payload.schemaVersion, leaseId: payload.leaseId, leaseEpoch: payload.leaseEpoch }, {
     schemaVersion: 2, leaseId: 'lease-000000000001', leaseEpoch: 9,
   }));
+});
+
+test('resolution change no-ops when the active lease socket is disconnected', async () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
+  WebRTC.socket = { connected: false, emit() { throw new Error('must not emit'); } };
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.currentResolution = { width: 960, height: 540, label: '960x540' };
+  let tunnelStarts = 0;
+  WebRTC.startTunnelRelay = () => { tunnelStarts += 1; };
+
+  assert.equal(await WebRTC.requestResolution(1280, 720), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.currentResolution)), { width: 960, height: 540, label: '960x540' });
+  assert.equal(tunnelStarts, 0);
+});
+
+test('resolution modal changes its display and closes only after a successful request', async () => {
+  const elements = new Map();
+  const selected = { dataset: { width: '1280', height: '720' } };
+  const document = {
+    body: makeElement(),
+    addEventListener(type, handler) { if (type === 'DOMContentLoaded') handler(); },
+    querySelector(selector) { return selector === 'input[name="resolution"]:checked' ? selected : null; },
+    getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); },
+  };
+  const modal = document.getElementById('resolutionModal');
+  const display = document.getElementById('resolutionDisplay');
+  const apply = document.getElementById('applyResolution');
+  const { WebRTC } = loadWebRTC({ document, fetch: async () => ({ ok: false, status: 500 }) });
+  display.textContent = '960x540';
+  WebRTC.requestResolution = async () => false;
+  await apply.listeners.get('click')();
+  assert.equal(display.textContent, '960x540');
+  assert.equal(modal.classList.contains('hidden'), false);
+
+  WebRTC.requestResolution = async () => true;
+  await apply.listeners.get('click')();
+  assert.equal(display.textContent, '1280x720');
+  assert.equal(modal.classList.contains('hidden'), true);
 });
 
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {

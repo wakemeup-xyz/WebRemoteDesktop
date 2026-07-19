@@ -1440,11 +1440,9 @@ const WebRTC = {
   
   async requestResolution(width, height) {
     const lease = this.activeLeaseEnvelope();
-    if (!lease) return false;
+    if (!lease || !this.socket?.connected) return false;
     this.currentResolution = { width, height, label: `${width}x${height}` };
-    if (this.socket?.connected) {
-      this.socket.emit('resolution-change', { ...lease, width, height });
-    }
+    this.socket.emit('resolution-change', { ...lease, width, height });
     if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {
       this.startTunnelRelay();
     }
@@ -1995,15 +1993,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   if (applyResolution && resolutionModal) {
-    applyResolution.addEventListener('click', () => {
+    applyResolution.addEventListener('click', async () => {
       const selected = document.querySelector('input[name="resolution"]:checked');
       if (selected) {
         const width = parseInt(selected.dataset.width, 10);
         const height = parseInt(selected.dataset.height, 10);
-        WebRTC.requestResolution(width, height);
+        const changed = await WebRTC.requestResolution(width, height);
+        if (!changed) return;
         document.getElementById('resolutionDisplay').textContent = `${width}x${height}`;
+        resolutionModal.classList.add('hidden');
       }
-      resolutionModal.classList.add('hidden');
     });
   }
   if (resolutionModal) {
