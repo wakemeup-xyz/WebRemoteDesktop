@@ -58,7 +58,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **Strict STUN 自适应降载**：Viewer 根据 FPS、RTT、jitter buffer 和丢包识别弱直连链路，自动降为 540p/15fps、480p/12fps、360p/8fps，并通知 Host 调整采集档位
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
-- [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；恢复耗尽后明确失败并自动上报诊断
+- [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
+- [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
 - [x] **缩放模式**：自适应(contain) / 填充(cover) / 拉伸(fill)
@@ -121,11 +122,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **缩放切换**：循环切换 contain/cover/fill
 - [x] **显示/隐藏控件**：左上角总控按钮隐藏/显示控制栏和虚拟按钮栏
 - [x] **诊断日志**：弹出模态框显示浏览器控制台捕获的日志，可一键发送到服务端；连接失败时自动附带网络环境和链路摘要上送一份诊断
-- [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复
+- [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复；会取消进行中的手动端口搜索
+- [x] **搜索端口**：仅在 `auto` / `stun` 且信令与 Host 在线时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）
 - [x] **全屏控制**：网页端提供全屏按钮，Esc 使用浏览器原生 Fullscreen API 退出
-- [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel
+- [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，自动恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel，也**不**自动启动 500 轮端口搜索
 - [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
-- [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明
+- [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明；切换模式会取消手动端口搜索
 
 ### 3.5 Host 本机浮动提示
 
@@ -344,7 +346,8 @@ WebRemoteDesktop/
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 才能稳定投屏
-- **当前部署策略**：本轮明确不引入 TURN/VPS/Viewer 客户端。公网媒体严格 STUN，失败后只由用户手动切换 JPEG tunnel fallback；固定域名与媒体是否直连无关
+- **当前部署策略**：本轮明确不引入 TURN/VPS/Viewer 客户端。公网媒体严格 STUN；自动恢复有界耗尽后明确失败，用户可手动切换 JPEG tunnel fallback，或在 `auto`/`stun` 下手动「搜索端口」最多 500 轮尝试系统分配 UDP 端口；固定域名与媒体是否直连无关
+- **系统分配端口**：浏览器没有选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0` 由 OS 分配。手动端口搜索不保证唯一端口，也不能替代可控的 Host UDP 端口范围与路由器转发方案
 - **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
 - **开发子域**：`dev.link.stockhub.wiki` 只作为可选开发入口；其边缘访问由 Cloudflare Access 单独保护，但默认仍通过 proxy 复用 `8080` 后端能力
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
@@ -374,3 +377,4 @@ WebRemoteDesktop/
 | 2026-07-19 | 完成真实普通浏览器验收；修复 Chromium 双击计数、首轮媒体预热/profile 同步、Terminal 关闭后迟到事件崩溃和 Signal 重启后的 Host 过期 token 重连；保留首帧 P50 与公网 Terminal RTT 未达目标的诚实结论 |
 | 2026-07-19 | 完成键盘映射与卡键专项审计；确认 Windows Ctrl -> Command、tracked keyup、跨 transport reset、左右 modifier、Host per-key watchdog、fresh tunnel 控制租约和国际键盘映射仍需整改，不再把组合键与 Windows 模式标记为完整验收 |
 | 2026-07-19 | 补齐键盘 v1/v2 迁移契约：Host/Viewer 版本能力协商、旧 Host 拒绝 v2 激活、legacy 单 controller 与 transport-change reset；真实 Host/Quartz 运行验收保留至 Task12 |
+| 2026-07-20 | 补充手动 STUN 端口搜索：仅按钮触发最多 500 轮全量重建；成功需 selected pair + 连续 3 次解码采样；UI 只显示数字端口；不覆盖 Strict STUN，耗尽不自动 TURN/tunnel；端口仍由系统分配 |

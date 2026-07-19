@@ -103,7 +103,7 @@ Viewer 侧降载动作通过现有信令扩展完成：
 3. ICE restart 后创建新 offer，确保浏览器实际发送带 ICE restart 的 SDP。
 4. 10 秒内仍无有效媒体，则进入 terminal failure。
 
-Strict STUN 模式下的恢复预算：
+Strict STUN 模式下的**自动**恢复预算（普通 WebRTC 失败路径）：
 
 | 动作 | `auto` | `stun` |
 |------|--------|--------|
@@ -113,7 +113,9 @@ Strict STUN 模式下的恢复预算：
 | 自动 TURN | 禁止 | 禁止 |
 | 自动 media tunnel | 禁止 | 禁止 |
 
-`auto` / `stun` 达到恢复预算后必须终止并上报：
+上述预算只约束**自动**恢复。它**不是**唯一恢复路径：用户可在 `auto` / `stun` 下通过控制栏「搜索端口」按钮**手动**启动最多 500 轮的 STUN 端口搜索（见下文「手动 STUN 端口搜索」）。普通 ICE/PC 失败、降载耗尽或 proactive ICE restart 耗尽**都不会**自动启动该 500 轮搜索。
+
+`auto` / `stun` 达到自动恢复预算后必须终止并上报：
 
 ```json
 {
@@ -123,6 +125,18 @@ Strict STUN 模式下的恢复预算：
   "fallbackUsed": false
 }
 ```
+
+## 手动 STUN 端口搜索
+
+补充能力（详见 `docs/superpowers/specs/2026-07-20-manual-stun-port-search-design.md`）：
+
+1. **唯一触发**：只有用户点击「搜索端口」才会启动最多 500 轮的全量 PeerConnection 重建搜索；自动恢复路径不得启动。
+2. **成功条件**：当前轮出现 selected candidate pair，且连续 3 个 1 秒采样都有解码视频帧。
+3. **UI 展示**：仅显示 Viewer/Host 的数字 UDP 端口与轮次（如 `端口搜索 27/500 · Viewer UDP 53114 · Host UDP 49702`），不展示 IP。
+4. **不保证唯一端口**：OS 可能复用先前端口；UI 分别统计连接轮次与观察到的唯一端口数。
+5. **不覆盖 Strict STUN 策略**：搜索失败/耗尽后不自动切 TURN，不自动走 Socket.IO 媒体 tunnel；自动降载与一次性 ICE restart 的预算规则保持不变。
+6. **端口仍由系统分配**：浏览器没有选择本地 ICE UDP 端口的 API；Host 侧 `aiortc`/`aioice` 绑定端口 `0`，由 macOS 分配。本功能通过反复重建连接“换端口”，不提供固定或可指定端口。
+7. **可取消与边界**：用户可点「停止搜索」；切换网络模式、断开、登出或普通「刷新画面」会取消搜索；耗尽 500 轮后明确失败并保留 Strict STUN 失败指引。
 
 ## 诊断字段
 
@@ -183,10 +197,11 @@ Host 日志新增：
 
 首期必须在代码或文档中明确：
 
-1. 当前 `aiortc` / `aioice` 默认随机绑定本地 UDP 端口。
-2. `RTCConfiguration` 不提供标准端口范围字段。
+1. 当前 `aiortc` / `aioice` 默认随机绑定本地 UDP 端口（绑定 `0`，由 OS 分配）。
+2. `RTCConfiguration` 不提供标准端口范围字段；浏览器也没有选择本地 ICE UDP 端口的 API。
 3. 因此不能只在 TP-LINK 虚拟服务器里填一个端口就保证 TURN/STUN/WebRTC 可达。
-4. 若未来要支持端口转发优化，需要新增 `WRD_ICE_UDP_PORT_RANGE`，并通过可维护的 `aioice` 适配层或上游能力固定 Host 侧 UDP 绑定范围。
+4. 手动「搜索端口」最多尝试 500 轮系统分配端口，**不**保证得到唯一或可转发的固定端口，也**不**替代后续的固定端口范围方案。
+5. 若未来要支持端口转发优化，需要新增 `WRD_ICE_UDP_PORT_RANGE`，并通过可维护的 `aioice` 适配层或上游能力固定 Host 侧 UDP 绑定范围。
 
 ### 后续增强
 
@@ -248,7 +263,9 @@ Signal Server 测试：
 
 1. 弱媒体路径出现丢包、0 FPS、RTT 或 jitter 异常时，Viewer 会先自动降载。
 2. 降载记录进入诊断 payload、前端日志和 Host 日志。
-3. 主动 ICE restart 只发生一次，并有明确日志。
+3. 主动 ICE restart 在自动恢复路径中只发生一次，并有明确日志。
 4. `auto` / `stun` 模式不会自动调用 `startTunnelRelay()`。
 5. 失败时显示 Strict STUN exhausted，而不是悄悄切中继。
 6. 文档明确 TP-LINK 端口转发只有在 Host UDP 端口范围可控后才有实际意义。
+7. 普通 WebRTC 失败只走有界自动恢复，不会启动 500 轮手动端口搜索；500 轮搜索仅由「搜索端口」按钮触发。
+8. 手动端口搜索成功需 selected pair + 连续 3 次解码视频采样；耗尽后不自动切 TURN / 媒体 tunnel；UI 只显示数字端口不显示 IP。

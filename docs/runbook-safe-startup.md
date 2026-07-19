@@ -291,20 +291,32 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 
 - 先尝试 WebRTC direct ICE，允许 `host` / `srflx` / `prflx`
 - 媒体链路恶化时自动降载：720p/20fps → 540p/15fps → 480p/12fps → 360p/8fps
-- 降载仍失败时主动尝试一次 ICE restart
-- 恢复预算耗尽后明确失败并自动上传诊断
+- 降载仍失败时主动尝试一次 ICE restart（自动恢复有界；这不是唯一后续手段）
+- 自动恢复预算耗尽后明确失败并自动上传诊断
 - 不自动切 TURN，不自动走 Cloudflare/Socket.IO 媒体 tunnel
+- **普通 WebRTC 失败只走上述有界自动恢复，不会自动启动 500 轮端口搜索**
+
+#### 手动 STUN 端口搜索（可选）
+
+当自动恢复耗尽、或用户希望主动尝试换一组系统分配的 UDP 端口时，可在控制栏点击「搜索端口」（仅 `auto` / `stun`、信令已连且 Host 在线）：
+
+1. **唯一触发**：只有用户手动点击该按钮才会启动最多 **500** 轮全量 PeerConnection 重建；自动失败处理不得启动
+2. **成功条件**：本轮出现 selected pair，且连续 3 个 1 秒采样都有解码视频；成功后保留当前连接
+3. **UI**：状态区只显示数字端口与轮次（如 `端口搜索 27/500 · Viewer UDP … · Host UDP …`），不显示 IP；未拿到候选时显示「分配中」
+4. **可停止**：再次点击变为「停止搜索」；切换网络模式、断开、登出或普通「刷新画面」会取消搜索
+5. **策略不变**：500 轮耗尽后不自动切 TURN / Socket.IO 媒体 tunnel，也不覆盖 Strict STUN 自动恢复预算
+6. **端口限制**：浏览器无选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0`，由 OS 分配。本功能不保证唯一端口、不保证可被路由器单端口转发命中
 
 排查顺序：
 
 1. 查看 Host 日志里的 `VIEWER_STATS`、`WRD_MEDIA_PROFILE`、`WRD_STUN_FAILURE`
 2. 如果出现 `WRD_MEDIA_PROFILE`，说明 Viewer 已检测到弱链路并尝试降载
-3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel
+3. 如果最终出现 `strict-stun-exhausted`，优先判断公司网 UDP/NAT、家庭路由器 NAT、IPv6、防火墙，而不是重启 quick tunnel；需要时可再尝试手动「搜索端口」（最多 500 轮）
 4. quick tunnel 的 `curl -I -L` 只能证明网页入口可达，不能证明媒体直连可达
 5. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
 6. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
 
-家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
+家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口（系统分配，绑定 `0`），手动搜索端口也只是反复重建连接以换取新的系统端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
 
 ### 场景 2：Cloudflare 地址失效
 
