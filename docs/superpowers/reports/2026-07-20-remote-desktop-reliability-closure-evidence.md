@@ -3,7 +3,7 @@
 Date: 2026-07-20
 Branch: `worktree-reliability-closure-p1`
 Review baseline (previous anchor): `4faf27148f73aa6d0980a201e0005a0fa964c602`
-Latest automated commit on this remediation branch: `8939791c21f6d6bf5d3def1f29d2be7eef7d15f7`
+Latest automated commit on this remediation branch: `c6fad985417834fceddcfe511b41f26cd63c533a`
 UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
@@ -17,7 +17,7 @@ Plan: `docs/superpowers/plans/2026-07-20-remote-desktop-reliability-closure-plan
 4. `dfc8dc9` feat(tunnel): acknowledge applied media control
 5. `a134d30` fix(host): fail closed on media apply errors
 6. `9b1aa7d` test(ops): restore launchctl regression coverage
-7. `8939791` docs(remote): reconcile reliability closure status
+7. `c6fad98` docs(remote): reconcile reliability closure status
 
 Earlier reliability-closure implementation history remains on `main` (reset barrier, port search gate, media suspension scaffolding, tunnel viewport, etc.).
 
