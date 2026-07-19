@@ -1812,3 +1812,92 @@ test('v2 offer forwards connectionAttemptId and binds media activity to that att
     1,
   );
 });
+
+test('tunnel media control requires ACTIVE lease and current attempt then routes Host ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer); io.connect(viewerB);
+
+  viewer.trigger('control-acquire', { requestId: 't1' });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((e) => e.event === 'control-grant').data;
+
+  // Bind attempt via offer.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-tunnel',
+  });
+
+  const mediaControl = {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: false,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    width: 960,
+    height: 540,
+    fps: 6,
+  };
+  viewer.trigger('relay-stream-control', mediaControl);
+  const forwarded = host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data;
+  assert.equal(forwarded.viewerId, 'viewer-1');
+  assert.equal(forwarded.connectionAttemptId, 'attempt-tunnel');
+  assert.equal(forwarded.generation, 1);
+  assert.equal(forwarded.state, 'suspended');
+
+  // Wrong attempt rejected.
+  viewer.trigger('relay-stream-control', {
+    ...mediaControl,
+    connectionAttemptId: 'attempt-old',
+    generation: 2,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1)?.data.reason
+      || viewer.sent.filter((e) => e.event === 'relay-stream-control-rejected').at(-1)?.data.reason,
+    'wrong-attempt',
+  );
+
+  // Host ack routes without leaseId.
+  host.trigger('relay-stream-control-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel',
+    applied: true,
+    viewerId: 'viewer-1',
+    leaseId: grant.leaseId,
+  });
+  const ack = viewer.sent.filter((e) => e.event === 'relay-stream-control-ack').at(-1)
+    || viewer.sent.filter((e) => e.event === 'media-activity-ack').at(-1);
+  assert.ok(ack);
+  assert.equal(ack.data.applied, true);
+  assert.equal(ack.data.generation, 1);
+  assert.equal(Object.hasOwn(ack.data, 'leaseId'), false);
+
+  // Read-only viewer cannot control current relay.
+  viewerB.trigger('relay-stream-control', {
+    ...mediaControl,
+    generation: 3,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control' && e.data.viewerId === 'viewer-2').length,
+    0,
+  );
+});

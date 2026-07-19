@@ -2464,9 +2464,142 @@ class WebRemoteHost:
         # Never echo leaseId.
         await sio.emit("media-activity-ack", payload)
 
+    async def _emit_relay_stream_control_ack(
+        self,
+        *,
+        viewer_id,
+        state,
+        generation,
+        connection_attempt_id,
+        applied,
+        reject_reason=None,
+    ):
+        sio = getattr(self, "sio", None)
+        if sio is None:
+            return
+        payload = {
+            "schemaVersion": 1,
+            "state": "active" if state == "active" else "suspended",
+            "generation": generation if isinstance(generation, int) else None,
+            "connectionAttemptId": connection_attempt_id if isinstance(connection_attempt_id, str) else None,
+            "applied": bool(applied),
+            "viewerId": viewer_id if isinstance(viewer_id, str) else None,
+        }
+        if reject_reason:
+            payload["reason"] = str(reject_reason)[:64]
+        await sio.emit("relay-stream-control-ack", payload)
+
+    def _is_tunnel_media_control(self, data):
+        if not isinstance(data, dict):
+            return False
+        if data.get("mediaControlSchemaVersion") == 1:
+            return True
+        return (
+            data.get("schemaVersion") == 2
+            and data.get("state") in ("active", "suspended")
+            and isinstance(data.get("generation"), int)
+            and isinstance(data.get("connectionAttemptId"), str)
+        )
+
+    async def _apply_tunnel_media_control(self, data):
+        """Suspend/resume tunnel producer for the current attempt without rebuilding PC."""
+        viewer_id = data.get("viewerId")
+        state = data.get("state")
+        if state not in ("active", "suspended"):
+            state = "active" if data.get("enabled") else "suspended"
+        generation = data.get("generation")
+        attempt_id = data.get("connectionAttemptId")
+        lease_id = data.get("leaseId")
+        lease_epoch = data.get("leaseEpoch")
+
+        ok, reason, _normalized = self._validate_media_activity_request({
+            "schemaVersion": 1,
+            "state": state,
+            "generation": generation,
+            "connectionAttemptId": attempt_id,
+            "viewerId": viewer_id,
+            "leaseId": lease_id,
+            "leaseEpoch": lease_epoch,
+            "reasons": data.get("reasons") if isinstance(data.get("reasons"), list) else [],
+        })
+        if not ok:
+            await self._emit_relay_stream_control_ack(
+                viewer_id=viewer_id,
+                state=state,
+                generation=generation,
+                connection_attempt_id=attempt_id,
+                applied=False,
+                reject_reason=reason,
+            )
+            return
+
+        applied = False
+        try:
+            if not self.relay_streamer:
+                self.relay_streamer = TunnelRelayStreamer(self.sio)
+            relay = self.relay_streamer
+            if state == "suspended":
+                # Freeze input + stop new capture/JPEG/relay without tearing Socket lifecycle.
+                try:
+                    if getattr(self, "input_handler", None) is not None:
+                        self.input_handler.release_all_mouse_buttons(reason="media-suspended")
+                        if hasattr(self.input_handler, "release_all_keys"):
+                            self.input_handler.release_all_keys(reason="media-suspended")
+                except Exception as exc:
+                    logger.warning("tunnel suspend input freeze failed: %s", type(exc).__name__)
+                    raise
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(True)
+                else:
+                    await relay.stop()
+                self._media_activity_suspended = True
+                applied = True
+            else:
+                # Resume producer for current generation; Viewer still waits for fresh frame.
+                if getattr(relay, "viewer_id", None) != viewer_id or not getattr(relay, "enabled", True):
+                    await relay.start(
+                        viewer_id,
+                        width=data.get("width", 960),
+                        height=data.get("height", 540),
+                        fps=data.get("fps", 8),
+                    )
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(False)
+                self._media_activity_suspended = False
+                applied = True
+
+            self._media_activity_binding = {
+                "viewerId": viewer_id,
+                "connectionAttemptId": attempt_id,
+                "generation": generation,
+                "state": state,
+            }
+        except Exception as exc:
+            logger.warning("tunnel media control apply failed: %s", type(exc).__name__)
+            applied = False
+            try:
+                if hasattr(self.relay_streamer, "set_suspended"):
+                    self.relay_streamer.set_suspended(True)
+            except Exception:
+                pass
+            self._media_activity_suspended = True
+            state = "suspended"
+
+        await self._emit_relay_stream_control_ack(
+            viewer_id=viewer_id,
+            state=state if applied else "suspended",
+            generation=generation,
+            connection_attempt_id=attempt_id,
+            applied=applied,
+            reject_reason=None if applied else "execution-failed",
+        )
+
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""
         try:
+            if self._is_tunnel_media_control(data):
+                await self._apply_tunnel_media_control(data)
+                return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
             if not self.relay_streamer:

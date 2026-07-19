@@ -926,7 +926,7 @@ function setupSignaling(io, options = {}) {
       });
     });
 
-    socket.on('relay-stream-control', (data) => {
+    socket.on('relay-stream-control', (data = {}) => {
       if (role !== 'viewer' && role !== 'relay-viewer') {
         console.warn(`Relay stream control rejected: role=${role} from ${socket.id}`);
         return;
@@ -935,7 +935,39 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay stream control rejected: disconnected viewer ${socket.id}`);
         return;
       }
-      if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      const isMediaControl = Number(data.mediaControlSchemaVersion) === 1
+        || (data.schemaVersion === 2 && (data.state === 'active' || data.state === 'suspended')
+          && Number.isSafeInteger(data.generation));
+      if (role === 'viewer' && isMediaControl) {
+        if (!authorizeViewer(socket, data, { legacy: false })) {
+          socket.emit('relay-stream-control-rejected', { reason: 'unauthorized' });
+          return;
+        }
+        if (!isValidConnectionAttemptId(data.connectionAttemptId)
+          || !Number.isSafeInteger(data.generation) || data.generation < 1) {
+          socket.emit('relay-stream-control-rejected', { reason: 'invalid-media-control' });
+          return;
+        }
+        const currentAttempt = currentViewerConnectionAttempt(socket.id);
+        if (currentAttempt && data.connectionAttemptId !== currentAttempt) {
+          socket.emit('relay-stream-control-rejected', { reason: 'wrong-attempt' });
+          return;
+        }
+        const prior = mediaActivityProgress.get(socket.id);
+        if (prior
+          && prior.connectionAttemptId === data.connectionAttemptId
+          && data.generation <= prior.generation) {
+          socket.emit('relay-stream-control-rejected', { reason: 'stale-generation' });
+          return;
+        }
+        mediaActivityProgress.set(socket.id, {
+          connectionAttemptId: data.connectionAttemptId,
+          generation: data.generation,
+        });
+      } else if (role === 'viewer' && data?.schemaVersion === 2
+        && !authorizeViewer(socket, data, { legacy: false })) {
+        return;
+      }
       let viewerId = socket.id;
       if (role === 'relay-viewer') {
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
@@ -948,11 +980,40 @@ function setupSignaling(io, options = {}) {
         if (!viewerId) return;
       }
       if (connections.host) {
-        connections.host.emit('relay-stream-control', {
+        const forwarded = {
           ...data,
           viewerId,
-        });
+        };
+        if (isMediaControl) {
+          forwarded.state = data.state === 'active' ? 'active' : 'suspended';
+          forwarded.enabled = data.state === 'active' || data.enabled === true;
+          forwarded.generation = data.generation;
+          forwarded.connectionAttemptId = data.connectionAttemptId;
+          forwarded.mediaControlSchemaVersion = 1;
+        }
+        connections.host.emit('relay-stream-control', forwarded);
       }
+    });
+
+    socket.on('relay-stream-control-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) return;
+      const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
+      if (!viewerId) return;
+      const viewerSocket = connections.viewers.get(viewerId);
+      if (!viewerSocket) return;
+      const ack = {
+        schemaVersion: 1,
+        state: data.state === 'active' ? 'active' : 'suspended',
+        generation: Number.isSafeInteger(data.generation) ? data.generation : null,
+        connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
+        applied: data.applied === true,
+      };
+      if (typeof data.reason === 'string' && data.reason) {
+        ack.reason = data.reason.slice(0, 64);
+      }
+      // Dual-route: media runtime listens on media-activity-ack; keep explicit tunnel event too.
+      viewerSocket.emit('relay-stream-control-ack', ack);
+      viewerSocket.emit('media-activity-ack', ack);
     });
 
     socket.on('relay-frame', (data) => {

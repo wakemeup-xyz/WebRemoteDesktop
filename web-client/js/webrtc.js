@@ -218,20 +218,18 @@ const WebRTC = {
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
       const tunnelSize = this.getTunnelRelayRequestSize();
+      // Tunnel media control: wait for Host applied ack. Never synthesize applied.
       this.socket.emit('relay-stream-control', {
         ...lease,
+        schemaVersion: 2,
+        mediaControlSchemaVersion: 1,
         enabled: desired === 'active',
-        width: tunnelSize.width,
-        height: tunnelSize.height,
-        fps: tunnelSize.fps,
-      });
-      // Tunnel path: treat stream control as the request; synthetic applied after emit.
-      this.handleMediaActivityAck({
-        schemaVersion: 1,
         state: desired,
         generation: payload.generation,
         connectionAttemptId: payload.connectionAttemptId,
-        applied: true,
+        width: tunnelSize.width,
+        height: tunnelSize.height,
+        fps: tunnelSize.fps,
       });
       return true;
     }
@@ -1463,6 +1461,15 @@ const WebRTC = {
     this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
     this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
     this.socket.on('media-activity-ack', (data) => this.handleMediaActivityAck(data));
+    this.socket.on('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
+    this.socket.on('relay-stream-control-rejected', (data) => {
+      this.handleMediaActivityAck({
+        state: data?.state === 'active' ? 'active' : 'suspended',
+        generation: data?.generation,
+        connectionAttemptId: data?.connectionAttemptId,
+        applied: false,
+      });
+    });
     this.socket.on('media-activity-rejected', () => {
       // Keep fail-closed local gates; do not re-enable input on rejection.
       this.syncDesktopInputGate();

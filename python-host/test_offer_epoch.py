@@ -690,6 +690,113 @@ async def test_relay_stop_from_stale_viewer_does_not_stop_active_relay():
 
 
 @pytest.mark.asyncio
+async def test_tunnel_media_control_acks_only_after_producer_suspend_and_rejects_stale_attempt():
+    events = []
+
+    class FakeRelay:
+        viewer_id = "viewer-1"
+        production_generation = 1
+        suspended = False
+        frames_emitted = 0
+
+        def set_suspended(self, suspended):
+            self.suspended = bool(suspended)
+            self.production_generation += 1
+            if suspended:
+                # producer stopped: no new frames after this generation bump
+                return self.production_generation
+            return self.production_generation
+
+        async def start(self, *args, **kwargs):
+            raise AssertionError("media control must not restart producer")
+
+        async def stop(self):
+            raise AssertionError("media control must not stop producer")
+
+    class FakeSio:
+        async def emit(self, event, payload):
+            events.append((event, payload))
+
+    host = object.__new__(WebRemoteHost)
+    host.sio = FakeSio()
+    host.relay_streamer = FakeRelay()
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionGeneration": 1,
+        "connectionAttemptId": "attempt-B",
+    }
+    host._media_activity_binding = {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": "attempt-B",
+        "generation": 0,
+        "state": "active",
+    }
+    host._media_activity_suspended = False
+    host.input_handler = None
+    host.screen_track = None
+    host.media_sender = None
+    host.pc = None
+
+    # Stale attempt cannot stop current controller relay.
+    await host.on_relay_stream_control({
+        "schemaVersion": 2,
+        "mediaControlSchemaVersion": 1,
+        "enabled": False,
+        "state": "suspended",
+        "generation": 1,
+        "connectionAttemptId": "attempt-A",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+    })
+    assert host.relay_streamer.suspended is False
+    assert events[-1][0] == "relay-stream-control-ack"
+    assert events[-1][1]["applied"] is False
+    assert events[-1][1]["reason"] == "wrong-attempt"
+    assert "leaseId" not in events[-1][1]
+
+    # Matching suspend applies only after producer set_suspended.
+    await host.on_relay_stream_control({
+        "schemaVersion": 2,
+        "mediaControlSchemaVersion": 1,
+        "enabled": False,
+        "state": "suspended",
+        "generation": 1,
+        "connectionAttemptId": "attempt-B",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+    })
+    assert host.relay_streamer.suspended is True
+    assert host._media_activity_suspended is True
+    assert events[-1][0] == "relay-stream-control-ack"
+    assert events[-1][1]["applied"] is True
+    assert events[-1][1]["state"] == "suspended"
+    assert events[-1][1]["generation"] == 1
+    assert events[-1][1]["connectionAttemptId"] == "attempt-B"
+    assert "leaseId" not in events[-1][1]
+
+    # Resume ack after producer resume.
+    await host.on_relay_stream_control({
+        "schemaVersion": 2,
+        "mediaControlSchemaVersion": 1,
+        "enabled": True,
+        "state": "active",
+        "generation": 2,
+        "connectionAttemptId": "attempt-B",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+    })
+    assert host.relay_streamer.suspended is False
+    assert events[-1][1]["applied"] is True
+    assert events[-1][1]["state"] == "active"
+    assert events[-1][1]["generation"] == 2
+
+
+@pytest.mark.asyncio
 async def test_input_from_stale_viewer_is_ignored():
     calls = []
 
