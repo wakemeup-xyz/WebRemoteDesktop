@@ -5,6 +5,7 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
+const proxyaddr = require('proxy-addr');
 const { Server } = require('socket.io');
 const { createAuthRouter } = require('./routes/auth');
 const {
@@ -31,6 +32,8 @@ const { createRotatingFileSink, createStructuredLogger } = require('./lib/observ
 const { createRecentEventStore } = require('./lib/observability/store');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
+
+const trustLoopbackProxy = proxyaddr.compile('loopback');
 
 function requireAccessToken(req, res, next) {
   try {
@@ -91,6 +94,7 @@ function createServerApp(options = {}) {
   const app = express();
   const server = http.createServer(app);
 
+  app.set('trust proxy', trustLoopbackProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors({
     origin(origin, callback) {

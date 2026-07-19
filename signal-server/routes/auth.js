@@ -9,24 +9,37 @@ const { TerminalMetrics } = require('../lib/terminal/metrics');
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 
 function createLimiter(max, options = {}) {
+  const {
+    terminalMetrics = null,
+    recordAuthRejection = false,
+    ...rateLimitOptions
+  } = options;
   return rateLimit({
     windowMs: AUTH_WINDOW_MS,
     max,
     standardHeaders: true,
     legacyHeaders: false,
     handler(_req, res) {
+      if (recordAuthRejection) {
+        terminalMetrics?.recordCounter('auth_rejected');
+      }
       return res.status(429).json({ error: 'Too many requests' });
     },
-    ...options,
+    ...rateLimitOptions,
   });
 }
 
-function createAuthLimiters() {
+function createAuthLimiters(options = {}) {
+  const adminLimiterOptions = {
+    terminalMetrics: options.terminalMetrics || null,
+    recordAuthRejection: true,
+  };
   return {
     viewer: createLimiter(20),
     host: createLimiter(60),
-    admin: createLimiter(5),
+    admin: createLimiter(5, adminLimiterOptions),
     adminGlobal: createLimiter(100, {
+      ...adminLimiterOptions,
       keyGenerator: () => 'terminal-admin-global',
       validate: false,
     }),
@@ -43,7 +56,7 @@ function createAuthRouter(options = {}) {
   const router = express.Router();
   const terminalAudit = options.terminalAudit || createTerminalAudit(options.logger || console);
   const terminalMetrics = options.terminalMetrics || new TerminalMetrics();
-  const limiters = options.authLimiters || createAuthLimiters();
+  const limiters = options.authLimiters || createAuthLimiters({ terminalMetrics });
 
   function getConfig() {
     return {
