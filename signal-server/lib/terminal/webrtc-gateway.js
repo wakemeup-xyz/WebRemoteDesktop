@@ -1,5 +1,12 @@
 const crypto = require('node:crypto');
 
+// Keep parity with Socket.IO terminal input/resize gates in websocket/terminal.js.
+const TERMINAL_INPUT_MAX_BYTES = 64 * 1024;
+const TERMINAL_RESIZE_COLS_MIN = 10;
+const TERMINAL_RESIZE_COLS_MAX = 300;
+const TERMINAL_RESIZE_ROWS_MIN = 5;
+const TERMINAL_RESIZE_ROWS_MAX = 100;
+
 function loadNodeDataChannel() {
   try {
     // Optional native dependency; Phase 2 requires it for webrtc-turn.
@@ -118,7 +125,10 @@ function createTerminalWebRtcGateway(options = {}) {
     if (type === 'bind') {
       const previousSid = entry.sessionId;
       entry.sessionId = String(message.sid || entry.sessionId || '');
-      entry.clientId = String(message.clientId || entry.clientId || '');
+      // Never trust clientId from DC frames; identity stays socket-authenticated.
+      if (typeof message.clientId === 'string' && message.clientId.trim()) {
+        entry.browserLabel = String(message.clientId).slice(0, 128);
+      }
       entry.preferDcOutput = message.preferDcOutput !== false;
       if (previousSid && previousSid !== entry.sessionId) {
         detachOutputBridge(entry, 'rebind');
@@ -143,6 +153,18 @@ function createTerminalWebRtcGateway(options = {}) {
       const data = String(message.data || '');
       if (!sid) {
         sendJson(entry.dc, { t: 'error', code: 'terminal_session_required' });
+        return;
+      }
+      const bytes = Buffer.byteLength(data, 'utf8');
+      if (bytes > TERMINAL_INPUT_MAX_BYTES) {
+        sendJson(entry.dc, {
+          t: 'error',
+          sid,
+          code: 'terminal_input_too_large',
+          message: 'Terminal input exceeds 64KB',
+          bytes,
+          maxBytes: TERMINAL_INPUT_MAX_BYTES,
+        });
         return;
       }
       try {
@@ -170,12 +192,32 @@ function createTerminalWebRtcGateway(options = {}) {
     }
     if (type === 'resize') {
       const sid = String(message.sid || entry.sessionId || '');
+      const cols = Number(message.cols);
+      const rows = Number(message.rows);
+      if (
+        !Number.isInteger(cols)
+        || !Number.isInteger(rows)
+        || cols < TERMINAL_RESIZE_COLS_MIN
+        || cols > TERMINAL_RESIZE_COLS_MAX
+        || rows < TERMINAL_RESIZE_ROWS_MIN
+        || rows > TERMINAL_RESIZE_ROWS_MAX
+      ) {
+        sendJson(entry.dc, {
+          t: 'error',
+          sid,
+          code: 'terminal_resize_out_of_range',
+          message: 'Terminal resize is out of range',
+          cols,
+          rows,
+        });
+        return;
+      }
       try {
         sessionManager.resizeSession(sid, {
           clientId: entry.clientId,
           socketId: entry.socketId,
-          cols: Number(message.cols),
-          rows: Number(message.rows),
+          cols,
+          rows,
         });
         sendJson(entry.dc, { t: 'resized', sid });
       } catch (error) {
@@ -332,7 +374,9 @@ function createTerminalWebRtcGateway(options = {}) {
       dc: null,
       open: false,
       socketId: key,
+      // Immutable peer identity from authenticated terminal socket offer path.
       clientId: String(clientId || ''),
+      browserLabel: '',
       sessionId: '',
     };
     peers.set(key, entry);
@@ -399,6 +443,11 @@ function createTerminalWebRtcGateway(options = {}) {
 }
 
 module.exports = {
+  TERMINAL_INPUT_MAX_BYTES,
+  TERMINAL_RESIZE_COLS_MIN,
+  TERMINAL_RESIZE_COLS_MAX,
+  TERMINAL_RESIZE_ROWS_MIN,
+  TERMINAL_RESIZE_ROWS_MAX,
   createTerminalWebRtcGateway,
   loadNodeDataChannel,
   toNodeIceServers,

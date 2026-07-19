@@ -33,6 +33,7 @@ test('capability reports missing runtime when PeerConnection absent', () => {
 test('acceptOffer answers, bridges output, and handles ping/input', () => {
   const writes = [];
   const attaches = [];
+  const resizes = [];
   class FakePC {
     constructor() {
       this.handlers = {};
@@ -73,11 +74,13 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
     PeerConnection: FakePC,
     sessionManager: {
       writeInput(sid, input) {
-        writes.push({ sid, data: input.data });
+        writes.push({ sid, data: input.data, clientId: input.clientId });
       },
-      resizeSession() {},
+      resizeSession(sid, input) {
+        resizes.push({ sid, cols: input.cols, rows: input.rows, clientId: input.clientId });
+      },
       attachSession(sid, input) {
-        attaches.push({ sid, observerId: input.observerId });
+        attaches.push({ sid, observerId: input.observerId, clientId: input.clientId });
         // Simulate one output chunk immediately.
         queueMicrotask(() => {
           input.onData?.('hello-from-pty\n', { replaySeq: 1 }, () => {});
@@ -112,10 +115,16 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
         entry.dc._message?.(JSON.stringify({
           t: 'bind',
           sid: 'term_1',
-          clientId: 'client-1',
+          // Spoofed identity must not override socket-authenticated clientId.
+          clientId: 'attacker-spoofed-id',
           preferDcOutput: true,
         }));
+        assert.equal(entry.clientId, 'client-1');
+        assert.equal(entry.browserLabel, 'attacker-spoofed-id');
         entry.dc._message?.(JSON.stringify({ t: 'in', sid: 'term_1', data: 'echo hi\n', inputId: 'i1' }));
+        entry.dc._message?.(JSON.stringify({ t: 'in', sid: 'term_1', data: 'x'.repeat(64 * 1024 + 1) }));
+        entry.dc._message?.(JSON.stringify({ t: 'resize', sid: 'term_1', cols: 9999, rows: 9999 }));
+        entry.dc._message?.(JSON.stringify({ t: 'resize', sid: 'term_1', cols: 120, rows: 40 }));
       } catch (error) {
         reject(error);
         return;
@@ -124,15 +133,21 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
         try {
           assert.equal(writes.length, 1);
           assert.equal(writes[0].sid, 'term_1');
+          assert.equal(writes[0].clientId, 'client-1');
           assert.equal(attaches.length, 1);
+          assert.equal(attaches[0].clientId, 'client-1');
           assert.match(attaches[0].observerId, /^webrtc:/);
-          const out = entry.dc._messages
-            .map((line) => {
-              try { return JSON.parse(line); } catch (_err) { return null; }
-            })
-            .find((item) => item && item.t === 'out');
-          assert.ok(out);
-          assert.equal(out.data, 'hello-from-pty\n');
+          assert.equal(resizes.length, 1);
+          assert.deepEqual(
+            { cols: resizes[0].cols, rows: resizes[0].rows, clientId: resizes[0].clientId },
+            { cols: 120, rows: 40, clientId: 'client-1' },
+          );
+          const parsed = entry.dc._messages.map((line) => {
+            try { return JSON.parse(line); } catch (_err) { return null; }
+          }).filter(Boolean);
+          assert.ok(parsed.some((item) => item.t === 'out' && item.data === 'hello-from-pty\n'));
+          assert.ok(parsed.some((item) => item.code === 'terminal_input_too_large'));
+          assert.ok(parsed.some((item) => item.code === 'terminal_resize_out_of_range'));
           gateway.closeAll();
           resolve();
         } catch (error) {
