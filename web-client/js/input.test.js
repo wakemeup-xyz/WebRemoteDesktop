@@ -123,7 +123,7 @@ test('blur resets keyboard state but leaves control ownership to WebRTC', () => 
 
 test('mouse pointer cancel releases capture and sends one reset', () => {
   const { Input, context, socketEvents } = loadInput();
-  Input.isActive = true;
+  activate(Input, context);
   const element = makeElement();
   Input.bindMouseEvents(element);
   const event = { pointerId: 8, button: 0, detail: 1, timeStamp: 1, clientX: 50, clientY: 50, currentTarget: element, preventDefault() {} };
@@ -141,4 +141,22 @@ test('keyboard diagnostics contain only state metadata', () => {
   const state = JSON.parse(JSON.stringify(Input.getDiagnosticState()));
   assert.deepEqual(Object.keys(state.keyboard).sort(), ['adapter', 'epoch', 'lastApplied', 'lastResetReason', 'lastSent', 'leaseState', 'modifierMask', 'pendingCount', 'pressedCount']);
   assert.doesNotMatch(JSON.stringify(state), /raw=|KeyA|keyCode/);
+});
+
+test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {
+  const { Input, context, socketEvents } = loadInput();
+  Input.socket = context.WebRTC.socket;
+  assert.equal(Input.sendInput('mouse', 'down', { relX: 0.5, relY: 0.5 }), null);
+  assert.equal(Input.sendInput('command', 'showDock', {}), null);
+  assert.equal(socketEvents.length, 0);
+
+  activate(Input, context);
+  Input.sendInput('mouse', 'down', { relX: 0.5, relY: 0.5 });
+  Input.sendInput('command', 'showDock', {});
+  assert.equal(socketEvents.length, 2);
+  for (const { payload } of socketEvents) {
+    assert.equal(payload.schemaVersion, 2);
+    assert.equal(payload.leaseId, 'lease-000000000001');
+    assert.equal(payload.leaseEpoch, 3);
+  }
 });

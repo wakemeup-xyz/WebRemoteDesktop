@@ -6,6 +6,7 @@ const Input = {
   keyboardMode: null,
   keyboardTransport: null,
   keyboardController: null,
+  activeControlLease: null,
   lastKeyboardResetReason: null,
   modifierMask: 0,
   _pendingMouseMove: null,
@@ -79,6 +80,9 @@ const Input = {
 
   setControlLease(lease) {
     this.initKeyboardController();
+    this.activeControlLease = lease && typeof lease.leaseId === 'string' && Number.isInteger(lease.leaseEpoch)
+      ? { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch }
+      : null;
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
     this.updateKeyboardUI();
   },
@@ -184,7 +188,12 @@ const Input = {
   },
 
   sendInput(type, action, payload) {
-    const data = { type, action, payload, timestamp: Date.now(), inputIds: [`inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`] };
+    const lease = this.activeControlLease;
+    if (!this.isActive || !lease) return null;
+    const data = {
+      type, action, payload, timestamp: Date.now(), inputIds: [`inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`],
+      schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,
+    };
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
       this.recordLatency(data);
       return data.inputIds[0];

@@ -725,6 +725,12 @@ const WebRTC = {
     return Boolean(this.controlState?.controller && this.controlState?.state === 'ACTIVE' && this.controlState?.lease);
   },
 
+  activeLeaseEnvelope() {
+    if (!this.hasActiveControl()) return null;
+    const lease = this.controlState.lease;
+    return { schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch };
+  },
+
   requestControl() {
     if (!this.socket?.connected || !this.controlState.hostOnline) return false;
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
@@ -798,13 +804,15 @@ const WebRTC = {
   },
 
   updateControlUI(status) {
-    if (!status && !this.controlState.controller) status = '只读';
+    const transitioning = this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING';
+    if (!status && !this.controlState.controller) status = transitioning ? '正在切换' : '只读';
     const label = status || (this.hasActiveControl() ? '已控制' : this.controlState.state === 'FREE' ? '只读' : '正在切换');
     const statusEl = document.getElementById('controlStatus');
     const button = document.getElementById('requestControlBtn');
     if (statusEl) statusEl.textContent = label;
     if (button) {
-      button.hidden = this.hasActiveControl();
+      button.hidden = this.hasActiveControl() || transitioning;
+      button.disabled = transitioning;
       button.textContent = this.controlState.state === 'ACTIVE' && !this.controlState.controller ? '请求接管' : '请求控制';
       const dataset = button.dataset || (button.dataset = {});
       if (!dataset.controlBound) {
@@ -1073,9 +1081,7 @@ const WebRTC = {
     this.inputChannel.onopen = () => {
       console.log('[INPUT-DC] DataChannel open');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
-      if (typeof Input !== 'undefined') {
-        Input.updateKeyDisplayRaw('输入直连已就绪');
-      }
+      if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
     };
     this.inputChannel.onclose = () => {
       const sctpState = this.pc && this.pc.sctp ? this.pc.sctp.state : 'no-sctp';
@@ -1209,19 +1215,24 @@ const WebRTC = {
   },
 
   emitRelayStreamControl() {
+    const lease = this.activeLeaseEnvelope();
+    if (!lease || !this.socket?.connected) return false;
     const width = Math.min(this.currentResolution.width || 960, 1280);
     const height = Math.min(this.currentResolution.height || 540, 720);
     const fps = width > 960 || height > 540 ? 6 : 8;
     this.socket?.emit('relay-stream-control', {
+      ...lease,
       enabled: true,
       width,
       height,
       fps
     });
+    return true;
   },
 
   stopTunnelRelay() {
-    if (this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { enabled: false });
+    const lease = this.activeLeaseEnvelope();
+    if (lease && this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { ...lease, enabled: false });
     this.tunnelRelayActive = false;
     document.body.classList.remove('tunnel-relay-active');
     const relayImage = document.getElementById('relayImage');
@@ -1266,8 +1277,10 @@ const WebRTC = {
         this.tunnelLastObjectUrl = objectUrl;
         this.tunnelPendingObjectUrl = '';
       }
-      if (this.socket?.connected) {
+      const lease = this.activeLeaseEnvelope();
+      if (lease && this.socket?.connected) {
         this.socket.emit('relay-frame-ack', {
+          ...lease,
           frameId: frameId || this.tunnelLastFrameId,
           renderedAt: Date.now(),
           latencyMs: data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0
