@@ -72,6 +72,7 @@ function setupSignaling(io, options = {}) {
   const pendingInputs = new Map();
   let pendingControllerProtocolVersion = null;
   let legacyControllerViewerId = null;
+  const legacyRelayCompanionByOwner = new Map();
 
   function clearPendingInputs(viewerId = null) {
     if (viewerId === null) pendingInputs.clear();
@@ -86,6 +87,7 @@ function setupSignaling(io, options = {}) {
         pendingInputs.clear();
         pendingControllerProtocolVersion = null;
         legacyControllerViewerId = null;
+        clearAllLegacyRelayCompanions({ stop: true });
       }
       broadcastControlState(result.reason);
     }
@@ -118,6 +120,43 @@ function setupSignaling(io, options = {}) {
       && pendingControllerProtocolVersion === 2) {
       effect.transition.reason = 'legacy-takeover';
     }
+  }
+
+  function legacyRelayOwnerForCompanion(companionId) {
+    for (const [ownerId, boundCompanionId] of legacyRelayCompanionByOwner) {
+      if (boundCompanionId === companionId) return ownerId;
+    }
+    return null;
+  }
+
+  function hasActiveLegacyRelayOwner(ownerId) {
+    const snapshot = controlSnapshot();
+    return Boolean(ownerId
+      && connections.viewers.size === 1
+      && legacyControllerViewerId === ownerId
+      && snapshot.state === 'ACTIVE'
+      && snapshot.controllerViewerId === ownerId
+      && connections.viewers.has(ownerId));
+  }
+
+  function bindLegacyRelayCompanion(companionId) {
+    const ownerId = legacyControllerViewerId;
+    if (!hasActiveLegacyRelayOwner(ownerId)) return null;
+    const existingCompanionId = legacyRelayCompanionByOwner.get(ownerId);
+    if (existingCompanionId && existingCompanionId !== companionId) return null;
+    legacyRelayCompanionByOwner.set(ownerId, companionId);
+    return ownerId;
+  }
+
+  function clearLegacyRelayCompanion(ownerId, { stop = false } = {}) {
+    if (!ownerId || !legacyRelayCompanionByOwner.delete(ownerId) || !stop || !connections.host) return;
+    connections.host.emit('relay-stream-control', { enabled: false, viewerId: ownerId });
+  }
+
+  function clearAllLegacyRelayCompanions({ stop = false } = {}) {
+    [...legacyRelayCompanionByOwner.keys()].forEach((ownerId) => {
+      clearLegacyRelayCompanion(ownerId, { stop });
+    });
   }
 
   function broadcastControlState(reason = null) {
@@ -211,6 +250,7 @@ function setupSignaling(io, options = {}) {
         clearPendingInputs();
         pendingControllerProtocolVersion = null;
         legacyControllerViewerId = null;
+        clearAllLegacyRelayCompanions({ stop: true });
         broadcastControlState('host-replaced');
       }
       socket.emit('connected', { role: 'host', status: 'ok', inputProtocolVersion: socket.inputProtocolVersion });
@@ -270,6 +310,9 @@ function setupSignaling(io, options = {}) {
       if (result.transition) {
         rememberPendingController(socket.inputProtocolVersion);
         annotateLegacyTakeover(result, previousController);
+        if (result.transition.reason === 'legacy-takeover') {
+          clearLegacyRelayCompanion(previousController, { stop: true });
+        }
         if (data.takeover === true && previousController && previousController !== socket.id) {
           connections.viewers.get(previousController)?.emit('control-revoked', { reason: 'takeover' });
         }
@@ -305,8 +348,10 @@ function setupSignaling(io, options = {}) {
         clearPendingInputs();
         pendingControllerProtocolVersion = null;
         legacyControllerViewerId = null;
+        clearAllLegacyRelayCompanions({ stop: true });
       }
       if (result.lease) {
+        if (legacyControllerViewerId) clearLegacyRelayCompanion(legacyControllerViewerId, { stop: true });
         legacyControllerViewerId = pendingControllerProtocolVersion === 1
           ? desktopLease.snapshot().controllerViewerId
           : null;
@@ -599,10 +644,21 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      let viewerId = socket.id;
+      if (role === 'relay-viewer') {
+        const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
+        if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) {
+          clearLegacyRelayCompanion(boundOwnerId);
+        }
+        viewerId = hasActiveLegacyRelayOwner(boundOwnerId)
+          ? boundOwnerId
+          : bindLegacyRelayCompanion(socket.id);
+        if (!viewerId) return;
+      }
       if (connections.host) {
         connections.host.emit('relay-stream-control', {
           ...data,
-          viewerId: socket.id
+          viewerId,
         });
       }
     });
@@ -612,7 +668,12 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
         return;
       }
-      const viewerSocket = connections.relayViewers.get(data.viewerId) || connections.viewers.get(data.viewerId);
+      const companionId = hasActiveLegacyRelayOwner(data.viewerId)
+        ? legacyRelayCompanionByOwner.get(data.viewerId)
+        : null;
+      const viewerSocket = (companionId && connections.relayViewers.get(companionId))
+        || connections.relayViewers.get(data.viewerId)
+        || connections.viewers.get(data.viewerId);
       if (viewerSocket) {
         viewerSocket.volatile.emit('relay-frame', data);
       }
@@ -624,9 +685,14 @@ function setupSignaling(io, options = {}) {
       }
       if (connections.host) {
         if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+        const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
+        const viewerId = role === 'relay-viewer' && hasActiveLegacyRelayOwner(boundOwnerId)
+          ? boundOwnerId
+          : role === 'viewer' ? socket.id : null;
+        if (!viewerId) return;
         connections.host.emit('relay-frame-ack', {
           ...data,
-          viewerId: socket.id
+          viewerId,
         });
       }
     });
@@ -669,6 +735,7 @@ function setupSignaling(io, options = {}) {
           clearPendingInputs();
           pendingControllerProtocolVersion = null;
           legacyControllerViewerId = null;
+          clearAllLegacyRelayCompanions();
           broadcastControlState(leaseResult.reason);
           connections.viewers.forEach((viewerSocket) => {
             viewerSocket.emit('host-status', { online: false });
@@ -681,6 +748,7 @@ function setupSignaling(io, options = {}) {
         clearPendingInputs(socket.id);
         const priorControl = controlSnapshot();
         const leaseResult = desktopLease.viewerDisconnected(socket.id);
+        clearLegacyRelayCompanion(socket.id, { stop: true });
         if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
         if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
         if (leaseResult.transition) {
@@ -703,12 +771,8 @@ function setupSignaling(io, options = {}) {
         emitViewerStatus('viewer-disconnected', socket);
       } else if (role === 'relay-viewer') {
         connections.relayViewers.delete(socket.id);
-        if (connections.host) {
-          connections.host.emit('relay-stream-control', {
-            enabled: false,
-            viewerId: socket.id
-          });
-        }
+        const ownerId = legacyRelayOwnerForCompanion(socket.id);
+        if (ownerId) clearLegacyRelayCompanion(ownerId, { stop: true });
       }
     });
   });
