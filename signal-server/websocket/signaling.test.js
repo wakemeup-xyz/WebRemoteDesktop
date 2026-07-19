@@ -333,6 +333,10 @@ test('signal input relay logs metadata without raw input payload values', () => 
   io.connect(host);
   io.connect(viewer);
 
+  viewer.trigger('control-acquire', { requestId: 'input-log' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
   const originalLog = console.log;
   console.log = (...values) => lines.push(values.join(' '));
   try {
@@ -583,6 +587,36 @@ test('input is not relayed before control transition ack, then valid v2 input re
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const granted = viewer.sent.find((entry) => entry.event === 'control-grant').data;
   viewer.trigger('input', v2Key({ leaseId: granted.leaseId, leaseEpoch: granted.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+});
+
+test('legacy input lazily acquires control and stays blocked until host ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+  });
+  const host = new FakeSocket('host-1', 'host');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(host);
+  io.connect(viewerA);
+  io.connect(viewerB);
+
+  const legacyInput = {
+    type: 'keyboard',
+    action: 'keydown',
+    payload: { key: 'a', code: 'KeyA' },
+  };
+  viewerA.trigger('input', legacyInput);
+  viewerB.trigger('input', legacyInput);
+  assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').at(-1).data.viewerId, 'viewer-a');
+  viewerB.trigger('input', legacyInput);
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 

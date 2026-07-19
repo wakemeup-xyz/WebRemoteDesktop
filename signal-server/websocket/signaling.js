@@ -106,9 +106,14 @@ function setupSignaling(io, options = {}) {
         leaseEpoch: data.leaseEpoch,
       });
     }
+    if (!legacy) {
+      const snapshot = desktopLease.snapshot();
+      return snapshot.state === 'ACTIVE' && snapshot.controllerViewerId === socket.id;
+    }
     return legacy;
   }
   const pendingOffers = new Map();
+  const pendingInputs = new Map();
 
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
@@ -235,6 +240,17 @@ function setupSignaling(io, options = {}) {
             if (isActiveViewerSocket(queuedSocket)) forwardOffer(queuedSocket, queuedData);
           });
         }
+        const queuedInputs = pendingInputs.get(desktopLease.snapshot().controllerViewerId);
+        if (queuedInputs) {
+          pendingInputs.delete(desktopLease.snapshot().controllerViewerId);
+          queuedInputs.forEach(({ socket: queuedSocket, data: queuedData }) => {
+            if (!isActiveViewerSocket(queuedSocket)) return;
+            if (!authorizeViewer(queuedSocket, queuedData, { legacy: true })) return;
+            if (connections.host) {
+              connections.host.emit('input', { ...queuedData, viewerId: queuedSocket.id });
+            }
+          });
+        }
       }
     });
 
@@ -313,6 +329,24 @@ function setupSignaling(io, options = {}) {
       if (!isActiveViewerSocket(socket)) {
         console.warn(`Input rejected: disconnected viewer ${socket.id}`);
         return;
+      }
+      if (data?.schemaVersion !== 2) {
+        const snapshot = desktopLease.snapshot();
+        if (!authorizeViewer(socket, data, { legacy: false })) {
+          if (snapshot.state === 'FREE' && connections.host) {
+            const result = desktopLease.requestControl({ viewerId: socket.id });
+            if (result.transition) {
+              pendingInputs.set(socket.id, [{ socket, data }]);
+              broadcastControlState('transition');
+              sendControlTransition(result);
+            }
+          } else if (snapshot.state === 'GRANTING' && snapshot.pendingViewerId === socket.id) {
+            const queued = pendingInputs.get(socket.id) || [];
+            queued.push({ socket, data });
+            pendingInputs.set(socket.id, queued);
+          }
+          return;
+        }
       }
       if (data?.schemaVersion === 2) {
         const validation = validateRemoteInput(data);
