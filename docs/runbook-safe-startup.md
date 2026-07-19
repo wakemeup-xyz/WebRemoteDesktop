@@ -409,3 +409,10 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 - `signal-server` / Host 重启通常会保留当前 tunnel 地址，但共享 Terminal 会话在内存中维护，因此会随服务重启结束
 - Terminal 失败应直接报错并上送诊断日志，不要自动退回媒体 tunnel 或 TURN
 - `http://localhost:5173/` 只作为开发映射入口；对外暴露时应走 `https://dev.link.stockhub.wiki` 并单独受 Cloudflare Access 保护，不是当前仓库的正式页面入口
+
+
+## 控制租约与媒体暂停运维提示（2026-07-20）
+
+- 若 Viewer 显示「Host 输入复位未确认，控制已安全锁定」：表示 reset barrier 仍在 `REVOKING/reset-blocked`。不要反复点请求控制；优先检查 Host 是否在线并完成 reset，或按既有流程重启本地 Host（不重建 tunnel）。
+- 暂停桌面媒体不会断开 Terminal；恢复后需等待首帧渲染再写入输入。
+- 公网入口仍以 `/tmp/wrd-safe-current-url.txt` 为准；本闭环不授权重建 tunnel。

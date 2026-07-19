@@ -645,3 +645,8 @@ Batch C 的自动化生命周期测试覆盖连续 50 次 start/stop 后无残�
 真实浏览器功能与正确性验收已闭环：selected pair、非黑画面、稳态 FPS/jitter、50 次正常刷新、自适应恢复、双击、拖出释放、三种 object-fit、Terminal 普通回显、密码隐藏和 alternate-screen 均取得实际证据。验收发现的 Terminal close race 和 Host 过期 token 重连也已修复并运行验证。
 
 仍不能标记为完全达到所有性能目标：首帧 P50 实测 `4.12s`，未达到 `<3s`；公网 Terminal RTT 仍约数百毫秒且波动到接近 900ms；Host 在高并发验收负载下出现一次 106ms event-loop critical lag。前两项主要受当前 Cloudflare/ICE 路径和既定部署约束影响，第三项需要长会话趋势证据。除此之外，当前方案在“不部署 TURN、不引入 VPS/Viewer 客户端、Strict STUN 失败后手动 tunnel”的边界内合理且已完成代码闭环。
+
+
+## Reliability closure update (2026-07-20)
+
+Automated items closed on branch `feat/remote-desktop-reliability-closure` (see `2026-07-20-remote-desktop-reliability-closure-evidence.md`): reset fail-closed, port-search lease gate, media suspend WebRTC+tunnel, viewport stability. Dual Viewer / physical keyboard / public tunnel remain runtime pending.

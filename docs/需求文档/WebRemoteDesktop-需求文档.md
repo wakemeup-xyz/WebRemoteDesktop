@@ -62,7 +62,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
-- [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
+- [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。启动还要求当前 Viewer 持有 ACTIVE 控制租约；只读/切换中/reset-blocked/媒体暂停时严格无副作用。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
 - [x] **缩放模式**：自适应(contain) / 填充(cover) / 拉伸(fill)
@@ -126,7 +126,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **显示/隐藏控件**：左上角总控按钮隐藏/显示控制栏和虚拟按钮栏
 - [x] **诊断日志**：弹出模态框显示浏览器控制台捕获的日志，可一键发送到服务端；连接失败时自动附带网络环境和链路摘要上送一份诊断
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复；会取消进行中的手动端口搜索
-- [x] **搜索端口**：仅在 `auto` / `stun` 且信令与 Host 在线时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）
+- [x] **搜索端口**：仅在 `auto` / `stun`、信令与 Host 在线，且当前 Viewer 为 ACTIVE controller 时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）；失去控制立即停止
 - [x] **全屏控制**：网页端提供全屏按钮，Esc 使用浏览器原生 Fullscreen API 退出
 - [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，自动恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel，也**不**自动启动 500 轮端口搜索
 - [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
@@ -394,3 +394,4 @@ WebRemoteDesktop/
 | 2026-07-19 | 补齐键盘 v1/v2 迁移契约：Host/Viewer 版本能力协商、旧 Host 拒绝 v2 激活、legacy 单 controller 与 transport-change reset；真实 Host/Quartz 运行验收保留至 Task12 |
 | 2026-07-20 | 补充手动 STUN 端口搜索：仅按钮触发最多 500 轮全量重建；成功需 selected pair + 连续 3 次解码采样；UI 只显示数字端口；不覆盖 Strict STUN，耗尽不自动 TURN/tunnel；端口仍由系统分配 |
 | 2026-07-20 | 立项 TURN 全链路接入：`turn.json`/env 双源、Host 注入与会话级 relay ICE、页面选择与自检、Terminal 默认 Socket.IO + 可选 `webrtc-turn`；设计 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`，计划 `docs/superpowers/plans/2026-07-20-turn-integration-plan.md` |
+| 2026-07-20 | 可靠性闭环：reset barrier fail-closed + 1s/2s/4s 有界重试与 reset-blocked；端口搜索租约门禁；媒体暂停端到端（WebRTC sender/capture + tunnel JPEG + Viewer applied phase/输入门禁/健康抑制）；tunnel 自适应分辨率下外层 viewport 稳定 |

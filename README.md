@@ -489,3 +489,16 @@ TURN_CREDENTIAL=你的凭证
 2. 增加端到端输入延迟可视化
 3. 支持音频传输
 4. 支持多 viewer 观看 / 单 viewer 控制
+
+
+## 远程桌面可靠性闭环（2026-07-20）
+
+自动化已闭合（详见 `docs/superpowers/reports/2026-07-20-remote-desktop-reliability-closure-evidence.md`）：
+
+- Host 控制租约 transition 失败/超时/非法 ack **fail-closed**：保持 `REVOKING`，同 epoch 1s/2s/4s 有界重试后广播 `reset-blocked`；仅 reset-only `applied` 进入 `FREE`。
+- 手动 STUN 端口搜索仅当前 **ACTIVE controller** 可启动；只读调用严格无副作用。
+- 媒体暂停停止桌面输入、MSS capture、WebRTC encode/payload、tunnel JPEG/relay；保留信令、ICE/DataChannel 与 Terminal。
+- tunnel 源分辨率可自适应（960/640/480），Viewer 外层 viewport 与指针几何保持稳定。
+- 本闭环不引入 TURN/VPS/原生 Viewer/固定 UDP 端口；不重启 Cloudflare tunnel。
+
+真实双 Viewer / 普通 Chrome / 公网 tunnel 运行验收见 Task 9 证据表（运行时待补）。
