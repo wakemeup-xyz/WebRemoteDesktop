@@ -73,7 +73,19 @@ function createServerApp(options = {}) {
     backupCount: config.logBackupCount,
   });
   const terminalOptions = options.terminal || {};
-  const terminalMetrics = options.terminalMetrics || terminalOptions.metrics || new TerminalMetrics();
+  if (
+    options.terminalMetrics
+    && terminalOptions.metrics
+    && options.terminalMetrics !== terminalOptions.metrics
+  ) {
+    throw new Error('[terminal] Explicit metrics instances must match');
+  }
+  const explicitTerminalMetrics = options.terminalMetrics || terminalOptions.metrics || null;
+  const managerMetrics = terminalOptions.sessionManager?.metrics || null;
+  if (explicitTerminalMetrics && managerMetrics && explicitTerminalMetrics !== managerMetrics) {
+    throw new Error('[terminal] Explicit metrics instance must match sessionManager.metrics');
+  }
+  const terminalMetrics = explicitTerminalMetrics || managerMetrics || new TerminalMetrics();
   ensureNodePtySpawnHelperExecutable(logger);
 
   const app = express();

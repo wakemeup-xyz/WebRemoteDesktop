@@ -806,6 +806,31 @@ test('terminal websocket records socket and input metrics once on the shared ins
   assert.equal(JSON.stringify(snapshot).includes('SECRET_INPUT'), false);
 });
 
+test('terminal setup rejects a metrics instance that conflicts with the injected manager', () => {
+  const managerMetrics = new TerminalMetrics();
+  const sessionManager = createTerminalSessionManager({
+    metrics: managerMetrics,
+    ptyFactory: () => createFakePty(),
+    audit: { info() {}, warn() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+    },
+  });
+
+  assert.throws(() => setupTerminal(makeIo(), {
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalIdleTimeoutMs: 0,
+    },
+    sessionManager,
+    metrics: new TerminalMetrics(),
+  }), /metrics instance/i);
+});
+
 test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', () => {
   const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness({
     terminalMaxObserverQueueBytes: 5,

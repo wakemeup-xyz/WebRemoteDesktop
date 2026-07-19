@@ -31,7 +31,11 @@ function authenticate(socket) {
 function setupTerminal(io, options = {}) {
   const config = options.config || loadConfig();
   const audit = options.audit || createTerminalAudit(options.logger || console);
-  const metrics = options.metrics || options.sessionManager?.metrics || new TerminalMetrics();
+  const managerMetrics = options.sessionManager?.metrics || null;
+  if (options.metrics && managerMetrics && options.metrics !== managerMetrics) {
+    throw new Error('[terminal] Explicit metrics instance must match sessionManager.metrics');
+  }
+  const metrics = options.metrics || managerMetrics || new TerminalMetrics();
   const sessionManager = options.sessionManager || createTerminalSessionManager({
     config,
     logger: options.logger || console,
