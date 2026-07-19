@@ -26,7 +26,7 @@ EXISTING_DOM_CODE_MAPPINGS = {
     "F6": 97, "F7": 98, "F8": 100, "F9": 101, "F10": 109,
     "F11": 103, "F12": 111, "F13": 105, "F14": 107, "F15": 113,
     "F16": 106, "F17": 64, "F18": 79, "F19": 80, "F20": 90,
-    "Enter": 36, "NumpadEnter": 36, "Escape": 53, "Backspace": 51,
+    "Enter": 36, "NumpadEnter": 76, "Escape": 53, "Backspace": 51,
     "Tab": 48, "Space": 49, "ArrowUp": 126, "ArrowDown": 125,
     "ArrowLeft": 123, "ArrowRight": 124, "ControlLeft": 59,
     "ControlRight": 62, "AltLeft": 58, "AltRight": 61,

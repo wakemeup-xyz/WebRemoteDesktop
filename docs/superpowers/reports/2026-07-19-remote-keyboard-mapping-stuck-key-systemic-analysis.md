@@ -258,22 +258,22 @@ teardown 与正在执行的 keydown 可以交错为“reset 先发 keyup，线�
 - 物理快捷键模式：以 `code` 为准，可发送 Dead key 对应的物理键。
 - 文本/IME 模式：使用单独的文本输入 interface，不把 composition 强行伪装成物理 keydown/up。
 
-### K-10 国际键盘和小键盘映射存在确定缺口
+### K-10 国际键盘和小键盘映射曾存在确定缺口
 
-当前 US 主键位矩阵完整，但扩展键有以下问题：
+Task7 与后续 P1 已修复以下扩展键映射和物理码拒绝行为：
 
 | Browser code | 当前 macOS code | macOS SDK 常量 | 结论 |
 |---|---:|---:|---|
-| `NumpadEnter` | 36 | 76 (`kVK_ANSI_KeypadEnter`) | 错映射为主键盘 Return |
-| `IntlBackslash` | 42 | 10 (`kVK_ISO_Section`) | ISO 键错映射为 ANSI Backslash |
-| `NumpadComma` | 65 | 95 (`kVK_JIS_KeypadComma`) | JIS 小键盘逗号错映射为 Decimal |
-| `IntlYen` | 未支持 | 93 | JIS 缺失 |
-| `IntlRo` | 未支持 | 94 (`kVK_JIS_Underscore`) | JIS 缺失 |
-| `Lang2` / Eisu | 未支持 | 102 | JIS 缺失 |
-| `Lang1` / Kana | 未支持 | 104 | JIS 缺失 |
-| `ContextMenu` | 119 | 无直接等价 | 当前会误触发 End |
+| `NumpadEnter` | 76 | 76 (`kVK_ANSI_KeypadEnter`) | Task7 已修复为独立小键盘 Enter |
+| `IntlBackslash` | 10 | 10 (`kVK_ISO_Section`) | Task7 已修复 ISO 物理键 |
+| `NumpadComma` | 95 | 95 (`kVK_JIS_KeypadComma`) | Task7 已修复 JIS 小键盘逗号 |
+| `IntlYen` | 93 | 93 | Task7 已加入 JIS 映射 |
+| `IntlRo` | 94 | 94 (`kVK_JIS_Underscore`) | Task7 已加入 JIS 映射 |
+| `Lang2` / Eisu | 102 | 102 | Task7 已加入 JIS 映射 |
+| `Lang1` / Kana | 104 | 104 | Task7 已加入 JIS 映射 |
+| `ContextMenu` | 拒绝 | 无直接等价 | P1 返回 `unsupported-code`，不投递 Quartz 事件 |
 
-SDK 证据来自本机 CommandLineTools 的 `HIToolbox.framework/Headers/Events.h`。这些不是需求范围内 US 主键位的阻断项，但必须在“完整键盘映射”口径中列为未完成。
+SDK 证据来自本机 CommandLineTools 的 `HIToolbox.framework/Headers/Events.h`。这些映射已由适配器测试覆盖；真实 macOS 运行验收仍是独立工作项。
 
 ### K-11 modifier 自身事件携带自身 flag，违反现有契约
 
