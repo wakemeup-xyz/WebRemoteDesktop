@@ -69,6 +69,38 @@ test('increments generation and calls onChange only for state changes', () => {
   ]);
 });
 
+test('returns the current snapshot for changed and repeated reason writes', () => {
+  const controller = MediaActivityController.create();
+
+  assert.deepEqual(controller.setReason('manual-pause', true), {
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+  });
+  assert.deepEqual(controller.setReason('manual-pause', true), {
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+  });
+});
+
+test('clearing terminal activity leaves a manual pause suspended', () => {
+  const controller = MediaActivityController.create();
+  controller.setReason('manual-pause', true);
+  controller.setReason('terminal-active', true);
+
+  assert.deepEqual(controller.setReason('terminal-active', false), {
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 3,
+  });
+  assert.deepEqual(controller.snapshot(), {
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 3,
+  });
+});
+
 test('rejects unknown reasons without mutating an already-suspended controller', () => {
   const controller = MediaActivityController.create();
   controller.setReason('page-hidden', true);

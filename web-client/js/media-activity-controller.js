@@ -30,9 +30,11 @@
 
       function notifyChange() {
         generation += 1;
+        const currentSnapshot = snapshot();
         if (onChange) {
-          onChange(snapshot());
+          onChange(currentSnapshot);
         }
+        return currentSnapshot;
       }
 
       return {
@@ -40,15 +42,14 @@
           validateReason(reason);
           const shouldEnable = Boolean(enabled);
           if (reasons.has(reason) === shouldEnable) {
-            return false;
+            return snapshot();
           }
           if (shouldEnable) {
             reasons.add(reason);
           } else {
             reasons.delete(reason);
           }
-          notifyChange();
-          return true;
+          return notifyChange();
         },
 
         hasReason(reason) {
