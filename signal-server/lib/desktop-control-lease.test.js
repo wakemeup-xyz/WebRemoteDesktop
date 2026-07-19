@@ -130,7 +130,7 @@ test('pending transition timeout returns to free and rejects its ack', () => {
   assert.equal(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }).reason, 'stale-transition');
 });
 
-test('release is owner-only and invalidates the credential immediately', () => {
+test('release is owner-only, freezes authorization, and waits for host reset confirmation', () => {
   const lease = makeLease();
   const request = lease.requestControl({ viewerId: 'viewer-a' });
   const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
@@ -138,17 +138,23 @@ test('release is owner-only and invalidates the credential immediately', () => {
   assert.deepEqual(lease.beginRelease({ viewerId: 'viewer-b', reason: 'manual' }), {
     state: 'ACTIVE', reason: 'not-controller',
   });
-  assert.deepEqual(lease.beginRelease({ viewerId: 'viewer-a', reason: 'manual' }), {
+  const release = lease.beginRelease({ viewerId: 'viewer-a', reason: 'manual' });
+  assert.equal(release.state, 'REVOKING');
+  assert.equal(release.transition.type, 'control-transition');
+  assert.equal(Object.hasOwn(release.transition, 'leaseId'), false);
+  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+  assert.equal(lease.snapshot().controllerViewerId, null);
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: release.transition.leaseEpoch }), {
     state: 'FREE', reason: 'manual',
   });
-  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
 });
 
 test('old credentials remain rejected after a new lease is granted', () => {
   const lease = makeLease();
   const first = lease.requestControl({ viewerId: 'viewer-a' });
   const activeA = lease.confirmTransition({ leaseEpoch: first.transition.leaseEpoch });
-  lease.beginRelease({ viewerId: 'viewer-a', reason: 'manual' });
+  const release = lease.beginRelease({ viewerId: 'viewer-a', reason: 'manual' });
+  lease.confirmTransition({ leaseEpoch: release.transition.leaseEpoch });
   const second = lease.requestControl({ viewerId: 'viewer-b' });
   const activeB = lease.confirmTransition({ leaseEpoch: second.transition.leaseEpoch });
 
