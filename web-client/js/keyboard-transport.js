@@ -18,11 +18,9 @@
     };
     const unavailable = new Set();
     const pending = new Map();
-    const acknowledged = new Set();
-    const invalidatedInputIds = new Set();
     const pressed = new Set();
-    let lease = null;
-    let epoch = 0;
+    let leaseId = null;
+    let leaseEpoch = 0;
     let lastSent = 0;
     let lastApplied = 0;
     let pinnedAdapter = null;
@@ -34,7 +32,7 @@
 
     function state() {
       expireBarrier();
-      if (!lease) return 'revoked';
+      if (!leaseId) return 'revoked';
       return barrier ? 'blocked' : 'ready';
     }
 
@@ -44,8 +42,6 @@
 
     function clearSession() {
       pending.clear();
-      acknowledged.clear();
-      invalidatedInputIds.clear();
       pressed.clear();
       pinnedAdapter = null;
       barrier = null;
@@ -79,7 +75,6 @@
         const oldest = pending.keys().next().value;
         const record = pending.get(oldest);
         pending.delete(oldest);
-        acknowledged.delete(record.seq);
         if (record.seq === lastApplied + 1) lastApplied = record.seq;
       }
     }
@@ -92,8 +87,8 @@
         action: message.action,
         payload: message.payload || {},
         schemaVersion: 2,
-        lease,
-        epoch,
+        leaseId,
+        leaseEpoch,
         seq,
         inputIds: [inputId],
       };
@@ -111,17 +106,14 @@
     function invalidateBeforeReset() {
       for (const record of pending.values()) {
         if (record.seq > lastApplied) lastApplied = record.seq;
-        invalidatedInputIds.add(record.inputId);
       }
-      while (invalidatedInputIds.size > MAX_PENDING) invalidatedInputIds.delete(invalidatedInputIds.values().next().value);
       pending.clear();
-      acknowledged.clear();
       pressed.clear();
       pinnedAdapter = null;
     }
 
     function sendReset(reason) {
-      if (!lease) return null;
+      if (!leaseId) return null;
       invalidateBeforeReset();
       const adapterName = chooseAdapter(true);
       if (!adapterName) return null;
@@ -134,27 +126,24 @@
       return record.inputId;
     }
 
-    function advanceApplied() {
-      let advanced = false;
-      while (acknowledged.has(lastApplied + 1)) {
-        acknowledged.delete(lastApplied + 1);
-        lastApplied += 1;
-        advanced = true;
-      }
-      return advanced;
-    }
-
     function setLease(nextLease) {
-      const normalized = typeof nextLease === 'string' && nextLease ? nextLease : null;
-      if (normalized === lease) return;
-      lease = normalized;
+      const validLease = nextLease
+        && typeof nextLease === 'object'
+        && typeof nextLease.leaseId === 'string'
+        && nextLease.leaseId
+        && Number.isInteger(nextLease.leaseEpoch)
+        && nextLease.leaseEpoch >= 0;
+      const nextLeaseId = validLease ? nextLease.leaseId : null;
+      const nextLeaseEpoch = validLease ? nextLease.leaseEpoch : 0;
+      if (nextLeaseId === leaseId && nextLeaseEpoch === leaseEpoch) return;
+      leaseId = nextLeaseId;
+      leaseEpoch = nextLeaseEpoch;
       clearSession();
-      if (lease) epoch += 1;
     }
 
     function send(message) {
       expireBarrier();
-      if (!lease || barrier || !message || !message.action) return null;
+      if (!leaseId || barrier || !message || !message.action) return null;
       const adapterName = chooseAdapter(false);
       if (!adapterName) return null;
       const identity = keyIdentity(message);
@@ -176,42 +165,34 @@
     function acceptAck(ack) {
       expireBarrier();
       const payload = ack || {};
-      if (!lease || payload.epoch !== epoch) return { status: 'stale' };
-      const ids = Array.isArray(payload.inputIds) ? payload.inputIds : [];
-      const resetDuplicate = barrier && payload.seq === barrier.seq;
-      let found = false;
-      let stale = false;
-      for (const id of ids) {
-        const record = pending.get(id);
-        if (record) {
-          found = true;
-          pending.delete(id);
-          if (record.seq <= lastApplied) stale = true;
-          else acknowledged.add(record.seq);
-        } else if (invalidatedInputIds.has(id)) {
-          stale = true;
-        }
+      if (!leaseId || payload.schemaVersion !== 2 || payload.leaseEpoch !== leaseEpoch) {
+        return { status: 'stale' };
       }
-      if (resetDuplicate) {
-        pending.delete(barrier.inputId);
-        acknowledged.delete(barrier.seq);
-        lastApplied = Math.max(lastApplied, barrier.seq);
-        barrier = null;
-        return { status: found ? 'applied' : 'duplicate' };
+      if (payload.status === 'resync-required') {
+        if (!barrier) sendReset('remote-resync-required');
+        return { status: 'resync-required' };
       }
-      if (Number.isFinite(payload.seq) && payload.seq > lastSent) {
-        sendReset('sequence-gap');
-        return { status: 'gap' };
+      if ((payload.status !== 'applied' && payload.status !== 'duplicate')
+          || !Number.isInteger(payload.appliedSeq)
+          || payload.appliedSeq < 0) {
+        return { status: 'stale' };
       }
-      const advanced = advanceApplied();
-      if (advanced) return { status: 'applied' };
-      if (stale) return { status: 'stale' };
-      if (found) return { status: 'pending-gap' };
-      return { status: 'duplicate' };
+      if (payload.appliedSeq < lastApplied) return { status: 'stale' };
+      if (payload.appliedSeq > lastSent) {
+        if (!barrier) sendReset('sequence-gap');
+        return { status: 'resync-required' };
+      }
+      if (barrier && payload.appliedSeq < barrier.seq) return { status: 'resync-required' };
+      for (const [inputId, record] of pending) {
+        if (record.seq <= payload.appliedSeq) pending.delete(inputId);
+      }
+      lastApplied = Math.max(lastApplied, payload.appliedSeq);
+      if (barrier && payload.appliedSeq >= barrier.seq) barrier = null;
+      return { status: payload.status };
     }
 
     function markAdapterUnavailable(name) {
-      const adapterName = name === 'dc' ? 'dataChannel' : name;
+      const adapterName = name;
       if (!adapters[adapterName]) return;
       unavailable.add(adapterName);
       if (adapterName === pinnedAdapter || adapterName === 'dataChannel') sendReset('adapter-unavailable');
@@ -224,7 +205,7 @@
     function getSnapshot() {
       return {
         state: state(),
-        epoch,
+        epoch: leaseEpoch,
         lastSent,
         lastApplied,
         pendingCount: pending.size,

@@ -21,7 +21,7 @@ function createHarness(options = {}) {
     makeInputId: () => `input-${++nextId}`,
     ackTimeoutMs: options.ackTimeoutMs || 3000,
   });
-  transport.setLease('lease-for-test');
+  transport.setLease({ leaseId: 'lease-for-test', leaseEpoch: 7 });
   return {
     transport,
     dataChannel,
@@ -42,9 +42,10 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
   assert.equal(h.socket[0].seq, 2);
   assert.equal(h.transport.canSendNewInput(), false);
 
-  h.transport.acceptAck({ inputIds: [h.socket[0].inputIds[0]], epoch: 1, seq: 2 });
+  h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'applied' });
   assert.equal(h.transport.canSendNewInput(), true);
-  assert.equal(h.transport.acceptAck({ inputIds: [keyId], epoch: 1, seq: 1 }).status, 'stale');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'duplicate' }).status, 'stale');
+  assert.equal(keyId, 'input-1');
 });
 
 test('reset barrier blocks new input until its applied or duplicate acknowledgement', () => {
@@ -52,11 +53,11 @@ test('reset barrier blocks new input until its applied or duplicate acknowledgem
   const resetId = h.transport.resetBarrier('focus-lost');
   assert.equal(h.socket.length, 1);
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
-  assert.equal(h.transport.acceptAck({ inputIds: [resetId], epoch: 1, seq: 1 }).status, 'applied');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'applied' }).status, 'applied');
   assert.equal(h.transport.canSendNewInput(), true);
 
   const secondReset = h.transport.resetBarrier('focus-lost-again');
-  assert.equal(h.transport.acceptAck({ inputIds: ['already-applied'], epoch: 1, seq: 2 }).status, 'duplicate');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'duplicate' }).status, 'duplicate');
   assert.equal(h.transport.canSendNewInput(), true);
   assert.equal(secondReset, h.socket[1].inputIds[0]);
 });
@@ -72,27 +73,30 @@ test('keyboard transport pins its adapter until every physical key is released',
   assert.equal(h.transport.getSnapshot().adapter, null);
 });
 
-test('normal acknowledgement ledger advances in order and duplicate acknowledgements are harmless', () => {
+test('spec acknowledgement envelope advances the cumulative ledger and duplicate acknowledgements are harmless', () => {
   const h = createHarness();
   const one = h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
   const two = h.transport.send({ type: 'keyboard', action: 'keyup', payload: { code: 'KeyA' } });
 
-  assert.equal(h.transport.acceptAck({ inputIds: [two], epoch: 1, seq: 2 }).status, 'pending-gap');
-  assert.equal(h.transport.getSnapshot().lastApplied, 0);
-  assert.equal(h.transport.acceptAck({ inputIds: [one], epoch: 1, seq: 1 }).status, 'applied');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'applied' }).status, 'applied');
   assert.equal(h.transport.getSnapshot().lastApplied, 2);
-  assert.equal(h.transport.acceptAck({ inputIds: [one], epoch: 1, seq: 1 }).status, 'duplicate');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'duplicate' }).status, 'duplicate');
+  assert.equal(one, 'input-1');
+  assert.equal(two, 'input-2');
 });
 
-test('sequence gaps install a Socket resync barrier and prevent subsequent keyboard input', () => {
+test('resync-required and sequence gaps preserve one Socket reset barrier', () => {
   const h = createHarness();
   h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
-  const result = h.transport.acceptAck({ inputIds: ['unknown'], epoch: 1, seq: 3 });
+  const result = h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 0, status: 'resync-required' });
 
-  assert.equal(result.status, 'gap');
+  assert.equal(result.status, 'resync-required');
   assert.equal(h.socket.length, 1);
   assert.equal(h.socket[0].action, 'reset');
   assert.equal(h.socket[0].seq, 2);
+  assert.equal(h.transport.canSendNewInput(), false);
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' }).status, 'resync-required');
+  assert.equal(h.socket.length, 1);
   assert.equal(h.transport.canSendNewInput(), false);
 });
 
@@ -124,7 +128,7 @@ test('lease revocation disables sends and snapshots never expose the lease token
   assert.equal(JSON.stringify(snapshot).includes('lease-for-test'), false);
 });
 
-test('all outgoing inputs carry the v2 lease, epoch, sequence, and input ID schema', () => {
+test('all outgoing inputs carry the v2 lease ID, lease epoch, sequence, and input ID schema', () => {
   const h = createHarness();
   h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyQ' } });
   assert.deepEqual(h.dataChannel[0], {
@@ -132,9 +136,20 @@ test('all outgoing inputs carry the v2 lease, epoch, sequence, and input ID sche
     action: 'keydown',
     payload: { code: 'KeyQ' },
     schemaVersion: 2,
-    lease: 'lease-for-test',
-    epoch: 1,
+    leaseId: 'lease-for-test',
+    leaseEpoch: 7,
     seq: 1,
     inputIds: ['input-1'],
   });
+});
+
+test('non-spec lease and acknowledgement aliases do not authorize input or advance state', () => {
+  const h = createHarness();
+  h.transport.setLease('legacy-lease');
+  assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyW' } }), null);
+
+  h.transport.setLease({ leaseId: 'lease-for-test', leaseEpoch: 7 });
+  h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyW' } });
+  assert.equal(h.transport.acceptAck({ epoch: 7, seq: 1, inputIds: ['input-1'] }).status, 'stale');
+  assert.equal(h.transport.getSnapshot().lastApplied, 0);
 });
