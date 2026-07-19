@@ -177,27 +177,41 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
             "inputIds": ["input-1"],
             "receiveTime": 20.0,
             "executeTime": 20.009,
+            "appliedSeq": 7,
+            "status": "applied",
+            "pressedKeyCount": 1,
+            "modifierMask": 0x100000,
         }
 
     host.input_handler = SimpleNamespace(handle_input=handle_input)
     await host.on_input({
         "viewerId": "viewer-1",
+        "schemaVersion": 2,
         "type": "keyboard",
         "action": "keydown",
         "transport": "datachannel",
+        "leaseEpoch": 12,
+        "seq": 7,
         "inputIds": ["input-1"],
-        "payload": {"key": "a", "code": "KeyA"},
+        "payload": {"key": "SecretKey", "code": "KeyA"},
     })
 
     assert len(sent) == 1
     ack = __import__("json").loads(sent[0])
     assert ack == {
         "type": "input_ack",
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "leaseEpoch": 12,
+        "appliedSeq": 7,
+        "status": "applied",
+        "pressedKeyCount": 1,
+        "modifierMask": 0x100000,
         "inputIds": ["input-1"],
         "hostExecuteMs": 9.0,
         "transport": "datachannel",
     }
+    assert "key" not in ack
+    assert "payload" not in ack
 
 
 def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):

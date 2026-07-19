@@ -323,6 +323,47 @@ test('host input ack is routed only to its original viewer', () => {
   assert.equal(viewerB.sent.some((message) => message.event === 'input-ack'), false);
 });
 
+test('v2 host input ack preserves keyboard state fields and redacts raw input data', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  host.trigger('input-ack', {
+    viewerId: 'viewer-1',
+    type: 'input_ack',
+    schemaVersion: 2,
+    leaseEpoch: 12,
+    appliedSeq: 7,
+    status: 'applied',
+    pressedKeyCount: 1,
+    modifierMask: 0x100000,
+    inputIds: ['input-1'],
+    hostExecuteMs: 9,
+    key: 'SecretKey',
+    payload: { key: 'SecretKey' },
+  });
+
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.deepEqual(ack, {
+    type: 'input_ack',
+    schemaVersion: 2,
+    leaseEpoch: 12,
+    appliedSeq: 7,
+    status: 'applied',
+    pressedKeyCount: 1,
+    modifierMask: 0x100000,
+    inputIds: ['input-1'],
+    hostExecuteMs: 9,
+    transport: 'socket',
+  });
+  assert.equal('key' in ack, false);
+  assert.equal('payload' in ack, false);
+});
+
 test('signal input relay logs metadata without raw input payload values', () => {
   resetConnections();
   const io = makeIo();

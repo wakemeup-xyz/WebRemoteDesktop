@@ -390,11 +390,37 @@ function setupSignaling(io, options = {}) {
       }
       const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
       if (!viewerSocket) return;
+      const inputIds = Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [];
+      const hostExecuteMs = Math.max(0, Number(data.hostExecuteMs || 0));
+      if (data.schemaVersion === 2) {
+        const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
+        const validSeq = Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0;
+        const validStatus = ['applied', 'duplicate', 'resync-required'].includes(data.status);
+        const validPressed = Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0;
+        const validModifiers = Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0;
+        if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers) {
+          logger.warn?.('[INPUT] invalid v2 ack');
+          return;
+        }
+        viewerSocket.emit('input-ack', {
+          type: 'input_ack',
+          schemaVersion: 2,
+          leaseEpoch: data.leaseEpoch,
+          appliedSeq: data.appliedSeq,
+          status: data.status,
+          pressedKeyCount: data.pressedKeyCount,
+          modifierMask: data.modifierMask,
+          inputIds,
+          hostExecuteMs,
+          transport: 'socket',
+        });
+        return;
+      }
       viewerSocket.emit('input-ack', {
         type: 'input_ack',
         schemaVersion: 1,
-        inputIds: Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [],
-        hostExecuteMs: Math.max(0, Number(data.hostExecuteMs || 0)),
+        inputIds,
+        hostExecuteMs,
         transport: 'socket',
       });
     });

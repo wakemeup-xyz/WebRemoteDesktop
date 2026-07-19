@@ -1205,14 +1205,37 @@ class WebRemoteHost:
         input_ids = result.get("inputIds", []) if isinstance(result, dict) else []
         if not input_ids:
             return False
-        ack = {
-            "type": "input_ack",
-            "schemaVersion": 1,
-            "inputIds": list(input_ids),
-            "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
-            "transport": str(data.get("transport") or "socket"),
-        }
-        if ack["transport"] == "datachannel":
+        transport = str(data.get("transport") or "socket")
+        if data.get("schemaVersion") == 2:
+            # v2 keyboard transport acknowledges the applied sequence and the
+            # Host's post-execution state; never echo the input payload.
+            pressed_key_count = result.get("pressedKeyCount")
+            modifier_mask = result.get("modifierMask")
+            if not isinstance(pressed_key_count, int):
+                pressed_key_count = len(getattr(self.input_handler, "_pressed_key_codes", ()))
+            if not isinstance(modifier_mask, int):
+                modifier_mask = int(getattr(self.input_handler, "_modifier_flags", 0) or 0)
+            ack = {
+                "type": "input_ack",
+                "schemaVersion": 2,
+                "leaseEpoch": data.get("leaseEpoch"),
+                "appliedSeq": result.get("appliedSeq", data.get("seq")),
+                "status": result.get("status") or "applied",
+                "pressedKeyCount": max(0, pressed_key_count),
+                "modifierMask": max(0, modifier_mask),
+                "inputIds": list(input_ids),
+                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "transport": transport,
+            }
+        else:
+            ack = {
+                "type": "input_ack",
+                "schemaVersion": 1,
+                "inputIds": list(input_ids),
+                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "transport": transport,
+            }
+        if transport == "datachannel":
             channel = self.get_input_datachannel()
             if channel is None or not hasattr(channel, "send"):
                 return False

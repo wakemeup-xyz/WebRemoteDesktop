@@ -320,8 +320,12 @@ class InputHandler:
                         i2 = time.perf_counter()
                         return {
                             "inputIds": input_ids,
+                            "appliedSeq": data.get("seq"),
                             "receiveTime": i1,
                             "executeTime": i2,
+                            "status": "applied",
+                            "pressedKeyCount": len(self._pressed_key_codes),
+                            "modifierMask": int(self._modifier_flags),
                         }
                     to_thread_start = time.perf_counter()
                     loop = asyncio.get_running_loop()
@@ -331,8 +335,12 @@ class InputHandler:
                     logger.info("keyboard_executed action=%s thread_ms=%.1f", action, to_thread_ms)
                     return {
                         "inputIds": input_ids,
+                        "appliedSeq": data.get("seq"),
                         "receiveTime": i1,
                         "executeTime": i2,
+                        "status": "applied",
+                        "pressedKeyCount": len(self._pressed_key_codes),
+                        "modifierMask": int(self._modifier_flags),
                     }
                 else:
                     to_thread_ms = 0
