@@ -620,6 +620,26 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
+test('pending legacy input queue retains only the first input during granting', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'first', code: 'KeyA' } });
+  viewer.trigger('input', { type: 'keyboard', action: 'keyup', payload: { key: 'second', code: 'KeyA' } });
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'third', code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
+  const relayed = host.sent.filter((entry) => entry.event === 'input');
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0].data.payload.key, 'first');
+});
+
 test('takeover freezes controller A until host ack and grants B', () => {
   resetConnections();
   const io = makeIo();

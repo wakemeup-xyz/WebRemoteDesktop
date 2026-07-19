@@ -342,7 +342,7 @@ function setupSignaling(io, options = {}) {
             }
           } else if (snapshot.state === 'GRANTING' && snapshot.pendingViewerId === socket.id) {
             const queued = pendingInputs.get(socket.id) || [];
-            queued.push({ socket, data });
+            if (queued.length === 0) queued.push({ socket, data });
             pendingInputs.set(socket.id, queued);
           }
           return;
