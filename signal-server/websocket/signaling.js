@@ -26,6 +26,43 @@ const connections = {
   relayViewers: new Map()
 };
 
+// Last host-reported TURN/media capability snapshot (no secrets).
+let hostCapabilities = {
+  turnReady: false,
+  turnFingerprint: '',
+  supportsSessionTurn: false,
+  updatedAt: null,
+};
+
+function getHostCapabilities() {
+  return {
+    turnReady: Boolean(hostCapabilities.turnReady),
+    turnFingerprint: String(hostCapabilities.turnFingerprint || ''),
+    supportsSessionTurn: Boolean(hostCapabilities.supportsSessionTurn),
+    updatedAt: hostCapabilities.updatedAt,
+  };
+}
+
+function setHostCapabilities(payload = {}) {
+  hostCapabilities = {
+    turnReady: Boolean(payload.turnReady),
+    turnFingerprint: String(payload.turnFingerprint || '').trim(),
+    supportsSessionTurn: Boolean(payload.supportsSessionTurn),
+    updatedAt: new Date().toISOString(),
+  };
+  return getHostCapabilities();
+}
+
+function clearHostCapabilities() {
+  hostCapabilities = {
+    turnReady: false,
+    turnFingerprint: '',
+    supportsSessionTurn: false,
+    updatedAt: null,
+  };
+  return getHostCapabilities();
+}
+
 function getViewerSnapshot() {
   return Array.from(connections.viewers.values()).map((viewerSocket) => ({
     id: viewerSocket.id,
@@ -231,6 +268,7 @@ function setupSignaling(io, options = {}) {
   }
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
+    const networkMode = String(data.networkMode || data.iceMode || '').trim();
     const forwarded = {
       offer: data.offer,
       viewerId: socket.id,
@@ -240,6 +278,10 @@ function setupSignaling(io, options = {}) {
     // v2 offers have already passed authorizeViewer(), so this opaque token
     // is safe to forward solely to the Host for its direct DataChannel binding.
     if (data.schemaVersion === 2) forwarded.leaseId = data.leaseId;
+    if (networkMode) {
+      forwarded.networkMode = networkMode;
+      forwarded.iceMode = networkMode;
+    }
     connections.host.emit('offer', forwarded);
     return true;
   }
@@ -285,11 +327,16 @@ function setupSignaling(io, options = {}) {
         clearAllLegacyRelayCompanions({ stop: true });
         broadcastControlState('host-replaced');
       }
+      clearHostCapabilities();
       socket.emit('connected', { role: 'host', status: 'ok', inputProtocolVersion: socket.inputProtocolVersion });
       emitViewerStatus('host-connected');
       // Notify all viewers that host is online
       connections.viewers.forEach((viewerSocket) => {
-        viewerSocket.emit('host-status', { online: true, inputProtocolVersion: hostInputProtocolVersion() });
+        viewerSocket.emit('host-status', {
+          online: true,
+          inputProtocolVersion: hostInputProtocolVersion(),
+          hostCapabilities: getHostCapabilities(),
+        });
       });
     } else if (role === 'viewer') {
       connections.viewers.set(socket.id, socket);
@@ -300,6 +347,7 @@ function setupSignaling(io, options = {}) {
         hostOnline: connections.host !== null,
         inputProtocolVersion: socket.inputProtocolVersion,
         hostInputProtocolVersion: hostInputProtocolVersion(),
+        hostCapabilities: getHostCapabilities(),
       });
       emitViewerStatus('viewer-connected', socket);
       socket.emit('control-state', {
@@ -763,11 +811,20 @@ function setupSignaling(io, options = {}) {
       }
     });
 
+    socket.on('host-capabilities', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) return;
+      const snapshot = setHostCapabilities(data);
+      connections.viewers.forEach((viewerSocket) => {
+        viewerSocket.emit('host-capabilities', snapshot);
+      });
+    });
+
     socket.on('disconnect', () => {
       console.log(`Disconnected: ${role} - ${socket.id}`);
       if (role === 'host') {
         if (connections.host && connections.host.id === socket.id) {
           connections.host = null;
+          clearHostCapabilities();
           const leaseResult = desktopLease.hostDisconnected();
           clearPendingInputs();
           pendingControllerProtocolVersion = null;
@@ -775,7 +832,7 @@ function setupSignaling(io, options = {}) {
           clearAllLegacyRelayCompanions();
           broadcastControlState(leaseResult.reason);
           connections.viewers.forEach((viewerSocket) => {
-            viewerSocket.emit('host-status', { online: false });
+            viewerSocket.emit('host-status', { online: false, hostCapabilities: getHostCapabilities() });
           });
           emitViewerStatus('host-disconnected');
         } else {
@@ -830,4 +887,12 @@ function getConnectionStatus() {
   };
 }
 
-module.exports = { setupSignaling, connections, getConnectionStatus, ingestDiagnosticPayload };
+module.exports = {
+  setupSignaling,
+  connections,
+  getConnectionStatus,
+  getHostCapabilities,
+  setHostCapabilities,
+  clearHostCapabilities,
+  ingestDiagnosticPayload,
+};

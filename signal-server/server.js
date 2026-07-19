@@ -19,6 +19,7 @@ const {
   setupSignaling,
   connections,
   getConnectionStatus,
+  getHostCapabilities,
 } = require('./websocket/signaling');
 const {
   loadRecentDiagnostics,
@@ -32,6 +33,8 @@ const { createRotatingFileSink, createStructuredLogger } = require('./lib/observ
 const { createRecentEventStore } = require('./lib/observability/store');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
+const rateLimit = require('express-rate-limit');
+const { createTurnSelfTestRunner } = require('./lib/turn-selftest');
 
 const trustLoopbackProxy = proxyaddr.compile('loopback');
 
@@ -159,6 +162,7 @@ function createServerApp(options = {}) {
     const turnState = getTurnStatus(config);
     const capabilities = getMediaModeCapabilities(config);
     const publicEntry = getPublicEntryConfig(config);
+    const hostCaps = getHostCapabilities();
 
     const iceServers = [];
     if (config.stunUrls.length) {
@@ -177,11 +181,52 @@ function createServerApp(options = {}) {
       turnConfigured: turnState.turnConfigured,
       turnMisconfigured: turnState.turnMisconfigured,
       turnStatus: turnState.turnStatus,
+      turnSource: turnState.turnSource || config.turnSource || 'none',
+      turnFingerprint: turnState.turnConfigured
+        ? (turnState.turnFingerprint || config.turnFingerprint || '')
+        : '',
       turnUrls: turnState.turnConfigured ? config.turnUrls : [],
+      hostTurnReady: Boolean(hostCaps.turnReady),
+      hostTurnFingerprint: hostCaps.turnFingerprint || '',
+      hostSupportsSessionTurn: Boolean(hostCaps.supportsSessionTurn),
       iceServers,
       ...capabilities,
       publicEntry,
     });
+  });
+
+  const turnSelfTestRunner = options.turnSelfTestRunner || createTurnSelfTestRunner();
+  const turnSelfTestLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { ok: false, error: 'turn-selftest-rate-limited' },
+  });
+
+  app.post('/api/turn-selftest', requireAccessToken, turnSelfTestLimiter, async (req, res) => {
+    try {
+      const timeoutMs = Math.min(15000, Math.max(1000, Number(req.body?.timeoutMs) || 10000));
+      const result = await turnSelfTestRunner.runFromConfig(config, { timeoutMs });
+      const hostCaps = getHostCapabilities();
+      return res.status(result.ok ? 200 : 422).json({
+        ...result,
+        hostTurnReady: Boolean(hostCaps.turnReady),
+        hostTurnFingerprint: hostCaps.turnFingerprint || '',
+        fingerprintMatch: Boolean(
+          result.turnFingerprint
+          && hostCaps.turnFingerprint
+          && result.turnFingerprint === hostCaps.turnFingerprint,
+        ),
+      });
+    } catch (error) {
+      logger.error?.('[turn-selftest] failed', error);
+      return res.status(500).json({
+        ok: false,
+        code: 'turn-selftest-error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post('/api/diagnostics', requireAccessToken, (req, res) => {

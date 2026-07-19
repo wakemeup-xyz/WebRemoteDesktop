@@ -8,7 +8,12 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
 process.env.HOST_PASSWORD = process.env.HOST_PASSWORD || 'test-host-password';
 
-const { setupSignaling, connections } = require('./signaling');
+const {
+  setupSignaling,
+  connections,
+  clearHostCapabilities,
+  getHostCapabilities,
+} = require('./signaling');
 
 function v2Key(overrides = {}) {
   return {
@@ -109,6 +114,7 @@ function resetConnections() {
   connections.host = null;
   connections.viewers.clear();
   connections.relayViewers.clear();
+  clearHostCapabilities();
 }
 
 test('standalone relay-viewer cannot stop host tunnel relay stream', () => {
@@ -1034,6 +1040,12 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
   assert.deepEqual(viewer.sent.find((entry) => entry.event === 'connected').data, {
     role: 'viewer', status: 'ok', hostOnline: true,
     inputProtocolVersion: 2, hostInputProtocolVersion: 1,
+    hostCapabilities: {
+      turnReady: false,
+      turnFingerprint: '',
+      supportsSessionTurn: false,
+      updatedAt: null,
+    },
   });
 
   viewer.trigger('control-acquire', { requestId: 'v2-on-v1' });
@@ -1041,6 +1053,56 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
     state: 'FREE', reason: 'host-protocol-too-old', requestId: 'v2-on-v1',
   });
   assert.equal(host.sent.some((entry) => entry.event === 'control-transition'), false);
+});
+
+test('host-capabilities are cached and forwarded to viewers; offer includes networkMode', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-turn', 'host');
+  host.handshake.auth.inputProtocolVersion = 2;
+  const viewer = new FakeSocket('viewer-turn', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  host.trigger('host-capabilities', {
+    turnReady: true,
+    turnFingerprint: 'abc123',
+    supportsSessionTurn: true,
+  });
+
+  const caps = getHostCapabilities();
+  assert.equal(caps.turnReady, true);
+  assert.equal(caps.turnFingerprint, 'abc123');
+  assert.equal(caps.supportsSessionTurn, true);
+  assert.ok(caps.updatedAt);
+
+  const fanout = viewer.sent.filter((entry) => entry.event === 'host-capabilities').at(-1);
+  assert.deepEqual(fanout.data.turnReady, true);
+  assert.equal(fanout.data.turnFingerprint, 'abc123');
+
+  // grant control so v2 offer can pass authorizeViewer
+  viewer.trigger('control-acquire', { requestId: 'turn-offer' });
+  const transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.filter((entry) => entry.event === 'control-grant').at(-1).data;
+
+  viewer.trigger('offer', {
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    schemaVersion: 2,
+    networkMode: 'relay',
+    iceMode: 'relay',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1);
+  assert.ok(forwarded);
+  assert.equal(forwarded.data.networkMode, 'relay');
+  assert.equal(forwarded.data.iceMode, 'relay');
+  assert.equal(forwarded.data.viewerId, viewer.id);
 });
 
 test('legacy controller is single-writer and a v2 takeover resets it before grant', () => {

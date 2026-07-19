@@ -1,5 +1,6 @@
 const REQUIRED_MIN_SECRET_LEN = 8;
 const { parseTerminalConfig } = require('./terminal/config');
+const { mergeTurnConfig } = require('./turn-config');
 
 function splitCsv(value) {
   return String(value || '')
@@ -44,6 +45,7 @@ function loadConfig() {
     8,
   );
   const terminal = parseTerminalConfig(process.env);
+  const turn = mergeTurnConfig({ env: process.env });
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -53,9 +55,12 @@ function loadConfig() {
     hostSharedSecret,
     corsOrigins: splitCsv(process.env.CORS_ORIGIN),
     stunUrls: splitCsv(process.env.STUN_URLS || 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302'),
-    turnUrls: splitCsv(process.env.TURN_URLS),
-    turnUsername: String(process.env.TURN_USERNAME || ''),
-    turnCredential: String(process.env.TURN_CREDENTIAL || ''),
+    turnUrls: turn.urls,
+    turnUsername: turn.username,
+    turnCredential: turn.credential,
+    turnSource: turn.source,
+    turnFingerprint: turn.fingerprint,
+    turnJsonPath: turn.jsonPath,
     publicEntryUrl: String(process.env.WRD_PUBLIC_ENTRY_URL || 'https://link.stockhub.wiki').trim() || 'https://link.stockhub.wiki',
     enableDiagPersist: process.env.WRD_ENABLE_DIAG_PERSIST === '1',
     logLevel: String(process.env.WRD_LOG_LEVEL || 'info').trim() || 'info',
@@ -89,12 +94,16 @@ function getTurnStatus(configLike = {}) {
   const turnUrls = Array.isArray(configLike.turnUrls) ? configLike.turnUrls : [];
   const turnUsername = String(configLike.turnUsername || '').trim();
   const turnCredential = String(configLike.turnCredential || '').trim();
+  const turnSource = String(configLike.turnSource || (turnUrls.length ? 'env' : 'none')).trim() || 'none';
+  const turnFingerprint = String(configLike.turnFingerprint || '').trim();
 
   if (!turnUrls.length) {
     return {
       turnConfigured: false,
       turnMisconfigured: false,
       turnStatus: 'missing',
+      turnSource: turnSource === 'none' ? 'none' : turnSource,
+      turnFingerprint: '',
     };
   }
 
@@ -103,6 +112,8 @@ function getTurnStatus(configLike = {}) {
       turnConfigured: false,
       turnMisconfigured: true,
       turnStatus: 'misconfigured',
+      turnSource,
+      turnFingerprint,
     };
   }
 
@@ -110,6 +121,8 @@ function getTurnStatus(configLike = {}) {
     turnConfigured: true,
     turnMisconfigured: false,
     turnStatus: 'configured',
+    turnSource,
+    turnFingerprint,
   };
 }
 

@@ -20,6 +20,8 @@ test('getTurnStatus reports missing when no TURN env is configured', () => {
     turnConfigured: false,
     turnMisconfigured: false,
     turnStatus: 'missing',
+    turnSource: 'none',
+    turnFingerprint: '',
   });
 });
 
@@ -28,12 +30,16 @@ test('getTurnStatus reports misconfigured when TURN urls are missing credentials
     turnUrls: ['turn:relay.example.com:3478'],
     turnUsername: '',
     turnCredential: '',
+    turnSource: 'env',
+    turnFingerprint: 'abc',
   });
 
   assert.deepEqual(status, {
     turnConfigured: false,
     turnMisconfigured: true,
     turnStatus: 'misconfigured',
+    turnSource: 'env',
+    turnFingerprint: 'abc',
   });
 });
 
@@ -42,12 +48,16 @@ test('getTurnStatus reports configured only when TURN urls and credentials are c
     turnUrls: ['turn:relay.example.com:3478'],
     turnUsername: 'user',
     turnCredential: 'secret',
+    turnSource: 'json',
+    turnFingerprint: 'deadbeef',
   });
 
   assert.deepEqual(status, {
     turnConfigured: true,
     turnMisconfigured: false,
     turnStatus: 'configured',
+    turnSource: 'json',
+    turnFingerprint: 'deadbeef',
   });
 });
 
@@ -163,6 +173,8 @@ test('/api/webrtc-config returns ICE settings plus capability and public entry m
       turnUrls: ['turn:relay.example.com:3478'],
       turnUsername: 'viewer-user',
       turnCredential: 'turn-secret',
+      turnSource: 'env',
+      turnFingerprint: 'fp-test',
       publicEntryUrl: 'https://link.stockhub.wiki',
       enableDiagPersist: false,
       enableTerminal: false,
@@ -190,29 +202,32 @@ test('/api/webrtc-config returns ICE settings plus capability and public entry m
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body, {
-      stunUrls: ['stun:stun1.example.com:3478'],
-      turnConfigured: true,
-      turnMisconfigured: false,
-      turnStatus: 'configured',
-      turnUrls: ['turn:relay.example.com:3478'],
-      iceServers: [
-        { urls: ['stun:stun1.example.com:3478'] },
-        {
-          urls: ['turn:relay.example.com:3478'],
-          username: 'viewer-user',
-          credential: 'turn-secret',
-        },
-      ],
-      directAvailable: true,
-      tunnelAvailable: true,
-      recommendedMode: 'auto',
-      manualFallbackChain: ['auto', 'relay', 'tunnel'],
-      publicEntry: {
-        formalEntryUrl: 'https://link.stockhub.wiki',
-        formalEntryMode: 'fixed-domain',
-        quickTunnelRecommended: false,
+    assert.equal(body.stunUrls[0], 'stun:stun1.example.com:3478');
+    assert.equal(body.turnConfigured, true);
+    assert.equal(body.turnMisconfigured, false);
+    assert.equal(body.turnStatus, 'configured');
+    assert.equal(body.turnSource, 'env');
+    assert.equal(body.turnFingerprint, 'fp-test');
+    assert.deepEqual(body.turnUrls, ['turn:relay.example.com:3478']);
+    assert.equal(body.hostTurnReady, false);
+    assert.equal(body.hostTurnFingerprint, '');
+    assert.equal(body.hostSupportsSessionTurn, false);
+    assert.deepEqual(body.iceServers, [
+      { urls: ['stun:stun1.example.com:3478'] },
+      {
+        urls: ['turn:relay.example.com:3478'],
+        username: 'viewer-user',
+        credential: 'turn-secret',
       },
+    ]);
+    assert.equal(body.directAvailable, true);
+    assert.equal(body.tunnelAvailable, true);
+    assert.equal(body.recommendedMode, 'auto');
+    assert.deepEqual(body.manualFallbackChain, ['auto', 'relay', 'tunnel']);
+    assert.deepEqual(body.publicEntry, {
+      formalEntryUrl: 'https://link.stockhub.wiki',
+      formalEntryMode: 'fixed-domain',
+      quickTunnelRecommended: false,
     });
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
