@@ -1312,6 +1312,7 @@ test('TerminalPanel measures input ack RTT in the browser clock and server proce
     }
   }
   const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  TerminalPanel.setTransportName('websocket');
   TerminalPanel.pendingInputAcks.set('input-skew', {
     sessionId: 'term-skew',
     clientSentAt: 1000,
@@ -1340,6 +1341,7 @@ test('TerminalPanel socket RTT trusts the local pending probe instead of echoed 
     }
   }
   const { TerminalPanel } = loadTerminal({ Date: FakeDate });
+  TerminalPanel.setTransportName('websocket');
   TerminalPanel.pendingLatencyProbes.set('ping-skew', 1000);
 
   TerminalPanel.handleLatencyPong({
@@ -1607,6 +1609,7 @@ test('TerminalPanel keeps websocket and polling latency samples separate', () =>
   }
   const { TerminalPanel } = loadTerminal({ Date: FakeDate });
 
+  TerminalPanel.setTransportName('websocket');
   TerminalPanel.pendingInputAcks.set('ws-input', { clientSentAt: 1000 });
   TerminalPanel.handleInputAck({
     inputId: 'ws-input',
@@ -1615,6 +1618,7 @@ test('TerminalPanel keeps websocket and polling latency samples separate', () =>
     transport: 'websocket',
   });
   now = 2020;
+  TerminalPanel.setTransportName('polling');
   TerminalPanel.pendingInputAcks.set('poll-input', { clientSentAt: 2000 });
   TerminalPanel.handleInputAck({
     inputId: 'poll-input',
@@ -1648,6 +1652,11 @@ test('TerminalPanel keeps tabs for rate and backpressure warnings and marks pty_
     title: 'Flow shell',
     processStatus: 'running',
   });
+  socketHandlers.get('terminal:session_attached')({
+    sessionId: 'term_flow',
+    status: 'attached',
+    processStatus: 'running',
+  });
 
   socketHandlers.get('terminal:error')({
     sessionId: 'term_flow',
@@ -1670,6 +1679,59 @@ test('TerminalPanel keeps tabs for rate and backpressure warnings and marks pty_
   });
   assert.notEqual(TerminalPanel.state.getSession('term_flow'), null);
   assert.match(elements.get('terminalWarning').textContent, /输出拥塞/);
+  assert.equal(TerminalPanel.attachedSessionIds.has('term_flow'), false);
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_flow'), false);
+  assert.equal(TerminalPanel.state.getSession('term_flow').status, 'detached');
+
+  const attachCountBefore = emitted.filter((entry) => entry.event === 'terminal:attach_session').length;
+  const liveSnapshot = {
+    defaultSessionId: 'term_flow',
+    sessions: [{
+      sessionId: 'term_flow',
+      status: 'attached',
+      processStatus: 'exited',
+    }],
+  };
+  socketHandlers.get('terminal:pool_snapshot')(liveSnapshot);
+  socketHandlers.get('terminal:snapshot')(liveSnapshot);
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session').length,
+    attachCountBefore + 1,
+  );
+  assert.notEqual(TerminalPanel.state.getSession('term_flow'), null);
+});
+
+test('late polling latency responses do not replace the current websocket transport', () => {
+  let now = 1120;
+  class FakeDate extends Date {
+    static now() { return now; }
+  }
+  const { TerminalPanel, elements } = loadTerminal({ Date: FakeDate });
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.setTransportName('websocket');
+  TerminalPanel.setStatus('共享控制台已连接', 'connected');
+
+  TerminalPanel.pendingLatencyProbes.set('poll-ping', 1000);
+  TerminalPanel.handleLatencyPong({
+    nonce: 'poll-ping',
+    transport: 'polling',
+  });
+  now = 1140;
+  TerminalPanel.pendingInputAcks.set('poll-input-late', { clientSentAt: 1120 });
+  TerminalPanel.handleInputAck({
+    inputId: 'poll-input-late',
+    transport: 'polling',
+    serverReceivedAt: 2000,
+    serverSentAt: 2004,
+  });
+
+  assert.equal(TerminalPanel.getDiagnosticState().transport, 'websocket');
+  assert.match(elements.get('terminalStatus').textContent, /websocket/);
+  assert.equal(TerminalPanel.getTransportLatency('polling').socket.snapshot().last, 120);
+  assert.equal(TerminalPanel.getTransportLatency('polling').input.snapshot().last, 20);
+  assert.equal(TerminalPanel.getTransportLatency('polling').server.snapshot().last, 4);
+  assert.equal(TerminalPanel.getTransportLatency('websocket').socket.snapshot().sampleCount, 0);
 });
 
 test('TerminalPanel applies canonical and legacy session aliases once', () => {

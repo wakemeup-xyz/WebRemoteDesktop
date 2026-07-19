@@ -505,11 +505,21 @@ const TerminalPanel = {
       this.updatePresence(payload);
     });
     this.socket.on('terminal:warning', (payload) => {
-      this.setWarning(
+      const warning = (
         TERMINAL_WARNING_MESSAGES[payload.code]
         || payload.message
-        || '终端会话较多，可能影响性能',
+        || '终端会话较多，可能影响性能'
       );
+      if (payload.code === 'terminal_output_backpressure' && payload.sessionId) {
+        this.attachedSessionIds.delete(payload.sessionId);
+        this.pendingAttachSessionIds.delete(payload.sessionId);
+        this.state.updateSession(payload.sessionId, {
+          status: 'detached',
+          warning,
+        });
+      }
+      this.setWarning(warning);
+      this.render();
     });
     this.socket.on('terminal:error', (payload) => {
       if (payload.sessionId && ['pty_spawn_failed', 'pty_startup_timeout'].includes(payload.code)) {
@@ -670,8 +680,8 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.setTransportName(payload.transport || this.getTransportName());
-    this.terminalSocketLatency.record(Date.now() - clientSentAt);
+    const latency = this.getTransportLatency(payload.transport || this.getTransportName());
+    latency.socket.record(Date.now() - clientSentAt);
     this.refreshStatus();
   },
 
@@ -685,12 +695,12 @@ const TerminalPanel = {
     if (!Number.isFinite(clientSentAt)) {
       return;
     }
-    this.setTransportName(payload.transport || this.getTransportName());
-    this.terminalInputAckLatency.record(Math.max(0, Date.now() - clientSentAt));
+    const latency = this.getTransportLatency(payload.transport || this.getTransportName());
+    latency.input.record(Math.max(0, Date.now() - clientSentAt));
     const serverReceivedAt = Number(payload.serverReceivedAt);
     const serverSentAt = Number(payload.serverSentAt);
     if (Number.isFinite(serverReceivedAt) && Number.isFinite(serverSentAt)) {
-      this.terminalServerProcessLatency.record(Math.max(0, serverSentAt - serverReceivedAt));
+      latency.server.record(Math.max(0, serverSentAt - serverReceivedAt));
     }
     this.refreshStatus();
   },
