@@ -87,6 +87,19 @@ test('stale ack and wrong attempt are ignored', () => {
   assert.equal(runtime.phase, 'suspending');
 });
 
+test('ack without an attempt id cannot advance a request bound to an attempt', () => {
+  const { runtime } = makeRuntime();
+  runtime.beginDesired('suspended', { generation: 1, connectionAttemptId: 'a1' });
+
+  const ack = runtime.applyAck({
+    state: 'suspended', generation: 1, applied: true,
+  });
+
+  assert.equal(ack.accepted, false);
+  assert.equal(ack.reason, 'wrong-attempt');
+  assert.equal(runtime.phase, 'suspending');
+});
+
 test('late suspended ack cannot override newer resuming request', () => {
   const { runtime } = makeRuntime();
   runtime.beginDesired('suspended', { generation: 1, connectionAttemptId: 'a1' });

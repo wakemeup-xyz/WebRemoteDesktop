@@ -98,7 +98,7 @@
       if (ackGeneration !== desiredGeneration) {
         return { accepted: false, reason: 'stale-ack', ...snapshot() };
       }
-      if (attemptId && ackAttempt && ackAttempt !== attemptId) {
+      if (attemptId && ackAttempt !== attemptId) {
         return { accepted: false, reason: 'wrong-attempt', ...snapshot() };
       }
       if (ack.applied !== true) {
