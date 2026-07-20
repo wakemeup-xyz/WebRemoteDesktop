@@ -883,7 +883,7 @@ test('WebRTC owns one stats sampler and stops it during telemetry teardown', () 
     stop() { stopCalls += 1; },
     snapshot() { return null; },
   };
-  const { WebRTC } = loadWebRTC({
+  const { WebRTC, context } = loadWebRTC({
     WebRtcStats: {
       createWebRtcStatsSampler() {
         createCalls += 1;
@@ -1792,6 +1792,116 @@ test('WebRTC proactive ICE restart happens once on critical media quality', () =
 
   assert.equal(restartCalls, 1);
   assert.equal(offerCalls, 1);
+});
+
+test('suppressed media health does not observe adaptive quality or trigger recovery', () => {
+  let observes = 0;
+  let profileApplies = 0;
+  let iceRestarts = 0;
+  const { WebRTC } = loadWebRTC({
+    LinkQualityController: {
+      create() {
+        return {
+          observe() {
+            observes += 1;
+            return {
+              action: 'critical',
+              reason: 'media-stalled',
+              shouldRestartIce: true,
+              profileConfig: { name: 'survival', width: 640, height: 360, fps: 8, bitrateKbps: 500 },
+            };
+          },
+        };
+      },
+    },
+  });
+
+  WebRTC.networkMode = 'stun';
+  WebRTC.isMediaHealthSuppressed = () => true;
+  WebRTC.applyMediaProfile = () => { profileApplies += 1; };
+  WebRTC.proactiveIceRestart = () => { iceRestarts += 1; };
+  WebRTC.handleReceiverStats({ fps: 0, rttMs: 100, selectedCandidateType: 'prflx' });
+
+  assert.equal(observes, 0);
+  assert.equal(profileApplies, 0);
+  assert.equal(iceRestarts, 0);
+});
+
+test('PC connection syncs the desktop input gate without directly enabling input', () => {
+  const inputCalls = [];
+  class FakePeerConnection {
+    constructor() {
+      this.connectionState = 'connected';
+      this.iceConnectionState = 'connected';
+    }
+
+    createDataChannel() {
+      return { readyState: 'open', bufferedAmount: 0, send() {} };
+    }
+  }
+  const { WebRTC } = loadWebRTC({
+    RTCPeerConnection: FakePeerConnection,
+    Input: {
+      init() {},
+      setActive(value) { inputCalls.push(value); },
+    },
+    setTimeout() { return 0; },
+  });
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.startStats = () => {};
+  WebRTC.startVideoFrameTracking = () => {};
+  WebRTC.syncMediaProfile = () => {};
+  WebRTC.clearFailureRecommendation = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  let gateSyncs = 0;
+  WebRTC.syncDesktopInputGate = () => { gateSyncs += 1; };
+
+  WebRTC.createPeerConnection();
+  WebRTC.pc.onconnectionstatechange();
+
+  assert.equal(gateSyncs, 1);
+  assert.deepEqual(inputCalls, []);
+});
+
+test('suspended media prevents tunnel start or restart until the active phase is restored', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspended');
+  emitted.length = 0;
+
+  WebRTC.startTunnelRelay();
+  WebRTC.emitRelayStreamControl();
+  assert.equal(WebRTC.tunnelRelayActive, false);
+  assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
+
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), true);
+  emitted.length = 0;
+
+  WebRTC.startTunnelRelay();
+  assert.equal(WebRTC.tunnelRelayActive, false);
+  assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
+
+  WebRTC.noteMediaRenderedFrame();
+  WebRTC.startTunnelRelay();
+  assert.equal(WebRTC.tunnelRelayActive, true);
+  assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), true);
 });
 
 test('auto on public origin without TURN keeps auto mode and still starts WebRTC setup', async () => {

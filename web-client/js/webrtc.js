@@ -197,14 +197,14 @@ const WebRTC = {
 
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
-      const tunnelSize = this.getTunnelRelayRequestSize();
-      this.socket.emit('relay-stream-control', {
-        ...lease,
+      const emitted = this.emitRelayStreamControl({
         enabled: desired === 'active',
-        width: tunnelSize.width,
-        height: tunnelSize.height,
-        fps: tunnelSize.fps,
+        // A resume request must restart the host stream before a fresh frame can
+        // advance the runtime from resuming to active. Ordinary tunnel starts do
+        // not get this exception.
+        allowResuming: desired === 'active',
       });
+      if (!emitted) return false;
       // Tunnel path: treat stream control as the request; synthetic applied after emit.
       this.handleMediaActivityAck({
         schemaVersion: 1,
@@ -540,6 +540,7 @@ const WebRTC = {
   },
 
   handleReceiverStats(stats) {
+    if (this.isMediaHealthSuppressed()) return;
     const controller = this.ensureLinkQualityController();
     if (!controller || !this.adaptiveMediaEnabled) return;
     // Tunnel JPEG has its own backpressure/profile path; WebRTC adaptive stays off.
@@ -1629,7 +1630,7 @@ const WebRTC = {
         }
         if (typeof Input !== 'undefined') {
           Input.init();
-          Input.setActive(this.hasActiveControl());
+          this.syncDesktopInputGate();
         }
         // Start latency clock sync after connection is stable
         setTimeout(() => {
@@ -1907,6 +1908,9 @@ const WebRTC = {
       this.requestControl();
       return;
     }
+    if (!this.canStartTunnelRelay()) {
+      return;
+    }
     if (!this.socket || !this.socket.connected) {
       return;
     }
@@ -1939,13 +1943,20 @@ const WebRTC = {
     };
   },
 
-  emitRelayStreamControl() {
+  canStartTunnelRelay({ allowResuming = false } = {}) {
+    if (this.getMediaActivitySnapshot().state !== 'active') return false;
+    const phase = this.getMediaAppliedPhase();
+    return phase === 'active' || (allowResuming && phase === 'resuming');
+  },
+
+  emitRelayStreamControl({ enabled = true, allowResuming = false } = {}) {
+    if (enabled && !this.canStartTunnelRelay({ allowResuming })) return false;
     const lease = this.activeLeaseEnvelope();
     if (!lease || !this.socket?.connected) return false;
     const { width, height, fps } = this.getTunnelRelayRequestSize();
     this.socket?.emit('relay-stream-control', {
       ...lease,
-      enabled: true,
+      enabled,
       width,
       height,
       fps
