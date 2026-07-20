@@ -314,3 +314,36 @@ async def test_media_resume_fails_closed_on_fresh_capture_timeout():
     assert host.sio.events[-1][1]["applied"] is False
     assert host._media_activity_suspended is True
     assert host.screen_track.suspended is True
+
+
+@pytest.mark.asyncio
+async def test_media_resume_fails_closed_when_fresh_capture_returns_false():
+    class FalseTrack(FakeTrack):
+        def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+            self.waited_after = after_seq
+            return False
+
+    host = _make_media_host(sender=FakeSender(), track=FalseTrack())
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    sender_before = host.video_sender
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    ack = host.sio.events[-1]
+    assert ack[0] == "media-activity-ack"
+    assert ack[1]["applied"] is False
+    assert ack[1]["state"] == "suspended"
+    assert ack[1].get("keyframeRequested") is not True
+    assert host._media_activity_suspended is True
+    assert host.screen_track.suspended is True
+    assert host.screen_track.waited_after is not None
+    # Must not leave the capture track attached as if resume succeeded.
+    assert sender_before.tracks == [] or sender_before.tracks[-1] is None
