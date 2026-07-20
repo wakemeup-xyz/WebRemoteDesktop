@@ -144,7 +144,13 @@ function setupSignaling(io, options = {}) {
     setTimeoutFn,
     clearTimeoutFn,
   });
-  // viewerId -> { connectionAttemptId, generation }
+  // viewerId -> {
+  //   connectionAttemptId,
+  //   connectionAttemptSequence, // monotonic authority epoch for attempt rebinding
+  //   generation,                // last accepted media generation for this attempt
+  // }
+  // Attempt binding and generation progress share one record, but applied:false only
+  // releases generation progress — never deletes the authoritative attempt bind.
   const mediaActivityProgress = new Map();
 
   function emitControlEvent(type, fields = {}) {
@@ -372,13 +378,72 @@ function setupSignaling(io, options = {}) {
       && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
   }
 
-  function bindViewerConnectionAttempt(viewerId, connectionAttemptId) {
-    if (!viewerId || !isValidConnectionAttemptId(connectionAttemptId)) return false;
+  function isValidConnectionAttemptSequence(value) {
+    return Number.isSafeInteger(value) && value >= 1;
+  }
+
+  function resolveConnectionAttemptSequence(viewerId, connectionAttemptId, requestedSequence) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (isValidConnectionAttemptSequence(requestedSequence)) {
+      return requestedSequence;
+    }
+    // Legacy offer/media without sequence: same attempt keeps sequence; new attempt
+    // advances monotonically so random attempt ids alone cannot rebind authority.
+    if (prior && prior.connectionAttemptId === connectionAttemptId) {
+      return isValidConnectionAttemptSequence(prior.connectionAttemptSequence)
+        ? prior.connectionAttemptSequence
+        : 1;
+    }
+    const priorSequence = isValidConnectionAttemptSequence(prior?.connectionAttemptSequence)
+      ? prior.connectionAttemptSequence
+      : 0;
+    return priorSequence + 1;
+  }
+
+  function bindViewerConnectionAttempt(viewerId, connectionAttemptId, requestedSequence) {
+    if (!viewerId || !isValidConnectionAttemptId(connectionAttemptId)) {
+      return { ok: false, reason: 'invalid-attempt' };
+    }
+    const sequence = resolveConnectionAttemptSequence(
+      viewerId,
+      connectionAttemptId,
+      requestedSequence,
+    );
+    if (!isValidConnectionAttemptSequence(sequence)) {
+      return { ok: false, reason: 'invalid-sequence' };
+    }
+    const prior = mediaActivityProgress.get(viewerId);
+    const priorSequence = isValidConnectionAttemptSequence(prior?.connectionAttemptSequence)
+      ? prior.connectionAttemptSequence
+      : 0;
+    if (prior && sequence < priorSequence) {
+      return { ok: false, reason: 'stale-sequence' };
+    }
+    if (prior && sequence === priorSequence) {
+      if (prior.connectionAttemptId !== connectionAttemptId) {
+        return { ok: false, reason: 'stale-sequence' };
+      }
+      // Idempotent same sequence + same attempt.
+      return {
+        ok: true,
+        bound: false,
+        connectionAttemptId,
+        connectionAttemptSequence: sequence,
+        generation: Number.isSafeInteger(prior.generation) ? prior.generation : 0,
+      };
+    }
     mediaActivityProgress.set(viewerId, {
       connectionAttemptId,
+      connectionAttemptSequence: sequence,
       generation: 0,
     });
-    return true;
+    return {
+      ok: true,
+      bound: true,
+      connectionAttemptId,
+      connectionAttemptSequence: sequence,
+      generation: 0,
+    };
   }
 
   function currentViewerConnectionAttempt(viewerId) {
@@ -386,6 +451,39 @@ function setupSignaling(io, options = {}) {
     return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
       ? prior.connectionAttemptId
       : null;
+  }
+
+  function releaseRejectedMediaProgress(viewerId, data = {}) {
+    if (data.applied === true || !viewerId) return;
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior) return;
+    if (prior.connectionAttemptId !== data.connectionAttemptId) return;
+    if (!Number.isSafeInteger(data.generation) || prior.generation !== data.generation) return;
+    // Host applied:false only reopens this generation for one bounded replay.
+    // Never delete the authoritative attempt bind — otherwise the next arbitrary
+    // attempt id would become truth.
+    prior.generation = Math.max(0, data.generation - 1);
+  }
+
+  function noteMediaGenerationProgress(viewerId, connectionAttemptId, generation) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior || prior.connectionAttemptId !== connectionAttemptId) return false;
+    if (!Number.isSafeInteger(generation) || generation < 1) return false;
+    prior.generation = generation;
+    return true;
+  }
+
+  function emitHostConnectionAttemptBind(viewerId, bindResult, lease = {}) {
+    if (!connections.host || !bindResult?.ok) return;
+    connections.host.emit('connection-attempt-bind', {
+      schemaVersion: 1,
+      viewerId,
+      connectionAttemptId: bindResult.connectionAttemptId,
+      connectionAttemptSequence: bindResult.connectionAttemptSequence,
+      leaseId: typeof lease.leaseId === 'string' ? lease.leaseId : undefined,
+      leaseEpoch: Number.isSafeInteger(lease.leaseEpoch) ? lease.leaseEpoch : undefined,
+      networkMode: typeof lease.networkMode === 'string' ? lease.networkMode : undefined,
+    });
   }
 
   function forwardOffer(socket, data) {
@@ -401,9 +499,15 @@ function setupSignaling(io, options = {}) {
     // is safe to forward solely to the Host for its direct DataChannel binding.
     if (data.schemaVersion === 2) {
       if (!isValidConnectionAttemptId(data.connectionAttemptId)) return false;
+      const bindResult = bindViewerConnectionAttempt(
+        socket.id,
+        data.connectionAttemptId,
+        data.connectionAttemptSequence,
+      );
+      if (!bindResult.ok) return false;
       forwarded.leaseId = data.leaseId;
       forwarded.connectionAttemptId = data.connectionAttemptId;
-      bindViewerConnectionAttempt(socket.id, data.connectionAttemptId);
+      forwarded.connectionAttemptSequence = bindResult.connectionAttemptSequence;
     }
     if (networkMode) {
       forwarded.networkMode = networkMode;
@@ -862,6 +966,58 @@ function setupSignaling(io, options = {}) {
       }
     });
 
+    socket.on('connection-attempt-bind', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)) {
+        socket.emit('connection-attempt-bind-rejected', { reason: 'inactive-viewer' });
+        return;
+      }
+      if (!authorizeViewer(socket, {
+        schemaVersion: 2,
+        leaseId: data.leaseId,
+        leaseEpoch: data.leaseEpoch,
+      }, { legacy: false })) {
+        socket.emit('connection-attempt-bind-rejected', { reason: 'unauthorized' });
+        return;
+      }
+      if (!isValidConnectionAttemptId(data.connectionAttemptId)) {
+        socket.emit('connection-attempt-bind-rejected', { reason: 'invalid-attempt' });
+        return;
+      }
+      if (!isValidConnectionAttemptSequence(data.connectionAttemptSequence)) {
+        socket.emit('connection-attempt-bind-rejected', { reason: 'invalid-sequence' });
+        return;
+      }
+      const bindResult = bindViewerConnectionAttempt(
+        socket.id,
+        data.connectionAttemptId,
+        data.connectionAttemptSequence,
+      );
+      if (!bindResult.ok) {
+        socket.emit('connection-attempt-bind-rejected', {
+          reason: bindResult.reason || 'bind-rejected',
+        });
+        return;
+      }
+      if (bindResult.bound) {
+        emitHostConnectionAttemptBind(socket.id, bindResult, {
+          leaseId: data.leaseId,
+          leaseEpoch: data.leaseEpoch,
+          networkMode: data.networkMode,
+        });
+      }
+      socket.emit('connection-attempt-bound', {
+        schemaVersion: 1,
+        connectionAttemptId: bindResult.connectionAttemptId,
+        connectionAttemptSequence: bindResult.connectionAttemptSequence,
+      });
+      emitControlEvent('connection_attempt_bound', {
+        viewerId: socket.id,
+        connectionAttemptId: bindResult.connectionAttemptId,
+        connectionAttemptSequence: bindResult.connectionAttemptSequence,
+        rebound: bindResult.bound,
+      });
+    });
+
     socket.on('media-activity-change', (data = {}) => {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
       const validated = validateMediaActivityRequest(data);
@@ -879,8 +1035,9 @@ function setupSignaling(io, options = {}) {
         return;
       }
       const currentAttempt = currentViewerConnectionAttempt(socket.id);
-      // Once an offer binds the media session, only that attempt may change media.
-      if (currentAttempt && value.connectionAttemptId !== currentAttempt) {
+      // Media control never establishes attempt authority. Only offer or explicit
+      // connection-attempt-bind may bind; then only the active attempt may write.
+      if (!currentAttempt || value.connectionAttemptId !== currentAttempt) {
         socket.emit('media-activity-rejected', { reason: 'wrong-attempt' });
         return;
       }
@@ -891,10 +1048,7 @@ function setupSignaling(io, options = {}) {
         socket.emit('media-activity-rejected', { reason: 'stale-generation' });
         return;
       }
-      mediaActivityProgress.set(socket.id, {
-        connectionAttemptId: value.connectionAttemptId,
-        generation: value.generation,
-      });
+      noteMediaGenerationProgress(socket.id, value.connectionAttemptId, value.generation);
       const summary = summarizeMediaActivity(value);
       emitControlEvent('media_activity_requested', {
         ...summary,
@@ -916,6 +1070,7 @@ function setupSignaling(io, options = {}) {
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
       if (!viewerSocket) return;
+      releaseRejectedMediaProgress(viewerId, data);
       viewerSocket.emit('media-activity-ack', {
         schemaVersion: 1,
         state: data.state === 'active' ? 'active' : 'suspended',
@@ -949,7 +1104,9 @@ function setupSignaling(io, options = {}) {
           return;
         }
         const currentAttempt = currentViewerConnectionAttempt(socket.id);
-        if (currentAttempt && data.connectionAttemptId !== currentAttempt) {
+        // Tunnel media control must not invent attempt authority. Bind first via
+        // connection-attempt-bind (or a WebRTC offer that shares the same record).
+        if (!currentAttempt || data.connectionAttemptId !== currentAttempt) {
           socket.emit('relay-stream-control-rejected', { reason: 'wrong-attempt' });
           return;
         }
@@ -960,10 +1117,7 @@ function setupSignaling(io, options = {}) {
           socket.emit('relay-stream-control-rejected', { reason: 'stale-generation' });
           return;
         }
-        mediaActivityProgress.set(socket.id, {
-          connectionAttemptId: data.connectionAttemptId,
-          generation: data.generation,
-        });
+        noteMediaGenerationProgress(socket.id, data.connectionAttemptId, data.generation);
       } else if (role === 'viewer' && data?.schemaVersion === 2
         && !authorizeViewer(socket, data, { legacy: false })) {
         return;
@@ -995,12 +1149,14 @@ function setupSignaling(io, options = {}) {
       }
     });
 
+
     socket.on('relay-stream-control-ack', (data = {}) => {
       if (role !== 'host' || connections.host !== socket) return;
       const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
       if (!viewerSocket) return;
+      releaseRejectedMediaProgress(viewerId, data);
       const ack = {
         schemaVersion: 1,
         state: data.state === 'active' ? 'active' : 'suspended',

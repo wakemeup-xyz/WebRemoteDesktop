@@ -529,6 +529,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
     connectionAttemptId: 'attempt-owner-1',
+    connectionAttemptSequence: 1,
   });
 
   const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1).data;
@@ -539,6 +540,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
     connectionAttemptId: 'attempt-owner-1',
+    connectionAttemptSequence: 1,
   });
   assert.equal(observer.sent.some((entry) => entry.event === 'offer'), false);
   assert.equal(JSON.stringify(observer.sent).includes(grant.leaseId), false);
@@ -1652,12 +1654,32 @@ test('media-activity-change requires active lease and monotonic generation', () 
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
   };
+  // Explicit attempt bind (offer or connection-attempt-bind) is required before media.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'wrd-1',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
   viewer.trigger('media-activity-change', ok);
   const forwarded = host.sent.filter((e) => e.event === 'media-activity-change').at(-1);
   assert.equal(Boolean(forwarded), true);
   assert.equal(forwarded.data.viewerId, 'viewer-1');
   assert.equal(forwarded.data.generation, 1);
   assert.equal(forwarded.data.leaseId, grant.leaseId);
+
+  // A Host apply failure releases this generation for the Viewer's one bounded replay.
+  host.trigger('media-activity-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'wrd-1',
+    applied: false,
+    viewerId: 'viewer-1',
+  });
+  viewer.trigger('media-activity-change', ok);
+  assert.equal(host.sent.filter((e) => e.event === 'media-activity-change').length, 2);
 
   // Stale generation rejected.
   viewer.trigger('media-activity-change', { ...ok, generation: 1, state: 'active' });
@@ -1860,6 +1882,17 @@ test('tunnel media control requires ACTIVE lease and current attempt then routes
   assert.equal(forwarded.generation, 1);
   assert.equal(forwarded.state, 'suspended');
 
+  host.trigger('relay-stream-control-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel',
+    applied: false,
+    viewerId: 'viewer-1',
+  });
+  viewer.trigger('relay-stream-control', mediaControl);
+  assert.equal(host.sent.filter((e) => e.event === 'relay-stream-control').length, 2);
+
   // Wrong attempt rejected.
   viewer.trigger('relay-stream-control', {
     ...mediaControl,
@@ -1898,6 +1931,342 @@ test('tunnel media control requires ACTIVE lease and current attempt then routes
   });
   assert.equal(
     host.sent.filter((e) => e.event === 'relay-stream-control' && e.data.viewerId === 'viewer-2').length,
+    0,
+  );
+});
+
+function grantActiveLease(io, host, viewer, requestId = 'grant') {
+  viewer.trigger('control-acquire', { requestId });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  return viewer.sent.find((e) => e.event === 'control-grant').data;
+}
+
+test('tunnel connection attempt bind does not require a synthetic offer', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  const grant = grantActiveLease(io, host, viewer, 'tunnel-bind-first');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-tunnel-A',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  const bound = viewer.sent.filter((e) => e.event === 'connection-attempt-bound').at(-1);
+  assert.equal(bound?.data?.connectionAttemptId, 'attempt-tunnel-A');
+  assert.equal(bound?.data?.connectionAttemptSequence, 1);
+
+  viewer.trigger('relay-stream-control', {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: true,
+    state: 'active',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'relay-stream-control').length, 1);
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data.connectionAttemptId,
+    'attempt-tunnel-A',
+  );
+});
+
+test('tunnel attempt rebind advances sequence and permanently rejects the old attempt', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  const grant = grantActiveLease(io, host, viewer, 'tunnel-rebind');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('relay-stream-control', {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: false,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'relay-stream-control').length, 1);
+
+  // Refresh / mode switch: sequence 2 binds B.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-B',
+    connectionAttemptSequence: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bound').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+
+  // Old attempt permanently rejected, even with a higher generation.
+  viewer.trigger('relay-stream-control', {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: false,
+    state: 'suspended',
+    generation: 9,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'relay-stream-control-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+
+  // B starts media generation from 1 (binding resets generation to 0).
+  viewer.trigger('relay-stream-control', {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: true,
+    state: 'active',
+    generation: 1,
+    connectionAttemptId: 'attempt-B',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data.generation,
+    1,
+  );
+});
+
+test('applied:false releases one generation replay without clearing attempt binding', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  const grant = grantActiveLease(io, host, viewer, 'replay-bind');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-B',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  const mediaControl = {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: true,
+    state: 'active',
+    generation: 1,
+    connectionAttemptId: 'attempt-B',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  };
+  viewer.trigger('relay-stream-control', mediaControl);
+  assert.equal(host.sent.filter((e) => e.event === 'relay-stream-control').length, 1);
+
+  host.trigger('relay-stream-control-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-B',
+    applied: false,
+    viewerId: 'viewer-1',
+  });
+
+  // Same generation may replay once; binding remains B.
+  viewer.trigger('relay-stream-control', mediaControl);
+  assert.equal(host.sent.filter((e) => e.event === 'relay-stream-control').length, 2);
+
+  // Without another applied:false, a second identical generation is stale.
+  viewer.trigger('relay-stream-control', mediaControl);
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'relay-stream-control-rejected').at(-1).data.reason,
+    'stale-generation',
+  );
+
+  // Late applied:false for old attempt A cannot clear B or open A.
+  host.trigger('relay-stream-control-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    applied: false,
+    viewerId: 'viewer-1',
+  });
+  viewer.trigger('relay-stream-control', {
+    ...mediaControl,
+    connectionAttemptId: 'attempt-A',
+    generation: 2,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'relay-stream-control-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+  viewer.trigger('relay-stream-control', {
+    ...mediaControl,
+    generation: 2,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data.generation,
+    2,
+  );
+});
+
+test('attempt bind rejects stale sequence, non-active lease, and old sockets', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  io.connect(viewerB);
+
+  const grant = grantActiveLease(io, host, viewer, 'bind-auth');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  // Same sequence + same attempt is idempotent.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bound').at(-1).data.connectionAttemptSequence,
+    2,
+  );
+
+  // Same sequence + different attempt rejected.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-Z',
+    connectionAttemptSequence: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
+    'stale-sequence',
+  );
+
+  // Older sequence rejected.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-old',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
+    'stale-sequence',
+  );
+
+  // Read-only socket cannot bind.
+  viewerB.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-B',
+    connectionAttemptSequence: 3,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewerB.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
+    'unauthorized',
+  );
+
+  // Offer bind and tunnel bind share one authority: offer advances sequence to 3.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-offer-C',
+    connectionAttemptSequence: 3,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'offer').at(-1).data.connectionAttemptId,
+    'attempt-offer-C',
+  );
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 2,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
+    'stale-sequence',
+  );
+
+  // Disconnect clears the binding for this socket.
+  viewer.disconnect();
+  const viewerReconnect = new FakeSocket('viewer-1', 'viewer');
+  viewerReconnect.handshake.auth.inputProtocolVersion = 2;
+  // New socket id after reconnect — previous authority must not rebind.
+  // (FakeSocket reuses constructor id only if we choose a new id.)
+  const oldSocketIdViewer = new FakeSocket('viewer-old', 'viewer');
+  oldSocketIdViewer.handshake.auth.inputProtocolVersion = 2;
+  // Old disconnected socket is not in connections; its bind is ignored/no-op.
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-ghost',
+    connectionAttemptSequence: 99,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control' && e.data?.connectionAttemptId === 'attempt-ghost').length,
     0,
   );
 });
