@@ -935,6 +935,12 @@ const TerminalPanel = {
       return;
     }
     if (type === 'error') {
+      this.handleTerminalError({
+        sessionId: message.sid,
+        inputId: message.inputId,
+        code: message.code,
+        message: message.message,
+      });
       this.setTransportStatus(`TURN 传输错误：${message.code || message.message || 'unknown'}`, 'error');
       return;
     }

@@ -151,6 +151,7 @@ function createTerminalWebRtcGateway(options = {}) {
     if (type === 'in') {
       const sid = String(message.sid || entry.sessionId || '');
       const data = String(message.data || '');
+      const inputId = typeof message.inputId === 'string' ? message.inputId : null;
       if (!sid) {
         sendJson(entry.dc, { t: 'error', code: 'terminal_session_required' });
         return;
@@ -160,6 +161,7 @@ function createTerminalWebRtcGateway(options = {}) {
         sendJson(entry.dc, {
           t: 'error',
           sid,
+          inputId,
           code: 'terminal_input_too_large',
           message: 'Terminal input exceeds 64KB',
           bytes,
@@ -177,13 +179,14 @@ function createTerminalWebRtcGateway(options = {}) {
         sendJson(entry.dc, {
           t: 'ack',
           sid,
-          inputId: typeof message.inputId === 'string' ? message.inputId : null,
+          inputId,
           serverProcessMs: Math.max(0, Number(metricNow()) - Number(started)),
         });
       } catch (error) {
         sendJson(entry.dc, {
           t: 'error',
           sid,
+          inputId,
           code: error.code || 'terminal_input_failed',
           message: error.message,
         });

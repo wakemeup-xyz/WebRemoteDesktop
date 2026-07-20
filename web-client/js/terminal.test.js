@@ -1121,6 +1121,64 @@ test('TerminalPanel unlocks a rejected composer submission only for its matching
   assert.equal(emitted.filter((entry) => entry.event === 'terminal:input').length, 2);
 });
 
+test('TerminalPanel unlocks only the matching TURN-rejected composer submission and preserves its draft for retry', () => {
+  const sentFrames = [];
+  const { TerminalPanel, elements } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = { connected: true, emit() {} };
+  TerminalPanel.preferredTransport = 'webrtc-turn';
+  TerminalPanel.webrtcReady = true;
+  TerminalPanel.webrtcDc = {
+    readyState: 'open',
+    send(frame) { sentFrames.push(JSON.parse(frame)); },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term-turn-retry', status: 'attached' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term-turn-retry');
+  TerminalPanel.activateSession('term-turn-retry');
+  elements.get('terminalComposer').value = 'retryable TURN draft';
+  TerminalPanel.handleComposerInput();
+  assert.equal(TerminalPanel.submitComposer(), true);
+
+  const firstInput = sentFrames.at(-1);
+  TerminalPanel.pendingInputAcks.set('unrelated-input', {
+    sessionId: 'term-unrelated',
+    composerSubmission: true,
+  });
+  TerminalPanel.pendingComposerInputIdsBySession.set('term-unrelated', 'unrelated-input');
+
+  TerminalPanel.handleWebRtcMessage({
+    t: 'error',
+    sid: 'term-unrelated',
+    inputId: firstInput.inputId,
+    code: 'terminal_input_rejected',
+    message: 'Unrelated rejection',
+  });
+  assert.equal(TerminalPanel.isComposerSubmissionPending('term-turn-retry'), true);
+  assert.equal(TerminalPanel.pendingInputAcks.has(firstInput.inputId), true);
+  assert.equal(TerminalPanel.pendingInputAcks.has('unrelated-input'), true);
+  assert.equal(elements.get('terminalComposerSubmit').disabled, true);
+
+  TerminalPanel.handleWebRtcMessage({
+    t: 'error',
+    sid: 'term-turn-retry',
+    inputId: firstInput.inputId,
+    code: 'terminal_input_rejected',
+    message: 'Input rejected',
+  });
+  assert.equal(TerminalPanel.isComposerSubmissionPending('term-turn-retry'), false);
+  assert.equal(TerminalPanel.pendingInputAcks.has(firstInput.inputId), false);
+  assert.equal(TerminalPanel.pendingInputAcks.has('unrelated-input'), true);
+  assert.equal(TerminalPanel.pendingComposerInputIdsBySession.get('term-unrelated'), 'unrelated-input');
+  assert.equal(elements.get('terminalComposerSubmit').disabled, false);
+  assert.equal(elements.get('terminalComposer').value, 'retryable TURN draft');
+
+  assert.equal(TerminalPanel.submitComposer(), true);
+  const retryInput = sentFrames.at(-1);
+  assert.notEqual(retryInput.inputId, firstInput.inputId);
+  assert.equal(retryInput.data, firstInput.data);
+});
+
 test('TerminalPanel preserves focused composer value and caret during same-session rerenders', () => {
   const { TerminalPanel, elements } = loadTerminal();
   TerminalPanel.cacheElements();

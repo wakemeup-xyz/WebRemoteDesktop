@@ -34,6 +34,7 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
   const writes = [];
   const attaches = [];
   const resizes = [];
+  let rejectNextInput = false;
   class FakePC {
     constructor() {
       this.handlers = {};
@@ -74,6 +75,10 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
     PeerConnection: FakePC,
     sessionManager: {
       writeInput(sid, input) {
+        if (rejectNextInput) {
+          rejectNextInput = false;
+          throw Object.assign(new Error('input rejected'), { code: 'terminal_input_rejected' });
+        }
         writes.push({ sid, data: input.data, clientId: input.clientId });
       },
       resizeSession(sid, input) {
@@ -122,7 +127,11 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
         assert.equal(entry.clientId, 'client-1');
         assert.equal(entry.browserLabel, 'attacker-spoofed-id');
         entry.dc._message?.(JSON.stringify({ t: 'in', sid: 'term_1', data: 'echo hi\n', inputId: 'i1' }));
-        entry.dc._message?.(JSON.stringify({ t: 'in', sid: 'term_1', data: 'x'.repeat(64 * 1024 + 1) }));
+        entry.dc._message?.(JSON.stringify({
+          t: 'in', sid: 'term_1', data: 'x'.repeat(64 * 1024 + 1), inputId: 'input-too-large',
+        }));
+        rejectNextInput = true;
+        entry.dc._message?.(JSON.stringify({ t: 'in', sid: 'term_1', data: 'reject', inputId: 'input-rejected' }));
         entry.dc._message?.(JSON.stringify({ t: 'resize', sid: 'term_1', cols: 9999, rows: 9999 }));
         entry.dc._message?.(JSON.stringify({ t: 'resize', sid: 'term_1', cols: 120, rows: 40 }));
       } catch (error) {
@@ -146,7 +155,28 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
             try { return JSON.parse(line); } catch (_err) { return null; }
           }).filter(Boolean);
           assert.ok(parsed.some((item) => item.t === 'out' && item.data === 'hello-from-pty\n'));
-          assert.ok(parsed.some((item) => item.code === 'terminal_input_too_large'));
+          assert.deepEqual(
+            parsed.find((item) => item.code === 'terminal_input_too_large'),
+            {
+              t: 'error',
+              sid: 'term_1',
+              inputId: 'input-too-large',
+              code: 'terminal_input_too_large',
+              message: 'Terminal input exceeds 64KB',
+              bytes: 64 * 1024 + 1,
+              maxBytes: 64 * 1024,
+            },
+          );
+          assert.deepEqual(
+            parsed.find((item) => item.code === 'terminal_input_rejected'),
+            {
+              t: 'error',
+              sid: 'term_1',
+              inputId: 'input-rejected',
+              code: 'terminal_input_rejected',
+              message: 'input rejected',
+            },
+          );
           assert.ok(parsed.some((item) => item.code === 'terminal_resize_out_of_range'));
           gateway.closeAll();
           resolve();
