@@ -6,8 +6,6 @@ const ALLOWED_REASONS = new Set([
   'terminal-active',
   'page-hidden',
   'page-hide',
-  'page-freeze',
-  'disconnected',
 ]);
 const ALLOWED_FIELDS = new Set([
   'schemaVersion',

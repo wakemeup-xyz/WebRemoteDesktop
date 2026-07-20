@@ -31,6 +31,8 @@ test('rejects unknown schema, invalid state, reasons, and missing fields', () =>
   assert.equal(validateMediaActivityRequest(valid({ schemaVersion: 2 })).code, 'INVALID_SCHEMA_VERSION');
   assert.equal(validateMediaActivityRequest(valid({ state: 'paused' })).code, 'INVALID_STATE');
   assert.equal(validateMediaActivityRequest(valid({ reasons: ['nope'] })).code, 'INVALID_REASONS');
+  assert.equal(validateMediaActivityRequest(valid({ reasons: ['page-freeze'] })).code, 'INVALID_REASONS');
+  assert.equal(validateMediaActivityRequest(valid({ reasons: ['disconnected'] })).code, 'INVALID_REASONS');
   assert.equal(validateMediaActivityRequest(valid({ generation: 0 })).code, 'INVALID_GENERATION');
   assert.equal(validateMediaActivityRequest(valid({ connectionAttemptId: '' })).code, 'INVALID_CONNECTION_ATTEMPT_ID');
   assert.equal(validateMediaActivityRequest(valid({ leaseId: 'short' })).code, 'INVALID_LEASE_ID');
