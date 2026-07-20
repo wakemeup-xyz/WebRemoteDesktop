@@ -3,7 +3,7 @@
 Date: 2026-07-20
 Branch: `worktree-reliability-closure-p1`
 Review baseline (previous anchor): `ff1b9a2b9f5a1db4f7c1e2142c56bca262ea750f`
-Latest automated commit on this remediation branch: _(pending commit after this review remediation)_
+Latest automated commit on this remediation branch: `2ba9825` (docs); code closed by `be7e6a4`/`0f7ef3b`/`061e970`/`c1d3e13`
 UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
@@ -29,7 +29,7 @@ Earlier reliability-closure implementation history remains on `main` (reset barr
 cd signal-server && npm test
 ```
 
-Result: **253 pass / 0 fail**
+Result: **257 pass / 0 fail**
 
 ### Viewer / scripts matrix
 
@@ -37,7 +37,7 @@ Result: **253 pass / 0 fail**
 node --test web-client/js/*.test.js scripts/*.test.js
 ```
 
-Result: **315 pass / 0 fail**
+Result: **333 pass / 0 fail**
 
 ### Python matrix
 
@@ -48,7 +48,7 @@ PYTHONPATH=python-host python3 -m pytest -q \
   skills/webremote-service/scripts/wrd_service_test.py
 ```
 
-Result: **142 passed / 0 fail** (1 deprecation warning from mss)
+Result: **143 passed / 0 fail** (1 deprecation warning from mss)
 
 ### Diff hygiene
 
