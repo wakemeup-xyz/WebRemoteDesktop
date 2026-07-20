@@ -177,9 +177,13 @@ class DesktopControlLease {
         },
       };
     }
-    if ((this._active && this._active.viewerId === viewerId)
-      || (this._pending && this._pending.viewerId === viewerId)) {
-      return this._free('controller-disconnect');
+    // ACTIVE controller disconnect must open a formal reset-only barrier.
+    // Freeing immediately would let a new Viewer acquire before Host reset ack.
+    if (this._state === 'ACTIVE' && this._active && this._active.viewerId === viewerId) {
+      return this._beginResetTransition('controller-disconnect');
+    }
+    if (this._pending && this._pending.viewerId === viewerId) {
+      return this._beginResetTransition('controller-disconnect');
     }
     return { state: this._state, reason: 'not-controller' };
   }

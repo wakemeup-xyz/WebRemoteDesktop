@@ -205,15 +205,80 @@ test('reset transition timeout never releases an expired lease to FREE', () => {
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
 });
 
-test('controller disconnect releases the lease and rejects its old credential', () => {
+test('ACTIVE controller disconnect enters reset-only REVOKING and freezes credentials', () => {
   const lease = makeLease();
   const request = lease.requestControl({ viewerId: 'viewer-a' });
   const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
 
-  assert.deepEqual(lease.viewerDisconnected('viewer-a'), {
+  const disconnected = lease.viewerDisconnected('viewer-a');
+  assert.equal(disconnected.state, 'REVOKING');
+  assert.equal(disconnected.reason, 'controller-disconnect');
+  assert.equal(disconnected.transition.type, 'control-transition');
+  assert.equal(disconnected.transition.reason, 'controller-disconnect');
+  assert.equal(Object.hasOwn(disconnected.transition, 'leaseId'), false);
+  assert.equal(Object.hasOwn(disconnected.transition, 'viewerId'), false);
+  assert.equal(disconnected.transition.leaseEpoch > active.lease.leaseEpoch, true);
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.snapshot().controllerViewerId, null);
+  assert.equal(lease.snapshot().leaseEpoch, disconnected.transition.leaseEpoch);
+  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+});
+
+test('disconnect reset rejection stays on the same epoch and remains fail-closed', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+  const disconnected = lease.viewerDisconnected('viewer-a');
+  const epoch = disconnected.transition.leaseEpoch;
+
+  const failed = lease.failTransition({ leaseEpoch: epoch, reason: 'reset-failed' });
+  assert.equal(failed.state, 'REVOKING');
+  assert.equal(failed.reason, 'reset-failed');
+  assert.equal(Object.hasOwn(failed, 'transition'), false);
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().leaseEpoch, epoch);
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+});
+
+test('disconnect reset timeout stays reset-blocked behind the same epoch', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+  const disconnected = lease.viewerDisconnected('viewer-a');
+  const epoch = disconnected.transition.leaseEpoch;
+
+  lease.advanceTo(3_000);
+  const timedOut = lease.expire();
+  assert.equal(timedOut.state, 'REVOKING');
+  assert.equal(timedOut.reason, 'transition-timeout');
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().leaseEpoch, epoch);
+  assert.equal(lease.snapshot().pendingViewerId, null);
+  assert.equal(lease.requestControl({ viewerId: 'viewer-b' }).reason, 'occupied');
+});
+
+test('late stale ack cannot release an ACTIVE disconnect barrier', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'viewer-a' });
+  const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+  const disconnected = lease.viewerDisconnected('viewer-a');
+
+  assert.equal(
+    lease.confirmTransition({ leaseEpoch: active.lease.leaseEpoch }).reason,
+    'stale-transition',
+  );
+  assert.equal(lease.snapshot().state, 'REVOKING');
+  assert.equal(lease.snapshot().leaseEpoch, disconnected.transition.leaseEpoch);
+
+  assert.deepEqual(lease.confirmTransition({
+    leaseEpoch: disconnected.transition.leaseEpoch,
+  }), {
     state: 'FREE', reason: 'controller-disconnect',
   });
-  assert.equal(lease.authorize({ viewerId: 'viewer-a', ...active.lease }), false);
+  assert.equal(lease.snapshot().state, 'FREE');
 });
 
 test('host disconnect releases both active and pending transitions', () => {

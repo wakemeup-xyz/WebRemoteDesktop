@@ -1102,6 +1102,38 @@ test('stale createOffer completion does not clear newer offer progress', async (
   assert.equal(WebRTC.offerInProgress, true);
 });
 
+test('createOffer emits connectionAttemptId bound to the current attempt', async () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = {
+    connected: true,
+    emit(...args) { emitted.push(args); },
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 },
+  };
+  WebRTC.networkMode = 'stun';
+  WebRTC.currentConnectionAttemptId = 'attempt-from-begin';
+  WebRTC.pc = {
+    getTransceivers: () => [],
+    addTransceiver: () => ({}),
+    createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    setLocalDescription: async () => {},
+    localDescription: { type: 'offer', sdp: 'v=0' },
+  };
+  WebRTC.preferH264 = () => {};
+
+  await WebRTC.createOffer();
+  const offerEmit = emitted.find((entry) => entry[0] === 'offer');
+  assert.ok(offerEmit);
+  assert.equal(offerEmit[1].connectionAttemptId, 'attempt-from-begin');
+  assert.equal(offerEmit[1].leaseId, 'lease-000000000001');
+  assert.equal(offerEmit[1].schemaVersion, 2);
+});
+
 test('auto fallback handles relay frames while tunnel relay is active', () => {
   const { WebRTC, elements } = loadWebRTC();
   const relayImage = elements.get('relayImage') || makeElement();
@@ -1881,6 +1913,12 @@ test('suspended media prevents tunnel start or restart until the active phase is
   WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
 
   WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  // Tunnel waits for Host applied ack; phase stays suspending until then.
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspending');
+  assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === false), true);
+  WebRTC.handleMediaActivityAck({
+    state: 'suspended', generation: 1, connectionAttemptId: 'wrd-1', applied: true,
+  });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'suspended');
   emitted.length = 0;
 
@@ -1898,7 +1936,10 @@ test('suspended media prevents tunnel start or restart until the active phase is
   assert.equal(WebRTC.tunnelRelayActive, false);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
 
-  WebRTC.noteMediaRenderedFrame();
+  WebRTC.handleMediaActivityAck({
+    state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
+  });
+  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
   WebRTC.startTunnelRelay();
   assert.equal(WebRTC.tunnelRelayActive, true);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), true);
@@ -2465,9 +2506,219 @@ test('media resume enables input only after active ack and rendered frame', () =
   assert.equal(WebRTC.canEnableDesktopInput(), false);
   WebRTC.handleMediaActivityAck({ state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true });
   assert.equal(WebRTC.canEnableDesktopInput(), false);
-  WebRTC.noteMediaRenderedFrame();
+  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
+});
+
+test('resume stays resuming when framesDecoded does not increase past baseline', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = {
+    active: false,
+    setActive(v) { this.active = v; },
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+
+  WebRTC._lastInboundFramesDecoded = 100;
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  WebRTC.handleMediaActivityAck({ state: 'suspended', generation: 1, connectionAttemptId: 'wrd-1', applied: true });
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  WebRTC.handleMediaActivityAck({ state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+
+  // Cumulative framesDecoded already > 0 from before pause must not unlock.
+  WebRTC.processStatsSnapshot({
+    fps: 15,
+    rttMs: 40,
+    framesReceived: 100,
+    framesDecoded: 100,
+    packetsLost: 0,
+    bytesReceived: 1000,
+    selectedCandidateType: 'srflx',
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+
+  // Fresh decoded frame past baseline unlocks once.
+  WebRTC.processStatsSnapshot({
+    fps: 15,
+    rttMs: 40,
+    framesReceived: 101,
+    framesDecoded: 101,
+    packetsLost: 0,
+    bytesReceived: 1100,
+    selectedCandidateType: 'srflx',
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
+  assert.equal(WebRTC.canEnableDesktopInput(), true);
+
+  const phaseAfter = WebRTC.getMediaAppliedPhase();
+  WebRTC.processStatsSnapshot({
+    fps: 15,
+    rttMs: 40,
+    framesReceived: 105,
+    framesDecoded: 105,
+    packetsLost: 0,
+    bytesReceived: 1500,
+    selectedCandidateType: 'srflx',
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), phaseAfter);
+});
+
+test('stale pc, wrong attempt, and non-fresh video callback cannot unlock resume', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  const livePc = { id: 'live' };
+  const stalePc = { id: 'stale' };
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.pc = livePc;
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-B';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = {
+    setActive() {},
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+
+  WebRTC._lastInboundFramesDecoded = 10;
+  WebRTC._videoFrameSeq = 3;
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  WebRTC.handleMediaActivityAck({ state: 'suspended', generation: 1, connectionAttemptId: 'attempt-B', applied: true });
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  WebRTC.handleMediaActivityAck({ state: 'active', generation: 2, connectionAttemptId: 'attempt-B', applied: true });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+  assert.equal(WebRTC.observeFreshResumeFrame({
+    source: 'stats',
+    framesDecoded: 11,
+    connectionAttemptId: 'attempt-A',
+    pc: livePc,
+  }), false);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+  assert.equal(WebRTC.observeFreshResumeFrame({
+    source: 'video-callback',
+    frameSeq: 4,
+    connectionAttemptId: 'attempt-B',
+    pc: stalePc,
+  }), false);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+  assert.equal(WebRTC.observeFreshResumeFrame({
+    source: 'video-callback',
+    frameSeq: 3,
+    connectionAttemptId: 'attempt-B',
+    pc: livePc,
+  }), false);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+  assert.equal(WebRTC.observeFreshResumeFrame({
+    source: 'video-callback',
+    frameSeq: 4,
+    connectionAttemptId: 'attempt-B',
+    pc: livePc,
+  }), true);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
+});
+
+test('acceptance scripts must not synthesize noteMediaRenderedFrame', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..', '..', 'scripts');
+  for (const name of [
+    'runtime_reliability_acceptance.py',
+    'runtime_reliability_acceptance_ext.py',
+    'runtime_reliability_acceptance_final.py',
+  ]) {
+    const source = fs.readFileSync(path.join(root, name), 'utf8');
+    assert.equal(
+      source.includes('noteMediaRenderedFrame'),
+      false,
+      `${name} must not call noteMediaRenderedFrame`,
+    );
+  }
+});
+
+test('tunnel media activity waits for Host applied ack and fresh relay frame', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = {
+    connected: true,
+    emit(...args) { emitted.push(args); },
+    on() {},
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-tunnel-1';
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
+  context.Input = {
+    setActive() {},
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
+  // No synthetic applied: still suspending until Host ack.
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspending');
+  const control = emitted.find((entry) => entry[0] === 'relay-stream-control');
+  assert.ok(control);
+  assert.equal(control[1].enabled, false);
+  assert.equal(control[1].state, 'suspended');
+  assert.equal(control[1].generation, 1);
+  assert.equal(control[1].connectionAttemptId, 'attempt-tunnel-1');
+  assert.equal(control[1].schemaVersion, 2);
+  assert.equal(control[1].mediaControlSchemaVersion, 1);
+  assert.equal(emitted.some((entry) => entry[0] === 'media-activity-change'), false);
+
+  WebRTC.handleMediaActivityAck({
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel-1',
+    applied: true,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspended');
+
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  WebRTC.handleMediaActivityAck({
+    state: 'active',
+    generation: 2,
+    connectionAttemptId: 'attempt-tunnel-1',
+    applied: true,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+
+  // Fresh relay frame unlocks.
+  WebRTC.tunnelLastFrameId = 10;
+  WebRTC.observeFreshResumeFrame({
+    source: 'video-callback',
+    frameSeq: (WebRTC._videoFrameSeq || 0) + 1,
+    connectionAttemptId: 'attempt-tunnel-1',
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
 });
 
 

@@ -365,6 +365,29 @@ function setupSignaling(io, options = {}) {
     }
     return legacy;
   }
+  function isValidConnectionAttemptId(value) {
+    return typeof value === 'string'
+      && value.length >= 1
+      && value.length <= 128
+      && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+  }
+
+  function bindViewerConnectionAttempt(viewerId, connectionAttemptId) {
+    if (!viewerId || !isValidConnectionAttemptId(connectionAttemptId)) return false;
+    mediaActivityProgress.set(viewerId, {
+      connectionAttemptId,
+      generation: 0,
+    });
+    return true;
+  }
+
+  function currentViewerConnectionAttempt(viewerId) {
+    const prior = mediaActivityProgress.get(viewerId);
+    return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
+      ? prior.connectionAttemptId
+      : null;
+  }
+
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
     const networkMode = String(data.networkMode || data.iceMode || '').trim();
@@ -376,7 +399,12 @@ function setupSignaling(io, options = {}) {
     };
     // v2 offers have already passed authorizeViewer(), so this opaque token
     // is safe to forward solely to the Host for its direct DataChannel binding.
-    if (data.schemaVersion === 2) forwarded.leaseId = data.leaseId;
+    if (data.schemaVersion === 2) {
+      if (!isValidConnectionAttemptId(data.connectionAttemptId)) return false;
+      forwarded.leaseId = data.leaseId;
+      forwarded.connectionAttemptId = data.connectionAttemptId;
+      bindViewerConnectionAttempt(socket.id, data.connectionAttemptId);
+    }
     if (networkMode) {
       forwarded.networkMode = networkMode;
       forwarded.iceMode = networkMode;
@@ -850,6 +878,12 @@ function setupSignaling(io, options = {}) {
         socket.emit('media-activity-rejected', { reason: 'unauthorized' });
         return;
       }
+      const currentAttempt = currentViewerConnectionAttempt(socket.id);
+      // Once an offer binds the media session, only that attempt may change media.
+      if (currentAttempt && value.connectionAttemptId !== currentAttempt) {
+        socket.emit('media-activity-rejected', { reason: 'wrong-attempt' });
+        return;
+      }
       const prior = mediaActivityProgress.get(socket.id);
       if (prior
         && prior.connectionAttemptId === value.connectionAttemptId
@@ -892,7 +926,7 @@ function setupSignaling(io, options = {}) {
       });
     });
 
-    socket.on('relay-stream-control', (data) => {
+    socket.on('relay-stream-control', (data = {}) => {
       if (role !== 'viewer' && role !== 'relay-viewer') {
         console.warn(`Relay stream control rejected: role=${role} from ${socket.id}`);
         return;
@@ -901,7 +935,39 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay stream control rejected: disconnected viewer ${socket.id}`);
         return;
       }
-      if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+      const isMediaControl = Number(data.mediaControlSchemaVersion) === 1
+        || (data.schemaVersion === 2 && (data.state === 'active' || data.state === 'suspended')
+          && Number.isSafeInteger(data.generation));
+      if (role === 'viewer' && isMediaControl) {
+        if (!authorizeViewer(socket, data, { legacy: false })) {
+          socket.emit('relay-stream-control-rejected', { reason: 'unauthorized' });
+          return;
+        }
+        if (!isValidConnectionAttemptId(data.connectionAttemptId)
+          || !Number.isSafeInteger(data.generation) || data.generation < 1) {
+          socket.emit('relay-stream-control-rejected', { reason: 'invalid-media-control' });
+          return;
+        }
+        const currentAttempt = currentViewerConnectionAttempt(socket.id);
+        if (currentAttempt && data.connectionAttemptId !== currentAttempt) {
+          socket.emit('relay-stream-control-rejected', { reason: 'wrong-attempt' });
+          return;
+        }
+        const prior = mediaActivityProgress.get(socket.id);
+        if (prior
+          && prior.connectionAttemptId === data.connectionAttemptId
+          && data.generation <= prior.generation) {
+          socket.emit('relay-stream-control-rejected', { reason: 'stale-generation' });
+          return;
+        }
+        mediaActivityProgress.set(socket.id, {
+          connectionAttemptId: data.connectionAttemptId,
+          generation: data.generation,
+        });
+      } else if (role === 'viewer' && data?.schemaVersion === 2
+        && !authorizeViewer(socket, data, { legacy: false })) {
+        return;
+      }
       let viewerId = socket.id;
       if (role === 'relay-viewer') {
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
@@ -914,11 +980,40 @@ function setupSignaling(io, options = {}) {
         if (!viewerId) return;
       }
       if (connections.host) {
-        connections.host.emit('relay-stream-control', {
+        const forwarded = {
           ...data,
           viewerId,
-        });
+        };
+        if (isMediaControl) {
+          forwarded.state = data.state === 'active' ? 'active' : 'suspended';
+          forwarded.enabled = data.state === 'active' || data.enabled === true;
+          forwarded.generation = data.generation;
+          forwarded.connectionAttemptId = data.connectionAttemptId;
+          forwarded.mediaControlSchemaVersion = 1;
+        }
+        connections.host.emit('relay-stream-control', forwarded);
       }
+    });
+
+    socket.on('relay-stream-control-ack', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket) return;
+      const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
+      if (!viewerId) return;
+      const viewerSocket = connections.viewers.get(viewerId);
+      if (!viewerSocket) return;
+      const ack = {
+        schemaVersion: 1,
+        state: data.state === 'active' ? 'active' : 'suspended',
+        generation: Number.isSafeInteger(data.generation) ? data.generation : null,
+        connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
+        applied: data.applied === true,
+      };
+      if (typeof data.reason === 'string' && data.reason) {
+        ack.reason = data.reason.slice(0, 64);
+      }
+      // Dual-route: media runtime listens on media-activity-ack; keep explicit tunnel event too.
+      viewerSocket.emit('relay-stream-control-ack', ack);
+      viewerSocket.emit('media-activity-ack', ack);
     });
 
     socket.on('relay-frame', (data) => {
@@ -1018,28 +1113,17 @@ function setupSignaling(io, options = {}) {
       } else if (role === 'viewer') {
         clearPendingInputs(socket.id);
         mediaActivityProgress.delete(socket.id);
-        const priorControl = controlSnapshot();
         const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
         clearLegacyRelayCompanion(socket.id, { stop: true });
         legacyRelayOwnerIds.delete(socket.id);
         if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
         if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
+        // ACTIVE disconnect must go through the formal DesktopControlLease
+        // reset-only barrier (dispatchLeaseEffect). Never bypass with a
+        // side-channel sendControlTransition after FREE.
         if (leaseResult.transition) {
           dispatchLeaseEffect(leaseResult, leaseResult.reason || 'viewer-disconnected');
-        } else if (priorControl.controllerViewerId === socket.id
-          && Number.isSafeInteger(priorControl.leaseEpoch)) {
-          // Active disconnects free the Signal lease immediately. The Host
-          // still needs a same-epoch reset barrier before its pressed state
-          // may be reused by a subsequent controller.
-          sendControlTransition({
-            transition: {
-              type: 'control-transition',
-              leaseEpoch: priorControl.leaseEpoch,
-              reason: leaseResult.reason || 'controller-disconnect',
-            },
-          });
-        }
-        if (!leaseResult.transition) {
+        } else {
           broadcastControlState(leaseResult.reason || 'viewer-disconnected');
         }
         connections.viewers.delete(socket.id);

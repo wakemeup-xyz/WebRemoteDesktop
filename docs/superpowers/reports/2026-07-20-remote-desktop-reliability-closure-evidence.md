@@ -1,161 +1,120 @@
 # Remote Desktop Reliability Closure Evidence
 
-Date: 2026-07-20  
-Branch: `feat/remote-desktop-reliability-closure`  
-Final automated commit (pre-runtime): `659e10d82ccd71f68d46d35df68b602c6fcbf476`  
-UTC timestamp: 2026-07-19T19:53:12Z
+Date: 2026-07-20
+Branch: `worktree-reliability-closure-p1`
+Review baseline (previous anchor): `4faf27148f73aa6d0980a201e0005a0fa964c602`
+Latest automated commit on this remediation branch: `c6fad985417834fceddcfe511b41f26cd63c533a`
+UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
-Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`  
+Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
 Plan: `docs/superpowers/plans/2026-07-20-remote-desktop-reliability-closure-plan.md`
 
-## Implementation commits
+## Remediation commits (post-review P1/P2)
 
-1. `7d080d9` fix(control): keep failed resets behind barrier  
-2. `f234652` feat(control): recover reset barriers safely  
-3. `f71af41` fix(viewer): require control lease for port search  
-4. `5cbc371` feat(media): authorize activity by control lease  
-5. `3a3b07b` feat(host): suspend media capture and sender  
-6. `8e12334` feat(viewer): apply media suspension lifecycle  
-7. `659e10d` feat(tunnel): suspend relay and stabilize viewport  
+1. `272a805` fix(control): keep disconnects behind reset barrier
+2. `f469673` fix(media): bind activity to connection attempt
+3. `afc7a79` fix(viewer): require fresh resume frames
+4. `dfc8dc9` feat(tunnel): acknowledge applied media control
+5. `a134d30` fix(host): fail closed on media apply errors
+6. `9b1aa7d` test(ops): restore launchctl regression coverage
+7. `c6fad98` docs(remote): reconcile reliability closure status
 
-## Automated gates (Task 8)
+Earlier reliability-closure implementation history remains on `main` (reset barrier, port search gate, media suspension scaffolding, tunnel viewport, etc.).
 
-### Node targeted matrix
+## Automated gates (this remediation)
 
-Command:
-
-```bash
-node --test \
-  signal-server/lib/desktop-control-lease.test.js \
-  signal-server/lib/control-transition-retry.test.js \
-  signal-server/lib/media-activity-contract.test.js \
-  signal-server/lib/remote-input-contract.test.js \
-  signal-server/websocket/signaling.test.js \
-  web-client/js/stun-port-search-controller.test.js \
-  web-client/js/media-activity-controller.test.js \
-  web-client/js/media-activity-lifecycle.test.js \
-  web-client/js/media-activity-runtime.test.js \
-  web-client/js/remote-keyboard-controller.test.js \
-  web-client/js/keyboard-transport.test.js \
-  web-client/js/input.test.js \
-  web-client/js/latency-monitor.test.js \
-  web-client/js/webrtc-stats.test.js \
-  web-client/js/webrtc.test.js
-```
-
-Result: **227 pass / 0 fail**
-
-### Python targeted matrix
-
-Command:
+### Signal server
 
 ```bash
-python3 -m pytest -q \
-  python-host/test_remote_keyboard_state.py \
-  python-host/test_input_handler.py \
-  python-host/test_offer_epoch.py \
-  python-host/test_aiortc_media_sender.py \
-  python-host/test_media_suspension.py \
-  python-host/test_media_profile.py \
-  python-host/test_tunnel_relay.py \
-  python-host/test_connection_diagnostics.py
+cd signal-server && npm test
 ```
 
-Result: **82 pass / 0 fail**
+Result: **253 pass / 0 fail**
 
-## Automated closure status
+### Viewer / scripts matrix
+
+```bash
+node --test web-client/js/*.test.js scripts/*.test.js
+```
+
+Result: **315 pass / 0 fail**
+
+### Python matrix
+
+```bash
+PYTHONPATH=python-host python3 -m pytest -q \
+  python-host \
+  scripts/test_wrd_entry_health.py \
+  skills/webremote-service/scripts/wrd_service_test.py
+```
+
+Result: **142 passed / 0 fail** (1 deprecation warning from mss)
+
+### Diff hygiene
+
+```bash
+git diff --check
+```
+
+Result: clean
+
+## Automated closure status (recalibrated)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Reset barrier fail-closed | automated-closed | `failTransition` keeps REVOKING; only applied reset-only enters FREE |
+| ACTIVE controller disconnect reset barrier | automated-closed | disconnect → reset-only `REVOKING`; no FREE window; formal `dispatchLeaseEffect` only |
+| Reset barrier fail-closed (reject/timeout) | automated-closed | `failTransition` keeps REVOKING; only matching applied reset-only → FREE |
 | Bounded reset retry 1s/2s/4s | automated-closed | same-epoch, single timer, `reset-blocked` after 3 |
 | Port search ACTIVE lease gate | automated-closed | read-only is strict no-op; control-lost cancels search |
-| Media-activity lease contract | automated-closed | Signal validates + authorizes; Host rejects stale/unauthorized |
-| Host capture/sender suspend | automated-closed | MSS gated; aiortc replaceTrack(None)/resume+keyframe |
-| Viewer applied phase | automated-closed | suspending/suspended/resuming/active; input gated |
-| Tunnel production suspend | automated-closed | no capture/JPEG/relay while suspended |
+| Media-activity lease + attempt binding | automated-closed | offer carries `connectionAttemptId`; Signal/Host reject wrong attempt; generation restarts per attempt |
+| Host capture/sender/relay fail-closed apply | automated-closed | input/sender/capture/relay aggregated; failure → `applied:false` + safe suspended |
+| Viewer fresh-frame resume gate | automated-closed | baseline framesDecoded / video-callback seq; no cumulative `>0` unlock |
+| Tunnel Host applied media control | automated-closed | no Viewer synthetic applied; Host `relay-stream-control-ack` after producer suspend/resume |
 | Tunnel viewport stability | automated-closed | CSS contain box; geometry test with 960/640/480 |
+| host-launchctl fixture | automated-closed | copies `lib-turn-env.sh` into temp fixture |
 
-## Runtime acceptance (Task 9)
+## Runtime acceptance (recalibrated)
 
-### Live truth (after loading this branch into local services)
+Previous Task 9 rows that claimed:
 
-- formal public entry: `https://link.stockhub.wiki` (`/health` ok)
-- local health: ok; `hostOnline: true`
-- safe signal-server: **running** from worktree
-  `.../.worktrees/reliability-closure/signal-server` (pid recorded in `/tmp/wrd-safe-signal.pid`)
-- Host: `hostOnline:true` against the same local signal; Host LaunchAgent plist was temporarily pointed at the worktree for acceptance, then restored to the main checkout path for future restarts
-- safe URL file: `https://memo-patterns-curve-contacted.trycloudflare.com` (**unchanged** across local restarts)
-- safe URL reachability: **http-invalid** → public tunnel media remains BLOCKED by policy (no rebuild)
-- security warning: cloudflared token found in process arguments (pre-existing; not mutated)
-- served `viewer.html` includes `media-activity-runtime.js` (branch assets confirmed)
+- reset barrier automated-closed **for disconnect FREE window** (was still open on review)
+- media resume **P95≈333ms** via synthetic `noteMediaRenderedFrame`
+- formal tunnel suspend/resume **PASS** without Host applied ack
+- Terminal full matrix **PASS**
 
-Artifacts (local only, not committed):
-
-- report: `/tmp/wrd-acceptance/task9-local-report.json`
-- screenshots: `/tmp/wrd-acceptance/A-*.png`, `/tmp/wrd-acceptance/B-*.png`
-- harness: `scripts/runtime_reliability_acceptance.py` (two independent Chromium contexts)
-
-### Runtime rows
-
-Primary local dual-viewer harness: `/tmp/wrd-acceptance/task9-local-report.json`  
-Extended harness: `/tmp/wrd-acceptance/task9-extended-report.json`  
-Final batch: `/tmp/wrd-acceptance/task9-final-report.json`  
-Input reprobe: `/tmp/wrd-acceptance/task9-input-reprobe.json`  
-Scripts: `scripts/runtime_reliability_acceptance.py`, `..._ext.py`, `..._final.py`
+are **withdrawn** as over-claims. Honest status after this remediation:
 
 | Gate | Status | Evidence / reason |
 |------|--------|-------------------|
-| 9A Dual Viewer single writer | **PASS** (`browser-protocol`) | A ACTIVE controller + lease; B read-only on same Host |
-| 9A read-only port search no-op | **PASS** | B `startPortSearch()=false`, no `control-acquire`, no timers/search |
-| 9A read-only port-search button disabled | **PASS** | B button disabled |
-| 9A controller canStartPortSearch | **PASS** | A predicate true while ACTIVE controller |
-| 9A takeover stops old search | **PASS** | A started search; B takeover; A loses controller and search stops |
-| 9A reset-blocked fault injection | **NOT RUN** | no safe runtime fault hook; automated unit/integration only |
-| 9B WebRTC connected | **PASS** (`browser-protocol`) | Chromium PeerConnection path runs after Start |
-| 9B media suspend applied phase | **PASS** | controller enters `suspending`/`suspended`, health suppressed, input/search gated |
-| 9B media resume applied phase | **PASS** | returns to `resuming`/`active` after clear + rendered-frame note |
-| 9B WebRTC suspend 15s payload stop | **PASS** (`browser-protocol`) | after applied `suspended` + drain, 15s hold: phase stays suspended, health suppressed, input gated, RTP payload bytes not growing meaningfully |
-| 9B resume latency 20-run P95 | **PASS** | 20/20 ok; p50≈247.5ms; **p95≈333ms**; max 340ms; threshold 1500ms (`task9-final-report.json`) |
-| 9B mouse double-click / drag | **PASS** (`browser-protocol`) | protocol events observed; Host open/select visual assertion not claimed |
-| 9C keyboard controller ready | **PASS** (`browser-protocol`) | Input module + active lease present |
-| 9C keyboard browser-protocol subset | **PASS** | left/right modifiers + common keys via controller `handleDomEvent` + DataChannel; pressedCount returns 0 (`task9-input-reprobe.json`) |
-| 9C keyboard K-01–K-13 ordinary Chrome product matrix | **PARTIAL** | protocol subset closed; full ordinary-Chrome product sign-off / physical still open |
-| 9C physical-keyboard | **NOT RUN** | requires user physical presses |
-| 9C os-reserved | **NOT RUN** | OS/browser may intercept before page |
-| 9C Terminal UI + pause coexistence | **PASS** | Terminal UI present; `terminal-active` suspend keeps socket connected |
-| 9D trycloudflare safe URL media | **BLOCKED** | `/tmp/wrd-safe-current-url.txt` health `http-invalid`/404; tunnel not rebuilt by policy |
-| 9D formal fixed-domain dual Viewer | **PASS** | `https://link.stockhub.wiki` A controller then B takeover single-writer |
-| 9D formal tunnel-mode media | **PASS** | formal entry `networkMode=tunnel`; suspend→resume active (~123ms sample), socket remains |
-| 9D formal entry health | **PASS** | `https://link.stockhub.wiki/health` ok |
+| Dual Viewer single writer | **NOT RUN** (this session) | prior browser-protocol sample exists; not re-executed here |
+| Dual Viewer: disconnect B blocked until reset ack | **automated-closed** / runtime **NOT RUN** | unit+signaling cover FREE window closed; live dual-viewer still open |
+| Dual Viewer: old Socket/DataChannel writes fail | **automated-closed** / runtime **NOT RUN** | Signal rejects unauthorized/disconnected writes; Host binding rejects stale lease |
+| WebRTC selected candidate / first non-black frame | **NOT RUN** | requires live Host+viewer |
+| WebRTC suspend 15s captureSeq/RTP payload | **NOT RUN** | prior payload-stop sample used browser-protocol; not re-run after fail-closed changes |
+| WebRTC resume 20× **real** fresh rendered frame P95 ≤1500ms | **NOT RUN** | acceptance scripts no longer synthesize frames; must re-measure |
+| Tunnel Host applied ack live | **NOT RUN** | automated Host/Signal/Viewer coverage only |
+| Tunnel suspend 15s capture/JPEG/relay = 0 | **NOT RUN** | Host unit/relay unit cover producer stop; live 15s open |
+| Tunnel resume 20× real fresh relay frame P95 ≤2500ms | **NOT RUN** | must re-measure with Host ack + real frame |
+| Keyboard K-01–K-13 ordinary Chrome product matrix | **PARTIAL / NOT RUN** | protocol subset only historically; physical not claimed |
+| physical-keyboard | **NOT RUN** | requires user physical presses |
+| os-reserved | **NOT RUN** | OS/browser intercept possible |
+| Mouse double-click Host open/select visual | **NOT RUN** | protocol only previously |
+| Mouse drag release / blur / takeover pressed=0 | **NOT RUN** | not re-executed |
+| Terminal admin password / Enter / Ctrl-C / alt-screen / resize / pause coexistence | **NOT RUN / PARTIAL** | do not claim full product PASS without re-run |
+| trycloudflare safe URL media | **BLOCKED** | policy: do not rebuild tunnel; URL health may be invalid |
+| formal fixed-domain health | **NOT RUN** this session | previous `/health` ok sample not revalidated here |
 
-Honest labels kept for truly open rows: physical keyboard, OS-reserved, reset-blocked fault injection, trycloudflare URL.
-
-### Host media-stop hardening during acceptance
-
-While closing 15s payload evidence, Host suspend path was hardened on this branch:
-
-- `ScreenCaptureTrack.recv()` blocks while suspended (no blank encoded frames)
-- `AiortcMediaSender` also sets transceiver direction `inactive`/`sendonly` when PC is bound
-- all current PC video senders are suspended on media-activity suspend
-
-These changes are part of the reliability-closure branch commits after initial Task 5.
+Labels used: **automated-closed**, **runtime PASS**, **PARTIAL**, **BLOCKED**, **NOT RUN**.
 
 ## Constraints preserved
 
-- No TURN/VPS/native Viewer client/fixed UDP port introduced by this closure
-- Cloudflare tunnel not rebuilt/restarted by implementation work
-- Lease tokens, passwords, key values, SDP, candidate addresses, and image payloads are not logged by the new events
+- No Cloudflare tunnel rebuild/restart/rotation by this work
+- No `scripts/stop-safe-wrd.sh`
+- No force push
+- No commit of passwords, tokens, `.env`, logs, URL files, screenshots, or Playwright traces
+- No wholesale merge/cherry-pick of old media-suspension branch
+- Playwright synthetic input is never labeled physical/OS PASS
 
 ## Log safety check
 
-Structured events introduced/used:
-
-- `control_transition_failed_closed`
-- `control_reset_retry`
-- `control_reset_blocked`
-- `media_activity_requested`
-- `host_media_suspended`
-- `host_media_resumed`
-
-Bounded fields only: epoch, generation, attemptId, reason enums, captureSeq, sender flags. No lease token / input text / SDP / candidate IP / JPEG body.
+New control/media events remain bounded: epoch, attempt id shape, generation, enum reasons only. No lease tokens, SDP, candidate addresses, key values, or image payloads in structured events.

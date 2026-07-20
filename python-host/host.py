@@ -1830,7 +1830,11 @@ class WebRemoteHost:
 
                 lease_id = data.get("leaseId")
                 lease_epoch = data.get("leaseEpoch")
+                connection_attempt_id = data.get("connectionAttemptId")
                 if isinstance(lease_id, str) and len(lease_id) >= 16 and isinstance(lease_epoch, int) and lease_epoch >= 1:
+                    if not isinstance(connection_attempt_id, str) or not connection_attempt_id:
+                        logger.warning("Ignoring offer without connectionAttemptId")
+                        return
                     self._connection_generation = max(
                         int(getattr(self, "_connection_generation", 0) or 0) + 1,
                         int(data.get("connectionGeneration") or 0),
@@ -1840,6 +1844,7 @@ class WebRemoteHost:
                         "leaseId": lease_id,
                         "leaseEpoch": lease_epoch,
                         "connectionGeneration": self._connection_generation,
+                        "connectionAttemptId": connection_attempt_id,
                     }
                     result = await self.input_handler.transition_keyboard(
                         connection_generation=binding["connectionGeneration"],
@@ -1850,6 +1855,13 @@ class WebRemoteHost:
                         logger.warning("Ignoring offer with rejected keyboard binding")
                         return
                     self._active_input_binding = binding
+                    # New offer/attempt invalidates prior media activity progress.
+                    self._media_activity_binding = {
+                        "viewerId": viewer_id,
+                        "connectionAttemptId": connection_attempt_id,
+                        "generation": 0,
+                        "state": "active",
+                    }
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
@@ -2255,15 +2267,21 @@ class WebRemoteHost:
             return False, "viewer-mismatch", None
         if binding.get("leaseId") != lease_id or binding.get("leaseEpoch") != lease_epoch:
             return False, "stale-lease", None
+        # Media activity must match the current offer binding attempt. Prior media
+        # progress from a different attempt is irrelevant and must not block the
+        # new attempt (generation may restart from a small value).
+        bound_attempt = binding.get("connectionAttemptId")
+        if isinstance(bound_attempt, str) and bound_attempt and bound_attempt != attempt_id:
+            return False, "wrong-attempt", None
 
         current = getattr(self, "_media_activity_binding", None)
-        if isinstance(current, dict):
-            if (
-                current.get("connectionAttemptId") == attempt_id
-                and isinstance(current.get("generation"), int)
-                and generation <= current["generation"]
-            ):
-                return False, "stale-generation", None
+        if (
+            isinstance(current, dict)
+            and current.get("connectionAttemptId") == attempt_id
+            and isinstance(current.get("generation"), int)
+            and generation <= current["generation"]
+        ):
+            return False, "stale-generation", None
 
         return True, None, {
             "schemaVersion": 1,
@@ -2297,6 +2315,24 @@ class WebRemoteHost:
             keyframe_requested = False
             screen_track = getattr(self, "screen_track", None)
             capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
+            step_ok = {
+                "input": True,
+                "sender": True,
+                "capture": True,
+                "relay": True,
+            }
+            network_mode = None
+            try:
+                binding = getattr(self, "_active_input_binding", None)
+                if isinstance(binding, dict):
+                    network_mode = binding.get("networkMode")
+            except Exception:
+                network_mode = None
+            tunnel_mode = network_mode == "tunnel" or (
+                getattr(self, "relay_streamer", None) is not None
+                and getattr(self, "pc", None) is None
+                and getattr(self, "video_sender", None) is None
+            )
             try:
                 if normalized["state"] == "suspended":
                     # 1) freeze desktop input for this attempt
@@ -2306,90 +2342,151 @@ class WebRemoteHost:
                             if hasattr(self.input_handler, "release_all_keys"):
                                 self.input_handler.release_all_keys(reason="media-suspended")
                     except Exception as exc:
+                        step_ok["input"] = False
                         logger.warning("media suspend input freeze failed: %s", type(exc).__name__)
                     # 2) suspend every live video sender on the current PC
                     sender_adapter = getattr(self, "media_sender", None)
                     if sender_adapter is None:
                         sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))
-                    sender_adapter.suspend()
+                    primary_suspend = sender_adapter.suspend()
                     self.media_sender = sender_adapter
+                    sender_needed = (
+                        getattr(self, "video_sender", None) is not None
+                        or getattr(self, "pc", None) is not None
+                    )
+                    if sender_needed and primary_suspend is False and getattr(self, "video_sender", None) is not None:
+                        step_ok["sender"] = False
                     pc = getattr(self, "pc", None)
                     if pc is not None and hasattr(pc, "getSenders"):
                         try:
                             for sender in list(pc.getSenders() or []):
                                 track = getattr(sender, "track", None)
                                 if track is None and sender is getattr(self, "video_sender", None):
-                                    AiortcMediaSender(sender).suspend()
+                                    if AiortcMediaSender(sender).suspend() is False:
+                                        step_ok["sender"] = False
                                     continue
                                 kind = getattr(track, "kind", None) if track is not None else None
                                 if kind == "video" or sender is getattr(self, "video_sender", None) or track is screen_track:
-                                    AiortcMediaSender(sender).suspend()
+                                    if AiortcMediaSender(sender).suspend() is False:
+                                        step_ok["sender"] = False
                         except Exception as exc:
+                            step_ok["sender"] = False
                             logger.warning("media suspend getSenders failed: %s", type(exc).__name__)
                     # 3) suspend capture and clear buffers (before any further recv work)
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
-                        capture_seq = screen_track.set_suspended(True)
+                        try:
+                            capture_seq = screen_track.set_suspended(True)
+                        except Exception as exc:
+                            step_ok["capture"] = False
+                            logger.warning("media suspend capture failed: %s", type(exc).__name__)
                     # 4) suspend tunnel production without tearing down control/terminal.
                     relay = getattr(self, "relay_streamer", None)
                     if relay is not None and hasattr(relay, "set_suspended"):
-                        relay.set_suspended(True)
+                        try:
+                            relay.set_suspended(True)
+                        except Exception as exc:
+                            step_ok["relay"] = False
+                            logger.warning("media suspend relay failed: %s", type(exc).__name__)
                     elif relay is not None and getattr(relay, "enabled", False):
                         try:
                             await relay.stop()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            step_ok["relay"] = False
+                            logger.warning("media suspend relay stop failed: %s", type(exc).__name__)
+                    applied = all(step_ok.values())
+                    # Fail-closed: always land in suspended even when one step fails.
                     self._media_activity_suspended = True
-                    applied = True
+                    try:
+                        if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                            screen_track.set_suspended(True)
+                    except Exception:
+                        pass
+                    try:
+                        if getattr(self, "media_sender", None) is not None:
+                            self.media_sender.suspend()
+                    except Exception:
+                        pass
                     emit_host_event(
                         logger,
-                        event="host_media_suspended",
-                        message="Host media suspended",
+                        event="host_media_suspended" if applied else "host_media_suspend_failed",
+                        message="Host media suspended" if applied else "Host media suspend failed closed",
                         meta={
                             "generation": normalized["generation"],
                             "connectionAttemptId": normalized["connectionAttemptId"],
                             "captureSeq": capture_seq,
                             "senderEnabled": False,
                             "keyframeRequested": False,
+                            "steps": step_ok,
                         },
                     )
                 else:
                     # Resume: capture ready, then sender/keyframe, then tunnel.
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
-                        baseline = screen_track.set_suspended(False)
-                        if hasattr(screen_track, "wait_for_fresh_capture"):
-                            await asyncio.to_thread(
-                                screen_track.wait_for_fresh_capture,
-                                baseline,
-                                0.5,
-                            )
-                        capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
+                        try:
+                            baseline = screen_track.set_suspended(False)
+                            if hasattr(screen_track, "wait_for_fresh_capture"):
+                                await asyncio.to_thread(
+                                    screen_track.wait_for_fresh_capture,
+                                    baseline,
+                                    0.5,
+                                )
+                            capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
+                        except Exception as exc:
+                            step_ok["capture"] = False
+                            logger.warning("media resume capture failed: %s", type(exc).__name__)
                     sender_adapter = getattr(self, "media_sender", None)
                     if sender_adapter is None:
                         sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))
                     resume_result = sender_adapter.resume(screen_track)
                     self.media_sender = sender_adapter
                     keyframe_requested = bool(resume_result.get("keyframeRequested"))
+                    sender_present = getattr(self, "video_sender", None) is not None or getattr(sender_adapter, "_sender", None) is not None
+                    if sender_present and not bool(resume_result.get("ok")):
+                        step_ok["sender"] = False
+                    elif not sender_present and not tunnel_mode and screen_track is not None:
+                        # WebRTC path expected a sender when capture track is live.
+                        step_ok["sender"] = False
                     relay = getattr(self, "relay_streamer", None)
                     if relay is not None and hasattr(relay, "set_suspended"):
-                        relay.set_suspended(False)
-                    # Resume without a live sender/track still counts as applied for
-                    # binding purposes when capture gate succeeded or neither exists.
-                    self._media_activity_suspended = False
-                    applied = bool(resume_result.get("ok", True)) or (
-                        getattr(self, "video_sender", None) is None and screen_track is None
-                    )
-                    if getattr(self, "video_sender", None) is None and screen_track is None:
-                        applied = True
+                        try:
+                            relay.set_suspended(False)
+                        except Exception as exc:
+                            step_ok["relay"] = False
+                            logger.warning("media resume relay failed: %s", type(exc).__name__)
+                    if tunnel_mode and relay is None and not sender_present and screen_track is None:
+                        step_ok["relay"] = False
+                    applied = all(step_ok.values())
+                    if not applied:
+                        # Fail closed: re-suspend and never partially restore input/media.
+                        self._media_activity_suspended = True
+                        try:
+                            if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                                screen_track.set_suspended(True)
+                        except Exception:
+                            pass
+                        try:
+                            if getattr(self, "media_sender", None) is not None:
+                                self.media_sender.suspend()
+                        except Exception:
+                            pass
+                        try:
+                            if relay is not None and hasattr(relay, "set_suspended"):
+                                relay.set_suspended(True)
+                        except Exception:
+                            pass
+                    else:
+                        self._media_activity_suspended = False
                     emit_host_event(
                         logger,
-                        event="host_media_resumed",
-                        message="Host media resumed",
+                        event="host_media_resumed" if applied else "host_media_resume_failed",
+                        message="Host media resumed" if applied else "Host media resume failed closed",
                         meta={
                             "generation": normalized["generation"],
                             "connectionAttemptId": normalized["connectionAttemptId"],
                             "captureSeq": capture_seq,
-                            "senderEnabled": True,
-                            "keyframeRequested": keyframe_requested,
+                            "senderEnabled": applied,
+                            "keyframeRequested": keyframe_requested if applied else False,
+                            "steps": step_ok,
                         },
                     )
             except Exception as exc:
@@ -2401,6 +2498,11 @@ class WebRemoteHost:
                     screen_track = getattr(self, "screen_track", None)
                     if screen_track is not None and hasattr(screen_track, "set_suspended"):
                         screen_track.set_suspended(True)
+                except Exception:
+                    pass
+                try:
+                    if getattr(self, "media_sender", None) is not None:
+                        self.media_sender.suspend()
                 except Exception:
                     pass
 
@@ -2416,7 +2518,8 @@ class WebRemoteHost:
                 generation=normalized["generation"],
                 connection_attempt_id=normalized["connectionAttemptId"],
                 applied=applied,
-                keyframe_requested=keyframe_requested,
+                keyframe_requested=keyframe_requested if applied else False,
+                reject_reason=None if applied else "execution-failed",
             )
 
     async def _emit_media_activity_ack(
@@ -2446,9 +2549,142 @@ class WebRemoteHost:
         # Never echo leaseId.
         await sio.emit("media-activity-ack", payload)
 
+    async def _emit_relay_stream_control_ack(
+        self,
+        *,
+        viewer_id,
+        state,
+        generation,
+        connection_attempt_id,
+        applied,
+        reject_reason=None,
+    ):
+        sio = getattr(self, "sio", None)
+        if sio is None:
+            return
+        payload = {
+            "schemaVersion": 1,
+            "state": "active" if state == "active" else "suspended",
+            "generation": generation if isinstance(generation, int) else None,
+            "connectionAttemptId": connection_attempt_id if isinstance(connection_attempt_id, str) else None,
+            "applied": bool(applied),
+            "viewerId": viewer_id if isinstance(viewer_id, str) else None,
+        }
+        if reject_reason:
+            payload["reason"] = str(reject_reason)[:64]
+        await sio.emit("relay-stream-control-ack", payload)
+
+    def _is_tunnel_media_control(self, data):
+        if not isinstance(data, dict):
+            return False
+        if data.get("mediaControlSchemaVersion") == 1:
+            return True
+        return (
+            data.get("schemaVersion") == 2
+            and data.get("state") in ("active", "suspended")
+            and isinstance(data.get("generation"), int)
+            and isinstance(data.get("connectionAttemptId"), str)
+        )
+
+    async def _apply_tunnel_media_control(self, data):
+        """Suspend/resume tunnel producer for the current attempt without rebuilding PC."""
+        viewer_id = data.get("viewerId")
+        state = data.get("state")
+        if state not in ("active", "suspended"):
+            state = "active" if data.get("enabled") else "suspended"
+        generation = data.get("generation")
+        attempt_id = data.get("connectionAttemptId")
+        lease_id = data.get("leaseId")
+        lease_epoch = data.get("leaseEpoch")
+
+        ok, reason, _normalized = self._validate_media_activity_request({
+            "schemaVersion": 1,
+            "state": state,
+            "generation": generation,
+            "connectionAttemptId": attempt_id,
+            "viewerId": viewer_id,
+            "leaseId": lease_id,
+            "leaseEpoch": lease_epoch,
+            "reasons": data.get("reasons") if isinstance(data.get("reasons"), list) else [],
+        })
+        if not ok:
+            await self._emit_relay_stream_control_ack(
+                viewer_id=viewer_id,
+                state=state,
+                generation=generation,
+                connection_attempt_id=attempt_id,
+                applied=False,
+                reject_reason=reason,
+            )
+            return
+
+        applied = False
+        try:
+            if not self.relay_streamer:
+                self.relay_streamer = TunnelRelayStreamer(self.sio)
+            relay = self.relay_streamer
+            if state == "suspended":
+                # Freeze input + stop new capture/JPEG/relay without tearing Socket lifecycle.
+                try:
+                    if getattr(self, "input_handler", None) is not None:
+                        self.input_handler.release_all_mouse_buttons(reason="media-suspended")
+                        if hasattr(self.input_handler, "release_all_keys"):
+                            self.input_handler.release_all_keys(reason="media-suspended")
+                except Exception as exc:
+                    logger.warning("tunnel suspend input freeze failed: %s", type(exc).__name__)
+                    raise
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(True)
+                else:
+                    await relay.stop()
+                self._media_activity_suspended = True
+                applied = True
+            else:
+                # Resume producer for current generation; Viewer still waits for fresh frame.
+                if getattr(relay, "viewer_id", None) != viewer_id or not getattr(relay, "enabled", True):
+                    await relay.start(
+                        viewer_id,
+                        width=data.get("width", 960),
+                        height=data.get("height", 540),
+                        fps=data.get("fps", 8),
+                    )
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(False)
+                self._media_activity_suspended = False
+                applied = True
+
+            self._media_activity_binding = {
+                "viewerId": viewer_id,
+                "connectionAttemptId": attempt_id,
+                "generation": generation,
+                "state": state,
+            }
+        except Exception as exc:
+            logger.warning("tunnel media control apply failed: %s", type(exc).__name__)
+            applied = False
+            try:
+                if hasattr(self.relay_streamer, "set_suspended"):
+                    self.relay_streamer.set_suspended(True)
+            except Exception:
+                pass
+            self._media_activity_suspended = True
+            state = "suspended"
+
+        await self._emit_relay_stream_control_ack(
+            viewer_id=viewer_id,
+            state=state if applied else "suspended",
+            generation=generation,
+            connection_attempt_id=attempt_id,
+            applied=applied,
+            reject_reason=None if applied else "execution-failed",
+        )
+
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""
         try:
+            if self._is_tunnel_media_control(data):
+                await self._apply_tunnel_media_control(data)
+                return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
             if not self.relay_streamer:

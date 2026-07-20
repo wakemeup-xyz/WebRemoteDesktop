@@ -528,6 +528,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     epoch: 3,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-owner-1',
   });
 
   const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1).data;
@@ -537,6 +538,7 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     epoch: 3,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-owner-1',
   });
   assert.equal(observer.sent.some((entry) => entry.event === 'offer'), false);
   assert.equal(JSON.stringify(observer.sent).includes(grant.leaseId), false);
@@ -1017,11 +1019,162 @@ test('legacy controller disconnect sends a reset-only transition for its active 
   host.trigger('control-transition-ack', { leaseEpoch: grantTransition.leaseEpoch, status: 'applied' });
   viewer.trigger('disconnect');
 
-  assert.deepEqual(host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data, {
-    type: 'control-transition',
-    leaseEpoch: grantTransition.leaseEpoch,
-    reason: 'controller-disconnect',
+  const resetTransition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(resetTransition.type, 'control-transition');
+  assert.equal(resetTransition.reason, 'controller-disconnect');
+  assert.equal(resetTransition.leaseEpoch > grantTransition.leaseEpoch, true);
+  assert.equal(Object.hasOwn(resetTransition, 'leaseId'), false);
+  assert.equal(Object.hasOwn(resetTransition, 'viewerId'), false);
+});
+
+test('ACTIVE controller disconnect stays REVOKING until matching applied ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, {
+    makeLeaseId: (() => {
+      let n = 0;
+      return () => `lease-${String(++n).padStart(16, '0')}`;
+    })(),
   });
+  const host = new FakeSocket('host-1', 'host');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewerA.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+
+  viewerA.trigger('control-acquire', { requestId: 'a' });
+  let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grantA = viewerA.sent.find((entry) => entry.event === 'control-grant').data;
+
+  viewerA.trigger('disconnect');
+  const resetTransition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(resetTransition.reason, 'controller-disconnect');
+  assert.equal(resetTransition.leaseEpoch > grantA.leaseEpoch, true);
+  assert.equal(Object.hasOwn(resetTransition, 'leaseId'), false);
+
+  const stateAfterDisconnect = viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(stateAfterDisconnect.state, 'REVOKING');
+  assert.equal(stateAfterDisconnect.pendingViewerId, null);
+  assert.equal(stateAfterDisconnect.controllerViewerId, null);
+
+  // New acquire blocked before reset ack.
+  viewerB.trigger('control-acquire', { requestId: 'blocked' });
+  const blocked = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
+  assert.equal(blocked.state, 'REVOKING');
+  assert.equal(blocked.reason, 'occupied');
+
+  // Old credential writes fail after disconnect.
+  viewerA.trigger('input', v2Key({
+    leaseId: grantA.leaseId,
+    leaseEpoch: grantA.leaseEpoch,
+  }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 0);
+
+  // Late same-epoch applied cannot free the barrier.
+  host.trigger('control-transition-ack', {
+    leaseEpoch: grantA.leaseEpoch,
+    status: 'applied',
+  });
+  assert.equal(
+    viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state,
+    'REVOKING',
+  );
+
+  // Matching applied ack releases to FREE.
+  host.trigger('control-transition-ack', {
+    leaseEpoch: resetTransition.leaseEpoch,
+    status: 'applied',
+  });
+  assert.equal(
+    viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state,
+    'FREE',
+  );
+  viewerB.trigger('control-acquire', { requestId: 'after-reset' });
+  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(transition.viewerId, 'viewer-b');
+});
+
+test('ACTIVE controller disconnect rejected reset retries same epoch and stays blocked after timeout path', () => {
+  resetConnections();
+  const io = makeIo();
+  const timers = new Map();
+  let nextTimerId = 1;
+  let now = 0;
+  const setTimeoutFn = (fn, delay) => {
+    const id = nextTimerId++;
+    timers.set(id, { fn, due: now + delay });
+    return id;
+  };
+  const clearTimeoutFn = (id) => { timers.delete(id); };
+  const advance = (ms) => {
+    const target = now + ms;
+    while (timers.size > 0) {
+      let nextDue = Infinity;
+      for (const t of timers.values()) nextDue = Math.min(nextDue, t.due);
+      if (nextDue > target) break;
+      now = nextDue;
+      for (const [id, t] of [...timers.entries()].filter(([, t]) => t.due <= now)) {
+        timers.delete(id);
+        t.fn();
+      }
+    }
+    now = target;
+  };
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    scheduler: {
+      setInterval: () => ({ unref() {} }),
+      setTimeout: setTimeoutFn,
+      clearTimeout: clearTimeoutFn,
+    },
+  });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer); io.connect(viewerB);
+
+  viewer.trigger('control-acquire', { requestId: 'a' });
+  const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', {
+    leaseEpoch: grantTransition.leaseEpoch,
+    status: 'applied',
+  });
+  viewer.trigger('disconnect');
+  const resetTransition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  const epoch = resetTransition.leaseEpoch;
+
+  host.trigger('control-transition-ack', {
+    leaseEpoch: epoch,
+    status: 'rejected',
+    reason: 'reset-failed',
+  });
+  assert.equal(
+    viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state,
+    'REVOKING',
+  );
+
+  const transitionsBefore = host.sent.filter((entry) => entry.event === 'control-transition').length;
+  advance(1000);
+  advance(2000);
+  advance(4000);
+  const retries = host.sent
+    .filter((entry) => entry.event === 'control-transition')
+    .slice(transitionsBefore);
+  assert.equal(retries.length, 3);
+  assert.equal(retries.every((entry) => entry.data.leaseEpoch === epoch), true);
+  assert.equal(retries.every((entry) => entry.data.leaseId === undefined), true);
+  assert.equal(retries.every((entry) => entry.data.viewerId === undefined), true);
+
+  viewerB.trigger('control-acquire', { requestId: 'still-blocked' });
+  const blocked = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
+  assert.equal(blocked.state, 'REVOKING');
+  assert.equal(blocked.reason, 'occupied');
 });
 
 test('v2 activation advertises capabilities and refuses an older host', () => {
@@ -1096,6 +1249,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
     iceMode: 'relay',
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-turn-1',
   });
 
   const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1);
@@ -1103,6 +1257,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
   assert.equal(forwarded.data.networkMode, 'relay');
   assert.equal(forwarded.data.iceMode, 'relay');
   assert.equal(forwarded.data.viewerId, viewer.id);
+  assert.equal(forwarded.data.connectionAttemptId, 'attempt-turn-1');
 });
 
 test('legacy controller is single-writer and a v2 takeover resets it before grant', () => {
@@ -1537,4 +1692,212 @@ test('media-activity-change requires active lease and monotonic generation', () 
   assert.equal(ack.applied, true);
   assert.equal(ack.generation, 1);
   assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+});
+
+test('v2 offer forwards connectionAttemptId and binds media activity to that attempt', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'attempt-bind' });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((e) => e.event === 'control-grant').data;
+
+  // Missing attempt id is rejected and not forwarded.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'offer').length, 0);
+
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    networkMode: 'stun',
+    iceMode: 'stun',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-A',
+  });
+  const forwarded = host.sent.filter((e) => e.event === 'offer').at(-1).data;
+  assert.equal(forwarded.connectionAttemptId, 'attempt-A');
+  assert.equal(forwarded.viewerId, 'viewer-1');
+  assert.equal(forwarded.leaseId, grant.leaseId);
+
+  // Media for a different attempt is rejected even with a higher generation.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 9,
+    connectionAttemptId: 'attempt-OLD',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+  assert.equal(host.sent.filter((e) => e.event === 'media-activity-change').length, 0);
+
+  // Matching current attempt is accepted and generation is tracked per attempt.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(host.sent.filter((e) => e.event === 'media-activity-change').length, 1);
+
+  // New offer rebinds attempt; old attempt cannot suspend/resume the new session.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=1' },
+    epoch: 2,
+    networkMode: 'stun',
+    iceMode: 'stun',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-B',
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'offer').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-A',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
+
+  // Attempt B can restart generation from a small value without pollution from A.
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1,
+    state: 'suspended',
+    reasons: ['manual-pause'],
+    generation: 1,
+    connectionAttemptId: 'attempt-B',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'media-activity-change').at(-1).data.connectionAttemptId,
+    'attempt-B',
+  );
+  assert.equal(
+    host.sent.filter((e) => e.event === 'media-activity-change').at(-1).data.generation,
+    1,
+  );
+});
+
+test('tunnel media control requires ACTIVE lease and current attempt then routes Host ack', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer); io.connect(viewerB);
+
+  viewer.trigger('control-acquire', { requestId: 't1' });
+  const transition = host.sent.find((e) => e.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((e) => e.event === 'control-grant').data;
+
+  // Bind attempt via offer.
+  viewer.trigger('offer', {
+    schemaVersion: 2,
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-tunnel',
+  });
+
+  const mediaControl = {
+    schemaVersion: 2,
+    mediaControlSchemaVersion: 1,
+    enabled: false,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    width: 960,
+    height: 540,
+    fps: 6,
+  };
+  viewer.trigger('relay-stream-control', mediaControl);
+  const forwarded = host.sent.filter((e) => e.event === 'relay-stream-control').at(-1).data;
+  assert.equal(forwarded.viewerId, 'viewer-1');
+  assert.equal(forwarded.connectionAttemptId, 'attempt-tunnel');
+  assert.equal(forwarded.generation, 1);
+  assert.equal(forwarded.state, 'suspended');
+
+  // Wrong attempt rejected.
+  viewer.trigger('relay-stream-control', {
+    ...mediaControl,
+    connectionAttemptId: 'attempt-old',
+    generation: 2,
+  });
+  assert.equal(
+    viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1)?.data.reason
+      || viewer.sent.filter((e) => e.event === 'relay-stream-control-rejected').at(-1)?.data.reason,
+    'wrong-attempt',
+  );
+
+  // Host ack routes without leaseId.
+  host.trigger('relay-stream-control-ack', {
+    schemaVersion: 1,
+    state: 'suspended',
+    generation: 1,
+    connectionAttemptId: 'attempt-tunnel',
+    applied: true,
+    viewerId: 'viewer-1',
+    leaseId: grant.leaseId,
+  });
+  const ack = viewer.sent.filter((e) => e.event === 'relay-stream-control-ack').at(-1)
+    || viewer.sent.filter((e) => e.event === 'media-activity-ack').at(-1);
+  assert.ok(ack);
+  assert.equal(ack.data.applied, true);
+  assert.equal(ack.data.generation, 1);
+  assert.equal(Object.hasOwn(ack.data, 'leaseId'), false);
+
+  // Read-only viewer cannot control current relay.
+  viewerB.trigger('relay-stream-control', {
+    ...mediaControl,
+    generation: 3,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  assert.equal(
+    host.sent.filter((e) => e.event === 'relay-stream-control' && e.data.viewerId === 'viewer-2').length,
+    0,
+  );
 });

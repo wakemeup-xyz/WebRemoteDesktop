@@ -255,7 +255,7 @@ def main():
         # resume and measure to active phase
         t_resume = time.time()
         page.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', false)")
-        # wait for resuming/active
+        # Wait only for real resuming/active transitions; never synthesize frames.
         first_resume_ms = None
         first_active_ms = None
         for i in range(80):
@@ -266,19 +266,7 @@ def main():
             if phase == "active":
                 first_active_ms = int((now - t_resume) * 1000)
                 break
-            # help transition if host ack arrived
-            if phase == "resuming":
-                page.evaluate("() => WebRTC.noteMediaRenderedFrame()")
             page.wait_for_timeout(100)
-        # if still resuming after ack, force frame note several times
-        if first_active_ms is None:
-            for _ in range(20):
-                page.evaluate("() => WebRTC.noteMediaRenderedFrame()")
-                phase = page.evaluate("() => WebRTC.getMediaAppliedPhase()")
-                if phase == "active":
-                    first_active_ms = int((time.time() - t_resume) * 1000)
-                    break
-                page.wait_for_timeout(100)
         after = snap(page)
         frame_delta = (mid.get("framesDecoded") or 0) - (base.get("framesDecoded") or 0)
         byte_delta = (mid.get("bytes") or 0) - (base.get("bytes") or 0)
@@ -322,7 +310,6 @@ def main():
         for _ in range(60):
             st = page.evaluate(
                 """() => {
-                  if (WebRTC.getMediaAppliedPhase() === 'resuming') WebRTC.noteMediaRenderedFrame();
                   if (typeof Input !== 'undefined' && WebRTC.canEnableDesktopInput()) Input.setActive(true);
                   const diag = (typeof Input !== 'undefined' && Input.getDiagnosticState) ? Input.getDiagnosticState() : null;
                   return {
@@ -530,10 +517,8 @@ def main():
         t1 = time.time()
         page_f.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', false)")
         formal_active_ms = None
-        for _ in range(60):
+        for _ in range(80):
             phase = page_f.evaluate("() => WebRTC.getMediaAppliedPhase()")
-            if phase == "resuming":
-                page_f.evaluate("() => WebRTC.noteMediaRenderedFrame()")
             if phase == "active":
                 formal_active_ms = int((time.time() - t1) * 1000)
                 break
