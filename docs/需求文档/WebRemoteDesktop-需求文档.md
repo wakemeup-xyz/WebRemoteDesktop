@@ -63,7 +63,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
 - [x] **按需媒体暂停**：切换 Terminal、页面进入后台或用户手动暂停时，Host 停止屏幕 capture、编码和视频 payload；WebRTC 保留 PeerConnection、ICE 和 DataChannel，tunnel 保留控制连接，Terminal Socket、PTY 和 admin 授权不受影响
-- [x] **暂停期健康语义**：暂停和恢复中的预期 0 FPS 不触发质量降档、ICE restart 或自动重连；只有匹配当前 connection attempt 的恢复 ack 与一帧新渲染画面后才重新启用桌面输入。Terminal/page visibility 的自动 reason 不会覆盖 `manual-pause`
+- [x] **暂停期健康语义**：暂停和恢复中的预期 0 FPS 不触发质量降档、ICE restart 或自动重连；只有匹配当前 connection attempt（含 tunnel 的 connection-attempt-bind 权威）的恢复 ack 与一帧新渲染画面后才重新启用桌面输入。Terminal/page visibility 的自动 reason 不会覆盖 `manual-pause`
 - [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。启动还要求当前 Viewer 持有 ACTIVE 控制租约；只读/切换中/reset-blocked/媒体暂停时严格无副作用。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
@@ -398,3 +398,4 @@ WebRemoteDesktop/
 | 2026-07-20 | 立项 TURN 全链路接入：`turn.json`/env 双源、Host 注入与会话级 relay ICE、页面选择与自检、Terminal 默认 Socket.IO + 可选 `webrtc-turn`；设计 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`，计划 `docs/superpowers/plans/2026-07-20-turn-integration-plan.md` |
 | 2026-07-20 | 可靠性闭环：reset barrier fail-closed + 1s/2s/4s 有界重试与 reset-blocked；端口搜索租约门禁；媒体暂停端到端（WebRTC sender/capture + tunnel JPEG + Viewer applied phase/输入门禁/健康抑制）；tunnel 自适应分辨率下外层 viewport 稳定 |
 | 2026-07-20 | 可靠性闭环 review 整改：ACTIVE controller disconnect 不再 FREE 窗口、媒体绑定 connectionAttemptId、resume 需真实新帧、tunnel Host applied ack（禁 synthetic applied）、Host 媒体 apply 失败 fail-closed、launchctl fixture 修复；真实验收 P95/双 Viewer/Terminal 重新标为 NOT RUN，不以旧 synthetic 结论宣称 PASS |
+| 2026-07-21 | 可靠性闭环后续：tunnel connectionAttempt 权威绑定（connectionAttemptSequence）、attempt binding 与 generation progress 拆分、Host fresh-capture false fail-closed、Viewer 有界重试/双 ack/stale frame 硬化；真实验收仍标 NOT RUN/BLOCKED，禁止伪造 PASS |

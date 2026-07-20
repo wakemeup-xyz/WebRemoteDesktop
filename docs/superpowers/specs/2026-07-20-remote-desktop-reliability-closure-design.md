@@ -237,6 +237,28 @@ Viewer 发：
 - state/reasons/generation/connectionAttemptId；
 - 同 Viewer + attempt 下 generation 严格递增。
 
+### 7.2.1 connectionAttempt 权威绑定
+
+`connectionAttemptId` 是 opaque 标识；权威再绑定必须携带单调 `connectionAttemptSequence`（epoch），不能只相信随机 attemptId。
+
+Signal 对每个 active Viewer socket 维护：
+
+```text
+{ connectionAttemptId, connectionAttemptSequence, generation }
+```
+
+规则：
+
+1. Direct WebRTC offer 与显式 `connection-attempt-bind` 汇入同一权威状态。
+2. 只有 exact ACTIVE lease + 当前 Viewer socket 可绑定。
+3. 同 sequence + 同 attempt 幂等；旧 sequence、或同 sequence 不同 attempt 拒绝。
+4. 新 attempt 绑定后 generation 从 0 起算。
+5. Host applied:false 只释放“该 generation 的一次有界重试资格”，**不得**删除 attempt 绑定。
+6. 旧 attempt 的 control / ack / frame / 重试不能修改新 attempt。
+7. takeover、disconnect、旧 Socket 均不能重新绑定。
+
+Tunnel 不发送 SDP offer，因此必须发送 `connection-attempt-bind`；不得依赖虚构 offer，也不得用 `relay-stream-control` 本身发明 attempt 权威。
+
 Signal 附加可信 viewerId 后转发。Host 只接受 current viewer、current connectionAttemptId 和更新 generation。
 
 Host suspended 顺序：
@@ -250,8 +272,8 @@ Host suspended 顺序：
 Host active 顺序：
 
 1. 唤醒 capture condition；
-2. 等待一次新 capture；
-3. `replaceTrack(screen_track)`；
+2. 等待一次新 capture；`wait_for_fresh_capture()` 返回值不是 True 时必须 fail-closed（`applied:false`、`state:suspended`、reason 如 `fresh-capture-timeout`），不得恢复 sender/input 或宣告 active；
+3. 仅在 capture 成功后 `replaceTrack(screen_track)`；
 4. 经集中 adapter 尽力请求 H.264 keyframe；
 5. 回 ack，包含 `keyframeRequested`，不暴露私有对象。
 
@@ -259,10 +281,11 @@ aiortc 私有 keyframe hook 必须隔离在 `python-host/aiortc_media_sender.py`
 
 ### 7.3 Tunnel 路径
 
-tunnel 继续复用带 active lease 的 `relay-stream-control`：
+tunnel 先通过 `connection-attempt-bind` 建立 attempt 权威，再复用带 active lease 的 `relay-stream-control`：
 
 - suspended：`enabled:false`，Host 停止 capture/encode/send；清理 pending object URL 和 FPS sampler，但保留主 Viewer Socket 和 Terminal。
 - active：用当前 resolution/profile 发 `enabled:true`；收到并渲染新 relay frame 后 phase 回到 active。
+- Host 对 tunnel media control 回 `relay-stream-control-ack`（Signal 可 dual-route 到 `media-activity-ack`）；Viewer 必须对同一 Host ack 只应用一次。
 
 同一状态变化不得同时发送 `media-activity-change` 和 tunnel relay control。networkMode 是 adapter 选择真相。
 

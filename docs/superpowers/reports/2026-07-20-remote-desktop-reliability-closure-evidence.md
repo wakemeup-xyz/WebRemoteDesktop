@@ -2,8 +2,8 @@
 
 Date: 2026-07-20
 Branch: `worktree-reliability-closure-p1`
-Review baseline (previous anchor): `4faf27148f73aa6d0980a201e0005a0fa964c602`
-Latest automated commit on this remediation branch: `c6fad985417834fceddcfe511b41f26cd63c533a`
+Review baseline (previous anchor): `ff1b9a2b9f5a1db4f7c1e2142c56bca262ea750f`
+Latest automated commit on this remediation branch: _(pending commit after this review remediation)_
 UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
@@ -66,7 +66,10 @@ Result: clean
 | Reset barrier fail-closed (reject/timeout) | automated-closed | `failTransition` keeps REVOKING; only matching applied reset-only → FREE |
 | Bounded reset retry 1s/2s/4s | automated-closed | same-epoch, single timer, `reset-blocked` after 3 |
 | Port search ACTIVE lease gate | automated-closed | read-only is strict no-op; control-lost cancels search |
-| Media-activity lease + attempt binding | automated-closed | offer carries `connectionAttemptId`; Signal/Host reject wrong attempt; generation restarts per attempt |
+| Media-activity lease + attempt binding | automated-closed | offer / `connection-attempt-bind` + monotonic `connectionAttemptSequence`; Signal/Host reject wrong attempt; generation restarts per attempt |
+| Tunnel connectionAttempt authority bind | automated-closed | no synthetic offer; A→B rebind; applied:false keeps binding B; late A cannot clear B; takeover/disconnect/old socket cannot rebind |
+| Host fresh-capture false fail-closed | automated-closed | `wait_for_fresh_capture()` False → applied:false + suspended; no host_media_resumed / success keyframe path |
+| Viewer bounded retry / dual-ack | automated-closed | one replay + one refresh; dual-routed Host ack applied once; stale attempt frame cannot unlock |
 | Host capture/sender/relay fail-closed apply | automated-closed | input/sender/capture/relay aggregated; failure → `applied:false` + safe suspended |
 | Viewer fresh-frame resume gate | automated-closed | baseline framesDecoded / video-callback seq; no cumulative `>0` unlock |
 | Tunnel Host applied media control | automated-closed | no Viewer synthetic applied; Host `relay-stream-control-ack` after producer suspend/resume |
@@ -101,7 +104,7 @@ are **withdrawn** as over-claims. Honest status after this remediation:
 | Mouse double-click Host open/select visual | **NOT RUN** | protocol only previously |
 | Mouse drag release / blur / takeover pressed=0 | **NOT RUN** | not re-executed |
 | Terminal admin password / Enter / Ctrl-C / alt-screen / resize / pause coexistence | **NOT RUN / PARTIAL** | do not claim full product PASS without re-run |
-| trycloudflare safe URL media | **BLOCKED** | policy: do not rebuild tunnel; URL health may be invalid |
+| trycloudflare safe URL media | **NOT RUN / BLOCKED** | policy: do not rebuild tunnel; this session did not revalidate safe URL |
 | formal fixed-domain health | **NOT RUN** this session | previous `/health` ok sample not revalidated here |
 
 Labels used: **automated-closed**, **runtime PASS**, **PARTIAL**, **BLOCKED**, **NOT RUN**.
@@ -118,3 +121,16 @@ Labels used: **automated-closed**, **runtime PASS**, **PARTIAL**, **BLOCKED**, *
 ## Log safety check
 
 New control/media events remain bounded: epoch, attempt id shape, generation, enum reasons only. No lease tokens, SDP, candidate addresses, key values, or image payloads in structured events.
+
+
+## Review remediation (2026-07-21)
+
+Closed remaining attempt-authority and fail-closed gaps from the post-`ff1b9a2` review:
+
+1. Explicit tunnel `connection-attempt-bind` with monotonic sequence/epoch.
+2. Split attempt binding from generation progress (`applied:false` no longer deletes authority).
+3. Host treats `wait_for_fresh_capture()` non-True as capture failure.
+4. Viewer dual-ack / timer / stale-frame hardening.
+5. Acceptance script keeps strict tunnel conditions (exact active + Host applied ack + fresh relay frame + 20 samples + P95≤2500ms + dual-viewer ordering + PointerEvent path).
+
+Runtime dual-viewer / non-black first frame / FPS-jitter / physical keyboard / Terminal alt-screen / live P95 remain **NOT RUN** unless re-executed with live services. No synthetic PASS.

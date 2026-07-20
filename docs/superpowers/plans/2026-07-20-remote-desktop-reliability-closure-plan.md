@@ -254,6 +254,9 @@
 
 - [ ] Add ordering tests: Signal forwards only monotonically newer generation for the active `connectionAttemptId`; takeover/revoke/disconnect emits or applies suspension for the old controller before a new controller can write; late ack from an old attempt cannot change the new attempt.
 
+- [x] Post-review: tunnel `connection-attempt-bind` with monotonic `connectionAttemptSequence`; split attempt binding from generation progress so `applied:false` only reopens one generation replay; Direct offer and tunnel bind share one Signal authority record.
+
+
 - [ ] Run Node RED:
 
   ```bash
