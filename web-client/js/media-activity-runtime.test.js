@@ -111,6 +111,20 @@ test('late suspended ack cannot override newer resuming request', () => {
   assert.equal(runtime.phase, 'resuming');
 });
 
+test('same in-flight desired state binds a replacement connection attempt', () => {
+  const { runtime } = makeRuntime();
+  runtime.beginDesired('active', { generation: 2, connectionAttemptId: 'attempt-a' });
+
+  const rebound = runtime.beginDesired('active', {
+    generation: 2,
+    connectionAttemptId: 'attempt-b',
+  });
+
+  assert.equal(rebound.accepted, true);
+  assert.equal(rebound.connectionAttemptId, 'attempt-b');
+  assert.equal(runtime.phase, 'resuming');
+});
+
 test('reset clears phase and health suppression', () => {
   const { runtime } = makeRuntime();
   runtime.beginDesired('suspended', { generation: 1, connectionAttemptId: 'a1' });

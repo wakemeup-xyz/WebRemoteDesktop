@@ -36,6 +36,11 @@ const WebRTC = {
   mediaActivityRuntime: null,
   _mediaResumeFramePending: false,
   _mediaResumeBaseline: null,
+  _mediaResumeFrameTimer: null,
+  _mediaIntent: null,
+  _mediaRequestRetryUsed: false,
+  _mediaResumeRefreshFallbackUsed: false,
+  _mediaFailureHandledKey: null,
   _lastInboundFramesDecoded: 0,
   _videoFrameSeq: 0,
   adaptiveMediaEnabled: true,
@@ -45,6 +50,7 @@ const WebRTC = {
   _iceRestartAttempts: 0,
   _tunnelLockUntil: 0,
   currentConnectionAttemptId: '',
+  connectionAttemptSequence: 0,
   selectedCandidatePair: null,
   candidateSummary: {
     local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
@@ -112,6 +118,11 @@ const WebRTC = {
     if (typeof MediaActivityRuntime !== 'undefined' && !this.mediaActivityRuntime) {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
         requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+        onPhaseChange: (_runtimeSnapshot, meta) => {
+          if (meta?.reason === 'request-timeout') {
+            this.handleMediaRequestFailure('request-timeout');
+          }
+        },
       });
     }
     return this.mediaActivityController.snapshot();
@@ -152,11 +163,25 @@ const WebRTC = {
     if (!this.mediaActivityRuntime && typeof MediaActivityRuntime !== 'undefined') {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
         requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+        onPhaseChange: (_runtimeSnapshot, meta) => {
+          if (meta?.reason === 'request-timeout') {
+            this.handleMediaRequestFailure('request-timeout');
+          }
+        },
       });
     }
     const desired = snapshot?.state === 'suspended' ? 'suspended' : 'active';
     const generation = Number(snapshot?.generation) || 0;
     if (generation < 1) return snapshot;
+    if (this._mediaIntent?.generation !== generation) {
+      this._mediaRequestRetryUsed = false;
+      this._mediaResumeRefreshFallbackUsed = false;
+    }
+    this._mediaIntent = {
+      state: desired,
+      reasons: Array.isArray(snapshot?.reasons) ? snapshot.reasons.slice(0, 8) : [],
+      generation,
+    };
 
     // Immediate local gates on suspend.
     if (desired === 'suspended') {
@@ -168,6 +193,7 @@ const WebRTC = {
       this.noMediaTicks = 0;
       this._mediaResumeFramePending = false;
       this._mediaResumeBaseline = null;
+      this.clearMediaResumeFallback();
     }
 
     const runtime = this.mediaActivityRuntime;
@@ -184,9 +210,76 @@ const WebRTC = {
       this.captureMediaResumeBaseline(generation);
     }
 
-    this.sendMediaActivityRequest(desired, snapshot);
+    this.sendMediaActivityRequest(desired, this._mediaIntent);
     this.syncDesktopInputGate();
     return snapshot;
+  },
+
+  replayMediaActivityIntent(_reason = 'replay') {
+    const snapshot = this._mediaIntent;
+    if (!snapshot || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1) return false;
+    if (!this.activeLeaseEnvelope() || !this.socket?.connected) return false;
+
+    const runtime = this.mediaActivityRuntime;
+    if (runtime) {
+      runtime.beginDesired(snapshot.state, {
+        generation: snapshot.generation,
+        connectionAttemptId: this.currentConnectionAttemptId || null,
+      });
+    }
+    if (snapshot.state === 'active') {
+      this.captureMediaResumeBaseline(snapshot.generation);
+    }
+    const sent = this.sendMediaActivityRequest(snapshot.state, snapshot);
+    this.syncDesktopInputGate();
+    return sent;
+  },
+
+  clearMediaResumeFallback() {
+    if (this._mediaResumeFrameTimer) {
+      clearTimeout(this._mediaResumeFrameTimer);
+      this._mediaResumeFrameTimer = null;
+    }
+  },
+
+  armMediaResumeFallback() {
+    this.clearMediaResumeFallback();
+    if (this._mediaResumeRefreshFallbackUsed || this._mediaIntent?.state !== 'active') return;
+    const timeoutMs = this.networkMode === 'tunnel' ? 2500 : 1500;
+    this._mediaResumeFrameTimer = setTimeout(() => {
+      this._mediaResumeFrameTimer = null;
+      if (this.getMediaAppliedPhase() !== 'resuming' || this._mediaResumeRefreshFallbackUsed) return;
+      this._mediaResumeRefreshFallbackUsed = true;
+      this.refresh();
+    }, timeoutMs);
+  },
+
+  handleMediaRequestFailure(reason = 'media-request-failed') {
+    this.syncDesktopInputGate();
+    const snapshot = this._mediaIntent;
+    if (!snapshot || this.manualDisconnect) return false;
+    if (!this.activeLeaseEnvelope() || !this.socket?.connected) return false;
+
+    // Cancel any armed fresh-frame timer before retry/refresh so a stale timer
+    // cannot fire a second refresh after this failure path.
+    this.clearMediaResumeFallback();
+
+    if (snapshot.state === 'active' && reason === 'request-timeout') {
+      if (this._mediaResumeRefreshFallbackUsed) return false;
+      this._mediaResumeRefreshFallbackUsed = true;
+      this.refresh();
+      return true;
+    }
+    if (!this._mediaRequestRetryUsed) {
+      this._mediaRequestRetryUsed = true;
+      return this.replayMediaActivityIntent(reason);
+    }
+    if (snapshot.state === 'active' && !this._mediaResumeRefreshFallbackUsed) {
+      this._mediaResumeRefreshFallbackUsed = true;
+      this.refresh();
+      return true;
+    }
+    return false;
   },
 
   captureMediaResumeBaseline(generation) {
@@ -240,6 +333,20 @@ const WebRTC = {
 
   handleMediaActivityAck(data = {}) {
     if (!this.mediaActivityRuntime) return;
+    if (data.applied !== true) {
+      const failureKey = [
+        'applied-false',
+        data.connectionAttemptId || this.currentConnectionAttemptId || '',
+        Number.isSafeInteger(data.generation) ? data.generation : '',
+        data.state || '',
+      ].join('|');
+      // Signal dual-routes tunnel Host acks on relay-stream-control-ack and
+      // media-activity-ack. Apply the failure path only once per generation.
+      if (this._mediaFailureHandledKey === failureKey) return;
+      this._mediaFailureHandledKey = failureKey;
+      this.handleMediaRequestFailure('applied-false');
+      return;
+    }
     const result = this.mediaActivityRuntime.applyAck({
       state: data.state,
       generation: data.generation,
@@ -248,15 +355,29 @@ const WebRTC = {
       keyframeRequested: data.keyframeRequested === true,
     });
     if (!result.accepted) return;
+    this._mediaFailureHandledKey = null;
     if (result.phase === 'resuming') {
       this._mediaResumeFramePending = true;
       if (!this._mediaResumeBaseline) {
         this.captureMediaResumeBaseline(data.generation);
       }
+      this.armMediaResumeFallback();
+      // A tunnel relay frame may finish rendering just before its Host ACK reaches
+      // this socket. Consume that post-baseline frame after the matching ACK rather
+      // than waiting indefinitely for a visually identical JPEG to load again.
+      const renderedRelayFrame = this._lastRenderedRelayFrame;
+      if (renderedRelayFrame) {
+        this.observeFreshResumeFrame({
+          source: 'relay-frame',
+          frameSeq: renderedRelayFrame.frameSeq,
+          connectionAttemptId: renderedRelayFrame.connectionAttemptId,
+        });
+      }
     }
     if (result.phase === 'suspended') {
       this._mediaResumeFramePending = false;
       this._mediaResumeBaseline = null;
+      this.clearMediaResumeFallback();
     }
     this.syncDesktopInputGate();
   },
@@ -308,6 +429,7 @@ const WebRTC = {
     if (!result.accepted) return false;
     this._mediaResumeFramePending = false;
     this._mediaResumeBaseline = null;
+    this.clearMediaResumeFallback();
     this.noMediaTicks = 0;
     this.syncDesktopInputGate();
     return true;
@@ -352,7 +474,12 @@ const WebRTC = {
   },
 
   beginConnectionAttempt(trigger = 'viewer-open') {
+    this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this._mediaFailureHandledKey = null;
+    this._mediaRequestRetryUsed = false;
+    this._mediaResumeRefreshFallbackUsed = false;
+    this.clearMediaResumeFallback();
     if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.start === 'function') {
       ConnectionTrace.start({
         trigger,
@@ -361,6 +488,7 @@ const WebRTC = {
         connectionAttemptId: this.currentConnectionAttemptId,
       });
     }
+    this.bindCurrentConnectionAttempt();
     return this.currentConnectionAttemptId;
   },
 
@@ -1350,6 +1478,8 @@ const WebRTC = {
         console.log('[OFFER-DBG] Created new PC on reconnect, pcState=%s', this.pc?.connectionState);
       }
       this.renderPortSearchStatus();
+      this.bindCurrentConnectionAttempt();
+      this.replayMediaActivityIntent('socket-connect');
     });
 
     this.socket.on('connected', (data) => {
@@ -1464,16 +1594,10 @@ const WebRTC = {
     this.socket.on('media-activity-ack', (data) => this.handleMediaActivityAck(data));
     this.socket.on('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
     this.socket.on('relay-stream-control-rejected', (data) => {
-      this.handleMediaActivityAck({
-        state: data?.state === 'active' ? 'active' : 'suspended',
-        generation: data?.generation,
-        connectionAttemptId: data?.connectionAttemptId,
-        applied: false,
-      });
+      this.handleMediaRequestFailure(data?.reason || 'relay-stream-control-rejected');
     });
-    this.socket.on('media-activity-rejected', () => {
-      // Keep fail-closed local gates; do not re-enable input on rejection.
-      this.syncDesktopInputGate();
+    this.socket.on('media-activity-rejected', (data) => {
+      this.handleMediaRequestFailure(data?.reason || 'media-activity-rejected');
     });
   },
 
@@ -1521,12 +1645,18 @@ const WebRTC = {
     if (typeof Input !== 'undefined') {
       Input.init();
       Input.setControlLease(this.controlState.lease);
-      Input.setActive(true);
+      Input.setActive(this.canEnableDesktopInput());
     }
     this.startControlHeartbeat();
     this.updateControlUI();
-    if (this.networkMode === 'tunnel') this.startTunnelRelay();
-    else this.createOffer();
+    this.bindCurrentConnectionAttempt();
+    if (this.networkMode === 'tunnel') {
+      if (this.getMediaActivitySnapshot().state === 'active') this.startTunnelRelay();
+      this.replayMediaActivityIntent('control-regrant');
+    } else {
+      this.createOffer();
+      this.replayMediaActivityIntent('control-regrant');
+    }
   },
 
   freezeControl(reason, reset = true) {
@@ -2008,6 +2138,10 @@ const WebRTC = {
     this._tunnelLockUntil = Date.now() + 30000;
     this.tunnelRelayActive = true;
     this.tunnelFrameCount = 0;
+    // Host start() restarts its sequence from zero. A prior producer must not
+    // cause the new stream's first frame to be discarded as stale.
+    this.tunnelLastFrameId = 0;
+    this._lastRenderedRelayFrame = null;
     this.tunnelStartedAt = performance.now();
     document.body.classList.add('tunnel-relay-active');
     document.getElementById('loading')?.classList.remove('hidden');
@@ -2047,6 +2181,7 @@ const WebRTC = {
       height,
       fps,
     };
+    if (!mediaControl && enabled) this.bindCurrentConnectionAttempt();
     if (mediaControl && typeof mediaControl === 'object') {
       payload.schemaVersion = mediaControl.schemaVersion === 2 ? 2 : payload.schemaVersion;
       payload.mediaControlSchemaVersion = 1;
@@ -2057,6 +2192,23 @@ const WebRTC = {
         || null;
     }
     this.socket?.emit('relay-stream-control', payload);
+    return true;
+  },
+
+  bindCurrentConnectionAttempt() {
+    const lease = this.activeLeaseEnvelope();
+    if (!lease || !this.socket?.connected || !this.currentConnectionAttemptId) return false;
+    if (!Number.isSafeInteger(this.connectionAttemptSequence) || this.connectionAttemptSequence < 1) {
+      return false;
+    }
+    this.socket.emit('connection-attempt-bind', {
+      schemaVersion: 1,
+      connectionAttemptId: this.currentConnectionAttemptId,
+      connectionAttemptSequence: this.connectionAttemptSequence,
+      leaseId: lease.leaseId,
+      leaseEpoch: lease.leaseEpoch,
+      networkMode: this.networkMode || undefined,
+    });
     return true;
   },
 
@@ -2111,8 +2263,19 @@ const WebRTC = {
         this.tunnelLastObjectUrl = objectUrl;
         this.tunnelPendingObjectUrl = '';
       }
+      const frameSeq = (Number(this._videoFrameSeq) || 0) + 1;
+      this._videoFrameSeq = frameSeq;
+      this._lastRenderedRelayFrame = {
+        frameId: frameId || this.tunnelLastFrameId,
+        frameSeq,
+        connectionAttemptId: this.currentConnectionAttemptId || null,
+      };
       if (this._mediaResumeFramePending) {
-        this.noteMediaRenderedFrame();
+        this.observeFreshResumeFrame({
+          source: 'relay-frame',
+          frameSeq,
+          connectionAttemptId: this.currentConnectionAttemptId || null,
+        });
       }
       const lease = this.activeLeaseEnvelope();
       if (lease && this.socket?.connected) {
@@ -2231,6 +2394,7 @@ const WebRTC = {
         leaseId: this.controlState.lease.leaseId,
         leaseEpoch: this.controlState.lease.leaseEpoch,
         connectionAttemptId: this.currentConnectionAttemptId,
+        connectionAttemptSequence: Number(this.connectionAttemptSequence) || 1,
       });
       console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {

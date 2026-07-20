@@ -62,7 +62,16 @@
       if (nextGeneration < desiredGeneration) {
         return { accepted: false, reason: 'stale-desired', ...snapshot() };
       }
-      if (nextGeneration === desiredGeneration && desired === desiredState && phase !== 'active' && phase !== 'suspended') {
+      const replacesAttempt = Boolean(
+        connectionAttemptId
+        && attemptId
+        && connectionAttemptId !== attemptId
+      );
+      if (nextGeneration === desiredGeneration
+          && desired === desiredState
+          && phase !== 'active'
+          && phase !== 'suspended'
+          && !replacesAttempt) {
         // Same in-flight desired: ignore.
         return { accepted: false, reason: 'duplicate-desired', ...snapshot() };
       }
