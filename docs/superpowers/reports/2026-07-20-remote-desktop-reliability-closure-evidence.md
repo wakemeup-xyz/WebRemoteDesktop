@@ -3,7 +3,7 @@
 Date: 2026-07-20
 Branch: `main`
 Review baseline (previous anchor): `ff1b9a2b9f5a1db4f7c1e2142c56bca262ea750f`
-Latest automated commit on this remediation branch / reviewed-up-to: `3f8179a2998b01f9f283ef86137fd36c6c5ce89b`
+Latest automated commit on this remediation branch / reviewed-up-to: `6241965adbb280702b779046db5ec0c2568d18af`
 UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
@@ -131,6 +131,7 @@ New control/media events remain bounded: epoch, attempt id shape, generation, en
 4. `c1d3e13` test(ops): harden reliability acceptance gates
 5. `2ba9825` docs(remote): document attempt sequence contract
 6. `3f8179a` docs(remote): pin evidence SHAs after remediation
+7. `6241965` docs(remote): set reviewed-up-to evidence anchor
 
 ## Review remediation (2026-07-21)
 
