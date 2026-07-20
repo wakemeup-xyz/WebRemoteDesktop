@@ -1,7 +1,7 @@
 # Terminal 多行命令编辑器设计
 
 **日期：** 2026-07-19
-**状态：** 已确认，待实施
+**状态：** 已实施
 **范围：** `web-client` 的 Shared Terminal 前端；不改变 Signal Server、PTY 或 quick tunnel 生命周期。
 
 ## 目标
@@ -41,7 +41,7 @@
 2. textarea 的原生 `Shift+Enter` 行为不拦截，浏览器将真实换行写入 `textarea.value`。
 3. textarea 的普通 `Enter`（不含 Shift，且 `event.isComposing === false`）调用提交逻辑并 `preventDefault()`；发送按钮走同一提交逻辑。
 4. 空草稿上的普通 `Enter` 仍发送原始 `\r`，保持终端常规回车语义。
-5. 有内容的草稿会被规范化为 LF（`\r\n` / `\r` 转为 `\n`），并作为单次 `terminal:input` 的 `data` 发送；收到匹配的 `terminal:input_ack` 后才清空当前会话草稿；断线、拒绝或未确认时保留草稿，重连后可重试。
+5. 有内容的草稿会被规范化为 LF（`\r\n` / `\r` 转为 `\n`），并作为单次 `terminal:input` 的 `data` 发送；收到匹配的 `terminal:input_ack` 后才清空当前会话草稿；断线、拒绝或未确认时保留草稿，重连后可重试。拒绝结果必须携带可信 `sessionId` 和 `inputId`，前端只清理精确匹配的 pending submission。
 6. composer 禁用时不接受提交：未授权、socket 未连接、没有活动会话或活动会话未附着都属于禁用状态。
 
 ### 会话与草稿

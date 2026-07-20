@@ -29,6 +29,24 @@
 - Suspended/resuming states never cause quality degradation, media-stalled classification, ICE restart, or automatic reconnect.
 - Targeted automated suites and real Chrome acceptance pass, and active requirements/README describe the shipped behavior.
 
+## Implementation Status (2026-07-20)
+
+The original ten-task design was implemented through the follow-up reliability
+closure because the control-lease barrier and media authority had to be made
+fail-closed before media commands could safely reach the Host. The current
+implementation is recorded by `7f87342`, `1cd965e`, `2fd0b6d`, `d7a96b3`,
+`3f07286`, `de8bfa5`, and `9a5388b`.
+
+| Original task | Current status | Evidence |
+| --- | --- | --- |
+| 1-3 Viewer truth, lifecycle, UI and Terminal intent | Implemented | `media-activity-controller`, `media-activity-lifecycle`, `media-activity-runtime`, `webrtc`, and Terminal tests |
+| 4 Signal routing | Implemented | lease-bound `media-activity-change` contract and `signaling.test.js` |
+| 5-6 Host sender/capture and generation ownership | Implemented | `aiortc_media_sender`, `ScreenCaptureTrack`, `test_media_suspension.py`, `test_offer_epoch.py` |
+| 7-8 WebRTC/tunnel health and relay behavior | Implemented | Viewer, Signal, and Host tunnel regression tests |
+| 9 Diagnostics and active docs | Implemented | `README.md`, requirements document, runtime evidence report |
+| 10 automated closure | Verified on `9a5388b` | Viewer/CSS 258, Signal 246, Host 116; `git diff --check` clean |
+| 10 current-HEAD browser rerun | Not completed | no controllable browser is available in this session; historic reports remain evidence for their recorded commits only |
+
 ---
 
 ### Task 1: Build the pure media activity truth module

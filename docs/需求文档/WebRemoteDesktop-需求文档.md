@@ -62,6 +62,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
+- [x] **按需媒体暂停**：切换 Terminal、页面进入后台或用户手动暂停时，Host 停止屏幕 capture、编码和视频 payload；WebRTC 保留 PeerConnection、ICE 和 DataChannel，tunnel 保留控制连接，Terminal Socket、PTY 和 admin 授权不受影响
+- [x] **暂停期健康语义**：暂停和恢复中的预期 0 FPS 不触发质量降档、ICE restart 或自动重连；只有匹配当前 connection attempt 的恢复 ack 与一帧新渲染画面后才重新启用桌面输入。Terminal/page visibility 的自动 reason 不会覆盖 `manual-pause`
 - [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。启动还要求当前 Viewer 持有 ACTIVE 控制租约；只读/切换中/reset-blocked/媒体暂停时严格无副作用。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
