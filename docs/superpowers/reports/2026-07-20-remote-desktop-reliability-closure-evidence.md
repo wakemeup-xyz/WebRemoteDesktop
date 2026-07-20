@@ -1,9 +1,9 @@
 # Remote Desktop Reliability Closure Evidence
 
 Date: 2026-07-20
-Branch: `worktree-reliability-closure-p1`
+Branch: `main`
 Review baseline (previous anchor): `ff1b9a2b9f5a1db4f7c1e2142c56bca262ea750f`
-Latest automated commit on this remediation branch: `2ba9825` (docs); code closed by `be7e6a4`/`0f7ef3b`/`061e970`/`c1d3e13`
+Latest automated commit on this remediation branch / reviewed-up-to: `3f8179a2998b01f9f283ef86137fd36c6c5ce89b`
 UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
@@ -122,6 +122,15 @@ Labels used: **automated-closed**, **runtime PASS**, **PARTIAL**, **BLOCKED**, *
 
 New control/media events remain bounded: epoch, attempt id shape, generation, enum reasons only. No lease tokens, SDP, candidate addresses, key values, or image payloads in structured events.
 
+
+## Review remediation commits (2026-07-21, main)
+
+1. `be7e6a4` fix(signal): bind tunnel attempts with monotonic sequence
+2. `0f7ef3b` fix(host): fail closed on fresh-capture false
+3. `061e970` fix(viewer): bound media retries and dual-ack de-dupe
+4. `c1d3e13` test(ops): harden reliability acceptance gates
+5. `2ba9825` docs(remote): document attempt sequence contract
+6. `3f8179a` docs(remote): pin evidence SHAs after remediation
 
 ## Review remediation (2026-07-21)
 
