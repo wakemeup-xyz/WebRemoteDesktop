@@ -3,6 +3,9 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLOUDFLARED="${CLOUDFLARED:-/Users/macstudio1/.homebrew/bin/cloudflared}"
+# Isolate quick tunnel from ~/.cloudflared/config.yml named-tunnel settings.
+# Without this, cloudflared reuses named-tunnel material and trycloudflare edges 404.
+CLOUDFLARED_CONFIG="${CLOUDFLARED_CONFIG:-/dev/null}"
 ORIGIN="${ORIGIN:-http://127.0.0.1:8080}"
 LOG_FILE="${LOG_FILE:-/tmp/wrd-safe-quicktunnel.log}"
 URL_FILE="${URL_FILE:-/tmp/wrd-safe-current-url.txt}"
@@ -91,7 +94,12 @@ fi
 while true; do
   if [ -z "${PID:-}" ] || ! kill -0 "$PID" 2>/dev/null; then
     : > "$LOG_FILE"
-    nohup "$CLOUDFLARED" tunnel --protocol http2 --url "$ORIGIN" >> "$LOG_FILE" 2>&1 &
+    # Drop named-tunnel token/cred env so quick tunnel cannot attach to wrd-tunnel.
+    # --config isolates from ~/.cloudflared/config.yml named-tunnel injection.
+    nohup env -u TUNNEL_TOKEN -u TUNNEL_CRED_FILE -u TUNNEL_CREDENTIALS_FILE \
+      -u CLOUDFLARED_CREDENTIALS_FILE \
+      "$CLOUDFLARED" tunnel --config "$CLOUDFLARED_CONFIG" --protocol http2 --url "$ORIGIN" \
+      >> "$LOG_FILE" 2>&1 &
     PID=$!
     disown "$PID" 2>/dev/null || true
     echo "$PID" > "$PID_FILE"

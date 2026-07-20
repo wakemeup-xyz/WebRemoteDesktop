@@ -21,6 +21,7 @@
 - 正式公网入口：`https://link.stockhub.wiki`
 - quick tunnel / `trycloudflare`：仅调试、临时排障、或 fixed-domain 不可用时的临时观察链路，不作为正式对外地址
 - named tunnel：只允许 `~/.cloudflared/config.yml` 中的 `credentials-file`；不得用 `--token` 或 `TUNNEL_TOKEN` 启动正式入口
+- quick tunnel（trycloudflare）必须与 named tunnel 配置隔离：`scripts/run-safe-quicktunnel.sh` 使用 `--config /dev/null`，并清除 `TUNNEL_TOKEN` / credentials 相关环境变量，避免默认加载 `~/.cloudflared/config.yml` 导致边缘 404
 
 Host 启动语义：
 

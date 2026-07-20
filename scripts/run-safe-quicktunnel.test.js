@@ -79,3 +79,22 @@ test('safe quick tunnel script restarts when the published URL stays unreachable
   assert.match(source, /url unreachable too long, restarting/);
   assert.match(source, /rm -f "\$URL_FILE"/);
 });
+
+test('safe quick tunnel isolates cloudflared from named-tunnel config and token env', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+
+  // Must not inherit ~/.cloudflared/config.yml named credentials into quick tunnel.
+  assert.match(source, /CLOUDFLARED_CONFIG="\$\{CLOUDFLARED_CONFIG:-\/dev\/null\}"/);
+  assert.match(source, /--config "\$CLOUDFLARED_CONFIG"/);
+  assert.match(source, /env -u TUNNEL_TOKEN -u TUNNEL_CRED_FILE -u TUNNEL_CREDENTIALS_FILE/);
+  // Quick tunnel still targets local origin only.
+  assert.match(source, /--url "\$ORIGIN"/);
+  // Must not launch a bare `tunnel --url` without config isolation.
+  assert.doesNotMatch(
+    source,
+    /"\$CLOUDFLARED" tunnel --protocol http2 --url "\$ORIGIN"/,
+  );
+  // Named-tunnel `tunnel run` / credentials-file path must stay out of this script.
+  assert.doesNotMatch(source, /tunnel run\b/);
+  assert.doesNotMatch(source, /credentials-file/);
+});

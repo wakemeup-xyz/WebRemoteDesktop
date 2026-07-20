@@ -157,6 +157,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 本机存在 `~/.cloudflared/config.yml`
 - `config.yml` 中为 named tunnel 配置了 `credentials-file`；正式启动不接受 `--token` 参数或 `TUNNEL_TOKEN` 作为凭据来源
 - `wrd-tunnel` 命名隧道已配置完成
+- debug quick tunnel（trycloudflare）由 `scripts/run-safe-quicktunnel.sh` 启动时会隔离 named config：默认 `--config /dev/null` 并清除 tunnel token/credentials 环境变量；不得把 named tunnel 凭据注入 quick tunnel
 
 `./scripts/status-safe-wrd.sh` 若发现现有 `cloudflared` argv 含 `--token`，只输出固定安全告警，不显示 token，也不会停止或重启 tunnel。凭据迁移和 tunnel 重启必须由用户单独授权。
 
