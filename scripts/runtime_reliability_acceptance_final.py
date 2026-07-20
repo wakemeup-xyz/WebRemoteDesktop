@@ -363,6 +363,11 @@ def main():
             "label": "browser-protocol",
         }
 
+        # A is intentionally revoked. Close it before exercising B's tunnel
+        # path so an observer-side WebRTC recovery cannot replace B's Host
+        # media binding during the single-controller tunnel measurement.
+        ctx_a.close()
+
         # formal tunnel mode on controller B
         b.evaluate("() => WebRTC.setNetworkMode('tunnel')")
         b.wait_for_timeout(2000)

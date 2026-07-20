@@ -1490,7 +1490,7 @@ const WebRTC = {
       this.applyHostCapabilities(data.hostCapabilities);
       this.renderPortSearchStatus();
       if (data.hostOnline) {
-        this.requestControl();
+        this.requestControl({ allowTakeover: false });
       } else {
         updateLoadingText('等待Host上线...');
       }
@@ -1512,7 +1512,7 @@ const WebRTC = {
           console.warn('[NETWORK] Host came online but offerInProgress=true; forcing new offer');
           this.offerInProgress = false;
         }
-        this.requestControl();
+        this.requestControl({ allowTakeover: false });
       } else {
         this.controlState.hostOnline = false;
         this.applyHostCapabilities({ turnReady: false, turnFingerprint: '', supportsSessionTurn: false });
@@ -1611,14 +1611,18 @@ const WebRTC = {
     return { schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch };
   },
 
-  requestControl() {
+  requestControl({ allowTakeover = true } = {}) {
     if (!this.socket?.connected || !this.controlState.hostOnline) return false;
     if (this.isControlResetBlocked() || this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING') {
       this.updateControlUI();
       return false;
     }
+    // Automatic paths must not silently steal an existing ACTIVE controller.
+    if (this.controlState.state === 'ACTIVE' && !this.controlState.controller && !allowTakeover) {
+      return false;
+    }
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
-    const takeover = this.controlState.state === 'ACTIVE' && !this.controlState.controller;
+    const takeover = this.controlState.state === 'ACTIVE' && !this.controlState.controller && allowTakeover;
     this.socket.emit('control-acquire', { requestId, takeover });
     this.updateControlUI('控制权正在切换');
     return true;
@@ -2121,7 +2125,7 @@ const WebRTC = {
 
   startTunnelRelay() {
     if (!this.hasActiveControl()) {
-      this.requestControl();
+      this.requestControl({ allowTakeover: false });
       return;
     }
     if (!this.canStartTunnelRelay()) {
@@ -2340,7 +2344,7 @@ const WebRTC = {
     console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
       this.networkMode, !!this.pc, this.offerInProgress);
     if (!this.hasActiveControl()) {
-      this.requestControl();
+      this.requestControl({ allowTakeover: false });
       return;
     }
     if (this.networkMode === 'tunnel') {

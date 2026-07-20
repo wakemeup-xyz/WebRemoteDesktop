@@ -2953,6 +2953,25 @@ test('stale attempt relay frame cannot unlock a newer resume attempt', () => {
   assert.equal(WebRTC.canEnableDesktopInput(), false);
 });
 
+test('auto host-status reconnect does not steal an active controller', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: false, hostOnline: true,
+    lease: null,
+  };
+  WebRTC._controlRequestId = 0;
+  WebRTC.updateControlUI = () => {};
+
+  assert.equal(WebRTC.requestControl({ allowTakeover: false }), false);
+  assert.equal(emitted.length, 0);
+
+  assert.equal(WebRTC.requestControl({ allowTakeover: true }), true);
+  assert.equal(emitted[0][0], 'control-acquire');
+  assert.equal(emitted[0][1].takeover, true);
+});
+
 test('control grant honors the media input gate before a fresh frame', () => {
   const { WebRTC, context } = loadWebRTC();
   const inputCalls = [];
