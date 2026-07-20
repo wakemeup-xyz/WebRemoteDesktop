@@ -144,3 +144,42 @@ Closed remaining attempt-authority and fail-closed gaps from the post-`ff1b9a2` 
 5. Acceptance script keeps strict tunnel conditions (exact active + Host applied ack + fresh relay frame + 20 samples + P95≤2500ms + dual-viewer ordering + PointerEvent path).
 
 Runtime dual-viewer / non-black first frame / FPS-jitter / physical keyboard / Terminal alt-screen / live P95 remain **NOT RUN** unless re-executed with live services. No synthetic PASS.
+
+
+## Runtime acceptance re-run (2026-07-21)
+
+Services: local `signal-server` + Host restarted; **Cloudflare tunnel not rebuilt**.
+
+Entry status:
+
+- local `http://127.0.0.1:8080/health` + `hostOnline:true` → ok
+- formal `https://link.stockhub.wiki` TLS cert subject mismatch on strict curl; with `-k` `/health` returns ok. Acceptance formal-entry page path remains **BLOCKED** for product TLS/entry.
+- safe quick tunnel URL deliverable (`/tmp/wrd-safe-current-url.txt`) but media gate left **NOT RUN** (debug-only, not rebuilt)
+
+Command:
+
+```bash
+python3 scripts/runtime_reliability_acceptance_final.py
+```
+
+Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-20T17:24:27Z`)
+
+| Gate | Status | Notes |
+|------|--------|-------|
+| 9B resume 20× P95 | **PASS** | p95=422ms ≤1500ms, 20/20 |
+| 9B suspend 15s payload stop | **PASS** | byte_delta=0 |
+| 9C keyboard browser-protocol subset | **PASS** | not physical/OS-reserved |
+| 9B mouse PointerEvent path | **FAIL** | only up/move observed; `setPointerCapture` not captured under inactive input gate (protocol harness) |
+| 9D dual Viewer ordered single writer | **PASS** | revoke then B takeover; single_writer true |
+| 9D tunnel media 20× Host ack+fresh frame | **PASS** | count_ok=20/20, p95=319ms ≤2500ms |
+| 9C physical keyboard | **NOT RUN** | needs user presses |
+| 9C os-reserved | **NOT RUN** | OS/browser intercept |
+| 9A reset-blocked fault injection | **NOT RUN** | no safe fault hook |
+| 9D trycloudflare safe URL media | **NOT RUN** | debug tunnel policy; not rebuilt |
+| 9D formal fixed-domain product entry | **BLOCKED** | cert subject mismatch / formal login page not accepted as product delivery in this harness |
+
+Follow-up fix validated in the same session:
+
+- automatic `requestControl` no longer takeovers an existing ACTIVE controller (`allowTakeover:false` on auto recovery paths). Without this, dual-viewer tunnel mode switch was revoked by observer recovery and tunnel media control could not send.
+
+Still not claimed: non-black first frame product visual, FPS/jitter product SLO, physical keyboard, Terminal alt-screen matrix, Host-side mouse open/select visual, formal-domain TLS product PASS.
