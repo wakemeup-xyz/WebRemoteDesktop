@@ -1,10 +1,10 @@
 # Remote Desktop Reliability Closure Evidence
 
-Date: 2026-07-20
+Date: 2026-07-20 (last updated 2026-08-01)
 Branch: `main`
 Review baseline (previous anchor): `ff1b9a2b9f5a1db4f7c1e2142c56bca262ea750f`
-Latest automated commit on this remediation branch / reviewed-up-to: `6241965adbb280702b779046db5ec0c2568d18af`
-UTC timestamp: 2026-07-19T21:30:00Z (approx; docs write-up)
+Latest automated remediation commit: `c871e99ccb923e6dfb01196cb99159dc152ac8e4`
+Verification timestamp: 2026-08-01 (Asia/Shanghai)
 
 Spec: `docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md`
 Plan: `docs/superpowers/plans/2026-07-20-remote-desktop-reliability-closure-plan.md`
@@ -37,7 +37,7 @@ Result: **257 pass / 0 fail**
 node --test web-client/js/*.test.js scripts/*.test.js
 ```
 
-Result: **333 pass / 0 fail**
+Result: **344 pass / 0 fail**
 
 ### Python matrix
 
@@ -48,7 +48,7 @@ PYTHONPATH=python-host python3 -m pytest -q \
   skills/webremote-service/scripts/wrd_service_test.py
 ```
 
-Result: **143 passed / 0 fail** (1 deprecation warning from mss)
+Result: **144 passed / 0 fail** (1 deprecation warning from mss)
 
 ### Diff hygiene
 
@@ -146,7 +146,7 @@ Closed remaining attempt-authority and fail-closed gaps from the post-`ff1b9a2` 
 Runtime dual-viewer / non-black first frame / FPS-jitter / physical keyboard / Terminal alt-screen / live P95 remain **NOT RUN** unless re-executed with live services. No synthetic PASS.
 
 
-## Runtime acceptance re-run (2026-07-21)
+## Historical runtime acceptance re-run (2026-07-21)
 
 Services: local `signal-server` + Host restarted; **Cloudflare tunnel not rebuilt**.
 
@@ -162,7 +162,7 @@ Command:
 python3 scripts/runtime_reliability_acceptance_final.py
 ```
 
-Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-20T17:24:27Z`)
+Historical report pointer: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-20T17:24:27Z`; later overwritten).
 
 | Gate | Status | Notes |
 |------|--------|-------|
@@ -170,7 +170,7 @@ Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-20T17:
 | 9B suspend 15s payload stop | **PASS** | byte_delta=0 |
 | 9C keyboard browser-protocol subset | **PASS** | not physical/OS-reserved |
 | 9B mouse PointerEvent path | **FAIL** | only up/move observed; `setPointerCapture` not captured under inactive input gate (protocol harness) |
-| 9D dual Viewer ordered single writer | **PASS** | revoke then B takeover; single_writer true |
+| 9D dual Viewer ordered controller state | **PARTIAL** | revoke then B takeover; controller flags were mutually exclusive, but Signal/Host write rejection was not observed |
 | 9D tunnel media 20× Host ack+fresh frame | **PASS** | count_ok=20/20, p95=319ms ≤2500ms |
 | 9C physical keyboard | **NOT RUN** | needs user presses |
 | 9C os-reserved | **NOT RUN** | OS/browser intercept |
@@ -185,7 +185,7 @@ Follow-up fix validated in the same session:
 Still not claimed: non-black first frame product visual, FPS/jitter product SLO, physical keyboard, Terminal alt-screen matrix, Host-side mouse open/select visual, formal-domain TLS product PASS.
 
 
-## Runtime acceptance re-run (2026-07-31)
+## Historical runtime acceptance re-run (2026-07-31)
 
 Services: local signal-server + Host already online; Cloudflare tunnel **not** rebuilt.
 
@@ -195,7 +195,7 @@ Command:
 python3 scripts/runtime_reliability_acceptance_final.py
 ```
 
-Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-31T14:41:26Z`)
+Historical report pointer: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-31T14:41:26Z`). This mutable `latest` file was overwritten by a later run, so the table below is retained as historical summary rather than independently reproducible raw evidence.
 
 | Gate | Status | Notes |
 |------|--------|-------|
@@ -203,7 +203,7 @@ Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-31T14:
 | 9B suspend 15s payload stop | **PASS** | |
 | 9C keyboard browser-protocol | **PASS** | input_ready=true; not physical |
 | 9B mouse PointerEvent path | **PASS** | center-content hit; capture ids [1,1,1]; down/up/move |
-| 9D dual Viewer ordered single writer | **PASS** | |
+| 9D dual Viewer ordered controller state | **PARTIAL** | controller flags were mutually exclusive; old-controller Signal/Host write rejection was not observed |
 | 9D tunnel media 20× Host ack+fresh frame | **PASS** | 20/20, p95=319ms ≤2500; attempt_unchanged 20/20 |
 | 9C physical keyboard | **NOT RUN** | needs user presses |
 | 9C os-reserved | **NOT RUN** | |
@@ -219,3 +219,26 @@ Fixes validated in this re-run:
 4. Closing old PC when entering tunnel clears WebRTC callbacks first so closed events cannot schedule a later refresh that kills the new relay.
 
 Still not claimed: physical keyboard, OS-reserved, Terminal alt-screen full matrix, formal TLS product PASS, non-black first-frame visual SLO.
+
+## Review follow-up remediation (2026-08-01)
+
+Code commit: `c871e99ccb923e6dfb01196cb99159dc152ac8e4`
+
+Closed automated review findings:
+
+1. Host media generation now advances only after `applied:true`; a transient `applied:false` can replay the same generation once.
+2. Viewer validates negative ack attempt/generation before consuming retry or refresh fallback.
+3. Every new connection attempt and control loss closes desktop input until a current-attempt rendered frame is observed; observer frames cannot arm a later regrant.
+4. Tunnel PASS now also requires an unchanged connection attempt.
+5. Dual Viewer runtime output is `PARTIAL` until Signal/Host rejection is observable; local old-controller input gating is recorded separately.
+6. Runtime reports now write an immutable timestamped artifact plus the mutable `latest` pointer and print a SHA-256 digest.
+
+Automated verification on `c871e99`:
+
+| Matrix | Result |
+|--------|--------|
+| Signal server | **257 pass / 0 fail** |
+| Viewer / scripts | **344 pass / 0 fail** |
+| Python | **144 pass / 0 fail** (1 existing mss deprecation warning) |
+
+Post-remediation browser/runtime acceptance: **NOT RUN**. The agent did not restart user-managed services. Previous latency, mouse, keyboard, dual-Viewer, and tunnel rows are historical evidence only and do not close runtime acceptance for `c871e99`.
