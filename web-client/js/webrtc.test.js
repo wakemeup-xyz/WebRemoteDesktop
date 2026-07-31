@@ -2866,6 +2866,85 @@ test('dual-routed applied:false ack triggers only one bounded replay', () => {
   assert.equal(WebRTC.canEnableDesktopInput(), false);
 });
 
+test('stale applied:false ack cannot retry the current media intent', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-current';
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 5 });
+  emitted.length = 0;
+  WebRTC.handleMediaActivityAck({
+    state: 'suspended', generation: 4, connectionAttemptId: 'attempt-old', applied: false,
+  });
+
+  assert.equal(emitted.some(([event]) => event === 'relay-stream-control'), false);
+  assert.equal(WebRTC._mediaRequestRetryUsed, false);
+});
+
+test('new connection attempt keeps input closed until its first rendered frame', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-old';
+  WebRTC._mediaReadyConnectionAttemptId = 'attempt-old';
+  context.Input = {
+    active: true,
+    setActive(value) { this.active = value; },
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+  WebRTC.createConnectionAttemptId = () => 'attempt-new';
+  assert.equal(WebRTC.canEnableDesktopInput(), true);
+
+  WebRTC.beginConnectionAttempt('refresh');
+
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+  assert.equal(context.Input.active, false);
+  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
+  assert.equal(WebRTC.canEnableDesktopInput(), true);
+});
+
+test('control loss clears frame readiness and observer frames cannot arm regrant input', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'attempt-current';
+  WebRTC._mediaReadyConnectionAttemptId = 'attempt-current';
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  context.Input = {
+    setActive() {},
+    setControlLease() {},
+    resetKeyboard() {},
+  };
+  WebRTC.updateControlUI = () => {};
+  WebRTC.renderPortSearchStatus = () => {};
+
+  WebRTC.freezeControl('takeover');
+
+  assert.equal(WebRTC._mediaReadyConnectionAttemptId, null);
+  assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), false);
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000002', leaseEpoch: 2 },
+  };
+  assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), true);
+});
+
 test('fresh-frame fallback cancels prior timer and runs refresh only once', () => {
   const timers = [];
   const realSetTimeout = global.setTimeout;

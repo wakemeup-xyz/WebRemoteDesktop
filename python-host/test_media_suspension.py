@@ -93,6 +93,19 @@ class FakeTrack:
         return True
 
 
+class TransientFreshTrack(FakeTrack):
+    def __init__(self):
+        super().__init__()
+        self.fresh = False
+
+    def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+        self.waited_after = after_seq
+        if not self.fresh:
+            return False
+        self._capture_seq = after_seq + 1
+        return True
+
+
 @pytest.mark.asyncio
 async def test_host_applies_suspend_and_resume_with_sender_and_capture():
     host = object.__new__(WebRemoteHost)
@@ -147,6 +160,33 @@ async def test_host_applies_suspend_and_resume_with_sender_and_capture():
     assert host.video_sender.keyframes == 1
     assert host.sio.events[-1][1]["applied"] is True
     assert host.sio.events[-1][1]["keyframeRequested"] is True
+
+
+@pytest.mark.asyncio
+async def test_host_retries_same_generation_after_transient_resume_failure():
+    track = TransientFreshTrack()
+    host = _make_media_host(sender=FakeSender(), track=track)
+    request = {
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    }
+
+    await host.on_media_activity_change(request)
+    assert host.sio.events[-1][1]["applied"] is False
+    assert host.sio.events[-1][1]["reason"] == "fresh-capture-timeout"
+    assert host._media_activity_binding["generation"] == 0
+
+    track.fresh = True
+    await host.on_media_activity_change(request)
+
+    assert host.sio.events[-1][1]["applied"] is True
+    assert host._media_activity_binding["generation"] == 1
 
 
 def _make_media_host(*, sender=None, track=None, relay=None, pc=None):

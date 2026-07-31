@@ -2515,12 +2515,15 @@ class WebRemoteHost:
                 except Exception:
                     pass
 
-            self._media_activity_binding = {
-                "viewerId": normalized["viewerId"],
-                "connectionAttemptId": normalized["connectionAttemptId"],
-                "generation": normalized["generation"],
-                "state": "suspended" if self._media_activity_suspended else normalized["state"],
-            }
+            if applied:
+                # This binding is applied progress, not request history. Preserve
+                # the previous generation so a transient failure can replay once.
+                self._media_activity_binding = {
+                    "viewerId": normalized["viewerId"],
+                    "connectionAttemptId": normalized["connectionAttemptId"],
+                    "generation": normalized["generation"],
+                    "state": "suspended" if self._media_activity_suspended else normalized["state"],
+                }
             reject_reason = None
             if not applied:
                 reject_reason = locals().get("capture_failed_reason") or "execution-failed"

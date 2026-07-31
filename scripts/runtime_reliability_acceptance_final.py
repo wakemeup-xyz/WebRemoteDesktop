@@ -11,6 +11,7 @@ Never prints secrets. Artifacts under /tmp/wrd-acceptance/.
 from __future__ import annotations
 
 import json
+import hashlib
 import statistics
 import time
 from pathlib import Path
@@ -25,7 +26,14 @@ OUT = Path("/tmp/wrd-acceptance")
 OUT.mkdir(parents=True, exist_ok=True)
 
 
-def tunnel_resume_pass(wait_phase_result, final_phase, host_applied_ack, fresh_relay_frame, resume_ms):
+def tunnel_resume_pass(
+    wait_phase_result,
+    final_phase,
+    host_applied_ack,
+    fresh_relay_frame,
+    resume_ms,
+    attempt_unchanged=True,
+):
     """Return true only for a bounded, acknowledged, visibly resumed tunnel."""
     return bool(
         wait_phase_result
@@ -33,6 +41,7 @@ def tunnel_resume_pass(wait_phase_result, final_phase, host_applied_ack, fresh_r
         and host_applied_ack
         and fresh_relay_frame
         and resume_ms <= 2500
+        and attempt_unchanged
     )
 
 
@@ -45,6 +54,30 @@ def captured_pointer_sequence(captured):
         and captured[0] > 0
         and all(pointer_id == captured[0] for pointer_id in captured)
     )
+
+
+def write_report(report, out_dir=OUT):
+    """Write one immutable run artifact plus the conventional latest pointer."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = str(report.get("timestamp") or "unknown").replace(":", "-")
+    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    base_name = f"task9-final-report-{timestamp}"
+    suffix = 0
+    while True:
+        artifact = out_dir / f"{base_name}{f'-{suffix}' if suffix else ''}.json"
+        try:
+            with artifact.open("x", encoding="utf-8") as handle:
+                handle.write(payload)
+            break
+        except FileExistsError:
+            suffix += 1
+    latest = out_dir / "task9-final-report.json"
+    latest.write_text(payload, encoding="utf-8")
+    return {
+        "artifact": str(artifact),
+        "latest": str(latest),
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    }
 
 
 def control_snapshot(page):
@@ -439,15 +472,29 @@ def main():
         sa2 = control_snapshot(a)
         sb2 = control_snapshot(b)
         single_writer = all(not point["A"]["controller"] or not point["B"]["controller"] for point in ordering)
+        old_controller_local_write_rejected = bool(a.evaluate(
+            """() => {
+              if (!Input || typeof Input.sendInput !== 'function') return false;
+              const result = Input.sendInput('command', 'showDock', {});
+              return result === null && !Input.isActive && !WebRTC.canEnableDesktopInput();
+            }"""
+        ))
         report["gates"]["9D_formal_dual_viewer"] = {
-            "status": "PASS" if a_get_control and b_read_only and revoke_seen and takeover_complete and single_writer else "FAIL",
+            "status": (
+                "PARTIAL"
+                if a_get_control and b_read_only and revoke_seen and takeover_complete
+                and single_writer and old_controller_local_write_rejected
+                else "FAIL"
+            ),
             "first": {"A": sa, "B": sb},
             "after_takeover": {"A": sa2, "B": sb2},
             "ordering": ordering,
             "revoke_seen": revoke_seen,
             "single_writer": single_writer,
+            "old_controller_local_write_rejected": old_controller_local_write_rejected,
             "origin": BROWSER_PROTOCOL_ORIGIN,
             "label": "browser-protocol",
+            "note": "local old-controller gate verified; Signal/Host rejection telemetry remains open",
         }
 
         # A is intentionally revoked. Close it before exercising B's tunnel
@@ -525,11 +572,19 @@ def main():
                 and ack.get("connectionAttemptId") == after.get("attempt")
             )
             fresh_relay_frame = after.get("frameSeq", 0) > baseline.get("frameSeq", 0)
+            attempt_unchanged = baseline.get("attempt") == after.get("attempt")
             passed = bool(
                 suspended
                 and after.get("mode") == "tunnel"
                 and after.get("socket")
-                and tunnel_resume_pass(wait_ok, after.get("phase"), host_applied_ack, fresh_relay_frame, resume_ms)
+                and tunnel_resume_pass(
+                    wait_ok,
+                    after.get("phase"),
+                    host_applied_ack,
+                    fresh_relay_frame,
+                    resume_ms,
+                    attempt_unchanged,
+                )
             )
             tunnel_samples.append({
                 "i": i + 1,
@@ -542,7 +597,7 @@ def main():
                 "baseline": baseline,
                 "after": after,
                 "pass": passed,
-                "attempt_unchanged": baseline.get("attempt") == after.get("attempt"),
+                "attempt_unchanged": attempt_unchanged,
             })
             # Drain to a stable active tunnel before the next sample so a soft
             # recovery from the previous iteration cannot pollute the next one.
@@ -600,10 +655,11 @@ def main():
         "origin": FORMAL,
     }
 
-    out = OUT / "task9-final-report.json"
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    written = write_report(report)
     print(json.dumps({
-        "report": str(out),
+        "report": written["artifact"],
+        "latest": written["latest"],
+        "sha256": written["sha256"],
         "summary": {k: v.get("status") for k, v in report["gates"].items()},
     }, ensure_ascii=False))
 

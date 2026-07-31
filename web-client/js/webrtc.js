@@ -41,6 +41,7 @@ const WebRTC = {
   _mediaRequestRetryUsed: false,
   _mediaResumeRefreshFallbackUsed: false,
   _mediaFailureHandledKey: null,
+  _mediaReadyConnectionAttemptId: null,
   _lastInboundFramesDecoded: 0,
   _videoFrameSeq: 0,
   adaptiveMediaEnabled: true,
@@ -155,7 +156,9 @@ const WebRTC = {
     return this.hasActiveControl()
       && !this.manualDisconnect
       && Boolean(this.mediaActivityRuntime?.canEnableDesktopInput?.() ?? true)
-      && this.getMediaActivitySnapshot().state === 'active';
+      && this.getMediaActivitySnapshot().state === 'active'
+      && (!this.currentConnectionAttemptId
+        || this._mediaReadyConnectionAttemptId === this.currentConnectionAttemptId);
   },
 
   applyMediaActivity(snapshot = this.getMediaActivitySnapshot()) {
@@ -360,7 +363,16 @@ const WebRTC = {
 
   handleMediaActivityAck(data = {}) {
     if (!this.mediaActivityRuntime) return;
+    const result = this.mediaActivityRuntime.applyAck({
+      state: data.state,
+      generation: data.generation,
+      connectionAttemptId: data.connectionAttemptId,
+      applied: data.applied === true,
+      keyframeRequested: data.keyframeRequested === true,
+    });
     if (data.applied !== true) {
+      // Do not spend the current intent's recovery budget on a late ack.
+      if (result.reason !== 'not-applied') return;
       const failureKey = [
         'applied-false',
         data.connectionAttemptId || this.currentConnectionAttemptId || '',
@@ -374,13 +386,6 @@ const WebRTC = {
       this.handleMediaRequestFailure('applied-false');
       return;
     }
-    const result = this.mediaActivityRuntime.applyAck({
-      state: data.state,
-      generation: data.generation,
-      connectionAttemptId: data.connectionAttemptId,
-      applied: data.applied === true,
-      keyframeRequested: data.keyframeRequested === true,
-    });
     if (!result.accepted) return;
     this._mediaFailureHandledKey = null;
     if (result.phase === 'resuming') {
@@ -454,6 +459,7 @@ const WebRTC = {
       afterResume: true,
     });
     if (!result.accepted) return false;
+    this.markMediaAttemptReady(attemptId);
     this._mediaResumeFramePending = false;
     this._mediaResumeBaseline = null;
     this.clearMediaResumeFallback();
@@ -466,15 +472,27 @@ const WebRTC = {
     // Prefer explicit source metadata. Bare calls (tests/legacy) still require
     // a post-baseline video-callback sequence when a baseline exists.
     if (meta && (meta.source || meta.frameSeq != null || meta.framesDecoded != null)) {
+      if (meta.source === 'video-callback' || meta.source === 'relay-frame') {
+        this.markMediaAttemptReady(meta.connectionAttemptId || this.currentConnectionAttemptId || null);
+      }
       return this.observeFreshResumeFrame(meta);
     }
     this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
+    this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
     return this.observeFreshResumeFrame({
       source: 'video-callback',
       frameSeq: this._videoFrameSeq,
       connectionAttemptId: this.currentConnectionAttemptId || null,
       pc: this.pc || null,
     });
+  },
+
+  markMediaAttemptReady(attemptId = this.currentConnectionAttemptId || null) {
+    if (!this.hasActiveControl()) return false;
+    if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
+    this._mediaReadyConnectionAttemptId = attemptId;
+    this.syncDesktopInputGate();
+    return true;
   },
 
   syncDesktopInputGate() {
@@ -503,6 +521,7 @@ const WebRTC = {
   beginConnectionAttempt(trigger = 'viewer-open') {
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this._mediaReadyConnectionAttemptId = null;
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
     this._mediaResumeRefreshFallbackUsed = false;
@@ -516,6 +535,7 @@ const WebRTC = {
       });
     }
     this.bindCurrentConnectionAttempt();
+    this.syncDesktopInputGate();
     return this.currentConnectionAttemptId;
   },
 
@@ -1693,6 +1713,7 @@ const WebRTC = {
   freezeControl(reason, reset = true) {
     if (reset && typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
     this.stopControlHeartbeat();
+    this._mediaReadyConnectionAttemptId = null;
     if (typeof Input !== 'undefined') {
       Input.setActive(false);
       Input.setControlLease(null);
@@ -2309,6 +2330,7 @@ if (this.tunnelLastObjectUrl) {
       }
       const frameSeq = (Number(this._videoFrameSeq) || 0) + 1;
       this._videoFrameSeq = frameSeq;
+      this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
       this._lastRenderedRelayFrame = {
         frameId: frameId || this.tunnelLastFrameId,
         frameSeq,
@@ -2692,6 +2714,7 @@ if (this.tunnelLastObjectUrl) {
     const onFrame = (now, metadata) => {
       if (this._videoFrameElement !== video) return;
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
+      this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
