@@ -183,3 +183,39 @@ Follow-up fix validated in the same session:
 - automatic `requestControl` no longer takeovers an existing ACTIVE controller (`allowTakeover:false` on auto recovery paths). Without this, dual-viewer tunnel mode switch was revoked by observer recovery and tunnel media control could not send.
 
 Still not claimed: non-black first frame product visual, FPS/jitter product SLO, physical keyboard, Terminal alt-screen matrix, Host-side mouse open/select visual, formal-domain TLS product PASS.
+
+
+## Runtime acceptance re-run (2026-07-31)
+
+Services: local signal-server + Host already online; Cloudflare tunnel **not** rebuilt.
+
+Command:
+
+```bash
+python3 scripts/runtime_reliability_acceptance_final.py
+```
+
+Report: `/tmp/wrd-acceptance/task9-final-report.json` (timestamp `2026-07-31T14:41:26Z`)
+
+| Gate | Status | Notes |
+|------|--------|-------|
+| 9B resume 20× P95 | **PASS** | p95=526ms ≤1500, 20/20 |
+| 9B suspend 15s payload stop | **PASS** | |
+| 9C keyboard browser-protocol | **PASS** | input_ready=true; not physical |
+| 9B mouse PointerEvent path | **PASS** | center-content hit; capture ids [1,1,1]; down/up/move |
+| 9D dual Viewer ordered single writer | **PASS** | |
+| 9D tunnel media 20× Host ack+fresh frame | **PASS** | 20/20, p95=319ms ≤2500; attempt_unchanged 20/20 |
+| 9C physical keyboard | **NOT RUN** | needs user presses |
+| 9C os-reserved | **NOT RUN** | |
+| 9A reset-blocked fault injection | **NOT RUN** | |
+| 9D trycloudflare safe URL media | **NOT RUN** | debug tunnel not rebuilt |
+| 9D formal fixed-domain product entry | **BLOCKED** | harness formal-entry path |
+
+Fixes validated in this re-run:
+
+1. `<video pause>` no longer force-disables desktop input; re-syncs via `syncDesktopInputGate`.
+2. Acceptance isolates keyboard/mouse contexts and waits for unified input readiness.
+3. Tunnel fresh-frame / request-timeout recovery is soft on the **current attempt** (no silent attempt churn); full refresh (if used) replays media intent on the new attempt.
+4. Closing old PC when entering tunnel clears WebRTC callbacks first so closed events cannot schedule a later refresh that kills the new relay.
+
+Still not claimed: physical keyboard, OS-reserved, Terminal alt-screen full matrix, formal TLS product PASS, non-black first-frame visual SLO.
