@@ -36,6 +36,17 @@ def tunnel_resume_pass(wait_phase_result, final_phase, host_applied_ack, fresh_r
     )
 
 
+def captured_pointer_sequence(captured):
+    """Require repeated capture of one browser-assigned PointerEvent id."""
+    return (
+        isinstance(captured, list)
+        and len(captured) == 3
+        and isinstance(captured[0], int)
+        and captured[0] > 0
+        and all(pointer_id == captured[0] for pointer_id in captured)
+    )
+
+
 def control_snapshot(page):
     return page.evaluate(
         """() => ({
@@ -61,7 +72,7 @@ def login_start(context, origin, name, password, auto_acquire=True):
     page.goto(f"{origin}/", wait_until="domcontentloaded", timeout=45000)
     page.fill("#password", password)
     page.click('button[type="submit"]')
-    page.wait_for_url("**/viewer.html**", timeout=45000)
+    page.wait_for_url("**/viewer.html**", wait_until="domcontentloaded", timeout=45000)
     page.wait_for_selector("#startBtn", timeout=20000)
     if not auto_acquire:
         # startBtn normally requests control. Preserve that method for the
@@ -120,18 +131,39 @@ def video_bytes(page):
 
 
 def ensure_input_ready(page):
-    """Bind lease/input only when media is truly active after a fresh frame."""
-    page.evaluate(
-        """() => {
-          if (typeof Input !== 'undefined') {
-            if (WebRTC.controlState && WebRTC.controlState.lease) {
-              Input.setControlLease(WebRTC.controlState.lease);
-            }
-            if (WebRTC.canEnableDesktopInput()) Input.setActive(true);
-          }
-        }"""
-    )
-    page.wait_for_timeout(300)
+    """Bind lease/input only when media gate is active after a real decoded/rendered frame."""
+    end = time.time() + 25
+    while time.time() < end:
+        ready = page.evaluate(
+            """async () => {
+              const hasLease = !!(WebRTC.controlState && WebRTC.controlState.lease);
+              let framesDecoded = 0;
+              if (WebRTC.pc) {
+                const stats = await WebRTC.pc.getStats();
+                stats.forEach((r) => {
+                  if (r.type === 'inbound-rtp' && r.kind === 'video') {
+                    framesDecoded = Number(r.framesDecoded) || 0;
+                  }
+                });
+              }
+              const freshFrame = (Number(WebRTC._videoFrameSeq) || 0) > 0 || framesDecoded > 0;
+              const phase = WebRTC.getMediaAppliedPhase();
+              const gate = !!WebRTC.canEnableDesktopInput();
+              if (typeof Input !== 'undefined' && hasLease) {
+                Input.setControlLease(WebRTC.controlState.lease);
+                // Authority is the unified gate; never force-active while suspended/resuming.
+                if (typeof WebRTC.syncDesktopInputGate === 'function') WebRTC.syncDesktopInputGate();
+                else Input.setActive(gate);
+              }
+              return hasLease && gate && freshFrame && phase === 'active' && !!(Input && Input.isActive);
+            }"""
+        )
+        if ready:
+            return True
+        page.wait_for_timeout(200)
+    return bool(page.evaluate(
+        "() => !!(Input && Input.isActive && WebRTC.canEnableDesktopInput() && WebRTC.getMediaAppliedPhase() === 'active')"
+    ))
 
 
 def main():
@@ -202,7 +234,10 @@ def main():
         wait_phase(page, "active", 10)
 
         # ---- keyboard browser-protocol broader ----
-        ensure_input_ready(page)
+        ctx.close()
+        ctx_keyboard = browser.new_context(viewport={"width": 1280, "height": 800})
+        page = login_start(ctx_keyboard, LOCAL, "final-local-keyboard", password)
+        keyboard_ready = ensure_input_ready(page)
         kb = page.evaluate(
             """() => {
               const sent = [];
@@ -221,7 +256,7 @@ def main():
               };
               if (typeof Input !== 'undefined') {
                 Input.setControlLease(WebRTC.controlState.lease);
-                Input.setActive(true);
+                Input.setActive(WebRTC.canEnableDesktopInput() && (Number(WebRTC._videoFrameSeq) || 0) > 0);
               }
               const ctrl = Input && Input.ensureKeyboardController ? Input.ensureKeyboardController() : (Input && Input.keyboardController);
               const fire = (type, key, code, mods={}) => {
@@ -271,52 +306,104 @@ def main():
         report["gates"]["9C_keyboard_browser_protocol_matrix_v2"] = {
             "status": "PASS" if kb.get("sentCount", 0) >= 8 and kb.get("pressedCount", 1) == 0 else "FAIL",
             "kb": kb,
+            "input_ready": keyboard_ready,
             "label": "browser-protocol",
             "note": "broader protocol-path subset via controller handleDomEvent; not physical/os-reserved full product matrix",
         }
 
         # Mouse protocol via the same PointerEvent/capture path used in-browser.
-        mouse = page.evaluate(
-            """async () => {
+        ctx_keyboard.close()
+        ctx_mouse = browser.new_context(viewport={"width": 1280, "height": 800})
+        page = login_start(ctx_mouse, LOCAL, "final-local-mouse", password)
+        mouse_ready = ensure_input_ready(page)
+        mouse_target_ready = False
+        target_end = time.time() + 20
+        while time.time() < target_end:
+            mouse_target_ready = bool(page.evaluate(
+                """() => {
+                  const v = document.getElementById('remoteVideo');
+                  const r = v?.getBoundingClientRect();
+                  return !!(
+                    v && Input && Input.videoElement === v &&
+                    (v.readyState || 0) >= 2 && r && r.width > 0 && r.height > 0 &&
+                    WebRTC.canEnableDesktopInput() && Input.isActive
+                  );
+                }"""
+            ))
+            if mouse_target_ready:
+                break
+            page.wait_for_timeout(200)
+        mouse_geometry = page.evaluate(
+            """() => {
+              const v = document.getElementById('remoteVideo');
+              const r = v?.getBoundingClientRect();
+              return r ? {left: r.left, top: r.top, width: r.width, height: r.height} : null;
+            }"""
+        )
+        page.evaluate(
+            """() => {
               const sent=[];
               const orig=WebRTC.sendInput.bind(WebRTC);
               WebRTC.sendInput=(payload)=>{ try{ sent.push({type:payload.type, action:payload.action}); }catch(e){} return orig(payload); };
               const captured=[];
               if (typeof Input!=='undefined') {
                 Input.setControlLease(WebRTC.controlState.lease);
-                Input.setActive(WebRTC.canEnableDesktopInput());
+                if (typeof WebRTC.syncDesktopInputGate === 'function') WebRTC.syncDesktopInputGate();
+                else Input.setActive(WebRTC.canEnableDesktopInput());
                 const v=document.getElementById('remoteVideo');
                 if (v) {
-                  const r=v.getBoundingClientRect();
                   const originalCapture=v.setPointerCapture && v.setPointerCapture.bind(v);
                   v.setPointerCapture=(pointerId)=>{ captured.push(pointerId); try { originalCapture?.(pointerId); } catch (_) {} };
-                  const mk=(type,x,y,buttons,detail=1)=>new PointerEvent(type,{
-                    bubbles:true, cancelable:true, pointerId:41, pointerType:'mouse', isPrimary:true,
-                    clientX:r.left+x, clientY:r.top+y, button:0, buttons, detail,
-                  });
-                  v.dispatchEvent(mk('pointerdown', 40, 40, 1, 1));
-                  v.dispatchEvent(mk('pointerup', 40, 40, 0, 1));
-                  v.dispatchEvent(mk('pointerdown', 40, 40, 1, 2));
-                  v.dispatchEvent(mk('pointerup', 40, 40, 0, 2));
-                  v.dispatchEvent(mk('pointerdown', 40, 40, 1, 1));
-                  v.dispatchEvent(mk('pointermove', 80, 60, 1, 1));
-                  v.dispatchEvent(mk('pointerup', 80, 60, 0, 1));
-                  await new Promise(requestAnimationFrame);
-                  v.setPointerCapture=originalCapture;
                 }
               }
-              WebRTC.sendInput=orig;
-              return {sentCount: sent.length, sent: sent.slice(0,30), captured};
+              window.__acceptanceMouse = {sent, captured, orig, video: document.getElementById('remoteVideo')};
             }"""
         )
+        if mouse_geometry:
+            # Browser target center corresponds to the content center (r.width / 2).
+            cx = mouse_geometry["left"] + mouse_geometry["width"] / 2
+            cy = mouse_geometry["top"] + mouse_geometry["height"] / 2
+            page.mouse.move(cx, cy)
+            page.mouse.down()
+            page.mouse.up()
+            page.mouse.down()
+            page.mouse.up()
+            page.mouse.down()
+            page.mouse.move(cx + 40, cy + 20)
+            page.mouse.up()
+        page.wait_for_timeout(100)
+        mouse = page.evaluate(
+            """() => {
+              const state = window.__acceptanceMouse || {};
+              if (state.video && state.orig) state.video.setPointerCapture = state.orig;
+              if (state.orig) WebRTC.sendInput = state.orig;
+              return {
+                sentCount: state.sent?.length || 0,
+                sent: (state.sent || []).slice(0, 30),
+                captured: state.captured || [],
+                inputActive: !!(Input && Input.isActive),
+                gate: !!WebRTC.canEnableDesktopInput(),
+              };
+            }"""
+        )
+        mouse_has_down = any(item.get("action") == "down" for item in (mouse.get("sent") or []))
         report["gates"]["9B_mouse_protocol_v2"] = {
-            "status": "PASS" if mouse.get("sentCount", 0) >= 3 and mouse.get("captured") == [41, 41, 41] else "FAIL",
+            "status": (
+                "PASS"
+                if mouse_ready and mouse_target_ready
+                and mouse.get("sentCount", 0) >= 3
+                and captured_pointer_sequence(mouse.get("captured"))
+                and mouse_has_down
+                else "FAIL"
+            ),
             "mouse": mouse,
+            "input_ready": mouse_ready,
+            "target_ready": mouse_target_ready,
             "label": "browser-protocol",
         }
 
         page.screenshot(path=str(OUT / "final-local-done.png"), full_page=True)
-        ctx.close()
+        ctx_mouse.close()
 
         # ---- formal dual viewer ----
         # The local Signal/Host entry is the protocol target. Formal-entry TLS
@@ -382,8 +469,29 @@ def main():
             if st["mode"] == "tunnel" and st["connected"]:
                 break
             b.wait_for_timeout(300)
+        # The first matrix operation must begin from an applied active tunnel
+        # stream. Starting during mode-switch/reconnect races the suspend intent
+        # with producer startup and makes the result a setup failure.
+        tunnel_ready = False
+        ready_end = time.time() + 20
+        while time.time() < ready_end:
+            ready = b.evaluate(
+                """() => ({
+                  active: WebRTC.getMediaAppliedPhase() === 'active',
+                  tunnel: !!WebRTC.tunnelRelayActive,
+                  socket: !!(WebRTC.socket && WebRTC.socket.connected),
+                  frameSeq: Number(WebRTC._videoFrameSeq) || 0,
+                  attempt: WebRTC.currentConnectionAttemptId || null,
+                })"""
+            )
+            if ready["active"] and ready["tunnel"] and ready["socket"] and ready["frameSeq"] > 0 and ready["attempt"]:
+                tunnel_ready = True
+                break
+            b.wait_for_timeout(200)
         tunnel_samples = []
         for i in range(20):
+            if not tunnel_ready:
+                break
             b.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', true)")
             suspended = wait_phase(b, "suspended", 10)
             b.wait_for_timeout(300)
@@ -434,7 +542,22 @@ def main():
                 "baseline": baseline,
                 "after": after,
                 "pass": passed,
+                "attempt_unchanged": baseline.get("attempt") == after.get("attempt"),
             })
+            # Drain to a stable active tunnel before the next sample so a soft
+            # recovery from the previous iteration cannot pollute the next one.
+            settle_end = time.time() + 8
+            while time.time() < settle_end:
+                settled = b.evaluate(
+                    """() => ({
+                      phase: WebRTC.getMediaAppliedPhase(),
+                      tunnel: !!WebRTC.tunnelRelayActive,
+                      mode: WebRTC.networkMode,
+                    })"""
+                )
+                if settled.get("phase") == "active" and settled.get("tunnel") and settled.get("mode") == "tunnel":
+                    break
+                b.wait_for_timeout(100)
             b.wait_for_timeout(150)
         passed_tunnel_samples = [sample["resume_ms"] for sample in tunnel_samples if sample["pass"]]
         tunnel_p95 = None
@@ -443,7 +566,7 @@ def main():
             index = max(0, min(len(ordered) - 1, int(round(0.95 * len(ordered))) - 1))
             tunnel_p95 = ordered[index]
         report["gates"]["9D_formal_tunnel_mode_media"] = {
-            "status": "PASS" if len(passed_tunnel_samples) == 20 and tunnel_p95 is not None and tunnel_p95 <= 2500 else "FAIL",
+            "status": "PASS" if tunnel_ready and len(passed_tunnel_samples) == 20 and tunnel_p95 is not None and tunnel_p95 <= 2500 else "FAIL",
             "count_ok": len(passed_tunnel_samples),
             "count_total": len(tunnel_samples),
             "p50": statistics.median(passed_tunnel_samples) if passed_tunnel_samples else None,
@@ -453,6 +576,7 @@ def main():
             "origin": BROWSER_PROTOCOL_ORIGIN,
             "label": "browser-protocol",
             "note": "requires matching Host ACK, fresh post-resume relay frame, exact active phase, and bounded latency",
+            "tunnel_ready": tunnel_ready,
         }
 
         b.screenshot(path=str(OUT / "final-formal-tunnel.png"), full_page=True)

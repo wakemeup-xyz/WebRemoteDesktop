@@ -19,6 +19,9 @@ test('tunnel acceptance requires active phase, host ack, fresh relay frame, and 
     "assert not m.tunnel_resume_pass(True, 'active', True, False, 100)",
     "assert not m.tunnel_resume_pass(True, 'active', True, True, 2501)",
     "assert m.tunnel_resume_pass(True, 'active', True, True, 2500)",
+    "assert not m.captured_pointer_sequence([])",
+    "assert not m.captured_pointer_sequence([1, 2, 1])",
+    "assert m.captured_pointer_sequence([1, 1, 1])",
   ].join('; ')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
@@ -32,4 +35,18 @@ test('runtime harness uses pointer events and a sequenced dual-viewer flow', () 
   assert.match(source, /A-get-control/);
   assert.match(source, /B-read-only/);
   assert.match(source, /B-takeover/);
+});
+
+test('acceptance isolates keyboard/mouse contexts and uses unified input readiness', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+  assert.match(source, /def ensure_input_ready/);
+  assert.match(source, /final-local-keyboard/);
+  assert.match(source, /final-local-mouse/);
+  assert.match(source, /syncDesktopInputGate/);
+  assert.match(source, /r\.width \/ 2/);
+});
+
+test('acceptance login waits for Viewer DOM readiness rather than unrelated load completion', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+  assert.match(source, /page\.wait_for_url\("\*\*\/viewer\.html\*\*", wait_until="domcontentloaded", timeout=45000\)/);
 });
