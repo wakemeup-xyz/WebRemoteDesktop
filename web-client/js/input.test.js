@@ -207,3 +207,22 @@ test('desktop mouse and command input require the active lease and carry the v2 
     assert.equal(payload.leaseEpoch, 3);
   }
 });
+
+
+test('video pause does not permanently disable input while media gate is active', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  context.WebRTC.canEnableDesktopInput = () => true;
+  context.WebRTC.syncDesktopInputGate = () => {
+    Input.setActive(context.WebRTC.canEnableDesktopInput());
+  };
+  Input.setActive(true);
+  assert.equal(Input.isActive, true);
+  video.listeners.get('pause')();
+  assert.equal(Input.isActive, true, 'pause must re-sync through media gate, not force off');
+  context.WebRTC.canEnableDesktopInput = () => false;
+  video.listeners.get('pause')();
+  assert.equal(Input.isActive, false);
+});

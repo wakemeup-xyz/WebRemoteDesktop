@@ -242,6 +242,23 @@ const WebRTC = {
     }
   },
 
+  recoverTunnelMediaOnCurrentAttempt(reason = 'tunnel-soft-recover') {
+    // Tunnel media recovery must not invent a new connectionAttemptId. A full
+    // refresh() rebinds attempt authority and would orphan the in-flight Host
+    // ack / generation that armMediaResumeFallback was waiting for.
+    if (this.networkMode !== 'tunnel' && !this.tunnelRelayActive) return false;
+    if (!this.activeLeaseEnvelope() || !this.socket?.connected) return false;
+    if (this.manualDisconnect) return false;
+    this.clearMediaResumeFallback();
+    if (this._mediaIntent?.state === 'active') {
+      this.captureMediaResumeBaseline(this._mediaIntent.generation);
+    }
+    if (!this.tunnelRelayActive && this.getMediaActivitySnapshot().state === 'active') {
+      this.startTunnelRelay();
+    }
+    return this.replayMediaActivityIntent(reason);
+  },
+
   armMediaResumeFallback() {
     this.clearMediaResumeFallback();
     if (this._mediaResumeRefreshFallbackUsed || this._mediaIntent?.state !== 'active') return;
@@ -250,6 +267,10 @@ const WebRTC = {
       this._mediaResumeFrameTimer = null;
       if (this.getMediaAppliedPhase() !== 'resuming' || this._mediaResumeRefreshFallbackUsed) return;
       this._mediaResumeRefreshFallbackUsed = true;
+      if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+        this.recoverTunnelMediaOnCurrentAttempt('fresh-frame-timeout');
+        return;
+      }
       this.refresh();
     }, timeoutMs);
   },
@@ -267,6 +288,9 @@ const WebRTC = {
     if (snapshot.state === 'active' && reason === 'request-timeout') {
       if (this._mediaResumeRefreshFallbackUsed) return false;
       this._mediaResumeRefreshFallbackUsed = true;
+      if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+        return this.recoverTunnelMediaOnCurrentAttempt(reason);
+      }
       this.refresh();
       return true;
     }
@@ -276,6 +300,9 @@ const WebRTC = {
     }
     if (snapshot.state === 'active' && !this._mediaResumeRefreshFallbackUsed) {
       this._mediaResumeRefreshFallbackUsed = true;
+      if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+        return this.recoverTunnelMediaOnCurrentAttempt(reason);
+      }
       this.refresh();
       return true;
     }
@@ -2135,6 +2162,15 @@ const WebRTC = {
       return;
     }
     if (this.pc) {
+      // Closing the old WebRTC transport is intentional when tunnel takes
+      // ownership. Its closed callbacks must not schedule a later refresh
+      // that tears down the newly started relay producer.
+      this.pc.oniceconnectionstatechange = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.onsignalingstatechange = null;
+      this.pc.onicegatheringstatechange = null;
+      this.pc.onicecandidate = null;
+      this.pc.ontrack = null;
       this.pc.close();
       this.pc = null;
     }
@@ -2220,13 +2256,17 @@ const WebRTC = {
     const lease = this.activeLeaseEnvelope();
     if (lease && this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { ...lease, enabled: false });
     this.tunnelRelayActive = false;
-    document.body.classList.remove('tunnel-relay-active');
+    document.body?.classList?.remove?.('tunnel-relay-active');
     const relayImage = document.getElementById('relayImage');
     if (relayImage) {
-      relayImage.classList.add('hidden');
-      relayImage.removeAttribute('src');
+      relayImage.classList?.add?.('hidden');
+      if (typeof relayImage.removeAttribute === 'function') {
+        relayImage.removeAttribute('src');
+      } else {
+        try { relayImage.src = ''; } catch (_) {}
+      }
     }
-    if (this.tunnelLastObjectUrl) {
+if (this.tunnelLastObjectUrl) {
       URL.revokeObjectURL(this.tunnelLastObjectUrl);
       this.tunnelLastObjectUrl = '';
     }
@@ -2881,10 +2921,14 @@ const WebRTC = {
       }
       if (this.socket?.connected) {
         this.startTunnelRelay();
+        // A media-resume refresh creates a new attempt. Re-issue the in-flight
+        // intent on that attempt so Host ack/generation tracking stays coherent.
+        this.replayMediaActivityIntent('refresh-tunnel');
       }
     } else {
       this.createPeerConnection();
       this.createOffer();
+      this.replayMediaActivityIntent('refresh-webrtc');
     }
   },
 

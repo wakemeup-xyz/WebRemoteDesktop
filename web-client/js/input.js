@@ -119,7 +119,15 @@ const Input = {
     video.addEventListener('click', () => video.focus());
     relayImage?.addEventListener('click', () => relayImage.focus());
     video.addEventListener('playing', () => { if (this.isActive) video.focus(); });
-    video.addEventListener('pause', () => this.setActive(false));
+    // A transient <video> pause must not override the media/control input gate.
+    // While media is applied-active and lease is live, desktop input stays enabled.
+    video.addEventListener('pause', () => {
+      if (typeof WebRTC !== 'undefined' && typeof WebRTC.syncDesktopInputGate === 'function') {
+        WebRTC.syncDesktopInputGate();
+        return;
+      }
+      this.setActive(false);
+    });
     video.addEventListener('contextmenu', (event) => event.preventDefault());
     relayImage?.addEventListener('contextmenu', (event) => event.preventDefault());
     window.addEventListener('blur', () => {

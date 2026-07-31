@@ -3008,6 +3008,138 @@ test('starting a new tunnel producer resets the frame-id cursor', () => {
 });
 
 
+test('tunnel fresh-frame fallback keeps the current attempt', () => {
+  const timers = [];
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  global.setTimeout = (fn, ms) => {
+    const handle = { fn, ms, cleared: false };
+    timers.push(handle);
+    return handle;
+  };
+  global.clearTimeout = (handle) => {
+    if (handle && typeof handle === 'object') handle.cleared = true;
+  };
+  try {
+    const emitted = [];
+    const { WebRTC, context } = loadWebRTC();
+    const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+    require('node:vm').runInContext(runtimeSource, context);
+    WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+    WebRTC.controlState = {
+      state: 'ACTIVE', controller: true, hostOnline: true,
+      lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+    };
+    WebRTC.currentConnectionAttemptId = 'attempt-tunnel-stable';
+    WebRTC.connectionAttemptSequence = 3;
+    WebRTC.networkMode = 'tunnel';
+    WebRTC.tunnelRelayActive = true;
+    WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
+    context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+    let refreshes = 0;
+    WebRTC.refresh = () => { refreshes += 1; WebRTC.beginConnectionAttempt('refresh'); };
+
+    WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 5 });
+    for (const timer of timers) timer.cleared = true;
+    WebRTC.handleMediaActivityAck({
+      state: 'active', generation: 5, connectionAttemptId: 'attempt-tunnel-stable', applied: true,
+    });
+    assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+    const live = timers.filter((t) => !t.cleared);
+    assert.equal(live.length, 1);
+    const beforeAttempt = WebRTC.currentConnectionAttemptId;
+    emitted.length = 0;
+    live[0].fn();
+
+    assert.equal(refreshes, 0);
+    assert.equal(WebRTC.currentConnectionAttemptId, beforeAttempt);
+    assert.equal(
+      emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.connectionAttemptId === beforeAttempt),
+      true,
+    );
+    assert.equal(WebRTC.canEnableDesktopInput(), false);
+  } finally {
+    global.setTimeout = realSetTimeout;
+    global.clearTimeout = realClearTimeout;
+  }
+});
+
+test('refresh while tunnel media is resuming replays intent on the new attempt', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-old';
+  WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+  WebRTC.createSignalingSocket = () => {};
+  const loading = context.document.getElementById('loading');
+  loading.classList = { add() {}, remove() {}, contains() { return false; } };
+  context.document.body.classList = { add() {}, remove() {}, contains() { return false; } };
+  const el = () => ({
+    classList: { add() {}, remove() {}, contains() { return false; } },
+    textContent: '',
+    src: '',
+    removeAttribute() {},
+    setAttribute() {},
+  });
+  context.document.getElementById = (id) => {
+    if (id === 'loading') return loading || el();
+    return el();
+  };
+
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 7 });
+  WebRTC.handleMediaActivityAck({
+    state: 'active', generation: 7, connectionAttemptId: 'attempt-old', applied: true,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+
+  emitted.length = 0;
+  WebRTC.refresh();
+
+  const media = emitted.filter(([event, payload]) => (
+    event === 'relay-stream-control'
+    && payload
+    && payload.mediaControlSchemaVersion === 1
+    && payload.generation === 7
+    && payload.state === 'active'
+  ));
+  assert.ok(media.length >= 1);
+  assert.equal(media.at(-1)[1].connectionAttemptId, WebRTC.currentConnectionAttemptId);
+  assert.notEqual(WebRTC.currentConnectionAttemptId, 'attempt-old');
+});
+
+test('starting tunnel relay detaches closed WebRTC callbacks before closing the old peer', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.networkMode = 'tunnel';
+  const pc = {
+    oniceconnectionstatechange() {}, onconnectionstatechange() {}, onsignalingstatechange() {},
+    onicegatheringstatechange() {}, onicecandidate() {}, ontrack() {},
+    close() { assert.equal(this.onconnectionstatechange, null); },
+  };
+  WebRTC.pc = pc;
+
+  WebRTC.startTunnelRelay();
+
+  assert.equal(WebRTC.pc, null);
+  assert.equal(pc.oniceconnectionstatechange, null);
+  assert.equal(pc.onconnectionstatechange, null);
+});
+
+
 test('stable viewport while adaptive relay frame sizes change', () => {
   const { WebRTC, context, elements } = loadWebRTC();
   WebRTC.tunnelRelayActive = true;
