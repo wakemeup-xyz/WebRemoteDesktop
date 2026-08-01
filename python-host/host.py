@@ -1600,6 +1600,22 @@ class WebRemoteHost:
         self.current_viewer_id = viewer_id
         return True
 
+    def _offer_attempt_is_stale(self, viewer_id, offer_sequence):
+        """Return True when a newer tunnel/bind sequence already owns this viewer."""
+        binding = getattr(self, "_active_input_binding", None)
+        if not isinstance(binding, dict):
+            return False
+        if binding.get("viewerId") != viewer_id:
+            return False
+        current_sequence = binding.get("connectionAttemptSequence")
+        if not isinstance(current_sequence, int) or current_sequence < 1:
+            return False
+        if not isinstance(offer_sequence, int) or offer_sequence < 1:
+            # A newer explicit bind already advanced authority; bare offers must not
+            # clobber tunnel attempt ownership after mode switch.
+            return True
+        return offer_sequence < current_sequence
+
     @staticmethod
     def _binding_matches(left, right):
         return bool(left) and bool(right) and all(
@@ -1825,6 +1841,15 @@ class WebRemoteHost:
         async with self._offer_lock:
             if not self._should_process_offer(viewer_id, offer_epoch):
                 return
+            offer_sequence = data.get("connectionAttemptSequence")
+            if self._offer_attempt_is_stale(viewer_id, offer_sequence):
+                logger.info(
+                    "Ignoring stale offer attempt viewer=%s offerSequence=%s activeSequence=%s",
+                    viewer_id,
+                    offer_sequence,
+                    (getattr(self, "_active_input_binding", None) or {}).get("connectionAttemptSequence"),
+                )
+                return
 
             try:
                 await self._close_peer_connection(reason="new-offer", reset_offer_state=False)
@@ -1847,6 +1872,8 @@ class WebRemoteHost:
                         "connectionGeneration": self._connection_generation,
                         "connectionAttemptId": connection_attempt_id,
                     }
+                    if isinstance(offer_sequence, int) and offer_sequence >= 1:
+                        binding["connectionAttemptSequence"] = offer_sequence
                     result = await self.input_handler.transition_keyboard(
                         connection_generation=binding["connectionGeneration"],
                         lease_id=binding["leaseId"],

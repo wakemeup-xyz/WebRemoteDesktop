@@ -242,3 +242,62 @@ Automated verification on `c871e99`:
 | Python | **144 pass / 0 fail** (1 existing mss deprecation warning) |
 
 Post-remediation browser/runtime acceptance: **NOT RUN**. The agent did not restart user-managed services. Previous latency, mouse, keyboard, dual-Viewer, and tunnel rows are historical evidence only and do not close runtime acceptance for `c871e99`.
+
+## Tunnel resume closure re-run (2026-08-01, Asia/Shanghai)
+
+Base: `aa315e0992a0d249f21a64fd75f4a483160aab96`, plus the tunnel-resume fixes recorded in this commit.
+
+### Root cause closed
+
+Formal dual-Viewer tunnel resume was stuck in `resuming` / first-sample setup races because:
+
+1. After B takeover, an in-flight WebRTC offer could finish on Host **after** tunnel `connection-attempt-bind` and clobber Host attempt authority back to the older offer attempt (`wrong-attempt`).
+2. Signal only forwarded Host binds on `bound:true`, so idempotent rebinds could not heal Host.
+3. Viewer tunnel media control did not re-assert the current attempt before each control, and wrong-attempt recovery did not rebind.
+
+Fixes included here:
+
+- Host ignores late offers whose `connectionAttemptSequence` is older than the active bind.
+- Signal always emits Host `connection-attempt-bind` on successful bind, including idempotent rebinds.
+- Viewer rebinds before tunnel media control and on `wrong-attempt` / `applied-false` recovery.
+- Acceptance primes one uncounted tunnel suspend/resume before the 20-sample matrix.
+
+Cloudflare tunnel was **not** rebuilt/rotated. `scripts/stop-safe-wrd.sh` was **not** run.
+
+### Automated gates (this re-run)
+
+| Matrix | Result |
+|--------|--------|
+| Signal server | **257 pass / 0 fail** |
+| Viewer / scripts | **346 pass / 0 fail** |
+| Python | **145 pass / 0 fail** (1 existing mss deprecation warning) |
+| `git diff --check` | clean |
+
+### Runtime acceptance (this re-run)
+
+Command:
+
+```bash
+/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 \
+  scripts/runtime_reliability_acceptance_final.py
+```
+
+Immutable artifact: `/tmp/wrd-acceptance/task9-final-report-2026-07-31T19-53-52Z.json`  
+Latest pointer: `/tmp/wrd-acceptance/task9-final-report.json`  
+SHA-256: `d69844d1ffd5aed4afaea7cbdeed32be785e1785c5277c9a582b047d1fb2d4fc`
+
+| Gate | Status | Notes |
+|------|--------|-------|
+| 9B WebRTC resume 20× P95 | **PASS** | 20/20, p95=832ms ≤1500ms |
+| 9B suspend 15s payload stop | **PASS** | |
+| 9C keyboard browser-protocol | **PASS** | not physical / not OS-reserved |
+| 9B mouse PointerEvent path | **PASS** | pointer capture path exercised |
+| 9D dual Viewer ordered single writer | **PARTIAL** | A control → B read-only → B takeover → A revoke; local old-controller write rejected; Signal/Host rejection telemetry still not live-observed |
+| 9D tunnel media 20× Host ack + fresh frame | **PASS** | 20/20, p95=1371ms ≤2500ms; exact `phase=active`, Host applied ack, fresh relay frame, attempt unchanged |
+| 9C physical keyboard | **NOT RUN** | requires user presses |
+| 9C os-reserved | **NOT RUN** | OS/browser intercept |
+| 9A reset-blocked fault injection | **NOT RUN** | no safe fault hook |
+| 9D trycloudflare safe URL media | **NOT RUN** | tunnel lifecycle unchanged |
+| 9D formal fixed-domain product entry | **BLOCKED** | harness formal-entry path / TLS product delivery |
+
+Labels used: **PASS**, **PARTIAL**, **BLOCKED**, **NOT RUN**. No synthetic frame unlock. No health-200-as-media-pass.

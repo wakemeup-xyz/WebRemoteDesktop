@@ -47,6 +47,7 @@ test('acceptance isolates keyboard/mouse contexts and uses unified input readine
   assert.match(source, /final-local-mouse/);
   assert.match(source, /syncDesktopInputGate/);
   assert.match(source, /r\.width \/ 2/);
+  assert.match(source, /Prime one uncounted suspend\/resume/);
 });
 
 test('acceptance login waits for Viewer DOM readiness rather than unrelated load completion', () => {

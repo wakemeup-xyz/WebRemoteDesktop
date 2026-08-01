@@ -2801,6 +2801,37 @@ test('media intent queues without a lease and replays after regrant on the curre
   assert.equal(WebRTC.getMediaAppliedPhase(), 'suspending');
 });
 
+test('desired media state changes queue while the socket is disconnected and replay after reconnect', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = {
+    connected: false,
+    emit(...args) { emitted.push(args); },
+    on() {},
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-offline';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+
+  WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['page-hidden'], generation: 3 });
+  assert.equal(emitted.length, 0);
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'suspending');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+
+  WebRTC.socket.connected = true;
+  assert.equal(WebRTC.replayMediaActivityIntent('socket-connect'), true);
+  const request = emitted.find(([event]) => event === 'media-activity-change');
+  assert.equal(request[1].generation, 3);
+  assert.equal(request[1].state, 'suspended');
+  assert.equal(request[1].connectionAttemptId, 'attempt-offline');
+});
+
 test('resume failures use one refresh fallback and keep desktop input disabled', () => {
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -2841,6 +2872,7 @@ test('dual-routed applied:false ack triggers only one bounded replay', () => {
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
   };
   WebRTC.currentConnectionAttemptId = 'attempt-dual';
+  WebRTC.connectionAttemptSequence = 4;
   WebRTC.networkMode = 'tunnel';
   WebRTC.tunnelRelayActive = true;
   WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
@@ -2860,10 +2892,47 @@ test('dual-routed applied:false ack triggers only one bounded replay', () => {
   WebRTC.handleMediaActivityAck(ack);
   WebRTC.handleMediaActivityAck(ack);
 
+  const binds = emitted.filter(([event]) => event === 'connection-attempt-bind');
   const replays = emitted.filter(([event]) => event === 'relay-stream-control');
+  assert.ok(binds.length >= 1);
   assert.equal(replays.length, 1);
   assert.equal(refreshes, 0);
   assert.equal(WebRTC.canEnableDesktopInput(), false);
+});
+
+test('wrong-attempt media failure rebinds the current tunnel attempt once', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-tunnel-current';
+  WebRTC.connectionAttemptSequence = 6;
+  WebRTC.networkMode = 'tunnel';
+  WebRTC.tunnelRelayActive = true;
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 2500 });
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+  WebRTC._mediaIntent = { state: 'suspended', reasons: ['manual-pause'], generation: 2 };
+  WebRTC.mediaActivityRuntime.beginDesired('suspended', {
+    generation: 2,
+    connectionAttemptId: 'attempt-tunnel-current',
+  });
+
+  assert.equal(WebRTC.handleMediaRequestFailure('wrong-attempt'), true);
+  assert.equal(WebRTC.handleMediaRequestFailure('wrong-attempt'), false);
+
+  const binds = emitted.filter(([event]) => event === 'connection-attempt-bind');
+  const controls = emitted.filter(([event]) => event === 'relay-stream-control');
+  assert.ok(binds.length >= 1);
+  assert.equal(binds[0][1].connectionAttemptId, 'attempt-tunnel-current');
+  assert.equal(binds[0][1].connectionAttemptSequence, 6);
+  assert.equal(controls.length, 1);
+  assert.equal(controls[0][1].generation, 2);
+  assert.equal(controls[0][1].state, 'suspended');
 });
 
 test('stale applied:false ack cannot retry the current media intent', () => {

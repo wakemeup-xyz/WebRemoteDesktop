@@ -535,6 +535,32 @@ def main():
                 tunnel_ready = True
                 break
             b.wait_for_timeout(200)
+        # Prime one uncounted suspend/resume so the measured matrix starts from an
+        # already-bound Host attempt. The first post-mode-switch control can still
+        # race a late WebRTC offer without counting that setup cost as product SLO.
+        if tunnel_ready:
+            b.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', true)")
+            wait_phase(b, "suspended", 12)
+            b.evaluate("() => WebRTC.setMediaActivityReason('manual-pause', false)")
+            wait_phase(b, "active", 12)
+            settle_end = time.time() + 8
+            while time.time() < settle_end:
+                settled = b.evaluate(
+                    """() => ({
+                      phase: WebRTC.getMediaAppliedPhase(),
+                      tunnel: !!WebRTC.tunnelRelayActive,
+                      mode: WebRTC.networkMode,
+                      frameSeq: Number(WebRTC._videoFrameSeq) || 0,
+                    })"""
+                )
+                if (
+                    settled.get("phase") == "active"
+                    and settled.get("tunnel")
+                    and settled.get("mode") == "tunnel"
+                    and settled.get("frameSeq", 0) > 0
+                ):
+                    break
+                b.wait_for_timeout(100)
         tunnel_samples = []
         for i in range(20):
             if not tunnel_ready:

@@ -998,13 +998,13 @@ function setupSignaling(io, options = {}) {
         });
         return;
       }
-      if (bindResult.bound) {
-        emitHostConnectionAttemptBind(socket.id, bindResult, {
-          leaseId: data.leaseId,
-          leaseEpoch: data.leaseEpoch,
-          networkMode: data.networkMode,
-        });
-      }
+      // Always inform Host, including idempotent rebinds. A late WebRTC offer can
+      // otherwise leave Host on a stale attempt after the Viewer already moved on.
+      emitHostConnectionAttemptBind(socket.id, bindResult, {
+        leaseId: data.leaseId,
+        leaseEpoch: data.leaseEpoch,
+        networkMode: data.networkMode,
+      });
       socket.emit('connection-attempt-bound', {
         schemaVersion: 1,
         connectionAttemptId: bindResult.connectionAttemptId,

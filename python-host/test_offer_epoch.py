@@ -690,6 +690,61 @@ async def test_relay_stop_from_stale_viewer_does_not_stop_active_relay():
 
 
 @pytest.mark.asyncio
+async def test_late_offer_with_stale_attempt_sequence_is_ignored():
+    """Tunnel bind with a newer sequence must not be clobbered by a late WebRTC offer."""
+    host = object.__new__(WebRemoteHost)
+    host.pc = None
+    host._offer_epoch = 0
+    host.current_viewer_id = 'viewer-1'
+    host._offer_lock = __import__('asyncio').Lock()
+    host._connection_generation = 3
+    host._active_input_binding = {
+        'viewerId': 'viewer-1',
+        'leaseId': 'lease-000000000001',
+        'leaseEpoch': 5,
+        'connectionGeneration': 3,
+        'connectionAttemptId': 'attempt-tunnel',
+        'connectionAttemptSequence': 3,
+    }
+    host._media_activity_binding = {
+        'viewerId': 'viewer-1',
+        'connectionAttemptId': 'attempt-tunnel',
+        'generation': 0,
+        'state': 'active',
+    }
+    host.input_handler = type('IH', (), {
+        'transition_keyboard': staticmethod(lambda **kwargs: (_ for _ in ()).throw(AssertionError('must not rebind'))),
+    })()
+    host.sio = type('S', (), {'emit': staticmethod(lambda *a, **k: None)})()
+    host.screen_track = None
+    host.media_sender = None
+    host.relay_streamer = None
+    host.pending_candidates = None
+    host._input_datachannel = None
+
+    closed = {'count': 0}
+    async def fake_close(**kwargs):
+        closed['count'] += 1
+    host._close_peer_connection = fake_close
+
+    await host.on_offer({
+        'viewerId': 'viewer-1',
+        'epoch': 9,
+        'offer': {'type': 'offer', 'sdp': 'v=0'},
+        'leaseId': 'lease-000000000001',
+        'leaseEpoch': 5,
+        'connectionAttemptId': 'attempt-old-webrtc',
+        'connectionAttemptSequence': 1,
+        'networkMode': 'auto',
+    })
+
+    assert closed['count'] == 0
+    assert host._active_input_binding['connectionAttemptId'] == 'attempt-tunnel'
+    assert host._active_input_binding['connectionAttemptSequence'] == 3
+    assert host._media_activity_binding['connectionAttemptId'] == 'attempt-tunnel'
+
+
+@pytest.mark.asyncio
 async def test_tunnel_media_control_acks_only_after_producer_suspend_and_rejects_stale_attempt():
     events = []
 

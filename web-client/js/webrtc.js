@@ -299,6 +299,17 @@ const WebRTC = {
     }
     if (!this._mediaRequestRetryUsed) {
       this._mediaRequestRetryUsed = true;
+      // Late WebRTC offers can leave Host on a stale attempt after tunnel switch.
+      // Re-assert the current attempt before the single bounded replay.
+      if (reason === 'wrong-attempt' || reason === 'applied-false') {
+        this.bindCurrentConnectionAttempt();
+      }
+      if (
+        (reason === 'wrong-attempt' || reason === 'applied-false')
+        && (this.networkMode === 'tunnel' || this.tunnelRelayActive)
+      ) {
+        return this.recoverTunnelMediaOnCurrentAttempt(reason);
+      }
       return this.replayMediaActivityIntent(reason);
     }
     if (snapshot.state === 'active' && !this._mediaResumeRefreshFallbackUsed) {
@@ -340,6 +351,9 @@ const WebRTC = {
 
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      // Re-assert attempt authority before media control so a late WebRTC offer
+      // cannot leave Host on a stale attempt across the first suspend/resume.
+      this.bindCurrentConnectionAttempt();
       // Keep main's resuming gate, but wait for Host applied ack (never synthetic).
       return this.emitRelayStreamControl({
         enabled: desired === 'active',
