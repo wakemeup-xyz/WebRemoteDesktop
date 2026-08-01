@@ -285,17 +285,18 @@ def clamp_int(value, minimum, maximum, fallback):
 def build_ice_servers(mode="auto"):
     """Build Host ICE config from env; TURN inclusion is session/mode scoped."""
     ice_servers = []
+    normalized_mode = normalize_network_mode(mode) or "auto"
     stun_urls = split_env_list(
         os.environ.get("STUN_URLS", "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302")
     )
-    if stun_urls:
+    # relay mode: TURN only — avoid host/srflx distraction (no iceTransportPolicy in aiortc).
+    if stun_urls and normalized_mode != "relay":
         ice_servers.append(RTCIceServer(urls=stun_urls))
 
     turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
     turn_username = os.environ.get("TURN_USERNAME")
     turn_credential = os.environ.get("TURN_CREDENTIAL")
     include_turn = should_include_turn_for_mode(mode)
-    normalized_mode = normalize_network_mode(mode) or "auto"
 
     if turn_urls and not include_turn:
         logger.info(
@@ -784,6 +785,44 @@ def format_keyboard_command(action, payload):
     command = "+".join(parts + ([key] if key else []))
     arrow = "↓" if action == "keydown" else "↑"
     return f"{arrow}{command or key}"
+
+
+def ice_candidate_type_from_sdp(candidate_sdp: str) -> str:
+    text = str(candidate_sdp or "").strip()
+    if text.startswith("candidate:"):
+        text = text[len("candidate:"):]
+    parts = text.split()
+    if "typ" in parts:
+        idx = parts.index("typ")
+        if idx + 1 < len(parts):
+            return str(parts[idx + 1]).lower()
+    return ""
+
+
+def should_emit_ice_candidate(mode, candidate_sdp: str) -> bool:
+    normalized = normalize_network_mode(mode) or "auto"
+    if normalized != "relay":
+        return True
+    return ice_candidate_type_from_sdp(candidate_sdp) == "relay"
+
+
+def filter_sdp_ice_candidates(mode, sdp: str) -> str:
+    normalized = normalize_network_mode(mode) or "auto"
+    if normalized != "relay" or not sdp:
+        return sdp
+    lines = str(sdp).splitlines()
+    kept = []
+    for line in lines:
+        if line.startswith("a=candidate:"):
+            candidate = line[len("a="):]
+            if not should_emit_ice_candidate(normalized, candidate):
+                continue
+        kept.append(line)
+    # Preserve whether original ended with a trailing newline.
+    body = "\r\n".join(kept)
+    if str(sdp).endswith("\n"):
+        return body + ("\r\n" if "\r\n" in str(sdp) else "\n")
+    return body
 
 
 def parse_ice_candidate(candidate_str):

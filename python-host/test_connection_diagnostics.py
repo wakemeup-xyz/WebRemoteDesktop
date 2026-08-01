@@ -144,8 +144,9 @@ def test_turn_env_is_included_for_relay_even_under_strict_stun(monkeypatch):
     monkeypatch.setenv("WRD_MEDIA_POLICY", "strict-stun")
 
     ice_servers = build_ice_servers("relay")
-    assert len(ice_servers) >= 2
+    assert len(ice_servers) == 1  # TURN only; no STUN in relay mode
     assert any("turn:" in repr(server) for server in ice_servers)
+    assert all("stun:" not in repr(server) for server in ice_servers)
 
 
 def test_turn_fingerprint_matches_node_normalization_vector(monkeypatch):
