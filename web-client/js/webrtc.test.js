@@ -3014,6 +3014,54 @@ test('control loss clears frame readiness and observer frames cannot arm regrant
   assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), true);
 });
 
+test('media resume fallback does not arm before PC is connected on webrtc paths', () => {
+  const timers = [];
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  global.setTimeout = (fn, ms) => {
+    const handle = { fn, ms, cleared: false };
+    timers.push(handle);
+    return handle;
+  };
+  global.clearTimeout = (handle) => {
+    if (handle && typeof handle === 'object') handle.cleared = true;
+  };
+  try {
+    const { WebRTC, context } = loadWebRTC();
+    const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+    require('node:vm').runInContext(runtimeSource, context);
+    WebRTC.socket = { connected: true, emit() {}, on() {} };
+    WebRTC.controlState = {
+      state: 'ACTIVE', controller: true, hostOnline: true,
+      lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+    };
+    WebRTC.currentConnectionAttemptId = 'attempt-arm';
+    WebRTC.networkMode = 'relay';
+    WebRTC.pc = { connectionState: 'connecting', iceConnectionState: 'checking' };
+    WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+    context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+
+    WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 1 });
+    for (const timer of timers) timer.cleared = true;
+    WebRTC.handleMediaActivityAck({
+      state: 'active', generation: 1, connectionAttemptId: 'attempt-arm', applied: true,
+    });
+    assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+    assert.equal(timers.filter((t) => !t.cleared).length, 0);
+    assert.equal(WebRTC._mediaResumeArmPending, true);
+
+    WebRTC.pc.connectionState = 'connected';
+    WebRTC.pc.iceConnectionState = 'connected';
+    WebRTC.ensureMediaResumeFallbackArmed('pc-connected');
+    const live = timers.filter((t) => !t.cleared);
+    assert.equal(live.length, 1);
+    assert.equal(live[0].ms, 12000);
+  } finally {
+    global.setTimeout = realSetTimeout;
+    global.clearTimeout = realClearTimeout;
+  }
+});
+
 test('fresh-frame fallback cancels prior timer and runs refresh only once', () => {
   const timers = [];
   const realSetTimeout = global.setTimeout;
@@ -3036,10 +3084,15 @@ test('fresh-frame fallback cancels prior timer and runs refresh only once', () =
       lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
     };
     WebRTC.currentConnectionAttemptId = 'attempt-timer';
+    WebRTC.networkMode = 'relay';
+    WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected', restartIce() {} };
     WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
     context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
     let refreshes = 0;
-    WebRTC.refresh = () => { refreshes += 1; };
+    WebRTC.refresh = (options) => {
+      refreshes += 1;
+      WebRTC._refreshReason = options?.reason || null;
+    };
 
     WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 4 });
     // Drop request-timeout timers from beginDesired so we only assert resume fallback.
@@ -3052,22 +3105,61 @@ test('fresh-frame fallback cancels prior timer and runs refresh only once', () =
     });
     assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
     const armed = timers.filter((t) => !t.cleared);
-    assert.ok(armed.length >= 1);
+    assert.equal(armed.length, 1);
+    assert.equal(armed[0].ms, 12000);
 
-    // Re-arming / success path must cancel the previous fallback timer.
+    // Re-arming must cancel the previous fallback timer and keep a single live timer.
     WebRTC.clearMediaResumeFallback();
     WebRTC.armMediaResumeFallback();
     WebRTC.armMediaResumeFallback();
-    const live = timers.filter((t) => !t.cleared);
+    let live = timers.filter((t) => !t.cleared);
     assert.equal(live.length, 1);
-    live[0].fn();
-    live[0].fn();
+
+    // First timeout is soft recover only — no full refresh.
+    const first = live[0];
+    first.cleared = true; // fired
+    first.fn();
+    assert.equal(refreshes, 0);
+    assert.equal(WebRTC._mediaResumeSoftRecoverUsed, true);
+    assert.equal(WebRTC._mediaResumeRefreshFallbackUsed, false);
+
+    // Soft recover may also create a request-timeout timer via replay; only the
+    // re-armed resume fallback timer (relay=12000) may escalate to hard refresh.
+    live = timers.filter((t) => !t.cleared && t.ms === 12000);
+    assert.equal(live.length, 1);
+    const second = live[0];
+    second.cleared = true; // fired
+    second.fn();
+    // Second timeout escalates to hard refresh once.
     assert.equal(refreshes, 1);
+    assert.equal(WebRTC._mediaResumeRefreshFallbackUsed, true);
     assert.equal(WebRTC.canEnableDesktopInput(), false);
   } finally {
     global.setTimeout = realSetTimeout;
     global.clearTimeout = realClearTimeout;
   }
+});
+
+test('fresh-frame hard refresh inherits resume budget and does not loop', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.networkMode = 'relay';
+  WebRTC.currentConnectionAttemptId = 'attempt-1';
+  WebRTC._mediaResumeRefreshFallbackUsed = true;
+  WebRTC._refreshReason = 'fresh-frame-timeout';
+  WebRTC.beginConnectionAttempt('refresh');
+  assert.equal(WebRTC._mediaResumeRefreshFallbackUsed, true);
+  assert.notEqual(WebRTC.currentConnectionAttemptId, 'attempt-1');
+
+  WebRTC._refreshReason = 'manual';
+  WebRTC.beginConnectionAttempt('viewer-open');
+  assert.equal(WebRTC._mediaResumeRefreshFallbackUsed, false);
 });
 
 test('stale attempt relay frame cannot unlock a newer resume attempt', () => {

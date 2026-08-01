@@ -1,3 +1,12 @@
+const MEDIA_RESUME_FRAME_TIMEOUT_MS = {
+  tunnel: 2500,
+  relay: 12000,
+  auto: 8000,
+  stun: 8000,
+  lan: 6000,
+  default: 8000,
+};
+
 const WebRTC = {
   pc: null,
   socket: null,
@@ -17,6 +26,7 @@ const WebRTC = {
   reconnectTimer: null,
   manualDisconnect: false,
   _refreshing: false,
+  _refreshReason: null,
   inputChannel: null,
   inputMoveChannel: null,
   serverConfig: null,
@@ -37,6 +47,8 @@ const WebRTC = {
   _mediaResumeFramePending: false,
   _mediaResumeBaseline: null,
   _mediaResumeFrameTimer: null,
+  _mediaResumeArmPending: false,
+  _mediaResumeSoftRecoverUsed: false,
   _mediaIntent: null,
   _mediaRequestRetryUsed: false,
   _mediaResumeRefreshFallbackUsed: false,
@@ -49,6 +61,9 @@ const WebRTC = {
   lastCandidateType: '',
   _autoFailCount: 0,
   _iceRestartAttempts: 0,
+  _reconnectAttempt: 0,
+  _relayHardRefreshCount: 0,
+  _inputDcDegraded: false,
   _tunnelLockUntil: 0,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
@@ -179,6 +194,7 @@ const WebRTC = {
     if (this._mediaIntent?.generation !== generation) {
       this._mediaRequestRetryUsed = false;
       this._mediaResumeRefreshFallbackUsed = false;
+      this._mediaResumeSoftRecoverUsed = false;
     }
     this._mediaIntent = {
       state: desired,
@@ -196,6 +212,7 @@ const WebRTC = {
       this.noMediaTicks = 0;
       this._mediaResumeFramePending = false;
       this._mediaResumeBaseline = null;
+      this._mediaResumeArmPending = false;
       this.clearMediaResumeFallback();
     }
 
@@ -245,6 +262,41 @@ const WebRTC = {
     }
   },
 
+  isWebRtcMediaPathConnected() {
+    const pc = this.pc;
+    if (!pc) return false;
+    return pc.connectionState === 'connected'
+      || pc.iceConnectionState === 'connected'
+      || pc.iceConnectionState === 'completed';
+  },
+
+  mediaResumeTimeoutMs() {
+    if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      return MEDIA_RESUME_FRAME_TIMEOUT_MS.tunnel;
+    }
+    return MEDIA_RESUME_FRAME_TIMEOUT_MS[this.networkMode]
+      || MEDIA_RESUME_FRAME_TIMEOUT_MS.default;
+  },
+
+  ensureMediaResumeFallbackArmed(reason = 'ack') {
+    if (this.getMediaAppliedPhase() !== 'resuming' || this._mediaIntent?.state !== 'active') {
+      this._mediaResumeArmPending = false;
+      return false;
+    }
+    if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      this._mediaResumeArmPending = false;
+      this.armMediaResumeFallback();
+      return true;
+    }
+    if (this.isWebRtcMediaPathConnected()) {
+      this._mediaResumeArmPending = false;
+      this.armMediaResumeFallback();
+      return true;
+    }
+    this._mediaResumeArmPending = true;
+    return false;
+  },
+
   recoverTunnelMediaOnCurrentAttempt(reason = 'tunnel-soft-recover') {
     // Tunnel media recovery must not invent a new connectionAttemptId. A full
     // refresh() rebinds attempt authority and would orphan the in-flight Host
@@ -265,17 +317,40 @@ const WebRTC = {
   armMediaResumeFallback() {
     this.clearMediaResumeFallback();
     if (this._mediaResumeRefreshFallbackUsed || this._mediaIntent?.state !== 'active') return;
-    const timeoutMs = this.networkMode === 'tunnel' ? 2500 : 1500;
+    if (this.getMediaAppliedPhase() !== 'resuming') return;
+    const timeoutMs = this.mediaResumeTimeoutMs();
     this._mediaResumeFrameTimer = setTimeout(() => {
       this._mediaResumeFrameTimer = null;
-      if (this.getMediaAppliedPhase() !== 'resuming' || this._mediaResumeRefreshFallbackUsed) return;
-      this._mediaResumeRefreshFallbackUsed = true;
-      if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
-        this.recoverTunnelMediaOnCurrentAttempt('fresh-frame-timeout');
-        return;
-      }
-      this.refresh();
+      this.onMediaResumeFrameTimeout();
     }, timeoutMs);
+  },
+
+  onMediaResumeFrameTimeout() {
+    if (this.getMediaAppliedPhase() !== 'resuming' || this._mediaResumeRefreshFallbackUsed) return;
+    if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      this._mediaResumeRefreshFallbackUsed = true;
+      this.recoverTunnelMediaOnCurrentAttempt('fresh-frame-timeout');
+      return;
+    }
+    if (!this._mediaResumeSoftRecoverUsed) {
+      this._mediaResumeSoftRecoverUsed = true;
+      try {
+        if (this.pc && typeof this.pc.restartIce === 'function' && this.isWebRtcMediaPathConnected()) {
+          this.pc.restartIce();
+        }
+      } catch (err) {
+        console.warn('[MEDIA] fresh-frame soft restartIce failed:', err?.message || err);
+      }
+      this.replayMediaActivityIntent('fresh-frame-soft');
+      // Spec: re-arm while still resuming so the hard path can fire next.
+      if (this.getMediaAppliedPhase() === 'resuming') {
+        this._mediaResumeArmPending = false;
+        this.armMediaResumeFallback();
+      }
+      return;
+    }
+    this._mediaResumeRefreshFallbackUsed = true;
+    this.refresh({ reason: 'fresh-frame-timeout' });
   },
 
   handleMediaRequestFailure(reason = 'media-request-failed') {
@@ -286,6 +361,7 @@ const WebRTC = {
 
     // Cancel any armed fresh-frame timer before retry/refresh so a stale timer
     // cannot fire a second refresh after this failure path.
+    this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
 
     if (snapshot.state === 'active' && reason === 'request-timeout') {
@@ -294,7 +370,7 @@ const WebRTC = {
       if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
         return this.recoverTunnelMediaOnCurrentAttempt(reason);
       }
-      this.refresh();
+      this.refresh({ reason: 'media-request-failed' });
       return true;
     }
     if (!this._mediaRequestRetryUsed) {
@@ -317,7 +393,7 @@ const WebRTC = {
       if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
         return this.recoverTunnelMediaOnCurrentAttempt(reason);
       }
-      this.refresh();
+      this.refresh({ reason: 'media-request-failed' });
       return true;
     }
     return false;
@@ -407,7 +483,7 @@ const WebRTC = {
       if (!this._mediaResumeBaseline) {
         this.captureMediaResumeBaseline(data.generation);
       }
-      this.armMediaResumeFallback();
+      this.ensureMediaResumeFallbackArmed('media-ack');
       // A tunnel relay frame may finish rendering just before its Host ACK reaches
       // this socket. Consume that post-baseline frame after the matching ACK rather
       // than waiting indefinitely for a visually identical JPEG to load again.
@@ -423,6 +499,7 @@ const WebRTC = {
     if (result.phase === 'suspended') {
       this._mediaResumeFramePending = false;
       this._mediaResumeBaseline = null;
+      this._mediaResumeArmPending = false;
       this.clearMediaResumeFallback();
     }
     this.syncDesktopInputGate();
@@ -476,6 +553,7 @@ const WebRTC = {
     this.markMediaAttemptReady(attemptId);
     this._mediaResumeFramePending = false;
     this._mediaResumeBaseline = null;
+    this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
     this.noMediaTicks = 0;
     this.syncDesktopInputGate();
@@ -538,8 +616,25 @@ const WebRTC = {
     this._mediaReadyConnectionAttemptId = null;
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
-    this._mediaResumeRefreshFallbackUsed = false;
+    this._mediaResumeSoftRecoverUsed = false;
+    this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
+
+    const inheritHardRefresh = trigger === 'refresh' && this._refreshReason === 'fresh-frame-timeout';
+    if (inheritHardRefresh) {
+      this._mediaResumeRefreshFallbackUsed = true;
+    } else {
+      this._mediaResumeRefreshFallbackUsed = false;
+    }
+
+    if (trigger === 'viewer-open' || trigger === 'manual-mode-switch') {
+      this._reconnectAttempt = 0;
+      this._relayHardRefreshCount = 0;
+      this._mediaResumeSoftRecoverUsed = false;
+      this._mediaResumeRefreshFallbackUsed = false;
+      this._inputDcDegraded = false;
+    }
+
     if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.start === 'function') {
       ConnectionTrace.start({
         trigger,
@@ -1850,7 +1945,11 @@ const WebRTC = {
     this.pc.oniceconnectionstatechange = () => {
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
       if (this._refreshing) return;
-      if (this.pc.iceConnectionState === 'disconnected') {
+      if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+        if (this._mediaResumeArmPending) {
+          this.ensureMediaResumeFallbackArmed('ice-connected');
+        }
+      } else if (this.pc.iceConnectionState === 'disconnected') {
         // Disconnected is often temporary; wait 5s for auto-recovery before forcing reconnect
         if (this._iceDisconnectedTimer) return;
         console.warn('[RECOVERY] ICE disconnected, waiting 5s for auto-recovery...');
@@ -1891,6 +1990,14 @@ const WebRTC = {
         this.updateNetworkUI('媒体链路已连接');
         this._autoFailCount = 0;
         this._iceRestartAttempts = 0;
+        this._reconnectAttempt = 0;
+        this._relayHardRefreshCount = 0;
+        this._mediaResumeSoftRecoverUsed = false;
+        this._mediaResumeRefreshFallbackUsed = false;
+        this._inputDcDegraded = false;
+        if (this._mediaResumeArmPending) {
+          this.ensureMediaResumeFallbackArmed('pc-connected');
+        }
         if (this.isPortSearchActive()) {
           this.armPortSearchDeadline();
         }
@@ -2885,8 +2992,18 @@ if (this.tunnelLastObjectUrl) {
       }
   },
 
-  async refresh() {
-    console.log('Refreshing WebRTC connection...');
+  async refresh(options) {
+    let reason = null;
+    if (typeof options === 'string') {
+      reason = options;
+    } else if (options && typeof options === 'object') {
+      reason = options.reason || null;
+    }
+    this._refreshReason = reason || null;
+    if (this._refreshReason === 'fresh-frame-timeout' && this.networkMode === 'relay') {
+      this._relayHardRefreshCount = (Number(this._relayHardRefreshCount) || 0) + 1;
+    }
+    console.log('Refreshing WebRTC connection...', this._refreshReason || '');
     if (!this._portSearchRefreshOwned && this.isPortSearchActive()) {
       this.stopPortSearch('manual-refresh');
     } else if (!this._portSearchRefreshOwned && this.portSearchController) {
