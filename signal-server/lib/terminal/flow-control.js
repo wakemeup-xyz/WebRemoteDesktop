@@ -73,6 +73,15 @@ class TerminalInputBucket {
 class TerminalOutputDispatcher {
   constructor(options = {}) {
     this.maxQueueBytes = positiveNumber('maxQueueBytes', options.maxQueueBytes);
+    // Windowed delivery: allow multiple unacked chunks in flight so high-RTT
+    // tunnels (Cloudflare) do not serialize every tiny PTY write behind one RTT.
+    // maxInFlightChunks=1 restores classic stop-and-wait behavior.
+    this.maxInFlightChunks = options.maxInFlightChunks === undefined
+      ? 32
+      : positiveNumber('maxInFlightChunks', options.maxInFlightChunks);
+    this.maxInFlightBytes = options.maxInFlightBytes === undefined
+      ? 65536
+      : positiveNumber('maxInFlightBytes', options.maxInFlightBytes);
     this.schedule = typeof options.schedule === 'function' ? options.schedule : setImmediate;
     this.observers = new Map();
   }
@@ -93,7 +102,9 @@ class TerminalOutputDispatcher {
       warned: false,
       scheduled: false,
       draining: false,
-      inFlight: null,
+      inFlight: new Map(),
+      inFlightBytes: 0,
+      nextChunkId: 1,
     });
   }
 
@@ -134,13 +145,21 @@ class TerminalOutputDispatcher {
     return this.observers.get(String(observerId || '').trim())?.queuedBytes || 0;
   }
 
+  canSendMore(observer) {
+    if (observer.queue.length === 0) return false;
+    // Always allow at least one in-flight chunk so oversized single writes cannot stall.
+    if (observer.inFlight.size === 0) return true;
+    if (observer.inFlight.size >= this.maxInFlightChunks) return false;
+    if (observer.inFlightBytes >= this.maxInFlightBytes) return false;
+    return true;
+  }
+
   ensureDrainScheduled(observerId, observer) {
     if (
       this.observers.get(observerId) !== observer
       || observer.scheduled
       || observer.draining
-      || observer.inFlight
-      || observer.queue.length === 0
+      || !this.canSendMore(observer)
     ) {
       return;
     }
@@ -151,32 +170,38 @@ class TerminalOutputDispatcher {
   drain(observerId, observer) {
     if (this.observers.get(observerId) !== observer) return;
     observer.scheduled = false;
-    if (observer.draining || observer.inFlight || observer.queue.length === 0) return;
+    if (observer.draining || !this.canSendMore(observer)) return;
 
-    const chunk = observer.queue.shift();
-    observer.inFlight = chunk;
     observer.draining = true;
-    const acknowledge = () => {
-      if (chunk.acknowledged) return;
-      chunk.acknowledged = true;
-      if (
-        this.observers.get(observerId) !== observer
-        || observer.inFlight !== chunk
-      ) {
-        return;
-      }
-      observer.inFlight = null;
-      observer.queuedBytes = Math.max(0, observer.queuedBytes - chunk.bytes);
-      if (!observer.draining) this.ensureDrainScheduled(observerId, observer);
-    };
-    const onData = observer.callbacks.onData;
-    const autoAcknowledge = typeof onData !== 'function' || onData.length < 3;
     try {
-      onData?.(chunk.data, chunk.metadata, acknowledge);
+      while (this.canSendMore(observer)) {
+        const chunk = observer.queue.shift();
+        if (!chunk) break;
+        const chunkId = observer.nextChunkId;
+        observer.nextChunkId += 1;
+        observer.inFlight.set(chunkId, chunk);
+        observer.inFlightBytes += chunk.bytes;
+        const acknowledge = () => {
+          if (chunk.acknowledged) return;
+          chunk.acknowledged = true;
+          if (this.observers.get(observerId) !== observer) return;
+          if (!observer.inFlight.has(chunkId)) return;
+          observer.inFlight.delete(chunkId);
+          observer.inFlightBytes = Math.max(0, observer.inFlightBytes - chunk.bytes);
+          observer.queuedBytes = Math.max(0, observer.queuedBytes - chunk.bytes);
+          if (!observer.draining) this.ensureDrainScheduled(observerId, observer);
+        };
+        const onData = observer.callbacks.onData;
+        const autoAcknowledge = typeof onData !== 'function' || onData.length < 3;
+        try {
+          onData?.(chunk.data, chunk.metadata, acknowledge);
+        } finally {
+          if (autoAcknowledge) acknowledge();
+        }
+      }
     } finally {
-      if (autoAcknowledge) acknowledge();
       observer.draining = false;
-      if (chunk.acknowledged) this.ensureDrainScheduled(observerId, observer);
+      this.ensureDrainScheduled(observerId, observer);
     }
   }
 }

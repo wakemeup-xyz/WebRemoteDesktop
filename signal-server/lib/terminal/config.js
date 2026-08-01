@@ -11,6 +11,8 @@ const LIMITS = Object.freeze({
   inputBytesPerSecond: [1024, 1024 * 1024],
   inputBurstBytes: [1024, 2 * 1024 * 1024],
   maxObserverQueueBytes: [64 * 1024, 8 * 1024 * 1024],
+  maxInFlightChunks: [1, 256],
+  maxInFlightBytes: [1024, 1024 * 1024],
 });
 
 function boundedInt(name, raw, [min, max], fallback) {
@@ -130,6 +132,19 @@ function parseTerminalConfig(env = process.env) {
       env.WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES,
       LIMITS.maxObserverQueueBytes,
       524288,
+    ),
+    // Pipeline terminal:output over high-RTT tunnels instead of stop-and-wait.
+    maxInFlightChunks: boundedInt(
+      'WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS',
+      env.WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS,
+      LIMITS.maxInFlightChunks,
+      32,
+    ),
+    maxInFlightBytes: boundedInt(
+      'WRD_TERMINAL_MAX_IN_FLIGHT_BYTES',
+      env.WRD_TERMINAL_MAX_IN_FLIGHT_BYTES,
+      LIMITS.maxInFlightBytes,
+      65536,
     ),
     allowPolling: env.WRD_TERMINAL_ALLOW_POLLING === '1',
     auditLog: String(env.WRD_TERMINAL_AUDIT_LOG || '').trim(),

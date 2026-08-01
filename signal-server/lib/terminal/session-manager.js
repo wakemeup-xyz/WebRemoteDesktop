@@ -590,6 +590,8 @@ function createTerminalSessionManager(options = {}) {
       replayBuffer: createReplayBuffer(config.replayBufferBytes),
       outputDispatcher: new TerminalOutputDispatcher({
         maxQueueBytes: config.maxObserverQueueBytes,
+        maxInFlightChunks: config.maxInFlightChunks,
+        maxInFlightBytes: config.maxInFlightBytes,
         schedule: outputSchedule,
       }),
       activePresenterClientId: null,

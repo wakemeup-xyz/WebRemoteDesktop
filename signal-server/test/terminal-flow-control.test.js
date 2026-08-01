@@ -150,6 +150,9 @@ test('TerminalOutputDispatcher retains in-flight bytes until ack and drains obse
   const warnings = [];
   const dispatcher = new TerminalOutputDispatcher({
     maxQueueBytes: 5,
+    // Preserve classic stop-and-wait for this backpressure regression.
+    maxInFlightChunks: 1,
+    maxInFlightBytes: 1,
     schedule: (drain) => scheduled.push(drain),
   });
   dispatcher.attach('slow', {
@@ -183,4 +186,42 @@ test('TerminalOutputDispatcher retains in-flight bytes until ack and drains obse
   slowAcks[0]();
   slowAcks[0]();
   assert.equal(dispatcher.queuedBytes('slow'), 0);
+});
+
+test('TerminalOutputDispatcher pipelines multiple unacked chunks within the in-flight window', () => {
+  const scheduled = [];
+  const acks = [];
+  const delivered = [];
+  const dispatcher = new TerminalOutputDispatcher({
+    maxQueueBytes: 64,
+    maxInFlightChunks: 3,
+    maxInFlightBytes: 64,
+    schedule: (drain) => scheduled.push(drain),
+  });
+  dispatcher.attach('observer', {
+    onData(data, metadata, acknowledge) {
+      delivered.push(data);
+      acks.push(acknowledge);
+    },
+  });
+
+  assert.equal(dispatcher.enqueue('observer', 'a'), true);
+  assert.equal(dispatcher.enqueue('observer', 'b'), true);
+  assert.equal(dispatcher.enqueue('observer', 'c'), true);
+  assert.equal(dispatcher.enqueue('observer', 'd'), true);
+  while (scheduled.length > 0) scheduled.shift()();
+
+  // Window of 3: first three delivered without waiting for ack; fourth stays queued.
+  assert.deepEqual(delivered, ['a', 'b', 'c']);
+  assert.equal(dispatcher.queuedBytes('observer'), 4);
+  assert.equal(acks.length, 3);
+
+  acks[0]();
+  while (scheduled.length > 0) scheduled.shift()();
+  assert.deepEqual(delivered, ['a', 'b', 'c', 'd']);
+
+  acks[1]();
+  acks[2]();
+  acks[3]();
+  assert.equal(dispatcher.queuedBytes('observer'), 0);
 });
