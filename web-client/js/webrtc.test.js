@@ -702,6 +702,62 @@ test('LinkQualityController relay path starts low and treats structural TURN RTT
   assert.equal(controller.snapshot().currentProfile, 'low');
 });
 
+test('LinkQualityController relay path never restarts ICE for media-stalled and warms up longer', () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const controller = LinkQualityController.create({ path: 'relay' });
+  controller.beginConnection();
+  assert.equal(controller.startupGraceSamplesRemaining, 12);
+  assert.equal(controller.iceRestartOnStall, false);
+
+  const stall = {
+    fps: 0,
+    rttMs: 400,
+    jitterBufferMs: 10,
+    packetsLost: 0,
+    framesDecoded: 0,
+    framesReceived: 0,
+    selectedCandidateType: 'relay',
+    interval: true,
+  };
+
+  for (let i = 0; i < 12; i += 1) {
+    const warm = controller.observe(stall);
+    assert.equal(warm.reason, 'media-warmup');
+    assert.equal(warm.shouldRestartIce || false, false);
+  }
+
+  // After grace, stall may go critical/survival for bitrate, but must not ask for ICE restart.
+  assert.equal(controller.observe(stall).action, 'hold');
+  const critical = controller.observe(stall);
+  assert.equal(critical.action, 'critical');
+  assert.equal(critical.profile, 'survival');
+  assert.equal(critical.shouldRestartIce, false);
+  assert.equal(critical.reason, 'media-stalled');
+});
+
+test('WebRTC proactiveIceRestart skips media-stalled on relay mode', () => {
+  const { WebRTC } = loadWebRTC();
+  let restartCalls = 0;
+  let offerCalls = 0;
+  WebRTC.networkMode = 'relay';
+  WebRTC._iceRestartAttempts = 0;
+  WebRTC.pc = {
+    restartIce() { restartCalls += 1; },
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+  };
+  WebRTC.createOffer = () => { offerCalls += 1; };
+
+  WebRTC.proactiveIceRestart('media-stalled');
+  assert.equal(restartCalls, 0);
+  assert.equal(offerCalls, 0);
+  assert.equal(WebRTC._iceRestartAttempts, 0);
+
+  WebRTC.proactiveIceRestart('high-rtt');
+  assert.equal(restartCalls, 0);
+  assert.equal(offerCalls, 0);
+});
+
 test('LinkQualityController relay path degrades on loss but never restarts ICE for high RTT alone', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const controller = LinkQualityController.create({ path: 'relay' });

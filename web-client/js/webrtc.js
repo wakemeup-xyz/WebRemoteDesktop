@@ -993,8 +993,11 @@ const WebRTC = {
 
   proactiveIceRestart(reason) {
     if (!this.pc || typeof this.pc.restartIce !== 'function') return;
-    // Structural TURN RTT is not recoverable via ICE restart.
-    if (this.networkMode === 'relay' && String(reason || '').includes('rtt')) {
+    const why = String(reason || '');
+    // On forced TURN, the selected pair is already relay↔relay. restartIce+offer
+    // tears the only working path during encoder warmup / brief 0-FPS gaps and
+    // recreates media-stalled (see 2026-08-01 full-relay hold samples).
+    if (this.networkMode === 'relay' && (why.includes('rtt') || why.includes('stall') || why === 'media-stalled')) {
       console.warn(`[RECOVERY] skip ICE restart on relay path reason=${reason}`);
       return;
     }

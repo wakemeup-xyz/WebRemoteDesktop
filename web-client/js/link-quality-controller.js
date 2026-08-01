@@ -20,6 +20,7 @@ const LinkQualityController = {
       veryHighRttMs: 300,
       iceRestartOnVeryHighRtt: true,
       iceRestartOnStall: true,
+      startupGraceSamples: 2,
     },
     relay: {
       initialProfile: 'low',
@@ -27,7 +28,12 @@ const LinkQualityController = {
       highRttMs: 700,
       veryHighRttMs: 1200,
       iceRestartOnVeryHighRtt: false,
-      iceRestartOnStall: true,
+      // Full-relay ICE is already selected; stall is almost always encoder/keyframe
+      // warmup or brief decode gaps on 300–600ms RTT — restartIce+offer tears the
+      // only working pair and recreates the stall (observed 2026-08-01 logs).
+      iceRestartOnStall: false,
+      // ~1Hz stats: allow encoder open + VT→x264 fallback + first keyframe on TURN.
+      startupGraceSamples: 12,
     },
   },
 
@@ -49,6 +55,9 @@ const LinkQualityController = {
       iceRestartOnStall: options.iceRestartOnStall != null
         ? Boolean(options.iceRestartOnStall)
         : preset.iceRestartOnStall,
+      startupGraceSamples: Number.isFinite(options.startupGraceSamples)
+        ? Math.max(0, Number(options.startupGraceSamples))
+        : (Number(preset.startupGraceSamples) || 0),
       degradedCount: 0,
       criticalCount: 0,
       goodCount: 0,
@@ -68,6 +77,7 @@ const LinkQualityController = {
         this.veryHighRttMs = next.veryHighRttMs;
         this.iceRestartOnVeryHighRtt = next.iceRestartOnVeryHighRtt;
         this.iceRestartOnStall = next.iceRestartOnStall;
+        this.startupGraceSamples = Number(next.startupGraceSamples) || 0;
         if (resetProfile) {
           this.currentProfile = next.initialProfile;
         } else {
@@ -93,8 +103,12 @@ const LinkQualityController = {
         return { changed: true, path: this.path, profile: this.currentProfile };
       },
 
-      beginConnection(graceSamples = 2) {
-        this.startupGraceSamplesRemaining = Math.max(0, Number(graceSamples) || 0);
+      beginConnection(graceSamples) {
+        const fallback = Number(this.startupGraceSamples);
+        const resolved = graceSamples == null
+          ? (Number.isFinite(fallback) ? fallback : 2)
+          : Number(graceSamples);
+        this.startupGraceSamplesRemaining = Math.max(0, Number.isFinite(resolved) ? resolved : 0);
         this.degradedCount = 0;
         this.criticalCount = 0;
         this.goodCount = 0;
