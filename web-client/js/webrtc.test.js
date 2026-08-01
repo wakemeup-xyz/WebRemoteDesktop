@@ -726,13 +726,22 @@ test('LinkQualityController relay path never restarts ICE for media-stalled and 
     assert.equal(warm.shouldRestartIce || false, false);
   }
 
-  // After grace, stall may go critical/survival for bitrate, but must not ask for ICE restart.
-  assert.equal(controller.observe(stall).action, 'hold');
+  // After grace, brief stalls hold; only sustained stall may enter survival, never ICE restart.
+  for (let i = 0; i < 5; i += 1) {
+    const held = controller.observe(stall);
+    assert.equal(held.shouldRestartIce || false, false);
+    assert.notEqual(held.action, 'critical');
+  }
   const critical = controller.observe(stall);
   assert.equal(critical.action, 'critical');
   assert.equal(critical.profile, 'survival');
   assert.equal(critical.shouldRestartIce, false);
   assert.equal(critical.reason, 'media-stalled');
+  // Already on survival: further stalls must not re-emit profileConfig (Host encoder thrash).
+  const again = controller.observe(stall);
+  assert.equal(again.profile, 'survival');
+  assert.equal(Boolean(again.profileConfig), false);
+  assert.equal(again.changed || false, false);
 });
 
 test('WebRTC proactiveIceRestart skips media-stalled on relay mode', () => {

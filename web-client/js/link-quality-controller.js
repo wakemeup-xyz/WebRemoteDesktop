@@ -201,6 +201,12 @@ const LinkQualityController = {
         }
 
         if (this.criticalCount >= 2) {
+          // Relay: brief 0-FPS gaps are normal at ~400ms RTT; require sustained
+          // stall before survival thrash (each profile apply reopens the encoder).
+          const criticalNeeded = (mediaStalled && this.path === 'relay') ? 6 : 2;
+          if (this.criticalCount < criticalNeeded) {
+            return { action: 'hold', profile: this.currentProfile, reason };
+          }
           const shouldRestartIce = mediaStalled
             ? this.iceRestartOnStall && !this.iceRestartAttempted
             : this.iceRestartOnVeryHighRtt && !this.iceRestartAttempted;
@@ -227,8 +233,9 @@ const LinkQualityController = {
 
       setProfile(profile, reason, extra = {}) {
         const from = this.currentProfile;
+        const changed = from !== profile;
         this.currentProfile = profile;
-        if (from !== profile) {
+        if (changed) {
           this.lastProfileChangeAt = now();
           this.degradedCount = 0;
           this.criticalCount = 0;
@@ -247,8 +254,11 @@ const LinkQualityController = {
           from,
           reason,
           path: this.path,
-          profileConfig: LinkQualityController.profiles[profile],
+          // Only ship config when the profile actually changes — re-applying the
+          // same survival/low profile forces Host to reopen the H.264 encoder.
+          profileConfig: changed ? LinkQualityController.profiles[profile] : null,
           shouldRestartIce: Boolean(extra.shouldRestartIce),
+          changed,
         };
       },
 

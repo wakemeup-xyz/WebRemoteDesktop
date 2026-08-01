@@ -103,12 +103,18 @@ class H264PayloadDescriptor:
         return obj, output
 
 
+# After the first VideoToolbox open/encode failure in-process, stick to libx264.
+# Profile thrash (survival↔low) used to recreate the encoder and re-hit VT every
+# few seconds, producing multi-second black/stutter gaps on TURN paths.
+_preferred_h264_codec = "h264_videotoolbox"
+
+
 class H264VideoToolboxEncoder(Encoder):
     def __init__(self) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
         self.codec: Optional[VideoCodecContext] = None
-        self.codec_name = "h264_videotoolbox"
+        self.codec_name = _preferred_h264_codec
         self.__target_bitrate = DEFAULT_BITRATE
 
     @staticmethod
@@ -255,7 +261,9 @@ class H264VideoToolboxEncoder(Encoder):
                 data_to_send += bytes(package)
         except av.FFmpegError as exc:
             if self.codec_name != "libx264":
+                global _preferred_h264_codec
                 logger.warning("VideoToolbox encode failed, falling back to libx264: %s", exc)
+                _preferred_h264_codec = "libx264"
                 self.codec_name = "libx264"
                 self.codec = self._create_codec(frame, self.codec_name)
                 data_to_send = b""
