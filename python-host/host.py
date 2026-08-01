@@ -1941,6 +1941,13 @@ class WebRemoteHost:
                 @self.pc.on("icecandidate")
                 async def on_icecandidate(candidate):
                     if candidate and viewer_id:
+                        if not should_emit_ice_candidate(network_mode, candidate.sdp):
+                            logger.info(
+                                "WRD_POLICY_INFO ice_candidate_dropped mode=%s sdp=%s",
+                                network_mode,
+                                (candidate.sdp or "")[:60],
+                            )
+                            return
                         logger.info(f"Host ICE: {candidate.sdp[:50]}...")
                         try:
                             await self.sio.emit('ice-candidate', {
@@ -2058,9 +2065,7 @@ class WebRemoteHost:
                 await self.pc.setLocalDescription(answer)
                 logger.info("Set local description")
                 local_description = self.pc.localDescription or answer
-                if local_description and hasattr(local_description, 'sdp'):
-                    self._log_video_codecs("host-answer", local_description.sdp)
-                else:
+                if not (local_description and hasattr(local_description, 'sdp')):
                     logger.warning("localDescription is None after setLocalDescription")
 
                 # Wait for ICE gathering to complete
@@ -2070,12 +2075,18 @@ class WebRemoteHost:
                 except asyncio.TimeoutError:
                     logger.warning("ICE gathering timeout")
 
-                # Send answer with ICE candidates included
+                # Send answer with ICE candidates included (relay mode filters non-relay)
                 local_description = self.pc.localDescription or answer
+                answer_sdp = filter_sdp_ice_candidates(
+                    network_mode,
+                    local_description.sdp if local_description else "",
+                )
+                if answer_sdp:
+                    self._log_video_codecs("host-answer", answer_sdp)
                 await self.sio.emit('answer', {
                     'answer': {
                         'type': local_description.type,
-                        'sdp': local_description.sdp
+                        'sdp': answer_sdp
                     },
                     'viewerId': viewer_id
                 })
