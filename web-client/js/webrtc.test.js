@@ -1730,6 +1730,44 @@ test('scheduleReconnect prefers ICE restart before full refresh in stun mode', (
   assert.equal(actions.includes('refresh'), false);
 });
 
+test('scheduleReconnect uses exponential backoff and exhausts relay hard refreshes', () => {
+  const timers = [];
+  const realSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms) => {
+    const handle = { fn, ms, cleared: false };
+    timers.push(handle);
+    return handle;
+  };
+  try {
+    const { WebRTC } = loadWebRTC();
+    WebRTC.manualDisconnect = false;
+    WebRTC.networkMode = 'relay';
+    WebRTC.socket = { connected: true };
+    WebRTC.pc = null;
+    WebRTC._iceRestartAttempts = 99; // force full refresh path
+    WebRTC.hasTurnConfigured = () => true;
+    WebRTC.getTurnServers = () => [{ urls: 'turn:example' }];
+    WebRTC.refresh = () => {};
+    WebRTC.isPortSearchActive = () => false;
+    WebRTC.isMediaHealthSuppressed = () => false;
+    WebRTC._relayHardRefreshCount = 0;
+
+    WebRTC.scheduleReconnect('pc-failed');
+    assert.equal(timers.at(-1).ms, 1500);
+    WebRTC.reconnectTimer = null;
+    WebRTC.scheduleReconnect('pc-failed');
+    assert.equal(timers.at(-1).ms, 3000);
+
+    WebRTC.reconnectTimer = null;
+    WebRTC._relayHardRefreshCount = 5;
+    const before = timers.length;
+    WebRTC.scheduleReconnect('pc-failed');
+    assert.equal(timers.length, before); // exhausted: no new timer
+  } finally {
+    global.setTimeout = realSetTimeout;
+  }
+});
+
 test('auto without TURN keeps STUN recovery path active after first pc-failed', () => {
   const { WebRTC } = loadWebRTC();
   const actions = [];

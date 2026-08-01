@@ -3211,6 +3211,22 @@ if (this.tunnelLastObjectUrl) {
     document.getElementById('loading').classList.remove('hidden');
     document.body.classList.remove('stream-connected');
 
+    if (this.networkMode === 'relay' && (Number(this._relayHardRefreshCount) || 0) >= 5) {
+      console.warn('[RECOVERY] relay-reconnect-exhausted');
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+        Diagnostic.autoSendFailure('relay-reconnect-exhausted');
+      }
+      this.updateNetworkUI('外网中继多次重连失败，请手动刷新或切换隧道中继。', 'danger');
+      updateLoadingText('中继重连已停止，请手动重试');
+      document.getElementById('loading')?.classList.remove('hidden');
+      return;
+    }
+
+    const attempt = Number(this._reconnectAttempt) || 0;
+    const delay = Math.min(1500 * (2 ** attempt), 15000);
+    this._reconnectAttempt = attempt + 1;
+    console.warn('[RECOVERY] Scheduling WebRTC reconnect after %s in %sms', reason, delay);
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.manualDisconnect) {
@@ -3219,8 +3235,8 @@ if (this.tunnelLastObjectUrl) {
       if (this.networkMode !== 'tunnel' && (!this.socket || !this.socket.connected)) {
         return;
       }
-      this.refresh();
-    }, 1500);
+      this.refresh({ reason: `reconnect:${reason}` });
+    }, delay);
   },
 
   disconnect() {
