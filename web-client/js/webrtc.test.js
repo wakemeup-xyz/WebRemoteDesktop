@@ -446,6 +446,63 @@ test('DataChannel lifecycle updates keyboard transport availability before recon
   clearTimeout(WebRTC._dcReconnectTimer);
 });
 
+test('dc-error does not schedule full reconnect when inbound video is healthy', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.manualDisconnect = false;
+  WebRTC._refreshing = false;
+  WebRTC.reconnectTimer = null;
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC._lastInboundFramesDecoded = 10;
+  WebRTC._lastInboundFramesDecodedAt = Date.now();
+  let scheduled = 0;
+  const original = WebRTC.scheduleReconnect.bind(WebRTC);
+  WebRTC.scheduleReconnect = (reason) => { scheduled += 1; return original(reason); };
+  assert.equal(WebRTC.shouldReconnectForDataChannelFault('dc-error'), false);
+  WebRTC.noteDataChannelFault('dc-error');
+  assert.equal(scheduled, 0);
+  assert.equal(WebRTC._inputDcDegraded, true);
+});
+
+test('dc-error schedules reconnect when inbound video is not healthy', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.manualDisconnect = false;
+  WebRTC._refreshing = false;
+  WebRTC.reconnectTimer = null;
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC._lastInboundFramesDecoded = 0;
+  WebRTC._lastInboundFramesDecodedAt = 0;
+  let scheduled = 0;
+  const reasons = [];
+  WebRTC.scheduleReconnect = (reason) => {
+    scheduled += 1;
+    reasons.push(reason);
+  };
+  assert.equal(WebRTC.isInboundVideoHealthy(), false);
+  assert.equal(WebRTC.shouldReconnectForDataChannelFault('dc-error'), true);
+  assert.equal(WebRTC.noteDataChannelFault('dc-error'), true);
+  assert.equal(scheduled, 1);
+  assert.deepEqual(reasons, ['dc-error']);
+});
+
+test('inbound video health requires recent framesDecoded growth', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._lastInboundFramesDecoded = 0;
+  WebRTC._lastInboundFramesDecodedAt = 0;
+  assert.equal(WebRTC.isInboundVideoHealthy(), false);
+
+  WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 5 });
+  assert.equal(WebRTC._lastInboundFramesDecoded, 5);
+  assert.ok(WebRTC._lastInboundFramesDecodedAt > 0);
+  assert.equal(WebRTC.isInboundVideoHealthy(), true);
+
+  const growthAt = WebRTC._lastInboundFramesDecodedAt;
+  WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 0 });
+  assert.equal(WebRTC._lastInboundFramesDecodedAt, growthAt);
+
+  WebRTC._lastInboundFramesDecodedAt = Date.now() - 6000;
+  assert.equal(WebRTC.isInboundVideoHealthy(), false);
+});
+
 test('stale DataChannel lifecycle callbacks cannot invalidate a replacement channel', () => {
   const lifecycle = [];
   const channels = [];

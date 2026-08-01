@@ -55,6 +55,7 @@ const WebRTC = {
   _mediaFailureHandledKey: null,
   _mediaReadyConnectionAttemptId: null,
   _lastInboundFramesDecoded: 0,
+  _lastInboundFramesDecodedAt: 0,
   _videoFrameSeq: 0,
   adaptiveMediaEnabled: true,
   noMediaTicks: 0,
@@ -2170,7 +2171,7 @@ const WebRTC = {
           this._dcTimeout = setTimeout(checkDcTimeout, 10000);
           return;
         }
-        this.scheduleReconnect('dc-stuck');
+        this.noteDataChannelFault('dc-stuck');
       }
     };
     this._dcTimeout = setTimeout(checkDcTimeout, 10000);
@@ -2179,6 +2180,7 @@ const WebRTC = {
       if (this.inputChannel !== inputChannel) return;
       console.log('[INPUT-DC] DataChannel open');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      this._inputDcDegraded = false;
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
     };
@@ -2199,7 +2201,7 @@ const WebRTC = {
         this._dcReconnectTimer = setTimeout(() => {
           this._dcReconnectTimer = null;
           if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
-          this.scheduleReconnect('dc-closed');
+          this.noteDataChannelFault('dc-closed');
         }, 3000);
       }
     };
@@ -2214,7 +2216,7 @@ const WebRTC = {
         this._dcReconnectTimer = setTimeout(() => {
           this._dcReconnectTimer = null;
           if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
-          this.scheduleReconnect('dc-error');
+          this.noteDataChannelFault('dc-error');
         }, 3000);
       }
     };
@@ -2874,7 +2876,14 @@ if (this.tunnelLastObjectUrl) {
       const codec = String(stats.codec || '');
       const selectedCandidateType = String(stats.selectedCandidateType || '');
       if (Number.isFinite(framesDecoded)) {
-        this._lastInboundFramesDecoded = framesDecoded;
+        const prevDecoded = Number(this._lastInboundFramesDecoded) || 0;
+        // Health timestamp only advances on real frame growth; flat/frozen stats age out.
+        if (framesDecoded > prevDecoded) {
+          this._lastInboundFramesDecoded = framesDecoded;
+          this._lastInboundFramesDecodedAt = Date.now();
+        } else {
+          this._lastInboundFramesDecoded = framesDecoded;
+        }
       }
       this.selectedCandidatePair = stats.selectedCandidatePair || {
         localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
@@ -3084,6 +3093,33 @@ if (this.tunnelLastObjectUrl) {
       this.createOffer();
       this.replayMediaActivityIntent('refresh-webrtc');
     }
+  },
+
+  isInboundVideoHealthy(maxAgeMs = 5000) {
+    const at = Number(this._lastInboundFramesDecodedAt) || 0;
+    const frames = Number(this._lastInboundFramesDecoded) || 0;
+    // Unknown (no growth sample) is not healthy — avoids suppressing DC recovery on freeze.
+    if (frames <= 0 || !at) return false;
+    return (Date.now() - at) <= maxAgeMs;
+  },
+
+  shouldReconnectForDataChannelFault(reason) {
+    if (this.manualDisconnect || this._refreshing) return false;
+    if (this.pc && this.pc.connectionState === 'connected' && this.isInboundVideoHealthy()) {
+      return false;
+    }
+    return true;
+  },
+
+  noteDataChannelFault(reason) {
+    if (!this.shouldReconnectForDataChannelFault(reason)) {
+      this._inputDcDegraded = true;
+      console.warn('[INPUT-DC] degraded reason=%s video-healthy=true skip-reconnect', reason);
+      if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
+      return false;
+    }
+    this.scheduleReconnect(reason);
+    return true;
   },
 
   scheduleReconnect(reason) {
