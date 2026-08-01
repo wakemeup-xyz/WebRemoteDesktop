@@ -17,6 +17,80 @@ const TERMINAL_ERROR_MESSAGES = Object.freeze({
 const TERMINAL_WARNING_MESSAGES = Object.freeze({
   terminal_output_backpressure: '终端输出拥塞，已断开当前观察连接',
 });
+// Align with tunnel evaluation network tiers (ms, socketRtt P50).
+const TERMINAL_NETWORK_TIER_B_MAX_MS = 250;
+const TERMINAL_NETWORK_TIER_C_MAX_MS = 400;
+
+function classifyTerminalNetworkTier(socketRttP50) {
+  if (!Number.isFinite(socketRttP50)) return null;
+  if (socketRttP50 <= 120) return 'A';
+  if (socketRttP50 <= TERMINAL_NETWORK_TIER_B_MAX_MS) return 'B';
+  if (socketRttP50 <= TERMINAL_NETWORK_TIER_C_MAX_MS) return 'C';
+  return 'D';
+}
+
+/**
+ * Manual transport advice only — never auto-switch (matches desktop mode policy).
+ * High Cloudflare Tunnel RTT is often edge geography; TURN is an alternate path to try.
+ */
+function buildTerminalTransportAdvice(options = {}) {
+  const rawP50 = options.socketRttP50;
+  const socketRttP50 = (rawP50 === null || rawP50 === undefined || rawP50 === '')
+    ? NaN
+    : Number(rawP50);
+  const preferredTransport = options.preferredTransport === 'webrtc-turn' ? 'webrtc-turn' : 'socketio';
+  const webrtcAvailable = options.webrtcAvailable === true;
+  const webrtcReady = options.webrtcReady === true;
+  const networkTier = classifyTerminalNetworkTier(socketRttP50);
+
+  if (preferredTransport === 'webrtc-turn') {
+    if (webrtcReady) {
+      return {
+        code: 'using_webrtc_turn',
+        networkTier,
+        recommendWebRtcTurn: false,
+        message: '当前使用 TURN DataChannel；延迟与 Socket.IO 分桶统计，失败不会静默回退',
+      };
+    }
+    return {
+      code: webrtcAvailable ? 'webrtc_connecting_or_failed' : 'webrtc_unavailable',
+      networkTier,
+      recommendWebRtcTurn: false,
+      message: webrtcAvailable
+        ? '已选择 TURN DataChannel，等待连接或查看失败原因（不会静默回退 Socket.IO）'
+        : '已选择 TURN DataChannel，但服务端报告不可用',
+    };
+  }
+
+  if (
+    Number.isFinite(socketRttP50)
+    && socketRttP50 > TERMINAL_NETWORK_TIER_B_MAX_MS
+    && webrtcAvailable
+  ) {
+    return {
+      code: 'recommend_webrtc_turn_high_rtt',
+      networkTier,
+      recommendWebRtcTurn: true,
+      message: `公网 RTT P50=${Math.round(socketRttP50)}ms（${networkTier || '?'} 档）。可手动切换 TURN DataChannel 对比路径；不保证一定更快，失败不会静默回退`,
+    };
+  }
+
+  if (Number.isFinite(socketRttP50) && socketRttP50 > TERMINAL_NETWORK_TIER_B_MAX_MS && !webrtcAvailable) {
+    return {
+      code: 'high_rtt_webrtc_unavailable',
+      networkTier,
+      recommendWebRtcTurn: false,
+      message: `公网 RTT P50=${Math.round(socketRttP50)}ms（${networkTier || '?'} 档）。TURN 不可用，只能继续 Socket.IO；瓶颈多在公网入口/edge`,
+    };
+  }
+
+  return {
+    code: 'socketio_ok',
+    networkTier,
+    recommendWebRtcTurn: false,
+    message: null,
+  };
+}
 
 function getTerminalComposerApi() {
   return (typeof window !== 'undefined' && window.TerminalComposer)
@@ -402,10 +476,56 @@ const TerminalPanel = {
     if (Number.isFinite(serverProcessLatency.p50)) {
       extras.push(`服务端 ${serverProcessLatency.p50}ms`);
     }
+    const advice = this.getTransportAdvice();
+    if (advice?.networkTier) {
+      extras.push(`网络${advice.networkTier}档`);
+    }
     this.elements.status.textContent = extras.length
       ? `${this.socketStatusBaseText} · ${extras.join(' · ')}`
       : this.socketStatusBaseText;
     this.elements.status.dataset.state = this.socketStatusKind;
+    this.applyTransportAdvice(advice);
+  },
+
+  getTransportAdvice() {
+    const socketLatency = this.terminalSocketLatency.snapshot();
+    return buildTerminalTransportAdvice({
+      socketRttP50: socketLatency.p50,
+      preferredTransport: this.preferredTransport,
+      webrtcAvailable: this.webrtcCapability?.available === true,
+      webrtcReady: Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open'),
+    });
+  },
+
+  applyTransportAdvice(advice = this.getTransportAdvice()) {
+    if (!advice) return;
+    if (this.elements.transportSelect) {
+      const webrtcOption = this.elements.transportSelect.querySelector('option[value="webrtc-turn"]');
+      if (webrtcOption) {
+        const baseLabel = 'TURN DataChannel';
+        webrtcOption.textContent = advice.recommendWebRtcTurn
+          ? `${baseLabel}（高 RTT 可尝试）`
+          : baseLabel;
+      }
+    }
+    // Preserve in-flight TURN setup / hard TURN errors; allow high-RTT advice to refresh on socketio.
+    const webrtcBusy = this.preferredTransport === 'webrtc-turn'
+      && (this.webrtcState === 'connecting' || /正在建立/.test(String(this.elements.transportStatus?.textContent || '')));
+    const hardTurnError = this.preferredTransport === 'webrtc-turn'
+      && (this.elements.transportStatus?.dataset?.state === 'error');
+    if (webrtcBusy || hardTurnError) {
+      return;
+    }
+    if (advice.message) {
+      this.setTransportStatus(
+        advice.message,
+        advice.recommendWebRtcTurn ? 'warning' : (advice.code === 'using_webrtc_turn' ? 'connected' : ''),
+      );
+      return;
+    }
+    if (this.preferredTransport !== 'webrtc-turn' && this.socketState === 'connected') {
+      this.setTransportStatus('使用 Socket.IO 传输', 'connected');
+    }
   },
 
   setWarning(text) {
@@ -886,14 +1006,15 @@ const TerminalPanel = {
       return;
     }
     if (type === 'ack') {
+      // Browser-local RTT uses pendingInputAcks; only serverProcessMs is server-domain.
+      const serverProcessMs = Number(message.serverProcessMs);
+      const hasServerProcess = Number.isFinite(serverProcessMs);
       this.handleInputAck({
         sessionId: message.sid,
         inputId: message.inputId,
-        clientSentAt: null,
-        serverReceivedAt: Date.now(),
-        serverSentAt: Date.now(),
         transport: 'webrtc-turn',
-        serverProcessMs: message.serverProcessMs,
+        serverReceivedAt: hasServerProcess ? 0 : undefined,
+        serverSentAt: hasServerProcess ? serverProcessMs : undefined,
       });
       return;
     }
@@ -1670,9 +1791,21 @@ const TerminalPanel = {
 
   getDiagnosticState() {
     const activeSessionId = this.state.activeSessionId();
+    const advice = this.getTransportAdvice();
     return {
       socketState: this.socketState,
       transport: this.getTransportName(),
+      preferredTransport: this.preferredTransport === 'webrtc-turn' ? 'webrtc-turn' : 'socketio',
+      webrtcState: this.webrtcState || 'idle',
+      webrtcAvailable: this.webrtcCapability?.available === true,
+      networkTier: advice?.networkTier || null,
+      transportAdvice: advice
+        ? {
+          code: advice.code,
+          recommendWebRtcTurn: Boolean(advice.recommendWebRtcTurn),
+          message: advice.message || null,
+        }
+        : null,
       socketRtt: this.terminalSocketLatency.snapshot(),
       inputAck: this.terminalInputAckLatency.snapshot(),
       serverProcess: this.terminalServerProcessLatency.snapshot(),

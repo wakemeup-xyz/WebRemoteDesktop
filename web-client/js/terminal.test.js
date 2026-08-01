@@ -126,6 +126,9 @@ function loadTerminal(overrides = {}) {
     'terminalComposer',
     'terminalComposerSubmit',
     'terminalComposerHint',
+    'terminalTransportSelect',
+    'terminalTransportStatus',
+    'terminalTransportTestBtn',
     'disconnectBtn',
     'pauseBtn',
     'remoteVideo',
@@ -261,7 +264,9 @@ function loadTerminal(overrides = {}) {
 globalThis.__createTerminalState = createTerminalState;
 globalThis.__TerminalUI = TerminalUI;
 globalThis.__TerminalPanel = TerminalPanel;
-globalThis.__TERMINAL_ADMIN_TOKEN_KEY = TERMINAL_ADMIN_TOKEN_KEY;`, context);
+globalThis.__TERMINAL_ADMIN_TOKEN_KEY = TERMINAL_ADMIN_TOKEN_KEY;
+globalThis.__classifyTerminalNetworkTier = classifyTerminalNetworkTier;
+globalThis.__buildTerminalTransportAdvice = buildTerminalTransportAdvice;`, context);
   return {
     context,
     elements,
@@ -2395,6 +2400,80 @@ test('late polling latency responses do not replace the current websocket transp
   assert.equal(TerminalPanel.getTransportLatency('polling').input.snapshot().last, 20);
   assert.equal(TerminalPanel.getTransportLatency('polling').server.snapshot().last, 4);
   assert.equal(TerminalPanel.getTransportLatency('websocket').socket.snapshot().sampleCount, 0);
+});
+
+test('classifyTerminalNetworkTier matches evaluation plan bands', () => {
+  const { context } = loadTerminal();
+  const classify = context.__classifyTerminalNetworkTier;
+  assert.equal(classify(50), 'A');
+  assert.equal(classify(200), 'B');
+  assert.equal(classify(300), 'C');
+  assert.equal(classify(500), 'D');
+  assert.equal(classify(null), null);
+});
+
+test('buildTerminalTransportAdvice recommends webrtc-turn only when high RTT and available', () => {
+  const { context } = loadTerminal();
+  const build = context.__buildTerminalTransportAdvice;
+  const high = build({
+    socketRttP50: 480,
+    preferredTransport: 'socketio',
+    webrtcAvailable: true,
+    webrtcReady: false,
+  });
+  assert.equal(high.code, 'recommend_webrtc_turn_high_rtt');
+  assert.equal(high.recommendWebRtcTurn, true);
+  assert.equal(high.networkTier, 'D');
+  assert.match(high.message, /TURN DataChannel/);
+
+  const low = build({
+    socketRttP50: 40,
+    preferredTransport: 'socketio',
+    webrtcAvailable: true,
+    webrtcReady: false,
+  });
+  assert.equal(low.recommendWebRtcTurn, false);
+  assert.equal(low.code, 'socketio_ok');
+
+  const noTurn = build({
+    socketRttP50: 500,
+    preferredTransport: 'socketio',
+    webrtcAvailable: false,
+    webrtcReady: false,
+  });
+  assert.equal(noTurn.recommendWebRtcTurn, false);
+  assert.equal(noTurn.code, 'high_rtt_webrtc_unavailable');
+});
+
+test('TerminalPanel surfaces high-RTT TURN advice without auto-switching transport', () => {
+  const { TerminalPanel, elements, context } = loadTerminal();
+  // Provide a minimal option node for label updates.
+  const select = elements.get('terminalTransportSelect');
+  const option = makeElement('webrtc-option');
+  option.value = 'webrtc-turn';
+  option.textContent = 'TURN DataChannel';
+  select.querySelector = (selector) => (
+    selector === 'option[value="webrtc-turn"]' ? option : null
+  );
+
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.preferredTransport = 'socketio';
+  TerminalPanel.webrtcCapability = { available: true, reason: 'ready' };
+  TerminalPanel.setTransportName('websocket');
+  TerminalPanel.setStatus('共享控制台已连接', 'connected');
+  TerminalPanel.terminalSocketLatency.record(520);
+  TerminalPanel.terminalSocketLatency.record(540);
+  TerminalPanel.refreshStatus();
+
+  const diagnostic = TerminalPanel.getDiagnosticState();
+  assert.equal(diagnostic.networkTier, 'D');
+  assert.equal(diagnostic.transportAdvice.code, 'recommend_webrtc_turn_high_rtt');
+  assert.equal(diagnostic.preferredTransport, 'socketio');
+  assert.match(elements.get('terminalTransportStatus').textContent, /可手动切换 TURN/);
+  assert.match(option.textContent, /高 RTT 可尝试/);
+  assert.equal(TerminalPanel.preferredTransport, 'socketio');
+  assert.equal(context.__classifyTerminalNetworkTier(520), 'D');
 });
 
 test('TerminalPanel applies canonical and legacy session aliases once', () => {
