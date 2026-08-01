@@ -2295,6 +2295,22 @@ class WebRemoteHost:
                 "target_fps": clamp_int(data.get("targetFps"), 5, 30, 15),
                 "video_bitrate_kbps": clamp_int(data.get("videoBitrateKbps"), 250, 5000, 1400),
             }
+            current = getattr(self, "media_profile", None) or {}
+            same = (
+                current.get("profile") == next_profile["profile"]
+                and int(current.get("width") or 0) == next_profile["width"]
+                and int(current.get("height") or 0) == next_profile["height"]
+                and int(current.get("target_fps") or 0) == next_profile["target_fps"]
+                and int(current.get("video_bitrate_kbps") or 0) == next_profile["video_bitrate_kbps"]
+            )
+            if same:
+                logger.debug(
+                    "WRD_MEDIA_PROFILE unchanged viewer=%s profile=%s reason=%s",
+                    data.get("viewerId", "-"),
+                    next_profile["profile"],
+                    str(data.get("reason", "quality"))[:80],
+                )
+                return
             self.media_profile = next_profile
             viewer_id = data.get("viewerId", "-")
             reason = str(data.get("reason", "quality"))[:80]
