@@ -60,6 +60,9 @@ const WebRTC = {
   _lastInboundFramesDecodedAt: 0,
   _videoFrameSeq: 0,
   adaptiveMediaEnabled: true,
+  // When false, adaptive path may still change fps/bitrate, but never width/height.
+  // Default OFF so user-chosen resolution is stable (esp. on high-RTT TURN).
+  adaptiveResolutionEnabled: localStorage.getItem('wrdAdaptiveResolution') === '1',
   noMediaTicks: 0,
   lastCandidateType: '',
   _autoFailCount: 0,
@@ -1012,24 +1015,58 @@ const WebRTC = {
   applyMediaProfile(profile, reason) {
     const lease = this.activeLeaseEnvelope();
     if (!profile || !lease) return false;
-    console.warn(`[MEDIA] applying profile ${profile.name} size=${profile.width}x${profile.height} fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps reason=${reason}`);
-    this.currentResolution = { width: profile.width, height: profile.height, label: `${profile.width}x${profile.height}` };
+    const allowResolutionChange = this.adaptiveResolutionEnabled === true;
+    const width = allowResolutionChange
+      ? Number(profile.width) || Number(this.currentResolution?.width) || 960
+      : Number(this.currentResolution?.width) || Number(profile.width) || 960;
+    const height = allowResolutionChange
+      ? Number(profile.height) || Number(this.currentResolution?.height) || 540
+      : Number(this.currentResolution?.height) || Number(profile.height) || 540;
+    if (allowResolutionChange) {
+      this.currentResolution = {
+        width,
+        height,
+        label: `${width}x${height}`,
+      };
+    }
+    console.warn(
+      `[MEDIA] applying profile ${profile.name} size=${width}x${height}`
+      + ` fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps`
+      + ` adaptiveRes=${allowResolutionChange ? 'on' : 'off'} reason=${reason}`,
+    );
     if (this.socket && this.socket.connected) {
       this.socket.emit('media-profile-change', {
         ...lease,
         profile: profile.name,
-        width: profile.width,
-        height: profile.height,
+        width,
+        height,
         targetFps: profile.fps,
         videoBitrateKbps: profile.bitrateKbps,
         reason,
         mediaPolicy: 'strict-stun',
+        adaptiveResolution: allowResolutionChange,
       });
     }
     if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.record === 'function') {
-      ConnectionTrace.record('media-profile-change', { profile: profile.name, reason });
+      ConnectionTrace.record('media-profile-change', {
+        profile: profile.name,
+        reason,
+        width,
+        height,
+        adaptiveResolution: allowResolutionChange,
+      });
     }
     return true;
+  },
+
+  setAdaptiveResolutionEnabled(enabled, { persist = true } = {}) {
+    this.adaptiveResolutionEnabled = Boolean(enabled);
+    if (persist) {
+      localStorage.setItem('wrdAdaptiveResolution', this.adaptiveResolutionEnabled ? '1' : '0');
+    }
+    const checkbox = document.getElementById('adaptiveResolutionToggle');
+    if (checkbox) checkbox.checked = this.adaptiveResolutionEnabled;
+    return this.adaptiveResolutionEnabled;
   },
 
   proactiveIceRestart(reason) {

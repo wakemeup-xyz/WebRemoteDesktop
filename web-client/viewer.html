@@ -146,6 +146,15 @@
           <span>1080p (超清 · 高性能)</span>
         </label>
       </div>
+      <label class="resolution-option" style="margin-top: 12px; align-items: flex-start;">
+        <input type="checkbox" id="adaptiveResolutionToggle">
+        <span>
+          <strong>自动调整分辨率</strong>
+          <small style="display:block; color: var(--text-muted); margin-top: 4px;">
+            默认关闭。开启后会按链路质量自动改宽高（如 720p→480p）；关闭时仅允许自动调整帧率/码率，不改你选的分辨率。
+          </small>
+        </span>
+      </label>
       <button id="applyResolution" class="modal-btn primary">应用</button>
       <button id="closeResolution" class="modal-btn">取消</button>
     </div>

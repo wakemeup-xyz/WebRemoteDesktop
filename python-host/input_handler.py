@@ -272,46 +272,101 @@ class InputHandler:
         elif action == 'switchInputMethod':
             self._switch_input_method()
 
+    def _dock_orientation(self):
+        """Return macOS Dock edge: bottom|left|right (default bottom)."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["defaults", "read", "com.apple.dock", "orientation"],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+            value = str(result.stdout or "").strip().lower()
+            if value in {"left", "right", "bottom"}:
+                return value
+        except Exception:
+            pass
+        return "bottom"
+
+    def _post_mouse_move(self, x, y):
+        event = CGEventCreateMouseEvent(
+            self.source, kCGEventMouseMoved, (float(x), float(y)), kCGMouseButtonLeft
+        )
+        if event is None:
+            return False
+        CGEventPost(kCGHIDEventTap, event)
+        return True
+
     def _show_dock(self):
-        """Push mouse past screen bottom edge to trigger auto-hidden Dock, then restore."""
+        """Reveal auto-hidden Dock and leave the cursor near it so it stays visible.
+
+        Previous implementation restored the cursor to the pre-click position after
+        0.6s, which immediately re-hid an auto-hide Dock and looked like a no-op.
+        """
         if not self.monitor:
             logger.warning("Show dock failed: no monitor info")
             return
 
         try:
-            # Use self.source to create event for getting current position (thread-safe)
             event = CGEventCreate(self.source)
             if event is None:
                 logger.warning("Show dock: CGEventCreate returned None")
                 return
             current_pos = CGEventGetLocation(event)
-            current_x = current_pos.x
-            current_y = current_pos.y
+            current_x = float(current_pos.x)
+            current_y = float(current_pos.y)
 
-            target_x = self.monitor.x + self.monitor.width / 2
-            edge_y = self.monitor.y + self.monitor.height - 1
-            push_y = self.monitor.y + self.monitor.height + 10
+            left = float(getattr(self.monitor, "x", 0) or 0)
+            top = float(getattr(self.monitor, "y", 0) or 0)
+            width = float(getattr(self.monitor, "width", 0) or 0)
+            height = float(getattr(self.monitor, "height", 0) or 0)
+            if width <= 0 or height <= 0:
+                logger.warning("Show dock failed: invalid monitor size")
+                return
 
-            logger.info("Show dock: pushing cursor past screen edge")
+            orientation = self._dock_orientation()
+            mid_x = left + width / 2.0
+            mid_y = top + height / 2.0
+            # Hot-edge positions: approach the edge, then push past it, then rest
+            # just inside so the Dock remains visible for interaction.
+            if orientation == "left":
+                approach = (left + 1.0, mid_y)
+                push = (left - 20.0, mid_y)
+                rest = (left + 36.0, mid_y)
+            elif orientation == "right":
+                approach = (left + width - 1.0, mid_y)
+                push = (left + width + 20.0, mid_y)
+                rest = (left + width - 36.0, mid_y)
+            else:
+                approach = (mid_x, top + height - 1.0)
+                push = (mid_x, top + height + 20.0)
+                rest = (mid_x, top + height - 48.0)
 
-            move_event = CGEventCreateMouseEvent(
-                self.source, kCGEventMouseMoved, (target_x, edge_y), kCGMouseButtonLeft
+            logger.info(
+                "Show dock: orientation=%s approach=(%.0f,%.0f) push=(%.0f,%.0f) rest=(%.0f,%.0f)",
+                orientation,
+                approach[0], approach[1],
+                push[0], push[1],
+                rest[0], rest[1],
             )
-            CGEventPost(kCGHIDEventTap, move_event)
 
-            time.sleep(0.05)
-            push_event = CGEventCreateMouseEvent(
-                self.source, kCGEventMouseMoved, (target_x, push_y), kCGMouseButtonLeft
+            # Multi-step reveal: macOS sometimes ignores a single jump past the edge.
+            for point in (approach, push, push, rest):
+                if not self._post_mouse_move(point[0], point[1]):
+                    logger.warning("Show dock: failed to post mouse move")
+                    return
+                time.sleep(0.05)
+
+            # Dwell near the Dock so autohide stays open long enough to click icons.
+            time.sleep(1.2)
+            self._post_mouse_move(rest[0], rest[1])
+            logger.info(
+                "Show dock: left cursor near dock (was %.0f,%.0f); not restoring far position",
+                current_x,
+                current_y,
             )
-            CGEventPost(kCGHIDEventTap, push_event)
-
-            time.sleep(0.6)
-
-            restore_event = CGEventCreateMouseEvent(
-                self.source, kCGEventMouseMoved, (current_x, current_y), kCGMouseButtonLeft
-            )
-            CGEventPost(kCGHIDEventTap, restore_event)
-            logger.info("Show dock: restored cursor")
         except Exception as e:
             logger.error("Show dock failed: %s", e, exc_info=True)
 
