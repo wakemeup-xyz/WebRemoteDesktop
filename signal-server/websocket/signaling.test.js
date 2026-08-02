@@ -1113,7 +1113,7 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
   viewerB.trigger('control-acquire', { requestId: 'blocked' });
   const blocked = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(blocked.state, 'REVOKING');
-  assert.equal(blocked.reason, 'occupied');
+  assert.equal(blocked.reason, 'reset-in-progress');
 
   // Old credential writes fail after disconnect.
   viewerA.trigger('input', v2Key({
@@ -1226,7 +1226,7 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
   viewerB.trigger('control-acquire', { requestId: 'still-blocked' });
   const blocked = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(blocked.state, 'REVOKING');
-  assert.equal(blocked.reason, 'occupied');
+  assert.equal(blocked.reason, 'reset-in-progress');
 });
 
 test('v2 activation advertises capabilities and refuses an older host', () => {
@@ -1416,7 +1416,7 @@ test('rejected transition stays fail-closed in REVOKING and cannot replay on lat
   viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
-  assert.equal(acquire.reason, 'occupied');
+  assert.equal(acquire.reason, 'reset-in-progress');
 });
 
 test('controller disconnect freezes old lease until host ack then grants later sole viewer', () => {
@@ -1649,7 +1649,7 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
   viewerB.trigger('control-acquire', { requestId: 'should-block' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
-  assert.equal(acquire.reason, 'occupied');
+  assert.equal(acquire.reason, 'reset-failed');
 
   // No timer storm after blocked.
   const timerCount = timers.size;

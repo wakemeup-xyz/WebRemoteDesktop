@@ -693,10 +693,41 @@ function setupSignaling(io, options = {}) {
         if (data.takeover === true && previousController && previousController !== socket.id) {
           connections.viewers.get(previousController)?.emit('control-revoked', { reason: 'takeover' });
         }
-        socket.emit('control-acquire-result', { state: result.state, requestId: data.requestId || null });
+        socket.emit('control-acquire-result', {
+          state: result.state,
+          reason: result.reason || 'transition',
+          pendingViewerId: result.transition?.viewerId ?? controlSnapshot().pendingViewerId,
+          leaseEpoch: result.transition?.leaseEpoch ?? controlSnapshot().leaseEpoch,
+          requestId: data.requestId || null,
+        });
         dispatchLeaseEffect(result, 'transition');
       } else {
-        socket.emit('control-acquire-result', { ...result, requestId: data.requestId || null });
+        const snapshot = controlSnapshot();
+        // Reset-only barrier blocks all acquires until Host acks. Nudge Host again
+        // so a missed control-transition does not leave the UI stuck forever.
+        if (snapshot.state === 'REVOKING' && snapshot.pendingViewerId === null
+          && Number.isSafeInteger(snapshot.leaseEpoch)) {
+          reemitResetOnlyTransition(snapshot.leaseEpoch, 0);
+          socket.emit('control-acquire-result', {
+            state: snapshot.state,
+            reason: snapshot.reason || 'reset-in-progress',
+            pendingViewerId: null,
+            leaseEpoch: snapshot.leaseEpoch,
+            requestId: data.requestId || null,
+          });
+          broadcastControlState(snapshot.reason || 'reset-in-progress');
+          return;
+        }
+        socket.emit('control-acquire-result', {
+          ...result,
+          state: result.state || snapshot.state,
+          pendingViewerId: result.pendingViewerId ?? snapshot.pendingViewerId,
+          leaseEpoch: result.leaseEpoch ?? snapshot.leaseEpoch,
+          requestId: data.requestId || null,
+        });
+        // Occupied/error paths previously emitted only to the requester, so the
+        // sticky client label "控制权正在切换" never cleared. Broadcast truth.
+        broadcastControlState(result.reason || result.state || 'acquire-rejected');
       }
     });
 

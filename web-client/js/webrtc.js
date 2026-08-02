@@ -1764,6 +1764,7 @@ const WebRTC = {
     });
     this.socket.on('control-state', (data) => this.handleControlState(data));
     this.socket.on('control-grant', (data) => this.handleControlGrant(data));
+    this.socket.on('control-acquire-result', (data) => this.handleControlAcquireResult(data));
     this.socket.on('control-revoked', () => this.freezeControl('control-revoked'));
     this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
     this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
@@ -1790,6 +1791,7 @@ const WebRTC = {
   requestControl({ allowTakeover = true } = {}) {
     if (!this.socket?.connected || !this.controlState.hostOnline) return false;
     if (this.isControlResetBlocked() || this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING') {
+      // Do not paint a sticky "切换中" that ignores later acquire-result.
       this.updateControlUI();
       return false;
     }
@@ -1799,14 +1801,64 @@ const WebRTC = {
     }
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
     const takeover = this.controlState.state === 'ACTIVE' && !this.controlState.controller && allowTakeover;
+    this._controlAcquireRequestId = requestId;
     this.socket.emit('control-acquire', { requestId, takeover });
+    // Optimistic label only; handleControlAcquireResult / control-state own the truth.
     this.updateControlUI('控制权正在切换');
     return true;
   },
 
+  handleControlAcquireResult(data = {}) {
+    if (data.requestId && this._controlAcquireRequestId && data.requestId !== this._controlAcquireRequestId) {
+      return;
+    }
+    const state = data.state || this.controlState.state;
+    this.controlState = {
+      ...this.controlState,
+      state,
+      reason: data.reason || this.controlState.reason || null,
+      controllerViewerId: Object.prototype.hasOwnProperty.call(data, 'controllerViewerId')
+        ? data.controllerViewerId
+        : this.controlState.controllerViewerId,
+      pendingViewerId: Object.prototype.hasOwnProperty.call(data, 'pendingViewerId')
+        ? data.pendingViewerId
+        : this.controlState.pendingViewerId,
+    };
+    // Rejected/occupied paths never get control-grant; clear sticky switching copy.
+    if (state === 'GRANTING' || state === 'REVOKING') {
+      this.updateControlUI();
+      return;
+    }
+    if (data.reason && state !== 'ACTIVE') {
+      const reasonText = {
+        'occupied': '控制权正忙（可能在 Host 复位），请稍后再试',
+        'host-offline': 'Host 离线，无法获取控制权',
+        'host-protocol-too-old': 'Host 协议过旧，无法获取控制权',
+        'legacy-input-disabled': '旧版输入协议已禁用',
+        'reset-in-progress': 'Host 正在复位输入，请稍后再请求控制',
+        'reset-blocked': 'Host 输入复位未确认，控制已安全锁定',
+      }[data.reason];
+      this.updateControlUI(reasonText || null);
+      return;
+    }
+    this.updateControlUI();
+  },
+
   handleControlState(data = {}) {
     this.controlState = { ...this.controlState, ...data, lease: data.controller ? this.controlState.lease : null };
-    if (!data.controller) this.freezeControl(data.reason || 'control-readonly', false);
+    // During GRANTING/REVOKING, controller is false for everyone — do not treat as
+    // permanent readonly freeze (that raced with acquire and left sticky UI).
+    const transitioning = data.state === 'GRANTING' || data.state === 'REVOKING';
+    if (!data.controller && !transitioning) {
+      this.freezeControl(data.reason || 'control-readonly', false);
+    } else if (!data.controller && transitioning) {
+      this.controlState = { ...this.controlState, controller: false, lease: null };
+      this.stopControlHeartbeat();
+      if (typeof Input !== 'undefined') {
+        Input.setActive(false);
+        Input.setControlLease(null);
+      }
+    }
     if (this.isPortSearchActive() && !this.canStartPortSearch()) {
       this.stopPortSearch('control-lost');
       this.updateNetworkUI('端口搜索已停止：控制权已失效', 'warning');

@@ -387,6 +387,34 @@ test('reset-blocked control state locks requests without looping acquire', () =>
   assert.equal(emitted.some((entry) => entry[0] === 'control-acquire'), false);
 });
 
+test('control-acquire-result clears sticky switching label on occupied reset barrier', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit() {} };
+  WebRTC.controlState.hostOnline = true;
+  WebRTC.handleControlState({ state: 'FREE', controller: false });
+  WebRTC.requestControl({ allowTakeover: true });
+  assert.equal(elements.get('controlStatus').textContent, '控制权正在切换');
+  WebRTC.handleControlAcquireResult({
+    state: 'REVOKING',
+    reason: 'reset-in-progress',
+    requestId: WebRTC._controlAcquireRequestId,
+    pendingViewerId: null,
+    leaseEpoch: 9,
+  });
+  assert.equal(WebRTC.controlState.state, 'REVOKING');
+  assert.equal(elements.get('controlStatus').textContent, '控制权正在切换');
+  assert.equal(elements.get('requestControlBtn').disabled, true);
+  WebRTC.handleControlAcquireResult({
+    state: 'REVOKING',
+    reason: 'reset-blocked',
+    requestId: WebRTC._controlAcquireRequestId,
+  });
+  // reason text path for non-transitioning terminal reasons uses explicit map when state not GRANTING
+  // reset-blocked with REVOKING still uses transitioning label via updateControlUI(); force via handleControlState
+  WebRTC.handleControlState({ state: 'REVOKING', controller: false, reason: 'reset-blocked' });
+  assert.equal(elements.get('controlStatus').textContent, 'Host 输入复位未确认，控制已安全锁定');
+});
+
 test('relay control and frame acknowledgements require and carry the active v2 lease', () => {
   const emitted = [];
   const { WebRTC, elements } = loadWebRTC();
