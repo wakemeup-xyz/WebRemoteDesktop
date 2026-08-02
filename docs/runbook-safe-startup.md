@@ -331,14 +331,15 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 
 - `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
 - `docs/superpowers/plans/2026-07-20-turn-integration-plan.md`
+- 多节点切换：`docs/superpowers/specs/2026-08-02-multi-turn-server-selection-design.md`
 
 检查顺序：
 
-1. 配置源：`TURN_*` 环境变量，或 `signal-server/.env`，或 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（env 覆盖 json）
-2. 登录后访问 `/api/webrtc-config`：`turnConfigured=true`；接入完成后核对 `turnSource` / `turnFingerprint` / `hostTurnReady`
-3. Host 必须注入**同一套** `TURN_*`（LaunchAgent 路径尤易遗漏）；用 `scripts/restart-host.sh` 重启后看 Host 日志是否装载 TURN
-4. 页面选手动「外网中继」；成功时链路为 `relay` / TURN 中继且 FPS > 0
-5. 失败分类优先：配置缺失/不完整、Host 未就绪、fingerprint 不一致、Allocate 失败（3478/防火墙/凭据）、有 candidate 无 selected、pair 有但 0 FPS（捕获/编码）
+1. 配置源：`TURN_*` 环境变量，或 `signal-server/.env`，或 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（支持 `turnServers[]`；默认优先阿里云；`WRD_TURN_SERVER_ID` 可覆盖）
+2. 登录后访问 `/api/webrtc-config`：`turnConfigured=true`；核对 `turnServers` / `selectedTurnServerId` / `turnFingerprint` / `hostTurnReady`（列表字段不得含 password）
+3. Host 必须能读同一 `turn.json` 目录（`scripts/restart-host.sh`）；日志应出现 multi-turn ids 与 default；会话 offer 的 `turnServerId` 会刷新 Host capability
+4. 页面网络面板选择 TURN 节点后「应用并重连」；`relay` 成功时链路为 TURN 中继且 FPS > 0，Viewer/Host fingerprint 对应当前节点
+5. 失败分类优先：配置缺失/不完整、Host 未就绪、节点 unknown、fingerprint 不一致、Allocate 失败（3478/防火墙/凭据）、有 candidate 无 selected、pair 有但 0 FPS（捕获/编码）
 6. Terminal **默认**仍走 Socket.IO，与 TURN 无关；可选 `webrtc-turn` 见设计 Phase 2，失败不得静默回退
 
 ### 场景 2：Cloudflare 地址失效

@@ -174,6 +174,7 @@
       apiBase = '',
       token = '',
       timeoutMs = 10000,
+      turnServerId = '',
       fetchImpl = (typeof fetch !== 'undefined' ? fetch : null),
     } = options;
     if (!fetchImpl) {
@@ -184,6 +185,9 @@
       };
     }
     try {
+      const payload = { timeoutMs };
+      const selectedId = String(turnServerId || '').trim();
+      if (selectedId) payload.turnServerId = selectedId;
       const response = await fetchImpl(`${apiBase}/api/turn-selftest`, {
         method: 'POST',
         cache: 'no-store',
@@ -191,7 +195,7 @@
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ timeoutMs }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok && !body?.code) {

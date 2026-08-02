@@ -215,6 +215,10 @@ const Diagnostic = {
       terminal: terminalState,
       inputState: inputState ? {
         keyboardMode: inputState.keyboardMode || null,
+        isActive: Boolean(inputState.isActive),
+        hasLease: Boolean(inputState.hasLease),
+        leaseEpoch: Number(inputState.leaseEpoch || 0),
+        gate: inputState.gate && typeof inputState.gate === 'object' ? { ...inputState.gate } : null,
         keyboard: inputState.keyboard ? {
           leaseState: inputState.keyboard.leaseState || null,
           epoch: Number(inputState.keyboard.epoch || 0),

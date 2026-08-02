@@ -3175,7 +3175,7 @@ test('new connection attempt keeps input closed until its first rendered frame',
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
 
-test('control loss clears frame readiness and observer frames cannot arm regrant input', () => {
+test('control loss keeps frame readiness so regrant can enable input without a new frame', () => {
   const { WebRTC, context } = loadWebRTC();
   WebRTC.currentConnectionAttemptId = 'attempt-current';
   WebRTC._mediaReadyConnectionAttemptId = 'attempt-current';
@@ -3184,7 +3184,8 @@ test('control loss clears frame readiness and observer frames cannot arm regrant
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
   };
   context.Input = {
-    setActive() {},
+    active: true,
+    setActive(value) { this.active = value; },
     setControlLease() {},
     resetKeyboard() {},
   };
@@ -3193,13 +3194,20 @@ test('control loss clears frame readiness and observer frames cannot arm regrant
 
   WebRTC.freezeControl('takeover');
 
-  assert.equal(WebRTC._mediaReadyConnectionAttemptId, null);
-  assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), false);
+  // Readiness survives control loss; only beginConnectionAttempt clears it.
+  assert.equal(WebRTC._mediaReadyConnectionAttemptId, 'attempt-current');
+  // Readonly frames may still refresh readiness without arming input.
+  assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), true);
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
+  assert.equal(context.Input.active, false);
+
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
     lease: { leaseId: 'lease-000000000002', leaseEpoch: 2 },
   };
-  assert.equal(WebRTC.markMediaAttemptReady('attempt-current'), true);
+  WebRTC.syncDesktopInputGate();
+  assert.equal(WebRTC.canEnableDesktopInput(), true);
+  assert.equal(context.Input.active, true);
 });
 
 test('media resume fallback does not arm before PC is connected on webrtc paths', () => {
@@ -3412,6 +3420,9 @@ test('control grant honors the media input gate before a fresh frame', () => {
   WebRTC.startControlHeartbeat = () => {};
   WebRTC.updateControlUI = () => {};
   WebRTC.createOffer = () => {};
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.bindCurrentConnectionAttempt = () => false;
+  WebRTC.replayMediaActivityIntent = () => false;
 
   WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 1 });
 

@@ -2,6 +2,7 @@
 # Load TURN_* into the current shell for Host / operator scripts.
 # Priority: already-exported env TURN_URLS wins; else fill gaps from
 # signal-server/.env (already sourced by caller) then WRD_TURN_JSON / ~/.StockHub/turn.json.
+# Multi-server turnServers[]: export the default node (Aliyun preferred).
 # shellcheck shell=bash
 
 wrd_turn_default_json_path() {
@@ -22,6 +23,7 @@ wrd_turn_load_json_into_env() {
   parsed="$(
     python3 - "$json_path" <<'PY'
 import json
+import re
 import sys
 
 path = sys.argv[1]
@@ -32,18 +34,60 @@ except Exception as exc:
     print(f"error={exc}", file=sys.stderr)
     sys.exit(1)
 
-server = data.get("turnServer") if isinstance(data, dict) else None
-if not isinstance(server, dict):
-    server = data if isinstance(data, dict) else {}
+def preferred_aliyun(entry):
+    region = str(entry.get("region") or "").strip().lower()
+    if region in {"cn", "aliyun", "china"}:
+        return True
+    blob = " ".join(str(entry.get(key) or "") for key in ("id", "remark", "label", "realm", "host"))
+    return bool(re.search(r"阿里云|aliyun|ali\.yun", blob, flags=re.I))
 
-host = str(server.get("host") or "").strip()
-port = server.get("port") or 3478
-transport = str(server.get("transport") or "udp").strip().lower() or "udp"
-username = str(server.get("username") or server.get("user") or "").strip()
-password = str(server.get("password") or server.get("credential") or "").strip()
-urls = str(server.get("urls") or server.get("TURN_URLS") or "").strip()
-if not urls and host:
-    urls = f"turn:{host}:{port}?transport={transport}"
+def build_urls(entry):
+    host = str(entry.get("host") or "").strip()
+    port = entry.get("port") or 3478
+    transport = str(entry.get("transport") or "udp").strip().lower() or "udp"
+    urls = str(entry.get("urls") or entry.get("TURN_URLS") or "").strip()
+    if not urls and host:
+        urls = f"turn:{host}:{port}?transport={transport}"
+    return urls
+
+entries = []
+if isinstance(data, dict) and isinstance(data.get("turnServers"), list):
+    entries = [item for item in data["turnServers"] if isinstance(item, dict)]
+if isinstance(data, dict) and isinstance(data.get("turnServer"), dict):
+    entries.append(data["turnServer"])
+if not entries and isinstance(data, dict) and (data.get("host") or data.get("urls") or data.get("TURN_URLS")):
+    entries = [data]
+
+if not entries:
+    sys.exit(0)
+
+configured = []
+for entry in entries:
+    urls = build_urls(entry)
+    username = str(entry.get("username") or entry.get("user") or "").strip()
+    password = str(entry.get("password") or entry.get("credential") or "").strip()
+    if urls and username and password:
+        configured.append({**entry, "_urls": urls, "_username": username, "_password": password})
+
+if not configured:
+    entry = entries[0]
+    urls = build_urls(entry)
+    username = str(entry.get("username") or entry.get("user") or "").strip()
+    password = str(entry.get("password") or entry.get("credential") or "").strip()
+else:
+    file_default = str(data.get("defaultTurnServerId") or "").strip() if isinstance(data, dict) else ""
+    chosen = None
+    if file_default:
+        for entry in configured:
+            if str(entry.get("id") or "").strip() == file_default:
+                chosen = entry
+                break
+    if chosen is None:
+        aliyun = [entry for entry in configured if preferred_aliyun(entry)]
+        chosen = aliyun[0] if aliyun else configured[0]
+    urls = chosen["_urls"]
+    username = chosen["_username"]
+    password = chosen["_password"]
 
 def esc(value: str) -> str:
     return value.replace("'", "'\"'\"'")

@@ -29,6 +29,10 @@ launchctl remove com.webremotedesktop.signal 2>/dev/null || true
 
 cd "$PROJECT_DIR/signal-server"
 
+# Persist viewer diagnostic uploads to /tmp/wrd-diag (see signal-server/lib/diagnostic.js).
+# Without this, "发送日志到服务端" accepts the payload but writes nothing on disk.
+export WRD_ENABLE_DIAG_PERSIST="${WRD_ENABLE_DIAG_PERSIST:-1}"
+
 # 启动并记录 PID
 nohup "$NODE_BIN" server.js > "$LOGFILE" 2>&1 &
 NEW_PID=$!

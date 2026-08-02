@@ -13,8 +13,9 @@ This file captures long-lived project knowledge migrated from Claude memory file
 
 - Frontend diagnostic workflow is manual through the in-page "发送日志到服务端" button.
 - `diagnostic.js` collects recent console logs and latency stats.
-- Signal Server writes diagnostic payloads to `diag-logs/<timestamp>_<viewerId>.json`.
-- When debugging frontend issues, inspect the latest file in `diag-logs/` first.
+- Signal Server persists diagnostic payloads only when `WRD_ENABLE_DIAG_PERSIST=1` (default on via `scripts/run-signal.sh`).
+- Persist directory is `/tmp/wrd-diag/<timestamp>_<viewerId>.json` (not the historical repo-local `diag-logs/`).
+- When debugging frontend issues, inspect the latest file in `/tmp/wrd-diag/` first; absence of new files usually means persist is off or the socket send never connected.
 
 ## Host Startup
 

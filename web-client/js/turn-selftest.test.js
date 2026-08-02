@@ -122,3 +122,35 @@ test('run reports allocate ok with injectable PC factory', async () => {
   assert.equal(allocate.ok, true);
   assert.equal(allocate.relayCandidateCount, 1);
 });
+
+test('runServerProbe posts turnServerId when provided', async () => {
+  let captured = null;
+  const result = await TurnSelfTest.runServerProbe({
+    apiBase: 'http://example.test',
+    token: 'tok',
+    timeoutMs: 1234,
+    turnServerId: 'overseas',
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return {
+        status: 200,
+        async json() {
+          return {
+            ok: true,
+            code: 'turn-allocate-ok',
+            reason: 'complete',
+            relayCandidateCount: 2,
+            durationMs: 11,
+            fingerprintMatch: true,
+            turnServerId: 'overseas',
+          };
+        },
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(captured.url, 'http://example.test/api/turn-selftest');
+  const body = JSON.parse(captured.options.body);
+  assert.equal(body.turnServerId, 'overseas');
+  assert.equal(body.timeoutMs, 1234);
+});

@@ -402,11 +402,39 @@ WebRemoteDesktop/
 
 #### 配置源优先级
 
-1. 进程环境变量 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`（最高优先级）
+1. 进程环境变量 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`（完整三项时合成 id=`env` 并默认选中）
 2. `signal-server/.env`（dotenv）
 3. `WRD_TURN_JSON` 指向的 JSON，或默认本机 `~/.StockHub/turn.json`（若文件存在）
+4. 可选 `WRD_TURN_SERVER_ID` / 文件 `defaultTurnServerId` 指定默认节点；否则**优先阿里云**（remark/realm/id 含 aliyun/阿里云）
 
-本机 JSON 示例结构（**不要提交到 git**）：
+本机 JSON 支持多节点（**不要提交到 git**）：
+
+```json
+{
+  "turnServers": [
+    {
+      "host": "cn.turn.example",
+      "port": 3478,
+      "username": "your-user",
+      "password": "your-password",
+      "realm": "aliyun.example",
+      "transport": "udp",
+      "remark": "阿里云节点"
+    },
+    {
+      "host": "os.turn.example",
+      "port": 3478,
+      "username": "your-user",
+      "password": "your-password",
+      "realm": "overseas.example",
+      "transport": "udp",
+      "remark": "海外节点"
+    }
+  ]
+}
+```
+
+兼容旧单节点：
 
 ```json
 {
@@ -428,25 +456,30 @@ STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
 TURN_URLS=turn:your.turn.host:3478?transport=udp
 TURN_USERNAME=你的用户名
 TURN_CREDENTIAL=你的凭证
-# 可选：显式指定 JSON 路径
+# 可选：显式指定 JSON 路径 / 默认节点
 # WRD_TURN_JSON=/Users/you/.StockHub/turn.json
+# WRD_TURN_SERVER_ID=aliyun
 ```
 
 配置要点：
 
-1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效（`turnMisconfigured`）
-2. **Host LaunchAgent 路径必须注入同一套 `TURN_*`**；仅改 signal-server 不够。接入完成后应使用仓库脚本重启 Host（`scripts/restart-host.sh`），并在 Host 日志中确认 TURN 已装载
-3. `relay` 会话必须在 Host 侧 **会话级** 允许 TURN；全局 `strict-stun` 不得再导致外网中继模式被静默忽略
-4. `auto` / `stun` 模式：保持 Strict STUN，失败时先降载和 ICE restart / 可选手动端口搜索，恢复耗尽后明确失败，**不自动**切 TURN 或 tunnel
-5. `relay` 模式：`iceTransportPolicy: 'relay'`；配置不完整时页面明确提示，建议手动改用隧道中继
-6. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件
-7. 常见来源：自建 coturn，或 metered.ca / Twilio / Cloudflare Calls 等；公司网常拦 UDP，可追加 `?transport=tcp` / `turns:` 备选并先做自检
-8. Terminal **默认**仍走 Socket.IO，不依赖 TURN；可选 `webrtc-turn` DataChannel 为后续 Phase（见设计文档），失败时不得静默假装已接通
+1. `TURN_URLS`、`TURN_USERNAME`、`TURN_CREDENTIAL` 三项必须同时存在，否则 TURN 不生效（`turnMisconfigured`）；完整 env 会覆盖为默认 `env` 节点
+2. **Host 与 signal-server 必须能读同一 `turn.json` 目录**（Host 按 offer.`turnServerId` 会话级选节点）；仅改 signal-server 不够。用 `scripts/restart-host.sh` 重启 Host
+3. Viewer 网络面板可切换 **TURN 节点**（`wrdTurnServerId`）；「应用并重连」后 offer 携带 `turnServerId`，signaling 白名单转发
+4. `relay` 会话必须在 Host 侧 **会话级** 允许 TURN；全局 `strict-stun` 不得再导致外网中继模式被静默忽略
+5. `auto` / `stun` 模式：保持 Strict STUN，失败时先降载和 ICE restart / 可选手动端口搜索，恢复耗尽后明确失败，**不自动**切 TURN 或 tunnel
+6. `relay` 模式：`iceTransportPolicy: 'relay'`；配置不完整时页面明确提示，建议手动改用隧道中继
+7. 当前入口是否是 trycloudflare / 外网域名，不再作为自动强制切到 `隧道中继` 的条件
+8. 常见来源：自建 coturn，或 metered.ca / Twilio / Cloudflare Calls 等；公司网常拦 UDP，可追加 `?transport=tcp` / `turns:` 备选并先做自检
+9. Terminal **默认**仍走 Socket.IO，不依赖 TURN；可选 `webrtc-turn` DataChannel 为后续 Phase（见设计文档），失败时不得静默假装已接通
+
+设计文档：`docs/superpowers/specs/2026-08-02-multi-turn-server-selection-design.md`
 
 验证方式：
 
-- 打开页面网络模式面板，确认显示 `TURN 已配置`（接入完成后还应显示来源 / fingerprint / Host ready）
-- 先在网页登录，再使用带 Bearer Token 的请求访问 `/api/webrtc-config`，确认 `turnConfigured` 为 `true`
+- 打开页面网络模式面板，确认显示 `TURN 已配置`、节点下拉（默认阿里云）与 fingerprint / Host ready
+- 先在网页登录，再使用带 Bearer Token 的请求访问 `/api/webrtc-config`，确认 `turnConfigured` 为 `true`，`turnServers` 列表无 password
+- `GET /api/webrtc-config?turnServerId=overseas` 应切换 `selectedTurnServerId` 与 `iceServers`
 - 选「外网中继」重连；stats 显示链路 `relay` / TURN 中继，且 FPS > 0
 - Host 日志中应出现 TURN 已配置类日志，以及 `Using custom H.264 encoder` / `VIEWER_STATS`
 - 接入自检 UI 后：点「测试 TURN」，配置完整性 + Allocate + 双边 fingerprint 应 PASS

@@ -103,7 +103,8 @@ function createTurnSelfTestRunner(options = {}) {
   }
 
   async function runFromConfig(config = {}, opts = {}) {
-    const turnState = getTurnStatus(config);
+    const turnServerId = String(opts.turnServerId || '').trim();
+    const turnState = getTurnStatus(config, { turnServerId });
     if (!turnState.turnConfigured) {
       return {
         ok: false,
@@ -112,6 +113,7 @@ function createTurnSelfTestRunner(options = {}) {
         turnMisconfigured: Boolean(turnState.turnMisconfigured),
         turnSource: turnState.turnSource || config.turnSource || 'none',
         turnFingerprint: turnState.turnFingerprint || config.turnFingerprint || '',
+        turnServerId: turnState.selectedTurnServerId || turnServerId || '',
         relayCandidateCount: 0,
         reason: turnState.turnStatus || 'missing',
         durationMs: 0,
@@ -120,9 +122,9 @@ function createTurnSelfTestRunner(options = {}) {
     }
 
     const allocate = await runAllocate({
-      urls: config.turnUrls,
-      username: config.turnUsername,
-      credential: config.turnCredential,
+      urls: turnState.turnUrls || config.turnUrls,
+      username: turnState.turnUsername || config.turnUsername,
+      credential: turnState.turnCredential || config.turnCredential,
       timeoutMs: opts.timeoutMs,
       PeerConnectionImpl: opts.PeerConnectionImpl,
     });
@@ -134,6 +136,7 @@ function createTurnSelfTestRunner(options = {}) {
       turnMisconfigured: false,
       turnSource: turnState.turnSource || config.turnSource || 'none',
       turnFingerprint: turnState.turnFingerprint || config.turnFingerprint || '',
+      turnServerId: turnState.selectedTurnServerId || turnServerId || '',
       relayCandidateCount: allocate.relayCandidateCount,
       reason: allocate.reason,
       durationMs: allocate.durationMs,

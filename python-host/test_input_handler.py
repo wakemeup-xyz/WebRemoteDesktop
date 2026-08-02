@@ -522,10 +522,78 @@ def test_release_all_mouse_buttons_is_public_and_idempotent(monkeypatch):
     handler = InputHandler()
     handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
     handler._pressed_mouse_button = "right"
+    handler._pressed_mouse_buttons = {"right"}
     handler.release_all_mouse_buttons(reason="viewer-disconnected")
     handler.release_all_mouse_buttons(reason="duplicate")
 
     assert [event["event_type"] for event in posted] == [input_handler.kCGEventRightMouseUp]
+    assert handler._pressed_mouse_buttons == set()
+    assert handler._pressed_mouse_button is None
+
+
+def test_mouse_tracks_multiple_buttons_and_releases_each(monkeypatch):
+    posted = []
+
+    def fake_create_mouse_event(source, event_type, position, button_type):
+        return {"event_type": event_type, "position": position, "button_type": button_type}
+
+    monkeypatch.setattr(input_handler, "CGEventCreateMouseEvent", fake_create_mouse_event)
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._handle_mouse("down", {"button": "left", "relX": 0.1, "relY": 0.1})
+    handler._handle_mouse("down", {"button": "right", "relX": 0.1, "relY": 0.1})
+    assert handler._pressed_mouse_buttons == {"left", "right"}
+    handler._handle_mouse("move", {"relX": 0.2, "relY": 0.2})
+    assert posted[-1]["event_type"] == input_handler.kCGEventLeftMouseDragged
+    handler._handle_mouse("up", {"button": "left", "relX": 0.2, "relY": 0.2})
+    assert handler._pressed_mouse_buttons == {"right"}
+    handler._handle_mouse("move", {"relX": 0.3, "relY": 0.3})
+    assert posted[-1]["event_type"] == input_handler.kCGEventRightMouseDragged
+    handler.release_all_mouse_buttons(reason="test")
+    assert handler._pressed_mouse_buttons == set()
+    assert handler._pressed_mouse_button is None
+
+
+def test_mouse_move_with_buttons_zero_clears_stuck_pressed_button(monkeypatch):
+    posted = []
+
+    def fake_create_mouse_event(source, event_type, position, button_type):
+        return {"event_type": event_type, "position": position, "button_type": button_type}
+
+    monkeypatch.setattr(input_handler, "CGEventCreateMouseEvent", fake_create_mouse_event)
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._handle_mouse("down", {"button": "left", "relX": 0.2, "relY": 0.3})
+    assert handler._pressed_mouse_button == "left"
+
+    # Lost up: move arrives with buttons===0 and must not stay in drag mode.
+    handler._handle_mouse("move", {"relX": 0.4, "relY": 0.5, "buttons": 0})
+
+    assert handler._pressed_mouse_button is None
+    assert posted[-2]["event_type"] == input_handler.kCGEventLeftMouseUp
+    assert posted[-1]["event_type"] == input_handler.kCGEventMouseMoved
+
+
+def test_mouse_move_without_buttons_field_keeps_drag_while_pressed(monkeypatch):
+    posted = []
+
+    def fake_create_mouse_event(source, event_type, position, button_type):
+        return {"event_type": event_type, "position": position, "button_type": button_type}
+
+    monkeypatch.setattr(input_handler, "CGEventCreateMouseEvent", fake_create_mouse_event)
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    handler._handle_mouse("down", {"button": "left", "relX": 0.1, "relY": 0.1})
+    handler._handle_mouse("move", {"relX": 0.2, "relY": 0.2})
+
+    assert handler._pressed_mouse_button == "left"
+    assert posted[-1]["event_type"] == input_handler.kCGEventLeftMouseDragged
 
 
 def test_input_handler_logs_no_keyboard_values_or_mouse_coordinates(monkeypatch, caplog):

@@ -16,13 +16,11 @@ test('getTurnStatus reports missing when no TURN env is configured', () => {
     turnCredential: '',
   });
 
-  assert.deepEqual(status, {
-    turnConfigured: false,
-    turnMisconfigured: false,
-    turnStatus: 'missing',
-    turnSource: 'none',
-    turnFingerprint: '',
-  });
+  assert.equal(status.turnConfigured, false);
+  assert.equal(status.turnMisconfigured, false);
+  assert.equal(status.turnStatus, 'missing');
+  assert.equal(status.turnSource, 'none');
+  assert.equal(status.turnFingerprint, '');
 });
 
 test('getTurnStatus reports misconfigured when TURN urls are missing credentials', () => {
@@ -34,13 +32,11 @@ test('getTurnStatus reports misconfigured when TURN urls are missing credentials
     turnFingerprint: 'abc',
   });
 
-  assert.deepEqual(status, {
-    turnConfigured: false,
-    turnMisconfigured: true,
-    turnStatus: 'misconfigured',
-    turnSource: 'env',
-    turnFingerprint: 'abc',
-  });
+  assert.equal(status.turnConfigured, false);
+  assert.equal(status.turnMisconfigured, true);
+  assert.equal(status.turnStatus, 'misconfigured');
+  assert.equal(status.turnSource, 'env');
+  assert.equal(status.turnFingerprint, 'abc');
 });
 
 test('getTurnStatus reports configured only when TURN urls and credentials are complete', () => {
@@ -52,13 +48,11 @@ test('getTurnStatus reports configured only when TURN urls and credentials are c
     turnFingerprint: 'deadbeef',
   });
 
-  assert.deepEqual(status, {
-    turnConfigured: true,
-    turnMisconfigured: false,
-    turnStatus: 'configured',
-    turnSource: 'json',
-    turnFingerprint: 'deadbeef',
-  });
+  assert.equal(status.turnConfigured, true);
+  assert.equal(status.turnMisconfigured, false);
+  assert.equal(status.turnStatus, 'configured');
+  assert.equal(status.turnSource, 'json');
+  assert.equal(status.turnFingerprint, 'deadbeef');
 });
 
 test('getPublicEntryConfig returns the formal fixed-domain entry metadata', () => {
@@ -229,6 +223,106 @@ test('/api/webrtc-config returns ICE settings plus capability and public entry m
       formalEntryMode: 'fixed-domain',
       quickTunnelRecommended: false,
     });
+  } finally {
+    await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('/api/webrtc-config lists multi turn servers and selects by query id', async () => {
+  const catalog = {
+    defaultId: 'aliyun',
+    source: 'json',
+    servers: [
+      {
+        id: 'aliyun',
+        label: '阿里云节点',
+        host: '8.1.1.1',
+        port: 3478,
+        transport: 'udp',
+        realm: 'aliyun.example',
+        priority: 0,
+        preferred: true,
+        configured: true,
+        fingerprint: 'fp-aliyun',
+        urls: ['turn:8.1.1.1:3478?transport=udp'],
+        username: 'u1',
+        credential: 'p1',
+        source: 'json',
+      },
+      {
+        id: 'overseas',
+        label: '海外节点',
+        host: '9.2.2.2',
+        port: 3478,
+        transport: 'udp',
+        realm: 'overseas.example',
+        priority: 0,
+        preferred: false,
+        configured: true,
+        fingerprint: 'fp-overseas',
+        urls: ['turn:9.2.2.2:3478?transport=udp'],
+        username: 'u2',
+        credential: 'p2',
+        source: 'json',
+      },
+    ],
+  };
+
+  const runtime = createServerApp({
+    config: {
+      port: 0,
+      nodeEnv: 'test',
+      jwtSecret: process.env.JWT_SECRET,
+      viewerAccessPassword: process.env.VIEWER_ACCESS_PASSWORD,
+      hostSharedSecret: process.env.HOST_SHARED_SECRET,
+      corsOrigins: [],
+      stunUrls: ['stun:stun1.example.com:3478'],
+      turnUrls: catalog.servers[0].urls,
+      turnUsername: 'u1',
+      turnCredential: 'p1',
+      turnSource: 'json',
+      turnFingerprint: 'fp-aliyun',
+      turnCatalog: catalog,
+      selectedTurnServerId: 'aliyun',
+      defaultTurnServerId: 'aliyun',
+      publicEntryUrl: 'https://link.stockhub.wiki',
+      enableDiagPersist: false,
+      enableTerminal: false,
+      terminalAdminPassword: '',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '',
+      terminalSoftWarnSessionCount: 4,
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalAuditLog: '',
+      terminalRecordIo: false,
+    },
+    logger: { log() {}, info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const { port } = runtime.server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const auth = {
+    Authorization: `Bearer ${signAccessToken('viewer', 'viewer-multi-turn')}`,
+  };
+
+  try {
+    const defaultResp = await fetch(`${baseUrl}/api/webrtc-config`, { headers: auth });
+    const defaultBody = await defaultResp.json();
+    assert.equal(defaultResp.status, 200);
+    assert.equal(defaultBody.turnServers.length, 2);
+    assert.equal(defaultBody.selectedTurnServerId, 'aliyun');
+    assert.equal(defaultBody.defaultTurnServerId, 'aliyun');
+    assert.deepEqual(defaultBody.turnUrls, ['turn:8.1.1.1:3478?transport=udp']);
+    assert.ok(defaultBody.turnServers.every((server) => !('password' in server) && !('credential' in server)));
+
+    const overseasResp = await fetch(`${baseUrl}/api/webrtc-config?turnServerId=overseas`, { headers: auth });
+    const overseasBody = await overseasResp.json();
+    assert.equal(overseasResp.status, 200);
+    assert.equal(overseasBody.selectedTurnServerId, 'overseas');
+    assert.equal(overseasBody.turnFingerprint, 'fp-overseas');
+    assert.deepEqual(overseasBody.turnUrls, ['turn:9.2.2.2:3478?transport=udp']);
+    assert.equal(overseasBody.iceServers.at(-1).username, 'u2');
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }

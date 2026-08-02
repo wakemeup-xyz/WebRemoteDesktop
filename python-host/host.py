@@ -244,6 +244,22 @@ def normalize_turn_urls(value):
 
 
 def get_turn_fingerprint(turn_urls=None, username=None):
+    try:
+        from turn_catalog import get_turn_fingerprint as catalog_fingerprint
+        from turn_catalog import get_cached_turn_catalog, resolve_turn_server
+    except ImportError:
+        catalog_fingerprint = None
+        get_cached_turn_catalog = None
+        resolve_turn_server = None
+
+    if catalog_fingerprint is not None and turn_urls is None and username is None:
+        catalog = get_cached_turn_catalog()
+        selected = resolve_turn_server(catalog, catalog.get("defaultId"))
+        if selected:
+            return catalog_fingerprint(selected.get("urls"), selected.get("username"))
+    if catalog_fingerprint is not None:
+        return catalog_fingerprint(turn_urls, username)
+
     raw_urls = turn_urls if turn_urls is not None else os.environ.get("TURN_URLS")
     urls = sorted(normalize_turn_urls(raw_urls))
     user = str(username if username is not None else os.environ.get("TURN_USERNAME") or "").strip()
@@ -253,15 +269,44 @@ def get_turn_fingerprint(turn_urls=None, username=None):
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def get_host_turn_capability():
-    turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
-    turn_username = str(os.environ.get("TURN_USERNAME") or "").strip()
-    turn_credential = str(os.environ.get("TURN_CREDENTIAL") or "").strip()
-    turn_ready = bool(turn_urls and turn_username and turn_credential)
+def get_host_turn_capability(selected_turn_server_id=None):
+    try:
+        from turn_catalog import get_cached_turn_catalog, resolve_turn_server
+    except ImportError:
+        turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
+        turn_username = str(os.environ.get("TURN_USERNAME") or "").strip()
+        turn_credential = str(os.environ.get("TURN_CREDENTIAL") or "").strip()
+        turn_ready = bool(turn_urls and turn_username and turn_credential)
+        return {
+            "turnReady": turn_ready,
+            "turnFingerprint": get_turn_fingerprint(turn_urls, turn_username) if turn_ready else "",
+            "supportsSessionTurn": True,
+            "supportsMultiTurn": False,
+            "turnServerId": "",
+            "defaultTurnServerId": "",
+            "turnServerIds": [],
+        }
+
+    catalog = get_cached_turn_catalog()
+    servers = list(catalog.get("servers") or [])
+    default_id = str(catalog.get("defaultId") or "")
+    selected = resolve_turn_server(catalog, selected_turn_server_id or default_id)
+    configured_servers = [server for server in servers if server.get("configured")]
+    turn_ready = bool(selected and selected.get("configured")) or bool(configured_servers)
+    selected_id = str((selected or {}).get("id") or default_id or "")
+    fingerprint = ""
+    if selected and selected.get("configured"):
+        fingerprint = str(selected.get("fingerprint") or "")
+    elif configured_servers:
+        fingerprint = str(configured_servers[0].get("fingerprint") or "")
     return {
         "turnReady": turn_ready,
-        "turnFingerprint": get_turn_fingerprint(turn_urls, turn_username) if turn_ready else "",
+        "turnFingerprint": fingerprint,
         "supportsSessionTurn": True,
+        "supportsMultiTurn": len(servers) >= 1,
+        "turnServerId": selected_id,
+        "defaultTurnServerId": default_id,
+        "turnServerIds": [str(server.get("id") or "") for server in servers if server.get("id")],
     }
 
 
@@ -282,8 +327,8 @@ def clamp_int(value, minimum, maximum, fallback):
     return max(minimum, min(maximum, parsed))
 
 
-def build_ice_servers(mode="auto"):
-    """Build Host ICE config from env; TURN inclusion is session/mode scoped."""
+def build_ice_servers(mode="auto", turn_server_id=None):
+    """Build Host ICE config; TURN inclusion is session/mode/id scoped."""
     ice_servers = []
     normalized_mode = normalize_network_mode(mode) or "auto"
     stun_urls = split_env_list(
@@ -293,15 +338,31 @@ def build_ice_servers(mode="auto"):
     if stun_urls and normalized_mode != "relay":
         ice_servers.append(RTCIceServer(urls=stun_urls))
 
-    turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
-    turn_username = os.environ.get("TURN_USERNAME")
-    turn_credential = os.environ.get("TURN_CREDENTIAL")
+    turn_urls = []
+    turn_username = ""
+    turn_credential = ""
+    selected_id = ""
+    try:
+        from turn_catalog import get_cached_turn_catalog, resolve_turn_server
+        catalog = get_cached_turn_catalog()
+        selected = resolve_turn_server(catalog, turn_server_id)
+        if selected:
+            turn_urls = normalize_turn_urls(selected.get("urls") or [])
+            turn_username = str(selected.get("username") or "").strip()
+            turn_credential = str(selected.get("credential") or "").strip()
+            selected_id = str(selected.get("id") or "")
+    except ImportError:
+        turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
+        turn_username = str(os.environ.get("TURN_USERNAME") or "").strip()
+        turn_credential = str(os.environ.get("TURN_CREDENTIAL") or "").strip()
+
     include_turn = should_include_turn_for_mode(mode)
 
     if turn_urls and not include_turn:
         logger.info(
-            "WRD_POLICY_INFO turn_omitted_for_mode mode=%s turn_urls=%s",
+            "WRD_POLICY_INFO turn_omitted_for_mode mode=%s turn_server_id=%s turn_urls=%s",
             normalized_mode,
+            selected_id or turn_server_id or "-",
             ",".join(turn_urls),
         )
     elif turn_urls and turn_username and turn_credential and include_turn:
@@ -313,13 +374,17 @@ def build_ice_servers(mode="auto"):
             )
         )
         logger.info(
-            "TURN relay configured for Host ICE: mode=%s urls=%s fingerprint=%s",
+            "TURN relay configured for Host ICE: mode=%s turn_server_id=%s urls=%s fingerprint=%s",
             normalized_mode,
+            selected_id or turn_server_id or "-",
             ",".join(turn_urls),
             get_turn_fingerprint(turn_urls, turn_username)[:12],
         )
     elif turn_urls and include_turn:
-        logger.warning("TURN_URLS is set but TURN_USERNAME/TURN_CREDENTIAL is missing; TURN disabled")
+        logger.warning(
+            "TURN urls present for turn_server_id=%s but username/credential missing; TURN disabled",
+            selected_id or turn_server_id or "-",
+        )
 
     return ice_servers
 
@@ -1333,6 +1398,7 @@ class WebRemoteHost:
         # Per-offer media demand binding: generation is monotonic per attempt.
         self._media_activity_binding = None
         self._media_activity_suspended = False
+        self._session_turn_server_id = None
 
     async def authenticate(self):
         try:
@@ -1398,9 +1464,12 @@ class WebRemoteHost:
                 capability = get_host_turn_capability()
                 await self.sio.emit("host-capabilities", capability)
                 logger.info(
-                    "Host capabilities reported turnReady=%s fingerprint=%s",
+                    "Host capabilities reported turnReady=%s multi=%s default=%s fingerprint=%s ids=%s",
                     capability.get("turnReady"),
+                    capability.get("supportsMultiTurn"),
+                    capability.get("defaultTurnServerId") or "-",
                     (capability.get("turnFingerprint") or "")[:12] or "-",
+                    ",".join(capability.get("turnServerIds") or []) or "-",
                 )
             except Exception as cap_err:
                 logger.warning("Failed to report host capabilities: %s", cap_err)
@@ -1418,14 +1487,41 @@ class WebRemoteHost:
                 return
             viewer_id = data.get("viewerId")
             is_v2 = data.get("schemaVersion") == 2
+            input_type = data.get('type')
+            action = data.get('action')
             if is_v2:
                 binding = getattr(self, "_active_input_binding", None)
-                if not isinstance(binding, dict) or (
-                    viewer_id != binding.get("viewerId")
-                    or data.get("leaseId") != binding.get("leaseId")
-                    or data.get("leaseEpoch") != binding.get("leaseEpoch")
-                ):
-                    logger.warning("Ignoring input that does not match the active lease binding")
+                lease_ok = (
+                    isinstance(binding, dict)
+                    and viewer_id == binding.get("viewerId")
+                    and data.get("leaseId") == binding.get("leaseId")
+                    and data.get("leaseEpoch") == binding.get("leaseEpoch")
+                )
+                if not lease_ok:
+                    # Mouse up/reset are safety releases: honor them even on a
+                    # stale/mismatched lease so a lost-up cannot keep Host dragging
+                    # after rebind or mid-transition.
+                    if input_type == "mouse" and action in ("up", "reset"):
+                        logger.warning(
+                            "Applying mouse safety release despite lease mismatch "
+                            "type=%s action=%s viewer=%s",
+                            input_type,
+                            action,
+                            viewer_id,
+                        )
+                        try:
+                            await self.input_handler.handle_input(data)
+                        except Exception:
+                            logger.exception("Mouse safety release failed")
+                        return
+                    logger.warning(
+                        "Ignoring input that does not match the active lease binding "
+                        "type=%s action=%s viewer=%s hasBinding=%s",
+                        input_type,
+                        action,
+                        viewer_id,
+                        isinstance(binding, dict),
+                    )
                     return
             elif viewer_id and self.current_viewer_id and viewer_id != self.current_viewer_id:
                 logger.warning(
@@ -1434,7 +1530,6 @@ class WebRemoteHost:
                     self.current_viewer_id,
                 )
                 return
-            input_type = data.get('type')
             if input_type not in ('mouse', 'keyboard', 'command'):
                 logger.warning("Unknown input type")
                 return
@@ -1448,7 +1543,6 @@ class WebRemoteHost:
                 if rel_y is not None and not (0 <= rel_y <= 1):
                     logger.warning("Invalid mouse coordinate field=relY")
                     return
-            action = data.get('action')
             transport = data.get("transport", "socket")
             input_ids = data.get("inputIds", [])
             self._input_event_count = int(getattr(self, "_input_event_count", 0) or 0) + 1
@@ -1932,8 +2026,21 @@ class WebRemoteHost:
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
-                config = RTCConfiguration(iceServers=build_ice_servers(network_mode))
+                turn_server_id = (
+                    data.get("turnServerId")
+                    or data.get("turn_server_id")
+                    or getattr(self, "_session_turn_server_id", None)
+                )
+                self._session_turn_server_id = str(turn_server_id or "").strip() or None
+                config = RTCConfiguration(
+                    iceServers=build_ice_servers(network_mode, self._session_turn_server_id)
+                )
                 self.pc = RTCPeerConnection(configuration=config)
+                try:
+                    session_caps = get_host_turn_capability(self._session_turn_server_id)
+                    await self.sio.emit("host-capabilities", session_caps)
+                except Exception as cap_err:
+                    logger.warning("Failed to refresh host TURN capability after offer: %s", cap_err)
 
                 # Setup handlers BEFORE setting local description
                 ice_complete = asyncio.Event()

@@ -44,9 +44,9 @@ test('redactDiagnosticPayload trims logs and strips keyboard debug details', () 
   assert.equal(redacted.network.candidateSummary.samples.local[0].type, 'srflx');
 });
 
-test('persistDiagnostic writes into temp wrd-diag directory', () => {
+test('persistDiagnostic writes into stable /tmp/wrd-diag directory', () => {
   const dir = getDiagDir();
-  assert.equal(dir, path.join(os.tmpdir(), 'wrd-diag'));
+  assert.equal(dir, path.join('/tmp', 'wrd-diag'));
   const filename = 'diag-' + Date.now() + '.json';
   const report = { ok: true };
   persistDiagnostic(filename, report);

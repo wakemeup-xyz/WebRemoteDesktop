@@ -775,6 +775,68 @@ test('input is not relayed before control transition ack, then valid v2 input re
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
+test('v2 mouse and command socket inputs relay after lease grant without keyboard contract', () => {
+  // Mouse/command are desktop writes under the same lease, but they are not keyboard
+  // envelopes. Socket fallback (DataChannel closed) must not run validateRemoteInput.
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-mouse-v2', 'host');
+  const viewer = new FakeSocket('viewer-mouse-v2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'mouse-1' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const granted = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+
+  viewer.trigger('input', {
+    schemaVersion: 2,
+    type: 'mouse',
+    action: 'down',
+    leaseId: granted.leaseId,
+    leaseEpoch: granted.leaseEpoch,
+    inputIds: ['mouse-1'],
+    transport: 'socket',
+    payload: { relX: 0.5, relY: 0.4, button: 'left', clickCount: 1 },
+  });
+  viewer.trigger('input', {
+    schemaVersion: 2,
+    type: 'command',
+    action: 'showDock',
+    leaseId: granted.leaseId,
+    leaseEpoch: granted.leaseEpoch,
+    inputIds: ['cmd-1'],
+    transport: 'socket',
+    payload: {},
+  });
+  // Keyboard contract still rejects unknown keyboard fields.
+  viewer.trigger('input', {
+    schemaVersion: 2,
+    type: 'keyboard',
+    action: 'key',
+    leaseId: granted.leaseId,
+    leaseEpoch: granted.leaseEpoch,
+    seq: 1,
+    inputIds: ['kbd-bad'],
+    transport: 'socket',
+    payload: { phase: 'down', code: 'KeyA', location: 0, repeat: false,
+      modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+      locks: { capsLock: false } },
+  });
+
+  const relayed = host.sent.filter((entry) => entry.event === 'input');
+  assert.equal(relayed.length, 2);
+  assert.equal(relayed[0].data.type, 'mouse');
+  assert.equal(relayed[0].data.action, 'down');
+  assert.equal(relayed[0].data.viewerId, 'viewer-mouse-v2');
+  assert.equal(relayed[1].data.type, 'command');
+  assert.equal(relayed[1].data.action, 'showDock');
+});
+
 test('fresh v2 tunnel input matches the Host transition lease without leaking it to viewers or logs', () => {
   resetConnections();
   const io = makeIo();
@@ -1249,6 +1311,10 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
       turnReady: false,
       turnFingerprint: '',
       supportsSessionTurn: false,
+      supportsMultiTurn: false,
+      turnServerId: '',
+      defaultTurnServerId: '',
+      turnServerIds: [],
       updatedAt: null,
     },
   });
@@ -1275,17 +1341,25 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
     turnReady: true,
     turnFingerprint: 'abc123',
     supportsSessionTurn: true,
+    supportsMultiTurn: true,
+    turnServerId: 'aliyun',
+    defaultTurnServerId: 'aliyun',
+    turnServerIds: ['aliyun', 'overseas'],
   });
 
   const caps = getHostCapabilities();
   assert.equal(caps.turnReady, true);
   assert.equal(caps.turnFingerprint, 'abc123');
   assert.equal(caps.supportsSessionTurn, true);
+  assert.equal(caps.supportsMultiTurn, true);
+  assert.equal(caps.turnServerId, 'aliyun');
+  assert.deepEqual(caps.turnServerIds, ['aliyun', 'overseas']);
   assert.ok(caps.updatedAt);
 
   const fanout = viewer.sent.filter((entry) => entry.event === 'host-capabilities').at(-1);
   assert.deepEqual(fanout.data.turnReady, true);
   assert.equal(fanout.data.turnFingerprint, 'abc123');
+  assert.equal(fanout.data.supportsMultiTurn, true);
 
   // grant control so v2 offer can pass authorizeViewer
   viewer.trigger('control-acquire', { requestId: 'turn-offer' });
@@ -1299,6 +1373,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
     schemaVersion: 2,
     networkMode: 'relay',
     iceMode: 'relay',
+    turnServerId: 'overseas',
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
     connectionAttemptId: 'attempt-turn-1',
@@ -1308,6 +1383,7 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
   assert.ok(forwarded);
   assert.equal(forwarded.data.networkMode, 'relay');
   assert.equal(forwarded.data.iceMode, 'relay');
+  assert.equal(forwarded.data.turnServerId, 'overseas');
   assert.equal(forwarded.data.viewerId, viewer.id);
   assert.equal(forwarded.data.connectionAttemptId, 'attempt-turn-1');
 });

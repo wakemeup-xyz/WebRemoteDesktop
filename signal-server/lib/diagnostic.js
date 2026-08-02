@@ -1,5 +1,4 @@
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { loadConfig } = require('./config');
 
@@ -24,11 +23,41 @@ function redactDiagnosticPayload(payload) {
   const inputState = payload.inputState
     ? {
         keyboardMode: payload.inputState.keyboardMode || null,
+        isActive: payload.inputState.isActive == null ? null : Boolean(payload.inputState.isActive),
+        hasLease: payload.inputState.hasLease == null ? null : Boolean(payload.inputState.hasLease),
+        leaseEpoch: Number(payload.inputState.leaseEpoch || 0) || 0,
+        gate: payload.inputState.gate && typeof payload.inputState.gate === 'object'
+          ? {
+              enabled: Boolean(payload.inputState.gate.enabled),
+              hasActiveControl: Boolean(payload.inputState.gate.hasActiveControl),
+              mediaState: payload.inputState.gate.mediaState || null,
+              runtimePhase: payload.inputState.gate.runtimePhase || null,
+              currentConnectionAttemptId: payload.inputState.gate.currentConnectionAttemptId || null,
+              mediaReadyConnectionAttemptId: payload.inputState.gate.mediaReadyConnectionAttemptId || null,
+              blockedReasons: Array.isArray(payload.inputState.gate.blockedReasons)
+                ? payload.inputState.gate.blockedReasons.slice(0, 8).map(String)
+                : [],
+            }
+          : null,
         pendingKeys: Array.isArray(payload.inputState.pendingKeys)
           ? payload.inputState.pendingKeys.length
           : payload.inputState.pendingKeys || 0,
         lastReleaseAllReason: payload.inputState.lastReleaseAllReason || null,
-        lastKeyboardResetReason: payload.inputState.lastKeyboardResetReason || null,
+        lastKeyboardResetReason: payload.inputState.lastKeyboardResetReason
+          || payload.inputState.keyboard?.lastResetReason
+          || null,
+        keyboard: payload.inputState.keyboard && typeof payload.inputState.keyboard === 'object'
+          ? {
+              leaseState: payload.inputState.keyboard.leaseState || null,
+              epoch: Number(payload.inputState.keyboard.epoch || 0) || 0,
+              lastSent: Number(payload.inputState.keyboard.lastSent || 0) || 0,
+              lastApplied: Number(payload.inputState.keyboard.lastApplied || 0) || 0,
+              pendingCount: Number(payload.inputState.keyboard.pendingCount || 0) || 0,
+              pressedCount: Number(payload.inputState.keyboard.pressedCount || 0) || 0,
+              adapter: payload.inputState.keyboard.adapter || null,
+              lastResetReason: payload.inputState.keyboard.lastResetReason || null,
+            }
+          : null,
         recentInputEvents: Array.isArray(payload.inputState.recentInputEvents)
           ? payload.inputState.recentInputEvents.slice(-20)
           : [],
@@ -45,7 +74,11 @@ function redactDiagnosticPayload(payload) {
 }
 
 function getDiagDir() {
-  return path.join(os.tmpdir(), 'wrd-diag');
+  // Prefer a stable absolute path so operators/agents can find uploads without
+  // chasing macOS per-user os.tmpdir() folders. Override with WRD_DIAG_DIR.
+  const override = String(process.env.WRD_DIAG_DIR || '').trim();
+  if (override) return path.resolve(override);
+  return path.join('/tmp', 'wrd-diag');
 }
 
 function persistDiagnostic(filename, report) {
@@ -313,7 +346,7 @@ function ingestDiagnosticPayload(options = {}) {
       const filename = `${ts}_${viewerId}.json`;
       persistDiagnostic(filename, report);
       persisted = true;
-      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join('tmp', 'wrd-diag', filename)}`);
+      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join(getDiagDir(), filename)}`);
     } catch (error) {
       logger.error?.('[DIAGNOSTIC] Failed to write log file:', error.message);
     }

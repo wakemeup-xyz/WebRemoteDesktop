@@ -11,6 +11,8 @@ const Input = {
   modifierMask: 0,
   _pendingMouseMove: null,
   _mouseMoveScheduled: false,
+  _pendingWheel: null,
+  _wheelScheduled: false,
   _activePointerId: null,
   _activePointerElement: null,
   _pressedMouseButtons: new Set(),
@@ -166,16 +168,25 @@ const Input = {
     if (display) display.textContent = this.keyboardController?.getSnapshot().state || 'INACTIVE';
   },
 
-  setActive(active) {
-    if (!active) {
-      this.releasePointer('deactivated');
-      this.resetKeyboard('deactivated');
-    }
+  setActive(active, meta = {}) {
+    const want = Boolean(active);
     // Desktop writes remain gated by WebRTC.canEnableDesktopInput when available.
-    if (active && typeof WebRTC !== 'undefined' && typeof WebRTC.canEnableDesktopInput === 'function') {
-      active = WebRTC.canEnableDesktopInput();
+    let next = want;
+    if (want && typeof WebRTC !== 'undefined' && typeof WebRTC.canEnableDesktopInput === 'function') {
+      next = Boolean(WebRTC.canEnableDesktopInput());
     }
-    this.isActive = Boolean(active);
+    const wasActive = this.isActive;
+    if (!next && wasActive) {
+      const reason = meta.reason || 'deactivated';
+      this.releasePointer(reason);
+      // resetKeyboard:true  → always
+      // resetKeyboard:false → never (caller already reset, or media-gate only)
+      // undefined           → only when no control lease remains
+      const shouldResetKeyboard = meta.resetKeyboard === true
+        || (meta.resetKeyboard !== false && !this.activeControlLease);
+      if (shouldResetKeyboard) this.resetKeyboard(reason);
+    }
+    this.isActive = next;
     if (this.isActive && this.videoElement) this.videoElement.focus();
     this.updateKeyboardUI();
   },
@@ -188,9 +199,15 @@ const Input = {
   getDiagnosticState() {
     const controller = this.keyboardController?.getSnapshot() || {};
     const transport = this.keyboardTransport?.getSnapshot() || {};
+    const gate = (typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopInputGateSnapshot === 'function')
+      ? WebRTC.getDesktopInputGateSnapshot()
+      : null;
     return {
       keyboardMode: controller.mode || this.keyboardMode || null,
       isActive: this.isActive,
+      hasLease: Boolean(this.activeControlLease),
+      leaseEpoch: this.activeControlLease?.leaseEpoch || 0,
+      gate,
       keyboard: {
         leaseState: controller.state || 'INACTIVE',
         epoch: transport.epoch || 0,
@@ -209,10 +226,24 @@ const Input = {
 
   sendInput(type, action, payload) {
     const lease = this.activeControlLease;
-    if (!this.isActive || !lease) return null;
+    if (!lease) return null;
+    // Mouse/DOM keyboard path requires the media gate (isActive). Toolbar commands
+    // like showDock only need the control lease so they keep working across brief
+    // 0-FPS / media-ready gaps on full-relay.
+    // Mouse up/reset are safety releases: they must still flow when the gate flips
+    // mid-gesture, otherwise Host keeps a pressed button and every move becomes a drag.
+    const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
+    if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
+    // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
+    // Do not attach free-form metadata here; transport is added only for the path used.
     const data = {
-      type, action, payload, timestamp: Date.now(), inputIds: [`inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`],
-      schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,
+      type,
+      action,
+      payload,
+      inputIds: [`inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`],
+      schemaVersion: 2,
+      leaseId: lease.leaseId,
+      leaseEpoch: lease.leaseEpoch,
     };
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
       this.recordLatency(data);
@@ -233,8 +264,14 @@ const Input = {
     this._mouseMoveScheduled = true;
     requestAnimationFrame(() => {
       this._mouseMoveScheduled = false;
-      if (this.isActive && this._pendingMouseMove) this.sendInput('mouse', 'move', this._pendingMouseMove);
+      const pending = this._pendingMouseMove;
       this._pendingMouseMove = null;
+      if (!pending) return;
+      // buttons===0 while we still track a local press: local desync — force reset.
+      if (Number(pending.buttons) === 0 && this._pressedMouseButtons.size > 0) {
+        this.releasePointer('move-buttons-clear');
+      }
+      if (this.isActive) this.sendInput('mouse', 'move', pending);
     });
   },
 
@@ -271,9 +308,17 @@ const Input = {
 
   bindMouseEvents(element) {
     element.addEventListener('pointermove', (event) => {
-      if (!this.isActive) return;
+      if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       const coords = this.getRelativeCoords(event, this._activePointerId === event.pointerId);
-      if (coords) { this._lastPointerCoords = coords; this.queueMouseMove(coords); }
+      if (coords) {
+        this._lastPointerCoords = coords;
+        this.queueMouseMove({
+          ...coords,
+          // Host uses buttons===0 on move to clear a stuck pressed button when the
+          // matching up was lost (DC drop / gate flip mid-gesture).
+          buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
+        });
+      }
     });
     element.addEventListener('pointerdown', (event) => {
       if (!this.isActive) return;
@@ -281,18 +326,77 @@ const Input = {
       const coords = this.getRelativeCoords(event); if (!coords) return;
       element.setPointerCapture?.(event.pointerId);
       const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
-      if (!this.sendInput('mouse', 'down', { ...coords, button, clickCount })) return;
+      if (!this.sendInput('mouse', 'down', { ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
       this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
     });
     element.addEventListener('pointerup', (event) => {
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
-      const id = coords ? this.sendInput('mouse', 'up', { ...coords, button, clickCount: this._activePointerClickCount }) : null;
-      this._pressedMouseButtons.delete(button); this._pendingMouseReset ||= !id;
+      // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
+      const id = coords
+        ? this.sendInput('mouse', 'up', {
+          ...coords,
+          button,
+          clickCount: this._activePointerClickCount,
+          buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
+        })
+        : null;
+      this._pressedMouseButtons.delete(button);
+      if (!id) {
+        this._pendingMouseReset = true;
+        this.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
+      } else {
+        this._pendingMouseReset = false;
+      }
       if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
     });
     element.addEventListener('pointercancel', () => this.releasePointer('pointer-cancel'));
-    element.addEventListener('wheel', (event) => { if (!this.isActive) return; event.preventDefault(); const coords = this.getRelativeCoords(event); if (coords) this.sendInput('mouse', 'wheel', { ...coords, deltaX: event.deltaX, deltaY: event.deltaY }); }, { passive: false });
+    element.addEventListener('lostpointercapture', () => {
+      if (this._pressedMouseButtons.size > 0 || this._pendingMouseReset) {
+        this.releasePointer('lost-pointer-capture');
+      }
+    });
+    element.addEventListener('wheel', (event) => {
+      if (!this.isActive) return;
+      event.preventDefault();
+      const coords = this.getRelativeCoords(event);
+      if (!coords) return;
+      this.queueWheel({
+        ...coords,
+        deltaX: Number(event.deltaX) || 0,
+        deltaY: Number(event.deltaY) || 0,
+      });
+    }, { passive: false });
+  },
+
+  queueWheel(payload) {
+    if (!this._pendingWheel) {
+      this._pendingWheel = {
+        relX: payload.relX,
+        relY: payload.relY,
+        deltaX: 0,
+        deltaY: 0,
+      };
+    }
+    this._pendingWheel.relX = payload.relX;
+    this._pendingWheel.relY = payload.relY;
+    this._pendingWheel.deltaX += Number(payload.deltaX) || 0;
+    this._pendingWheel.deltaY += Number(payload.deltaY) || 0;
+    if (this._wheelScheduled) return;
+    this._wheelScheduled = true;
+    const flush = () => {
+      this._wheelScheduled = false;
+      const wheel = this._pendingWheel;
+      this._pendingWheel = null;
+      if (!wheel || !this.isActive) return;
+      if (wheel.deltaX === 0 && wheel.deltaY === 0) return;
+      this.sendInput('mouse', 'wheel', wheel);
+    };
+    // rAF batches to the next frame; an extra microtask keeps same-tick callers
+    // (and test doubles that invoke rAF synchronously) able to merge first.
+    requestAnimationFrame(() => {
+      Promise.resolve().then(flush);
+    });
   },
 
   setupActionButtons() {

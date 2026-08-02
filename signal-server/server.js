@@ -13,6 +13,7 @@ const {
   getTurnStatus,
   getPublicEntryConfig,
   getMediaModeCapabilities,
+  listPublicTurnServers,
 } = require('./lib/config');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
 const {
@@ -159,10 +160,30 @@ function createServerApp(options = {}) {
   });
 
   app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
-    const turnState = getTurnStatus(config);
-    const capabilities = getMediaModeCapabilities(config);
+    const requestedTurnServerId = String(
+      req.query.turnServerId
+      || req.get('x-wrd-turn-server-id')
+      || '',
+    ).trim();
+    const turnState = getTurnStatus(config, { turnServerId: requestedTurnServerId });
+    const capabilities = getMediaModeCapabilities({
+      ...config,
+      turnUrls: turnState.turnUrls,
+      turnUsername: turnState.turnUsername,
+      turnCredential: turnState.turnCredential,
+      turnFingerprint: turnState.turnFingerprint,
+      turnSource: turnState.turnSource,
+    });
     const publicEntry = getPublicEntryConfig(config);
     const hostCaps = getHostCapabilities();
+    const selectedTurnServerId = turnState.selectedTurnServerId
+      || config.selectedTurnServerId
+      || config.defaultTurnServerId
+      || '';
+    const defaultTurnServerId = turnState.defaultTurnServerId
+      || config.defaultTurnServerId
+      || '';
+    const turnServers = listPublicTurnServers(config, selectedTurnServerId);
 
     const iceServers = [];
     if (config.stunUrls.length) {
@@ -170,9 +191,9 @@ function createServerApp(options = {}) {
     }
     if (turnState.turnConfigured) {
       iceServers.push({
-        urls: config.turnUrls,
-        username: config.turnUsername,
-        credential: config.turnCredential,
+        urls: turnState.turnUrls,
+        username: turnState.turnUsername,
+        credential: turnState.turnCredential,
       });
     }
 
@@ -185,10 +206,16 @@ function createServerApp(options = {}) {
       turnFingerprint: turnState.turnConfigured
         ? (turnState.turnFingerprint || config.turnFingerprint || '')
         : '',
-      turnUrls: turnState.turnConfigured ? config.turnUrls : [],
+      turnUrls: turnState.turnConfigured ? turnState.turnUrls : [],
+      turnServers,
+      selectedTurnServerId,
+      defaultTurnServerId,
       hostTurnReady: Boolean(hostCaps.turnReady),
       hostTurnFingerprint: hostCaps.turnFingerprint || '',
+      hostTurnServerId: hostCaps.turnServerId || hostCaps.defaultTurnServerId || '',
       hostSupportsSessionTurn: Boolean(hostCaps.supportsSessionTurn),
+      hostSupportsMultiTurn: Boolean(hostCaps.supportsMultiTurn),
+      hostTurnServerIds: Array.isArray(hostCaps.turnServerIds) ? hostCaps.turnServerIds : [],
       iceServers,
       ...capabilities,
       publicEntry,
@@ -207,16 +234,30 @@ function createServerApp(options = {}) {
   app.post('/api/turn-selftest', requireAccessToken, turnSelfTestLimiter, async (req, res) => {
     try {
       const timeoutMs = Math.min(15000, Math.max(1000, Number(req.body?.timeoutMs) || 10000));
-      const result = await turnSelfTestRunner.runFromConfig(config, { timeoutMs });
+      const turnServerId = String(req.body?.turnServerId || '').trim();
+      const result = await turnSelfTestRunner.runFromConfig(config, { timeoutMs, turnServerId });
       const hostCaps = getHostCapabilities();
+      const hostFp = hostCaps.turnFingerprint || '';
+      const hostTurnServerId = hostCaps.turnServerId || hostCaps.defaultTurnServerId || '';
+      // Prefer fingerprint equality: Host may label the same node as `env`
+      // when LaunchAgent exported TURN_* from the preferred json entry.
+      const fingerprintMatch = Boolean(
+        result.turnFingerprint
+        && hostFp
+        && result.turnFingerprint === hostFp,
+      );
       return res.status(result.ok ? 200 : 422).json({
         ...result,
+        turnServerId: result.turnServerId || turnServerId || '',
         hostTurnReady: Boolean(hostCaps.turnReady),
-        hostTurnFingerprint: hostCaps.turnFingerprint || '',
-        fingerprintMatch: Boolean(
-          result.turnFingerprint
-          && hostCaps.turnFingerprint
-          && result.turnFingerprint === hostCaps.turnFingerprint,
+        hostTurnFingerprint: hostFp,
+        hostTurnServerId,
+        fingerprintMatch,
+        turnServerIdMatch: Boolean(
+          !turnServerId
+          || !hostTurnServerId
+          || turnServerId === hostTurnServerId
+          || fingerprintMatch,
         ),
       });
     } catch (error) {

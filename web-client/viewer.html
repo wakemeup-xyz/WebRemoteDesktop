@@ -199,6 +199,12 @@
           </span>
         </label>
       </div>
+      <div class="network-turn-select-row" style="margin: 12px 0 8px; display: flex; flex-direction: column; gap: 6px;">
+        <label class="network-turn-select-label" for="turnServerSelect" style="font-size: 13px; color: var(--text-secondary);">TURN 节点</label>
+        <select id="turnServerSelect" class="network-turn-select" style="width: 100%; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: rgba(0,0,0,0.35); color: var(--text-primary);">
+          <option value="">未配置</option>
+        </select>
+      </div>
       <p id="networkTurnStatus" class="network-turn-status">正在读取 TURN 配置...</p>
       <pre id="networkTurnTestResult" class="network-turn-test-result" aria-live="polite"></pre>
       <div class="network-modal-actions">

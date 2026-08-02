@@ -36,14 +36,34 @@ let hostCapabilities = {
   turnReady: false,
   turnFingerprint: '',
   supportsSessionTurn: false,
+  supportsMultiTurn: false,
+  turnServerId: '',
+  defaultTurnServerId: '',
+  turnServerIds: [],
   updatedAt: null,
 };
+
+function normalizeTurnServerIds(value) {
+  if (!Array.isArray(value)) return [];
+  const ids = [];
+  for (const item of value) {
+    const id = String(item || '').trim();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
 
 function getHostCapabilities() {
   return {
     turnReady: Boolean(hostCapabilities.turnReady),
     turnFingerprint: String(hostCapabilities.turnFingerprint || ''),
     supportsSessionTurn: Boolean(hostCapabilities.supportsSessionTurn),
+    supportsMultiTurn: Boolean(hostCapabilities.supportsMultiTurn),
+    turnServerId: String(hostCapabilities.turnServerId || ''),
+    defaultTurnServerId: String(hostCapabilities.defaultTurnServerId || ''),
+    turnServerIds: Array.isArray(hostCapabilities.turnServerIds)
+      ? hostCapabilities.turnServerIds.slice()
+      : [],
     updatedAt: hostCapabilities.updatedAt,
   };
 }
@@ -53,6 +73,10 @@ function setHostCapabilities(payload = {}) {
     turnReady: Boolean(payload.turnReady),
     turnFingerprint: String(payload.turnFingerprint || '').trim(),
     supportsSessionTurn: Boolean(payload.supportsSessionTurn),
+    supportsMultiTurn: Boolean(payload.supportsMultiTurn),
+    turnServerId: String(payload.turnServerId || payload.selectedTurnServerId || '').trim(),
+    defaultTurnServerId: String(payload.defaultTurnServerId || '').trim(),
+    turnServerIds: normalizeTurnServerIds(payload.turnServerIds),
     updatedAt: new Date().toISOString(),
   };
   return getHostCapabilities();
@@ -63,6 +87,10 @@ function clearHostCapabilities() {
     turnReady: false,
     turnFingerprint: '',
     supportsSessionTurn: false,
+    supportsMultiTurn: false,
+    turnServerId: '',
+    defaultTurnServerId: '',
+    turnServerIds: [],
     updatedAt: null,
   };
   return getHostCapabilities();
@@ -538,6 +566,7 @@ function setupSignaling(io, options = {}) {
   function forwardOffer(socket, data) {
     if (!connections.host) return false;
     const networkMode = String(data.networkMode || data.iceMode || '').trim();
+    const turnServerId = String(data.turnServerId || data.turn_server_id || '').trim();
     const forwarded = {
       offer: data.offer,
       viewerId: socket.id,
@@ -561,6 +590,9 @@ function setupSignaling(io, options = {}) {
     if (networkMode) {
       forwarded.networkMode = networkMode;
       forwarded.iceMode = networkMode;
+    }
+    if (turnServerId) {
+      forwarded.turnServerId = turnServerId;
     }
     connections.host.emit('offer', forwarded);
     return true;
@@ -905,12 +937,36 @@ function setupSignaling(io, options = {}) {
         }
       }
       if (data?.schemaVersion === 2) {
-        const validation = validateRemoteInput(data);
-        if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
-          logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
+        // Keyboard uses the strict remote-input contract (seq + physical key fields).
+        // Mouse/command share lease authorize only — they are not keyboard envelopes
+        // and may carry transport/timestamp metadata for Host logging. Running mouse
+        // through validateRemoteInput rejects every socket fallback as UNKNOWN_FIELD
+        // / INVALID_TYPE once DataChannel is closed (control appears totally dead).
+        if (data.type === 'keyboard') {
+          const validation = validateRemoteInput(data);
+          if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
+            logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
+            return;
+          }
+          logger.log?.(`[INPUT] relay viewer=${socket.id} ${JSON.stringify(summarizeRemoteInput(data))}`);
+        } else if (data.type === 'mouse' || data.type === 'command') {
+          if (!authorizeViewer(socket, data, { legacy: false })) {
+            logger.warn?.(`[INPUT] rejected viewer=${socket.id} unauthorized`);
+            return;
+          }
+          if (typeof data.action !== 'string'
+            || data.action.length < 1
+            || data.action.length > 32
+            || !data.payload
+            || typeof data.payload !== 'object'
+            || Array.isArray(data.payload)) {
+            logger.warn?.(`[INPUT] rejected viewer=${socket.id} INVALID_DESKTOP_WRITE`);
+            return;
+          }
+        } else {
+          logger.warn?.(`[INPUT] rejected viewer=${socket.id} INVALID_TYPE`);
           return;
         }
-        logger.log?.(`[INPUT] relay viewer=${socket.id} ${JSON.stringify(summarizeRemoteInput(data))}`);
       }
       if (data.type !== 'mouse' || data.action !== 'move') {
         const inputType = ['mouse', 'keyboard', 'command'].includes(data.type) ? data.type : 'unknown';

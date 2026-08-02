@@ -58,7 +58,8 @@ class InputHandler:
         self._modifier_stale_seconds = 8.0
         self._lock_waiters = 0
         self._lock_contention_logged = False
-        self._pressed_mouse_button = None  # Track pressed button for drag events
+        self._pressed_mouse_button = None  # legacy single-button mirror (primary)
+        self._pressed_mouse_buttons = set()  # all currently pressed buttons
         self._last_mouse_position = None
 
     def start(self):
@@ -343,14 +344,33 @@ class InputHandler:
             click_count = 1
 
         if action == 'move':
+            # Viewer may report the live button mask. buttons===0 while we still
+            # track a pressed button means the matching up was lost (DC drop /
+            # gate flip) — clear before synthesizing the move or every subsequent
+            # move becomes a drag with no user click held.
+            if "buttons" in payload:
+                try:
+                    buttons = int(payload.get("buttons") or 0)
+                except (TypeError, ValueError):
+                    buttons = 0
+                if buttons == 0 and self._pressed_mouse_buttons:
+                    self.release_all_mouse_buttons(reason="move-buttons-clear")
             # Use dragged event type when a button is held (critical for drag to work)
             drag_map = {
                 'left': kCGEventLeftMouseDragged,
                 'right': kCGEventRightMouseDragged,
                 'middle': kCGEventOtherMouseDragged,
             }
-            if self._pressed_mouse_button and self._pressed_mouse_button in drag_map:
-                move_type = drag_map[self._pressed_mouse_button]
+            # Prefer left, then right, then middle for the drag event type.
+            primary = None
+            for name in ('left', 'right', 'middle'):
+                if name in self._pressed_mouse_buttons:
+                    primary = name
+                    break
+            if primary is None:
+                primary = self._pressed_mouse_button
+            if primary and primary in drag_map:
+                move_type = drag_map[primary]
             else:
                 move_type = kCGEventMouseMoved
             event = CGEventCreateMouseEvent(
@@ -370,6 +390,7 @@ class InputHandler:
             if click_count > 1:
                 CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count)
             CGEventPost(kCGHIDEventTap, event)
+            self._pressed_mouse_buttons.add(button)
             self._pressed_mouse_button = button
 
         elif action == 'up':
@@ -386,7 +407,13 @@ class InputHandler:
             try:
                 CGEventPost(kCGHIDEventTap, event)
             finally:
-                self._pressed_mouse_button = None
+                self._pressed_mouse_buttons.discard(button)
+                if self._pressed_mouse_button == button:
+                    self._pressed_mouse_button = next(
+                        (name for name in ('left', 'right', 'middle')
+                         if name in self._pressed_mouse_buttons),
+                        None,
+                    )
 
         elif action == 'click':
             # click is now a no-op: viewer sends mousedown + mouseup which
@@ -431,24 +458,34 @@ class InputHandler:
             CGEventPost(kCGHIDEventTap, event)
 
     def release_all_mouse_buttons(self, reason="remote-reset"):
-        button = self._pressed_mouse_button
-        if not button:
+        buttons = set(self._pressed_mouse_buttons)
+        if self._pressed_mouse_button:
+            buttons.add(self._pressed_mouse_button)
+        if not buttons:
             return
-        logger.warning("Releasing stuck mouse button reason=%s button=%s", reason, button)
+        logger.warning(
+            "Releasing stuck mouse button reason=%s buttons=%s",
+            reason,
+            ",".join(sorted(buttons)),
+        )
         try:
             if not self.monitor:
                 return
             position = self._last_mouse_position or (self.monitor.x, self.monitor.y)
-            event_type = {
-                'left': kCGEventLeftMouseUp,
-                'right': kCGEventRightMouseUp,
-                'middle': kCGEventOtherMouseUp,
-            }.get(button, kCGEventLeftMouseUp)
-            event = CGEventCreateMouseEvent(
-                self.source, event_type, position, self._get_mouse_button(button)
-            )
-            CGEventPost(kCGHIDEventTap, event)
+            for button in ('left', 'right', 'middle'):
+                if button not in buttons:
+                    continue
+                event_type = {
+                    'left': kCGEventLeftMouseUp,
+                    'right': kCGEventRightMouseUp,
+                    'middle': kCGEventOtherMouseUp,
+                }.get(button, kCGEventLeftMouseUp)
+                event = CGEventCreateMouseEvent(
+                    self.source, event_type, position, self._get_mouse_button(button)
+                )
+                CGEventPost(kCGHIDEventTap, event)
         finally:
+            self._pressed_mouse_buttons.clear()
             self._pressed_mouse_button = None
 
     def _normalize_scroll_delta(self, delta_x, delta_y):

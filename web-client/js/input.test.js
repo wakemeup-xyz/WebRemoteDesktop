@@ -208,6 +208,99 @@ test('desktop mouse and command input require the active lease and carry the v2 
   }
 });
 
+test('toolbar command can send with lease even when media gate is inactive', () => {
+  const { Input, context, socketEvents } = loadInput();
+  Input.socket = context.WebRTC.socket;
+  Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 3 };
+  Input.isActive = false;
+  assert.equal(Input.sendInput('mouse', 'down', { relX: 0.5, relY: 0.5 }), null);
+  assert.equal(socketEvents.length, 0);
+  const id = Input.sendInput('command', 'showDock', {});
+  assert.ok(id);
+  assert.equal(socketEvents.length, 1);
+  assert.equal(socketEvents[0].payload.type, 'command');
+  assert.equal(socketEvents[0].payload.action, 'showDock');
+});
+
+test('mouse up and reset still send when media gate is inactive', () => {
+  const { Input, context, socketEvents } = loadInput();
+  Input.socket = context.WebRTC.socket;
+  Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 3 };
+  Input.isActive = false;
+  assert.equal(Input.sendInput('mouse', 'down', { relX: 0.5, relY: 0.5 }), null);
+  const upId = Input.sendInput('mouse', 'up', { relX: 0.5, relY: 0.5, button: 'left' });
+  const resetId = Input.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
+  assert.ok(upId);
+  assert.ok(resetId);
+  assert.equal(socketEvents.length, 2);
+  assert.equal(socketEvents[0].payload.action, 'up');
+  assert.equal(socketEvents[1].payload.action, 'reset');
+});
+
+test('pointer move with buttons 0 clears local pressed set via reset', () => {
+  const { Input, context, socketEvents, elements } = loadInput();
+  activate(Input, context);
+  Input.socket = context.WebRTC.socket;
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  // Simulate a held button that lost its up.
+  Input._pressedMouseButtons.add('left');
+  Input.isActive = true;
+  video.listeners.get('pointermove')({
+    clientX: 50,
+    clientY: 50,
+    buttons: 0,
+    pointerId: 1,
+    currentTarget: video,
+    preventDefault() {},
+  });
+  // rAF flushes the queued move
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      assert.equal(Input._pressedMouseButtons.size, 0);
+      assert.ok(socketEvents.some(({ payload }) => payload.type === 'mouse' && payload.action === 'reset'));
+      resolve();
+    });
+  });
+});
+
+
+test('media-gate deactivation keeps keyboard lease without erecting a reset barrier', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.isActive = true;
+  // Simulate a real key down via controller so pressed state exists.
+  Input.keyboardController.handleDomEvent({
+    type: 'keydown', code: 'KeyA', key: 'a', location: 0, repeat: false,
+    ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, isComposing: false,
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+    getModifierState: () => false, preventDefault() {},
+  });
+  const before = socketEvents.length;
+  // Media gate closes but lease remains — must not keyboard-reset.
+  context.WebRTC.canEnableDesktopInput = () => false;
+  Input.setActive(false);
+  assert.equal(Input.isActive, false);
+  assert.equal(Input.activeControlLease.leaseId, 'lease-000000000001');
+  const resets = socketEvents.slice(before).filter(({ payload }) => payload.action === 'reset');
+  assert.equal(resets.length, 0, 'media-gate close must not send keyboard reset while lease is live');
+});
+
+test('wheel events are coalesced into one input per animation frame', async () => {
+  const { Input, context, socketEvents, elements } = loadInput();
+  activate(Input, context);
+  Input.socket = context.WebRTC.socket;
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  const wheel = video.listeners.get('wheel');
+  wheel({ clientX: 40, clientY: 40, deltaX: 0, deltaY: 100, preventDefault() {}, currentTarget: video });
+  wheel({ clientX: 42, clientY: 42, deltaX: 10, deltaY: 50, preventDefault() {}, currentTarget: video });
+  await new Promise((resolve) => setImmediate(resolve));
+  const wheels = socketEvents.filter(({ payload }) => payload.type === 'mouse' && payload.action === 'wheel');
+  assert.equal(wheels.length, 1);
+  assert.equal(wheels[0].payload.payload.deltaY, 150);
+  assert.equal(wheels[0].payload.payload.deltaX, 10);
+});
 
 test('video pause does not permanently disable input while media gate is active', () => {
   const { Input, context, elements } = loadInput();

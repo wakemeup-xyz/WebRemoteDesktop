@@ -32,6 +32,7 @@ const WebRTC = {
   inputMoveChannel: null,
   serverConfig: null,
   networkMode: localStorage.getItem('wrdNetworkMode') || 'auto',
+  selectedTurnServerId: localStorage.getItem('wrdTurnServerId') || '',
   recommendationState: null,
   useRelayFallback: false,
   tunnelRelayActive: false,
@@ -176,6 +177,33 @@ const WebRTC = {
       && this.getMediaActivitySnapshot().state === 'active'
       && (!this.currentConnectionAttemptId
         || this._mediaReadyConnectionAttemptId === this.currentConnectionAttemptId);
+  },
+
+  getDesktopInputGateSnapshot() {
+    const mediaSnap = this.getMediaActivitySnapshot();
+    const runtimePhase = this.mediaActivityRuntime?.phase || null;
+    const reasons = [];
+    if (!this.hasActiveControl()) reasons.push('no-active-control');
+    if (this.manualDisconnect) reasons.push('manual-disconnect');
+    if (!(this.mediaActivityRuntime?.canEnableDesktopInput?.() ?? true)) {
+      reasons.push(`runtime-phase:${runtimePhase || 'unknown'}`);
+    }
+    if (mediaSnap?.state !== 'active') reasons.push(`media-state:${mediaSnap?.state || 'unknown'}`);
+    if (this.currentConnectionAttemptId
+      && this._mediaReadyConnectionAttemptId !== this.currentConnectionAttemptId) {
+      reasons.push('media-not-ready-for-attempt');
+    }
+    return {
+      enabled: this.canEnableDesktopInput(),
+      hasActiveControl: this.hasActiveControl(),
+      manualDisconnect: Boolean(this.manualDisconnect),
+      mediaState: mediaSnap?.state || null,
+      runtimePhase,
+      currentConnectionAttemptId: this.currentConnectionAttemptId || null,
+      mediaReadyConnectionAttemptId: this._mediaReadyConnectionAttemptId || null,
+      inputIsActive: (typeof Input !== 'undefined') ? Boolean(Input.isActive) : null,
+      blockedReasons: reasons,
+    };
   },
 
   applyMediaActivity(snapshot = this.getMediaActivitySnapshot()) {
@@ -582,7 +610,10 @@ const WebRTC = {
   },
 
   markMediaAttemptReady(attemptId = this.currentConnectionAttemptId || null) {
-    if (!this.hasActiveControl()) return false;
+    // Media readiness is independent of control ownership. Frames that arrive
+    // while the viewer is readonly still prove this attempt has painted; a later
+    // control-grant can enable input without waiting for another frame — critical
+    // on full-relay paths that regularly sit at 0 FPS for multi-second gaps.
     if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
     this.syncDesktopInputGate();
@@ -712,6 +743,12 @@ const WebRTC = {
     const entry = this.getPublicEntryUrl();
     const prefix = entry ? `固定入口：${entry}` : '固定入口：未提供';
     const source = this.serverConfig?.turnSource || 'none';
+    const selectedId = this.selectedTurnServerId
+      || this.serverConfig?.selectedTurnServerId
+      || '';
+    const selectedMeta = (this.serverConfig?.turnServers || [])
+      .find((server) => server.id === selectedId);
+    const nodeLabel = selectedMeta?.label || selectedMeta?.remark || selectedId || '-';
     const fp = (typeof TurnSelfTest !== 'undefined' && TurnSelfTest.shortFingerprint)
       ? TurnSelfTest.shortFingerprint(this.serverConfig?.turnFingerprint)
       : String(this.serverConfig?.turnFingerprint || '').slice(0, 12);
@@ -719,15 +756,16 @@ const WebRTC = {
     const hostFp = (typeof TurnSelfTest !== 'undefined' && TurnSelfTest.shortFingerprint)
       ? TurnSelfTest.shortFingerprint(this.serverConfig?.hostTurnFingerprint)
       : String(this.serverConfig?.hostTurnFingerprint || '').slice(0, 12);
+    const hostTurnServerId = this.serverConfig?.hostTurnServerId || '';
     const hostPart = hostReady
-      ? `Host ready · fp ${hostFp || '-'}`
+      ? `Host ready · 节点 ${hostTurnServerId || '-'} · fp ${hostFp || '-'}`
       : (this.serverConfig?.hostTurnFingerprint
         ? `Host fp ${hostFp}`
         : 'Host TURN 未上报');
 
     if (this.serverConfig?.turnConfigured) {
       const urls = (this.serverConfig.turnUrls || []).join(', ');
-      return `${prefix}。TURN 已配置（source=${source}${fp ? ` · fp ${fp}` : ''}）：${urls || '已启用'}。${hostPart}。失败时请手动切换外网中继，不会自动改写模式。`;
+      return `${prefix}。TURN 已配置 · 节点 ${nodeLabel}${selectedId ? `(${selectedId})` : ''}（source=${source}${fp ? ` · fp ${fp}` : ''}）：${urls || '已启用'}。${hostPart}。失败时请手动切换外网中继，不会自动改写模式。`;
     }
     if (this.serverConfig?.turnStatus === 'misconfigured') {
       return `${prefix}。TURN 配置不完整（source=${source}），当前无法使用外网中继；页面只会给出建议，不会自动改写你选中的模式。`;
@@ -749,7 +787,7 @@ const WebRTC = {
     }
 
     setResult('正在刷新配置并测试 TURN…');
-    await this.loadServerConfig();
+    await this.loadServerConfig({ turnServerId: this.selectedTurnServerId });
     this.updateNetworkUI('', '');
 
     const apiBase = (typeof RuntimeConfig !== 'undefined')
@@ -765,12 +803,14 @@ const WebRTC = {
       turnFingerprint: this.serverConfig?.turnFingerprint || '',
       hostTurnReady: this.serverConfig?.hostTurnReady,
       hostTurnFingerprint: this.serverConfig?.hostTurnFingerprint || '',
+      turnServerId: this.selectedTurnServerId || this.serverConfig?.selectedTurnServerId || '',
       skipAllocate,
       includeServerProbe: true,
       serverProbeOptions: {
         apiBase,
         token,
         timeoutMs: 10000,
+        turnServerId: this.selectedTurnServerId || this.serverConfig?.selectedTurnServerId || '',
       },
       timeoutMs: 8000,
     });
@@ -1114,6 +1154,20 @@ const WebRTC = {
     if (Object.prototype.hasOwnProperty.call(capabilities, 'supportsSessionTurn')) {
       this.serverConfig.hostSupportsSessionTurn = Boolean(capabilities.supportsSessionTurn);
     }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'supportsMultiTurn')) {
+      this.serverConfig.hostSupportsMultiTurn = Boolean(capabilities.supportsMultiTurn);
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'turnServerId')) {
+      this.serverConfig.hostTurnServerId = String(capabilities.turnServerId || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'defaultTurnServerId')) {
+      this.serverConfig.hostDefaultTurnServerId = String(capabilities.defaultTurnServerId || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(capabilities, 'turnServerIds')) {
+      this.serverConfig.hostTurnServerIds = Array.isArray(capabilities.turnServerIds)
+        ? capabilities.turnServerIds.slice()
+        : [];
+    }
     const turnStatus = document.getElementById('networkTurnStatus');
     if (turnStatus) {
       turnStatus.textContent = this.buildTurnStatusText();
@@ -1121,13 +1175,84 @@ const WebRTC = {
     return this.serverConfig;
   },
 
-  async loadServerConfig() {
+  listTurnServerOptions() {
+    const servers = Array.isArray(this.serverConfig?.turnServers)
+      ? this.serverConfig.turnServers
+      : [];
+    return servers.filter((server) => server && server.id);
+  },
+
+  resolveSelectedTurnServerId(preferredId = this.selectedTurnServerId) {
+    const servers = this.listTurnServerOptions();
+    const preferred = String(preferredId || '').trim();
+    if (preferred && servers.some((server) => server.id === preferred && server.configured !== false)) {
+      return preferred;
+    }
+    const defaultId = String(
+      this.serverConfig?.defaultTurnServerId
+      || this.serverConfig?.selectedTurnServerId
+      || '',
+    ).trim();
+    if (defaultId && servers.some((server) => server.id === defaultId)) {
+      return defaultId;
+    }
+    const preferredServer = servers.find((server) => server.preferred && server.configured !== false);
+    if (preferredServer?.id) return preferredServer.id;
+    const firstConfigured = servers.find((server) => server.configured !== false);
+    return firstConfigured?.id || servers[0]?.id || '';
+  },
+
+  setSelectedTurnServerId(turnServerId, { persist = true } = {}) {
+    const next = this.resolveSelectedTurnServerId(turnServerId);
+    this.selectedTurnServerId = next;
+    if (persist) {
+      if (next) localStorage.setItem('wrdTurnServerId', next);
+      else localStorage.removeItem('wrdTurnServerId');
+    }
+    return next;
+  },
+
+  populateTurnServerSelect() {
+    const select = document.getElementById('turnServerSelect');
+    if (!select || typeof document.createElement !== 'function') return;
+    const servers = this.listTurnServerOptions();
+    const selectedId = this.resolveSelectedTurnServerId(this.selectedTurnServerId);
+    select.innerHTML = '';
+    if (!servers.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = '未配置';
+      select.appendChild(option);
+      select.disabled = true;
+      select.value = '';
+      return;
+    }
+    select.disabled = servers.length <= 1;
+    for (const server of servers) {
+      const option = document.createElement('option');
+      option.value = server.id;
+      const label = server.label || server.remark || server.host || server.id;
+      const host = server.host ? ` (${server.host})` : '';
+      const suffix = server.preferred || server.isDefault ? '（推荐）' : '';
+      option.textContent = `${label}${host}${suffix}`;
+      select.appendChild(option);
+    }
+    select.value = selectedId || servers[0].id;
+  },
+
+  async loadServerConfig({ turnServerId } = {}) {
     try {
       const token = Auth.getToken();
       const apiBase = (typeof RuntimeConfig !== 'undefined')
         ? RuntimeConfig.getApiBase()
         : '';
-      const response = await fetch(`${apiBase}/api/webrtc-config`, {
+      const requestedId = String(
+        turnServerId != null ? turnServerId : (this.selectedTurnServerId || ''),
+      ).trim();
+      const query = requestedId
+        ? `?turnServerId=${encodeURIComponent(requestedId)}`
+        : '';
+      const response = await fetch(`${apiBase}/api/webrtc-config${query}`, {
         cache: 'no-store',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -1135,13 +1260,37 @@ const WebRTC = {
         throw new Error(`HTTP ${response.status}`);
       }
       this.serverConfig = await response.json();
+      const resolvedId = this.setSelectedTurnServerId(
+        this.serverConfig.selectedTurnServerId || requestedId || this.selectedTurnServerId,
+        { persist: true },
+      );
+      if (
+        resolvedId
+        && this.serverConfig.selectedTurnServerId
+        && resolvedId !== this.serverConfig.selectedTurnServerId
+      ) {
+        // localStorage id may be stale relative to default; reload once for matching iceServers.
+        const retry = await fetch(
+          `${apiBase}/api/webrtc-config?turnServerId=${encodeURIComponent(resolvedId)}`,
+          {
+            cache: 'no-store',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          },
+        );
+        if (retry.ok) {
+          this.serverConfig = await retry.json();
+        }
+      }
+      this.populateTurnServerSelect();
       console.log('[NETWORK] Loaded WebRTC config:', {
         stunUrls: this.serverConfig.stunUrls,
         turnConfigured: this.serverConfig.turnConfigured,
         turnSource: this.serverConfig.turnSource,
         turnFingerprint: this.serverConfig.turnFingerprint,
         hostTurnReady: this.serverConfig.hostTurnReady,
-        turnUrls: this.serverConfig.turnUrls
+        turnUrls: this.serverConfig.turnUrls,
+        selectedTurnServerId: this.selectedTurnServerId,
+        turnServers: (this.serverConfig.turnServers || []).map((server) => server.id),
       });
     } catch (err) {
       console.warn('[NETWORK] Failed to load WebRTC config, using built-in STUN only:', err);
@@ -1155,8 +1304,12 @@ const WebRTC = {
         hostTurnReady: false,
         hostTurnFingerprint: '',
         turnUrls: [],
+        turnServers: [],
+        selectedTurnServerId: '',
+        defaultTurnServerId: '',
         iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
       };
+      this.populateTurnServerSelect();
     }
   },
 
@@ -1877,27 +2030,38 @@ const WebRTC = {
     if (typeof Input !== 'undefined') {
       Input.init();
       Input.setControlLease(this.controlState.lease);
-      Input.setActive(this.canEnableDesktopInput());
     }
     this.startControlHeartbeat();
     this.updateControlUI();
     this.bindCurrentConnectionAttempt();
+    // Enable input immediately when this attempt already painted; do not wait for
+    // the next decoded frame (relay regularly has multi-second 0-FPS gaps).
+    this.syncDesktopInputGate();
     if (this.networkMode === 'tunnel') {
       if (this.getMediaActivitySnapshot().state === 'active') this.startTunnelRelay();
       this.replayMediaActivityIntent('control-regrant');
     } else {
+      const pcState = this.pc?.connectionState;
+      if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
+        this.createPeerConnection();
+      }
       this.createOffer();
       this.replayMediaActivityIntent('control-regrant');
     }
   },
 
   freezeControl(reason, reset = true) {
-    if (reset && typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
     this.stopControlHeartbeat();
-    this._mediaReadyConnectionAttemptId = null;
+    // Do not clear _mediaReadyConnectionAttemptId here. Control ownership and
+    // "has this attempt painted" are independent; clearing readiness on every
+    // revoke/visibility freeze left re-grant blocked until the next frame, which
+    // may not arrive for seconds on full-relay survival profiles.
     if (typeof Input !== 'undefined') {
-      Input.setActive(false);
+      // Reset keyboard while lease is still present so the envelope can send.
+      if (reset) Input.resetKeyboard?.(reason || 'control-lost');
+      Input.releasePointer?.(reason || 'control-lost');
       Input.setControlLease(null);
+      Input.setActive(false, { resetKeyboard: false, reason: reason || 'control-lost' });
     }
     this.controlState = { ...this.controlState, controller: false, lease: null };
     if (this.isPortSearchActive()) {
@@ -1933,7 +2097,19 @@ const WebRTC = {
   bindControlLifecycle() {
     if (this._controlLifecycleBound) return;
     this._controlLifecycleBound = true;
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseControl('visibility-hidden'); });
+    // visibility-hidden is a keyboard/pointer reset reason, not a control release.
+    // Releasing the lease on every tab hide made "请求控制" appear to work while
+    // subsequent clicks silently no-oped until the user noticed readonly UI.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (typeof Input !== 'undefined') {
+          Input.releasePointer?.('visibility-hidden');
+          Input.resetKeyboard?.('visibility-hidden');
+        }
+        return;
+      }
+      if (this.hasActiveControl()) this.syncDesktopInputGate();
+    });
     window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
   },
 
@@ -2651,6 +2827,7 @@ if (this.tunnelLastObjectUrl) {
         schemaVersion: 2,
         networkMode: this.networkMode,
         iceMode: this.networkMode,
+        turnServerId: this.selectedTurnServerId || this.serverConfig?.selectedTurnServerId || undefined,
         leaseId: this.controlState.lease.leaseId,
         leaseEpoch: this.controlState.lease.leaseEpoch,
         connectionAttemptId: this.currentConnectionAttemptId,
@@ -2762,10 +2939,43 @@ if (this.tunnelLastObjectUrl) {
       applyBtn.dataset.bound = '1';
       applyBtn.addEventListener('click', () => {
         const selected = document.querySelector('input[name="networkMode"]:checked');
-        if (selected) {
-          this.setNetworkMode(selected.value);
-          modal?.classList.add('hidden');
+        const turnSelect = document.getElementById('turnServerSelect');
+        const nextTurnId = turnSelect ? String(turnSelect.value || '').trim() : this.selectedTurnServerId;
+        const hostSupportsMulti = this.serverConfig?.hostSupportsMultiTurn;
+        const hostIds = Array.isArray(this.serverConfig?.hostTurnServerIds)
+          ? this.serverConfig.hostTurnServerIds
+          : [];
+        if (
+          nextTurnId
+          && hostSupportsMulti === false
+          && hostIds.length
+          && !hostIds.includes(nextTurnId)
+        ) {
+          const resultEl = document.getElementById('networkTurnTestResult');
+          if (resultEl) {
+            resultEl.textContent = `当前 Host 仅装载有限 TURN 节点，无法切换到「${nextTurnId}」。请重启 Host 以加载完整 turn.json，或改回默认节点。`;
+            resultEl.dataset.severity = 'danger';
+          }
+          const fallback = this.resolveSelectedTurnServerId(
+            this.serverConfig?.defaultTurnServerId || hostIds[0] || '',
+          );
+          this.setSelectedTurnServerId(fallback);
+          this.populateTurnServerSelect();
+          return;
         }
+        this.setSelectedTurnServerId(nextTurnId);
+        const apply = () => {
+          if (selected) {
+            this.setNetworkMode(selected.value);
+          } else if (this.socket && this.socket.connected) {
+            this.beginConnectionAttempt('manual-turn-switch');
+            this.refresh();
+          }
+          modal?.classList.add('hidden');
+        };
+        this.loadServerConfig({ turnServerId: this.selectedTurnServerId })
+          .catch(() => {})
+          .finally(apply);
       });
     }
 
@@ -2794,6 +3004,7 @@ if (this.tunnelLastObjectUrl) {
     if (selected) {
       selected.checked = true;
     }
+    this.populateTurnServerSelect();
   },
 
   setNetworkMode(mode) {
