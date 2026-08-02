@@ -25,6 +25,7 @@ const WebRTC = {
   videoTransceiver: null,
   reconnectTimer: null,
   manualDisconnect: false,
+  _superseded: false,
   _refreshing: false,
   _refreshReason: null,
   inputChannel: null,
@@ -1072,6 +1073,9 @@ const WebRTC = {
   },
 
   createSignalingSocket(forceRecreate = false) {
+    if (this._superseded) {
+      return null;
+    }
     if (this.socket && !forceRecreate) {
       return this.socket;
     }
@@ -1087,7 +1091,8 @@ const WebRTC = {
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
     this.socket = io(socketBase, {
-      auth: { token, role: 'viewer', inputProtocolVersion: 2 }
+      auth: { token, role: 'viewer', inputProtocolVersion: 2 },
+      reconnection: !this._superseded,
     });
     this.setupSocketListeners();
     return this.socket;
@@ -1728,17 +1733,28 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('Signaling disconnected');
+    this.socket.on('viewer-superseded', (data) => {
+      this.handleViewerSuperseded(data || {});
+    });
+
+    this.socket.on('disconnect', (reason) => {
+      console.log('Signaling disconnected', reason || '');
+      if (this._superseded) {
+        return;
+      }
+      if (reason === 'io server disconnect') {
+        this.handleViewerSuperseded({ reason: 'server-kick', bySocketId: null });
+        return;
+      }
       updateConnectionStatus('disconnected');
-      document.getElementById('remoteVideo').classList.remove('connected');
+      document.getElementById('remoteVideo')?.classList.remove('connected');
       this.freezeControl('signal-disconnect');
       if (this.isPortSearchActive()) {
         this.stopPortSearch('signal-disconnect');
       } else {
         this.renderPortSearchStatus();
       }
-      if (this.networkMode === 'tunnel' && !this.manualDisconnect) {
+      if (this.networkMode === 'tunnel' && !this.manualDisconnect && !this._superseded) {
         this.scheduleReconnect('signal-disconnected');
       }
     });
@@ -3005,6 +3021,9 @@ if (this.tunnelLastObjectUrl) {
   },
 
   async refresh(options) {
+    if (this._superseded) {
+      return;
+    }
     let reason = null;
     if (typeof options === 'string') {
       reason = options;
@@ -3126,6 +3145,9 @@ if (this.tunnelLastObjectUrl) {
   },
 
   scheduleReconnect(reason) {
+    if (this._superseded) {
+      return;
+    }
     if (this.isMediaHealthSuppressed()) {
       return;
     }
@@ -3277,6 +3299,131 @@ if (this.tunnelLastObjectUrl) {
     document.getElementById('remoteVideo').classList.remove('connected');
     document.body.classList.remove('stream-connected');
     Auth.logout();
+  },
+
+  handleViewerSuperseded(payload = {}) {
+    if (this._superseded) {
+      return;
+    }
+    console.warn('[VIEWER] superseded', payload?.reason || 'unknown', payload?.bySocketId || '');
+    this._superseded = true;
+    this.manualDisconnect = true;
+    this.offerInProgress = false;
+    this._offerEpoch += 1;
+
+    try {
+      if (this.socket?.io && typeof this.socket.io.reconnection === 'function') {
+        this.socket.io.reconnection(false);
+      }
+    } catch (_err) {
+      // Ignore manager API gaps in tests / older clients.
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this._dcTimeout) {
+      clearTimeout(this._dcTimeout);
+      this._dcTimeout = null;
+    }
+    if (this._disconnectedTimer) {
+      clearTimeout(this._disconnectedTimer);
+      this._disconnectedTimer = null;
+    }
+    if (this._iceDisconnectedTimer) {
+      clearTimeout(this._iceDisconnectedTimer);
+      this._iceDisconnectedTimer = null;
+    }
+    if (this._dcReconnectTimer) {
+      clearTimeout(this._dcReconnectTimer);
+      this._dcReconnectTimer = null;
+    }
+    this.clearMediaResumeFallback();
+    this.clearPortSearchTimers();
+    this.stopPortSearch('viewer-superseded');
+    this.stopControlHeartbeat();
+    this.stopMediaTelemetry();
+    this.stopTunnelRelay();
+    if (this._latencySyncInterval) {
+      clearInterval(this._latencySyncInterval);
+      this._latencySyncInterval = null;
+    }
+
+    if (this.pc) {
+      this.pc.oniceconnectionstatechange = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.onsignalingstatechange = null;
+      this.pc.onicegatheringstatechange = null;
+      this.pc.onicecandidate = null;
+      this.pc.ontrack = null;
+      try {
+        this.pc.close();
+      } catch (_err) {}
+      this.pc = null;
+    }
+    this.inputChannel = null;
+    this.inputMoveChannel = null;
+    this.remoteStream = null;
+
+    // Local freeze only — do not emit control-release on a dying/dead socket.
+    try {
+      this.freezeControl('viewer-superseded', true);
+    } catch (_err) {}
+
+    const videoElement = document.getElementById('remoteVideo');
+    if (videoElement) {
+      videoElement.srcObject = null;
+      videoElement.classList.remove('connected');
+    }
+    document.body?.classList?.remove('stream-connected');
+    document.getElementById('loading')?.classList?.add('hidden');
+    updateConnectionStatus('disconnected');
+
+    if (this.socket) {
+      try {
+        if (this.socket.connected) {
+          this.socket.disconnect();
+        }
+      } catch (_err) {}
+      this.socket = null;
+    }
+
+    this.showSupersededUI(payload);
+  },
+
+  showSupersededUI(_payload = {}) {
+    const overlay = document.getElementById('viewerSupersededOverlay');
+    if (overlay) {
+      overlay.classList.remove('hidden');
+      overlay.hidden = false;
+    }
+  },
+
+  hideSupersededUI() {
+    const overlay = document.getElementById('viewerSupersededOverlay');
+    if (overlay) {
+      overlay.classList.add('hidden');
+      overlay.hidden = true;
+    }
+  },
+
+  reclaimDesktopSession() {
+    this.hideSupersededUI();
+    this._superseded = false;
+    this.manualDisconnect = false;
+    this._reconnectAttempt = 0;
+    this._autoFailCount = 0;
+    this.offerInProgress = false;
+    this._offerEpoch += 1;
+    this.beginConnectionAttempt('reclaim');
+    updateConnectionStatus('connecting');
+    document.getElementById('loading')?.classList?.remove('hidden');
+    updateLoadingText('正在重新连接桌面…');
+    this.createSignalingSocket(true);
+    if (this.networkMode !== 'tunnel') {
+      this.createPeerConnection();
+    }
   }
 };
 

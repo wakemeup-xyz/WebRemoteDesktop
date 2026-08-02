@@ -3572,3 +3572,65 @@ test('stable viewport while adaptive relay frame sizes change', () => {
   // Source size changes must not schedule reconnect/offers.
   assert.equal(WebRTC.reconnectTimer, null);
 });
+
+test('viewer-superseded enters terminal state and blocks scheduleReconnect', () => {
+  const { WebRTC, context } = loadWebRTC();
+  let logoutCount = 0;
+  context.Auth.logout = () => { logoutCount += 1; };
+  let reconnectionValue = true;
+  WebRTC.socket = {
+    connected: true,
+    disconnect() { this.connected = false; },
+    io: {
+      reconnection(value) {
+        if (typeof value === 'boolean') reconnectionValue = value;
+        return reconnectionValue;
+      },
+    },
+    on() {},
+    emit() {},
+  };
+  WebRTC.pc = {
+    oniceconnectionstatechange() {},
+    onconnectionstatechange() {},
+    onsignalingstatechange() {},
+    onicegatheringstatechange() {},
+    onicecandidate() {},
+    ontrack() {},
+    close() {},
+  };
+  WebRTC.manualDisconnect = false;
+  WebRTC._superseded = false;
+  WebRTC.reconnectTimer = null;
+
+  WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer', bySocketId: 'other' });
+
+  assert.equal(WebRTC.manualDisconnect, true);
+  assert.equal(WebRTC._superseded, true);
+  assert.equal(WebRTC.reconnectTimer, null);
+  assert.equal(WebRTC.socket, null);
+  assert.equal(WebRTC.pc, null);
+  assert.equal(reconnectionValue, false);
+  assert.equal(logoutCount, 0);
+
+  // Do NOT wrap scheduleReconnect to increment before early-return.
+  WebRTC.scheduleReconnect('ice-failed');
+  assert.equal(WebRTC.reconnectTimer, null);
+  WebRTC.scheduleReconnect('signal-disconnected');
+  assert.equal(WebRTC.reconnectTimer, null);
+});
+
+test('reclaimDesktopSession clears supersede flags', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
+  let started = 0;
+  WebRTC.createSignalingSocket = () => { started += 1; };
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.beginConnectionAttempt = () => {};
+
+  WebRTC.reclaimDesktopSession();
+
+  assert.equal(WebRTC._superseded, false);
+  assert.equal(WebRTC.manualDisconnect, false);
+  assert.equal(started, 1);
+});

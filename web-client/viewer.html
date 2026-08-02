@@ -245,6 +245,14 @@
     </div>
   </div>
 
+  <div id="viewerSupersededOverlay" class="viewer-superseded-overlay hidden" hidden role="dialog" aria-modal="true" aria-labelledby="viewerSupersededTitle">
+    <div class="viewer-superseded-card">
+      <h2 id="viewerSupersededTitle">桌面已在其他窗口打开，本页已断开。</h2>
+      <p class="viewer-superseded-hint">控制权不会自动转移。重新连接后如需操作，请再次点击「请求控制」。</p>
+      <button id="reclaimDesktopSessionBtn" class="modal-btn primary" type="button" onclick="WebRTC.reclaimDesktopSession()">在此页重新连接</button>
+    </div>
+  </div>
+
   <script src="js/runtime-config.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/webrtc-stats.js"></script>
