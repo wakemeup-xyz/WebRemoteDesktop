@@ -21,7 +21,11 @@ def test_media_profile_change_updates_host_state_and_logs():
         "target_fps": 20,
         "video_bitrate_kbps": 2500,
     }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host._last_keyframe_request_at = 0.0
     host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
 
     handler = ListHandler()
     logger = logging.getLogger("host")
@@ -30,6 +34,7 @@ def test_media_profile_change_updates_host_state_and_logs():
     logger.setLevel(logging.INFO)
 
     try:
+        # adaptiveResolution true preserves legacy size-ladder behaviour.
         host.on_media_profile_change({
             "viewerId": "viewer-1",
             "profile": "low",
@@ -38,6 +43,7 @@ def test_media_profile_change_updates_host_state_and_logs():
             "targetFps": 12,
             "videoBitrateKbps": 900,
             "reason": "packet-loss",
+            "adaptiveResolution": True,
         })
     finally:
         logger.removeHandler(handler)
@@ -60,7 +66,11 @@ def test_invalid_media_profile_is_clamped():
         "target_fps": 20,
         "video_bitrate_kbps": 2500,
     }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host._last_keyframe_request_at = 0.0
     host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
 
     host.on_media_profile_change({
         "viewerId": "viewer-1",
@@ -70,6 +80,7 @@ def test_invalid_media_profile_is_clamped():
         "targetFps": 99,
         "videoBitrateKbps": 99999,
         "reason": "bad",
+        "adaptiveResolution": True,
     })
 
     assert host.media_profile["profile"] == "medium"

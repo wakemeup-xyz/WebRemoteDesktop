@@ -342,6 +342,18 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 5. 失败分类优先：配置缺失/不完整、Host 未就绪、节点 unknown、fingerprint 不一致、Allocate 失败（3478/防火墙/凭据）、有 candidate 无 selected、pair 有但 0 FPS（捕获/编码）
 6. Terminal **默认**仍走 Socket.IO，与 TURN 无关；可选 `webrtc-turn` 见设计 Phase 2，失败不得静默回退
 
+### 场景：画面糊 / 秒级卡顿但 RTT 只有 ~100ms
+
+Quality Lock（默认）：
+
+1. 分辨率设置里 **「自动调整分辨率」默认关闭**——系统不得自动 720p→480p/360p
+2. 状态栏区分 `RTT` 与 `缓冲`：缓冲尖峰多来自 0fps/关键帧空窗，不是单纯网络差
+3. 短时卡顿应优先关键帧恢复（日志 `WRD_KEYFRAME` / `request-keyframe`），而不是 survival 分辨率
+4. Host 日志：`WRD_MEDIA_PROFILE size locked` 表示忽略了 Viewer 请求的更小 size；`WRD_ENCODER_RATE ... encoderReopen=false` 表示同分辨率热更新码率
+5. 若仍糊：检查是否手动打开了自动分辨率；或用户手选分辨率过低；TURN 是否选了海外节点
+
+相关设计：`docs/superpowers/specs/2026-08-02-quality-lock-low-latency-design.md`
+
 ### 场景 2：Cloudflare 地址失效
 
 如果日志出现 `Unauthorized: Tunnel not found`，说明当前 quick tunnel 很可能已经在 Cloudflare 侧失效。Agent 只能报告该结论；除非用户明确要求重建 tunnel，否则不得自动重建或刷新：

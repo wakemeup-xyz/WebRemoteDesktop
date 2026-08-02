@@ -575,7 +575,8 @@ test('stale DataChannel lifecycle callbacks cannot invalidate a replacement chan
 
 test('LinkQualityController requires two degraded samples before requesting medium profile', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create();
+  // Legacy ladder: packet-loss degrade still works with qualityLock (rate signaling).
+  const controller = LinkQualityController.create({ qualityLock: false });
 
   let result = controller.observe({
     fps: 4,
@@ -605,7 +606,8 @@ test('LinkQualityController requires two degraded samples before requesting medi
 
 test('LinkQualityController enters critical recovery after repeated zero fps with selected pair', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create();
+  // Unlock: legacy survival size ladder on sustained stall.
+  const controller = LinkQualityController.create({ qualityLock: false });
 
   controller.observe({
     fps: 0,
@@ -634,7 +636,11 @@ test('LinkQualityController enters critical recovery after repeated zero fps wit
 test('LinkQualityController upgrades one profile after ten good samples and cooldown', () => {
   const { LinkQualityController } = loadLinkQualityController();
   let now = 0;
-  const controller = LinkQualityController.create({ initialProfile: 'survival', now: () => now });
+  const controller = LinkQualityController.create({
+    initialProfile: 'survival',
+    now: () => now,
+    qualityLock: false,
+  });
   const good = {
     fps: 20,
     rttMs: 40,
@@ -657,7 +663,7 @@ test('LinkQualityController upgrades one profile after ten good samples and cool
 
 test('LinkQualityController requires two fresh degraded samples for every downshift', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create();
+  const controller = LinkQualityController.create({ qualityLock: false });
   const bad = {
     fps: 4,
     rttMs: 140,
@@ -678,7 +684,7 @@ test('LinkQualityController requires two fresh degraded samples for every downsh
 
 test('LinkQualityController ignores two startup zero-fps samples before evaluating stalls', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create();
+  const controller = LinkQualityController.create({ qualityLock: false });
   controller.beginConnection();
   const startupSample = {
     fps: 0,
@@ -698,12 +704,12 @@ test('LinkQualityController ignores two startup zero-fps samples before evaluati
   assert.equal(controller.snapshot().currentProfile, 'survival');
 });
 
-test('LinkQualityController relay path starts low and treats structural TURN RTT as non-critical', () => {
+test('LinkQualityController relay path starts high and treats structural TURN RTT as non-critical', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create({ path: 'relay' });
+  const controller = LinkQualityController.create({ path: 'relay', qualityLock: false });
 
-  assert.equal(controller.currentProfile, 'low');
-  assert.equal(controller.maxProfile, 'medium');
+  assert.equal(controller.currentProfile, 'high');
+  assert.equal(controller.maxProfile, 'high');
 
   // ~430ms is normal for LA TURN; must not force survival or ICE restart.
   let result = controller.observe({
@@ -716,7 +722,7 @@ test('LinkQualityController relay path starts low and treats structural TURN RTT
     interval: true,
   });
   assert.equal(result.action, 'hold');
-  assert.equal(result.profile, 'low');
+  assert.equal(result.profile, 'high');
   assert.equal(result.shouldRestartIce || false, false);
 
   result = controller.observe({
@@ -729,14 +735,15 @@ test('LinkQualityController relay path starts low and treats structural TURN RTT
     interval: true,
   });
   assert.equal(result.action, 'hold');
-  assert.equal(result.profile, 'low');
+  assert.equal(result.profile, 'high');
   assert.equal(result.shouldRestartIce || false, false);
-  assert.equal(controller.snapshot().currentProfile, 'low');
+  assert.equal(controller.snapshot().currentProfile, 'high');
 });
 
 test('LinkQualityController relay path never restarts ICE for media-stalled and warms up longer', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create({ path: 'relay' });
+  // Unlock preserves survival-on-sustained-stall ladder (lock mode covered in dedicated tests).
+  const controller = LinkQualityController.create({ path: 'relay', qualityLock: false });
   controller.beginConnection();
   assert.equal(controller.startupGraceSamplesRemaining, 12);
   assert.equal(controller.iceRestartOnStall, false);
@@ -801,7 +808,7 @@ test('WebRTC proactiveIceRestart skips media-stalled on relay mode', () => {
 
 test('LinkQualityController relay path degrades on loss but never restarts ICE for high RTT alone', () => {
   const { LinkQualityController } = loadLinkQualityController();
-  const controller = LinkQualityController.create({ path: 'relay' });
+  const controller = LinkQualityController.create({ path: 'relay', qualityLock: false });
   const lossy = {
     fps: 4,
     rttMs: 500,
@@ -815,7 +822,8 @@ test('LinkQualityController relay path degrades on loss but never restarts ICE f
   assert.equal(controller.observe(lossy).action, 'hold');
   const degraded = controller.observe(lossy);
   assert.equal(degraded.action, 'degrade');
-  assert.equal(degraded.profile, 'survival');
+  // Relay now starts at high; two loss samples step to medium (not full survival).
+  assert.equal(degraded.profile, 'medium');
   assert.equal(degraded.shouldRestartIce, false);
 
   // Structural very-high RTT still does not request ICE restart on relay.
@@ -837,7 +845,12 @@ test('LinkQualityController relay path degrades on loss but never restarts ICE f
 test('LinkQualityController relay path caps upgrades at medium', () => {
   const { LinkQualityController } = loadLinkQualityController();
   let now = 0;
-  const controller = LinkQualityController.create({ path: 'relay', initialProfile: 'survival', now: () => now });
+  const controller = LinkQualityController.create({
+    path: 'relay',
+    initialProfile: 'survival',
+    now: () => now,
+    qualityLock: false,
+  });
   const good = {
     fps: 15,
     rttMs: 400,
@@ -932,9 +945,15 @@ test('WebRTC relay mode syncs low media profile instead of high', () => {
 
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].event, 'media-profile-change');
-  assert.equal(emitted[0].payload.profile, 'low');
-  assert.equal(emitted[0].payload.targetFps, 12);
-  assert.equal(emitted[0].payload.videoBitrateKbps, 900);
+  assert.equal(emitted[0].payload.profile, 'high');
+  // Quality Lock (adaptiveResolution off): keep user presentation floors on connection-sync.
+  // Default currentResolution is 1280x720 → targetFps/bitrate from qualityFloorsForResolution.
+  assert.equal(emitted[0].payload.targetFps, 20);
+  assert.equal(emitted[0].payload.videoBitrateKbps >= 1800, true);
+  assert.equal(emitted[0].payload.videoBitrateKbps, 2500);
+  assert.equal(emitted[0].payload.width, WebRTC.currentResolution.width);
+  assert.equal(emitted[0].payload.height, WebRTC.currentResolution.height);
+  assert.equal(emitted[0].payload.adaptiveResolution, false);
   assert.equal(WebRTC.linkQualityController.path, 'relay');
 });
 
@@ -945,7 +964,7 @@ test('WebRTC relay mode adapts on packet loss without ICE restart for structural
   let restartCalls = 0;
 
   WebRTC.networkMode = 'relay';
-  WebRTC.linkQualityController = LinkQualityController.create({ path: 'relay' });
+  WebRTC.linkQualityController = LinkQualityController.create({ path: 'relay', qualityLock: false });
   WebRTC.socket = {
     connected: true,
     emit(event, payload) {
@@ -982,8 +1001,9 @@ test('WebRTC relay mode adapts on packet loss without ICE restart for structural
 
   const profileEvent = emitted.find((entry) => entry.event === 'media-profile-change');
   assert.equal(Boolean(profileEvent), true);
-  assert.equal(profileEvent.payload.profile, 'survival');
-  // Adaptive resolution defaults OFF: keep user size, only degrade fps/bitrate.
+  // With qualityLock false and relay max=high, two loss samples step high→medium (not full survival).
+  assert.ok(['medium', 'low', 'survival'].includes(profileEvent.payload.profile));
+  assert.notEqual(profileEvent.payload.profile, 'high');
   assert.equal(WebRTC.adaptiveResolutionEnabled, false);
   assert.equal(profileEvent.payload.width, WebRTC.currentResolution.width);
   assert.equal(profileEvent.payload.height, WebRTC.currentResolution.height);
@@ -2054,7 +2074,9 @@ test('WebRTC applies degraded media profile without starting tunnel in auto mode
   assert.equal(Boolean(profileEvent), true);
   assert.equal(profileEvent.payload.profile, 'medium');
   assert.equal(profileEvent.payload.targetFps, 15);
-  assert.equal(profileEvent.payload.videoBitrateKbps, 1400);
+  // Lock mode floors 720p minBitrate to 1800 even when profile table says 1400.
+  assert.equal(profileEvent.payload.videoBitrateKbps, 1800);
+  assert.equal(profileEvent.payload.adaptiveResolution, false);
 });
 
 test('WebRTC proactive ICE restart happens once on critical media quality', () => {

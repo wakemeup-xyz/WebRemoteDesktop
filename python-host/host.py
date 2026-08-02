@@ -1321,8 +1321,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         return min(60, max(target_fps * 2, target_fps + 5))
 
     def apply_media_profile(self, profile):
-        self.set_max_resolution(profile["width"], profile["height"])
+        prev_w = getattr(self, "_max_width", None)
+        prev_h = getattr(self, "_max_height", None)
+        next_w = int(profile.get("width") or prev_w or 1280)
+        next_h = int(profile.get("height") or prev_h or 720)
+        size_changed = prev_w != next_w or prev_h != next_h
+        self.set_max_resolution(next_w, next_h)
         self.set_target_fps(profile["target_fps"])
+        return {"sizeChanged": size_changed, "width": next_w, "height": next_h}
 
     def _scale_image_array(self, img):
         with self._target_lock:
@@ -1393,6 +1399,13 @@ class WebRemoteHost:
         self._reconnecting = False
         self._last_diag_network = None
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
+        # User-owned presentation size (resolution-change / adaptive size). Quality Lock
+        # ignores media-profile size when adaptiveResolution is false.
+        self._user_resolution = {
+            "width": MEDIA_PROFILE_DEFAULT["width"],
+            "height": MEDIA_PROFILE_DEFAULT["height"],
+        }
+        self._last_keyframe_request_at = 0.0
         self._input_event_count = 0
         self._last_input_at_monotonic = None
         # Per-offer media demand binding: generation is monotonic per attempt.
@@ -1441,6 +1454,7 @@ class WebRemoteHost:
         sio.on('viewer-stats', self.on_viewer_stats)
         sio.on('resolution-change', self.on_resolution_change)
         sio.on('media-profile-change', self.on_media_profile_change)
+        sio.on('request-keyframe', self.on_request_keyframe)
         sio.on('media-activity-change', self.on_media_activity_change)
         sio.on('relay-stream-control', self.on_relay_stream_control)
         sio.on('connection-attempt-bind', self.on_connection_attempt_bind)
@@ -2374,11 +2388,81 @@ class WebRemoteHost:
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
 
+    def _locked_user_size(self):
+        """Return user presentation width/height for Quality Lock."""
+        user = getattr(self, "_user_resolution", None) or {}
+        width = int(user.get("width") or 0)
+        height = int(user.get("height") or 0)
+        if width > 0 and height > 0:
+            return width, height
+        current = getattr(self, "media_profile", None) or {}
+        return (
+            int(current.get("width") or MEDIA_PROFILE_DEFAULT["width"]),
+            int(current.get("height") or MEDIA_PROFILE_DEFAULT["height"]),
+        )
+
+    def _set_user_resolution(self, width, height):
+        width = clamp_int(width, 320, 1920, MEDIA_PROFILE_DEFAULT["width"])
+        height = clamp_int(height, 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
+        self._user_resolution = {"width": width, "height": height}
+        profile = getattr(self, "media_profile", None)
+        if isinstance(profile, dict):
+            profile["width"] = width
+            profile["height"] = height
+        return width, height
+
+    def _request_keyframe(self, reason="media-stalled", viewer_id="-"):
+        """Request encoder keyframe with a 1/s host-wide rate limit."""
+        now = time.monotonic()
+        last = float(getattr(self, "_last_keyframe_request_at", 0.0) or 0.0)
+        reason_s = str(reason or "media-stalled")[:80]
+        viewer_s = str(viewer_id or "-")[:64]
+        if now - last < 1.0:
+            logger.debug(
+                "WRD_KEYFRAME rate-limited reason=%s viewer=%s",
+                reason_s,
+                viewer_s,
+            )
+            return False
+        self._last_keyframe_request_at = now
+        ok = False
+        media_sender = getattr(self, "media_sender", None)
+        if media_sender is not None and hasattr(media_sender, "request_keyframe"):
+            try:
+                ok = bool(media_sender.request_keyframe())
+            except Exception as exc:
+                logger.debug("media_sender keyframe failed: %s", type(exc).__name__)
+                ok = False
+        if not ok:
+            try:
+                ok = bool(AiortcMediaSender(getattr(self, "video_sender", None)).request_keyframe())
+            except Exception as exc:
+                logger.debug("video_sender keyframe failed: %s", type(exc).__name__)
+                ok = False
+        logger.info(
+            "WRD_KEYFRAME reason=%s viewer=%s ok=%s",
+            reason_s,
+            viewer_s,
+            ok,
+        )
+        return ok
+
+    def on_request_keyframe(self, data):
+        """Handle viewer continuity keyframe request (lease checked by signal)."""
+        try:
+            payload = data if isinstance(data, dict) else {}
+            reason = payload.get("reason", "media-stalled")
+            viewer_id = payload.get("viewerId", "-")
+            self._request_keyframe(reason=reason, viewer_id=viewer_id)
+        except Exception as e:
+            logger.error(f"Error handling request-keyframe: {e}")
+
     async def on_resolution_change(self, data):
         """Apply viewer requested max stream resolution."""
         try:
-            width = int(data.get("width"))
-            height = int(data.get("height"))
+            width = clamp_int(data.get("width"), 320, 1920, MEDIA_PROFILE_DEFAULT["width"])
+            height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
+            width, height = self._set_user_resolution(width, height)
             logger.info(
                 "Resolution request from viewer=%s max=%sx%s",
                 data.get("viewerId", "-"),
@@ -2393,14 +2477,35 @@ class WebRemoteHost:
     def on_media_profile_change(self, data):
         """Apply adaptive media profile requested by the active viewer."""
         try:
+            payload = data if isinstance(data, dict) else {}
             allowed_profiles = {"high", "medium", "low", "survival"}
-            profile = data.get("profile") if data.get("profile") in allowed_profiles else "medium"
+            profile = payload.get("profile") if payload.get("profile") in allowed_profiles else "medium"
+            # Quality Lock default: missing adaptiveResolution means false.
+            adaptive_resolution = payload.get("adaptiveResolution") is True
+            requested_width = clamp_int(payload.get("width"), 320, 1920, 960)
+            requested_height = clamp_int(payload.get("height"), 180, 1080, 540)
+            if adaptive_resolution:
+                width, height = requested_width, requested_height
+                self._set_user_resolution(width, height)
+            else:
+                locked_width, locked_height = self._locked_user_size()
+                width, height = locked_width, locked_height
+                if requested_width != locked_width or requested_height != locked_height:
+                    logger.info(
+                        "WRD_MEDIA_PROFILE size locked user=%sx%s requested=%sx%s viewer=%s adaptiveResolution=%s",
+                        locked_width,
+                        locked_height,
+                        requested_width,
+                        requested_height,
+                        payload.get("viewerId", "-"),
+                        adaptive_resolution,
+                    )
             next_profile = {
                 "profile": profile,
-                "width": clamp_int(data.get("width"), 320, 1920, 960),
-                "height": clamp_int(data.get("height"), 180, 1080, 540),
-                "target_fps": clamp_int(data.get("targetFps"), 5, 30, 15),
-                "video_bitrate_kbps": clamp_int(data.get("videoBitrateKbps"), 250, 5000, 1400),
+                "width": width,
+                "height": height,
+                "target_fps": clamp_int(payload.get("targetFps"), 5, 30, 15),
+                "video_bitrate_kbps": clamp_int(payload.get("videoBitrateKbps"), 250, 5000, 1400),
             }
             current = getattr(self, "media_profile", None) or {}
             same = (
@@ -2410,19 +2515,22 @@ class WebRemoteHost:
                 and int(current.get("target_fps") or 0) == next_profile["target_fps"]
                 and int(current.get("video_bitrate_kbps") or 0) == next_profile["video_bitrate_kbps"]
             )
+            continuity_action = payload.get("continuityAction")
+            viewer_id = payload.get("viewerId", "-")
+            reason = str(payload.get("reason", "quality"))[:80]
             if same:
                 logger.debug(
                     "WRD_MEDIA_PROFILE unchanged viewer=%s profile=%s reason=%s",
-                    data.get("viewerId", "-"),
+                    viewer_id,
                     next_profile["profile"],
-                    str(data.get("reason", "quality"))[:80],
+                    reason,
                 )
+                if continuity_action == "keyframe":
+                    self._request_keyframe(reason=reason or "keyframe", viewer_id=viewer_id)
                 return
             self.media_profile = next_profile
-            viewer_id = data.get("viewerId", "-")
-            reason = str(data.get("reason", "quality"))[:80]
             logger.info(
-                "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s",
+                "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s adaptiveResolution=%s",
                 viewer_id,
                 next_profile["profile"],
                 next_profile["width"],
@@ -2430,11 +2538,54 @@ class WebRemoteHost:
                 next_profile["target_fps"],
                 next_profile["video_bitrate_kbps"],
                 reason,
+                adaptive_resolution,
             )
             if self.screen_track and hasattr(self.screen_track, "apply_media_profile"):
-                self.screen_track.apply_media_profile(next_profile)
+                apply_result = self.screen_track.apply_media_profile(next_profile) or {}
+            else:
+                apply_result = {}
+            bitrate_kbps = int(next_profile["video_bitrate_kbps"])
+            encoder_reopen = bool(apply_result.get("sizeChanged"))
+            hot_ok = self._apply_encoder_bitrate_kbps(bitrate_kbps)
+            logger.info(
+                "WRD_ENCODER_RATE bitrate_kbps=%s hot=%s encoderReopen=%s size=%sx%s",
+                bitrate_kbps,
+                hot_ok,
+                encoder_reopen,
+                next_profile["width"],
+                next_profile["height"],
+            )
+            if continuity_action == "keyframe":
+                self._request_keyframe(reason=reason or "keyframe", viewer_id=viewer_id)
         except Exception as e:
             logger.error(f"Error handling media profile change: {e}")
+
+    def _apply_encoder_bitrate_kbps(self, bitrate_kbps):
+        """Hot-update encoder target bitrate when possible (no codec reopen)."""
+        try:
+            bitrate_bps = max(250_000, min(int(bitrate_kbps) * 1000, 8_000_000))
+        except (TypeError, ValueError):
+            return False
+        sender = getattr(self, "video_sender", None)
+        if sender is None:
+            return False
+        encoder = getattr(sender, "_encoder", None)
+        if encoder is None:
+            # aiortc private name variants
+            encoder = getattr(sender, "_RTCRtpSender__encoder", None)
+        if encoder is None:
+            return False
+        try:
+            if hasattr(encoder, "target_bitrate"):
+                encoder.target_bitrate = bitrate_bps
+                return True
+            codec = getattr(encoder, "codec", None)
+            if codec is not None and hasattr(codec, "bit_rate"):
+                codec.bit_rate = bitrate_bps
+                return True
+        except Exception as exc:
+            logger.debug("encoder bitrate hot-update failed: %s", type(exc).__name__)
+        return False
 
     def _validate_media_activity_request(self, data):
         """Pure validation for Signal-forwarded media-activity-change (no side effects)."""

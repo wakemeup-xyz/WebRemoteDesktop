@@ -277,13 +277,16 @@ class H264VideoToolboxEncoder(Encoder):
 
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
         pixels = frame.width * frame.height
-        if pixels <= 1280 * 720:
+        if self.__target_bitrate and self.__target_bitrate > 0:
+            bitrate = int(self.__target_bitrate)
+        elif pixels <= 1280 * 720:
             bitrate = 2_500_000
         elif pixels <= 1920 * 1080:
             bitrate = 4_000_000
         else:
             bitrate = 6_000_000
         bitrate = max(MIN_BITRATE, min(bitrate, MAX_BITRATE))
+        self.__target_bitrate = bitrate
 
         logger.info(
             "Opening H.264 encoder codec=%s size=%dx%d bitrate=%d",
@@ -300,7 +303,8 @@ class H264VideoToolboxEncoder(Encoder):
         codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
         codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
         codec.profile = "Baseline"
-        codec.gop_size = MAX_FRAME_RATE * 3  # keyframe every 3 seconds
+        # Shorter GOP for remote-desktop recovery (was 3s); stall path also force-keyframe.
+        codec.gop_size = max(MAX_FRAME_RATE, MAX_FRAME_RATE * 2)
         try:
             codec.max_b_frames = 0
         except Exception:
@@ -335,8 +339,14 @@ class H264VideoToolboxEncoder(Encoder):
 
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
-        bitrate = max(MIN_BITRATE, min(bitrate, MAX_BITRATE))
+        bitrate = max(MIN_BITRATE, min(int(bitrate), MAX_BITRATE))
         self.__target_bitrate = bitrate
+        # Hot-update without reopening the codec when size is unchanged.
+        if self.codec is not None:
+            try:
+                self.codec.bit_rate = bitrate
+            except Exception as exc:
+                logger.debug("hot bitrate update failed: %s", type(exc).__name__)
 
 
 def h264_depayload(payload: bytes) -> bytes:

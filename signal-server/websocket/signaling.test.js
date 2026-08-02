@@ -231,7 +231,23 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   assert.equal(message.data.targetFps, 15);
   assert.equal(message.data.videoBitrateKbps, 1400);
   assert.equal(message.data.reason, 'packet-loss');
+  assert.equal(message.data.adaptiveResolution, false);
+  assert.equal(message.data.continuityAction, 'none');
   assert.equal(message.data.extra, undefined);
+
+  viewer.trigger('media-profile-change', {
+    profile: 'low',
+    width: 854,
+    height: 480,
+    targetFps: 12,
+    videoBitrateKbps: 900,
+    reason: 'keyframe-recovery',
+    adaptiveResolution: true,
+    continuityAction: 'keyframe',
+  });
+  const locked = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
+  assert.equal(locked.adaptiveResolution, true);
+  assert.equal(locked.continuityAction, 'keyframe');
 });
 
 test('v2 viewers cannot forward unleased media writes and active media writes are bounded', () => {
@@ -274,6 +290,39 @@ test('non-viewer media-profile-change is ignored', () => {
   host.trigger('media-profile-change', { profile: 'survival' });
 
   assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
+});
+
+test('viewer request-keyframe is sanitized and forwarded to host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('request-keyframe', {
+    reason: 'media-stalled',
+    secret: 'drop-me',
+  });
+
+  const message = host.sent.find((entry) => entry.event === 'request-keyframe');
+  assert.equal(Boolean(message), true);
+  assert.equal(message.data.viewerId, 'viewer-1');
+  assert.equal(message.data.reason, 'media-stalled');
+  assert.equal(message.data.secret, undefined);
+});
+
+test('non-viewer request-keyframe is ignored', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+
+  const host = new FakeSocket('host-1', 'host');
+  io.connect(host);
+  host.trigger('request-keyframe', { reason: 'media-stalled' });
+  assert.equal(host.sent.some((entry) => entry.event === 'request-keyframe'), false);
 });
 
 test('viewer disconnect reports zero viewers so host can stop active relay stream', () => {

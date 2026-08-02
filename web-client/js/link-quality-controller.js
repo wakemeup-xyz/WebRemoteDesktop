@@ -9,8 +9,14 @@ const LinkQualityController = {
   /**
    * Path presets:
    * - direct: LAN / STUN / auto short paths (default)
-   * - relay: forced TURN hairpin; structural RTT is often 300–600ms and must not
+   * - relay: forced TURN hairpin; structural RTT is often 80–600ms and must not
    *   thrash into survival or trigger ICE restart by itself.
+   *
+   * qualityLock (create option, default true):
+   * Continuity-first mode. High jitter with fps>0 and structural relay RTT do not
+   * step the size ladder; brief/sustained media stalls request keyframe recovery
+   * instead of setProfile('survival'). Pair with WebRTC adaptiveResolution off.
+   * Pass qualityLock:false to restore the legacy degrade→survival ladder.
    */
   pathPresets: {
     direct: {
@@ -23,8 +29,10 @@ const LinkQualityController = {
       startupGraceSamples: 2,
     },
     relay: {
-      initialProfile: 'low',
-      maxProfile: 'medium',
+      // Quality Lock: logical start name is informational; size comes from user resolution.
+      // Prefer high rate semantics on ~100ms TURN rather than forcing low/900kbps.
+      initialProfile: 'high',
+      maxProfile: 'high',
       highRttMs: 700,
       veryHighRttMs: 1200,
       iceRestartOnVeryHighRtt: false,
@@ -45,6 +53,8 @@ const LinkQualityController = {
 
     return {
       path: pathName,
+      // Default ON: remote-desktop continuity; unlock only when adaptive size ladder is wanted.
+      qualityLock: options.qualityLock != null ? Boolean(options.qualityLock) : true,
       currentProfile: options.initialProfile || preset.initialProfile,
       maxProfile: options.maxProfile || preset.maxProfile,
       highRttMs: Number.isFinite(options.highRttMs) ? options.highRttMs : preset.highRttMs,
@@ -103,6 +113,11 @@ const LinkQualityController = {
         return { changed: true, path: this.path, profile: this.currentProfile };
       },
 
+      setQualityLock(enabled) {
+        this.qualityLock = Boolean(enabled);
+        return this.qualityLock;
+      },
+
       beginConnection(graceSamples) {
         const fallback = Number(this.startupGraceSamples);
         const resolved = graceSamples == null
@@ -122,6 +137,27 @@ const LinkQualityController = {
         return maxIndex >= 0 ? maxIndex : 0;
       },
 
+      _holdResult(reason, extra = {}) {
+        return {
+          action: extra.action || 'hold',
+          profile: this.currentProfile,
+          reason,
+          path: this.path,
+          profileConfig: null,
+          shouldRestartIce: Boolean(extra.shouldRestartIce),
+          shouldRequestKeyframe: Boolean(extra.shouldRequestKeyframe),
+          changed: false,
+        };
+      },
+
+      _recoverResult(reason, extra = {}) {
+        return this._holdResult(reason, {
+          action: extra.action || 'recover',
+          shouldRequestKeyframe: extra.shouldRequestKeyframe !== false,
+          shouldRestartIce: Boolean(extra.shouldRestartIce),
+        });
+      },
+
       observe(stats = {}) {
         const packetsLost = Number(stats.packetsLost || 0);
         const framesDecoded = Number(stats.framesDecoded || 0);
@@ -137,6 +173,7 @@ const LinkQualityController = {
         this.lastPacketsLost = packetsLost;
         this.lastFramesDecoded = framesDecoded;
 
+        const qualityLock = this.qualityLock === true;
         const hasSelectedPair = Boolean(stats.selectedCandidateType);
         const fps = Number(stats.fps || 0);
         const rttMs = Number(stats.rttMs || 0);
@@ -158,7 +195,7 @@ const LinkQualityController = {
           this.degradedCount = 0;
           this.criticalCount = 0;
           this.goodCount = 0;
-          return { action: 'hold', profile: this.currentProfile, reason: 'no-selected-pair' };
+          return this._holdResult('no-selected-pair');
         }
 
         if (mediaStalled && this.startupGraceSamplesRemaining > 0) {
@@ -166,7 +203,7 @@ const LinkQualityController = {
           this.degradedCount = 0;
           this.criticalCount = 0;
           this.goodCount = 0;
-          return { action: 'hold', profile: this.currentProfile, reason: 'media-warmup' };
+          return this._holdResult('media-warmup');
         }
         if (!zeroFps) {
           this.startupGraceSamplesRemaining = 0;
@@ -181,10 +218,32 @@ const LinkQualityController = {
           this.criticalCount = 0;
         }
 
-        if (zeroFps || highRtt || highJitter || highLoss) {
+        // --- Quality-lock signal reclassification ---
+        // Lock: high jitter with frames flowing is observe-only (no size ladder).
+        // Lock: relay RTT below veryHigh with fps>0 is structural (no degrade).
+        // Lock: media stall uses recover/keyframe, not survival setProfile.
+        // Unlock: legacy zeroFps|highRtt|highJitter|highLoss → degrade ladder.
+        const structuralRelayRtt = qualityLock
+          && this.path === 'relay'
+          && fps > 0
+          && highRtt
+          && !veryHighRtt;
+        const jitterWithFrames = qualityLock && highJitter && fps > 0;
+
+        let sampleIsCongested;
+        if (qualityLock) {
+          sampleIsCongested = highLoss
+            || (fps > 0 && veryHighRtt)
+            || (fps > 0 && highRtt && !structuralRelayRtt);
+          // intentionally exclude: jitterWithFrames, mediaStalled, structuralRelayRtt
+        } else {
+          sampleIsCongested = zeroFps || highRtt || highJitter || highLoss;
+        }
+
+        if (sampleIsCongested) {
           this.degradedCount += 1;
           this.goodCount = 0;
-        } else {
+        } else if (fps > 0 && !highRtt && !highJitter && !highLoss) {
           this.degradedCount = 0;
           this.criticalCount = 0;
           this.goodCount += 1;
@@ -197,7 +256,14 @@ const LinkQualityController = {
           ) {
             return this.setProfile(order[currentIndex - 1], 'sustained-good', { action: 'upgrade' });
           }
-          return { action: 'hold', profile: this.currentProfile, reason: 'good' };
+          return this._holdResult('good');
+        } else {
+          // observe-only (lock jitter / structural RTT) or lock media-stall path
+          this.goodCount = 0;
+          if (qualityLock && fps > 0 && (jitterWithFrames || structuralRelayRtt)) {
+            // Do not advance degrade streak on observe-only samples.
+            return this._holdResult(reason);
+          }
         }
 
         if (this.criticalCount >= 2) {
@@ -205,15 +271,34 @@ const LinkQualityController = {
           // stall before survival thrash (each profile apply reopens the encoder).
           const criticalNeeded = (mediaStalled && this.path === 'relay') ? 6 : 2;
           if (this.criticalCount < criticalNeeded) {
-            return { action: 'hold', profile: this.currentProfile, reason };
+            if (qualityLock && mediaStalled) {
+              return this._recoverResult(reason || 'media-stalled');
+            }
+            return this._holdResult(reason);
           }
+
           const shouldRestartIce = mediaStalled
             ? this.iceRestartOnStall && !this.iceRestartAttempted
             : this.iceRestartOnVeryHighRtt && !this.iceRestartAttempted;
+
+          if (qualityLock) {
+            // Continuity: keyframe/diagnostic only — never emit survival size ladder.
+            return this._recoverResult(reason, {
+              action: 'critical',
+              shouldRequestKeyframe: true,
+              shouldRestartIce,
+            });
+          }
+
           return this.setProfile('survival', reason, {
             action: 'critical',
             shouldRestartIce,
           });
+        }
+
+        // Brief media stall under lock: recover before critical threshold.
+        if (qualityLock && mediaStalled) {
+          return this._recoverResult(reason || 'media-stalled');
         }
 
         if (this.degradedCount >= 2) {
@@ -224,7 +309,7 @@ const LinkQualityController = {
           }
         }
 
-        return { action: 'hold', profile: this.currentProfile, reason };
+        return this._holdResult(reason);
       },
 
       markIceRestartAttempted() {
@@ -258,6 +343,7 @@ const LinkQualityController = {
           // same survival/low profile forces Host to reopen the H.264 encoder.
           profileConfig: changed ? LinkQualityController.profiles[profile] : null,
           shouldRestartIce: Boolean(extra.shouldRestartIce),
+          shouldRequestKeyframe: Boolean(extra.shouldRequestKeyframe),
           changed,
         };
       },
@@ -266,6 +352,7 @@ const LinkQualityController = {
         return {
           enabled: true,
           path: this.path,
+          qualityLock: this.qualityLock === true,
           currentProfile: this.currentProfile,
           maxProfile: this.maxProfile,
           highRttMs: this.highRttMs,

@@ -41,7 +41,21 @@ const WebRTC = {
   tunnelLastObjectUrl: '',
   tunnelPendingObjectUrl: '',
   tunnelLastFrameId: 0,
-  currentResolution: { width: 960, height: 540, label: '540p' },
+  currentResolution: (() => {
+    // Prefer panel default (720p checked) over hard-coded 540p so connection-sync
+    // does not start from the wrong presentation contract.
+    try {
+      if (typeof document !== 'undefined') {
+        const selected = document.querySelector('input[name="resolution"]:checked');
+        const width = parseInt(selected?.dataset?.width, 10);
+        const height = parseInt(selected?.dataset?.height, 10);
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          return { width, height, label: `${width}x${height}` };
+        }
+      }
+    } catch (_err) { /* non-DOM test env */ }
+    return { width: 1280, height: 720, label: '1280x720' };
+  })(),
   linkQualityController: null,
   mediaActivityController: null,
   mediaActivityLifecycle: null,
@@ -969,10 +983,16 @@ const WebRTC = {
   },
 
   ensureLinkQualityController() {
+    const qualityLock = this.adaptiveResolutionEnabled !== true;
     if (!this.linkQualityController && typeof LinkQualityController !== 'undefined') {
       this.linkQualityController = LinkQualityController.create({
         path: this.linkQualityPathForMode(),
+        qualityLock,
       });
+    } else if (this.linkQualityController && typeof this.linkQualityController.setQualityLock === 'function') {
+      this.linkQualityController.setQualityLock(qualityLock);
+    } else if (this.linkQualityController) {
+      this.linkQualityController.qualityLock = qualityLock;
     }
     return this.linkQualityController;
   },
@@ -1000,6 +1020,38 @@ const WebRTC = {
     return changed;
   },
 
+  qualityFloorsForResolution(width, height) {
+    const w = Number(width) || 0;
+    const h = Number(height) || 0;
+    const pixels = Math.max(1, w * h);
+    if (pixels >= 1920 * 1080) return { minBitrateKbps: 2500, minFps: 12, targetFps: 20 };
+    if (pixels >= 1280 * 720) return { minBitrateKbps: 1800, minFps: 12, targetFps: 20 };
+    if (pixels >= 960 * 540) return { minBitrateKbps: 1200, minFps: 12, targetFps: 18 };
+    return { minBitrateKbps: 900, minFps: 10, targetFps: 15 };
+  },
+
+  requestKeyframe(reason = 'media-stalled') {
+    const now = Date.now();
+    if (this._lastKeyframeRequestAt && now - this._lastKeyframeRequestAt < 1000) {
+      return false;
+    }
+    const lease = this.activeLeaseEnvelope();
+    if (!lease || !this.socket?.connected) return false;
+    this._lastKeyframeRequestAt = now;
+    // Re-assert low-latency playout after stalls so the browser does not keep a multi-second buffer.
+    try {
+      const receiver = this.pc?.getReceivers?.()?.find((entry) => entry?.track?.kind === 'video');
+      if (receiver) this.configureVideoReceiver(receiver);
+    } catch (_err) { /* ignore */ }
+    this.socket.emit('request-keyframe', {
+      ...lease,
+      schemaVersion: 2,
+      reason: String(reason || 'media-stalled').slice(0, 80),
+    });
+    console.warn(`[MEDIA] request-keyframe reason=${reason}`);
+    return true;
+  },
+
   handleReceiverStats(stats) {
     if (this.isMediaHealthSuppressed()) return;
     const controller = this.ensureLinkQualityController();
@@ -1012,12 +1064,21 @@ const WebRTC = {
     if (typeof controller.setPath === 'function') {
       controller.setPath(this.linkQualityPathForMode(), { resetProfile: false });
     }
+    if (typeof controller.setQualityLock === 'function') {
+      controller.setQualityLock(this.adaptiveResolutionEnabled !== true);
+    } else if (controller) {
+      controller.qualityLock = this.adaptiveResolutionEnabled !== true;
+    }
 
     const result = controller.observe({
       ...stats,
       selectedCandidatePair: this.selectedCandidatePair,
     });
     if (!result || result.action === 'hold') return;
+
+    if (result.shouldRequestKeyframe || result.action === 'recover') {
+      this.requestKeyframe(result.reason || 'media-stalled');
+    }
 
     if (result.profileConfig) {
       this.applyMediaProfile(result.profileConfig, result.reason);
@@ -1082,15 +1143,13 @@ const WebRTC = {
     let bitrateKbps = Number(profile.bitrateKbps) || 900;
     let targetFps = Number(profile.fps) || 15;
     if (!allowResolutionChange) {
-      const pixels = Math.max(1, width * height);
-      if (pixels >= 1920 * 1080) {
-        bitrateKbps = Math.max(bitrateKbps, 1800);
-        targetFps = Math.max(targetFps, 12);
-      } else if (pixels >= 1280 * 720) {
-        bitrateKbps = Math.max(bitrateKbps, 1200);
-        targetFps = Math.max(targetFps, 12);
-      } else if (pixels >= 960 * 540) {
-        bitrateKbps = Math.max(bitrateKbps, 900);
+      const floors = this.qualityFloorsForResolution(width, height);
+      bitrateKbps = Math.max(bitrateKbps, floors.minBitrateKbps);
+      // Prefer target fps on connection-sync; never below min floor when adapting down.
+      if (reason === 'connection-sync' || reason === 'path-sync') {
+        targetFps = Math.max(targetFps, floors.targetFps);
+      } else {
+        targetFps = Math.max(targetFps, floors.minFps);
       }
     }
     if (allowResolutionChange) {
@@ -1116,6 +1175,7 @@ const WebRTC = {
         reason,
         mediaPolicy: 'strict-stun',
         adaptiveResolution: allowResolutionChange,
+        continuityAction: 'none',
       });
     }
     if (typeof ConnectionTrace !== 'undefined' && typeof ConnectionTrace.record === 'function') {
@@ -3386,7 +3446,16 @@ if (this.tunnelLastObjectUrl) {
       if (fpsEl) fpsEl.textContent = `${Math.round(fps)} FPS`;
       const latencyEl = document.getElementById('latencyDisplay');
       if (latencyEl) {
-        latencyEl.textContent = latencyMs > 0 ? `${latencyMs} ms` : '- ms';
+        if (latencyMs > 0 && jitterBufferDelay > 0) {
+          latencyEl.textContent = `RTT ${Math.round(latencyMs)} · 缓冲 ${Math.round(jitterBufferDelay)} ms`;
+          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms；播放缓冲 ${Math.round(jitterBufferDelay)} ms`;
+        } else if (latencyMs > 0) {
+          latencyEl.textContent = `RTT ${Math.round(latencyMs)} ms`;
+          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms`;
+        } else {
+          latencyEl.textContent = '- ms';
+          latencyEl.title = '';
+        }
       }
       const candidateEl = document.getElementById('candidateDisplay');
       const portSearchStatus = this.portSearchController?.snapshot?.()?.status || null;

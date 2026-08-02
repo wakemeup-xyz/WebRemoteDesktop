@@ -1099,10 +1099,31 @@ function setupSignaling(io, options = {}) {
         videoBitrateKbps: clampInt(data.videoBitrateKbps, 250, 5000, 1400),
         reason: String(data.reason || 'quality').slice(0, 80),
         mediaPolicy: data.mediaPolicy === 'strict-stun' ? 'strict-stun' : 'unknown',
+        // Default Quality Lock when field absent (matches host/spec).
+        adaptiveResolution: data.adaptiveResolution === true,
+        continuityAction: data.continuityAction === 'keyframe' ? 'keyframe' : 'none',
       };
       if (connections.host) {
         connections.host.emit('media-profile-change', sanitized);
       }
+    });
+
+    socket.on('request-keyframe', (data = {}) => {
+      if (role !== 'viewer') return;
+      if (!isActiveViewerSocket(socket)) return;
+      if (socket.inputProtocolVersion === 2) {
+        if (data?.schemaVersion !== 2 || !authorizeViewer(socket, data, { legacy: false })) return;
+      } else if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) {
+        return;
+      }
+      if (!connections.host) return;
+      connections.host.emit('request-keyframe', {
+        viewerId: socket.id,
+        reason: String(data.reason || 'media-stalled').slice(0, 80),
+        schemaVersion: data.schemaVersion === 2 ? 2 : undefined,
+        leaseId: typeof data.leaseId === 'string' ? data.leaseId : undefined,
+        leaseEpoch: Number.isSafeInteger(data.leaseEpoch) ? data.leaseEpoch : undefined,
+      });
     });
 
     socket.on('connection-attempt-bind', (data = {}) => {
