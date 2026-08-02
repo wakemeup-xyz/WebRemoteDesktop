@@ -165,7 +165,20 @@ const Input = {
 
   updateKeyboardUI() {
     const display = document.getElementById('keyInputDisplay');
-    if (display) display.textContent = this.keyboardController?.getSnapshot().state || 'INACTIVE';
+    if (!display) return;
+    const raw = this.keyboardController?.getSnapshot().state || 'INACTIVE';
+    const labels = {
+      INACTIVE: '键盘：未激活',
+      READY: '键盘：就绪',
+      BLOCKED: '键盘：阻塞',
+      RESET_REQUIRED: '键盘：需复位',
+      'reacquire-required': '键盘：需重获控制',
+      revoked: '键盘：已撤销',
+      blocked: '键盘：阻塞',
+      ready: '键盘：就绪',
+    };
+    display.textContent = labels[raw] || `键盘：${raw}`;
+    display.dataset.state = raw;
   },
 
   setActive(active, meta = {}) {

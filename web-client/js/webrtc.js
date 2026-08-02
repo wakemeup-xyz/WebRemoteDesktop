@@ -149,6 +149,9 @@ const WebRTC = {
     warning: 8000,
     danger: 14000,
   },
+  // After the pointer leaves the card, dock quickly — do not reuse the long idle timer.
+  NETWORK_ADVISOR_LEAVE_COLLAPSE_MS: 280,
+  _networkAdvisorLastSignature: '',
   // Remote-desktop users alt-tab constantly. The original 750ms page-hidden delay
   // suspended capture ~2s after connect and left Host at FPS=0 while ICE stayed up
   // ("can't connect"). Keep intentional suspend, but require a sustained hide.
@@ -3223,21 +3226,23 @@ if (this.tunnelLastObjectUrl) {
 
     advisor.addEventListener('mouseenter', () => {
       this._networkAdvisorHover = true;
+      this.clearNetworkAdvisorCollapseTimer();
       this.expandNetworkAdvisor({ reschedule: false });
     });
     advisor.addEventListener('mouseleave', () => {
       this._networkAdvisorHover = false;
       this._networkAdvisorPinned = false;
-      this.scheduleNetworkAdvisorCollapse();
+      // Leave = dock soon. Idle timer only applies after content updates while expanded.
+      this.scheduleNetworkAdvisorCollapse({ delayMs: this.NETWORK_ADVISOR_LEAVE_COLLAPSE_MS });
     });
     advisor.addEventListener('focusin', () => {
+      this.clearNetworkAdvisorCollapseTimer();
       this.expandNetworkAdvisor({ reschedule: false });
     });
     advisor.addEventListener('focusout', () => {
-      // Defer so focus moving inside the advisor does not collapse mid-tab.
       setTimeout(() => {
         if (advisor.contains(document.activeElement)) return;
-        this.scheduleNetworkAdvisorCollapse();
+        this.scheduleNetworkAdvisorCollapse({ delayMs: this.NETWORK_ADVISOR_LEAVE_COLLAPSE_MS });
       }, 0);
     });
     handle?.addEventListener('click', (event) => {
@@ -3245,6 +3250,7 @@ if (this.tunnelLastObjectUrl) {
       event.stopPropagation();
       if (advisor.classList.contains('collapsed')) {
         this._networkAdvisorPinned = true;
+        this.clearNetworkAdvisorCollapseTimer();
         this.expandNetworkAdvisor({ reschedule: false });
       } else {
         this._networkAdvisorPinned = false;
@@ -3283,19 +3289,21 @@ if (this.tunnelLastObjectUrl) {
     if (handle) handle.setAttribute('aria-label', '展开网络状态');
   },
 
-  scheduleNetworkAdvisorCollapse() {
+  scheduleNetworkAdvisorCollapse(options = {}) {
     const advisor = document.getElementById('networkAdvisor');
     if (!advisor || !advisor.classList.contains('visible')) return;
     if (this._networkAdvisorHover || this._networkAdvisorPinned) return;
     this.clearNetworkAdvisorCollapseTimer();
     const severity = this._networkAdvisorSeverity || '';
-    const delay = this.NETWORK_ADVISOR_COLLAPSE_MS[severity]
-      ?? this.NETWORK_ADVISOR_COLLAPSE_MS['']
-      ?? 4500;
+    const delay = Number.isFinite(options.delayMs)
+      ? options.delayMs
+      : (this.NETWORK_ADVISOR_COLLAPSE_MS[severity]
+        ?? this.NETWORK_ADVISOR_COLLAPSE_MS['']
+        ?? 4500);
     this._networkAdvisorCollapseTimer = setTimeout(() => {
       this._networkAdvisorCollapseTimer = null;
       this.collapseNetworkAdvisor();
-    }, delay);
+    }, Math.max(0, delay));
   },
 
   updateNetworkUI(message, severity = '') {
@@ -3333,20 +3341,48 @@ if (this.tunnelLastObjectUrl) {
       this.getRecommendationMessage(),
     ].filter(Boolean).join(' ');
     const effectiveSeverity = severity || recommendation?.severity || (this.networkMode === 'relay' && !this.hasTurnConfigured() ? 'warning' : '');
+    const stateLabel = recommendation?.nextSuggestedMode
+      ? `建议：${this.networkModes[recommendation.nextSuggestedMode]?.label || recommendation.nextSuggestedMode}`
+      : mode.state;
+    const signature = [
+      this.networkMode,
+      effectiveSeverity || '',
+      stateLabel,
+      detail || '',
+      recommendation?.nextSuggestedMode || '',
+    ].join('|');
+
+    // Stats ticks rewrite RTT every second. Only expand when the story changes;
+    // otherwise keep the docked tab and quietly refresh copy.
+    const firstShow = !advisor.classList.contains('visible');
+    const meaningfulChange = signature !== this._networkAdvisorLastSignature;
+    const severityRank = { '': 0, warning: 1, danger: 2 };
+    const severityUp = (severityRank[effectiveSeverity] || 0)
+      > (severityRank[this._networkAdvisorSeverity] || 0);
+    this._networkAdvisorLastSignature = signature;
     this._networkAdvisorSeverity = effectiveSeverity;
 
     title.textContent = `网络模式：${mode.label}`;
-    state.textContent = recommendation?.nextSuggestedMode
-      ? `建议：${this.networkModes[recommendation.nextSuggestedMode]?.label || recommendation.nextSuggestedMode}`
-      : mode.state;
+    state.textContent = stateLabel;
     text.textContent = detail || mode.hint;
     advisor.classList.toggle('warning', effectiveSeverity === 'warning');
     advisor.classList.toggle('danger', effectiveSeverity === 'danger');
     state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
     advisor.classList.add('visible');
-    // Fresh status: expand so the user can read it, then auto-collapse to the right tab.
-    this._networkAdvisorPinned = false;
-    this.expandNetworkAdvisor({ reschedule: true });
+
+    const shouldExpand = firstShow
+      || severityUp
+      || (meaningfulChange && (effectiveSeverity === 'warning' || effectiveSeverity === 'danger'
+        || genericMessage || !message
+        || /失败|不可用|切换|重连|建议|耗尽|超时|中断/.test(String(baseMessage || ''))));
+
+    if (shouldExpand) {
+      this._networkAdvisorPinned = false;
+      this.expandNetworkAdvisor({ reschedule: true });
+    } else if (!advisor.classList.contains('collapsed') && !this._networkAdvisorHover && !this._networkAdvisorPinned) {
+      // Content refreshed while expanded — keep idle collapse armed.
+      this.scheduleNetworkAdvisorCollapse();
+    }
   },
   
   startStats() {

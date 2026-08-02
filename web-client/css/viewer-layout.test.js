@@ -36,3 +36,11 @@ test('network advisor supports right-edge auto-collapse tab', () => {
   const visible = getBlock('.network-advisor.visible');
   assert.match(visible, /pointer-events\s*:\s*auto/, 'visible advisor must accept hover/click');
 });
+
+test('status bar groups metrics and actions for operator chrome', () => {
+  assert.match(html, /class="status-metrics"/);
+  assert.match(html, /class="status-actions"/);
+  assert.match(html, /id="keyInputDisplay"[^>]*>键盘：未激活/);
+  const metrics = getBlock('.status-metrics');
+  assert.match(metrics, /inline-flex/);
+});

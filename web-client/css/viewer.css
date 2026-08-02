@@ -211,14 +211,16 @@ body.tunnel-relay-active #remoteVideo {
   top: 0;
   left: 0;
   right: 0;
-  height: 56px;
+  min-height: 56px;
+  height: auto;
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  padding: 8px 20px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   z-index: 100;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -228,8 +230,7 @@ body.tunnel-relay-active #remoteVideo {
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   transition: all var(--transition-base);
 }
 
@@ -251,23 +252,60 @@ body.tunnel-relay-active #remoteVideo {
   box-shadow: 0 0 12px var(--accent-danger-glow);
 }
 
-.status-bar span:not(.status) {
+.status-metrics {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border-subtle);
+}
+
+.status-metric {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.status-metric:last-child {
+  border-right: 0;
+}
+
+.status-bar span:not(.status):not(.status-metric):not(.key-input-display):not(.control-status) {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
-  display: flex;
+}
+
+.status-actions {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: 0.02em;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+body.stream-connected .status-action-secondary {
+  opacity: 0.72;
+}
+
+body.stream-connected .status-action-secondary:hover,
+body.stream-connected .status-action-secondary:focus-visible {
+  opacity: 1;
 }
 
 .key-input-display {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   background: rgba(59, 130, 246, 0.1);
   padding: 4px 12px;
   border-radius: var(--radius-sm);
-  min-width: 140px;
+  min-width: 7.5rem;
   justify-content: center;
   color: var(--accent-primary);
   border: 1px solid rgba(59, 130, 246, 0.15);
@@ -651,6 +689,31 @@ body:not(.stream-connected) .control-bar {
 body.controls-hidden .control-bar,
 body.controls-hidden .action-bar {
   display: none !important;
+}
+
+/* Immersive streaming: chrome stays quiet until the user hovers the docks. */
+body.stream-connected:not(.controls-hidden) .control-bar,
+body.stream-connected:not(.controls-hidden) .action-bar {
+  opacity: 0.22;
+}
+
+body.stream-connected:not(.controls-hidden):hover .control-bar,
+body.stream-connected:not(.controls-hidden):hover .action-bar,
+body.stream-connected:not(.controls-hidden) .control-bar:hover,
+body.stream-connected:not(.controls-hidden) .action-bar:hover {
+  opacity: 1;
+}
+
+body.controls-hidden .network-advisor.visible:not(.collapsed) .network-advisor__body {
+  /* Prefer the edge tab when the operator hid chrome. */
+  display: none;
+}
+
+body.controls-hidden .network-advisor.visible:not(.collapsed) {
+  width: 44px;
+  max-width: 44px;
+  right: 0;
+  border-radius: 12px 0 0 12px;
 }
 
 .control-btn {

@@ -17,17 +17,21 @@
       <button id="terminalTabBtn" class="view-tab-btn" type="button">Terminal</button>
     </div>
     <span id="connectionStatus" class="status connecting">连接中</span>
-    <span id="resolutionDisplay">-</span>
-    <span id="fpsDisplay">0 FPS</span>
-    <span id="latencyDisplay" title="网络 RTT 与播放缓冲">RTT - ms</span>
-    <span id="candidateDisplay">链路 -</span>
-    <span id="keyInputDisplay" class="key-input-display">INACTIVE</span>
+    <div class="status-metrics" aria-label="链路指标">
+      <span id="resolutionDisplay" class="status-metric" title="分辨率">-</span>
+      <span id="fpsDisplay" class="status-metric" title="帧率">0 FPS</span>
+      <span id="latencyDisplay" class="status-metric" title="网络 RTT 与播放缓冲">RTT - ms</span>
+      <span id="candidateDisplay" class="status-metric" title="候选链路">链路 -</span>
+    </div>
+    <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
-    <button id="requestControlBtn" class="control-btn">请求控制</button>
-    <button id="textInputBtn" class="control-btn">文本输入</button>
-    <button id="refreshBtn" class="control-btn">刷新画面</button>
-    <button id="diagBtn" class="control-btn">诊断日志</button>
-    <button id="toggleControlsBtn" class="control-btn">隐藏控件</button>
+    <div class="status-actions">
+      <button id="requestControlBtn" class="control-btn">请求控制</button>
+      <button id="textInputBtn" class="control-btn status-action-secondary">文本输入</button>
+      <button id="refreshBtn" class="control-btn">刷新画面</button>
+      <button id="diagBtn" class="control-btn status-action-secondary">诊断日志</button>
+      <button id="toggleControlsBtn" class="control-btn status-action-secondary">隐藏控件</button>
+    </div>
   </div>
   
   <main id="desktopPanel">

@@ -1837,9 +1837,13 @@ test('network advisor expands on update then auto-collapses to the right edge ta
   advisor.listeners.get('mouseenter')();
   assert.equal(advisor.classList.contains('collapsed'), false);
   advisor.listeners.get('mouseleave')();
-  const afterLeave = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_COLLAPSE_MS['']);
-  assert.ok(afterLeave.length >= 1);
+  const afterLeave = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_LEAVE_COLLAPSE_MS);
+  assert.ok(afterLeave.length >= 1, 'mouse leave should use the short leave collapse delay');
   afterLeave.at(-1).fn();
+  assert.equal(advisor.classList.contains('collapsed'), true);
+
+  // Routine RTT refresh must not yank the tab open again.
+  WebRTC.updateNetworkUI('当前通过 TURN 中继传输。RTT 120 ms，适合受限外网但延迟会高于本地直连。');
   assert.equal(advisor.classList.contains('collapsed'), true);
 });
 
