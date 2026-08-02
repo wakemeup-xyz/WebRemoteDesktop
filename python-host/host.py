@@ -2618,6 +2618,7 @@ class WebRemoteHost:
                             "senderEnabled": False,
                             "keyframeRequested": False,
                             "steps": step_ok,
+                            "reasons": list(normalized.get("reasons") or [])[:8],
                         },
                     )
                 else:

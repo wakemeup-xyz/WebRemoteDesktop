@@ -135,6 +135,10 @@ const WebRTC = {
     warning: 8000,
     danger: 14000,
   },
+  // Remote-desktop users alt-tab constantly. The original 750ms page-hidden delay
+  // suspended capture ~2s after connect and left Host at FPS=0 while ICE stayed up
+  // ("can't connect"). Keep intentional suspend, but require a sustained hide.
+  PAGE_HIDDEN_SUSPEND_DELAY_MS: 30000,
 
   initializeMediaActivity() {
     if (this.mediaActivityController) {
@@ -151,6 +155,7 @@ const WebRTC = {
     if (typeof MediaActivityLifecycle !== 'undefined') {
       this.mediaActivityLifecycle = MediaActivityLifecycle.create({
         setReason: (reason, enabled) => this.setMediaActivityReason(reason, enabled),
+        hiddenDelayMs: this.PAGE_HIDDEN_SUSPEND_DELAY_MS,
       });
       this.mediaActivityLifecycle.start();
     }
@@ -165,6 +170,37 @@ const WebRTC = {
       });
     }
     return this.mediaActivityController.snapshot();
+  },
+
+  /**
+   * If the page is actually visible, drop transient hide reasons and re-assert
+   * active media. Used after PC connect / control grant / visibility restore so
+   * a brief alt-tab or a stuck suspend cannot leave a black but "connected" session.
+   */
+  ensureMediaActiveIfVisible(reason = 'visible-ensure') {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return false;
+    }
+    this.initializeMediaActivity();
+    let changed = false;
+    if (this.mediaActivityController?.hasReason?.('page-hidden')) {
+      this.setMediaActivityReason('page-hidden', false);
+      changed = true;
+    }
+    if (this.mediaActivityController?.hasReason?.('page-hide')) {
+      this.setMediaActivityReason('page-hide', false);
+      changed = true;
+    }
+    const snap = this.getMediaActivitySnapshot();
+    if (snap.state === 'active') {
+      const phase = this.getMediaAppliedPhase();
+      // Always re-assert after clearing a hide reason, or when runtime is not yet active.
+      if (changed || phase !== 'active' || this._mediaIntent?.state !== 'active') {
+        this.replayMediaActivityIntent(reason);
+      }
+    }
+    this.syncDesktopInputGate();
+    return changed || snap.state === 'active';
   },
 
   setMediaActivityReason(reason, enabled) {
@@ -255,7 +291,9 @@ const WebRTC = {
     // Immediate local gates on suspend.
     if (desired === 'suspended') {
       if (typeof Input !== 'undefined') {
-        Input.setActive(false);
+        // Keep lease; only release pointer + keys. Do not open a keyboard reset
+        // barrier that blocks typing after a brief hide/resume cycle.
+        Input.setActive(false, { resetKeyboard: false, reason: 'media-suspended' });
         Input.resetKeyboard?.('media-suspended');
       }
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
@@ -2109,6 +2147,9 @@ const WebRTC = {
     // Enable input immediately when this attempt already painted; do not wait for
     // the next decoded frame (relay regularly has multi-second 0-FPS gaps).
     this.syncDesktopInputGate();
+    // Control grant is the first moment Host will accept media-activity writes.
+    // Clear any stale page-hidden suspend and push active while the tab is visible.
+    this.ensureMediaActiveIfVisible('control-grant');
     if (this.networkMode === 'tunnel') {
       if (this.getMediaActivitySnapshot().state === 'active') this.startTunnelRelay();
       this.replayMediaActivityIntent('control-regrant');
@@ -2181,6 +2222,8 @@ const WebRTC = {
         return;
       }
       if (this.hasActiveControl()) this.syncDesktopInputGate();
+      // Returning to the tab must not leave Host suspended with a black frame.
+      this.ensureMediaActiveIfVisible('visibility-visible');
     });
     window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
   },
@@ -2318,6 +2361,8 @@ const WebRTC = {
         if (this._mediaResumeArmPending) {
           this.ensureMediaResumeFallbackArmed('pc-connected');
         }
+        // Connected + visible ⇒ do not stay black due to a stuck page-hidden suspend.
+        this.ensureMediaActiveIfVisible('pc-connected');
         if (this.isPortSearchActive()) {
           this.armPortSearchDeadline();
         }

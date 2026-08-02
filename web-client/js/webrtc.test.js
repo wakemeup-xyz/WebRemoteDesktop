@@ -2181,7 +2181,8 @@ test('PC connection syncs the desktop input gate without directly enabling input
   WebRTC.createPeerConnection();
   WebRTC.pc.onconnectionstatechange();
 
-  assert.equal(gateSyncs, 1);
+  // Connected path now also runs ensureMediaActiveIfVisible → may sync more than once.
+  assert.ok(gateSyncs >= 1);
   assert.deepEqual(inputCalls, []);
 });
 
@@ -2796,6 +2797,65 @@ test('media resume enables input only after active ack and rendered frame', () =
   WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
+});
+
+test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const controllerSource = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, 'media-activity-controller.js'),
+    'utf8',
+  );
+  const runtimeSource = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, 'media-activity-runtime.js'),
+    'utf8',
+  );
+  require('node:vm').runInContext(controllerSource, context);
+  require('node:vm').runInContext(runtimeSource, context);
+  const MediaActivityController = context.MediaActivityController
+    || context.window?.MediaActivityController
+    || context.globalThis?.MediaActivityController;
+  const MediaActivityRuntime = context.MediaActivityRuntime
+    || context.window?.MediaActivityRuntime
+    || context.globalThis?.MediaActivityRuntime;
+  assert.ok(MediaActivityController, 'MediaActivityController must load in vm');
+  assert.ok(MediaActivityRuntime, 'MediaActivityRuntime must load in vm');
+
+  context.document.hidden = false;
+  WebRTC.socket = { connected: true, emit() {}, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.PAGE_HIDDEN_SUSPEND_DELAY_MS = 30000;
+  const emitted = [];
+  WebRTC.sendMediaActivityRequest = (desired, snapshot) => {
+    emitted.push(['media-req', desired, snapshot?.generation]);
+    return true;
+  };
+  WebRTC.mediaActivityController = MediaActivityController.create({
+    onChange: (snap) => {
+      WebRTC._mediaIntent = {
+        state: snap.state,
+        reasons: snap.reasons,
+        generation: snap.generation,
+      };
+    },
+  });
+  WebRTC.mediaActivityRuntime = MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = {
+    setActive() {},
+    resetKeyboard() {},
+    setControlLease() {},
+  };
+
+  WebRTC.mediaActivityController.setReason('page-hidden', true);
+  assert.equal(WebRTC.getMediaActivitySnapshot().state, 'suspended');
+  WebRTC.ensureMediaActiveIfVisible('test-ensure');
+  assert.equal(WebRTC.getMediaActivitySnapshot().state, 'active');
+  assert.equal(WebRTC.mediaActivityController.hasReason('page-hidden'), false);
+  assert.ok(emitted.some((entry) => entry[0] === 'media-req' && entry[1] === 'active'));
+  assert.ok(WebRTC.PAGE_HIDDEN_SUSPEND_DELAY_MS >= 15000);
 });
 
 test('resume stays resuming when framesDecoded does not increase past baseline', () => {
@@ -3504,6 +3564,7 @@ test('control grant honors the media input gate before a fresh frame', () => {
   WebRTC.createPeerConnection = () => {};
   WebRTC.bindCurrentConnectionAttempt = () => false;
   WebRTC.replayMediaActivityIntent = () => false;
+  WebRTC.ensureMediaActiveIfVisible = () => false;
 
   WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 1 });
 

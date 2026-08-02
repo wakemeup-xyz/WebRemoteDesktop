@@ -38,6 +38,12 @@ This file captures long-lived project knowledge migrated from Claude memory file
 - Do not restart `trycloudflare`, `scripts/run-safe-quicktunnel.sh`, or the repo-scoped quick-tunnel `cloudflared` process unless the user explicitly asks to rebuild or restart the tunnel or regenerate the public URL. A dead or unreachable tunnel is diagnosis evidence, not implicit restart authorization.
 - When only `signal-server` or Host needs a restart, preserve the existing quick tunnel and treat `/tmp/wrd-safe-current-url.txt` as the source of truth for the current public URL.
 - In repo terminology, `restart services` means local `signal-server` / Host only; it must not be implemented as a tunnel restart while the current quick tunnel is still alive.
+## Media Suspension
+
+- Intentional media suspend reasons: `manual-pause`, `terminal-active`, `page-hidden`, `page-hide`.
+- Viewer `page-hidden` delay is **30s** (`WebRTC.PAGE_HIDDEN_SUSPEND_DELAY_MS`), not the original 750ms lifecycle default — remote-desktop alt-tab must not black the session within seconds of connect.
+- On PC connected, control grant, and visibility restore, Viewer calls `ensureMediaActiveIfVisible()` to clear stale hide reasons and re-assert active media while the tab is visible.
+- Host `host_media_suspended` logs include `reasons[]` for diagnosis.
 - A public origin does not determine the media path. Without TURN, `auto` and `stun` remain Strict STUN; recovery exhaustion must fail explicitly, and only the user may manually select JPEG tunnel fallback.
 - TURN secrets may live in `~/.StockHub/turn.json` or `signal-server/.env` (`TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`); env overrides JSON. Viewer and Host must share the same TURN fingerprint. Host LaunchAgent must export `TURN_*`—editing only signal-server is not enough. See `docs/superpowers/specs/2026-07-20-turn-integration-design.md`.
 - Desktop `relay` is the supported TURN media mode; Strict STUN must not silently strip TURN from relay sessions. Terminal defaults to Socket.IO; optional Terminal-over-TURN is a separate DataChannel phase, not the default.
