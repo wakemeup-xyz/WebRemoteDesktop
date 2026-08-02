@@ -311,6 +311,55 @@ function setupSignaling(io, options = {}) {
     });
   }
 
+  // Single cleanup entry for desktop viewers. Map identity guard is the only
+  // idempotency latch (compatible with FakeSocket; no socket.data required).
+  function removeDesktopViewer(socket, reason = 'viewer-disconnected') {
+    if (!socket) return null;
+    if (connections.viewers.get(socket.id) !== socket) return null;
+    connections.viewers.delete(socket.id);
+    clearPendingInputs(socket.id);
+    mediaActivityProgress.delete(socket.id);
+    pendingOffers.delete(socket.id);
+    const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
+    clearLegacyRelayCompanion(socket.id, { stop: true });
+    legacyRelayOwnerIds.delete(socket.id);
+    if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
+    if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
+    // ACTIVE disconnect must go through the formal DesktopControlLease
+    // reset-only barrier (dispatchLeaseEffect). Never bypass with a
+    // side-channel sendControlTransition after FREE.
+    if (leaseResult.transition) {
+      dispatchLeaseEffect(leaseResult, leaseResult.reason || reason);
+    } else {
+      broadcastControlState(leaseResult.reason || reason);
+    }
+    emitViewerStatus('viewer-disconnected', socket);
+    socket._wrdRemoved = true;
+    return leaseResult;
+  }
+
+  function supersedeOtherDesktopViewers(incoming) {
+    const others = [...connections.viewers.entries()].filter(([id]) => id !== incoming.id);
+    for (const [id, other] of others) {
+      try {
+        other.emit('viewer-superseded', {
+          reason: 'single-desktop-viewer',
+          bySocketId: incoming.id,
+          ts: Date.now(),
+        });
+      } catch (_e) {
+        // Best-effort notify; transport close is the fallback.
+      }
+      console.log(`[VIEWER] supersede desktop viewer old=${id} by=${incoming.id}`);
+      removeDesktopViewer(other, 'viewer-superseded');
+      try {
+        other.disconnect(true);
+      } catch (_e) {
+        // Ignore sockets that already closed.
+      }
+    }
+  }
+
   function sendControlTransition(effect) {
     if (!effect || !connections.host || !effect.transition) return false;
     const hostTransition = desktopLease.transitionForHost({
@@ -580,7 +629,10 @@ function setupSignaling(io, options = {}) {
         });
       });
     } else if (role === 'viewer') {
+      // Hard order: claim map slot → supersede others → only then welcome incoming.
+      // New desktop viewers never auto-acquire control.
       connections.viewers.set(socket.id, socket);
+      supersedeOtherDesktopViewers(socket);
       if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
       socket.emit('connected', {
         role: 'viewer',
@@ -1267,23 +1319,7 @@ function setupSignaling(io, options = {}) {
           console.log(`Ignoring stale host disconnect: ${socket.id}`);
         }
       } else if (role === 'viewer') {
-        clearPendingInputs(socket.id);
-        mediaActivityProgress.delete(socket.id);
-        const leaseResult = withLeaseExpiry(() => desktopLease.viewerDisconnected(socket.id));
-        clearLegacyRelayCompanion(socket.id, { stop: true });
-        legacyRelayOwnerIds.delete(socket.id);
-        if (legacyControllerViewerId === socket.id) legacyControllerViewerId = null;
-        if (leaseResult.state === 'FREE') pendingControllerProtocolVersion = null;
-        // ACTIVE disconnect must go through the formal DesktopControlLease
-        // reset-only barrier (dispatchLeaseEffect). Never bypass with a
-        // side-channel sendControlTransition after FREE.
-        if (leaseResult.transition) {
-          dispatchLeaseEffect(leaseResult, leaseResult.reason || 'viewer-disconnected');
-        } else {
-          broadcastControlState(leaseResult.reason || 'viewer-disconnected');
-        }
-        connections.viewers.delete(socket.id);
-        emitViewerStatus('viewer-disconnected', socket);
+        removeDesktopViewer(socket, 'viewer-disconnected');
       } else if (role === 'relay-viewer') {
         connections.relayViewers.delete(socket.id);
         const ownerId = legacyRelayOwnerForCompanion(socket.id);

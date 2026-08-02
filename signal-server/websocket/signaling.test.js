@@ -40,6 +40,7 @@ class FakeSocket extends EventEmitter {
   constructor(id, role, tokenRole = role === 'relay-viewer' ? 'viewer' : role) {
     super();
     this.id = id;
+    this.disconnected = false;
     this.handshake = {
       auth: { role, token: signAccessToken(tokenRole, `${id}-${tokenRole}`) },
       address: '127.0.0.1',
@@ -61,6 +62,8 @@ class FakeSocket extends EventEmitter {
   }
 
   disconnect() {
+    if (this.disconnected) return;
+    this.disconnected = true;
     this.trigger('disconnect');
   }
 }
@@ -328,15 +331,15 @@ test('input from disconnected viewer is not relayed to host', () => {
 });
 
 test('host input ack is routed only to its original viewer', () => {
+  // single-desktop-viewer policy: only one desktop viewer online at a time;
+  // verify ack routes by viewerId and does not deliver to a later sole viewer.
   resetConnections();
   const io = makeIo();
   setupSignaling(io);
   const host = new FakeSocket('host-1', 'host');
   const viewerA = new FakeSocket('viewer-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-b', 'viewer');
   io.connect(host);
   io.connect(viewerA);
-  io.connect(viewerB);
 
   host.trigger('input-ack', {
     viewerId: 'viewer-a',
@@ -345,9 +348,30 @@ test('host input ack is routed only to its original viewer', () => {
     hostExecuteMs: 8,
     transport: 'socket',
   });
-
   assert.equal(viewerA.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-1'), true);
+
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(viewerB);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-b'), true);
+
+  host.trigger('input-ack', {
+    viewerId: 'viewer-a',
+    type: 'input_ack',
+    inputIds: ['input-stale'],
+    hostExecuteMs: 8,
+    transport: 'socket',
+  });
   assert.equal(viewerB.sent.some((message) => message.event === 'input-ack'), false);
+
+  host.trigger('input-ack', {
+    viewerId: 'viewer-b',
+    type: 'input_ack',
+    inputIds: ['input-2'],
+    hostExecuteMs: 4,
+    transport: 'socket',
+  });
+  assert.equal(viewerB.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-2'), true);
 });
 
 test('v2 host input ack preserves keyboard state fields and redacts raw input data', () => {
@@ -505,17 +529,17 @@ test('offer from disconnected viewer is not relayed to host', () => {
 });
 
 test('active v2 offer forwards its authorized lease only to the host', () => {
+  // single-desktop-viewer policy: sole desktop viewer; lease must not echo back
+  // on control-state, and offer is host-only (no second desktop observer).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const owner = new FakeSocket('viewer-owner', 'viewer');
-  const observer = new FakeSocket('viewer-observer', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   owner.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(owner);
-  io.connect(observer);
 
   owner.trigger('control-acquire', { requestId: 'owner-control' });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
@@ -542,8 +566,6 @@ test('active v2 offer forwards its authorized lease only to the host', () => {
     connectionAttemptId: 'attempt-owner-1',
     connectionAttemptSequence: 1,
   });
-  assert.equal(observer.sent.some((entry) => entry.event === 'offer'), false);
-  assert.equal(JSON.stringify(observer.sent).includes(grant.leaseId), false);
   assert.equal(JSON.stringify(owner.sent.filter((entry) => entry.event === 'control-state')).includes(grant.leaseId), false);
 });
 
@@ -786,6 +808,8 @@ test('fresh v2 tunnel input matches the Host transition lease without leaking it
 });
 
 test('legacy input lazily acquires control and stays blocked until host ack', () => {
+  // single-desktop-viewer policy: sole desktop viewer; second writer covered by
+  // sequential supersede (later sole viewer cannot use the prior controller's path).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, {
@@ -793,10 +817,8 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
   });
   const host = new FakeSocket('host-1', 'host');
   const viewerA = new FakeSocket('viewer-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-b', 'viewer');
   io.connect(host);
   io.connect(viewerA);
-  io.connect(viewerB);
 
   const legacyInput = {
     type: 'keyboard',
@@ -804,14 +826,20 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
     payload: { key: 'a', code: 'KeyA' },
   };
   viewerA.trigger('input', legacyInput);
-  viewerB.trigger('input', legacyInput);
+  // Extra inputs while GRANTING stay queued/dropped per single-writer rules.
+  viewerA.trigger('input', legacyInput);
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
 
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
   assert.equal(host.sent.filter((entry) => entry.event === 'input').at(-1).data.viewerId, 'viewer-a');
+
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(viewerB);
+  assert.equal(connections.viewers.has('viewer-a'), false);
   viewerB.trigger('input', legacyInput);
+  // Supersede removed the ACTIVE controller → REVOKING barrier; B cannot write yet.
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
@@ -881,25 +909,40 @@ test('legacy relay companion binds after its only main viewer receives a lazy le
   });
 });
 
-test('legacy relay-viewer remains unbound when more than one main viewer is online', () => {
+test('legacy relay companion stops when a second desktop viewer supersedes the owner', () => {
+  // single-desktop-viewer policy: two main viewers cannot stay online; the second
+  // desktop viewer supersedes the owner and stops the bound companion (replaces
+  // the former "unbound while >1 main viewer" multi-viewer ambiguity case).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const mainViewer = new FakeSocket('legacy-main', 'viewer');
-  const observer = new FakeSocket('legacy-observer', 'viewer');
   const relayViewer = new FakeSocket('legacy-relay', 'relay-viewer');
-  io.connect(host); io.connect(mainViewer); io.connect(observer); io.connect(relayViewer);
+  io.connect(host); io.connect(mainViewer); io.connect(relayViewer);
 
   mainViewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   relayViewer.trigger('relay-stream-control', { enabled: true });
+  assert.equal(host.sent.filter((entry) => entry.event === 'relay-stream-control').length, 1);
 
-  assert.equal(host.sent.some((entry) => entry.event === 'relay-stream-control'), false);
+  const superseder = new FakeSocket('legacy-observer', 'viewer');
+  io.connect(superseder);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('legacy-observer'), true);
+  assert.equal(mainViewer.disconnected, true);
+  assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
+    enabled: false,
+    viewerId: 'legacy-main',
+  });
+  relayViewer.trigger('relay-stream-control', { enabled: true });
+  assert.equal(host.sent.filter((entry) => entry.event === 'relay-stream-control' && entry.data.enabled === true).length, 1);
 });
 
-test('legacy relay companion ambiguity stops the host relay and rejects later frames', () => {
+test('legacy relay companion stops on second desktop viewer supersede and rejects later frames', () => {
+  // single-desktop-viewer policy: second desktop viewer supersedes the owner
+  // (replaces multi-viewer ambiguity); companion is stopped and later frames drop.
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
@@ -977,7 +1020,10 @@ test('v2 main viewer relay control remains strictly lease-authorized', () => {
   assert.equal(viewer.sent.filter((entry) => entry.event === 'relay-frame').length, 1);
 });
 
-test('legacy relay companion stops forwarding while a v2 takeover reset is pending', () => {
+test('legacy relay companion stops when a second desktop viewer supersedes during active relay', () => {
+  // single-desktop-viewer policy: cannot keep legacy main + v2 desktop viewer online
+  // for takeover; supersede removes the owner and stops the companion (same stop
+  // outcome as the former dual-viewer legacy-takeover path).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })() });
@@ -996,15 +1042,14 @@ test('legacy relay companion stops forwarding while a v2 takeover reset is pendi
   const v2Viewer = new FakeSocket('viewer-v2', 'viewer');
   v2Viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(v2Viewer);
-  v2Viewer.trigger('control-acquire', { requestId: 'take-legacy', takeover: true });
-  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
-  assert.equal(transition.reason, 'legacy-takeover');
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-v2'), true);
+  assert.equal(mainViewer.disconnected, true);
   assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
     enabled: false,
     viewerId: 'legacy-main',
   });
   relayViewer.trigger('relay-stream-control', { enabled: true });
-
   assert.equal(host.sent.filter((entry) => entry.event === 'relay-stream-control').length, 2);
 });
 
@@ -1030,6 +1075,7 @@ test('legacy controller disconnect sends a reset-only transition for its active 
 });
 
 test('ACTIVE controller disconnect stays REVOKING until matching applied ack', () => {
+  // single-desktop-viewer policy: sequential A disconnect then B connect (not both online).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, {
@@ -1040,11 +1086,9 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
   });
   const host = new FakeSocket('host-1', 'host');
   const viewerA = new FakeSocket('viewer-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-b', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewerA.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+  io.connect(host); io.connect(viewerA);
 
   viewerA.trigger('control-acquire', { requestId: 'a' });
   let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
@@ -1057,10 +1101,13 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
   assert.equal(resetTransition.leaseEpoch > grantA.leaseEpoch, true);
   assert.equal(Object.hasOwn(resetTransition, 'leaseId'), false);
 
-  const stateAfterDisconnect = viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
-  assert.equal(stateAfterDisconnect.state, 'REVOKING');
-  assert.equal(stateAfterDisconnect.pendingViewerId, null);
-  assert.equal(stateAfterDisconnect.controllerViewerId, null);
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(viewerB);
+  const stateAfterConnect = viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
+  assert.equal(stateAfterConnect.state, 'REVOKING');
+  assert.equal(stateAfterConnect.pendingViewerId, null);
+  assert.equal(stateAfterConnect.controllerViewerId, null);
 
   // New acquire blocked before reset ack.
   viewerB.trigger('control-acquire', { requestId: 'blocked' });
@@ -1100,6 +1147,7 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
 });
 
 test('ACTIVE controller disconnect rejected reset retries same epoch and stays blocked after timeout path', () => {
+  // single-desktop-viewer policy: sequential A disconnect then B connect.
   resetConnections();
   const io = makeIo();
   const timers = new Map();
@@ -1135,11 +1183,9 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
   });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-b', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewer.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(viewer); io.connect(viewerB);
+  io.connect(host); io.connect(viewer);
 
   viewer.trigger('control-acquire', { requestId: 'a' });
   const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
@@ -1150,6 +1196,10 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
   viewer.trigger('disconnect');
   const resetTransition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
   const epoch = resetTransition.leaseEpoch;
+
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(viewerB);
 
   host.trigger('control-transition-ack', {
     leaseEpoch: epoch,
@@ -1262,17 +1312,16 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
   assert.equal(forwarded.data.connectionAttemptId, 'attempt-turn-1');
 });
 
-test('legacy controller is single-writer and a v2 takeover resets it before grant', () => {
+test('legacy controller is single-writer and a later v2 viewer acquires only after reset', () => {
+  // single-desktop-viewer policy: cannot keep legacy + second legacy + v2 online;
+  // sole legacy writer, then supersede by v2, then acquire after FREE (not dual online takeover).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })() });
   const host = new FakeSocket('host-v2', 'host');
   host.handshake.auth.inputProtocolVersion = 2;
   const legacyViewer = new FakeSocket('legacy-viewer', 'viewer');
-  const secondLegacyViewer = new FakeSocket('legacy-readonly', 'viewer');
-  const v2Viewer = new FakeSocket('v2-viewer', 'viewer');
-  v2Viewer.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(legacyViewer); io.connect(secondLegacyViewer); io.connect(v2Viewer);
+  io.connect(host); io.connect(legacyViewer);
 
   const legacyInput = { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } };
   legacyViewer.trigger('input', legacyInput);
@@ -1280,14 +1329,22 @@ test('legacy controller is single-writer and a v2 takeover resets it before gran
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 
-  secondLegacyViewer.trigger('input', legacyInput);
-  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
-  assert.equal(secondLegacyViewer.sent.some((entry) => entry.event === 'control-grant'), false);
+  // Extra legacy inputs from the same sole controller still go through once ACTIVE.
+  legacyViewer.trigger('input', legacyInput);
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 2);
 
-  v2Viewer.trigger('control-acquire', { requestId: 'take-legacy', takeover: true });
+  const v2Viewer = new FakeSocket('v2-viewer', 'viewer');
+  v2Viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(v2Viewer);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(legacyViewer.disconnected, true);
   transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
-  assert.equal(transition.reason, 'legacy-takeover');
-  assert.equal(v2Viewer.sent.some((entry) => entry.event === 'control-grant'), false);
+  assert.equal(transition.reason, 'controller-disconnect');
+  v2Viewer.trigger('control-acquire', { requestId: 'after-supersede' });
+  assert.equal(v2Viewer.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  v2Viewer.trigger('control-acquire', { requestId: 'after-reset' });
+  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   assert.equal(v2Viewer.sent.some((entry) => entry.event === 'control-grant'), true);
 });
@@ -1328,15 +1385,14 @@ test('disconnect clears pending legacy input before transition ack', () => {
 });
 
 test('rejected transition stays fail-closed in REVOKING and cannot replay on late ack', () => {
+  // single-desktop-viewer policy: sequential sole viewer then later B for blocked acquire.
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
-  const viewerB = new FakeSocket('viewer-2', 'viewer');
   io.connect(host);
   io.connect(viewer);
-  io.connect(viewerB);
   viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { key: 'stale', code: 'KeyA' } });
   const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'rejected', reason: 'reset-failed' });
@@ -1353,31 +1409,44 @@ test('rejected transition stays fail-closed in REVOKING and cannot replay on lat
   assert.equal(viewer.sent.some((entry) => entry.event === 'control-grant'), false);
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
 
-  // New acquire stays blocked while the reset-only barrier is unresolved.
+  // New sole viewer still blocked while the reset-only barrier is unresolved.
+  viewer.disconnect();
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  io.connect(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
   assert.equal(acquire.reason, 'occupied');
 });
 
-test('takeover freezes controller A until host ack and grants B', () => {
+test('controller disconnect freezes old lease until host ack then grants later sole viewer', () => {
+  // single-desktop-viewer policy: dual online takeover is impossible; sequential
+  // A disconnect → REVOKING freeze → B connect + acquire after FREE.
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: (() => { let n = 0; return () => `lease-${String(++n).padStart(16, '0')}`; })() });
   const host = new FakeSocket('host-1', 'host');
   const viewerA = new FakeSocket('viewer-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-b', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewerA.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+  io.connect(host); io.connect(viewerA);
   viewerA.trigger('control-acquire', { requestId: 'a' });
   let transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grantA = viewerA.sent.find((entry) => entry.event === 'control-grant').data;
-  viewerB.trigger('control-acquire', { requestId: 'b', takeover: true });
+  viewerA.trigger('disconnect');
+  transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(transition.reason, 'controller-disconnect');
   viewerA.trigger('input', v2Key({ leaseId: grantA.leaseId, leaseEpoch: grantA.leaseEpoch }));
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 0);
+
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(viewerB);
+  viewerB.trigger('control-acquire', { requestId: 'b' });
+  assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  viewerB.trigger('control-acquire', { requestId: 'b-after-free' });
   transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grantB = viewerB.sent.find((entry) => entry.event === 'control-grant').data;
@@ -1432,6 +1501,7 @@ test('lease expiry sends a newer reset-only transition before releasing host sta
 });
 
 test('heartbeat expiry is dispatched once before a later scheduler tick and keeps the reset barrier', () => {
+  // single-desktop-viewer policy: sequential sole controller then later B for blocked acquire.
   resetConnections();
   let currentTime = 0;
   let tick = null;
@@ -1448,11 +1518,9 @@ test('heartbeat expiry is dispatched once before a later scheduler tick and keep
   });
   const host = new FakeSocket('host-expiry-race', 'host');
   const viewerA = new FakeSocket('viewer-expiry-a', 'viewer');
-  const viewerB = new FakeSocket('viewer-expiry-b', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewerA.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(viewerA); io.connect(viewerB);
+  io.connect(host); io.connect(viewerA);
 
   viewerA.trigger('control-acquire', { requestId: 'a' });
   const grantTransition = host.sent.find((entry) => entry.event === 'control-transition').data;
@@ -1474,6 +1542,11 @@ test('heartbeat expiry is dispatched once before a later scheduler tick and keep
 
   viewerA.trigger('input', v2Key({ leaseId: grantA.leaseId, leaseEpoch: grantA.leaseEpoch }));
   assert.equal(host.sent.some((entry) => entry.event === 'input'), false);
+
+  viewerA.disconnect();
+  const viewerB = new FakeSocket('viewer-expiry-b', 'viewer');
+  viewerB.handshake.auth.inputProtocolVersion = 2;
+  io.connect(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'b' });
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
 
@@ -1483,7 +1556,7 @@ test('heartbeat expiry is dispatched once before a later scheduler tick and keep
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
 
   host.trigger('control-transition-ack', { leaseEpoch: resetTransitions[0].data.leaseEpoch, status: 'applied' });
-  assert.equal(viewerA.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'FREE');
+  assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data.state, 'FREE');
 });
 
 test('control logs redact lease token and text payload', () => {
@@ -1508,6 +1581,7 @@ test('control logs redact lease token and text payload', () => {
 
 
 test('blocked reset cannot grant a new controller and retries are same-epoch bounded', () => {
+  // single-desktop-viewer policy: sequential sole viewer then later B for blocked acquire.
   resetConnections();
   const io = makeIo();
   const timers = new Map();
@@ -1541,10 +1615,8 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
   });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
-  const viewerB = new FakeSocket('viewer-2', 'viewer');
   io.connect(host);
   io.connect(viewer);
-  io.connect(viewerB);
 
   viewer.trigger('control-acquire', { requestId: 'a1' });
   const first = host.sent.find((entry) => entry.event === 'control-transition').data;
@@ -1571,6 +1643,9 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
   assert.equal(afterBlocked.state, 'REVOKING');
   assert.equal(afterBlocked.reason, 'reset-blocked');
 
+  viewer.disconnect();
+  const viewerB = new FakeSocket('viewer-2', 'viewer');
+  io.connect(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'should-block' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
@@ -1616,18 +1691,17 @@ test('applied reset-only ack cancels retries and frees the barrier', () => {
 
 
 test('media-activity-change requires active lease and monotonic generation', () => {
+  // single-desktop-viewer policy: sole desktop viewer; unauthorized write is the
+  // no-lease path (no concurrent read-only second desktop viewer).
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
-  const viewerB = new FakeSocket('viewer-2', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewer.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
-  io.connect(viewerB);
 
   const base = {
     schemaVersion: 1,
@@ -1686,18 +1760,6 @@ test('media-activity-change requires active lease and monotonic generation', () 
   assert.equal(
     viewer.sent.filter((e) => e.event === 'media-activity-rejected').at(-1).data.reason,
     'stale-generation',
-  );
-
-  // Read-only viewer cannot write.
-  viewerB.trigger('media-activity-change', {
-    ...ok,
-    generation: 2,
-    leaseId: grant.leaseId,
-    leaseEpoch: grant.leaseEpoch,
-  });
-  assert.equal(
-    host.sent.filter((e) => e.event === 'media-activity-change' && e.data.viewerId === 'viewer-2').length,
-    0,
   );
 
   // Host ack is routed without echoing secrets beyond lease-free fields.
@@ -1836,16 +1898,15 @@ test('v2 offer forwards connectionAttemptId and binds media activity to that att
 });
 
 test('tunnel media control requires ACTIVE lease and current attempt then routes Host ack', () => {
+  // single-desktop-viewer policy: sole desktop viewer; no concurrent read-only peer.
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
-  const viewerB = new FakeSocket('viewer-2', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewer.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(host); io.connect(viewer); io.connect(viewerB);
+  io.connect(host); io.connect(viewer);
 
   viewer.trigger('control-acquire', { requestId: 't1' });
   const transition = host.sent.find((e) => e.event === 'control-transition').data;
@@ -1921,18 +1982,6 @@ test('tunnel media control requires ACTIVE lease and current attempt then routes
   assert.equal(ack.data.applied, true);
   assert.equal(ack.data.generation, 1);
   assert.equal(Object.hasOwn(ack.data, 'leaseId'), false);
-
-  // Read-only viewer cannot control current relay.
-  viewerB.trigger('relay-stream-control', {
-    ...mediaControl,
-    generation: 3,
-    leaseId: grant.leaseId,
-    leaseEpoch: grant.leaseEpoch,
-  });
-  assert.equal(
-    host.sent.filter((e) => e.event === 'relay-stream-control' && e.data.viewerId === 'viewer-2').length,
-    0,
-  );
 });
 
 function grantActiveLease(io, host, viewer, requestId = 'grant') {
@@ -2149,18 +2198,17 @@ test('applied:false releases one generation replay without clearing attempt bind
 });
 
 test('attempt bind rejects stale sequence, non-active lease, and old sockets', () => {
+  // single-desktop-viewer policy: no concurrent second desktop viewer; unauthorized
+  // covered by wrong-lease / disconnected socket paths.
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
-  const viewerB = new FakeSocket('viewer-2', 'viewer');
   host.handshake.auth.inputProtocolVersion = 2;
   viewer.handshake.auth.inputProtocolVersion = 2;
-  viewerB.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
-  io.connect(viewerB);
 
   const grant = grantActiveLease(io, host, viewer, 'bind-auth');
   viewer.trigger('connection-attempt-bind', {
@@ -2210,16 +2258,16 @@ test('attempt bind rejects stale sequence, non-active lease, and old sockets', (
     'stale-sequence',
   );
 
-  // Read-only socket cannot bind.
-  viewerB.trigger('connection-attempt-bind', {
+  // Wrong lease credentials rejected while still ACTIVE on this socket.
+  viewer.trigger('connection-attempt-bind', {
     schemaVersion: 1,
     connectionAttemptId: 'attempt-B',
     connectionAttemptSequence: 3,
-    leaseId: grant.leaseId,
+    leaseId: 'lease-not-mine',
     leaseEpoch: grant.leaseEpoch,
   });
   assert.equal(
-    viewerB.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
+    viewer.sent.filter((e) => e.event === 'connection-attempt-bind-rejected').at(-1).data.reason,
     'unauthorized',
   );
 
@@ -2251,12 +2299,6 @@ test('attempt bind rejects stale sequence, non-active lease, and old sockets', (
 
   // Disconnect clears the binding for this socket.
   viewer.disconnect();
-  const viewerReconnect = new FakeSocket('viewer-1', 'viewer');
-  viewerReconnect.handshake.auth.inputProtocolVersion = 2;
-  // New socket id after reconnect — previous authority must not rebind.
-  // (FakeSocket reuses constructor id only if we choose a new id.)
-  const oldSocketIdViewer = new FakeSocket('viewer-old', 'viewer');
-  oldSocketIdViewer.handshake.auth.inputProtocolVersion = 2;
   // Old disconnected socket is not in connections; its bind is ignored/no-op.
   viewer.trigger('connection-attempt-bind', {
     schemaVersion: 1,
@@ -2269,4 +2311,88 @@ test('attempt bind rejects stale sequence, non-active lease, and old sockets', (
     host.sent.filter((e) => e.event === 'relay-stream-control' && e.data?.connectionAttemptId === 'attempt-ghost').length,
     0,
   );
+});
+
+test('second desktop viewer supersedes the first', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const a = new FakeSocket('viewer-a', 'viewer');
+  const b = new FakeSocket('viewer-b', 'viewer');
+  io.connect(a);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-a'), true);
+  assert.equal(a.sent.some((entry) => entry.event === 'connected'), true);
+
+  io.connect(b);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-b'), true);
+  assert.equal(connections.viewers.has('viewer-a'), false);
+  assert.ok(a.sent.some((entry) => entry.event === 'viewer-superseded'
+    && entry.data?.reason === 'single-desktop-viewer'
+    && entry.data?.bySocketId === 'viewer-b'));
+  assert.equal(a.disconnected, true);
+  assert.equal(b.sent.some((entry) => entry.event === 'connected'), true);
+  assert.equal(b.sent.some((entry) => entry.event === 'control-state'), true);
+  // Hard order: supersede completes before welcome; A must already be gone when B is connected.
+  assert.equal(connections.viewers.get('viewer-b'), b);
+});
+
+test('removeDesktopViewer is idempotent under disconnect after supersede', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const a = new FakeSocket('viewer-a', 'viewer');
+  const b = new FakeSocket('viewer-b', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  a.handshake.auth.inputProtocolVersion = 2;
+  b.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(a);
+  a.trigger('control-acquire', { requestId: 'a' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+
+  const transitionsBefore = host.sent.filter((entry) => entry.event === 'control-transition').length;
+  io.connect(b);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(a.disconnected, true);
+  const transitionsAfterSupersede = host.sent.filter((entry) => entry.event === 'control-transition').length;
+  // ACTIVE controller supersede produces one reset-only transition.
+  assert.equal(transitionsAfterSupersede, transitionsBefore + 1);
+
+  // Disconnect already ran via supersede; a second disconnect must be a no-op.
+  a.disconnect();
+  a.trigger('disconnect');
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-b'), true);
+  assert.equal(
+    host.sent.filter((entry) => entry.event === 'control-transition').length,
+    transitionsAfterSupersede,
+  );
+});
+
+test('host and relay-viewer survive desktop supersede', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host');
+  const relay = new FakeSocket('relay-1', 'relay-viewer');
+  const viewerA = new FakeSocket('viewer-a', 'viewer');
+  const viewerB = new FakeSocket('viewer-b', 'viewer');
+  io.connect(host);
+  io.connect(relay);
+  io.connect(viewerA);
+  io.connect(viewerB);
+
+  assert.equal(connections.host, host);
+  assert.equal(connections.relayViewers.has('relay-1'), true);
+  assert.equal(connections.viewers.size, 1);
+  assert.equal(connections.viewers.has('viewer-b'), true);
+  assert.equal(connections.viewers.has('viewer-a'), false);
+  assert.equal(viewerA.disconnected, true);
+  assert.equal(host.disconnected, false);
+  assert.equal(relay.disconnected, false);
+  assert.equal(viewerB.disconnected, false);
 });
