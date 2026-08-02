@@ -201,6 +201,51 @@ def test_input_method_switch_remains_an_explicit_quartz_command():
     assert "ctypes" not in source
 
 
+def test_show_dock_leaves_cursor_near_edge_instead_of_restoring_far(monkeypatch):
+    posted = []
+
+    class FakeMonitor:
+        x = 0
+        y = 0
+        width = 1792
+        height = 1120
+
+    class FakePoint:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    monkeypatch.setattr(input_handler, "CGEventCreate", lambda _source: object())
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventGetLocation",
+        lambda _event: FakePoint(900, 500),
+    )
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateMouseEvent",
+        lambda _source, _type, pos, _button: {"pos": pos},
+    )
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventPost",
+        lambda _tap, event: posted.append(event["pos"]),
+    )
+    monkeypatch.setattr(input_handler.time, "sleep", lambda _seconds: None)
+
+    handler = InputHandler()
+    handler.monitor = FakeMonitor()
+    monkeypatch.setattr(handler, "_dock_orientation", lambda: "bottom")
+    handler._show_dock()
+
+    assert len(posted) >= 3
+    # Final rest position must stay near bottom edge, not restore to (900, 500).
+    last_x, last_y = posted[-1]
+    assert abs(last_x - 896) < 2
+    assert last_y >= 1000
+    assert (900, 500) not in posted
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", ("ContextMenu", "Convert", "NonConvert"))
 async def test_unsupported_physical_codes_do_not_fall_back_to_legacy_key_names(monkeypatch, code):

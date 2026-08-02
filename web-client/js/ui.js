@@ -5,48 +5,19 @@ const UI = {
   },
   
   setupResolutionModal() {
-    const resolutionBtn = document.getElementById('resolutionBtn');
-    const modal = document.getElementById('resolutionModal');
-    const applyBtn = document.getElementById('applyResolution');
-    const closeBtn = document.getElementById('closeResolution');
-    
-    if (resolutionBtn && modal) {
-      resolutionBtn.addEventListener('click', () => {
-        modal.classList.remove('hidden');
-      });
-    }
-    
-    if (closeBtn && modal) {
-      closeBtn.addEventListener('click', () => {
-        modal.classList.add('hidden');
-      });
-    }
-    
-    if (modal) {
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-          modal.classList.add('hidden');
-        }
-      });
-    }
-    
-    if (applyBtn && modal) {
-      applyBtn.addEventListener('click', () => {
-      const selected = document.querySelector('input[name="resolution"]:checked');
-      if (selected) {
-        const width = parseInt(selected.dataset.width);
-        const height = parseInt(selected.dataset.height);
-        
-        if (typeof WebRTC !== 'undefined') {
-          WebRTC.requestResolution(width, height);
-        }
-        
-        document.getElementById('resolutionDisplay').textContent = 
-          `${selected.value} (${width}x${height})`;
-        
-        modal.classList.add('hidden');
+    // webrtc.js owns open/apply/close handlers for the resolution modal.
+    // UI only keeps the adaptive-resolution checkbox in sync.
+    const adaptiveToggle = document.getElementById('adaptiveResolutionToggle');
+    if (adaptiveToggle && !adaptiveToggle.dataset.boundUi) {
+      adaptiveToggle.dataset.boundUi = '1';
+      if (typeof WebRTC !== 'undefined') {
+        adaptiveToggle.checked = WebRTC.adaptiveResolutionEnabled === true;
       }
-    });
+      adaptiveToggle.addEventListener('change', () => {
+        if (typeof WebRTC !== 'undefined' && typeof WebRTC.setAdaptiveResolutionEnabled === 'function') {
+          WebRTC.setAdaptiveResolutionEnabled(adaptiveToggle.checked);
+        }
+      });
     }
   },
   
