@@ -23,3 +23,16 @@ test('terminal composer describes its live submission hint', () => {
   assert.match(html, /id="terminalComposer"[\s\S]*?aria-describedby="terminalComposerHint"/);
   assert.match(html, /id="terminalComposerHint"[^>]*role="status"[^>]*aria-live="polite"/);
 });
+
+test('network advisor supports right-edge auto-collapse tab', () => {
+  assert.match(html, /id="networkAdvisor"[\s\S]*?id="networkAdvisorHandle"/);
+  assert.match(html, /id="networkAdvisorHandleLabel"/);
+  assert.match(html, /class="network-advisor__body"/);
+
+  const collapsed = getBlock('.network-advisor.visible.collapsed');
+  assert.match(collapsed, /width\s*:\s*44px/, 'collapsed advisor must shrink to a right-edge tab');
+  assert.match(collapsed, /right\s*:\s*0/, 'collapsed advisor docks to the right edge');
+
+  const visible = getBlock('.network-advisor.visible');
+  assert.match(visible, /pointer-events\s*:\s*auto/, 'visible advisor must accept hover/click');
+});

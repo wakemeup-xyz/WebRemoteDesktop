@@ -905,8 +905,12 @@ body.controls-hidden .action-bar {
   position: fixed;
   right: 18px;
   bottom: 148px;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
   width: min(360px, calc(100vw - 36px));
-  padding: 14px 16px;
+  max-width: min(360px, calc(100vw - 18px));
+  padding: 0;
   border-radius: var(--radius-md);
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.82);
@@ -918,11 +922,28 @@ body.controls-hidden .action-bar {
   opacity: 0;
   transform: translateY(12px);
   pointer-events: none;
-  transition: opacity 0.45s var(--transition-base), transform 0.45s var(--transition-base);
+  overflow: hidden;
+  transition:
+    opacity 0.35s var(--transition-base),
+    transform 0.35s var(--transition-base),
+    width 0.35s var(--transition-base),
+    max-width 0.35s var(--transition-base),
+    right 0.35s var(--transition-base),
+    border-radius 0.35s var(--transition-base);
 }
 
 .network-advisor.visible {
   opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Auto-collapse: keep a right-edge tab; full card slides mostly off-screen. */
+.network-advisor.visible.collapsed {
+  right: 0;
+  width: 44px;
+  max-width: 44px;
+  border-radius: 12px 0 0 12px;
   transform: translateY(0);
 }
 
@@ -932,6 +953,73 @@ body.controls-hidden .action-bar {
 
 .network-advisor.danger {
   border-color: rgba(239, 68, 68, 0.55);
+}
+
+.network-advisor__handle {
+  flex: 0 0 44px;
+  width: 44px;
+  margin: 0;
+  padding: 10px 0;
+  border: 0;
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.network-advisor__handle:hover,
+.network-advisor__handle:focus-visible {
+  background: rgba(59, 130, 246, 0.16);
+  outline: none;
+}
+
+.network-advisor__handle-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.network-advisor:not(.collapsed) .network-advisor__handle {
+  /* Expanded: compact chevron strip so body keeps most width. */
+  flex-basis: 28px;
+  width: 28px;
+}
+
+.network-advisor:not(.collapsed) .network-advisor__handle-label {
+  writing-mode: horizontal-tb;
+  letter-spacing: 0;
+  font-size: 0;
+}
+
+.network-advisor:not(.collapsed) .network-advisor__handle-label::before {
+  content: '›';
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.network-advisor__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 14px 16px 14px 12px;
+  opacity: 1;
+  transition: opacity 0.2s var(--transition-base);
+}
+
+.network-advisor.collapsed .network-advisor__body {
+  opacity: 0;
+  pointer-events: none;
+  padding: 0;
+  width: 0;
+  overflow: hidden;
 }
 
 .network-advisor__top {
@@ -963,11 +1051,23 @@ body.controls-hidden .action-bar {
   color: #fcd34d;
 }
 
-.network-advisor p {
+.network-advisor p,
+.network-advisor__body p {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.55;
   margin: 0;
+}
+
+@media (max-width: 640px) {
+  .network-advisor {
+    bottom: 120px;
+    right: 10px;
+  }
+
+  .network-advisor.visible.collapsed {
+    right: 0;
+  }
 }
 
 .modal-btn {

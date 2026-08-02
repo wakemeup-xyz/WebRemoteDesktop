@@ -94,29 +94,46 @@ const WebRTC = {
   networkModes: {
     lan: {
       label: '本地直连',
+      shortLabel: '本地',
       state: '最低延迟',
       hint: '访问电脑和这台 Mac 在同一局域网时使用。失败时切换到自动穿透或外网中继。'
     },
     auto: {
       label: '自动穿透',
+      shortLabel: '自动',
       state: '推荐',
       hint: '默认模式。优先低延迟直连；失败时只提示手动切换外网中继或隧道中继，不会自动改写你选中的模式。'
     },
     stun: {
       label: '外网直连',
+      shortLabel: '直连',
       state: '看网络',
       hint: '适合外网但 UDP 未被限制的环境。失败时会尝试 ICE 恢复，并提示你手动切换到更稳的模式。'
     },
     relay: {
       label: '外网中继',
+      shortLabel: '中继',
       state: '最稳',
       hint: '适合公司网、校园网、跨运营商、蜂窝热点或 ICE 失败场景。强制走 TURN，延迟通常明显高于直连。本机或同网访问请优先用本地直连/自动穿透。需要服务端配置 TURN；若 TURN 不可用，只会提示手动改用隧道中继。'
     },
     tunnel: {
       label: '隧道中继',
+      shortLabel: '隧道',
       state: '兜底',
       hint: '最终兜底模式。视频经 Cloudflare/Socket.IO 转发 JPEG，默认从 540p 起推，FPS 较低但不依赖 UDP。本机访问请优先用本地直连/自动穿透。'
     }
+  },
+
+  // Network advisor auto-collapse (right-edge tab).
+  _networkAdvisorBound: false,
+  _networkAdvisorCollapseTimer: null,
+  _networkAdvisorHover: false,
+  _networkAdvisorPinned: false,
+  _networkAdvisorSeverity: '',
+  NETWORK_ADVISOR_COLLAPSE_MS: {
+    '': 4500,
+    warning: 8000,
+    danger: 14000,
   },
 
   initializeMediaActivity() {
@@ -1022,6 +1039,22 @@ const WebRTC = {
     const height = allowResolutionChange
       ? Number(profile.height) || Number(this.currentResolution?.height) || 540
       : Number(this.currentResolution?.height) || Number(profile.height) || 540;
+    // When resolution is locked high, do not starve the encoder with survival bitrates
+    // designed for 360p — that creates encode backlog and multi-second jitter spikes.
+    let bitrateKbps = Number(profile.bitrateKbps) || 900;
+    let targetFps = Number(profile.fps) || 15;
+    if (!allowResolutionChange) {
+      const pixels = Math.max(1, width * height);
+      if (pixels >= 1920 * 1080) {
+        bitrateKbps = Math.max(bitrateKbps, 1800);
+        targetFps = Math.max(targetFps, 12);
+      } else if (pixels >= 1280 * 720) {
+        bitrateKbps = Math.max(bitrateKbps, 1200);
+        targetFps = Math.max(targetFps, 12);
+      } else if (pixels >= 960 * 540) {
+        bitrateKbps = Math.max(bitrateKbps, 900);
+      }
+    }
     if (allowResolutionChange) {
       this.currentResolution = {
         width,
@@ -1031,7 +1064,7 @@ const WebRTC = {
     }
     console.warn(
       `[MEDIA] applying profile ${profile.name} size=${width}x${height}`
-      + ` fps=${profile.fps} bitrate=${profile.bitrateKbps}kbps`
+      + ` fps=${targetFps} bitrate=${bitrateKbps}kbps`
       + ` adaptiveRes=${allowResolutionChange ? 'on' : 'off'} reason=${reason}`,
     );
     if (this.socket && this.socket.connected) {
@@ -1040,8 +1073,8 @@ const WebRTC = {
         profile: profile.name,
         width,
         height,
-        targetFps: profile.fps,
-        videoBitrateKbps: profile.bitrateKbps,
+        targetFps,
+        videoBitrateKbps: bitrateKbps,
         reason,
         mediaPolicy: 'strict-stun',
         adaptiveResolution: allowResolutionChange,
@@ -1053,6 +1086,8 @@ const WebRTC = {
         reason,
         width,
         height,
+        targetFps,
+        videoBitrateKbps: bitrateKbps,
         adaptiveResolution: allowResolutionChange,
       });
     }
@@ -3074,13 +3109,99 @@ if (this.tunnelLastObjectUrl) {
     this.renderPortSearchStatus();
   },
 
+  bindNetworkAdvisor() {
+    if (this._networkAdvisorBound) return;
+    const advisor = document.getElementById('networkAdvisor');
+    const handle = document.getElementById('networkAdvisorHandle');
+    if (!advisor) return;
+    this._networkAdvisorBound = true;
+
+    advisor.addEventListener('mouseenter', () => {
+      this._networkAdvisorHover = true;
+      this.expandNetworkAdvisor({ reschedule: false });
+    });
+    advisor.addEventListener('mouseleave', () => {
+      this._networkAdvisorHover = false;
+      this._networkAdvisorPinned = false;
+      this.scheduleNetworkAdvisorCollapse();
+    });
+    advisor.addEventListener('focusin', () => {
+      this.expandNetworkAdvisor({ reschedule: false });
+    });
+    advisor.addEventListener('focusout', () => {
+      // Defer so focus moving inside the advisor does not collapse mid-tab.
+      setTimeout(() => {
+        if (advisor.contains(document.activeElement)) return;
+        this.scheduleNetworkAdvisorCollapse();
+      }, 0);
+    });
+    handle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (advisor.classList.contains('collapsed')) {
+        this._networkAdvisorPinned = true;
+        this.expandNetworkAdvisor({ reschedule: false });
+      } else {
+        this._networkAdvisorPinned = false;
+        this.collapseNetworkAdvisor();
+      }
+    });
+  },
+
+  clearNetworkAdvisorCollapseTimer() {
+    if (this._networkAdvisorCollapseTimer) {
+      clearTimeout(this._networkAdvisorCollapseTimer);
+      this._networkAdvisorCollapseTimer = null;
+    }
+  },
+
+  expandNetworkAdvisor({ reschedule = true } = {}) {
+    const advisor = document.getElementById('networkAdvisor');
+    if (!advisor) return;
+    this.clearNetworkAdvisorCollapseTimer();
+    advisor.classList.remove('collapsed');
+    advisor.setAttribute('aria-expanded', 'true');
+    const handle = document.getElementById('networkAdvisorHandle');
+    if (handle) handle.setAttribute('aria-label', '收起网络状态');
+    if (reschedule) this.scheduleNetworkAdvisorCollapse();
+  },
+
+  collapseNetworkAdvisor() {
+    const advisor = document.getElementById('networkAdvisor');
+    if (!advisor || !advisor.classList.contains('visible')) return;
+    if (this._networkAdvisorHover || this._networkAdvisorPinned) return;
+    if (advisor.contains(document.activeElement)) return;
+    this.clearNetworkAdvisorCollapseTimer();
+    advisor.classList.add('collapsed');
+    advisor.setAttribute('aria-expanded', 'false');
+    const handle = document.getElementById('networkAdvisorHandle');
+    if (handle) handle.setAttribute('aria-label', '展开网络状态');
+  },
+
+  scheduleNetworkAdvisorCollapse() {
+    const advisor = document.getElementById('networkAdvisor');
+    if (!advisor || !advisor.classList.contains('visible')) return;
+    if (this._networkAdvisorHover || this._networkAdvisorPinned) return;
+    this.clearNetworkAdvisorCollapseTimer();
+    const severity = this._networkAdvisorSeverity || '';
+    const delay = this.NETWORK_ADVISOR_COLLAPSE_MS[severity]
+      ?? this.NETWORK_ADVISOR_COLLAPSE_MS['']
+      ?? 4500;
+    this._networkAdvisorCollapseTimer = setTimeout(() => {
+      this._networkAdvisorCollapseTimer = null;
+      this.collapseNetworkAdvisor();
+    }, delay);
+  },
+
   updateNetworkUI(message, severity = '') {
+    this.bindNetworkAdvisor();
     const mode = this.networkModes[this.networkMode] || this.networkModes.auto;
     const modeBtn = document.getElementById('networkModeBtn');
     const advisor = document.getElementById('networkAdvisor');
     const title = document.getElementById('networkAdvisorTitle');
     const state = document.getElementById('networkAdvisorState');
     const text = document.getElementById('networkAdvisorText');
+    const handleLabel = document.getElementById('networkAdvisorHandleLabel');
     const turnStatus = document.getElementById('networkTurnStatus');
 
     if (modeBtn) {
@@ -3088,6 +3209,9 @@ if (this.tunnelLastObjectUrl) {
     }
     if (turnStatus) {
       turnStatus.textContent = this.buildTurnStatusText();
+    }
+    if (handleLabel) {
+      handleLabel.textContent = mode.shortLabel || mode.label || '网络';
     }
     if (!advisor || !title || !state || !text) {
       return;
@@ -3104,6 +3228,7 @@ if (this.tunnelLastObjectUrl) {
       this.getRecommendationMessage(),
     ].filter(Boolean).join(' ');
     const effectiveSeverity = severity || recommendation?.severity || (this.networkMode === 'relay' && !this.hasTurnConfigured() ? 'warning' : '');
+    this._networkAdvisorSeverity = effectiveSeverity;
 
     title.textContent = `网络模式：${mode.label}`;
     state.textContent = recommendation?.nextSuggestedMode
@@ -3114,6 +3239,9 @@ if (this.tunnelLastObjectUrl) {
     advisor.classList.toggle('danger', effectiveSeverity === 'danger');
     state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
     advisor.classList.add('visible');
+    // Fresh status: expand so the user can read it, then auto-collapse to the right tab.
+    this._networkAdvisorPinned = false;
+    this.expandNetworkAdvisor({ reschedule: true });
   },
   
   startStats() {
@@ -3795,9 +3923,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const resolutionModal = document.getElementById('resolutionModal');
   const applyResolution = document.getElementById('applyResolution');
   const closeResolution = document.getElementById('closeResolution');
+  const adaptiveToggle = document.getElementById('adaptiveResolutionToggle');
 
+  if (adaptiveToggle && !adaptiveToggle.dataset.bound) {
+    adaptiveToggle.dataset.bound = '1';
+    adaptiveToggle.checked = WebRTC.adaptiveResolutionEnabled === true;
+    adaptiveToggle.addEventListener('change', () => {
+      WebRTC.setAdaptiveResolutionEnabled(adaptiveToggle.checked);
+    });
+  }
   if (resolutionBtn && resolutionModal) {
     resolutionBtn.addEventListener('click', () => {
+      if (adaptiveToggle) adaptiveToggle.checked = WebRTC.adaptiveResolutionEnabled === true;
       resolutionModal.classList.remove('hidden');
     });
   }
@@ -3808,6 +3945,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (applyResolution && resolutionModal) {
     applyResolution.addEventListener('click', async () => {
+      if (adaptiveToggle) {
+        WebRTC.setAdaptiveResolutionEnabled(adaptiveToggle.checked);
+      }
       const selected = document.querySelector('input[name="resolution"]:checked');
       if (selected) {
         const width = parseInt(selected.dataset.width, 10);

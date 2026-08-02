@@ -160,12 +160,17 @@
     </div>
   </div>
 
-  <div id="networkAdvisor" class="network-advisor" aria-live="polite">
-    <div class="network-advisor__top">
-      <span id="networkAdvisorTitle">网络模式：自动</span>
-      <span id="networkAdvisorState" class="network-advisor__state">检测中</span>
+  <div id="networkAdvisor" class="network-advisor" aria-live="polite" aria-expanded="true" role="status">
+    <button type="button" id="networkAdvisorHandle" class="network-advisor__handle" aria-label="展开或收起网络状态">
+      <span id="networkAdvisorHandleLabel" class="network-advisor__handle-label">自动</span>
+    </button>
+    <div class="network-advisor__body">
+      <div class="network-advisor__top">
+        <span id="networkAdvisorTitle">网络模式：自动</span>
+        <span id="networkAdvisorState" class="network-advisor__state">检测中</span>
+      </div>
+      <p id="networkAdvisorText">自动优先直连，失败时使用可用中继。</p>
     </div>
-    <p id="networkAdvisorText">自动优先直连，失败时使用可用中继。</p>
   </div>
 
   <div id="networkModal" class="modal hidden">

@@ -7,7 +7,8 @@ const vm = require('node:vm');
 function makeElement() {
   const classes = new Set();
   const listeners = new Map();
-  return {
+  const attrs = new Map();
+  const el = {
     textContent: '',
     style: {},
     src: '',
@@ -36,9 +37,12 @@ function makeElement() {
     },
     listeners,
     addEventListener(type, handler) { listeners.set(type, handler); },
-    removeAttribute() {},
-    setAttribute() {},
+    removeAttribute(name) { attrs.delete(name); },
+    setAttribute(name, value) { attrs.set(name, String(value)); },
+    getAttribute(name) { return attrs.has(name) ? attrs.get(name) : null; },
+    contains(node) { return node === el; },
   };
+  return el;
 }
 
 function loadWebRTC(overrides = {}) {
@@ -979,7 +983,36 @@ test('WebRTC relay mode adapts on packet loss without ICE restart for structural
   const profileEvent = emitted.find((entry) => entry.event === 'media-profile-change');
   assert.equal(Boolean(profileEvent), true);
   assert.equal(profileEvent.payload.profile, 'survival');
+  // Adaptive resolution defaults OFF: keep user size, only degrade fps/bitrate.
+  assert.equal(WebRTC.adaptiveResolutionEnabled, false);
+  assert.equal(profileEvent.payload.width, WebRTC.currentResolution.width);
+  assert.equal(profileEvent.payload.height, WebRTC.currentResolution.height);
+  assert.equal(profileEvent.payload.adaptiveResolution, false);
   assert.equal(restartCalls, 0);
+});
+
+test('adaptive resolution toggle can allow profile size changes when enabled', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '1280x720' };
+
+  WebRTC.setAdaptiveResolutionEnabled(false, { persist: false });
+  WebRTC.applyMediaProfile({ name: 'survival', width: 640, height: 360, fps: 8, bitrateKbps: 500 }, 'test-off');
+  assert.equal(WebRTC.currentResolution.width, 1280);
+  assert.equal(emitted.at(-1).payload.width, 1280);
+  assert.equal(emitted.at(-1).payload.height, 720);
+  // Locked high-res keeps a sane bitrate floor instead of 500kbps survival.
+  assert.equal(emitted.at(-1).payload.videoBitrateKbps >= 1200, true);
+  assert.equal(emitted.at(-1).payload.targetFps >= 12, true);
+
+  WebRTC.setAdaptiveResolutionEnabled(true, { persist: false });
+  WebRTC.applyMediaProfile({ name: 'survival', width: 640, height: 360, fps: 8, bitrateKbps: 500 }, 'test-on');
+  assert.equal(WebRTC.currentResolution.width, 640);
+  assert.equal(WebRTC.currentResolution.height, 360);
+  assert.equal(emitted.at(-1).payload.width, 640);
+  assert.equal(emitted.at(-1).payload.adaptiveResolution, true);
 });
 
 test('media profile and resolution changes no-op without a lease and emit v2 envelopes when active', async () => {
@@ -1743,6 +1776,53 @@ test('auto without TURN shows recommendation-only copy instead of auto fallback 
   assert.match(turnStatus, /固定入口.*link\.stockhub\.wiki/);
 });
 
+test('network advisor expands on update then auto-collapses to the right edge tab', () => {
+  const timers2 = [];
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout: (fn, ms) => {
+      const handle = { fn, ms, cleared: false };
+      timers2.push(handle);
+      return handle;
+    },
+    clearTimeout: (handle) => {
+      if (handle && typeof handle === 'object') handle.cleared = true;
+    },
+  });
+  WebRTC.networkMode = 'relay';
+  WebRTC.serverConfig = {
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example:3478'],
+    iceServers: [{ urls: ['turn:turn.example:3478'], username: 'u', credential: 'p' }],
+  };
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.getPublicEntryUrl = () => '';
+  WebRTC.getRecommendationMessage = () => '';
+  WebRTC.getDefaultNetworkGuidance = () => '外网中继已就绪';
+
+  WebRTC.updateNetworkUI('外网中继已连接', '');
+  const advisor = context.document.getElementById('networkAdvisor');
+  const handleLabel = context.document.getElementById('networkAdvisorHandleLabel');
+  assert.equal(advisor.classList.contains('visible'), true);
+  assert.equal(advisor.classList.contains('collapsed'), false);
+  assert.equal(handleLabel.textContent, '中继');
+  assert.equal(advisor.getAttribute('aria-expanded'), 'true');
+
+  const collapseTimers = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_COLLAPSE_MS['']);
+  assert.ok(collapseTimers.length >= 1, 'should schedule auto-collapse');
+  collapseTimers.at(-1).fn();
+  assert.equal(advisor.classList.contains('collapsed'), true);
+  assert.equal(advisor.getAttribute('aria-expanded'), 'false');
+
+  advisor.listeners.get('mouseenter')();
+  assert.equal(advisor.classList.contains('collapsed'), false);
+  advisor.listeners.get('mouseleave')();
+  const afterLeave = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_COLLAPSE_MS['']);
+  assert.ok(afterLeave.length >= 1);
+  afterLeave.at(-1).fn();
+  assert.equal(advisor.classList.contains('collapsed'), true);
+});
+
 test('collectNetworkSnapshot summarizes candidate and state context', () => {
   const { WebRTC } = loadWebRTC();
 
@@ -1853,6 +1933,7 @@ test('scheduleReconnect uses exponential backoff and exhausts relay hard refresh
 
     WebRTC.reconnectTimer = null;
     WebRTC._relayHardRefreshCount = 5;
+    WebRTC.updateNetworkUI = () => {};
     const before = timers.length;
     WebRTC.scheduleReconnect('pc-failed');
     assert.equal(timers.length, before); // exhausted: no new timer
