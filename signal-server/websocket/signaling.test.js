@@ -1226,7 +1226,7 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
   viewerB.trigger('control-acquire', { requestId: 'still-blocked' });
   const blocked = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(blocked.state, 'REVOKING');
-  assert.equal(blocked.reason, 'reset-in-progress');
+  assert.equal(blocked.reason, 'reset-failed');
 });
 
 test('v2 activation advertises capabilities and refuses an older host', () => {
@@ -1416,7 +1416,7 @@ test('rejected transition stays fail-closed in REVOKING and cannot replay on lat
   viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
-  assert.equal(acquire.reason, 'reset-in-progress');
+  assert.equal(acquire.reason, 'reset-failed');
 });
 
 test('controller disconnect freezes old lease until host ack then grants later sole viewer', () => {
