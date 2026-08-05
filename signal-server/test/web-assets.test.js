@@ -1,0 +1,64 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+const test = require('node:test');
+const {
+  loadWebAssetManifest,
+  cachePolicyForAsset,
+  createWebAssetMiddleware,
+} = require('../lib/web-assets');
+
+function fixture() {
+  const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-assets-'));
+  fs.mkdirSync(path.join(distDir, 'assets'));
+  fs.writeFileSync(path.join(distDir, 'assets/app.0123456789abcdef.js'), 'ok');
+  fs.writeFileSync(path.join(distDir, 'viewer.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(distDir, 'asset-manifest.json'), JSON.stringify({
+    schemaVersion: 1,
+    assets: { desktopJs: 'assets/app.0123456789abcdef.js' },
+  }));
+  return distDir;
+}
+
+test('manifest-listed hashed assets are immutable while HTML revalidates', () => {
+  const distDir = fixture();
+  const manifest = loadWebAssetManifest({ distDir });
+  assert.equal(
+    cachePolicyForAsset('/assets/app.0123456789abcdef.js', manifest),
+    'public, max-age=31536000, immutable',
+  );
+  assert.equal(
+    cachePolicyForAsset('/viewer.html', manifest),
+    'no-cache, max-age=0, must-revalidate',
+  );
+  assert.equal(cachePolicyForAsset('/assets/unknown.js', manifest), 'no-cache');
+});
+
+test('manifest rejects traversal and missing files', () => {
+  const distDir = fixture();
+  fs.writeFileSync(path.join(distDir, 'asset-manifest.json'), JSON.stringify({
+    schemaVersion: 1,
+    assets: { desktopJs: '../secret.js' },
+  }));
+  assert.throws(() => loadWebAssetManifest({ distDir }), /unsafe asset path/);
+});
+
+test('generated HTML revalidates and hashed assets are immutable', async () => {
+  const express = require('express');
+  const fixtureDir = fixture();
+  const manifest = loadWebAssetManifest({ distDir: fixtureDir });
+  const app = express();
+  app.use(createWebAssetMiddleware({ express, distDir: fixtureDir, manifest }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const html = await fetch(`${origin}/viewer.html`);
+  const asset = await fetch(`${origin}/assets/app.0123456789abcdef.js`);
+  assert.equal(html.headers.get('cache-control'), 'no-cache, max-age=0, must-revalidate');
+  assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  await new Promise((resolve) => server.close(resolve));
+});
