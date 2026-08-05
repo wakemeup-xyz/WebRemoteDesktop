@@ -4,6 +4,8 @@
   "private": true,
   "main": "server.js",
   "scripts": {
+    "build:web": "node scripts/build-web-client.js",
+    "pretest": "npm run build:web",
     "start": "node server.js",
     "test": "node --test",
     "audit:deps": "npm audit --audit-level=moderate"
