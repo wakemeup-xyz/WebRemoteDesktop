@@ -57,6 +57,10 @@ async function buildWebClient({ sourceDir, outDir }) {
     const terminalSource = `${xtermJs}\n${fitJs}\n${readJoined(sourceDir, graph.terminalScripts)}`;
     const desktopJs = await compileClassic(desktopSource, 'desktop-core.js');
     const terminalJs = await compileClassic(terminalSource, 'terminal.js');
+    const shellGuard = await compileClassic(
+      fs.readFileSync(path.join(sourceDir, 'js/shell-guard.js'), 'utf8'),
+      'shell-guard.js',
+    );
     const viewerCss = fs.readFileSync(path.join(sourceDir, 'css/viewer.css'), 'utf8');
 
     const assets = {
@@ -64,6 +68,11 @@ async function buildWebClient({ sourceDir, outDir }) {
       viewerCss: writeHashed(path.join(staging, 'assets'), 'viewer', 'css', viewerCss),
       terminalJs: writeHashed(path.join(staging, 'assets'), 'terminal', 'js', terminalJs),
       terminalCss: writeHashed(path.join(staging, 'assets'), 'terminal', 'css', xtermCss),
+    };
+
+    const lazyAssets = {
+      terminalJs: `/${assets.terminalJs}`,
+      terminalCss: `/${assets.terminalCss}`,
     };
 
     let viewerHtml = fs.readFileSync(path.join(sourceDir, 'viewer.html'), 'utf8');
@@ -77,7 +86,11 @@ async function buildWebClient({ sourceDir, outDir }) {
       viewerHtml,
       '<!-- WRD_BUILD_SCRIPTS_START -->',
       '<!-- WRD_BUILD_SCRIPTS_END -->',
-      `<script>window.__WRD_ASSETS__=${JSON.stringify({ terminalJs: `/${assets.terminalJs}`, terminalCss: `/${assets.terminalCss}` })}</script>\n<script src="/${assets.desktopJs}" defer></script>`,
+      [
+        `<script>${shellGuard}</script>`,
+        `<script>window.__WRD_ASSETS__=${JSON.stringify(lazyAssets)}</script>`,
+        `<script src="/${assets.desktopJs}" defer></script>`,
+      ].join('\n'),
     );
     fs.writeFileSync(path.join(staging, 'viewer.html'), viewerHtml);
     fs.copyFileSync(path.join(sourceDir, 'index.html'), path.join(staging, 'index.html'));

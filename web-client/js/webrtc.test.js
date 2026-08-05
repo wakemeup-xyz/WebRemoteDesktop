@@ -57,6 +57,7 @@ function loadWebRTC(overrides = {}) {
     localStorage: {
       getItem: () => null,
       setItem: () => {},
+      removeItem: () => {},
     },
     document: {
       body: makeElement(),
@@ -3840,4 +3841,71 @@ test('reclaimDesktopSession clears supersede flags', () => {
   assert.equal(WebRTC._superseded, false);
   assert.equal(WebRTC.manualDisconnect, false);
   assert.equal(started, 1);
+});
+
+test('Start warmup and click use one bootstrap and one signaling attempt', async () => {
+  const signalingSockets = [];
+  let bootstrapCalls = 0;
+  const { WebRTC } = loadWebRTC({
+    io: () => {
+      const socket = { on() {}, emit() {}, disconnect() {}, connected: true };
+      signalingSockets.push(socket);
+      return socket;
+    },
+  });
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.setupSocketListeners = () => {};
+  const controller = {
+    load: async () => {
+      bootstrapCalls += 1;
+      return { schemaVersion: 1, host: { online: true }, webrtc: { iceServers: [] } };
+    },
+  };
+  const start = WebRTC.createStartHandler(controller);
+  await Promise.all([start(), start()]);
+  assert.equal(bootstrapCalls, 1);
+  assert.equal(signalingSockets.length, 1);
+  assert.ok(WebRTC.currentConnectionAttemptId);
+});
+
+test('WebRTC.init consumes supplied snapshot and does not fetch config', async () => {
+  const signalingSockets = [];
+  const { WebRTC } = loadWebRTC({
+    io: () => {
+      const socket = { on() {}, emit() {}, disconnect() {}, connected: true };
+      signalingSockets.push(socket);
+      return socket;
+    },
+  });
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.setupSocketListeners = () => {};
+  WebRTC.loadServerConfig = () => { throw new Error('must not fetch'); };
+  await WebRTC.init({
+    bootstrapSnapshot: { host: { online: true }, webrtc: { iceServers: [] } },
+    trigger: 'test',
+  });
+  assert.equal(WebRTC.serverConfig.iceServers.length, 0);
+  assert.equal(signalingSockets.length, 1);
+});
+
+test('first-frame timeout exits connecting without reviving a stale attempt', () => {
+  let timerCallback = null;
+  const { WebRTC, elements } = loadWebRTC({
+    setTimeout(callback) { timerCallback = callback; return 1; },
+    clearTimeout() {},
+  });
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-1';
+  WebRTC.beginFirstFrameDeadline('attempt-1', 8000);
+  timerCallback();
+  assert.match(elements.get('loadingText').textContent, /超时|重试/);
+  WebRTC.currentConnectionAttemptId = 'attempt-2';
+  timerCallback();
+  assert.equal(WebRTC.currentConnectionAttemptId, 'attempt-2');
 });

@@ -691,6 +691,7 @@ const WebRTC = {
     // on full-relay paths that regularly sit at 0 FPS for multi-second gaps.
     if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
+    this.clearFirstFrameDeadline();
     this.syncDesktopInputGate();
     return true;
   },
@@ -1267,22 +1268,137 @@ const WebRTC = {
     return { effectiveMode: preferredMode, changed: false, unavailable: false, reason: '' };
   },
   
-  async init() {
+  async init({ bootstrapSnapshot = null, trigger = 'viewer-open' } = {}) {
     const token = Auth.getToken();
     if (!token) {
       console.error('No token available');
+      if (typeof Auth.logout === 'function') Auth.logout();
       return;
     }
     this.manualDisconnect = false;
-    await this.loadServerConfig();
+    if (bootstrapSnapshot) {
+      this.applyBootstrapSnapshot(bootstrapSnapshot);
+    } else {
+      await this.loadServerConfig();
+    }
     this.clearFailureRecommendation();
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
-    this.beginConnectionAttempt('viewer-open');
+    this.beginConnectionAttempt(trigger);
+    this.beginFirstFrameDeadline(this.currentConnectionAttemptId, 8000);
     this.configureNetworkControls();
     this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
     this.createSignalingSocket(true);
     this.bindControlLifecycle();
     if (this.networkMode !== 'tunnel') this.createPeerConnection();
+  },
+
+  applyBootstrapSnapshot(snapshot = null) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new Error('bootstrap snapshot required');
+    }
+    const webrtc = snapshot.webrtc && typeof snapshot.webrtc === 'object'
+      ? snapshot.webrtc
+      : snapshot;
+    this.serverConfig = {
+      ...webrtc,
+      iceServers: Array.isArray(webrtc.iceServers) ? webrtc.iceServers : [],
+    };
+    if (snapshot.host && typeof snapshot.host === 'object') {
+      this.applyHostCapabilities(snapshot.host.capabilities || {});
+    }
+    const selectedId = this.setSelectedTurnServerId(
+      this.serverConfig.selectedTurnServerId || this.selectedTurnServerId || '',
+      { persist: true },
+    );
+    if (selectedId && !this.serverConfig.selectedTurnServerId) {
+      this.serverConfig.selectedTurnServerId = selectedId;
+    }
+    this.populateTurnServerSelect();
+    return this.serverConfig;
+  },
+
+  isCurrentAttemptMediaReady(attemptId = this.currentConnectionAttemptId || null) {
+    return Boolean(
+      attemptId
+      && this._mediaReadyConnectionAttemptId
+      && this._mediaReadyConnectionAttemptId === attemptId,
+    );
+  },
+
+  clearFirstFrameDeadline() {
+    if (this._firstFrameTimer) {
+      clearTimeout(this._firstFrameTimer);
+      this._firstFrameTimer = null;
+    }
+  },
+
+  beginFirstFrameDeadline(attemptId, timeoutMs = 8000) {
+    this.clearFirstFrameDeadline();
+    const expectedAttemptId = attemptId || this.currentConnectionAttemptId;
+    this._firstFrameTimer = setTimeout(() => {
+      if (expectedAttemptId !== this.currentConnectionAttemptId) return;
+      if (this.isCurrentAttemptMediaReady(expectedAttemptId)) return;
+      this.endConnectingWithFailure('first-frame-timeout');
+    }, timeoutMs);
+  },
+
+  endConnectingWithFailure(reason = 'first-frame-timeout') {
+    this.clearFirstFrameDeadline();
+    updateConnectionStatus('disconnected');
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.style.display = '';
+    if (reason === 'first-frame-timeout') {
+      this.setFailureRecommendation('direct-failed-suggest-relay', 'error');
+      updateLoadingText('首帧超时，请检查网络模式后重试');
+      this.updateNetworkUI(this.getRecommendationMessage() || '首帧超时', 'error');
+      return;
+    }
+    updateLoadingText(String(reason || '连接失败，请重试'));
+  },
+
+  enterBootstrapFailure(error) {
+    this.clearFirstFrameDeadline();
+    updateConnectionStatus('disconnected');
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.style.display = '';
+    const message = error?.message || '启动配置加载失败';
+    updateLoadingText(`启动失败：${message}`);
+    this.updateNetworkUI(message, 'error');
+  },
+
+  async startViewer(controller = null) {
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.style.display = 'none';
+    updateLoadingText('正在连接...');
+    try {
+      if (typeof Auth !== 'undefined' && !Auth.isLoggedIn()) {
+        return Auth.logout();
+      }
+      if (!controller) {
+        await this.init({ trigger: 'start-button' });
+        return;
+      }
+      const bootstrapSnapshot = await controller.load({
+        mode: this.networkMode,
+        turnServerId: this.selectedTurnServerId,
+      });
+      await this.init({ bootstrapSnapshot, trigger: 'start-button' });
+    } catch (error) {
+      if (controller && controller.getSnapshot && controller.getSnapshot().state === 'auth-required') {
+        return Auth.logout();
+      }
+      this.enterBootstrapFailure(error);
+    }
+  },
+
+  createStartHandler(controller = null) {
+    let inflightStart = null;
+    const self = this;
+    return function startOnce() {
+      if (inflightStart) return inflightStart;
+      inflightStart = self.startViewer(controller).finally(() => { inflightStart = null; });
+      return inflightStart;
+    };
   },
 
   createSignalingSocket(forceRecreate = false) {
@@ -4026,20 +4142,58 @@ function updateLoadingText(text) {
 
 document.addEventListener('DOMContentLoaded', () => {
   WebRTC.initializeMediaActivity();
-  WebRTC.loadServerConfig().then(() => {
-    WebRTC.configureNetworkControls();
-    WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
-  });
 
-  const startBtn = document.getElementById('startBtn');
-  if (startBtn) {
-    startBtn.addEventListener('click', () => {
-      if (Auth.isLoggedIn()) {
-        WebRTC.init();
-        startBtn.style.display = 'none';
-        document.getElementById('loadingText').textContent = '正在连接...';
-      }
-    });
+  const ViewerBootstrap = (typeof createViewerBootstrap === 'function')
+    ? createViewerBootstrap({
+      timeoutMs: 3000,
+      async fetchSnapshot({ turnServerId, signal }) {
+        const apiBase = (typeof RuntimeConfig !== 'undefined')
+          ? RuntimeConfig.getApiBase()
+          : '';
+        const query = turnServerId ? `?turnServerId=${encodeURIComponent(turnServerId)}` : '';
+        const response = await fetch(`${apiBase}/api/viewer-bootstrap${query}`, {
+          cache: 'no-store',
+          signal,
+          headers: { Authorization: `Bearer ${Auth.getToken()}` },
+        });
+        if (!response.ok) {
+          const error = new Error(`Viewer bootstrap HTTP ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        return response.json();
+      },
+      fallbackFactory({ mode, error }) {
+        return {
+          schemaVersion: 1,
+          degraded: true,
+          degradedReason: error?.code || 'bootstrap-unavailable',
+          host: { online: null, capabilities: {} },
+          webrtc: {
+            stunUrls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
+            iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
+            turnConfigured: false,
+            turnStatus: 'unavailable',
+            selectedTurnServerId: '',
+          },
+          mode,
+        };
+      },
+    })
+    : null;
+
+  if (ViewerBootstrap) {
+    ViewerBootstrap.load({ mode: WebRTC.networkMode }).catch(() => {});
+  } else {
+    WebRTC.loadServerConfig().then(() => {
+      WebRTC.configureNetworkControls();
+      WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
+    }).catch(() => {});
+  }
+
+  const startHandler = WebRTC.createStartHandler(ViewerBootstrap);
+  if (window.__WRD_SHELL__ && typeof window.__WRD_SHELL__.installCore === 'function') {
+    window.__WRD_SHELL__.installCore(startHandler);
   }
 
   const refreshBtn = document.getElementById('refreshBtn');
@@ -4077,6 +4231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (adaptiveToggle && !adaptiveToggle.dataset.bound) {
     adaptiveToggle.dataset.bound = '1';
+
     adaptiveToggle.checked = WebRTC.adaptiveResolutionEnabled === true;
     adaptiveToggle.addEventListener('change', () => {
       WebRTC.setAdaptiveResolutionEnabled(adaptiveToggle.checked);

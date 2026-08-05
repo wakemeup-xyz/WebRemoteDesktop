@@ -6,6 +6,7 @@
   <title>CodeHarness学习助手 - 控制台</title>
   <!-- WRD_BUILD_HEAD_START -->
   <link rel="stylesheet" href="css/viewer.css">
+  <script src="js/shell-guard.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"></script>
@@ -16,7 +17,7 @@
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
       <button id="desktopTabBtn" class="view-tab-btn active" type="button">桌面</button>
-      <button id="terminalTabBtn" class="view-tab-btn" type="button">Terminal</button>
+      <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control>Terminal</button>
     </div>
     <span id="connectionStatus" class="status connecting">连接中</span>
     <div class="status-metrics" aria-label="链路指标">
@@ -28,11 +29,11 @@
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
-      <button id="requestControlBtn" class="control-btn">请求控制</button>
-      <button id="textInputBtn" class="control-btn status-action-secondary">文本输入</button>
-      <button id="refreshBtn" class="control-btn">刷新画面</button>
-      <button id="diagBtn" class="control-btn status-action-secondary">诊断日志</button>
-      <button id="toggleControlsBtn" class="control-btn status-action-secondary">隐藏控件</button>
+      <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
+      <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
+      <button id="refreshBtn" class="control-btn" data-core-control>刷新画面</button>
+      <button id="diagBtn" class="control-btn status-action-secondary" data-core-control>诊断日志</button>
+      <button id="toggleControlsBtn" class="control-btn status-action-secondary" data-core-control>隐藏控件</button>
     </div>
   </div>
   
@@ -43,51 +44,55 @@
       <div id="loading" class="stream-placeholder">
         <div class="spinner"></div>
         <p id="loadingText">点击开始连接，基础控制已就绪</p>
-        <button id="startBtn" class="start-btn">开始学习助手</button>
+        <button id="startBtn" class="start-btn" type="button"
+                onclick="window.__WRD_SHELL__ && window.__WRD_SHELL__.acknowledgeStartClick()">
+          开始学习助手
+        </button>
+        <button id="coreRetryBtn" class="start-btn" type="button" hidden onclick="location.reload()">重新加载</button>
       </div>
     </div>
 
     <div class="control-bar">
-      <button id="scaleBtn" class="control-btn">
+      <button id="scaleBtn" class="control-btn" data-core-control>
         缩放：自适应
       </button>
-      <button id="resolutionBtn" class="control-btn">
+      <button id="resolutionBtn" class="control-btn" data-core-control>
         分辨率设置
       </button>
-      <button id="fullscreenBtn" class="control-btn">
+      <button id="fullscreenBtn" class="control-btn" data-core-control>
         全屏
       </button>
-      <button id="networkModeBtn" class="control-btn">
+      <button id="networkModeBtn" class="control-btn" data-core-control>
         网络：自动
       </button>
-      <button id="portSearchBtn" class="control-btn" type="button">
+      <button id="portSearchBtn" class="control-btn" type="button" data-core-control>
         搜索端口
       </button>
-      <button id="pauseBtn" class="control-btn">
+      <button id="pauseBtn" class="control-btn" data-core-control>
         暂停
       </button>
-      <button id="disconnectBtn" class="control-btn danger">
+      <button id="disconnectBtn" class="control-btn danger" data-core-control>
         断开连接
       </button>
     </div>
 
     <div class="action-bar">
-      <button class="action-btn" data-action="enter">回车</button>
-      <button class="action-btn" data-action="up">上</button>
-      <button class="action-btn" data-action="down">下</button>
-      <button class="action-btn" data-action="left">左</button>
-      <button class="action-btn" data-action="right">右</button>
-      <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射">键盘：-</button>
-      <button class="action-btn" data-action="copy">复制</button>
-      <button class="action-btn" data-action="paste">粘贴</button>
-      <button class="action-btn" data-action="cut">剪切</button>
-      <button class="action-btn" data-action="undo">撤销</button>
-      <button class="action-btn" data-action="selectAll">全选</button>
-      <button class="action-btn" data-action="save">保存</button>
-      <button class="action-btn" data-action="find">查找</button>
-      <button class="action-btn" data-action="showDock">显示程序坞</button>
-      <button class="action-btn" data-action="screenshot">截屏</button>
-      <button class="action-btn" data-action="switchInputMethod">切换输入法</button>
+      <button class="action-btn" data-action="enter" data-core-control>回车</button>
+      <button class="action-btn" data-action="up" data-core-control>上</button>
+      <button class="action-btn" data-action="down" data-core-control>下</button>
+      <button class="action-btn" data-action="left" data-core-control>左</button>
+      <button class="action-btn" data-action="right" data-core-control>右</button>
+      <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
+      <button class="action-btn" data-action="copy" data-core-control>复制</button>
+      <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
+      <button class="action-btn" data-action="cut" data-core-control>剪切</button>
+      <button class="action-btn" data-action="undo" data-core-control>撤销</button>
+      <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
+      <button class="action-btn" data-action="save" data-core-control>保存</button>
+      <button class="action-btn" data-action="find" data-core-control>查找</button>
+      <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
+      <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
+      <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
     </div>
   </main>
 
@@ -289,6 +294,7 @@
   <script src="js/media-activity-runtime.js"></script>
   <script src="js/stun-port-search-controller.js"></script>
   <script src="js/turn-selftest.js"></script>
+  <script src="js/bootstrap-controller.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input-geometry.js"></script>
   <script src="js/keyboard-transport.js"></script>
