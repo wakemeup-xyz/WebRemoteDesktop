@@ -54,6 +54,14 @@
 - 外部用户应只记这一个固定域名
 - `trycloudflare` / safe quick tunnel 仅用于本地调试、临时排障和公网入口兜底验证，不应作为长期正式入口
 
+### Viewer 构建与缓存
+
+- `node server.js`（包括 `npm start` 和仓库 LaunchAgent/启动脚本）会先构建 `web-client/dist/`，构建失败时不监听 8080。
+- Viewer HTML 每次 revalidate；带内容哈希的 JS/CSS 使用一年 immutable cache。
+- Viewer 运行时不依赖 jsDelivr/cdn.socket.io；Terminal/xterm 首次打开时加载本地构建资产。
+- `dist/` 是可重建产物，不纳入 Git；`signal-server/package-lock.json` 必须纳入 Git。
+- 正式公网冷启动 Core Interactive P95 <= 5 秒；点击到 signaling connected P95 <= 3 秒；点击到稳定非黑画面 P95 <= 8 秒。
+
 ### 方式一：本地调试/排障启动（safe quick tunnel）
 
 当你需要同时拉起本地服务，并保留一个临时 quick tunnel 做调试或排障时，使用这一种。

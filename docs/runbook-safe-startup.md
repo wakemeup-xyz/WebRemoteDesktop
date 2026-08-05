@@ -185,6 +185,22 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 ./scripts/start-fixed-domain.sh
 ```
 
+#### 只读 preflight 与本地验收（不改 tunnel）
+
+```bash
+# Read-only formal connector check
+./scripts/fixed-tunnel-preflight.sh
+
+# Build verification; does not restart any service or tunnel
+cd signal-server && npm ci && npm run build:web
+
+# Runtime acceptance after the user manually restarts local services
+VIEWER_ACCESS_PASSWORD=... python3 scripts/viewer_bootstrap_acceptance.py \
+  --origin http://127.0.0.1:8080 --runs 20 --mode both
+```
+
+`fixed-tunnel-preflight.sh` 只报告 ownership / credentials-file / health 分类，不会 kill、restart 或 rotate 任何 `cloudflared`。修复 token/multiple-owner 发现，或变更正在运行的正式 connector，必须另行获得用户明确授权。本地重启与 quick-tunnel 复用规则不变：`重启服务` 只重启 `signal-server` / Host，不得重建 tunnel。
+
 前提条件：
 
 - 已执行过 `scripts/setup-cloudflare.sh`

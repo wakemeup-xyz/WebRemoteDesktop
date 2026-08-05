@@ -10,6 +10,15 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - **公网可达**：通过 Cloudflare Tunnel 暴露服务
 - **输入同步**：鼠标、键盘实时转发到远程主机
 
+### Viewer 启动性能与可恢复性
+
+- 正式公网入口冷启动 Core Interactive P95 <= 5 秒，热加载 P95 <= 2 秒。
+- 点击「开始学习助手」必须立即反馈；到 Signal connected P95 <= 3 秒。
+- 点击到首个稳定非黑画面 P95 <= 8 秒；超时必须退出连接中状态并允许重试。
+- 任一 bootstrap 依赖不得静默阻塞超过 5 秒。
+- Terminal/xterm 按需加载，加载失败不得影响 Desktop。
+- 以上公网指标至少使用 20 个新浏览器上下文，以 immutable JSON + SHA-256 验收。
+
 ---
 
 ## 2. 系统架构
