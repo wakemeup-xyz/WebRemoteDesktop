@@ -4196,6 +4196,46 @@ document.addEventListener('DOMContentLoaded', () => {
     window.__WRD_SHELL__.installCore(startHandler);
   }
 
+  const TerminalLoader = (typeof createTerminalLoader === 'function')
+    ? createTerminalLoader({
+      assets: window.__WRD_ASSETS__ || null,
+      document,
+      timeoutMs: 5000,
+    })
+    : null;
+
+  function setTerminalLoadFailure(error) {
+    const warning = document.getElementById('terminalWarning');
+    const retry = document.getElementById('terminalLoadRetryBtn');
+    if (warning) {
+      warning.textContent = error?.message || 'Terminal 资源加载失败';
+      warning.classList.remove('hidden');
+    }
+    if (retry) retry.hidden = false;
+  }
+
+  async function openTerminal({ retry = false } = {}) {
+    if (!TerminalLoader) {
+      if (typeof TerminalPanel !== 'undefined' && TerminalPanel?.init) {
+        TerminalPanel.init();
+        TerminalPanel.showTerminal();
+      }
+      return;
+    }
+    try {
+      const panel = retry ? await TerminalLoader.retry() : await TerminalLoader.load();
+      document.getElementById('terminalWarning')?.classList.add('hidden');
+      const retryButton = document.getElementById('terminalLoadRetryBtn');
+      if (retryButton) retryButton.hidden = true;
+      panel.showTerminal();
+    } catch (error) {
+      setTerminalLoadFailure(error);
+    }
+  }
+
+  document.getElementById('terminalTabBtn')?.addEventListener('click', () => openTerminal());
+  document.getElementById('terminalLoadRetryBtn')?.addEventListener('click', () => openTerminal({ retry: true }));
+
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {
     let lastRefreshTime = 0;

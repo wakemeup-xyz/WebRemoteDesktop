@@ -44,6 +44,15 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   for (const relative of Object.values(a.assets)) {
     assert.equal(fs.existsSync(path.join(outA, relative)), true, relative);
   }
+  assert.ok(a.assets.terminalJs);
+  assert.ok(a.assets.terminalCss);
+  const desktopBundle = fs.readFileSync(path.join(outA, a.assets.desktopJs), 'utf8');
+  assert.match(desktopBundle, /createTerminalLoader/);
+  assert.doesNotMatch(desktopBundle, /const TerminalPanel\s*=/);
+  assert.doesNotMatch(
+    html,
+    /<(?:script[^>]+src|link[^>]+href)="[^"]*(?:xterm|addon-fit|terminal\.[a-f0-9]+\.(?:js|css))/i,
+  );
 });
 
 test('build does not publish a manifest when an input is missing', async () => {

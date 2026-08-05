@@ -336,10 +336,13 @@ const TerminalPanel = {
   bootstrapPromise: null,
   transportLatency: new Map(),
   aliasedEvents: new Map(),
+  _initialized: false,
 
   init() {
+    if (this._initialized) return false;
     this.cacheElements();
-    if (!this.elements.root) return;
+    if (!this.elements.root) return false;
+    this._initialized = true;
     this.bindEvents();
     if (this.elements.transportSelect) {
       this.elements.transportSelect.value = this.preferredTransport === 'webrtc-turn'
@@ -347,6 +350,7 @@ const TerminalPanel = {
         : 'socketio';
     }
     this.render();
+    return true;
   },
 
   cacheElements() {
@@ -375,7 +379,7 @@ const TerminalPanel = {
 
   bindEvents() {
     this.elements.desktopTab?.addEventListener('click', () => this.showDesktop());
-    this.elements.terminalTab?.addEventListener('click', () => this.showTerminal());
+    // Terminal tab open is owned by TerminalLoader/openTerminal so assets can load first.
     this.elements.authForm?.addEventListener('submit', (event) => {
       event.preventDefault();
       this.authorize();
@@ -459,7 +463,7 @@ const TerminalPanel = {
   },
 
   refreshStatus() {
-    if (!this.elements.status) return;
+    if (!this.elements?.status) return;
     const extras = [];
     const socketLatency = this.terminalSocketLatency.snapshot();
     const inputAckLatency = this.terminalInputAckLatency.snapshot();
@@ -1991,6 +1995,9 @@ const TerminalPanel = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  TerminalPanel.init();
-});
+if (typeof globalThis !== 'undefined') {
+  globalThis.TerminalPanel = TerminalPanel;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { TerminalPanel };
+}
