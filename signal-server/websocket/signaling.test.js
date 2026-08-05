@@ -742,9 +742,14 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
   });
   assert.deepEqual(diagnostic.data.inputState, {
     keyboardMode: 'windows',
+    isActive: null,
+    hasLease: null,
+    leaseEpoch: 0,
+    gate: null,
     pendingKeys: 0,
     lastReleaseAllReason: 'window-blur',
     lastKeyboardResetReason: 'window-blur',
+    keyboard: null,
     recentInputEvents: [{ type: 'keyboard-reset', reason: 'window-blur' }],
   });
   assert.deepEqual(diagnostic.data.inputChannelTimeline, [{ kind: 'open', message: '[INPUT-DC] DataChannel open' }]);
