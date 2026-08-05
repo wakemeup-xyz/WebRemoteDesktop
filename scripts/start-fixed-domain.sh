@@ -15,6 +15,11 @@ HEALTH_URL="${HEALTH_URL:-${LOCAL_ORIGIN}/health}"
 TUNNEL_LABEL="${TUNNEL_LABEL:-com.webremotedesktop.fixed-domain}"
 ENABLE_DEV_SUBDOMAIN="${ENABLE_DEV_SUBDOMAIN:-0}"
 CLOUDFLARED_CONFIG="${CLOUDFLARED_CONFIG:-$HOME/.cloudflared/config.yml}"
+WRD_FIXED_TUNNEL_PROTOCOL="${WRD_FIXED_TUNNEL_PROTOCOL:-http2}"
+case "$WRD_FIXED_TUNNEL_PROTOCOL" in
+  http2|quic) ;;
+  *) echo "WRD_FIXED_TUNNEL_PROTOCOL must be http2 or quic"; exit 1 ;;
+esac
 
 if [ ! -f "$CLOUDFLARED_CONFIG" ]; then
   echo "Missing ~/.cloudflared/config.yml. Run scripts/setup-cloudflare.sh first."
@@ -42,7 +47,9 @@ curl -s "$HEALTH_URL" >/dev/null 2>&1 || {
   exit 1
 }
 
-launchctl submit -l "$TUNNEL_LABEL" -- /bin/zsh -lc "unset TUNNEL_TOKEN; exec \"$CLOUDFLARED\" tunnel --config \"$CLOUDFLARED_CONFIG\" run \"$TUNNEL_NAME\" >> /tmp/wrd-fixed-domain.log 2>&1"
+FIXED_PROTOCOL_FLAG=(--protocol "$WRD_FIXED_TUNNEL_PROTOCOL")
+launchctl submit -l "$TUNNEL_LABEL" -- /bin/zsh -lc \
+  "unset TUNNEL_TOKEN; exec \"$CLOUDFLARED\" tunnel --config \"$CLOUDFLARED_CONFIG\" ${FIXED_PROTOCOL_FLAG[*]} run \"$TUNNEL_NAME\" >> /tmp/wrd-fixed-domain.log 2>&1"
 for _ in {1..20}; do
   if cloudflared tunnel info "$TUNNEL_NAME" 2>/dev/null | grep -qv 'does not have any active connection'; then
     break
