@@ -322,6 +322,9 @@ const Diagnostic = {
       events: redactedEvents,
       probeResults: Array.isArray(basePayload.probeResults) ? basePayload.probeResults.slice() : [],
       adaptiveMedia,
+      startup: typeof globalThis.__WRD_STARTUP_SNAPSHOT__ === 'function'
+        ? globalThis.__WRD_STARTUP_SNAPSHOT__()
+        : null,
       traceSummary: {
         ...(basePayload.traceSummary || snapshot.traceSummary || {}),
         trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',

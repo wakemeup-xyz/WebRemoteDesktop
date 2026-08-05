@@ -693,6 +693,10 @@ const WebRTC = {
     this._mediaReadyConnectionAttemptId = attemptId;
     this.clearFirstFrameDeadline();
     this.syncDesktopInputGate();
+    if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+      StartupTelemetry.mark('first-frame');
+      StartupTelemetry.mark('active');
+    }
     return true;
   },
 
@@ -1370,6 +1374,10 @@ const WebRTC = {
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = 'none';
     updateLoadingText('正在连接...');
+    if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+      StartupTelemetry.mark('start-click');
+      StartupTelemetry.mark('bootstrap-start');
+    }
     try {
       if (typeof Auth !== 'undefined' && !Auth.isLoggedIn()) {
         return Auth.logout();
@@ -1382,6 +1390,13 @@ const WebRTC = {
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
       });
+      if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+        if (bootstrapSnapshot?.degraded) {
+          StartupTelemetry.mark('bootstrap-degraded');
+        } else {
+          StartupTelemetry.mark('bootstrap-ready');
+        }
+      }
       await this.init({ bootstrapSnapshot, trigger: 'start-button' });
     } catch (error) {
       if (controller && controller.getSnapshot && controller.getSnapshot().state === 'auth-required') {
@@ -2071,6 +2086,9 @@ const WebRTC = {
     this.socket.on('connect', async () => {
       console.log('[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s',
         this.offerInProgress, !!this.pc, this.pc?.connectionState);
+      if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+        StartupTelemetry.mark('signal-connected');
+      }
       updateConnectionStatus('connecting');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
@@ -4142,6 +4160,18 @@ function updateLoadingText(text) {
 
 document.addEventListener('DOMContentLoaded', () => {
   WebRTC.initializeMediaActivity();
+  if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+    StartupTelemetry.mark('html-shell');
+    const shellSnap = window.__WRD_SHELL__?.snapshot?.();
+    if (shellSnap?.marks?.length) {
+      shellSnap.marks.forEach((mark) => {
+        StartupTelemetry.mark(mark.name, mark.detail || null);
+      });
+    }
+    if (typeof performance !== 'undefined' && performance.getEntriesByType) {
+      StartupTelemetry.recordResources(performance.getEntriesByType('resource') || []);
+    }
+  }
 
   const ViewerBootstrap = (typeof createViewerBootstrap === 'function')
     ? createViewerBootstrap({

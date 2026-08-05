@@ -16,6 +16,11 @@ const {
   buildViewerBootstrapSnapshot,
   projectLegacyWebrtcConfig,
 } = require('./lib/viewer-bootstrap');
+const {
+  loadWebAssetManifest,
+  createWebAssetMiddleware,
+} = require('./lib/web-assets');
+const { buildWebClient } = require('./scripts/build-web-client');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
 const {
   setupSignaling,
@@ -119,14 +124,33 @@ function createServerApp(options = {}) {
   }));
 
   const webClientPath = path.join(__dirname, '..', 'web-client');
-  app.use(express.static(webClientPath, {
-    setHeaders: (res) => {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
+  const webClientDistPath = options.webClientDistPath
+    || path.join(webClientPath, 'dist');
+  let webAssetManifest = options.webAssetManifest || null;
+  if (!webAssetManifest) {
+    try {
+      webAssetManifest = loadWebAssetManifest({ distDir: webClientDistPath });
+    } catch (_error) {
+      webAssetManifest = null;
     }
-  }));
-  logger.log?.('Serving static files from:', webClientPath);
+  }
+  if (webAssetManifest) {
+    app.use(createWebAssetMiddleware({
+      express,
+      distDir: webClientDistPath,
+      manifest: webAssetManifest,
+    }));
+    logger.log?.('Serving generated web assets from:', webClientDistPath);
+  } else {
+    app.use(express.static(webClientPath, {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      },
+    }));
+    logger.log?.('Serving static files from:', webClientPath);
+  }
 
   const io = new Server(server, {
     cors: {
@@ -366,12 +390,27 @@ function startServer(options = {}) {
   return runtime;
 }
 
+async function startServerFromSource(options = {}) {
+  const projectRoot = path.join(__dirname, '..');
+  const build = options.buildWebClient || buildWebClient;
+  const start = options.startServer || startServer;
+  await build({
+    sourceDir: path.join(projectRoot, 'web-client'),
+    outDir: path.join(projectRoot, 'web-client', 'dist'),
+  });
+  return start(options.serverOptions || {});
+}
+
 if (require.main === module) {
-  startServer();
+  startServerFromSource().catch((error) => {
+    console.error('[web-assets] build failed:', error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = {
   createServerApp,
   startServer,
+  startServerFromSource,
   requireAccessToken,
 };

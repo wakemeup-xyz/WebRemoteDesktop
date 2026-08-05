@@ -62,3 +62,13 @@ test('generated HTML revalidates and hashed assets are immutable', async () => {
   assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
   await new Promise((resolve) => server.close(resolve));
 });
+
+test('executable startup builds assets before creating the listening server', async () => {
+  const { startServerFromSource } = require('../server');
+  const calls = [];
+  await startServerFromSource({
+    buildWebClient: async () => { calls.push('build'); },
+    startServer: () => { calls.push('listen'); return {}; },
+  });
+  assert.deepEqual(calls, ['build', 'listen']);
+});
