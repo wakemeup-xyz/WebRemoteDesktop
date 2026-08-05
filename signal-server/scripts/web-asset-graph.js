@@ -11,6 +11,7 @@ module.exports = Object.freeze({
     'js/media-activity-runtime.js',
     'js/stun-port-search-controller.js',
     'js/turn-selftest.js',
+    'js/bootstrap-controller.js',
     'js/webrtc.js',
     'js/input-geometry.js',
     'js/keyboard-transport.js',
