@@ -46,6 +46,7 @@ env/
 # Node modules
 node_modules/
 package-lock.json
+!signal-server/package-lock.json
 yarn.lock
 
 # Build files
