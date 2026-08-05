@@ -223,6 +223,23 @@ test('/api/webrtc-config returns ICE settings plus capability and public entry m
       formalEntryMode: 'fixed-domain',
       quickTunnelRecommended: false,
     });
+    assert.match(response.headers.get('cache-control') || '', /no-store/);
+
+    const unauthenticated = await fetch(`${baseUrl}/api/viewer-bootstrap`);
+    assert.equal(unauthenticated.status, 401);
+
+    const bootstrapResponse = await fetch(`${baseUrl}/api/viewer-bootstrap`, {
+      headers: {
+        Authorization: `Bearer ${signAccessToken('viewer', 'viewer-bootstrap-test')}`,
+      },
+    });
+    const bootstrapBody = await bootstrapResponse.json();
+    assert.equal(bootstrapResponse.status, 200);
+    assert.match(bootstrapResponse.headers.get('cache-control') || '', /no-store/);
+    assert.equal(bootstrapBody.schemaVersion, 1);
+    assert.equal(bootstrapBody.host.online, false);
+    assert.equal(bootstrapBody.webrtc.turnConfigured, true);
+    assert.deepEqual(bootstrapBody.webrtc.iceServers, body.iceServers);
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }

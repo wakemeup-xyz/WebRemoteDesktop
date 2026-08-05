@@ -11,10 +11,11 @@ const { createAuthRouter } = require('./routes/auth');
 const {
   loadConfig,
   getTurnStatus,
-  getPublicEntryConfig,
-  getMediaModeCapabilities,
-  listPublicTurnServers,
 } = require('./lib/config');
+const {
+  buildViewerBootstrapSnapshot,
+  projectLegacyWebrtcConfig,
+} = require('./lib/viewer-bootstrap');
 const { readBearerToken, verifyAccessToken } = require('./lib/auth');
 const {
   setupSignaling,
@@ -159,67 +160,40 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
+  function buildSnapshotForRequest(req) {
     const requestedTurnServerId = String(
       req.query.turnServerId
       || req.get('x-wrd-turn-server-id')
       || '',
     ).trim();
-    const turnState = getTurnStatus(config, { turnServerId: requestedTurnServerId });
-    const capabilities = getMediaModeCapabilities({
-      ...config,
-      turnUrls: turnState.turnUrls,
-      turnUsername: turnState.turnUsername,
-      turnCredential: turnState.turnCredential,
-      turnFingerprint: turnState.turnFingerprint,
-      turnSource: turnState.turnSource,
+    const connectionStatus = getConnectionStatus();
+    return buildViewerBootstrapSnapshot({
+      config,
+      hostCapabilities: getHostCapabilities(),
+      hostOnline: Boolean(connectionStatus.hostOnline),
+      turnServerId: requestedTurnServerId,
     });
-    const publicEntry = getPublicEntryConfig(config);
-    const hostCaps = getHostCapabilities();
-    const selectedTurnServerId = turnState.selectedTurnServerId
-      || config.selectedTurnServerId
-      || config.defaultTurnServerId
-      || '';
-    const defaultTurnServerId = turnState.defaultTurnServerId
-      || config.defaultTurnServerId
-      || '';
-    const turnServers = listPublicTurnServers(config, selectedTurnServerId);
+  }
 
-    const iceServers = [];
-    if (config.stunUrls.length) {
-      iceServers.push({ urls: config.stunUrls });
-    }
-    if (turnState.turnConfigured) {
-      iceServers.push({
-        urls: turnState.turnUrls,
-        username: turnState.turnUsername,
-        credential: turnState.turnCredential,
-      });
-    }
+  app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(projectLegacyWebrtcConfig(buildSnapshotForRequest(req)));
+  });
 
-    res.json({
-      stunUrls: config.stunUrls,
-      turnConfigured: turnState.turnConfigured,
-      turnMisconfigured: turnState.turnMisconfigured,
-      turnStatus: turnState.turnStatus,
-      turnSource: turnState.turnSource || config.turnSource || 'none',
-      turnFingerprint: turnState.turnConfigured
-        ? (turnState.turnFingerprint || config.turnFingerprint || '')
-        : '',
-      turnUrls: turnState.turnConfigured ? turnState.turnUrls : [],
-      turnServers,
-      selectedTurnServerId,
-      defaultTurnServerId,
-      hostTurnReady: Boolean(hostCaps.turnReady),
-      hostTurnFingerprint: hostCaps.turnFingerprint || '',
-      hostTurnServerId: hostCaps.turnServerId || hostCaps.defaultTurnServerId || '',
-      hostSupportsSessionTurn: Boolean(hostCaps.supportsSessionTurn),
-      hostSupportsMultiTurn: Boolean(hostCaps.supportsMultiTurn),
-      hostTurnServerIds: Array.isArray(hostCaps.turnServerIds) ? hostCaps.turnServerIds : [],
-      iceServers,
-      ...capabilities,
-      publicEntry,
+  app.get('/api/viewer-bootstrap', requireAccessToken, (req, res) => {
+    const startedAt = performance.now();
+    const snapshot = buildSnapshotForRequest(req);
+    res.setHeader('Cache-Control', 'no-store');
+    structuredLogger.info({
+      domain: 'viewer-bootstrap',
+      event: 'viewer_bootstrap_served',
+      meta: {
+        serverProcessMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        hostOnline: snapshot.host.online,
+        turnServerId: snapshot.webrtc.selectedTurnServerId,
+      },
     });
+    res.json(snapshot);
   });
 
   const turnSelfTestRunner = options.turnSelfTestRunner || createTurnSelfTestRunner();
