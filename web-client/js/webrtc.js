@@ -694,8 +694,11 @@ const WebRTC = {
     this.clearFirstFrameDeadline();
     this.syncDesktopInputGate();
     if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
-      StartupTelemetry.mark('first-frame');
-      StartupTelemetry.mark('active');
+      const names = new Set(
+        (StartupTelemetry.snapshot?.().marks || []).map((mark) => mark.name),
+      );
+      if (!names.has('first-frame')) StartupTelemetry.mark('first-frame');
+      if (!names.has('active')) StartupTelemetry.mark('active');
     }
     return true;
   },
@@ -4224,6 +4227,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const startHandler = WebRTC.createStartHandler(ViewerBootstrap);
   if (window.__WRD_SHELL__ && typeof window.__WRD_SHELL__.installCore === 'function') {
     window.__WRD_SHELL__.installCore(startHandler);
+  }
+  if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+    StartupTelemetry.mark('core-interactive');
+    const shellSnapAfter = window.__WRD_SHELL__?.snapshot?.();
+    if (shellSnapAfter?.marks?.length) {
+      shellSnapAfter.marks.forEach((mark) => {
+        if (mark?.name === 'core-interactive') return;
+        // Keep shell pre-core marks without duplicating core-interactive.
+        if (!StartupTelemetry.snapshot().marks.some((existing) => existing.name === mark.name)) {
+          StartupTelemetry.mark(mark.name, mark.detail || null);
+        }
+      });
+    }
   }
 
   const TerminalLoader = (typeof createTerminalLoader === 'function')
