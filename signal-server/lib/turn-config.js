@@ -127,8 +127,12 @@ function normalizeEntry(raw = {}, index = 0) {
   const remark = String(raw.remark || raw.label || '').trim();
   const realm = String(raw.realm || '').trim();
   const region = String(raw.region || '').trim();
-  let priority = Number(raw.priority);
-  if (!Number.isFinite(priority)) priority = 0;
+  // Priority is an integer only (matches python-host/turn_catalog.py).
+  let priority = 0;
+  if (raw.priority != null && raw.priority !== '') {
+    const parsed = Number.parseInt(String(raw.priority), 10);
+    priority = Number.isFinite(parsed) ? parsed : 0;
+  }
   const explicitId = sanitizeTurnId(raw.id);
   const entry = {
     id: explicitId,

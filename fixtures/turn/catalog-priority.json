@@ -1,0 +1,35 @@
+{
+  "defaultId": "high",
+  "turnServers": [
+    {
+      "id": "low",
+      "host": "1.1.1.1",
+      "port": 3478,
+      "username": "u-low",
+      "password": "p-low",
+      "transport": "udp",
+      "priority": "1.9",
+      "remark": "low-float-as-int"
+    },
+    {
+      "id": "high",
+      "host": "2.2.2.2",
+      "port": 3478,
+      "username": "u-high",
+      "password": "p-high",
+      "transport": "udp",
+      "priority": 10,
+      "remark": "high-int"
+    },
+    {
+      "id": "bad",
+      "host": "3.3.3.3",
+      "port": 3478,
+      "username": "u-bad",
+      "password": "p-bad",
+      "transport": "udp",
+      "priority": "nope",
+      "remark": "bad-priority"
+    }
+  ]
+}

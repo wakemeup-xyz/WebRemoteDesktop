@@ -158,7 +158,9 @@ def normalize_entry(raw: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
     realm = str(raw.get("realm") or "").strip()
     region = str(raw.get("region") or "").strip()
     try:
-        priority = int(raw.get("priority"))
+        # Integer priority only; numeric strings like "1.9" truncate toward zero
+        # to match signal-server parseInt/Number truncation contract.
+        priority = int(float(str(raw.get("priority"))))
     except (TypeError, ValueError):
         priority = 0
     explicit_id = sanitize_turn_id(raw.get("id"))
