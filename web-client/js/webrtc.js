@@ -1440,6 +1440,10 @@ const WebRTC = {
     this.socket = io(socketBase, {
       auth: { token, role: 'viewer', inputProtocolVersion: 2 },
       reconnection: !this._superseded,
+      // Prefer WebSocket to avoid multi-round polling on high-latency formal entry.
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
     });
     this.setupSocketListeners();
     return this.socket;

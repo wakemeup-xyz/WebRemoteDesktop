@@ -81,7 +81,10 @@ async function buildWebClient({ sourceDir, outDir }) {
       viewerHtml,
       '<!-- WRD_BUILD_HEAD_START -->',
       '<!-- WRD_BUILD_HEAD_END -->',
-      `<link rel="stylesheet" href="/${assets.viewerCss}">`,
+      [
+        `<link rel="preload" href="/${assets.desktopJs}" as="script">`,
+        `<link rel="stylesheet" href="/${assets.viewerCss}">`,
+      ].join('\n'),
     );
     viewerHtml = replaceBlock(
       viewerHtml,
@@ -95,10 +98,12 @@ async function buildWebClient({ sourceDir, outDir }) {
     );
 
     // Validate critical request graph before publish.
+    // Allow one stylesheet and optional preload link; exactly one script src.
     if ((viewerHtml.match(/<script[^>]+src=/g) || []).length !== 1) {
       throw new Error('critical HTML must reference exactly one script src');
     }
-    if ((viewerHtml.match(/<link[^>]+stylesheet/g) || []).length !== 1) {
+    const stylesheetCount = (viewerHtml.match(/<link[^>]+rel=["']stylesheet["']/g) || []).length;
+    if (stylesheetCount !== 1) {
       throw new Error('critical HTML must reference exactly one stylesheet');
     }
     if (/cdn\.jsdelivr\.net|cdn\.socket\.io|fonts\.googleapis\.com|fonts\.gstatic\.com/.test(viewerHtml)) {

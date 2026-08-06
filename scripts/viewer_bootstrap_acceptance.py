@@ -379,16 +379,22 @@ def classify_failure_stage(error):
         return "stable-non-black"
     if "signal-connected" in text:
         return "signal-connected"
-    if "active" in text:
+    if "active" in text and "mark" not in text:
         return "first-frame-active"
     if "core-interactive" in text or "webrtc" in text:
         return "core-interactive"
-    if "startbtn" in text or "goto" in text or "navigation" in text or "timeout" in text and "viewer" in text:
+    if "wait_for_function" in text and "5000" in text:
+        return "bounded-wait-5s"
+    if "wait_for_function" in text and "8000" in text:
+        return "bounded-wait-8s"
+    if "startbtn" in text or "goto" in text or "navigation" in text:
         return "html-or-navigation"
     if "feedback" in text:
         return "immediate-start-feedback"
     if "mark" in text:
         return "startup-marks"
+    if "timeout" in text:
+        return "timeout"
     return "unknown"
 
 

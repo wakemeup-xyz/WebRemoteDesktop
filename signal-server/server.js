@@ -4,6 +4,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 const proxyaddr = require('proxy-addr');
 const { Server } = require('socket.io');
@@ -106,6 +107,10 @@ function createServerApp(options = {}) {
 
   app.set('trust proxy', trustLoopbackProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(compression({
+    // Compress HTML/JS/CSS; skip already-tiny or precompressed payloads.
+    threshold: 1024,
+  }));
   app.use(cors({
     origin(origin, callback) {
       if (!origin || config.corsOrigins.length === 0 || config.corsOrigins.includes('*') || config.corsOrigins.includes(origin)) {

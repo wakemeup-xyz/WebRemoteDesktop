@@ -31,7 +31,8 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   const html = fs.readFileSync(path.join(outA, 'viewer.html'), 'utf8');
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdn\.socket\.io|fonts\.googleapis\.com|fonts\.gstatic\.com/);
   assert.equal((html.match(/<script[^>]+src=/g) || []).length, 1);
-  assert.equal((html.match(/<link[^>]+stylesheet/g) || []).length, 1);
+  assert.equal((html.match(/<link[^>]+rel=["']stylesheet["']/g) || []).length, 1);
+  assert.match(html, /rel="preload"[^>]+as="script"/);
   assert.match(html, new RegExp(a.assets.desktopJs.replaceAll('.', '\\.')));
   assert.doesNotMatch(
     html,
