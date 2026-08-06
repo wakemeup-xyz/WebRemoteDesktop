@@ -5,9 +5,29 @@
     startHandler: null,
     marks: [],
   };
+
+  function nowMs() {
+    if (global.performance && typeof global.performance.now === 'function') {
+      return global.performance.now();
+    }
+    return 0;
+  }
+
+  function mark(name, detail = null) {
+    state.marks.push({
+      name: String(name).slice(0, 64),
+      atMs: Math.round(nowMs() * 100) / 100,
+      detail: detail == null ? null : detail,
+    });
+  }
+
+  // Record HTML parse / shell availability immediately — never backfilled later.
+  mark('html-shell');
+
+  const CORE_DEADLINE_MS = 5000;
   const deadline = global.setTimeout(() => {
     if (!state.coreInstalled) failCore('页面资源加载超时');
-  }, 8000);
+  }, CORE_DEADLINE_MS);
 
   function setCoreControlsDisabled(disabled) {
     const nodes = global.document.querySelectorAll('[data-core-control]');
@@ -22,9 +42,6 @@
   }
 
   function element(id) { return global.document.getElementById(id); }
-  function mark(name, detail = null) {
-    state.marks.push({ name, at: global.performance?.now?.() || 0, detail });
-  }
   function setText(text) {
     const target = element('loadingText');
     if (target) target.textContent = text;
@@ -57,6 +74,11 @@
     acknowledgeStartClick,
     installCore,
     failCore,
-    snapshot: () => ({ ...state, marks: state.marks.slice() }),
+    coreDeadlineMs: CORE_DEADLINE_MS,
+    snapshot: () => ({
+      coreInstalled: state.coreInstalled,
+      queuedStart: state.queuedStart,
+      marks: state.marks.map((entry) => ({ ...entry })),
+    }),
   };
 })(typeof window !== 'undefined' ? window : globalThis);

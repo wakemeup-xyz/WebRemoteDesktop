@@ -1,6 +1,11 @@
 function createStartupTelemetry({ now = () => performance.now(), origin = (typeof location !== 'undefined' ? location.origin : '') } = {}) {
   const marks = [];
   let resources = [];
+
+  function hasMark(name) {
+    return marks.some((entry) => entry.name === name);
+  }
+
   return {
     mark(name, detail = null) {
       if (marks.length >= 64) return false;
@@ -10,6 +15,27 @@ function createStartupTelemetry({ now = () => performance.now(), origin = (typeo
         detail: detail == null ? null : detail,
       });
       return true;
+    },
+    /**
+     * Import pre-core marks with their original performance timestamps.
+     * Never rewrites an existing mark name; never invents times with `now()`.
+     */
+    importMarks(entries = []) {
+      let imported = 0;
+      for (const entry of entries || []) {
+        if (!entry || !entry.name || hasMark(entry.name)) continue;
+        if (marks.length >= 64) break;
+        const atRaw = entry.atMs != null ? entry.atMs : entry.at;
+        marks.push({
+          name: String(entry.name).slice(0, 64),
+          atMs: Math.round(Number(atRaw || 0) * 100) / 100,
+          detail: entry.detail == null ? null : entry.detail,
+        });
+        imported += 1;
+      }
+      // Keep chronological order by original performance time.
+      marks.sort((a, b) => a.atMs - b.atMs);
+      return imported;
     },
     recordResources(entries = []) {
       resources = entries.flatMap((entry) => {
@@ -26,9 +52,29 @@ function createStartupTelemetry({ now = () => performance.now(), origin = (typeo
       }).sort((a, b) => b.durationMs - a.durationMs).slice(0, 10);
     },
     snapshot() {
+      const shellMarks = (typeof globalThis !== 'undefined'
+        && globalThis.__WRD_SHELL__
+        && typeof globalThis.__WRD_SHELL__.snapshot === 'function')
+        ? (globalThis.__WRD_SHELL__.snapshot().marks || [])
+        : [];
+      // Merge shell marks by name without changing their original atMs.
+      const byName = new Map();
+      for (const entry of shellMarks) {
+        if (!entry?.name || byName.has(entry.name)) continue;
+        const atRaw = entry.atMs != null ? entry.atMs : entry.at;
+        byName.set(entry.name, {
+          name: String(entry.name).slice(0, 64),
+          atMs: Math.round(Number(atRaw || 0) * 100) / 100,
+          detail: entry.detail == null ? null : entry.detail,
+        });
+      }
+      for (const entry of marks) {
+        if (!byName.has(entry.name)) byName.set(entry.name, entry);
+      }
+      const merged = [...byName.values()].sort((a, b) => a.atMs - b.atMs);
       return {
         schemaVersion: 1,
-        marks: marks.slice(),
+        marks: merged,
         resources: resources.slice(),
       };
     },

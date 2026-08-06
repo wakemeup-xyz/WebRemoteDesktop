@@ -4165,15 +4165,14 @@ function bootViewerShell() {
   if (window.__WRD_VIEWER_BOOTED__) return;
   window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
-  if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
-    StartupTelemetry.mark('html-shell');
+  if (typeof StartupTelemetry !== 'undefined') {
+    // Import ShellGuard marks with original performance timestamps only.
     const shellSnap = window.__WRD_SHELL__?.snapshot?.();
-    if (shellSnap?.marks?.length) {
-      shellSnap.marks.forEach((mark) => {
-        StartupTelemetry.mark(mark.name, mark.detail || null);
-      });
+    if (shellSnap?.marks?.length && typeof StartupTelemetry.importMarks === 'function') {
+      StartupTelemetry.importMarks(shellSnap.marks);
     }
-    if (typeof performance !== 'undefined' && performance.getEntriesByType) {
+    if (typeof performance !== 'undefined' && performance.getEntriesByType
+      && typeof StartupTelemetry.recordResources === 'function') {
       StartupTelemetry.recordResources(performance.getEntriesByType('resource') || []);
     }
   }
@@ -4230,17 +4229,10 @@ function bootViewerShell() {
   if (window.__WRD_SHELL__ && typeof window.__WRD_SHELL__.installCore === 'function') {
     window.__WRD_SHELL__.installCore(startHandler);
   }
-  if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
-    StartupTelemetry.mark('core-interactive');
+  if (typeof StartupTelemetry !== 'undefined' && typeof StartupTelemetry.importMarks === 'function') {
     const shellSnapAfter = window.__WRD_SHELL__?.snapshot?.();
     if (shellSnapAfter?.marks?.length) {
-      shellSnapAfter.marks.forEach((mark) => {
-        if (mark?.name === 'core-interactive') return;
-        // Keep shell pre-core marks without duplicating core-interactive.
-        if (!StartupTelemetry.snapshot().marks.some((existing) => existing.name === mark.name)) {
-          StartupTelemetry.mark(mark.name, mark.detail || null);
-        }
-      });
+      StartupTelemetry.importMarks(shellSnapAfter.marks);
     }
   }
 
