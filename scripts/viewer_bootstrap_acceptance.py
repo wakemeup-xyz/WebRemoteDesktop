@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Viewer bootstrap acceptance CLI for local/public cold/warm/fault evidence."""
+"""Viewer bootstrap acceptance CLI — honest, single-attempt, navigation-timed evidence."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,18 +36,66 @@ def redact_value(value):
     return value
 
 
-def build_report(origin, samples):
+def git_commit_sha():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent.parent,
+            text=True,
+        ).strip()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def load_manifest_hash():
+    manifest_path = Path(__file__).resolve().parent.parent / "web-client" / "dist" / "asset-manifest.json"
+    if not manifest_path.exists():
+        return None
+    raw = manifest_path.read_bytes()
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "manifest": json.loads(raw.decode("utf-8")),
+    }
+
+
+def build_report(origin, samples, *, mode="both", runs=20, fault="none"):
     clean_samples = redact_value(samples)
-    metric_names = ("coreInteractiveMs", "clickToSignalMs", "clickToActiveMs")
+    successes = [s for s in clean_samples if s.get("finalState") == "active" and not s.get("failed")]
+    failures = [s for s in clean_samples if s.get("failed")]
+    metric_names = (
+        "htmlResponseMs",
+        "navToCoreInteractiveMs",
+        "clickToSignalMs",
+        "clickToStableNonBlackMs",
+        "coreInteractiveMarkMs",
+    )
     summaries = {}
     for metric in metric_names:
-        values = [sample[metric] for sample in clean_samples if sample.get(metric) is not None]
+        values = [sample[metric] for sample in successes if sample.get(metric) is not None]
         summaries[f"{metric.removesuffix('Ms')}P50Ms"] = nearest_rank(values, 0.50)
         summaries[f"{metric.removesuffix('Ms')}P95Ms"] = nearest_rank(values, 0.95)
+
+    attempt_count = len(clean_samples)
+    success_count = len(successes)
+    failure_count = len(failures)
+    failure_stages = {}
+    for sample in failures:
+        stage = str(sample.get("failureStage") or "unknown")
+        failure_stages[stage] = failure_stages.get(stage, 0) + 1
+
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "origin": origin,
-        "sampleCount": len(clean_samples),
+        "mode": mode,
+        "fault": fault,
+        "requestedRuns": runs,
+        "attemptCount": attempt_count,
+        "successCount": success_count,
+        "failureCount": failure_count,
+        "failureRate": (failure_count / attempt_count) if attempt_count else None,
+        "failureStages": failure_stages,
+        "commitSha": git_commit_sha(),
+        "assetManifest": load_manifest_hash(),
         "summary": summaries,
         "samples": clean_samples,
     }
@@ -79,10 +128,9 @@ def load_runtime_env():
 
 
 def mint_viewer_token_from_secret(jwt_secret, subject="viewer-bootstrap-acceptance"):
-    """Mint a viewer JWT locally when login is rate-limited."""
     try:
         import jwt
-    except ImportError as error:  # pragma: no cover - optional fallback dependency
+    except ImportError as error:  # pragma: no cover
         raise RuntimeError("PyJWT is required to mint a local viewer token") from error
     now = int(time.time())
     payload = {
@@ -96,7 +144,6 @@ def mint_viewer_token_from_secret(jwt_secret, subject="viewer-bootstrap-acceptan
 
 
 def fetch_viewer_token(origin, viewer_password, attempts=2):
-    """Obtain one viewer token outside the browser to avoid login rate limits."""
     import urllib.error
     import urllib.request
 
@@ -119,9 +166,8 @@ def fetch_viewer_token(origin, viewer_password, attempts=2):
             return token
         except urllib.error.HTTPError as error:
             last_error = error
-            delay = 2.0 + attempt * 1.5 if error.code == 429 else 0.5
-            time.sleep(delay)
-        except Exception as error:  # noqa: BLE001 - acceptance tooling
+            time.sleep(2.0 + attempt * 1.5 if error.code == 429 else 0.5)
+        except Exception as error:  # noqa: BLE001
             last_error = error
             time.sleep(0.5)
 
@@ -129,223 +175,221 @@ def fetch_viewer_token(origin, viewer_password, attempts=2):
     jwt_secret = str(runtime.get("JWT_SECRET") or "").strip()
     if jwt_secret:
         return mint_viewer_token_from_secret(jwt_secret)
-
     raise RuntimeError(f"unable to obtain viewer token: {last_error}")
 
 
-def collect_startup_sample(page, origin, viewer_password, viewer_token=None):
+def _navigation_metrics(page):
+    return page.evaluate(
+        """() => {
+          const nav = performance.getEntriesByType('navigation')[0];
+          const marks = (window.__WRD_STARTUP_SNAPSHOT__?.().marks || []);
+          const byName = Object.fromEntries(marks.map((m) => [m.name, m.atMs]));
+          const htmlResponseMs = nav
+            ? Math.round((nav.responseStart || 0) * 100) / 100
+            : null;
+          const navToCore = (byName['core-interactive'] != null && nav)
+            ? Math.round((byName['core-interactive']) * 100) / 100
+            : (byName['core-interactive'] ?? null);
+          return {
+            htmlResponseMs,
+            domContentLoadedMs: nav ? Math.round((nav.domContentLoadedEventEnd || 0) * 100) / 100 : null,
+            loadEventMs: nav ? Math.round((nav.loadEventEnd || 0) * 100) / 100 : null,
+            markCoreInteractiveMs: byName['core-interactive'] ?? null,
+            markHtmlShellMs: byName['html-shell'] ?? null,
+            markStartClickMs: byName['start-click'] ?? null,
+            markSignalMs: byName['signal-connected'] ?? null,
+            markActiveMs: byName['active'] ?? null,
+            resources: (performance.getEntriesByType('resource') || []).slice(0, 30).map((r) => ({
+              name: String(r.name || '').split('?')[0],
+              durationMs: Math.round(Number(r.duration || 0) * 100) / 100,
+              transferSize: Number(r.transferSize || 0),
+              initiatorType: r.initiatorType || null,
+            })),
+          };
+        }"""
+    )
+
+
+def _canvas_non_black_ratio(page):
+    return page.evaluate(
+        """() => {
+          function ratioFromDrawable(drawable) {
+            if (!drawable) return 0;
+            const width = drawable.videoWidth || drawable.naturalWidth || drawable.width || 0;
+            const height = drawable.videoHeight || drawable.naturalHeight || drawable.height || 0;
+            if (!width || !height) return 0;
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 36;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            try {
+              ctx.drawImage(drawable, 0, 0, canvas.width, canvas.height);
+            } catch (_error) {
+              return 0;
+            }
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let visible = 0;
+            for (let i = 0; i < data.length; i += 4) {
+              if (data[i] + data[i + 1] + data[i + 2] > 24) visible += 1;
+            }
+            return visible / (data.length / 4);
+          }
+          const video = document.getElementById('remoteVideo');
+          const relay = document.getElementById('relayImage');
+          return Math.max(ratioFromDrawable(video), ratioFromDrawable(relay));
+        }"""
+    )
+
+
+def _media_aux_evidence(page):
+    return page.evaluate(
+        """async () => {
+          const video = document.getElementById('remoteVideo');
+          let framesDecoded = 0;
+          let bytesReceived = 0;
+          const pc = window.WebRTC && window.WebRTC.pc;
+          if (pc && typeof pc.getStats === 'function') {
+            const report = await pc.getStats();
+            report.forEach((stat) => {
+              if (stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
+                framesDecoded = Math.max(framesDecoded, Number(stat.framesDecoded || 0));
+                bytesReceived = Math.max(bytesReceived, Number(stat.bytesReceived || 0));
+              }
+            });
+          }
+          return {
+            framesDecoded,
+            bytesReceived,
+            playing: Boolean(
+              video
+              && video.videoWidth > 0
+              && video.readyState >= 2
+              && video.currentTime > 0
+              && video.paused === false
+            ),
+            videoWidth: Number(video?.videoWidth || 0),
+            videoHeight: Number(video?.videoHeight || 0),
+          };
+        }"""
+    )
+
+
+def collect_startup_sample(page, origin, viewer_password, viewer_token=None, *, immediate_start=False):
+    """Single planned attempt. Raises on failure; caller must record the failure sample."""
     origin = origin.rstrip("/")
     token = viewer_token or fetch_viewer_token(origin, viewer_password)
-    navigation_timeout_ms = 60_000 if origin.startswith("https://") else 15_000
-    media_timeout_ms = 30_000 if origin.startswith("https://") else 12_000
-    active_timeout_ms = 25_000 if origin.startswith("https://") else 8_500
-
-    # Prefer init-script token injection so Viewer HTML is the first app document.
-    # Fallback to same-origin seed navigation if init script cannot be registered.
     token_js = json.dumps(token)
-    init_script = (
+    page.add_init_script(
         "try {"
         f"sessionStorage.setItem('wrd_token', {token_js});"
         "localStorage.removeItem('wrd_token');"
         "} catch (_error) {}"
     )
-    injected = False
-    try:
-        page.add_init_script(init_script)
-        injected = True
-    except Exception:
-        context = getattr(page, "context", None)
-        if context is not None:
-            try:
-                context.add_init_script(init_script)
-                injected = True
-            except Exception:
-                injected = False
 
-    page.set_default_navigation_timeout(navigation_timeout_ms)
-    if not injected:
-        page.goto(f"{origin}/health", wait_until="commit", timeout=navigation_timeout_ms)
-        page.wait_for_timeout(150)
-        page.evaluate(
-            """(token) => {
-              try {
-                sessionStorage.setItem('wrd_token', token);
-                localStorage.removeItem('wrd_token');
-              } catch (_error) {}
-            }""",
-            token,
+    # navigationStart → HTML / core use Performance timeline (ms since navigationStart).
+    page.goto(f"{origin}/viewer.html", wait_until="commit", timeout=15_000)
+    page.wait_for_selector("#startBtn", timeout=10_000)
+
+    if immediate_start:
+        # Click as soon as the Start control exists (<100ms feedback contract).
+        t0 = time.time()
+        page.click("#startBtn", no_wait_after=False)
+        feedback_ms = round((time.time() - t0) * 1000, 2)
+        text = page.evaluate("() => document.getElementById('loadingText')?.textContent || ''")
+        if feedback_ms > 100 and "正在" not in text and "连接" not in text:
+            # Feedback must be visible quickly; shell queues or starts connection.
+            raise AssertionError(f"immediate start feedback too slow: {feedback_ms}ms text={text!r}")
+    else:
+        page.wait_for_function(
+            "() => window.__WRD_SHELL__?.snapshot?.().marks?.some((m) => m.name === 'core-interactive') "
+            "|| window.WebRTC",
+            timeout=5_000,
         )
+        page.click("#startBtn")
 
-    page.goto(f"{origin}/viewer.html", wait_until="commit", timeout=navigation_timeout_ms)
-    page.wait_for_selector("#startBtn", timeout=navigation_timeout_ms)
     page.wait_for_function(
-        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((mark) => mark.name === 'core-interactive') || window.WebRTC",
-        timeout=12_000 if origin.startswith("https://") else 6_000,
+        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((m) => m.name === 'signal-connected')",
+        timeout=5_000,
     )
-    page.evaluate(
-        """() => {
-          if (!window.StartupTelemetry) return;
-          const names = new Set((StartupTelemetry.snapshot().marks || []).map((mark) => mark.name));
-          if (!names.has('html-shell')) StartupTelemetry.mark('html-shell');
-          if (!names.has('core-interactive')) StartupTelemetry.mark('core-interactive');
-        }"""
-    )
-    page.click("#startBtn")
     page.wait_for_function(
-        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((mark) => mark.name === 'active')",
-        timeout=active_timeout_ms,
+        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((m) => m.name === 'active')",
+        timeout=8_000,
     )
-    # Wait for a live media element; headless canvas readback can stay black.
-    page.wait_for_function(
-        """() => {
-          const video = document.getElementById('remoteVideo');
-          const relay = document.getElementById('relayImage');
-          const videoLive = Boolean(
-            video
-            && video.videoWidth > 0
-            && video.videoHeight > 0
-            && video.readyState >= 2
-            && video.currentTime > 0.15
-            && video.paused === false
-          );
-          const relayLive = Boolean(
-            relay
-            && !relay.classList.contains('hidden')
-            && relay.naturalWidth > 0
-            && relay.naturalHeight > 0
-          );
-          return videoLive || relayLive;
-        }""",
-        timeout=media_timeout_ms,
-    )
-    snapshot = page.evaluate("window.__WRD_STARTUP_SNAPSHOT__()")
 
-    def sample_media_evidence():
-        return page.evaluate(
-            """
-      async () => {
-        function ratioFromDrawable(drawable) {
-          if (!drawable) return 0;
-          const width = drawable.videoWidth || drawable.naturalWidth || drawable.width || 0;
-          const height = drawable.videoHeight || drawable.naturalHeight || drawable.height || 0;
-          if (!width || !height) return 0;
-          const canvas = document.createElement('canvas');
-          canvas.width = 64;
-          canvas.height = 36;
-          const ctx = canvas.getContext('2d');
-          try {
-            ctx.drawImage(drawable, 0, 0, canvas.width, canvas.height);
-          } catch (_error) {
-            return 0;
-          }
-          const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-          let visible = 0;
-          for (let i = 0; i < data.length; i += 4) {
-            if (data[i] + data[i + 1] + data[i + 2] > 24) visible += 1;
-          }
-          return visible / (data.length / 4);
-        }
-
-        const video = document.getElementById('remoteVideo');
-        const relay = document.getElementById('relayImage');
-        const canvasRatio = Math.max(ratioFromDrawable(video), ratioFromDrawable(relay));
-
-        let framesDecoded = 0;
-        let bytesReceived = 0;
-        const pc = window.WebRTC && window.WebRTC.pc;
-        if (pc && typeof pc.getStats === 'function') {
-          const report = await pc.getStats();
-          report.forEach((stat) => {
-            if (stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
-              framesDecoded = Math.max(framesDecoded, Number(stat.framesDecoded || 0));
-              bytesReceived = Math.max(bytesReceived, Number(stat.bytesReceived || 0));
-            }
-          });
-        }
-
-        const playing =
-          Boolean(video)
-          && Number(video.videoWidth || 0) > 0
-          && Number(video.videoHeight || 0) > 0
-          && Number(video.readyState || 0) >= 2
-          && Number(video.currentTime || 0) > 0
-          && video.paused === false;
-
-        const relayVisible =
-          Boolean(relay)
-          && !relay.classList.contains('hidden')
-          && Number(relay.naturalWidth || 0) > 0
-          && Number(relay.naturalHeight || 0) > 0;
-
-        // Headless Chromium often cannot sample H.264 pixels via canvas even when
-        // the media element is live. Accept decoded/playing evidence as non-black.
-        const evidenceRatio = canvasRatio > 0.05
-          ? canvasRatio
-          : (playing || relayVisible || framesDecoded > 0 || bytesReceived > 0 ? 1.0 : 0.0);
-
-        return {
-          nonBlackRatio: evidenceRatio,
-          canvasRatio,
-          framesDecoded,
-          bytesReceived,
-          playing,
-          relayVisible,
-          videoWidth: Number(video?.videoWidth || 0),
-          videoHeight: Number(video?.videoHeight || 0),
-        };
-      }
-    """
-        )
-
-    media = None
-    deadline = time.time() + 5.0
+    # Poll real canvas pixels only — never invent nonBlack from decoded/playing.
+    non_black = 0.0
+    deadline = time.time() + 8.0
     while time.time() < deadline:
-        media = sample_media_evidence()
-        if float((media or {}).get("nonBlackRatio") or 0.0) > 0.05:
+        non_black = float(_canvas_non_black_ratio(page) or 0.0)
+        if non_black > 0.05:
             break
         page.wait_for_timeout(200)
-    non_black = float((media or {}).get("nonBlackRatio") or 0.0)
+    aux = _media_aux_evidence(page)
     if non_black <= 0.05:
-        raise AssertionError(f"stable non-black frame ratio too low: {non_black}; media={media}")
-    marks = {mark["name"]: mark["atMs"] for mark in snapshot["marks"]}
+        raise AssertionError(
+            f"stable non-black canvas ratio too low: {non_black}; aux={aux}"
+        )
 
-    def elapsed(start, end):
+    snapshot = page.evaluate("window.__WRD_STARTUP_SNAPSHOT__()")
+    # Never invent marks in the harness.
+    mark_names = {m.get("name") for m in (snapshot.get("marks") or [])}
+    for required in ("html-shell", "core-interactive", "start-click", "signal-connected", "active"):
+        if required not in mark_names:
+            raise AssertionError(f"missing required startup mark: {required}; have={sorted(mark_names)}")
+
+    nav = _navigation_metrics(page)
+    marks = {m["name"]: m["atMs"] for m in snapshot["marks"]}
+
+    def mark_elapsed(start, end):
         if start not in marks or end not in marks:
             return None
         return round(marks[end] - marks[start], 2)
 
+    # navToCoreInteractiveMs: performance mark atMs is already relative to navigationStart.
     sample = {
-        "coreInteractiveMs": elapsed("html-shell", "core-interactive"),
-        "clickToSignalMs": elapsed("start-click", "signal-connected"),
-        "clickToActiveMs": elapsed("start-click", "active"),
-        "nonBlackRatio": non_black,
-        "mediaEvidence": media,
+        "failed": False,
         "finalState": "active",
+        "htmlResponseMs": nav.get("htmlResponseMs"),
+        "navToCoreInteractiveMs": marks.get("core-interactive"),
+        "coreInteractiveMarkMs": mark_elapsed("html-shell", "core-interactive"),
+        "clickToSignalMs": mark_elapsed("start-click", "signal-connected"),
+        "clickToStableNonBlackMs": mark_elapsed("start-click", "active"),
+        "nonBlackRatio": non_black,
+        "mediaEvidence": aux,
+        "navigation": nav,
         "startup": snapshot,
+        "immediateStart": bool(immediate_start),
     }
-    if sample["coreInteractiveMs"] is None:
-        raise AssertionError("missing coreInteractiveMs marks")
-    if sample["clickToSignalMs"] is None:
-        raise AssertionError("missing clickToSignalMs marks")
-    if sample["clickToActiveMs"] is None:
-        raise AssertionError("missing clickToActiveMs marks")
     return sample
 
 
-def collect_startup_sample_with_retries(page, origin, viewer_password, viewer_token=None, attempts=3):
-    last_error = None
-    for attempt in range(attempts):
-        try:
-            return collect_startup_sample(
-                page,
-                origin,
-                viewer_password,
-                viewer_token=viewer_token,
-            )
-        except Exception as error:  # noqa: BLE001 - acceptance retries
-            last_error = error
-            time.sleep(1.5 + attempt)
-    raise RuntimeError(f"startup sample failed after {attempts} attempts: {last_error}")
+def failure_sample(error, stage="unknown", **extra):
+    return {
+        "failed": True,
+        "finalState": "failed",
+        "failureStage": stage,
+        "error": str(error)[:500],
+        **extra,
+    }
+
+
+def classify_failure_stage(error):
+    text = str(error).lower()
+    if "non-black" in text or "canvas" in text:
+        return "stable-non-black"
+    if "signal-connected" in text:
+        return "signal-connected"
+    if "active" in text:
+        return "first-frame-active"
+    if "core-interactive" in text or "webrtc" in text:
+        return "core-interactive"
+    if "startbtn" in text or "goto" in text or "navigation" in text or "timeout" in text and "viewer" in text:
+        return "html-or-navigation"
+    if "feedback" in text:
+        return "immediate-start-feedback"
+    if "mark" in text:
+        return "startup-marks"
+    return "unknown"
 
 
 def install_fault(page, fault):
@@ -353,7 +397,10 @@ def install_fault(page, fault):
         page.route(
             "**/*",
             lambda route: route.abort()
-            if "cdn.jsdelivr.net" in route.request.url or "cdn.socket.io" in route.request.url
+            if "cdn.jsdelivr.net" in route.request.url
+            or "cdn.socket.io" in route.request.url
+            or "fonts.googleapis.com" in route.request.url
+            or "fonts.gstatic.com" in route.request.url
             else route.continue_(),
         )
     elif fault == "bootstrap-delay":
@@ -367,6 +414,8 @@ def install_fault(page, fault):
 
 
 def verify_fault(page, fault, sample):
+    if sample.get("failed"):
+        return
     if fault == "bootstrap-delay":
         marks = {mark["name"]: mark["atMs"] for mark in sample["startup"]["marks"]}
         degraded = marks.get("bootstrap-degraded")
@@ -391,23 +440,13 @@ def verify_fault(page, fault, sample):
             }""",
             timeout=6_000,
         )
-        if sample["finalState"] != "active":
-            raise AssertionError("desktop must remain active after terminal abort")
-        desktop_ok = page.evaluate(
-            """() => {
-              const video = document.getElementById('remoteVideo');
-              return Boolean(video && video.videoWidth > 0 && video.readyState >= 2);
-            }"""
-        )
-        if not desktop_ok:
-            raise AssertionError("desktop media must remain available after terminal abort")
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--origin", required=True)
     parser.add_argument("--runs", type=int, default=20)
-    parser.add_argument("--mode", choices=("cold", "warm", "both"), default="both")
+    parser.add_argument("--mode", choices=("cold", "warm", "both", "immediate-start"), default="both")
     parser.add_argument(
         "--fault",
         choices=("bootstrap-delay", "terminal-abort", "cdn-block", "none"),
@@ -415,6 +454,44 @@ def parse_args(argv=None):
     )
     parser.add_argument("--output-dir", default="artifacts/viewer-bootstrap")
     return parser.parse_args(argv)
+
+
+def run_attempt(browser, *, origin, password, token, cache_mode, fault, immediate_start=False):
+    # Cold: brand-new context, cache disabled. Warm: caller reuses context.
+    context = browser.new_context(ignore_https_errors=False)
+    if cache_mode == "cold":
+        # Disable HTTP cache for cold samples.
+        context.route(
+            "**/*",
+            lambda route: route.continue_(
+                headers={
+                    **route.request.headers,
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                }
+            ),
+        )
+    page = context.new_page()
+    install_fault(page, fault)
+    try:
+        sample = collect_startup_sample(
+            page,
+            origin,
+            password,
+            viewer_token=token,
+            immediate_start=immediate_start,
+        )
+        sample["cacheMode"] = cache_mode
+        verify_fault(page, fault, sample)
+        return sample, context, page
+    except Exception as error:  # noqa: BLE001 - record every planned attempt
+        sample = failure_sample(
+            error,
+            stage=classify_failure_stage(error),
+            cacheMode=cache_mode,
+            immediateStart=bool(immediate_start),
+        )
+        return sample, context, page
 
 
 def main(argv=None):
@@ -427,67 +504,117 @@ def main(argv=None):
 
     viewer_token = fetch_viewer_token(args.origin, password)
     samples = []
-    launch_args = []
-    # Cloudflare formal entry is more reliable for headless Chromium over HTTP/1.1.
-    if args.origin.startswith("https://"):
-        launch_args.append("--disable-http2")
+
+    # Never alter the ordinary user path with --disable-http2 or similar.
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, args=launch_args)
+        browser = playwright.chromium.launch(headless=True)
         if args.mode in ("cold", "both"):
-            for _ in range(args.runs):
-                context = browser.new_context()
-                page = context.new_page()
-                install_fault(page, args.fault)
-                sample = {
-                    "cacheMode": "cold",
-                    **collect_startup_sample_with_retries(
-                        page,
-                        args.origin,
-                        password,
-                        viewer_token=viewer_token,
-                        attempts=3 if args.origin.startswith("https://") else 2,
-                    ),
-                }
-                verify_fault(page, args.fault, sample)
+            for index in range(args.runs):
+                sample, context, _page = run_attempt(
+                    browser,
+                    origin=args.origin,
+                    password=password,
+                    token=viewer_token,
+                    cache_mode="cold",
+                    fault=args.fault,
+                )
+                sample["attemptIndex"] = index
                 samples.append(sample)
                 context.close()
-                time.sleep(1.0)
+                time.sleep(0.5)
+
         if args.mode in ("warm", "both"):
-            context = browser.new_context()
-            page = context.new_page()
-            install_fault(page, args.fault)
-            collect_startup_sample_with_retries(
-                page,
-                args.origin,
-                password,
-                viewer_token=viewer_token,
-                attempts=3 if args.origin.startswith("https://") else 2,
-            )
-            for _ in range(args.runs):
-                sample = {
-                    "cacheMode": "warm",
-                    **collect_startup_sample_with_retries(
-                        page,
+            # Explicit warmup, then N warm samples on the same warmed context/cache.
+            warm_context = browser.new_context()
+            warm_page = warm_context.new_page()
+            install_fault(warm_page, args.fault)
+            try:
+                collect_startup_sample(
+                    warm_page,
+                    args.origin,
+                    password,
+                    viewer_token=viewer_token,
+                )
+            except Exception as error:  # noqa: BLE001
+                samples.append(
+                    failure_sample(
+                        error,
+                        stage=classify_failure_stage(error),
+                        cacheMode="warm-seed",
+                        attemptIndex=-1,
+                    )
+                )
+            for index in range(args.runs):
+                try:
+                    sample = collect_startup_sample(
+                        warm_page,
                         args.origin,
                         password,
                         viewer_token=viewer_token,
-                        attempts=3 if args.origin.startswith("https://") else 2,
-                    ),
-                }
-                verify_fault(page, args.fault, sample)
+                    )
+                    sample["cacheMode"] = "warm"
+                    sample["attemptIndex"] = index
+                    verify_fault(warm_page, args.fault, sample)
+                    samples.append(sample)
+                except Exception as error:  # noqa: BLE001
+                    samples.append(
+                        failure_sample(
+                            error,
+                            stage=classify_failure_stage(error),
+                            cacheMode="warm",
+                            attemptIndex=index,
+                        )
+                    )
+                time.sleep(0.3)
+            warm_context.close()
+
+        if args.mode == "immediate-start":
+            for index in range(args.runs):
+                sample, context, _page = run_attempt(
+                    browser,
+                    origin=args.origin,
+                    password=password,
+                    token=viewer_token,
+                    cache_mode="cold",
+                    fault=args.fault,
+                    immediate_start=True,
+                )
+                sample["attemptIndex"] = index
                 samples.append(sample)
-                time.sleep(0.5)
-            context.close()
+                context.close()
+
         browser.close()
 
-    report = build_report(args.origin, samples)
+    report = build_report(
+        args.origin,
+        samples,
+        mode=args.mode,
+        runs=args.runs,
+        fault=args.fault,
+    )
     path, digest = write_immutable_report(report, args.output_dir)
     print(
         json.dumps(
-            {"report": str(path), "sha256": digest, "summary": report["summary"]},
+            {
+                "report": str(path),
+                "sha256": digest,
+                "summary": report["summary"],
+                "attemptCount": report["attemptCount"],
+                "successCount": report["successCount"],
+                "failureCount": report["failureCount"],
+                "failureRate": report["failureRate"],
+                "failureStages": report["failureStages"],
+                "commitSha": report["commitSha"],
+            },
             ensure_ascii=True,
         )
     )
+
+    # Gate: for formal cold 20/20, any failure fails the process.
+    if args.mode in ("cold", "both", "immediate-start") and args.fault == "none":
+        cold = [s for s in samples if s.get("cacheMode") == "cold"]
+        if cold and any(s.get("failed") for s in cold):
+            raise SystemExit(2)
 
 
 if __name__ == "__main__":

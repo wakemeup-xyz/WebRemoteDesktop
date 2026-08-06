@@ -11,6 +11,8 @@ if str(ROOT) not in sys.path:
 
 from viewer_bootstrap_acceptance import (  # noqa: E402
     build_report,
+    classify_failure_stage,
+    failure_sample,
     nearest_rank,
     write_immutable_report,
 )
@@ -21,10 +23,36 @@ def test_nearest_rank_p95_and_report_redaction(tmp_path):
     assert nearest_rank(samples, 0.95) == 19
     report = build_report(
         origin="https://link.stockhub.wiki",
-        samples=[{"coreInteractiveMs": 1000, "token": "must-not-appear"}],
+        samples=[
+            {
+                "finalState": "active",
+                "failed": False,
+                "htmlResponseMs": 100,
+                "navToCoreInteractiveMs": 200,
+                "clickToSignalMs": 300,
+                "clickToStableNonBlackMs": 400,
+                "coreInteractiveMarkMs": 50,
+                "token": "must-not-appear",
+            },
+            failure_sample("boom", stage="signal-connected", cacheMode="cold"),
+        ],
+        mode="cold",
+        runs=20,
     )
     text = json.dumps(report)
     assert "must-not-appear" not in text
+    assert report["attemptCount"] == 2
+    assert report["successCount"] == 1
+    assert report["failureCount"] == 1
+    assert report["failureStages"]["signal-connected"] == 1
     path, digest = write_immutable_report(report, tmp_path)
     assert path.exists()
     assert len(digest) == 64
+
+
+def test_classify_failure_stage_and_no_retry_helper():
+    assert classify_failure_stage("stable non-black canvas ratio too low") == "stable-non-black"
+    assert classify_failure_stage("missing required startup mark: html-shell") == "startup-marks"
+    sample = failure_sample(AssertionError("x"), stage="core-interactive")
+    assert sample["failed"] is True
+    assert sample["finalState"] == "failed"
