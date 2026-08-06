@@ -38,7 +38,8 @@ function replaceBlock(html, start, end, replacement) {
 }
 
 async function buildWebClient({ sourceDir, outDir }) {
-  const staging = `${outDir}.tmp-${process.pid}`;
+  const staging = `${outDir}.tmp-${process.pid}-${Date.now()}`;
+  const previousBackup = `${outDir}.prev-${process.pid}-${Date.now()}`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(path.join(staging, 'assets'), { recursive: true });
 
@@ -92,6 +93,18 @@ async function buildWebClient({ sourceDir, outDir }) {
         `<script src="/${assets.desktopJs}" defer></script>`,
       ].join('\n'),
     );
+
+    // Validate critical request graph before publish.
+    if ((viewerHtml.match(/<script[^>]+src=/g) || []).length !== 1) {
+      throw new Error('critical HTML must reference exactly one script src');
+    }
+    if ((viewerHtml.match(/<link[^>]+stylesheet/g) || []).length !== 1) {
+      throw new Error('critical HTML must reference exactly one stylesheet');
+    }
+    if (/cdn\.jsdelivr\.net|cdn\.socket\.io|fonts\.googleapis\.com|fonts\.gstatic\.com/.test(viewerHtml)) {
+      throw new Error('critical HTML must not reference runtime CDN hosts');
+    }
+
     fs.writeFileSync(path.join(staging, 'viewer.html'), viewerHtml);
     fs.copyFileSync(path.join(sourceDir, 'index.html'), path.join(staging, 'index.html'));
     fs.mkdirSync(path.join(staging, 'css'));
@@ -104,9 +117,30 @@ async function buildWebClient({ sourceDir, outDir }) {
     fs.writeFileSync(path.join(staging, 'THIRD_PARTY_LICENSES.txt'), `${licenses.join('\n')}\n`);
 
     const manifest = { schemaVersion: 1, assets };
+    for (const relative of Object.values(assets)) {
+      const absolute = path.join(staging, relative);
+      if (!fs.existsSync(absolute)) {
+        throw new Error(`missing staged asset before publish: ${relative}`);
+      }
+    }
     fs.writeFileSync(path.join(staging, 'asset-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-    fs.rmSync(outDir, { recursive: true, force: true });
-    fs.renameSync(staging, outDir);
+
+    // Atomic publish: keep previous dist until staging is fully valid.
+    const hadPrevious = fs.existsSync(outDir);
+    if (hadPrevious) {
+      fs.rmSync(previousBackup, { recursive: true, force: true });
+      fs.renameSync(outDir, previousBackup);
+    }
+    try {
+      fs.renameSync(staging, outDir);
+    } catch (publishError) {
+      if (hadPrevious && fs.existsSync(previousBackup)) {
+        fs.rmSync(outDir, { recursive: true, force: true });
+        fs.renameSync(previousBackup, outDir);
+      }
+      throw publishError;
+    }
+    fs.rmSync(previousBackup, { recursive: true, force: true });
     return manifest;
   } catch (error) {
     fs.rmSync(staging, { recursive: true, force: true });

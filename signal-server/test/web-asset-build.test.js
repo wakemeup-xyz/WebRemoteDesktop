@@ -29,7 +29,7 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
 
   assert.deepEqual(a, b);
   const html = fs.readFileSync(path.join(outA, 'viewer.html'), 'utf8');
-  assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdn\.socket\.io/);
+  assert.doesNotMatch(html, /cdn\.jsdelivr\.net|cdn\.socket\.io|fonts\.googleapis\.com|fonts\.gstatic\.com/);
   assert.equal((html.match(/<script[^>]+src=/g) || []).length, 1);
   assert.equal((html.match(/<link[^>]+stylesheet/g) || []).length, 1);
   assert.match(html, new RegExp(a.assets.desktopJs.replaceAll('.', '\\.')));
@@ -55,8 +55,27 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   );
 });
 
-test('build does not publish a manifest when an input is missing', async () => {
+test('build keeps previous dist when a subsequent build fails', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-keep-'));
+  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  const first = await buildWebClient({ sourceDir, outDir });
+  assert.equal(fs.existsSync(path.join(outDir, 'asset-manifest.json')), true);
+  const firstHtml = fs.readFileSync(path.join(outDir, 'viewer.html'), 'utf8');
+  await assert.rejects(
+    buildWebClient({ sourceDir: '/missing/web-client-after-success', outDir }),
+    /missing|ENOENT/i,
+  );
+  assert.equal(fs.existsSync(path.join(outDir, 'asset-manifest.json')), true);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(outDir, 'asset-manifest.json'), 'utf8')),
+    first,
+  );
+  assert.equal(fs.readFileSync(path.join(outDir, 'viewer.html'), 'utf8'), firstHtml);
+});
+
+test('build does not publish a manifest when an input is missing on empty outDir', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-fail-'));
+  fs.rmSync(outDir, { recursive: true, force: true });
   await assert.rejects(
     buildWebClient({ sourceDir: '/missing/web-client', outDir }),
     /missing|ENOENT/i,

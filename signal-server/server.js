@@ -126,11 +126,18 @@ function createServerApp(options = {}) {
   const webClientPath = path.join(__dirname, '..', 'web-client');
   const webClientDistPath = options.webClientDistPath
     || path.join(webClientPath, 'dist');
+  const allowSourceFallback = options.allowSourceFallback === true
+    || String((options.config && options.config.nodeEnv) || process.env.NODE_ENV || '') === 'test';
   let webAssetManifest = options.webAssetManifest || null;
   if (!webAssetManifest) {
     try {
       webAssetManifest = loadWebAssetManifest({ distDir: webClientDistPath });
-    } catch (_error) {
+    } catch (error) {
+      if (!allowSourceFallback) {
+        throw new Error(
+          `[web-assets] production requires a valid dist manifest at ${webClientDistPath}: ${error.message}`,
+        );
+      }
       webAssetManifest = null;
     }
   }
@@ -141,7 +148,7 @@ function createServerApp(options = {}) {
       manifest: webAssetManifest,
     }));
     logger.log?.('Serving generated web assets from:', webClientDistPath);
-  } else {
+  } else if (allowSourceFallback) {
     app.use(express.static(webClientPath, {
       setHeaders: (res) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -149,7 +156,9 @@ function createServerApp(options = {}) {
         res.setHeader('Expires', '0');
       },
     }));
-    logger.log?.('Serving static files from:', webClientPath);
+    logger.log?.('Serving static files from source fallback:', webClientPath);
+  } else {
+    throw new Error('[web-assets] missing web asset manifest; refusing source/CDN fallback');
   }
 
   const io = new Server(server, {

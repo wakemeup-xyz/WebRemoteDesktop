@@ -72,3 +72,29 @@ test('executable startup builds assets before creating the listening server', as
   });
   assert.deepEqual(calls, ['build', 'listen']);
 });
+
+test('createServerApp fails fast without a valid dist unless source fallback is explicit', () => {
+  const { createServerApp } = require('../server');
+  const missingDist = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-missing-dist-'));
+  assert.throws(
+    () => createServerApp({
+      webClientDistPath: missingDist,
+      config: {
+        port: 0,
+        nodeEnv: 'production',
+        jwtSecret: process.env.JWT_SECRET || '12345678',
+        viewerAccessPassword: process.env.VIEWER_ACCESS_PASSWORD || 'x',
+        hostSharedSecret: process.env.HOST_SHARED_SECRET || 'y',
+        corsOrigins: [],
+        stunUrls: [],
+        turnUrls: [],
+        turnUsername: '',
+        turnCredential: '',
+        enableDiagPersist: false,
+        enableTerminal: false,
+      },
+      logger: { log() {}, info() {}, warn() {}, error() {} },
+    }),
+    /valid dist manifest|missing web asset manifest/i,
+  );
+});
