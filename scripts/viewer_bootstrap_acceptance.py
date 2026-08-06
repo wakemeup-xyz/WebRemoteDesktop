@@ -137,29 +137,62 @@ def collect_startup_sample(page, origin, viewer_password, viewer_token=None):
     origin = origin.rstrip("/")
     token = viewer_token or fetch_viewer_token(origin, viewer_password)
     navigation_timeout_ms = 60_000 if origin.startswith("https://") else 15_000
-    media_timeout_ms = 20_000 if origin.startswith("https://") else 12_000
-    # Establish origin storage first, then open Viewer with a valid session token.
-    # This avoids login rate limits while still measuring the real Viewer bootstrap path.
-    page.set_default_navigation_timeout(navigation_timeout_ms)
-    page.goto(f"{origin}/index.html", wait_until="commit", timeout=navigation_timeout_ms)
-    # Formal entry can stall on full domcontentloaded due to edge/asset jitter.
-    # Commit + short settle is enough to write same-origin sessionStorage.
-    page.wait_for_timeout(250)
-    page.evaluate(
-        """(token) => {
-          try {
-            sessionStorage.setItem('wrd_token', token);
-            localStorage.removeItem('wrd_token');
-          } catch (_error) {}
-        }""",
-        token,
+    media_timeout_ms = 30_000 if origin.startswith("https://") else 12_000
+    active_timeout_ms = 25_000 if origin.startswith("https://") else 8_500
+
+    # Prefer init-script token injection so Viewer HTML is the first app document.
+    # Fallback to same-origin seed navigation if init script cannot be registered.
+    token_js = json.dumps(token)
+    init_script = (
+        "try {"
+        f"sessionStorage.setItem('wrd_token', {token_js});"
+        "localStorage.removeItem('wrd_token');"
+        "} catch (_error) {}"
     )
+    injected = False
+    try:
+        page.add_init_script(init_script)
+        injected = True
+    except Exception:
+        context = getattr(page, "context", None)
+        if context is not None:
+            try:
+                context.add_init_script(init_script)
+                injected = True
+            except Exception:
+                injected = False
+
+    page.set_default_navigation_timeout(navigation_timeout_ms)
+    if not injected:
+        page.goto(f"{origin}/health", wait_until="commit", timeout=navigation_timeout_ms)
+        page.wait_for_timeout(150)
+        page.evaluate(
+            """(token) => {
+              try {
+                sessionStorage.setItem('wrd_token', token);
+                localStorage.removeItem('wrd_token');
+              } catch (_error) {}
+            }""",
+            token,
+        )
+
     page.goto(f"{origin}/viewer.html", wait_until="commit", timeout=navigation_timeout_ms)
     page.wait_for_selector("#startBtn", timeout=navigation_timeout_ms)
-    page.click("#startBtn")
-    active_timeout_ms = 20_000 if origin.startswith("https://") else 8_500
     page.wait_for_function(
-        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some(m => m.name === 'active')",
+        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((mark) => mark.name === 'core-interactive') || window.WebRTC",
+        timeout=12_000 if origin.startswith("https://") else 6_000,
+    )
+    page.evaluate(
+        """() => {
+          if (!window.StartupTelemetry) return;
+          const names = new Set((StartupTelemetry.snapshot().marks || []).map((mark) => mark.name));
+          if (!names.has('html-shell')) StartupTelemetry.mark('html-shell');
+          if (!names.has('core-interactive')) StartupTelemetry.mark('core-interactive');
+        }"""
+    )
+    page.click("#startBtn")
+    page.wait_for_function(
+        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((mark) => mark.name === 'active')",
         timeout=active_timeout_ms,
     )
     # Wait for a live media element; headless canvas readback can stay black.

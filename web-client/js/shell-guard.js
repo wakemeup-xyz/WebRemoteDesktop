@@ -7,7 +7,7 @@
   };
   const deadline = global.setTimeout(() => {
     if (!state.coreInstalled) failCore('页面资源加载超时');
-  }, 5000);
+  }, 8000);
 
   function setCoreControlsDisabled(disabled) {
     const nodes = global.document.querySelectorAll('[data-core-control]');

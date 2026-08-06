@@ -4161,7 +4161,9 @@ function updateLoadingText(text) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootViewerShell() {
+  if (window.__WRD_VIEWER_BOOTED__) return;
+  window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
   if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
     StartupTelemetry.mark('html-shell');
@@ -4357,4 +4359,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootViewerShell, { once: true });
+} else {
+  bootViewerShell();
+}
