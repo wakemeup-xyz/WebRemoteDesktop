@@ -143,7 +143,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 - 前端**不单独运行** `npm run dev`
 - **不要把**裸 `5173` **页面当作当前仓库正式入口**；只有在显式配置 `dev.link.stockhub.wiki` 时，`5173` 才作为可选开发映射存在
-- `signal-server` 会通过 `express.static()` 直接托管 `web-client/`
+- `signal-server` 通过构建产物 `web-client/dist/` 托管 Viewer：HTML revalidate，内容哈希 JS/CSS immutable；生产路径不直接托管 source `web-client/` 目录，也不依赖运行时 CDN
 - 本地唯一正确入口：`http://127.0.0.1:8080`
 - 健康检查：`http://127.0.0.1:8080/health`
 - Host 状态：`http://127.0.0.1:8080/api/status`

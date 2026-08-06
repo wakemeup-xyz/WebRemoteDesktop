@@ -13,11 +13,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ### Viewer 启动性能与可恢复性
 
 - 正式公网入口冷启动 Core Interactive P95 <= 5 秒，热加载 P95 <= 2 秒。
-- 点击「开始学习助手」必须立即反馈；到 Signal connected P95 <= 3 秒。
+- 点击「开始学习助手」必须立即反馈（含核心脚本未就绪时的排队反馈，100ms 内可见）；到 Signal connected P95 <= 3 秒。
 - 点击到首个稳定非黑画面 P95 <= 8 秒；超时必须退出连接中状态并允许重试。
-- 任一 bootstrap 依赖不得静默阻塞超过 5 秒。
+- 任一 bootstrap 依赖不得静默阻塞超过 5 秒；ShellGuard 核心资源 deadline 为 5 秒。
 - Terminal/xterm 按需加载，加载失败不得影响 Desktop。
-- 以上公网指标至少使用 20 个新浏览器上下文，以 immutable JSON + SHA-256 验收。
+- 以上公网指标至少使用 20 个新浏览器上下文，以 immutable JSON + SHA-256 验收；失败样本不得被重试成功结果替换。
 
 ---
 
@@ -121,7 +121,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 - **映射边界**：物理按键只接受 `KeyboardEvent.code`。Host 当前精确支持 `KeyA-KeyZ`、`Digit0-Digit9`、`F1-F20`、Enter/Escape/Backspace/Tab/Space、方向/导航键、左右 Control/Alt/Shift/Meta、常用 ANSI 标点、`IntlBackslash`/`IntlYen`/`IntlRo`/`Lang1`/`Lang2`/`KanaMode` 及小键盘数字/运算键。`ContextMenu`、`Convert`、`NonConvert` 明确返回 `unsupported-code`；任何未列出的 code 也不得回退为字符猜测。文本输入只使用 `keyboard/text` 的 Unicode adapter，不冒充物理按键。
 - **v2 envelope**：`schemaVersion: 2` 的键盘消息必须是 `keyboard/key`、`keyboard/text`、`keyboard/batch` 或 `keyboard/reset`，并带有效 `leaseId`、`leaseEpoch`、严格递增 `seq` 和有界 `inputIds`。`key` 使用 `down/up + code + location + repeat + modifiers + locks`；`batch` 在同一个 Host 串行队列中执行；`reset` 释放该 lease 的全部已按下按键并成为后续输入的确认屏障。
-- **控制与认证**：Viewer 与 Host Socket.IO 都声明 `inputProtocolVersion`。v2 Viewer 只能在 Host 同样声明 v2 后获得控制；旧 Host 必须收到/返回 `host-protocol-too-old`，不得降级为无租约输入。direct WebRTC offer 和 tunnel Socket 输入都先经过已认证 Viewer 身份及 desktop-control lease；同一时刻只有一个主 Viewer 可写，第二个 legacy Viewer 只读。`relay-viewer` 只是主 Viewer 的媒体 relay companion，不能取得独立桌面控制权或发送输入。
+- **控制与认证**：Viewer 与 Host Socket.IO 都声明 `inputProtocolVersion`。v2 Viewer 只能在 Host 同样声明 v2 后获得控制；旧 Host 必须收到/返回 `host-protocol-too-old`，不得降级为无租约输入。direct WebRTC offer 和 tunnel Socket 输入都先经过已认证 Viewer 身份及 desktop-control lease。**严格单桌面 Viewer**：同一时刻只允许一个主 Viewer 会话；新 Viewer 连接会顶替旧 Viewer（旧页进入 superseded/断开，不得继续作为只读旁观者）。`relay-viewer` 只是主 Viewer 的媒体 relay companion，不能取得独立桌面控制权或发送输入。
 - **长按与释放**：合法长按不以固定 8 秒阈值强制 keyup；lease heartbeat、Viewer/transport teardown、模式切换、失焦和显式 release 都进入同一 reset 路径。v2 接管 legacy controller 时，Host 必须先完成 `legacy-takeover` reset，再发新 grant。
 - **v1 迁移**：`LEGACY_INPUT_COMPAT_ENABLED` 当前在 Signal Server 中固定为 `true`，不是环境变量，禁止用部署配置绕过 v2 约束。legacy direct/tunnel 的首个输入惰性申请同一 lease，只有 lease controller 的输入可转发；Host 的单个 `LegacyInputAdapter` 同时处理 legacy DataChannel 与 Socket 输入，transport 变化必须先应用 `transport-change` reset 再处理新事件。移除该常量的条件是：所有受支持 Viewer 和 Host 都声明 v2、连续发布周期内无 v1 连接、direct/tunnel/relay 的 v2 合约与真实 Host 验收均通过；移除后 v1 必须明确拒绝，不能恢复 env 开关。
 - **脱敏与运行剩余项**：日志、ack 和诊断只保留协议版本、lease epoch、seq、动作、transport、payload byte count、input ID hash 与本机耗时，不记录 key/code/text、lease token 或坐标。Task12 之前不把真实 Host/Quartz、长按、IME、ISO/JIS 和公网多 Viewer 运行验证标记为已完成。

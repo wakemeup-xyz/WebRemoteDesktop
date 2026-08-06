@@ -1,71 +1,42 @@
-# Viewer Fast Bootstrap Acceptance Report
+# Viewer Fast Bootstrap Acceptance Report (Review Remediation)
 
-Date: 2026-08-06  
-Commit: `a2b0d49`  
-Baseline design/plan: `3902407`
+Date: 2026-08-07
+Implementation tip: pending runtime restart
+Code baseline for remediation: post-`3c2eaea` review fixes
 
-## Connector migration (authorized)
+## Remediation summary
 
-- Stopped legacy system token LaunchDaemon path (`com.cloudflare.cloudflared` / `--token` argv)
-- Kept safe quick tunnel untouched
-- Formal named connector now single owner with `--protocol http2`
-- Read-only preflight final result:
-  - `local-health: ok`
-  - `credentials-file: present`
-  - `formal-owners: 1`
-  - `token-argv: absent`
-  - `formal-health: 200`
-  - exit `0`
+### P0 acceptance truth
+- `html-shell` is recorded by inline ShellGuard at HTML parse with original `performance.now()` timestamps.
+- Desktop bundle only **imports** shell marks; it never invents `html-shell` / `core-interactive` times.
+- Acceptance harness reports:
+  - `htmlResponseMs` (navigationStart → responseStart)
+  - `navToCoreInteractiveMs` (navigationStart → core-interactive mark)
+  - `clickToSignalMs`
+  - `clickToStableNonBlackMs`
+- Each planned sample runs once; failures are recorded with `failureStage` and counts.
+- Cold contexts disable cache; no `--disable-http2`.
+- `nonBlackRatio` is **canvas pixel ratio only**; decoded/playing/bytes are separate `mediaEvidence`.
+- `immediate-start` mode covers open-then-click feedback.
 
-## Local runtime
+### P1 delivery
+- Production `createServerApp` fail-fast without valid dist (test env may use source fallback).
+- Build keeps previous dist on failed rebuild; atomic publish.
+- Critical HTML graph: 1 CSS + 1 JS, no runtime CDN fonts/scripts.
 
-Evidence: `artifacts/viewer-bootstrap-local/viewer-bootstrap-20260806T024354.477179Z.json`  
-SHA-256: `f0963b851cd6882b42da268a3e079e9f6bb668a47cc9c146266fed50aa822a15`  
-Samples: cold 20 + warm 20
+### P1 security/config
+- Official registry `npm audit --audit-level=moderate` → 0 vulnerabilities after lockfile refresh.
+- TURN `priority` is integer-only on Node and Python with shared fixture parity tests.
 
-| Metric | P50 | P95 | Budget | Result |
-|---|---:|---:|---:|---|
-| Core Interactive | 0.6 ms | 2.0 ms | ≤ 5 s | PASS |
-| Click → Signal | 32.4 ms | 121.8 ms | ≤ 3 s | PASS |
-| Click → Active | 609.3 ms | 1294.5 ms | ≤ 8 s | PASS |
+### P2 docs/contracts
+- ShellGuard deadline restored to 5s.
+- Requirements: strict single desktop Viewer (new supersedes old).
+- README no longer claims direct source `web-client/` hosting.
+- fixed-tunnel preflight reports protocol + recent timeout/reconnect classification.
 
-Fault injection: bootstrap-delay / terminal-abort / cdn-block PASS.
+## Runtime status
 
-## Formal public runtime
+**CODE COMPLETE / AUTOMATED pending full suite in this session.**
+**RUNTIME PENDING**: do not restart tunnels; user must manually restart signal-server + Host before local/formal acceptance re-run with the remediated harness.
 
-Evidence: `artifacts/viewer-bootstrap-formal/viewer-bootstrap-20260806T140843.102549Z.json`  
-SHA-256: `c38888eaf9f3eb63dde4e6a15c251eac0fe610a0bce6fe1a114ecbb60c34bf17`  
-Samples: cold 20 + warm 20 (40 total; 4 transient failures retried)
-
-### Cold (formal entry SLO)
-
-| Metric | P50 | P95 | Budget | Result |
-|---|---:|---:|---:|---|
-| Core Interactive | 7.1 ms | 7.4 ms | ≤ 5 s | PASS |
-| Click → Signal | 2142.2 ms | 3823.6 ms | ≤ 3 s | **FAIL** |
-| Click → Active | 6110.2 ms | 8126.8 ms | ≤ 8 s | **FAIL** (marginal) |
-
-### Warm
-
-| Metric | P50 | P95 | Budget | Result |
-|---|---:|---:|---:|---|
-| Core Interactive | 0.9 ms | 1.1 ms | ≤ 2 s | PASS |
-| Click → Signal | 2163.3 ms | 2905.7 ms | ≤ 3 s | PASS |
-| Click → Active | 5528.8 ms | 7933.3 ms | ≤ 8 s | PASS |
-
-## Judgment
-
-- **AUTOMATED PASS**: code/tasks 1-11 complete
-- **LOCAL RUNTIME PASS**
-- **FORMAL CONNECTOR HYGIENE PASS** (token removed, single HTTP/2 owner)
-- **FORMAL PUBLIC PERF PARTIAL**: full 20/20 sample counts achieved; core interactive meets budget; cold click-to-signal and click-to-active P95 still miss formal budgets due to edge/media path variance
-
-## Remaining performance gap
-
-Formal cold tail is dominated by post-click signaling/media, not HTML/core bootstrap:
-
-- Core interactive is already far under budget
-- Signal connected P95 ~3.8 s (budget 3 s)
-- Stable active/non-black P95 ~8.1 s (budget 8 s)
-
-Recommended next hardening (separate task): reduce formal offer/ICE/first-frame tail, keep HTTP/2 connector, and re-run the same 20-cold matrix.
+Formal FULL PASS requires 20/20 cold successes under the honest gates above.
