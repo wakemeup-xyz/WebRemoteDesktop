@@ -1,8 +1,8 @@
 # Viewer Fast Bootstrap Acceptance Report (Review Remediation)
 
 Date: 2026-08-07
-Implementation tip: pending runtime restart
-Code baseline for remediation: post-`3c2eaea` review fixes
+Implementation tip: `9f` see git tip below
+Code baseline for remediation: post-`3c2eaea` review fixes through honest harness + delivery/perf hardening
 
 ## Remediation summary
 
@@ -14,7 +14,7 @@ Code baseline for remediation: post-`3c2eaea` review fixes
   - `navToCoreInteractiveMs` (navigationStart → core-interactive mark)
   - `clickToSignalMs`
   - `clickToStableNonBlackMs`
-- Each planned sample runs once; failures are recorded with `failureStage` and counts.
+- Each planned sample runs once; failures enter the artifact with `failureStage`.
 - Cold contexts disable cache; no `--disable-http2`.
 - `nonBlackRatio` is **canvas pixel ratio only**; decoded/playing/bytes are separate `mediaEvidence`.
 - `immediate-start` mode covers open-then-click feedback.
@@ -22,21 +22,56 @@ Code baseline for remediation: post-`3c2eaea` review fixes
 ### P1 delivery
 - Production `createServerApp` fail-fast without valid dist (test env may use source fallback).
 - Build keeps previous dist on failed rebuild; atomic publish.
-- Critical HTML graph: 1 CSS + 1 JS, no runtime CDN fonts/scripts.
+- Critical HTML graph: preload + 1 CSS + 1 JS; no runtime CDN fonts/scripts.
+- `compression` enabled for HTML/JS/CSS (gzip ~63 KiB core vs 231 KiB raw).
 
 ### P1 security/config
-- Official registry `npm audit --audit-level=moderate` → 0 vulnerabilities after lockfile refresh.
-- TURN `priority` is integer-only on Node and Python with shared fixture parity tests.
+- Official registry `npm audit --audit-level=moderate` → 0 vulnerabilities.
+- TURN `priority` integer-only on Node/Python with shared fixture parity tests.
 
 ### P2 docs/contracts
-- ShellGuard deadline restored to 5s.
-- Requirements: strict single desktop Viewer (new supersedes old).
+- ShellGuard deadline 5s.
+- Requirements: strict single desktop Viewer.
 - README no longer claims direct source `web-client/` hosting.
 - fixed-tunnel preflight reports protocol + recent timeout/reconnect classification.
 
-## Runtime status
+## Runtime results (honest harness)
 
-**CODE COMPLETE / AUTOMATED pending full suite in this session.**
-**RUNTIME PENDING**: do not restart tunnels; user must manually restart signal-server + Host before local/formal acceptance re-run with the remediated harness.
+### Local cold 20/20 — PASS
+Artifact: `artifacts/viewer-bootstrap-local-remediated/viewer-bootstrap-20260806T172034.967084Z.json`
+SHA-256: `2a27598068c9451e9d0b5f38f7e62d317234c73cc8bc44d6ee43ef4a7e628579`
 
-Formal FULL PASS requires 20/20 cold successes under the honest gates above.
+| Metric | P95 | Budget | Result |
+|---|---:|---:|---|
+| HTML response | 15.2 ms | ≤2s | PASS |
+| nav → core-interactive | 322.5 ms | ≤5s | PASS |
+| click → signal | 173.8 ms | ≤3s | PASS |
+| click → stable non-black | 878.3 ms | ≤8s | PASS |
+
+Immediate-start 5/5 also PASS.
+
+### Formal cold 20 — FAIL (honest)
+Latest artifact: `artifacts/viewer-bootstrap-formal-remediated/latest.json`
+SHA-256: see `latest.sha256`
+
+| Metric | P50 | P95 | Budget | Result |
+|---|---:|---:|---:|---|
+| HTML response | ~1.0s | **~4.2s** | ≤2s | FAIL |
+| nav → core-interactive | ~1.3s | **~6.9s** | ≤5s | FAIL |
+| click → signal | ~2.2s | **~4.5s** | ≤3s | FAIL |
+| click → stable non-black | ~4.4s | **~8.0s** | ≤8s | marginal/FAIL |
+
+Attempt accounting (latest formal run): successCount < 20 on at least one run; failures retained (no retry rewrite).
+
+## Judgment
+
+- **AUTOMATED PASS**
+- **LOCAL RUNTIME PASS** (honest canvas + single-attempt)
+- **FORMAL PUBLIC PERF: FAIL / NOT FULL PASS**
+  - Remaining risk is formal edge/HTML tail and signaling/media tail over Cloudflare, not inert controls or CDN script graph.
+  - Preflight may still classify historical log tail as timeout-heavy while live formal `/health` is 200.
+
+## Safety
+
+- Quick tunnel / safe URL not mutated during local restarts.
+- No automatic formal connector mutation in this remediation runtime phase beyond previously authorized HTTP/2 single-owner state.
