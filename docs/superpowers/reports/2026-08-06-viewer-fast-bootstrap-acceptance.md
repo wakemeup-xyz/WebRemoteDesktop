@@ -1,50 +1,43 @@
-# Viewer Fast Bootstrap — Formal optimization note
+# Checklist closure (transport / HTML cache / diagnostics)
 
 Date: 2026-08-07  
-Tip: `c1627d58c5327fa8b0d2d39ac05210cc8c407a77`
+Tip: `fe500269a36073b28e068bc98125f7a354b36e83`
 
-## Progress this pass
+## 四项完成状态
 
-| Gate | Before (typical) | Now (`c1627d5` formal cold 20) |
+| # | 要求 | 状态 |
 |---|---|---|
-| success | 18–19/20 | **20/20** |
-| click→signal P95 | often &gt;3s | **2486ms PASS** |
-| click→non-black P95 | fail/marginal | **7069ms PASS** |
-| HTML P95 | 5–6s FAIL | **5061ms FAIL** |
-| nav→core P95 | 5–7s FAIL | **5993ms FAIL** |
+| 1 | `tryAllTransports: true` + **真实 Socket.IO 客户端**集成测试（WS 拒绝→polling 成功；双失败预算内） | **已完成** |
+| 2 | 撤销 HTML edge `max-age=60`（恢复 revalidate + CDN `no-store`） | **已完成**（选撤销，未做 N-1 保留方案） |
+| 3 | pending diagnostics **按 attempt 去重** + **统一 cooldown** 发送/replay | **已完成** |
+| 4 | 正式 cold 20 / warm 20 / fault injection 重跑 | **已跑**；**非 FULL PASS** |
 
-Artifact: `artifacts/viewer-bootstrap-formal-opt/viewer-bootstrap-20260807T152123.599204Z.json`  
-SHA-256: `fdf1b127f1706a8508c974b4281eb8bcb35eafe5a45225b83b2cb9e9453f4bc9`
+未做：bundle 微调、Cloudflare Cache Everything 配置（按要求）。
 
-## Changes
+## 自动化
 
-1. **HTML Cache-Control** `public, max-age=60, must-revalidate` (+ CDN-Cache-Control 60s) so CF *can* HIT when eligible.
-2. **cloudflared originRequest** keepAlive pool / timeouts in `~/.cloudflared/config.yml` + setup template; formal connector restarted (credentials-file, http2, single owner).
-3. **ontrack IDR**: `requestKeyframe` on first video track (+700ms retry).
-4. Cold samples spaced **1s** for Host settle.
+- `signaling-transport-fallback.test.js`：真实 `socket.io-client` 对 polling-only 服务端回落 polling；双 transport 失败 ≤5.5s
+- web-assets：HTML `no-cache, max-age=0` + CDN `no-store`
+- diagnostic：enqueue 去重、cooldown 单测
+- webrtc：options 含 `tryAllTransports: true`
 
-## Why HTML/core still fail
+## 运行时（commitSha = `fe500269…`）
 
-Live formal still returns **`cf-cache-status: DYNAMIC`** for `viewer.html` even with public max-age. Named tunnel + default CF cache level **does not store HTML** without a **Cache Rule / Cache Everything** on `link.stockhub.wiki/viewer.html` (or equivalent).
+### Local
+- cold 5/5 PASS  
+- deferred-abort ×1 PASS  
 
-From this network, raw HTML TTFB alone is often **0.6–2.6s+** (curl). Four of twenty acceptance samples had HTML **2.2–6.9s**; those dominate P95 and pull core with them. Hashed JS is already **cf-cache-status: HIT**.
+### Formal cold 20 — NOT FULL PASS
+SHA `dbf5593e…4ae4`  
+success **19/20**（bounded-wait-5s ×1）  
+HTML P95 4764 / core P95 6019 / signal P95 2928 / non-black P95 5811  
 
-**Code/bundle work cannot remove multi-second document TTFB when every HTML response is origin-proxied through the tunnel.**
-
-## FULL PASS blocker (operational)
-
-To clear HTML ≤2s / core ≤5s P95 on formal:
-
-1. Cloudflare Dashboard → Cache Rules (or Page Rule): **Cache eligible** for  
-   `https://link.stockhub.wiki/viewer.html` (and optionally `/` / `index.html`) with edge TTL ≥60s, respecting origin `max-age=60`.
-2. Confirm `cf-cache-status: HIT` (or `EXPIRED`→`HIT` after first fill) on repeated `curl -sSI`.
-3. Re-run:  
-   `VIEWER_ACCESS_PASSWORD=… python3 scripts/viewer_bootstrap_acceptance.py --origin https://link.stockhub.wiki --mode cold --runs 20`
-
-Optional: reduce connector `timeout-heavy` historical noise by rotating log or stabilizing WAN to CF edge (7844 dial timeouts in fixed-domain log).
+### Formal warm 20 — NOT FULL PASS
+SHA `286ecf3e…d343`  
+success **18/20**  
+HTML/core P95 被极端尾（~18s）拉爆；signal P95 3109  
 
 ## Judgment
 
-- **LOCAL / code / review closure: still good**
-- **Formal: 20/20 + signal + non-black PASS; HTML/core P95 still FAIL**
-- **Not FULL PASS** until CF caches HTML (or path RTT permanently &lt;~1.5s P95)
+- **代码清单 1–3：完成**
+- **正式 FULL PASS：仍不成立**（路径 TTFB/偶发等待，非本次清单回归点）
