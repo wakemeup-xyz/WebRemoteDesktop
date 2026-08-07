@@ -494,18 +494,21 @@ def verify_fault(page, fault, sample):
     elif fault == "deferred-abort":
         page.wait_for_function(
             """() => {
-              const btn = document.getElementById('diagBtn');
-              if (!btn) return false;
-              const state = btn.dataset.wrdDiagState || '';
-              const label = String(btn.textContent || '');
-              // Must not be enabled-and-inert: either still loading (disabled) or explicit retry.
-              if (state === 'failed' || /重试/.test(label)) {
-                return btn.disabled === false;
+              const diag = document.getElementById('diagBtn');
+              const port = document.getElementById('portSearchBtn');
+              function isRetryOrLoading(btn, retryRe) {
+                if (!btn) return false;
+                const state = btn.dataset.wrdDiagState || btn.dataset.wrdOperatorState || '';
+                const label = String(btn.textContent || '');
+                if (state === 'failed' || retryRe.test(label)) return btn.disabled === false;
+                if (state === 'loading' || btn.getAttribute('aria-busy') === 'true') {
+                  return btn.disabled === true;
+                }
+                return false;
               }
-              if (state === 'loading' || btn.getAttribute('aria-busy') === 'true') {
-                return btn.disabled === true;
-              }
-              return false;
+              const diagOk = isRetryOrLoading(diag, /重试/);
+              const portOk = isRetryOrLoading(port, /重试|加载/);
+              return diagOk && portOk;
             }""",
             timeout=6_000,
         )

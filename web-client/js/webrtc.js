@@ -1445,23 +1445,90 @@ const WebRTC = {
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
-    const transports = this.resolveSignalingTransports();
-    this.socket = io(socketBase, {
-      auth: { token, role: 'viewer', inputProtocolVersion: 2 },
+    const socketOptions = this.buildSignalingSocketOptions({
+      token,
       reconnection: !this._superseded,
-      // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
-      transports,
-      // Bound dual-transport failure so Start does not silently hang past 5s budgets.
-      timeout: 5000,
     });
+    this.socket = io(socketBase, socketOptions);
     this.setupSocketListeners();
     return this.socket;
   },
+
+  signalingConnectBudgetMs: 5000,
 
   resolveSignalingTransports({ allowPolling = true } = {}) {
     // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
     if (allowPolling === false) return ['websocket'];
     return ['websocket', 'polling'];
+  },
+
+  buildSignalingSocketOptions({ token, reconnection = true, allowPolling = true } = {}) {
+    const transports = this.resolveSignalingTransports({ allowPolling });
+    const timeout = Number(this.signalingConnectBudgetMs) > 0
+      ? Number(this.signalingConnectBudgetMs)
+      : 5000;
+    return {
+      auth: { token, role: 'viewer', inputProtocolVersion: 2 },
+      reconnection: Boolean(reconnection),
+      // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
+      transports,
+      // Bound dual-transport failure so Start does not silently hang past 5s budgets.
+      timeout,
+    };
+  },
+
+  /**
+   * Pure helper for transport-fallback policy tests.
+   * models: websocket attempt first; on hard WS failure, polling may succeed;
+   * if every listed transport fails, exit within the connect budget.
+   */
+  evaluateSignalingTransportPlan(events = [], {
+    transports = null,
+    budgetMs = null,
+  } = {}) {
+    const list = Array.isArray(transports) && transports.length
+      ? transports.slice()
+      : this.resolveSignalingTransports();
+    const rawBudget = budgetMs == null || budgetMs === ''
+      ? this.signalingConnectBudgetMs
+      : budgetMs;
+    const budget = Number.isFinite(Number(rawBudget)) && Number(rawBudget) > 0
+      ? Number(rawBudget)
+      : 5000;
+    let used = null;
+    let connectedAt = null;
+    let failedAt = null;
+    for (const event of events) {
+      const at = Number(event?.atMs);
+      const transport = String(event?.transport || '');
+      const type = String(event?.type || '');
+      if (!Number.isFinite(at) || at < 0) continue;
+      if (type === 'connect' && list.includes(transport)) {
+        used = transport;
+        connectedAt = at;
+        break;
+      }
+      if (type === 'transport-error' || type === 'connect_error') {
+        failedAt = at;
+      }
+    }
+    if (used != null) {
+      return {
+        ok: true,
+        transport: used,
+        withinBudget: connectedAt <= budget,
+        elapsedMs: connectedAt,
+        exhausted: false,
+      };
+    }
+    const elapsed = failedAt == null ? budget : Math.min(budget, failedAt);
+    return {
+      ok: false,
+      transport: null,
+      withinBudget: elapsed <= budget,
+      elapsedMs: elapsed,
+      exhausted: true,
+    };
   },
 
   applyHostCapabilities(capabilities = null) {
@@ -1900,14 +1967,35 @@ const WebRTC = {
     const candidateEl = document.getElementById('candidateDisplay');
     const snap = this.portSearchController?.snapshot?.() || null;
     const searching = snap?.status === 'searching';
+    const toolsState = this._operatorToolsState || 'loading'; // loading | ready | failed
     const canStart = this.canStartPortSearch();
     const gateReason = searching ? null : this.portSearchGateReason();
 
     if (btn) {
-      btn.textContent = searching ? '停止搜索' : '搜索端口';
-      btn.disabled = searching ? false : !canStart;
-      if (gateReason) btn.title = gateReason;
-      else if (!searching) btn.title = '搜索可用 STUN 端口';
+      if (!btn.dataset.wrdPortSearchLabel) {
+        btn.dataset.wrdPortSearchLabel = '搜索端口';
+      }
+      // Deferred STUN tool must never look enabled-and-inert.
+      if (toolsState === 'loading') {
+        btn.textContent = btn.dataset.wrdPortSearchLabel;
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+        btn.dataset.wrdOperatorState = 'loading';
+        btn.title = '端口搜索组件加载中…';
+      } else if (toolsState === 'failed') {
+        btn.textContent = '端口工具重试';
+        btn.disabled = false;
+        if (typeof btn.removeAttribute === 'function') btn.removeAttribute('aria-busy');
+        btn.dataset.wrdOperatorState = 'failed';
+        btn.title = '端口搜索组件加载失败，点击重试';
+      } else {
+        btn.textContent = searching ? '停止搜索' : btn.dataset.wrdPortSearchLabel;
+        btn.disabled = searching ? false : !canStart;
+        if (typeof btn.removeAttribute === 'function') btn.removeAttribute('aria-busy');
+        btn.dataset.wrdOperatorState = 'ready';
+        if (gateReason) btn.title = gateReason;
+        else if (!searching) btn.title = '搜索可用 STUN 端口';
+      }
     }
 
     if (!candidateEl || !snap) {
@@ -1956,6 +2044,8 @@ const WebRTC = {
     const controller = this.ensurePortSearchController();
     if (!controller) {
       console.warn('[PORT-SEARCH] StunPortSearchController unavailable');
+      this.updateNetworkUI('端口搜索组件尚未就绪，请稍后重试或点击“端口工具重试”。', 'warning');
+      this.renderPortSearchStatus();
       return false;
     }
 
@@ -4265,19 +4355,39 @@ function bootViewerShell() {
   }
 
   // Non-critical operator tools: load after core-interactive without blocking Start.
-  // Diagnostic button stays disabled (via diagnostic-core) until this succeeds or fails with retry.
+  // Diagnostic + port-search stay disabled until this succeeds or fails with retry.
+  WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'loading';
+  WebRTC._retryOperatorTools = null;
   (function loadDeferredDesktop(attempt = 0) {
     const src = window.__WRD_ASSETS__ && window.__WRD_ASSETS__.desktopDeferredJs;
+    function markOperatorToolsReady() {
+      WebRTC._operatorToolsState = 'ready';
+      WebRTC._retryOperatorTools = null;
+      WebRTC.renderPortSearchStatus?.();
+    }
+    function markOperatorToolsFailed() {
+      WebRTC._operatorToolsState = 'failed';
+      WebRTC._retryOperatorTools = () => {
+        WebRTC._operatorToolsState = 'loading';
+        WebRTC.renderPortSearchStatus?.();
+        loadDeferredDesktop(attempt + 1);
+      };
+      WebRTC.renderPortSearchStatus?.();
+    }
+
     if (!src) {
-      // Source mode already includes full scripts; mark diagnostic ready if panel init ran.
+      // Source mode already includes full scripts on the page.
       if (typeof Diagnostic !== 'undefined' && Diagnostic.panelState === 'loading'
         && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) {
         Diagnostic.markDeferredReady?.();
       }
+      markOperatorToolsReady();
       return;
     }
     if (document.querySelector('script[data-wrd-deferred-desktop="loading"]')) return;
 
+    WebRTC._operatorToolsState = 'loading';
+    WebRTC.renderPortSearchStatus?.();
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredLoading === 'function') {
       Diagnostic.markDeferredLoading();
     }
@@ -4288,17 +4398,23 @@ function bootViewerShell() {
     script.dataset.wrdDeferredDesktop = 'loading';
     script.onload = () => {
       script.dataset.wrdDeferredDesktop = 'ready';
+      markOperatorToolsReady();
     };
     script.onerror = () => {
       script.dataset.wrdDeferredDesktop = 'failed';
       script.remove();
       console.warn('[viewer] deferred desktop tools failed to load');
+      markOperatorToolsFailed();
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredFailed === 'function') {
         Diagnostic.markDeferredFailed(() => {
           if (typeof Diagnostic.markDeferredLoading === 'function') {
             Diagnostic.markDeferredLoading();
           }
-          loadDeferredDesktop(attempt + 1);
+          if (typeof WebRTC._retryOperatorTools === 'function') {
+            WebRTC._retryOperatorTools();
+          } else {
+            loadDeferredDesktop(attempt + 1);
+          }
         });
       }
     };
@@ -4362,12 +4478,26 @@ function bootViewerShell() {
   const portSearchBtn = document.getElementById('portSearchBtn');
   if (portSearchBtn) {
     portSearchBtn.addEventListener('click', () => {
+      if (WebRTC._operatorToolsState === 'failed' && typeof WebRTC._retryOperatorTools === 'function') {
+        WebRTC._retryOperatorTools();
+        return;
+      }
+      if (WebRTC._operatorToolsState !== 'ready') {
+        WebRTC.updateNetworkUI?.('端口搜索组件加载中…', 'warning');
+        return;
+      }
       if (WebRTC.isPortSearchActive()) {
         WebRTC.stopPortSearch('user');
       } else {
         WebRTC.startPortSearch();
       }
     });
+    // Tests and source mode often already have StunPortSearchController; default ready then.
+    if (typeof StunPortSearchController !== 'undefined' || window.StunPortSearchController) {
+      WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'ready';
+    } else {
+      WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'loading';
+    }
     WebRTC.renderPortSearchStatus();
   }
 

@@ -316,6 +316,42 @@ test('createSignalingSocket records websocket-first transports for blocked-WS po
   assert.ok(Number(calls[0].options.timeout) <= 5000);
 });
 
+test('evaluateSignalingTransportPlan: websocket blocked then polling succeeds within budget', () => {
+  const { WebRTC } = loadWebRTC();
+  const plan = WebRTC.evaluateSignalingTransportPlan([
+    { type: 'transport-error', transport: 'websocket', atMs: 120 },
+    { type: 'connect', transport: 'polling', atMs: 480 },
+  ]);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.transport, 'polling');
+  assert.equal(plan.withinBudget, true);
+  assert.equal(plan.exhausted, false);
+  assert.equal(plan.elapsedMs, 480);
+});
+
+test('evaluateSignalingTransportPlan: both transports fail exits within connect budget', () => {
+  const { WebRTC } = loadWebRTC();
+  const plan = WebRTC.evaluateSignalingTransportPlan([
+    { type: 'transport-error', transport: 'websocket', atMs: 200 },
+    { type: 'transport-error', transport: 'polling', atMs: 900 },
+    { type: 'connect_error', transport: 'polling', atMs: 1100 },
+  ], { budgetMs: 5000 });
+  assert.equal(plan.ok, false);
+  assert.equal(plan.exhausted, true);
+  assert.equal(plan.withinBudget, true);
+  assert.ok(plan.elapsedMs <= 5000);
+});
+
+test('buildSignalingSocketOptions keeps websocket before polling and timeout <= budget', () => {
+  const { WebRTC } = loadWebRTC();
+  const options = WebRTC.buildSignalingSocketOptions({ token: 't', reconnection: true });
+  assert.deepEqual(Array.from(options.transports), ['websocket', 'polling']);
+  assert.equal(options.transports[0], 'websocket');
+  assert.ok(options.transports.indexOf('websocket') < options.transports.indexOf('polling'));
+  assert.ok(options.timeout <= WebRTC.signalingConnectBudgetMs);
+  assert.equal(options.auth.inputProtocolVersion, 2);
+});
+
 test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
@@ -2504,6 +2540,7 @@ test('socket connected event enables port search button only for active controll
     state: 'ACTIVE',
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
   };
+  WebRTC._operatorToolsState = 'ready';
   WebRTC.renderPortSearchStatus();
   assert.equal(context.document.getElementById('portSearchBtn').disabled, false);
   assert.equal(context.document.getElementById('portSearchBtn').textContent, '搜索端口');
