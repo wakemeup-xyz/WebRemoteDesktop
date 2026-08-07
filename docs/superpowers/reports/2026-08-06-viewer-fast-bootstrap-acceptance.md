@@ -1,83 +1,60 @@
-# Viewer Fast Bootstrap Acceptance Report (Review Remediation)
+# Viewer Fast Bootstrap Acceptance Report (Closure Review Fix)
 
-Date: 2026-08-07
-Code baseline: post-`a69a494` + deferred operator tools + parallel Start signaling
+Date: 2026-08-07  
+Code tip: `4ffc5c075e9c3d84b0243471dffc20de18821f00`
 
-## Remediation summary
+## Review findings addressed
 
-### P0 acceptance truth
-- `html-shell` is recorded by inline ShellGuard at HTML parse with original `performance.now()` timestamps.
-- Desktop bundle only **imports** shell marks; it never invents `html-shell` / `core-interactive` times.
-- Acceptance harness reports:
-  - `htmlResponseMs` (navigationStart → responseStart)
-  - `navToCoreInteractiveMs` (navigationStart → core-interactive mark)
-  - `clickToSignalMs`
-  - `clickToStableNonBlackMs`
-- Each planned sample runs once; failures enter the artifact with `failureStage`.
-- Cold contexts disable cache; no `--disable-http2`.
-- `nonBlackRatio` is **canvas pixel ratio only**; decoded/playing/bytes are separate `mediaEvidence`.
-- `immediate-start` mode covers open-then-click feedback.
+1. **Diagnostic inert control** — `diagnostic-core.js` is on the critical path (log capture + button shell). `#diagBtn` is **not** `data-core-control`. It stays disabled while deferred panel loads; on deferred failure it becomes an explicit **诊断重试** control (`deferred-abort` fault verified).
+2. **Honest stable-non-black** — harness records first canvas `nonBlackRatio > 0.05` as `stable-non-black` mark; `clickToStableNonBlackMs` is start-click → that mark; 8s deadline is from Start click (no longer `active` + extra 8s).
+3. **Transports** — desktop Socket.IO is WebSocket-first with polling fallback (`['websocket','polling']`) and connect `timeout: 5000`. Unit tests cover transport preference and options.
+4. **Docs** — design, plan, and requirements updated for deferred diagnostic policy, WS+polling, and non-black contract.
 
-### P1 delivery
-- Production `createServerApp` fail-fast without valid dist (test env may use source fallback).
-- Build keeps previous dist on failed rebuild; atomic publish.
-- Critical HTML graph: preload + 1 CSS + 1 JS; no runtime CDN fonts/scripts.
-- `compression` enabled for HTML/JS/CSS.
-- Critical desktop core excludes operator tools (STUN port search / TURN self-test / latency / diagnostic); they ship as lazy `desktop-deferred` after core-interactive.
-- desktop-core gzip ≈57 KiB (raw ≈210 KiB) after deferred split.
+## Automated
 
-### P1 security/config
-- Official registry `npm audit --audit-level=moderate` → 0 vulnerabilities.
-- TURN `priority` integer-only on Node/Python with shared fixture parity tests.
+- signal-server: 282 pass
+- web-client webrtc+diagnostic tests: pass after fix
+- harness unit tests: pass
+- Python TURN parity: 4 pass
+- `npm audit --audit-level=moderate`: 0 (prior tip; unchanged deps this commit)
+- `git diff --check`: clean on commit
 
-### P2 docs/contracts
-- ShellGuard deadline 5s.
-- Requirements: strict single desktop Viewer.
-- README no longer claims direct source `web-client/` hosting.
-- fixed-tunnel preflight reports protocol + recent timeout/reconnect classification.
+## Local runtime (commitSha = `4ffc5c0…`)
 
-### Perf follow-ups that closed formal gates
-- Websocket-only Socket.IO transport (no polling ladder).
-- Start opens signaling socket in parallel with bootstrap; PeerConnection waits for ICE config (`_deferPeerUntilConfig`).
-- Bootstrap preload key matches Start (`mode` + `selectedTurnServerId`).
+| Mode | Result | SHA-256 |
+|---|---|---|
+| cold 20/20 | **PASS** all P95 budgets | `740bf2663aa3fea4c117c1829274f4b35d9680ec863f7a58f308e0515b756fab` |
+| warm 20/20 | **PASS** | `42ae0843bb29cb2360b7887140bed1fa24570d521dbcd3b2f37835b61acb82f9` |
+| immediate-start 5/5 | **PASS** | `a4788b02c5492be5e35e58fbc8c471cf6b8f51ad1e01f16c43530c2e7de0fe3e` |
+| deferred-abort ×1 | **PASS** (diag retry state) | `04d36544c8491210c4c64b4a8d47a7959667b10cec43ee0ece949f77369e6c13` |
 
-## Runtime results (honest harness)
+Local cold P95: HTML 10.6ms / core 220.5ms / signal 106.5ms / non-black 876.5ms.
 
-### Local cold 20/20 — PASS
-Artifact: `artifacts/viewer-bootstrap-local-deferred/viewer-bootstrap-20260807T023116.370058Z.json`
-SHA-256: `50c764ee5ee359f1cda9a06d03927c43da3604112f0dceea27e4634485dfeb42`
+## Formal runtime (commitSha = `4ffc5c0…`) — NOT FULL PASS
 
-| Metric | P95 | Budget | Result |
-|---|---:|---:|---|
-| HTML response | 10.2 ms | ≤2s | PASS |
-| nav → core-interactive | 184.6 ms | ≤5s | PASS |
-| click → signal | 97.6 ms | ≤3s | PASS |
-| click → stable non-black | 646.7 ms | ≤8s | PASS |
-
-Immediate-start 5/5 also PASS (earlier same session).
-
-### Formal cold 20/20 — PASS
-Artifact: `artifacts/viewer-bootstrap-formal-deferred/viewer-bootstrap-20260807T023027.896086Z.json`
-SHA-256: `c6d1c73b48f6b3b7225b1533e2a83687e28c2f1907666478047156c441e800a0`
+Latest cold artifact: `artifacts/viewer-bootstrap-closure-formal/viewer-bootstrap-20260807T131630.033803Z.json`  
+SHA-256: `a26d897ed2c2220b70ff75a44a36232d6ad50d16bf9690b0022112567ef30882`
 
 | Metric | P50 | P95 | Budget | Result |
 |---|---:|---:|---:|---|
-| HTML response | 844 ms | 1618 ms | ≤2s | PASS |
-| nav → core-interactive | 1045 ms | 2307 ms | ≤5s | PASS |
-| click → signal | 1497 ms | 2087 ms | ≤3s | PASS |
-| click → stable non-black | 3006 ms | 4362 ms | ≤8s | PASS |
+| HTML response | 1001 | 1787 | ≤2s | PASS (this run) |
+| nav → core | 1408 | 3598 | ≤5s | PASS |
+| click → signal | 1607 | **4918** | ≤3s | **FAIL** |
+| click → stable non-black | 3867 | 7748 | ≤8s | PASS (successes) |
+| attempt success | 19/20 | | 20/20 | **FAIL** (`stable-non-black` ×1) |
 
-Attempt accounting: successCount 20 / attemptCount 20; failureCount 0.
+Earlier formal cold in the same session also 19/20 with heavier HTML tail (P95 HTML 6211 on first run). Warm formal 19/20 with one navigation failure.
 
-Preflight (read-only) at formal re-run: formal-owners 1, token-argv absent, protocol http2, formal-health 200; connector-stability still classified timeout-heavy on historical log tail (operational residual, not acceptance gate fail).
+Preflight (read-only): owners=1, credentials-file, http2, health 200; historical log still `timeout-heavy`.
 
 ## Judgment
 
-- **AUTOMATED PASS** (signal-server 282; web-asset-build 4; prior scripts/css suites green)
-- **LOCAL RUNTIME PASS** (honest canvas + single-attempt)
-- **FORMAL PUBLIC PERF: FULL PASS** (honest 20/20 + all P95 budgets)
+- **CODE / REVIEW CLOSURE: PASS** (findings 1–4 fixed; local evidence complete; artifact commitSha matches tip)
+- **LOCAL FULL PASS**
+- **FORMAL PUBLIC PERF: FAIL / NOT FULL PASS** under honest single-attempt + canvas non-black gates  
+  Residual risk: Cloudflare edge / signaling / media tail variance; connector log timeout-heavy classification. Not an inert-control or CDN-graph defect.
 
 ## Safety
 
-- Quick tunnel / safe URL not mutated during local restarts (`https://contributors-acm-circular-names.trycloudflare.com` preserved).
-- No formal connector mutation in this phase; preflight remained read-only.
+- Local restart only via `wrd_service.py restart-local`; safe URL unchanged across restart (`https://outside-photographer-stuart-review.trycloudflare.com`).
+- No formal connector mutation; preflight remained read-only.
