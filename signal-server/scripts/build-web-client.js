@@ -55,8 +55,12 @@ async function buildWebClient({ sourceDir, outDir }) {
     const xtermCss = fs.readFileSync(path.join(xtermRoot, 'css/xterm.css'), 'utf8');
 
     const desktopSource = `${socketClient}\n${readJoined(sourceDir, graph.desktopScripts)}`;
+    const deferredSource = readJoined(sourceDir, graph.desktopDeferredScripts || []);
     const terminalSource = `${xtermJs}\n${fitJs}\n${readJoined(sourceDir, graph.terminalScripts)}`;
     const desktopJs = await compileClassic(desktopSource, 'desktop-core.js');
+    const deferredJs = deferredSource
+      ? await compileClassic(deferredSource, 'desktop-deferred.js')
+      : '';
     const terminalJs = await compileClassic(terminalSource, 'terminal.js');
     const shellGuard = await compileClassic(
       fs.readFileSync(path.join(sourceDir, 'js/shell-guard.js'), 'utf8'),
@@ -70,11 +74,22 @@ async function buildWebClient({ sourceDir, outDir }) {
       terminalJs: writeHashed(path.join(staging, 'assets'), 'terminal', 'js', terminalJs),
       terminalCss: writeHashed(path.join(staging, 'assets'), 'terminal', 'css', xtermCss),
     };
+    if (deferredJs) {
+      assets.desktopDeferredJs = writeHashed(
+        path.join(staging, 'assets'),
+        'desktop-deferred',
+        'js',
+        deferredJs,
+      );
+    }
 
     const lazyAssets = {
       terminalJs: `/${assets.terminalJs}`,
       terminalCss: `/${assets.terminalCss}`,
     };
+    if (assets.desktopDeferredJs) {
+      lazyAssets.desktopDeferredJs = `/${assets.desktopDeferredJs}`;
+    }
 
     let viewerHtml = fs.readFileSync(path.join(sourceDir, 'viewer.html'), 'utf8');
     viewerHtml = replaceBlock(

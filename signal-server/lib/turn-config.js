@@ -228,7 +228,9 @@ function toPublicTurnServer(server = {}, { selectedId = '', defaultId = '' } = {
     port: Number(server.port) || 0,
     transport: normalizeTransport(server.transport),
     realm: String(server.realm || ''),
-    priority: Number.isFinite(Number(server.priority)) ? Number(server.priority) : 0,
+    priority: Number.isFinite(Number.parseInt(String(server.priority), 10))
+      ? Number.parseInt(String(server.priority), 10)
+      : 0,
     preferred: Boolean(server.preferred || isPreferredAliyun(server)),
     configured: Boolean(server.configured),
     fingerprint: String(server.fingerprint || ''),

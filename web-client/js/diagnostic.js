@@ -449,9 +449,14 @@ const Diagnostic = {
   }
 };
 
-document.addEventListener('DOMContentLoaded', () => {
+// Safe for deferred load after DOMContentLoaded already fired.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    Diagnostic.init();
+  });
+} else {
   Diagnostic.init();
-});
+}
 
 function updateLatencyPanel() {
   if (typeof LatencyMonitor === 'undefined') return;

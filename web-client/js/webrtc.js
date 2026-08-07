@@ -1275,7 +1275,7 @@ const WebRTC = {
     return { effectiveMode: preferredMode, changed: false, unavailable: false, reason: '' };
   },
   
-  async init({ bootstrapSnapshot = null, trigger = 'viewer-open' } = {}) {
+  async init({ bootstrapSnapshot = null, trigger = 'viewer-open', reuseSocket = false } = {}) {
     const token = Auth.getToken();
     if (!token) {
       console.error('No token available');
@@ -1294,7 +1294,9 @@ const WebRTC = {
     this.beginFirstFrameDeadline(this.currentConnectionAttemptId, 8000);
     this.configureNetworkControls();
     this.updateNetworkUI(modeState.changed ? modeState.reason : '网络模式已就绪', modeState.changed ? 'warning' : '');
-    this.createSignalingSocket(true);
+    // reuseSocket: startViewer may already have opened signaling while bootstrap loads.
+    this._deferPeerUntilConfig = false;
+    this.createSignalingSocket(!reuseSocket);
     this.bindControlLifecycle();
     if (this.networkMode !== 'tunnel') this.createPeerConnection();
   },
@@ -1389,6 +1391,11 @@ const WebRTC = {
         await this.init({ trigger: 'start-button' });
         return;
       }
+      // Open signaling immediately; ICE/config can arrive in parallel via bootstrap.
+      // Defer PeerConnection until applyBootstrapSnapshot so we do not gather with empty ICE.
+      this.manualDisconnect = false;
+      this._deferPeerUntilConfig = true;
+      this.createSignalingSocket(true);
       const bootstrapSnapshot = await controller.load({
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
@@ -1400,8 +1407,9 @@ const WebRTC = {
           StartupTelemetry.mark('bootstrap-ready');
         }
       }
-      await this.init({ bootstrapSnapshot, trigger: 'start-button' });
+      await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
     } catch (error) {
+      this._deferPeerUntilConfig = false;
       if (controller && controller.getSnapshot && controller.getSnapshot().state === 'auth-required') {
         return Auth.logout();
       }
@@ -2103,7 +2111,9 @@ const WebRTC = {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
         this.offerInProgress = false;
       }
-      if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
+      // While startViewer awaits bootstrap, keep PC deferred so ICE servers are applied first.
+      if (!this._deferPeerUntilConfig
+        && (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState))) {
         this.createPeerConnection();
         console.log('[OFFER-DBG] Created new PC on reconnect, pcState=%s', this.pc?.connectionState);
       }
@@ -2134,7 +2144,8 @@ const WebRTC = {
         this.applyHostCapabilities(data.hostCapabilities);
         this.renderPortSearchStatus();
         updateLoadingText('Host已上线，正在连接...');
-        if (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState)) {
+        if (!this._deferPeerUntilConfig
+          && (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState))) {
           this.createPeerConnection();
         }
         // Force a new offer if the previous one is stuck
@@ -2142,7 +2153,9 @@ const WebRTC = {
           console.warn('[NETWORK] Host came online but offerInProgress=true; forcing new offer');
           this.offerInProgress = false;
         }
-        this.requestControl({ allowTakeover: false });
+        if (!this._deferPeerUntilConfig) {
+          this.requestControl({ allowTakeover: false });
+        }
       } else {
         this.controlState.hostOnline = false;
         this.applyHostCapabilities({ turnReady: false, turnFingerprint: '', supportsSessionTurn: false });
@@ -4218,8 +4231,12 @@ function bootViewerShell() {
     })
     : null;
 
+  // Align preload key with startViewer (mode + selected TURN) so Start reuses the inflight fetch.
   if (ViewerBootstrap) {
-    ViewerBootstrap.load({ mode: WebRTC.networkMode }).catch(() => {});
+    ViewerBootstrap.load({
+      mode: WebRTC.networkMode,
+      turnServerId: WebRTC.selectedTurnServerId || '',
+    }).catch(() => {});
   } else {
     WebRTC.loadServerConfig().then(() => {
       WebRTC.configureNetworkControls();
@@ -4237,6 +4254,20 @@ function bootViewerShell() {
       StartupTelemetry.importMarks(shellSnapAfter.marks);
     }
   }
+
+  // Non-critical operator tools: load after core-interactive without blocking Start.
+  (function loadDeferredDesktop() {
+    const src = window.__WRD_ASSETS__ && window.__WRD_ASSETS__.desktopDeferredJs;
+    if (!src || document.querySelector('script[data-wrd-deferred-desktop]')) return;
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.dataset.wrdDeferredDesktop = '1';
+    script.onerror = () => {
+      console.warn('[viewer] deferred desktop tools failed to load');
+    };
+    document.head.appendChild(script);
+  }());
 
   const TerminalLoader = (typeof createTerminalLoader === 'function')
     ? createTerminalLoader({

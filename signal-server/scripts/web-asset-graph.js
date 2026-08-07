@@ -1,6 +1,7 @@
 'use strict';
 
 module.exports = Object.freeze({
+  // Critical path only: enough for ShellGuard takeover, Start, signaling, media, input.
   desktopScripts: Object.freeze([
     'js/runtime-config.js',
     'js/auth.js',
@@ -9,8 +10,6 @@ module.exports = Object.freeze({
     'js/media-activity-controller.js',
     'js/media-activity-lifecycle.js',
     'js/media-activity-runtime.js',
-    'js/stun-port-search-controller.js',
-    'js/turn-selftest.js',
     'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
     'js/terminal-loader.js',
@@ -20,6 +19,11 @@ module.exports = Object.freeze({
     'js/remote-keyboard-controller.js',
     'js/input.js',
     'js/ui.js',
+  ]),
+  // Loaded after core-interactive; must not block Start/signaling.
+  desktopDeferredScripts: Object.freeze([
+    'js/stun-port-search-controller.js',
+    'js/turn-selftest.js',
     'js/latency-monitor.js',
     'js/diagnostic.js',
   ]),
