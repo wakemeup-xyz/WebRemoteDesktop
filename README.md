@@ -57,7 +57,7 @@
 ### Viewer 构建与缓存
 
 - `node server.js`（包括 `npm start` 和仓库 LaunchAgent/启动脚本）会先构建 `web-client/dist/`，构建失败时不监听 8080。
-- Viewer HTML 每次 revalidate；带内容哈希的 JS/CSS 使用一年 immutable cache。
+- Viewer HTML 使用短公共缓存（`max-age=60, must-revalidate`），便于 Cloudflare 边缘 HIT；带内容哈希的 JS/CSS 使用一年 immutable cache。部署后约 1 分钟内边缘可能仍提供上一版 HTML。
 - Viewer 运行时不依赖 jsDelivr/cdn.socket.io；Terminal/xterm 首次打开时加载本地构建资产。
 - `dist/` 是可重建产物，不纳入 Git；`signal-server/package-lock.json` 必须纳入 Git。
 - 正式公网冷启动 Core Interactive P95 <= 5 秒；点击到 signaling connected P95 <= 3 秒；点击到稳定非黑画面 P95 <= 8 秒。
