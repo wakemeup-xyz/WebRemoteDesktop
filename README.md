@@ -57,7 +57,7 @@
 ### Viewer 构建与缓存
 
 - `node server.js`（包括 `npm start` 和仓库 LaunchAgent/启动脚本）会先构建 `web-client/dist/`，构建失败时不监听 8080。
-- Viewer HTML 使用短公共缓存（`max-age=60, must-revalidate`），便于 Cloudflare 边缘 HIT；带内容哈希的 JS/CSS 使用一年 immutable cache。部署后约 1 分钟内边缘可能仍提供上一版 HTML。
+- Viewer HTML 每次 revalidate（`no-cache, max-age=0, must-revalidate`；CDN 侧 `no-store`），避免“旧 HTML + 新哈希资产”窗口；带内容哈希的 JS/CSS 使用一年 immutable cache。
 - Viewer 运行时不依赖 jsDelivr/cdn.socket.io；Terminal/xterm 首次打开时加载本地构建资产。
 - `dist/` 是可重建产物，不纳入 Git；`signal-server/package-lock.json` 必须纳入 Git。
 - 正式公网冷启动 Core Interactive P95 <= 5 秒；点击到 signaling connected P95 <= 3 秒；点击到稳定非黑画面 P95 <= 8 秒。
@@ -143,7 +143,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 - 前端**不单独运行** `npm run dev`
 - **不要把**裸 `5173` **页面当作当前仓库正式入口**；只有在显式配置 `dev.link.stockhub.wiki` 时，`5173` 才作为可选开发映射存在
-- `signal-server` 通过构建产物 `web-client/dist/` 托管 Viewer：HTML 短缓存（60s must-revalidate，便于 CF 边缘 HIT），内容哈希 JS/CSS immutable；生产路径不直接托管 source `web-client/` 目录，也不依赖运行时 CDN
+- `signal-server` 通过构建产物 `web-client/dist/` 托管 Viewer：HTML 强制 revalidate（无 edge TTL），内容哈希 JS/CSS immutable；生产路径不直接托管 source `web-client/` 目录，也不依赖运行时 CDN
 - 本地唯一正确入口：`http://127.0.0.1:8080`
 - 健康检查：`http://127.0.0.1:8080/health`
 - Host 状态：`http://127.0.0.1:8080/api/status`

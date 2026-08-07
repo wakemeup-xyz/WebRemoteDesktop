@@ -187,23 +187,40 @@
     if (typeof this.buildConnectionDiagnostic === 'function'
       && typeof this.sendConnectionDiagnostic === 'function'
       && this.panelReady) {
+      // Full panel owns attempt-id extraction + unified cooldown.
+      if (typeof this.claimAttemptSendSlot === 'function') {
+        // Delegate to full autoSendFailure once assigned; core only queues reasons.
+      }
       const payload = this.buildConnectionDiagnostic({
         trigger: 'auto-failure',
         reason,
       });
       const attemptId = String(payload.connectionAttemptId || '').trim() || 'global';
       const now = Date.now();
-      if (typeof this.pruneAutoSendCooldown === 'function') this.pruneAutoSendCooldown(now);
-      const lastSentAt = Number(this.autoSendByAttempt[attemptId] || 0);
-      if (now - lastSentAt < this.autoSendCooldownMs) {
-        console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
-        return;
+      if (typeof this.claimAttemptSendSlot === 'function') {
+        if (!this.claimAttemptSendSlot(attemptId, now)) {
+          console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
+          if (typeof this.enqueuePendingDiagnostic === 'function') {
+            this.enqueuePendingDiagnostic(payload);
+          }
+          return;
+        }
+      } else {
+        if (typeof this.pruneAutoSendCooldown === 'function') this.pruneAutoSendCooldown(now);
+        const lastSentAt = Number(this.autoSendByAttempt[attemptId] || 0);
+        if (now - lastSentAt < this.autoSendCooldownMs) {
+          console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
+          return;
+        }
+        this.autoSendByAttempt[attemptId] = now;
       }
-      this.autoSendByAttempt[attemptId] = now;
       this.sendConnectionDiagnostic(payload);
       return;
     }
-    this._pendingFailureReasons.push(String(reason || 'unknown').slice(0, 128));
+    // Dedupe pending reason strings (core has no attempt id yet).
+    const key = String(reason || 'unknown').slice(0, 128);
+    this._pendingFailureReasons = (this._pendingFailureReasons || []).filter((item) => item !== key);
+    this._pendingFailureReasons.push(key);
     if (this._pendingFailureReasons.length > 20) {
       this._pendingFailureReasons.shift();
     }

@@ -410,8 +410,15 @@
 
   enqueuePendingDiagnostic(payload) {
     const pending = this.getPendingDiagnostics();
-    pending.push(payload);
-    this.setPendingDiagnostics(pending);
+    const attemptId = String(payload?.connectionAttemptId || payload?.attemptId || '').trim() || 'global';
+    // One pending payload per attempt — keep the latest failure for that attempt.
+    const deduped = pending.filter((item) => {
+      const id = String(item?.connectionAttemptId || item?.attemptId || '').trim() || 'global';
+      return id !== attemptId;
+    });
+    deduped.push(payload);
+    while (deduped.length > 10) deduped.shift();
+    this.setPendingDiagnostics(deduped);
   },
 
   pruneAutoSendCooldown(now = Date.now()) {
@@ -420,6 +427,21 @@
         delete this.autoSendByAttempt[attemptId];
       }
     });
+  },
+
+  /**
+   * Unified per-attempt cooldown gate for live auto-send and pending replay.
+   * Returns true once and stamps the attempt; false if still cooling down.
+   */
+  claimAttemptSendSlot(attemptId, now = Date.now()) {
+    const id = String(attemptId || '').trim() || 'global';
+    this.pruneAutoSendCooldown(now);
+    const lastSentAt = Number(this.autoSendByAttempt[id] || 0);
+    if (now - lastSentAt < this.autoSendCooldownMs) {
+      return false;
+    }
+    this.autoSendByAttempt[id] = now;
+    return true;
   },
 
   async sendConnectionDiagnostic(payload) {
@@ -464,12 +486,24 @@
       return 0;
     }
     const pending = this.getPendingDiagnostics();
-    const replay = pending.slice(0, 2);
-    replay.forEach((payload) => {
+    const remaining = [];
+    let sent = 0;
+    for (const payload of pending) {
+      if (sent >= 2) {
+        remaining.push(payload);
+        continue;
+      }
+      const attemptId = String(payload?.connectionAttemptId || payload?.attemptId || '').trim() || 'global';
+      if (!this.claimAttemptSendSlot(attemptId)) {
+        // Still in unified cooldown — keep for a later replay.
+        remaining.push(payload);
+        continue;
+      }
       targetSocket.emit('diagnostic', payload);
-    });
-    this.setPendingDiagnostics(pending.slice(replay.length));
-    return replay.length;
+      sent += 1;
+    }
+    this.setPendingDiagnostics(remaining);
+    return sent;
   },
 
   autoSendFailure(reason) {
@@ -478,14 +512,12 @@
       reason,
     });
     const attemptId = String(payload.connectionAttemptId || '').trim() || 'global';
-    const now = Date.now();
-    this.pruneAutoSendCooldown(now);
-    const lastSentAt = Number(this.autoSendByAttempt[attemptId] || 0);
-    if (now - lastSentAt < this.autoSendCooldownMs) {
+    if (!this.claimAttemptSendSlot(attemptId)) {
       console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
+      // Still refresh pending slot for this attempt so a later replay has latest payload.
+      this.enqueuePendingDiagnostic(payload);
       return;
     }
-    this.autoSendByAttempt[attemptId] = now;
     this.sendConnectionDiagnostic(payload);
   },
   });

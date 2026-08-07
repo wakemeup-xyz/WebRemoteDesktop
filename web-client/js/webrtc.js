@@ -1472,6 +1472,8 @@ const WebRTC = {
       reconnection: Boolean(reconnection),
       // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
       transports,
+      // When the first transport fails hard, continue through the list (WS → polling).
+      tryAllTransports: true,
       // Bound dual-transport failure so Start does not silently hang past 5s budgets.
       timeout,
     };

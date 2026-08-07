@@ -277,6 +277,7 @@ test('viewer waits for an active control lease before starting an offer and rout
 
   assert.equal(socketOptions.auth.inputProtocolVersion, 2);
   assert.deepEqual(Array.from(socketOptions.transports), ['websocket', 'polling']);
+  assert.equal(socketOptions.tryAllTransports, true);
   assert.equal(socketOptions.timeout, 5000);
   socketHandlers.get('connected')({ hostOnline: true });
   assert.equal(offers, 0);
@@ -312,6 +313,7 @@ test('createSignalingSocket records websocket-first transports for blocked-WS po
   WebRTC.createSignalingSocket(true);
   assert.equal(calls.length, 1);
   assert.deepEqual(Array.from(calls[0].options.transports), ['websocket', 'polling']);
+  assert.equal(calls[0].options.tryAllTransports, true);
   // Dual-transport connect is budget-bounded (no unbounded silent hang).
   assert.ok(Number(calls[0].options.timeout) <= 5000);
 });
@@ -348,6 +350,7 @@ test('buildSignalingSocketOptions keeps websocket before polling and timeout <= 
   assert.deepEqual(Array.from(options.transports), ['websocket', 'polling']);
   assert.equal(options.transports[0], 'websocket');
   assert.ok(options.transports.indexOf('websocket') < options.transports.indexOf('polling'));
+  assert.equal(options.tryAllTransports, true);
   assert.ok(options.timeout <= WebRTC.signalingConnectBudgetMs);
   assert.equal(options.auth.inputProtocolVersion, 2);
 });

@@ -3,12 +3,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Browser + edge: short shared TTL so Cloudflare can serve HIT for viewer.html.
-// Formal cold P95 is dominated by tunnel HTML TTFB when status=DYNAMIC; a 60s
-// public max-age keeps deploys fresh enough while allowing edge cache.
-// Hashed assets remain long-immutable.
-const HTML_POLICY = 'public, max-age=60, must-revalidate';
-const HTML_EDGE_POLICY = 'public, max-age=60';
+// Browsers always revalidate HTML. Do not set a positive max-age/edge TTL for HTML:
+// a short edge cache without N-1 asset retention can pair old HTML with missing
+// new hashed assets after deploy. Hashed assets stay long-immutable.
+const HTML_POLICY = 'no-cache, max-age=0, must-revalidate';
+const HTML_EDGE_POLICY = null;
 const IMMUTABLE_POLICY = 'public, max-age=31536000, immutable';
 
 function normalizeAssetPath(value) {
@@ -47,6 +46,7 @@ function cachePolicyForAsset(pathname, manifest) {
 
 function edgeCachePolicyForAsset(pathname, manifest) {
   if (manifest.immutablePaths.has(pathname)) return IMMUTABLE_POLICY;
+  // HTML deliberately has no edge TTL (see HTML_EDGE_POLICY).
   if (isHtmlLikePath(pathname)) return HTML_EDGE_POLICY;
   return null;
 }
@@ -58,6 +58,10 @@ function applyAssetCacheHeaders(res, pathname, manifest) {
     // Cloudflare respects CDN-Cache-Control / Cloudflare-CDN-Cache-Control over Cache-Control.
     res.setHeader('CDN-Cache-Control', edge);
     res.setHeader('Cloudflare-CDN-Cache-Control', edge);
+  } else if (isHtmlLikePath(pathname)) {
+    // Explicitly disable shared caches for HTML when no edge policy is set.
+    res.setHeader('CDN-Cache-Control', 'no-store');
+    res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
   }
 }
 

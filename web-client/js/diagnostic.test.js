@@ -333,6 +333,41 @@ test('replayPendingDiagnostics replays at most two queued diagnostics and remove
   assert.deepEqual(JSON.parse(storage.getItem('wrdPendingDiagnostics')), [{ connectionAttemptId: 'wrd-3' }]);
 });
 
+test('enqueuePendingDiagnostic keeps one payload per connectionAttemptId', () => {
+  const { context, storage } = createDiagnosticContext();
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  Diagnostic.enqueuePendingDiagnostic({ connectionAttemptId: 'a1', reason: 'first' });
+  Diagnostic.enqueuePendingDiagnostic({ connectionAttemptId: 'a1', reason: 'second' });
+  Diagnostic.enqueuePendingDiagnostic({ connectionAttemptId: 'a2', reason: 'other' });
+  const queued = JSON.parse(storage.getItem('wrdPendingDiagnostics'));
+  assert.equal(queued.length, 2);
+  const a1 = queued.find((item) => item.connectionAttemptId === 'a1');
+  assert.equal(a1.reason, 'second');
+});
+
+test('autoSendFailure and replayPendingDiagnostics share unified per-attempt cooldown', async () => {
+  const { context, storage } = createDiagnosticContext();
+  const emitted = [];
+  context.WebRTC.socket = {
+    connected: true,
+    emit(event, payload) { emitted.push({ event, payload }); },
+  };
+  context.WebRTC.currentConnectionAttemptId = 'attempt-cool';
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  Diagnostic.autoSendCooldownMs = 60_000;
+  Diagnostic.autoSendFailure('pc-failed');
+  assert.equal(emitted.length, 1);
+  Diagnostic.autoSendFailure('pc-failed-again');
+  // Second call cools down but still refreshes pending for the attempt.
+  assert.equal(emitted.length, 1);
+  const pending = JSON.parse(storage.getItem('wrdPendingDiagnostics') || '[]');
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].connectionAttemptId, 'attempt-cool');
+  const replayed = await Diagnostic.replayPendingDiagnostics(context.WebRTC.socket);
+  assert.equal(replayed, 0);
+  assert.equal(emitted.length, 1);
+});
+
 test('autoSendFailure is scoped per connection attempt instead of one global cooldown', () => {
   const { context } = createDiagnosticContext();
   const emitted = [];
