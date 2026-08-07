@@ -35,7 +35,7 @@ test('manifest-listed hashed assets are immutable while HTML revalidates', () =>
   );
   assert.equal(
     cachePolicyForAsset('/viewer.html', manifest),
-    'no-cache, max-age=0, must-revalidate',
+    'public, max-age=60, must-revalidate',
   );
   assert.equal(edgeCachePolicyForAsset('/viewer.html', manifest), HTML_EDGE_POLICY);
   assert.equal(cachePolicyForAsset('/assets/unknown.js', manifest), 'no-cache');
@@ -61,7 +61,7 @@ test('generated HTML revalidates and hashed assets are immutable', async () => {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const html = await fetch(`${origin}/viewer.html`);
   const asset = await fetch(`${origin}/assets/app.0123456789abcdef.js`);
-  assert.equal(html.headers.get('cache-control'), 'no-cache, max-age=0, must-revalidate');
+  assert.equal(html.headers.get('cache-control'), 'public, max-age=60, must-revalidate');
   assert.equal(html.headers.get('cdn-cache-control'), HTML_EDGE_POLICY);
   assert.equal(html.headers.get('cloudflare-cdn-cache-control'), HTML_EDGE_POLICY);
   assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');

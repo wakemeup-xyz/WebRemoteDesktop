@@ -49,6 +49,13 @@ credentials-file: ~/.cloudflared/$TUNNEL_ID.json
 ingress:
   - hostname: $DOMAIN
     service: $LOCAL_ORIGIN
+    originRequest:
+      connectTimeout: 10s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 90s
+      keepAliveConnections: 100
+      noHappyEyeballs: true
 EOF
 
 if [ "$ENABLE_DEV_SUBDOMAIN" = "1" ]; then

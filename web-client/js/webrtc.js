@@ -2803,6 +2803,12 @@ const WebRTC = {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
       });
 
+      // Ask Host for an IDR ASAP so formal cold first-frame is not stuck on an inter-frame.
+      if (event.track?.kind === 'video') {
+        this.requestKeyframe('ontrack-first-video');
+        setTimeout(() => this.requestKeyframe('ontrack-first-video-retry'), 700);
+      }
+
       // Last-resort fallback: if loading still visible after 8s, force hide
       setTimeout(() => {
         const el = document.getElementById('loading');

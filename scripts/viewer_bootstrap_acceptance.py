@@ -592,7 +592,9 @@ def main(argv=None):
                 sample["attemptIndex"] = index
                 samples.append(sample)
                 context.close()
-                time.sleep(0.5)
+                # Brief gap lets Host encoder/lease settle between cold sessions
+                # (formal sequential 20 can otherwise starve first-frame).
+                time.sleep(1.0)
 
         if args.mode in ("warm", "both"):
             # Explicit warmup, then N warm samples on the same warmed context/cache.

@@ -3,9 +3,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Browsers always revalidate HTML; edge may keep a short shared copy so formal
-// Cloudflare TTFB spikes do not hit origin on every cold navigation.
-const HTML_POLICY = 'no-cache, max-age=0, must-revalidate';
+// Browser + edge: short shared TTL so Cloudflare can serve HIT for viewer.html.
+// Formal cold P95 is dominated by tunnel HTML TTFB when status=DYNAMIC; a 60s
+// public max-age keeps deploys fresh enough while allowing edge cache.
+// Hashed assets remain long-immutable.
+const HTML_POLICY = 'public, max-age=60, must-revalidate';
 const HTML_EDGE_POLICY = 'public, max-age=60';
 const IMMUTABLE_POLICY = 'public, max-age=31536000, immutable';
 
