@@ -1,16 +1,41 @@
-// Diagnostic log collector: intercepts console output and allows sending to server
-const Diagnostic = {
-  logs: [],
-  maxLogs: 500,
-  socket: null,
-  autoSendByAttempt: {},
-  autoSendCooldownMs: 15000,
-  browserSessionId: null,
+// Full diagnostic panel (deferred). Extends diagnostic-core collector/button shell.
+(function extendDiagnosticPanel(global) {
+  const Diagnostic = global.Diagnostic && typeof global.Diagnostic === 'object'
+    ? global.Diagnostic
+    : {
+      logs: [],
+      maxLogs: 500,
+      autoSendByAttempt: {},
+      autoSendCooldownMs: 15000,
+      browserSessionId: null,
+    };
 
+  // Preserve core log buffer / hijack flags when present.
+  Diagnostic.logs = Array.isArray(Diagnostic.logs) ? Diagnostic.logs : [];
+  Diagnostic.maxLogs = Diagnostic.maxLogs || 500;
+  Diagnostic.autoSendByAttempt = Diagnostic.autoSendByAttempt || {};
+  Diagnostic.autoSendCooldownMs = Diagnostic.autoSendCooldownMs || 15000;
+  Diagnostic.socket = Diagnostic.socket || null;
+
+  Object.assign(Diagnostic, {
   init() {
     this.ensureBrowserSessionId();
-    this.hijackConsole();
+    if (typeof this.hijackConsole === 'function') this.hijackConsole();
     this.setupUI();
+    if (typeof this.markDeferredReady === 'function') {
+      this.markDeferredReady();
+    } else {
+      const diagBtn = document.getElementById('diagBtn');
+      if (diagBtn) {
+        diagBtn.disabled = false;
+        if (typeof diagBtn.removeAttribute === 'function') {
+          diagBtn.removeAttribute('aria-busy');
+        }
+      }
+    }
+    if (typeof this.flushPendingAutoSends === 'function') {
+      this.flushPendingAutoSends();
+    }
     console.log('[Diagnostic] Log collector initialized');
   },
 
@@ -54,6 +79,8 @@ const Diagnostic = {
   },
 
   hijackConsole() {
+    if (this._consoleHijacked) return;
+    this._consoleHijacked = true;
     const originalLog = console.log;
     const originalError = console.error;
     const originalWarn = console.warn;
@@ -90,6 +117,15 @@ const Diagnostic = {
     };
   },
 
+  openPanel() {
+    const modal = document.getElementById('diagModal');
+    const area = document.getElementById('diagLogArea');
+    if (!modal || !area) return;
+    area.value = this.logs.map((entry) => this.formatLogEntry(entry)).join('\n');
+    area.scrollTop = area.scrollHeight;
+    modal.classList.remove('hidden');
+  },
+
   setupUI() {
     const diagBtn = document.getElementById('diagBtn');
     const modal = document.getElementById('diagModal');
@@ -98,30 +134,35 @@ const Diagnostic = {
     const clearBtn = document.getElementById('clearDiagBtn');
     const area = document.getElementById('diagLogArea');
 
-    if (!diagBtn) return;
+    if (!diagBtn || !modal || !area) return;
 
-    diagBtn.addEventListener('click', () => {
-      area.value = this.logs.map((entry) => this.formatLogEntry(entry)).join('\n');
-      area.scrollTop = area.scrollHeight;
-      modal.classList.remove('hidden');
-    });
+    // Core shell already owns the click → openPanel/retry path.
+    if (!this._diagShellBound) {
+      diagBtn.addEventListener('click', () => this.openPanel());
+    }
 
-    closeBtn.addEventListener('click', () => {
-      modal.classList.add('hidden');
-    });
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        modal.classList.add('hidden');
+      });
+    }
 
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.classList.add('hidden');
     });
 
-    clearBtn.addEventListener('click', () => {
-      this.logs = [];
-      area.value = '';
-    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        this.logs = [];
+        area.value = '';
+      });
+    }
 
-    sendBtn.addEventListener('click', () => {
-      this.sendLogs();
-    });
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => {
+        this.sendLogs();
+      });
+    }
   },
 
   getInputChannelTimeline() {
@@ -446,17 +487,23 @@ const Diagnostic = {
     }
     this.autoSendByAttempt[attemptId] = now;
     this.sendConnectionDiagnostic(payload);
-  }
-};
-
-// Safe for deferred load after DOMContentLoaded already fired.
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    Diagnostic.init();
+  },
   });
-} else {
-  Diagnostic.init();
-}
+
+  global.Diagnostic = Diagnostic;
+
+  // Safe for deferred load after DOMContentLoaded already fired.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      Diagnostic.init();
+    });
+  } else {
+    Diagnostic.init();
+  }
+}(typeof window !== 'undefined' ? window : globalThis));
+
+// Classic-script / test harness binding (IIFE also assigns window.Diagnostic).
+var Diagnostic = (typeof window !== 'undefined' ? window : globalThis).Diagnostic;
 
 function updateLatencyPanel() {
   if (typeof LatencyMonitor === 'undefined') return;

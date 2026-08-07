@@ -12,12 +12,16 @@ function makeElement(id) {
     scrollTop: 0,
     scrollHeight: 100,
     style: {},
+    disabled: false,
+    dataset: {},
     classList: {
       add() {},
       remove() {},
     },
     focus() {},
     setAttribute() {},
+    removeAttribute() {},
+    getAttribute() { return null; },
     addEventListener(type, handler) {
       this[`on${type}`] = handler;
     },

@@ -1445,14 +1445,23 @@ const WebRTC = {
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
+    const transports = this.resolveSignalingTransports();
     this.socket = io(socketBase, {
       auth: { token, role: 'viewer', inputProtocolVersion: 2 },
       reconnection: !this._superseded,
-      // Formal entry is high-latency; avoid long-polling ladders.
-      transports: ['websocket'],
+      // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
+      transports,
+      // Bound dual-transport failure so Start does not silently hang past 5s budgets.
+      timeout: 5000,
     });
     this.setupSocketListeners();
     return this.socket;
+  },
+
+  resolveSignalingTransports({ allowPolling = true } = {}) {
+    // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
+    if (allowPolling === false) return ['websocket'];
+    return ['websocket', 'polling'];
   },
 
   applyHostCapabilities(capabilities = null) {
@@ -4256,15 +4265,42 @@ function bootViewerShell() {
   }
 
   // Non-critical operator tools: load after core-interactive without blocking Start.
-  (function loadDeferredDesktop() {
+  // Diagnostic button stays disabled (via diagnostic-core) until this succeeds or fails with retry.
+  (function loadDeferredDesktop(attempt = 0) {
     const src = window.__WRD_ASSETS__ && window.__WRD_ASSETS__.desktopDeferredJs;
-    if (!src || document.querySelector('script[data-wrd-deferred-desktop]')) return;
+    if (!src) {
+      // Source mode already includes full scripts; mark diagnostic ready if panel init ran.
+      if (typeof Diagnostic !== 'undefined' && Diagnostic.panelState === 'loading'
+        && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) {
+        Diagnostic.markDeferredReady?.();
+      }
+      return;
+    }
+    if (document.querySelector('script[data-wrd-deferred-desktop="loading"]')) return;
+
+    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredLoading === 'function') {
+      Diagnostic.markDeferredLoading();
+    }
+
     const script = document.createElement('script');
     script.src = src;
     script.async = true;
-    script.dataset.wrdDeferredDesktop = '1';
+    script.dataset.wrdDeferredDesktop = 'loading';
+    script.onload = () => {
+      script.dataset.wrdDeferredDesktop = 'ready';
+    };
     script.onerror = () => {
+      script.dataset.wrdDeferredDesktop = 'failed';
+      script.remove();
       console.warn('[viewer] deferred desktop tools failed to load');
+      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredFailed === 'function') {
+        Diagnostic.markDeferredFailed(() => {
+          if (typeof Diagnostic.markDeferredLoading === 'function') {
+            Diagnostic.markDeferredLoading();
+          }
+          loadDeferredDesktop(attempt + 1);
+        });
+      }
     };
     document.head.appendChild(script);
   }());

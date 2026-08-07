@@ -176,6 +176,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **流控与背压**：每 observer 输入 token bucket、64 KiB 单消息限制和 ack 驱动输出队列；慢 observer 单独 detach，replay 保留完整 chunk，其他 observer 与共享 PTY 不受影响
 - [x] **有界指标**：admin-only `/api/admin/terminal/metrics` 返回固定计数器、有界 latency p50/p95、transport 分桶和 pool 容量，不包含原始 IO。`WRD_TERMINAL_RECORD_IO=1` 仅开启 metadata 记录
 - [x] **传输策略**：默认 WebSocket-only；`WRD_TERMINAL_ALLOW_POLLING=1` 才启用 polling，两个 transport 的延迟样本分开统计
+- [x] **桌面 Viewer 信令**：Socket.IO **WebSocket-first + polling fallback**（`transports: ['websocket', 'polling']`，connect timeout ≤5s）。Terminal 仍默认 WebSocket-only，仅 `WRD_TERMINAL_ALLOW_POLLING=1` 时启用 polling。
+- [x] **诊断控件**：critical path 保留最小日志采集与诊断按钮壳；完整诊断面板可 deferred 加载，加载前按钮 disabled，失败显示“诊断重试”，禁止可点击无响应。
 - [x] **同钟延迟指标**：`socketRtt`、`inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 只在 Signal Server 内部相减，不混用浏览器与服务端 wall clock
 - [x] **密码安全回显**：首批普通输入只作为隐藏 probe；确认远端 shell 实际回显后才允许后续本地回显。Enter、控制键、alternate-screen、断线和重连均清零 confidence
 - [x] **关闭竞态保护**：session 关闭后的迟到 input/resize 返回稳定 `terminal_session_not_found` 并记录脱敏拒绝元数据，不得终止 Signal Server 或影响新 session
@@ -357,7 +359,8 @@ WebRemoteDesktop/
 │       ├── webrtc.js
 │       ├── input.js
 │       ├── ui.js
-│       └── diagnostic.js      # 日志捕获 + 诊断模态框
+│       ├── diagnostic-core.js # 关键路径日志采集 + 诊断按钮壳
+│       └── diagnostic.js      # deferred 诊断模态框/发送
 └── docs/需求文档/
     └── WebRemoteDesktop-需求文档.md
 ```

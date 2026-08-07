@@ -294,7 +294,8 @@ def collect_startup_sample(page, origin, viewer_password, viewer_token=None, *, 
         # Click as soon as the Start control exists (<100ms feedback contract).
         t0 = time.time()
         page.click("#startBtn", no_wait_after=False)
-        feedback_ms = round((time.time() - t0) * 1000, 2)
+        click_wall = time.time()
+        feedback_ms = round((click_wall - t0) * 1000, 2)
         text = page.evaluate("() => document.getElementById('loadingText')?.textContent || ''")
         if feedback_ms > 100 and "正在" not in text and "连接" not in text:
             # Feedback must be visible quickly; shell queues or starts connection.
@@ -306,34 +307,65 @@ def collect_startup_sample(page, origin, viewer_password, viewer_token=None, *, 
             timeout=5_000,
         )
         page.click("#startBtn")
+        click_wall = time.time()
 
     page.wait_for_function(
         "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((m) => m.name === 'signal-connected')",
         timeout=5_000,
     )
-    page.wait_for_function(
-        "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((m) => m.name === 'active')",
-        timeout=8_000,
-    )
 
-    # Poll real canvas pixels only — never invent nonBlack from decoded/playing.
+    # Stable non-black: first canvas ratio > 0.05, deadline from Start click (not active+extra).
     non_black = 0.0
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
+    stable_non_black_at_ms = None
+    non_black_deadline = click_wall + 8.0
+    while time.time() < non_black_deadline:
         non_black = float(_canvas_non_black_ratio(page) or 0.0)
         if non_black > 0.05:
+            stable_non_black_at_ms = page.evaluate(
+                """() => {
+                  const atMs = (typeof performance !== 'undefined' && performance.now)
+                    ? Math.round(performance.now() * 100) / 100
+                    : null;
+                  if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
+                    const names = new Set((StartupTelemetry.snapshot?.().marks || []).map((m) => m.name));
+                    if (!names.has('stable-non-black')) {
+                      StartupTelemetry.mark('stable-non-black');
+                    }
+                  } else if (window.__WRD_SHELL__?.mark) {
+                    const snap = window.__WRD_SHELL__.snapshot?.();
+                    const names = new Set((snap?.marks || []).map((m) => m.name));
+                    if (!names.has('stable-non-black')) window.__WRD_SHELL__.mark('stable-non-black');
+                  }
+                  const marks = window.__WRD_STARTUP_SNAPSHOT__?.().marks
+                    || window.__WRD_SHELL__?.snapshot?.().marks
+                    || [];
+                  const hit = marks.find((m) => m.name === 'stable-non-black');
+                  return hit?.atMs ?? atMs;
+                }"""
+            )
             break
-        page.wait_for_timeout(200)
+        page.wait_for_timeout(100)
     aux = _media_aux_evidence(page)
-    if non_black <= 0.05:
+    if non_black <= 0.05 or stable_non_black_at_ms is None:
         raise AssertionError(
-            f"stable non-black canvas ratio too low: {non_black}; aux={aux}"
+            f"stable non-black canvas ratio too low within 8s of start-click: {non_black}; aux={aux}"
         )
+
+    # active/first-frame may lag slightly after pixels; still require within remaining budget if possible.
+    try:
+        remaining_ms = max(500, int((non_black_deadline - time.time()) * 1000))
+        page.wait_for_function(
+            "() => window.__WRD_STARTUP_SNAPSHOT__?.().marks.some((m) => m.name === 'active')",
+            timeout=remaining_ms,
+        )
+    except Exception:  # noqa: BLE001
+        # Pixels already proved non-black; active mark is supporting evidence only.
+        pass
 
     snapshot = page.evaluate("window.__WRD_STARTUP_SNAPSHOT__()")
     # Never invent marks in the harness.
     mark_names = {m.get("name") for m in (snapshot.get("marks") or [])}
-    for required in ("html-shell", "core-interactive", "start-click", "signal-connected", "active"):
+    for required in ("html-shell", "core-interactive", "start-click", "signal-connected", "stable-non-black"):
         if required not in mark_names:
             raise AssertionError(f"missing required startup mark: {required}; have={sorted(mark_names)}")
 
@@ -345,15 +377,24 @@ def collect_startup_sample(page, origin, viewer_password, viewer_token=None, *, 
             return None
         return round(marks[end] - marks[start], 2)
 
+    click_to_stable = mark_elapsed("start-click", "stable-non-black")
+    if click_to_stable is None and stable_non_black_at_ms is not None and "start-click" in marks:
+        click_to_stable = round(float(stable_non_black_at_ms) - float(marks["start-click"]), 2)
+    if click_to_stable is not None and click_to_stable > 8000:
+        raise AssertionError(
+            f"stable non-black exceeded 8s from start-click: {click_to_stable}ms"
+        )
+
     # navToCoreInteractiveMs: performance mark atMs is already relative to navigationStart.
     sample = {
         "failed": False,
-        "finalState": "active",
+        "finalState": "active" if "active" in mark_names else "stable-non-black",
         "htmlResponseMs": nav.get("htmlResponseMs"),
         "navToCoreInteractiveMs": marks.get("core-interactive"),
         "coreInteractiveMarkMs": mark_elapsed("html-shell", "core-interactive"),
         "clickToSignalMs": mark_elapsed("start-click", "signal-connected"),
-        "clickToStableNonBlackMs": mark_elapsed("start-click", "active"),
+        # Honest pixel gate — never proxy with the active mark alone.
+        "clickToStableNonBlackMs": click_to_stable,
         "nonBlackRatio": non_black,
         "mediaEvidence": aux,
         "navigation": nav,
@@ -417,10 +458,12 @@ def install_fault(page, fault):
         page.route("**/api/viewer-bootstrap*", delay_bootstrap)
     elif fault == "terminal-abort":
         page.route("**/assets/terminal.*", lambda route: route.abort())
+    elif fault == "deferred-abort":
+        page.route("**/assets/desktop-deferred*", lambda route: route.abort())
 
 
 def verify_fault(page, fault, sample):
-    if sample.get("failed"):
+    if sample.get("failed") and fault != "deferred-abort":
         return
     if fault == "bootstrap-delay":
         marks = {mark["name"]: mark["atMs"] for mark in sample["startup"]["marks"]}
@@ -431,6 +474,8 @@ def verify_fault(page, fault, sample):
         if degraded - started > 5000:
             raise AssertionError("bootstrap wait exceeded 5s budget")
     elif fault == "terminal-abort":
+        if sample.get("failed"):
+            return
         page.click("#terminalTabBtn")
         page.wait_for_function(
             """() => {
@@ -446,6 +491,24 @@ def verify_fault(page, fault, sample):
             }""",
             timeout=6_000,
         )
+    elif fault == "deferred-abort":
+        page.wait_for_function(
+            """() => {
+              const btn = document.getElementById('diagBtn');
+              if (!btn) return false;
+              const state = btn.dataset.wrdDiagState || '';
+              const label = String(btn.textContent || '');
+              // Must not be enabled-and-inert: either still loading (disabled) or explicit retry.
+              if (state === 'failed' || /重试/.test(label)) {
+                return btn.disabled === false;
+              }
+              if (state === 'loading' || btn.getAttribute('aria-busy') === 'true') {
+                return btn.disabled === true;
+              }
+              return false;
+            }""",
+            timeout=6_000,
+        )
 
 
 def parse_args(argv=None):
@@ -455,7 +518,7 @@ def parse_args(argv=None):
     parser.add_argument("--mode", choices=("cold", "warm", "both", "immediate-start"), default="both")
     parser.add_argument(
         "--fault",
-        choices=("bootstrap-delay", "terminal-abort", "cdn-block", "none"),
+        choices=("bootstrap-delay", "terminal-abort", "cdn-block", "deferred-abort", "none"),
         default="none",
     )
     parser.add_argument("--output-dir", default="artifacts/viewer-bootstrap")

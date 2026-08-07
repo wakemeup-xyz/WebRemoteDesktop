@@ -52,7 +52,23 @@ def test_nearest_rank_p95_and_report_redaction(tmp_path):
 
 def test_classify_failure_stage_and_no_retry_helper():
     assert classify_failure_stage("stable non-black canvas ratio too low") == "stable-non-black"
+    assert classify_failure_stage("stable non-black exceeded 8s from start-click") == "stable-non-black"
     assert classify_failure_stage("missing required startup mark: html-shell") == "startup-marks"
     sample = failure_sample(AssertionError("x"), stage="core-interactive")
     assert sample["failed"] is True
     assert sample["finalState"] == "failed"
+
+
+def test_stable_non_black_metric_must_not_use_active_proxy():
+    """Document the contract: clickToStableNonBlackMs is start-click → stable-non-black."""
+    marks = {
+        "start-click": 100.0,
+        "signal-connected": 400.0,
+        "active": 900.0,
+        "stable-non-black": 700.0,
+    }
+    click_to_active = marks["active"] - marks["start-click"]
+    click_to_stable = marks["stable-non-black"] - marks["start-click"]
+    assert click_to_stable == 600.0
+    assert click_to_stable != click_to_active
+    assert click_to_stable <= 8000

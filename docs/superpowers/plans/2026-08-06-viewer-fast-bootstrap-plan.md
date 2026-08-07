@@ -150,14 +150,20 @@ module.exports = Object.freeze({
     'js/media-activity-controller.js',
     'js/media-activity-lifecycle.js',
     'js/media-activity-runtime.js',
-    'js/stun-port-search-controller.js',
-    'js/turn-selftest.js',
+    'js/startup-telemetry.js',
+    'js/bootstrap-controller.js',
+    'js/terminal-loader.js',
+    'js/diagnostic-core.js',
     'js/webrtc.js',
     'js/input-geometry.js',
     'js/keyboard-transport.js',
     'js/remote-keyboard-controller.js',
     'js/input.js',
     'js/ui.js',
+  ]),
+  desktopDeferredScripts: Object.freeze([
+    'js/stun-port-search-controller.js',
+    'js/turn-selftest.js',
     'js/latency-monitor.js',
     'js/diagnostic.js',
   ]),
@@ -168,6 +174,12 @@ module.exports = Object.freeze({
   ]),
 });
 ```
+
+Notes after closure review:
+- Keep **diagnostic-core** (log capture + button shell) on the critical path so failure diagnosis remains possible and the diag button is never enabled-and-inert.
+- Heavy diagnostic panel / latency / STUN-TURN tools load as `desktop-deferred` after core-interactive; before ready the diag button stays disabled; on load failure it becomes an explicit **诊断重试** control.
+- Desktop signaling is **WebSocket-first + polling fallback** with connect timeout ≤5s (not websocket-only).
+- Acceptance `clickToStableNonBlackMs` uses first canvas ratio > 0.05 from Start click (`stable-non-black`), not the `active` mark; 8s deadline starts at Start click.
 
 - [ ] **Step 5: Add non-behavioral build markers to Viewer HTML**
 

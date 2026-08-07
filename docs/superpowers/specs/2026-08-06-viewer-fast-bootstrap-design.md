@@ -172,6 +172,7 @@ Create `signal-server/scripts/web-asset-graph.js` as the only ordered source lis
 
 ```javascript
 module.exports = Object.freeze({
+  // Critical path: Start/signaling/media/input + minimal diagnostic collector.
   desktopScripts: [
     'js/runtime-config.js',
     'js/auth.js',
@@ -180,16 +181,22 @@ module.exports = Object.freeze({
     'js/media-activity-controller.js',
     'js/media-activity-lifecycle.js',
     'js/media-activity-runtime.js',
-    'js/stun-port-search-controller.js',
-    'js/turn-selftest.js',
+    'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
     'js/terminal-loader.js',
+    'js/diagnostic-core.js',
     'js/webrtc.js',
     'js/input-geometry.js',
     'js/keyboard-transport.js',
     'js/remote-keyboard-controller.js',
     'js/input.js',
     'js/ui.js',
+  ],
+  // After core-interactive. Heavy operator tools must not block Start.
+  // Diagnostic button stays disabled until deferred panel is ready; load failure shows retry.
+  desktopDeferredScripts: [
+    'js/stun-port-search-controller.js',
+    'js/turn-selftest.js',
     'js/latency-monitor.js',
     'js/diagnostic.js',
   ],
@@ -202,6 +209,10 @@ module.exports = Object.freeze({
 ```
 
 The list is an implementation detail of the builder, not a second runtime loader. Source order remains explicit while callers only consume the generated bundle names.
+
+**Signaling transports:** desktop Socket.IO is **WebSocket-first with polling fallback** (`transports: ['websocket', 'polling']`, connect `timeout` ≤5s). Do not ship websocket-only; proxies that block WS must still reach the signal server via polling within the silent-wait budget.
+
+**Acceptance non-black:** `clickToStableNonBlackMs` is Start click → first canvas `nonBlackRatio > 0.05` (`stable-non-black` mark). It must not be proxied by the `active` mark. The 8s deadline is measured from Start click.
 
 ### 7.2 Build outputs
 

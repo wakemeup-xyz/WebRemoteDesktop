@@ -276,6 +276,8 @@ test('viewer waits for an active control lease before starting an offer and rout
   WebRTC.setupSocketListeners();
 
   assert.equal(socketOptions.auth.inputProtocolVersion, 2);
+  assert.deepEqual(Array.from(socketOptions.transports), ['websocket', 'polling']);
+  assert.equal(socketOptions.timeout, 5000);
   socketHandlers.get('connected')({ hostOnline: true });
   assert.equal(offers, 0);
   assert.equal(emitted.at(-1)[0], 'control-acquire');
@@ -285,6 +287,33 @@ test('viewer waits for an active control lease before starting an offer and rout
   socketHandlers.get('input-ack')({ schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
   assert.deepEqual(order, ['transport', 'latency']);
   WebRTC.stopControlHeartbeat();
+});
+
+test('resolveSignalingTransports prefers websocket and keeps polling fallback by default', () => {
+  const { WebRTC } = loadWebRTC();
+  assert.deepEqual(Array.from(WebRTC.resolveSignalingTransports()), ['websocket', 'polling']);
+  assert.deepEqual(Array.from(WebRTC.resolveSignalingTransports({ allowPolling: false })), ['websocket']);
+});
+test('createSignalingSocket records websocket-first transports for blocked-WS polling fallback', () => {
+  const calls = [];
+  const { WebRTC } = loadWebRTC({
+    io(base, options) {
+      calls.push({ base, options });
+      return {
+        connected: false,
+        on() {},
+        emit() {},
+        disconnect() {},
+      };
+    },
+    Auth: { getToken: () => 'token-test' },
+  });
+  WebRTC.setupSocketListeners = () => {};
+  WebRTC.createSignalingSocket(true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(Array.from(calls[0].options.transports), ['websocket', 'polling']);
+  // Dual-transport connect is budget-bounded (no unbounded silent hang).
+  assert.ok(Number(calls[0].options.timeout) <= 5000);
 });
 
 test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {

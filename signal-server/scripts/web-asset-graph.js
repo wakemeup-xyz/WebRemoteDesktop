@@ -1,7 +1,8 @@
 'use strict';
 
 module.exports = Object.freeze({
-  // Critical path only: enough for ShellGuard takeover, Start, signaling, media, input.
+  // Critical path only: enough for ShellGuard takeover, Start, signaling, media, input,
+  // plus minimal diagnostic log capture so failure diagnosis remains possible.
   desktopScripts: Object.freeze([
     'js/runtime-config.js',
     'js/auth.js',
@@ -13,6 +14,7 @@ module.exports = Object.freeze({
     'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
     'js/terminal-loader.js',
+    'js/diagnostic-core.js',
     'js/webrtc.js',
     'js/input-geometry.js',
     'js/keyboard-transport.js',
@@ -21,6 +23,7 @@ module.exports = Object.freeze({
     'js/ui.js',
   ]),
   // Loaded after core-interactive; must not block Start/signaling.
+  // Heavy diagnostic panel attaches onto diagnostic-core; button stays disabled until ready.
   desktopDeferredScripts: Object.freeze([
     'js/stun-port-search-controller.js',
     'js/turn-selftest.js',

@@ -54,8 +54,11 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   assert.doesNotMatch(desktopBundle, /const TerminalPanel\s*=/);
   // Deferred tools implementations must not bloat the critical desktop path.
   // (webrtc may still reference optional globals via typeof guards.)
-  assert.doesNotMatch(desktopBundle, /LatencyMonitor=\{|Diagnostic=\{|Log collector initialized|\[LatencyMonitor\] initialized/);
-  assert.match(deferredBundle, /StunPortSearchController|TurnSelfTest|LatencyMonitor=\{|Diagnostic=\{/);
+  // diagnostic-core collector stays critical; full panel stays deferred.
+  assert.match(desktopBundle, /core collector ready|diagnostic-core/);
+  assert.doesNotMatch(desktopBundle, /LatencyMonitor=\{|\[LatencyMonitor\] initialized/);
+  assert.doesNotMatch(desktopBundle, /Log collector initialized/);
+  assert.match(deferredBundle, /StunPortSearchController|TurnSelfTest|LatencyMonitor=\{|Log collector initialized/);
   assert.doesNotMatch(
     html,
     /<(?:script[^>]+src|link[^>]+href)="[^"]*(?:xterm|addon-fit|terminal\.[a-f0-9]+\.(?:js|css)|desktop-deferred)/i,

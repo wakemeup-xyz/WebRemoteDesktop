@@ -32,7 +32,7 @@
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
       <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
       <button id="refreshBtn" class="control-btn" data-core-control>刷新画面</button>
-      <button id="diagBtn" class="control-btn status-action-secondary" data-core-control>诊断日志</button>
+      <button id="diagBtn" class="control-btn status-action-secondary" type="button" disabled aria-busy="true" title="诊断组件加载中…">诊断日志</button>
       <button id="toggleControlsBtn" class="control-btn status-action-secondary" data-core-control>隐藏控件</button>
     </div>
   </div>
@@ -298,6 +298,7 @@
   <script src="js/startup-telemetry.js"></script>
   <script src="js/bootstrap-controller.js"></script>
   <script src="js/terminal-loader.js"></script>
+  <script src="js/diagnostic-core.js"></script>
   <script src="js/webrtc.js"></script>
   <script src="js/input-geometry.js"></script>
   <script src="js/keyboard-transport.js"></script>
