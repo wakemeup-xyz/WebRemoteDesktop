@@ -97,7 +97,8 @@ async function buildWebClient({ sourceDir, outDir }) {
       '<!-- WRD_BUILD_HEAD_START -->',
       '<!-- WRD_BUILD_HEAD_END -->',
       [
-        `<link rel="preload" href="/${assets.desktopJs}" as="script">`,
+        `<link rel="preload" href="/${assets.desktopJs}" as="script" fetchpriority="high">`,
+        `<link rel="preload" href="/${assets.viewerCss}" as="style">`,
         `<link rel="stylesheet" href="/${assets.viewerCss}">`,
       ].join('\n'),
     );

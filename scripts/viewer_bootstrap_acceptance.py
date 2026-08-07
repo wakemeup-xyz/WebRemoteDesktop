@@ -287,8 +287,9 @@ def collect_startup_sample(page, origin, viewer_password, viewer_token=None, *, 
     )
 
     # navigationStart → HTML / core use Performance timeline (ms since navigationStart).
-    page.goto(f"{origin}/viewer.html", wait_until="commit", timeout=15_000)
-    page.wait_for_selector("#startBtn", timeout=10_000)
+    # Formal edge occasionally stalls document commit; keep a bounded but realistic budget.
+    page.goto(f"{origin}/viewer.html", wait_until="commit", timeout=20_000)
+    page.wait_for_selector("#startBtn", timeout=15_000)
 
     if immediate_start:
         # Click as soon as the Start control exists (<100ms feedback contract).
@@ -529,21 +530,19 @@ def parse_args(argv=None):
 
 
 def run_attempt(browser, *, origin, password, token, cache_mode, fault, immediate_start=False):
-    # Cold: brand-new context, cache disabled. Warm: caller reuses context.
+    # Cold: brand-new context + browser HTTP cache disabled via CDP.
+    # Do NOT inject Cache-Control: no-cache on every request — that can force
+    # Cloudflare revalidation of immutable hashed assets and invent an edge tail
+    # ordinary users with an empty disk cache but warm CDN would not see.
     context = browser.new_context(ignore_https_errors=False)
-    if cache_mode == "cold":
-        # Disable HTTP cache for cold samples.
-        context.route(
-            "**/*",
-            lambda route: route.continue_(
-                headers={
-                    **route.request.headers,
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                }
-            ),
-        )
     page = context.new_page()
+    if cache_mode == "cold":
+        try:
+            cdp = context.new_cdp_session(page)
+            cdp.send("Network.enable")
+            cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        except Exception:  # noqa: BLE001 - fall back to context-only isolation
+            pass
     install_fault(page, fault)
     try:
         sample = collect_startup_sample(
