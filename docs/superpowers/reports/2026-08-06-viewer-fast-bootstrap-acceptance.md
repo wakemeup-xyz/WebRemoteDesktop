@@ -1,51 +1,39 @@
-# Viewer Fast Bootstrap Acceptance Report (Closure Review Fix)
+# Viewer Fast Bootstrap Acceptance Report (Closure continued)
 
 Date: 2026-08-07  
-Code tip: `8c116f457c0ec272102bb6748d77130ea8ec1ed6`
+Code tip: `5234d2b9e521caf8d7e0328d05e729815d2f3e16`
 
-## Review findings addressed
+## What changed since review closure
 
-1. **Diagnostic inert control** — `diagnostic-core.js` on critical path; `#diagBtn` not `data-core-control`; disabled until ready; failure → **诊断重试**.
-2. **Port-search inert control (residual)** — `#portSearchBtn` also removed from `data-core-control`; loading/retry via `_operatorToolsState` with deferred bundle.
-3. **Honest stable-non-black** — first canvas ratio > 0.05 → `stable-non-black`; 8s from Start click.
-4. **Transports** — WS-first + polling; `timeout` ≤5s; unit plan tests for WS-blocked→polling success and dual-fail within budget.
-5. **Docs** — design/plan/requirements updated.
+- Cold harness: CDP `Network.setCacheDisabled` instead of per-request `Cache-Control: no-cache` (avoids unnecessary origin revalidation pressure).
+- Build: preload CSS + `fetchpriority=high` on desktop JS.
+- Delivery: browser HTML still `max-age=0, must-revalidate`; added `CDN-Cache-Control` / `Cloudflare-CDN-Cache-Control: public, max-age=60`. **Note:** live formal responses still show `cf-cache-status: DYNAMIC` under the current tunnel (no Cache Everything rule); edge short-cache is armed in origin headers but not yet observed as HIT.
 
-## Automated
+## Local
 
-- web-client webrtc tests: 124 pass (includes transport plan cases)
-- prior signal-server 282 / TURN parity / audit 0 remain green on lineage
+cold 10/10 on `84bc3f9` lineage PASS (core P95 ~202ms).
 
-## Local runtime (commitSha = `8c116f4…`)
+## Formal cold 20 (tip `5234d2b`) — NOT FULL PASS
 
-| Mode | Result | Notes |
-|---|---|---|
-| cold 10/10 smoke | **PASS** | signal P95 119ms, non-black P95 1406ms |
-| deferred-abort ×1 | **PASS** | diag + port-search retry/loading states |
-
-Earlier full local cold/warm/immediate on `4ffc5c0` also PASS.
-
-## Formal cold (commitSha = `8c116f4…`) — NOT FULL PASS
-
-Artifact: `artifacts/viewer-bootstrap-closure2-formal/viewer-bootstrap-20260807T133134.204850Z.json`  
-SHA-256: `63a1181bdc7282fb4ece7ae5069156210eca74613b85abfd9512f1eb163b1ea6`
+Artifact: `artifacts/viewer-bootstrap-closure3-formal/viewer-bootstrap-20260807T134349.730554Z.json`  
+SHA-256: `ca8d419f09f3422fd6e61412a68ba3872f0b1e531728ef999ba72ec5560fbe33`
 
 | Metric | P50 | P95 | Budget | Result |
 |---|---:|---:|---:|---|
-| HTML | 1226 | 1859 | ≤2s | PASS |
-| nav → core | 1978 | **5313** | ≤5s | **FAIL** |
-| click → signal | 1994 | 2515 | ≤3s | PASS |
-| click → non-black | 4588 | 6029 | ≤8s | PASS |
-| success | 19/20 | | 20/20 | **FAIL** (html-or-navigation ×1) |
+| HTML | 899 | **6381** | ≤2s | **FAIL** |
+| nav → core | 1429 | **6770** | ≤5s | **FAIL** |
+| click → signal | 1383 | 2748 | ≤3s | PASS |
+| click → non-black | 3706 | 5135 | ≤8s | PASS |
+| success | 19/20 | | 20/20 | **FAIL** (stable-non-black ×1) |
 
-Signal budget now met under honest harness; remaining formal risk is edge HTML/core tail + rare navigation miss.
+Slow outliers show **HTML TTFB multi-second** while desktop-core download is often &lt;1s — bottleneck is formal edge document time, not critical JS size alone. Preflight still `timeout-heavy`; health 200.
 
 ## Judgment
 
-- **CODE / REVIEW CLOSURE: PASS** (findings + residuals for inert operator tools + transport tests)
-- **LOCAL PASS**
-- **FORMAL PUBLIC PERF: still FAIL** (19/20, core P95 over budget) — do not claim FULL PASS
+- Review code findings remain **closed**.
+- **Formal FULL PASS still not honest to claim.**
+- Next levers are operational/CF (cache rules / connector stability) or a much larger webrtc split; further micro-bundle cuts will not remove 6s HTML tails.
 
 ## Safety
 
-Local restart only; safe URL preserved; no formal connector mutation.
+Local signal restart only; no tunnel mutation.
