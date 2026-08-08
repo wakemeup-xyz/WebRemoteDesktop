@@ -34,6 +34,7 @@ module.exports = Object.freeze({
     'js/terminal-echo-controller.js',
     'js/terminal-composer.js',
     'js/terminal-input-gate.js',
+    'js/terminal-turn-transport.js',
     'js/terminal.js',
   ]),
 });

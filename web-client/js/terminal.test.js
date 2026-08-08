@@ -259,6 +259,8 @@ function loadTerminal(overrides = {}) {
   vm.createContext(context);
   const gateSource = fs.readFileSync(path.join(__dirname, 'terminal-input-gate.js'), 'utf8');
   vm.runInContext(gateSource, context);
+  const turnSource = fs.readFileSync(path.join(__dirname, 'terminal-turn-transport.js'), 'utf8');
+  vm.runInContext(turnSource, context);
   const composerSource = fs.readFileSync(path.join(__dirname, 'terminal-composer.js'), 'utf8');
   vm.runInContext(composerSource, context);
   const source = fs.readFileSync(path.join(__dirname, 'terminal.js'), 'utf8');
@@ -2682,4 +2684,71 @@ test('TerminalPanel registers pending input before adapter send and rolls back w
   assert.equal(result, null);
   assert.deepEqual(seenDuringSend, [beforePending + 1]);
   assert.equal(TerminalPanel.pendingInputAcks.size, beforePending);
+});
+
+test('TerminalPanel emitTerminalInput hard-rejects preferred TURN when dc is not open', () => {
+  const { TerminalPanel, emitted, elements } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = {
+    connected: true,
+    emit(event, payload) { emitted.push({ event, payload }); },
+  };
+  TerminalPanel.preferredTransport = 'webrtc-turn';
+  TerminalPanel.webrtcReady = false;
+  TerminalPanel.webrtcDc = { readyState: 'connecting', send() { throw new Error('should not send'); } };
+  TerminalPanel.ensureSession({ sessionId: 'term_turn_hard', processStatus: 'running' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term_turn_hard');
+  const beforePending = TerminalPanel.pendingInputAcks.size;
+
+  const result = TerminalPanel.emitTerminalInput('term_turn_hard', 'x', { optimisticEcho: true });
+
+  assert.equal(result, null);
+  assert.equal(TerminalPanel.pendingInputAcks.size, beforePending);
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:input'), false);
+  assert.match(
+    elements.get('terminalTransportStatus').textContent,
+    /TURN 未就绪|未回退 Socket\.IO/,
+  );
+  assert.equal(elements.get('terminalTransportStatus').dataset.state, 'error');
+});
+
+test('TerminalPanel activateSession rebinds open TURN dc with preferDcOutput and new sid', () => {
+  const sentFrames = [];
+  const { TerminalPanel } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = { connected: true, emit() {} };
+  TerminalPanel.preferredTransport = 'webrtc-turn';
+  TerminalPanel.webrtcReady = true;
+  TerminalPanel.webrtcOutputReady = true;
+  TerminalPanel.webrtcBoundSessionId = 'term_turn_a';
+  TerminalPanel.webrtcDc = {
+    readyState: 'open',
+    send(frame) { sentFrames.push(JSON.parse(String(frame))); },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term_turn_a', processStatus: 'running' }, { activate: true });
+  TerminalPanel.ensureSession({ sessionId: 'term_turn_b', processStatus: 'running' });
+  TerminalPanel.attachedSessionIds.add('term_turn_a');
+  TerminalPanel.attachedSessionIds.add('term_turn_b');
+
+  assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_a'), true);
+
+  TerminalPanel.activateSession('term_turn_b', { announce: false });
+
+  const bindFrames = sentFrames.filter((frame) => frame.t === 'bind');
+  assert.equal(bindFrames.length >= 1, true);
+  const lastBind = bindFrames.at(-1);
+  assert.equal(lastBind.sid, 'term_turn_b');
+  assert.equal(lastBind.preferDcOutput, true);
+  // Mute window: suppress cleared until output_bound for the new sid.
+  assert.equal(TerminalPanel.webrtcOutputReady, false);
+  assert.equal(TerminalPanel.webrtcBoundSessionId, null);
+  assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_b'), false);
+
+  TerminalPanel.handleWebRtcMessage({ t: 'output_bound', sid: 'term_turn_b' });
+  assert.equal(TerminalPanel.webrtcBoundSessionId, 'term_turn_b');
+  assert.equal(TerminalPanel.webrtcOutputReady, true);
+  assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_b'), true);
+  assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_a'), false);
 });

@@ -15,6 +15,7 @@ test('asset graph keeps desktop critical and Terminal optional sources separate'
     'js/terminal-echo-controller.js',
     'js/terminal-composer.js',
     'js/terminal-input-gate.js',
+    'js/terminal-turn-transport.js',
     'js/terminal.js',
   ]);
   assert.equal(new Set(graph.desktopScripts).size, graph.desktopScripts.length);

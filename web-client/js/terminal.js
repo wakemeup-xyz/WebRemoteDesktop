@@ -104,6 +104,12 @@ function getTerminalInputGateApi() {
     || null;
 }
 
+function getTerminalTurnTransportApi() {
+  return (typeof window !== 'undefined' && window.TerminalTurnTransport)
+    || (typeof globalThis !== 'undefined' && globalThis.TerminalTurnTransport)
+    || null;
+}
+
 const TERMINAL_PENDING_ATTACH_ERROR_CODES = new Set([
   'terminal_attach_failed',
   'terminal_session_not_found',
@@ -333,6 +339,7 @@ const TerminalPanel = {
   webrtcDc: null,
   webrtcReady: false,
   webrtcOutputReady: false,
+  webrtcBoundSessionId: null,
   webrtcState: 'idle',
   terminalSocketLatency: createLatencySeries(),
   terminalInputAckLatency: createLatencySeries(),
@@ -815,6 +822,18 @@ const TerminalPanel = {
     return `${sessionId || 'term'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   },
 
+  canSendTurnInput() {
+    const turnApi = getTerminalTurnTransportApi();
+    if (turnApi?.createTurnTransportState) {
+      const turn = turnApi.createTurnTransportState({
+        ready: this.webrtcReady,
+        dcOpen: this.webrtcDc?.readyState === 'open',
+      });
+      return turn.canSendInput();
+    }
+    return Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open');
+  },
+
   decideTerminalInput(sessionId) {
     const gateApi = getTerminalInputGateApi();
     if (!gateApi?.createTerminalInputGate) {
@@ -824,9 +843,8 @@ const TerminalPanel = {
       if (this.state.getSession(sessionId)?.processStatus !== 'running') {
         return { allowed: false, reason: 'process_not_running' };
       }
-      if (this.preferredTransport === 'webrtc-turn') {
-        const turnReady = Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open');
-        if (!turnReady) return { allowed: false, reason: 'transport_not_ready' };
+      if (this.preferredTransport === 'webrtc-turn' && !this.canSendTurnInput()) {
+        return { allowed: false, reason: 'transport_not_ready' };
       }
       return { allowed: true, reason: null };
     }
@@ -836,7 +854,7 @@ const TerminalPanel = {
       processStatus: (id) => this.state.getSession(id)?.processStatus || null,
       transportCanSend: () => {
         if (this.preferredTransport === 'webrtc-turn') {
-          return Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open');
+          return this.canSendTurnInput();
         }
         return true;
       },
@@ -859,6 +877,13 @@ const TerminalPanel = {
   emitTerminalInput(sessionId, data, options = {}) {
     const decision = this.decideTerminalInput(sessionId);
     if (!decision.allowed) {
+      if (
+        this.preferredTransport === 'webrtc-turn'
+        && decision.reason === 'transport_not_ready'
+      ) {
+        // F-02: hard reject — never silent-fallback to Socket.IO input.
+        this.setTransportStatus('TURN 未就绪/已断开，未回退 Socket.IO', 'error');
+      }
       return null;
     }
     const inputId = this.makeInputId(sessionId);
@@ -872,7 +897,7 @@ const TerminalPanel = {
     let accepted = false;
     let path = 'socketio';
     try {
-      if (this.preferredTransport === 'webrtc-turn' && this.webrtcReady && this.webrtcDc?.readyState === 'open') {
+      if (this.preferredTransport === 'webrtc-turn' && this.canSendTurnInput()) {
         path = 'webrtc-turn';
         this.webrtcDc.send(JSON.stringify({
           t: 'in',
@@ -883,7 +908,8 @@ const TerminalPanel = {
         }));
         accepted = true;
       } else if (this.preferredTransport === 'webrtc-turn') {
-        // Preferred TURN but not ready: never silent-fallback to socketio (Task 4 hardens further).
+        // Preferred TURN but not ready: never silent-fallback to socketio.
+        this.setTransportStatus('TURN 未就绪/已断开，未回退 Socket.IO', 'error');
         accepted = false;
       } else {
         this.socket.emit('terminal:input', {
@@ -942,6 +968,7 @@ const TerminalPanel = {
   stopWebRtcTransport(reason = 'stop') {
     this.webrtcReady = false;
     this.webrtcOutputReady = false;
+    this.webrtcBoundSessionId = null;
     this.webrtcState = 'idle';
     try { this.webrtcDc?.close?.(); } catch (_err) { /* ignore */ }
     try { this.webrtcPc?.close?.(); } catch (_err) { /* ignore */ }
@@ -952,16 +979,58 @@ const TerminalPanel = {
     }
   },
 
-  shouldPreferWebRtcOutput(sessionId) {
+  snapshotTurnTransportState() {
+    const turnApi = getTerminalTurnTransportApi();
+    if (!turnApi?.createTurnTransportState) return null;
+    return turnApi.createTurnTransportState({
+      preferred: this.preferredTransport,
+      ready: this.webrtcReady,
+      dcOpen: this.webrtcDc?.readyState === 'open',
+      outputReady: this.webrtcOutputReady,
+      activeSessionId: this.state.activeSessionId(),
+      boundSessionId: this.webrtcBoundSessionId,
+    });
+  },
+
+  rebindTurnDataChannel(sessionId) {
     if (this.preferredTransport !== 'webrtc-turn') return false;
-    if (!this.webrtcReady || !this.webrtcOutputReady) return false;
     if (!this.webrtcDc || this.webrtcDc.readyState !== 'open') return false;
-    const activeId = this.state.activeSessionId();
-    if (sessionId && activeId && sessionId !== activeId) {
-      // Only suppress for the active bound session; other sessions keep Socket.IO.
+    const sid = sessionId || this.state.activeSessionId() || '';
+    let frame = {
+      t: 'bind',
+      sid,
+      preferDcOutput: true,
+      clientId: this.getBrowserSessionId(),
+    };
+    const turn = this.snapshotTurnTransportState();
+    if (turn) {
+      frame = turn.beginRebind(sid, { clientId: this.getBrowserSessionId() });
+      this.webrtcBoundSessionId = turn.boundSessionId;
+      this.webrtcOutputReady = turn.outputReady;
+    } else {
+      // Clear suppression window before bind (F-01 mute-window policy).
+      this.webrtcBoundSessionId = null;
+      this.webrtcOutputReady = false;
+    }
+    try {
+      this.webrtcDc.send(JSON.stringify(frame));
+      return true;
+    } catch (_err) {
       return false;
     }
-    return true;
+  },
+
+  shouldPreferWebRtcOutput(sessionId) {
+    const turn = this.snapshotTurnTransportState();
+    if (turn) {
+      return turn.shouldSuppressSocketOutput(sessionId);
+    }
+    if (this.preferredTransport !== 'webrtc-turn') return false;
+    if (!this.webrtcOutputReady) return false;
+    if (!this.webrtcDc || this.webrtcDc.readyState !== 'open') return false;
+    const activeId = this.state.activeSessionId();
+    if (!sessionId || !activeId || !this.webrtcBoundSessionId) return false;
+    return this.webrtcBoundSessionId === sessionId && sessionId === activeId;
   },
 
   async startWebRtcTransport() {
@@ -1005,22 +1074,17 @@ const TerminalPanel = {
     dc.onopen = () => {
       this.webrtcReady = true;
       this.webrtcOutputReady = false;
+      this.webrtcBoundSessionId = null;
       this.webrtcState = 'connected';
       this.setTransportName('webrtc-turn');
       this.setTransportStatus('TURN DataChannel 已连接', 'connected');
-      try {
-        dc.send(JSON.stringify({
-          t: 'bind',
-          clientId: this.getBrowserSessionId(),
-          sid: this.state.activeSessionId() || '',
-          preferDcOutput: true,
-        }));
-      } catch (_err) { /* ignore */ }
+      this.rebindTurnDataChannel(this.state.activeSessionId() || '');
       this.refreshStatus();
     };
     dc.onclose = () => {
       this.webrtcReady = false;
       this.webrtcOutputReady = false;
+      this.webrtcBoundSessionId = null;
       this.webrtcState = 'closed';
       if (this.preferredTransport === 'webrtc-turn') {
         this.setTransportStatus('TURN DataChannel 已断开（未静默回退 Socket.IO）', 'error');
@@ -1104,12 +1168,22 @@ const TerminalPanel = {
       return;
     }
     if (type === 'output_bound') {
-      this.webrtcOutputReady = true;
+      const turn = this.snapshotTurnTransportState();
+      const sid = message.sid || this.state.activeSessionId() || null;
+      if (turn) {
+        turn.markOutputBound(sid);
+        this.webrtcBoundSessionId = turn.boundSessionId;
+        this.webrtcOutputReady = turn.outputReady;
+      } else {
+        this.webrtcBoundSessionId = sid;
+        this.webrtcOutputReady = Boolean(sid);
+      }
       this.setTransportStatus('TURN DataChannel 输入/输出已绑定', 'connected');
       return;
     }
     if (type === 'output_fallback') {
       this.webrtcOutputReady = false;
+      this.webrtcBoundSessionId = null;
       this.setTransportStatus('TURN 输出失败，已恢复 Socket.IO 输出（输入仍保持 TURN 策略）', 'warning');
       return;
     }
@@ -1141,7 +1215,11 @@ const TerminalPanel = {
     }
     if (type === 'ready' || type === 'bound') {
       this.webrtcReady = true;
-      if (message.output) this.webrtcOutputReady = true;
+      if (message.output) {
+        const sid = message.sid || this.state.activeSessionId() || null;
+        this.webrtcBoundSessionId = sid;
+        this.webrtcOutputReady = Boolean(sid);
+      }
       this.setTransportStatus('TURN DataChannel 就绪', 'connected');
     }
   },
@@ -1479,6 +1557,8 @@ const TerminalPanel = {
       this.persistActiveSessionId(session.sessionId);
     }
     if (this.state.activeSessionId() === session.sessionId) {
+      // F-01: after attach success for active session, rebind TURN DC if preferred.
+      this.rebindTurnDataChannel(session.sessionId);
       this.announceActivePresenter(session.sessionId);
     }
     this.render();
@@ -1648,7 +1728,12 @@ const TerminalPanel = {
     const activeSessionId = this.state.activeSessionId();
     this.persistActiveSessionId(activeSessionId || '');
     if (activeSessionId) {
+      const alreadyAttached = this.attachedSessionIds.has(activeSessionId);
       this.requestAttachSession(activeSessionId);
+      // F-01: already-attached activate rebinds immediately; otherwise attach success rebinds.
+      if (alreadyAttached) {
+        this.rebindTurnDataChannel(activeSessionId);
+      }
     }
     if (options.announce !== false) {
       this.announceActivePresenter(activeSessionId);
