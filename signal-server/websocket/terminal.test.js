@@ -943,3 +943,81 @@ test('terminal websocket warns and detaches only a slow observer while replay re
   const replay = slow.sent.findLast((message) => message.event === 'terminal:replay').data.replay;
   assert.deepEqual(replay.map((entry) => entry.data), ['12345', 'x']);
 });
+
+test('attach success and error echo action sessionId operationId (bounded)', () => {
+  const { namespace, sessionManager } = buildTerminalHarness();
+  const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  const joiner = namespace.connect(new FakeSocket('admin-b', 'admin'));
+  creator.trigger('terminal:create_session', { title: 'Op shell' });
+  const created = creator.sent.find((message) => message.event === 'terminal:session_created').data;
+  const operationId = `attach-${'x'.repeat(200)}`;
+
+  joiner.sent.length = 0;
+  joiner.trigger('terminal:attach_session', {
+    sessionId: created.sessionId,
+    cols: 120,
+    rows: 32,
+    operationId,
+  });
+
+  for (const event of ['terminal:session_attached', 'terminal:attached']) {
+    const message = joiner.sent.find((entry) => entry.event === event);
+    assert.ok(message, event);
+    assert.equal(message.data.action, 'attach');
+    assert.equal(message.data.sessionId, created.sessionId);
+    assert.equal(message.data.operationId, operationId.slice(0, 128));
+  }
+
+  joiner.sent.length = 0;
+  const missingOp = 'missing-attach-op-1';
+  joiner.trigger('terminal:attach_session', {
+    sessionId: 'missing-session',
+    operationId: missingOp,
+  });
+  const error = joiner.sent.find((message) => message.event === 'terminal:error');
+  assert.ok(error);
+  assert.equal(error.data.action, 'attach');
+  assert.equal(error.data.sessionId, 'missing-session');
+  assert.equal(error.data.operationId, missingOp);
+  assert.ok(error.data.code);
+  assert.notEqual(sessionManager._getSession(created.sessionId), null);
+});
+
+test('close success broadcast and close error echo action sessionId operationId', () => {
+  const { namespace } = buildTerminalHarness();
+  const owner = namespace.connect(new FakeSocket('admin-owner', 'admin'));
+  const peer = namespace.connect(new FakeSocket('admin-peer', 'admin'));
+  owner.trigger('terminal:create_session', { title: 'Close op shell' });
+  const created = owner.sent.find((message) => message.event === 'terminal:session_created').data;
+  peer.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 80, rows: 24 });
+
+  const closeOp = 'close-op-abc';
+  owner.sent.length = 0;
+  peer.sent.length = 0;
+  owner.trigger('terminal:close_session', {
+    sessionId: created.sessionId,
+    operationId: closeOp,
+  });
+
+  for (const socket of [owner, peer]) {
+    for (const event of ['terminal:session_closed', 'terminal:closed']) {
+      const message = socket.sent.find((entry) => entry.event === event);
+      assert.ok(message, `${socket.id} ${event}`);
+      assert.equal(message.data.action, 'close');
+      assert.equal(message.data.sessionId, created.sessionId);
+      assert.equal(message.data.operationId, closeOp);
+    }
+  }
+
+  const stranger = namespace.connect(new FakeSocket('admin-stranger', 'admin'));
+  stranger.sent.length = 0;
+  stranger.trigger('terminal:close_session', {
+    sessionId: 'nope',
+    operationId: 'close-fail-1',
+  });
+  const error = stranger.sent.find((message) => message.event === 'terminal:error');
+  assert.ok(error);
+  assert.equal(error.data.action, 'close');
+  assert.equal(error.data.sessionId, 'nope');
+  assert.equal(error.data.operationId, 'close-fail-1');
+});

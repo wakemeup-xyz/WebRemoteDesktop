@@ -2574,8 +2574,8 @@ test('TerminalPanel does not clear attach or close pending on input rate-limit e
   fakeSocket.connected = true;
   socketHandlers.get('connect')();
   TerminalPanel.ensureSession({ sessionId: 'term_rate', processStatus: 'running' });
-  TerminalPanel.pendingAttachSessionIds.add('term_rate');
-  TerminalPanel.pendingCloseSessionIds.add('term_rate');
+  TerminalPanel.pendingAttachSessionIds.set('term_rate', 'attach-rate-op');
+  TerminalPanel.pendingCloseSessionIds.set('term_rate', 'close-rate-op');
 
   socketHandlers.get('terminal:error')({
     sessionId: 'term_rate',
@@ -2751,4 +2751,222 @@ test('TerminalPanel activateSession rebinds open TURN dc with preferDcOutput and
   assert.equal(TerminalPanel.webrtcOutputReady, true);
   assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_b'), true);
   assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_a'), false);
+});
+
+test('TerminalPanel attach/close emit bounded operationId and store pending by operation', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_attach', processStatus: 'running' });
+  TerminalPanel.ensureSession({ sessionId: 'term_op_close', processStatus: 'running' });
+
+  TerminalPanel.activateSession('term_op_attach');
+  const attachEmit = emitted.find((entry) => (
+    entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_op_attach'
+  ));
+  assert.ok(attachEmit);
+  assert.equal(typeof attachEmit.payload.operationId, 'string');
+  assert.ok(attachEmit.payload.operationId.length > 0);
+  assert.ok(attachEmit.payload.operationId.length <= 128);
+  assert.equal(TerminalPanel.pendingAttachSessionIds.get('term_op_attach'), attachEmit.payload.operationId);
+
+  TerminalPanel.closeSession('term_op_close');
+  const closeEmit = emitted.find((entry) => (
+    entry.event === 'terminal:close_session' && entry.payload.sessionId === 'term_op_close'
+  ));
+  assert.ok(closeEmit);
+  assert.equal(typeof closeEmit.payload.operationId, 'string');
+  assert.ok(closeEmit.payload.operationId.length > 0);
+  assert.ok(closeEmit.payload.operationId.length <= 128);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.get('term_op_close'), closeEmit.payload.operationId);
+});
+
+test('TerminalPanel clears attach pending only for matching action+sessionId+operationId', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_match', processStatus: 'running' });
+
+  TerminalPanel.activateSession('term_op_match');
+  const operationId = emitted.find((entry) => (
+    entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_op_match'
+  )).payload.operationId;
+
+  socketHandlers.get('terminal:error')({
+    action: 'attach',
+    sessionId: 'term_op_match',
+    operationId: 'stale-operation-id',
+    code: 'terminal_attach_failed',
+    message: 'stale failure',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.get('term_op_match'), operationId);
+
+  socketHandlers.get('terminal:error')({
+    action: 'attach',
+    sessionId: 'term_op_match',
+    operationId,
+    code: 'terminal_attach_failed',
+    message: 'current failure',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_op_match'), false);
+
+  TerminalPanel.activateSession('term_op_match');
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_op_match').length,
+    2,
+  );
+});
+
+test('TerminalPanel attach success with stale operationId does not clear current pendingAttach', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_success', processStatus: 'running' });
+
+  TerminalPanel.activateSession('term_op_success');
+  const operationId = emitted.find((entry) => (
+    entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_op_success'
+  )).payload.operationId;
+
+  socketHandlers.get('terminal:session_attached')({
+    action: 'attach',
+    sessionId: 'term_op_success',
+    operationId: 'old-attach-op',
+    processStatus: 'running',
+    status: 'attached',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.get('term_op_success'), operationId);
+  // Lifecycle may still mark attached from authoritative payload; pending stays until match.
+  assert.equal(TerminalPanel.attachedSessionIds.has('term_op_success'), true);
+
+  socketHandlers.get('terminal:session_attached')({
+    action: 'attach',
+    sessionId: 'term_op_success',
+    operationId,
+    processStatus: 'running',
+    status: 'attached',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_op_success'), false);
+});
+
+test('TerminalPanel close error with stale operationId keeps pendingClose; match clears it', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_close_match', processStatus: 'running' });
+  TerminalPanel.closeSession('term_op_close_match');
+  const operationId = emitted.find((entry) => entry.event === 'terminal:close_session').payload.operationId;
+
+  socketHandlers.get('terminal:error')({
+    action: 'close',
+    sessionId: 'term_op_close_match',
+    operationId: 'stale-close-op',
+    code: 'terminal_session_not_attached',
+    message: 'stale',
+  });
+  assert.equal(TerminalPanel.pendingCloseSessionIds.get('term_op_close_match'), operationId);
+
+  socketHandlers.get('terminal:error')({
+    action: 'close',
+    sessionId: 'term_op_close_match',
+    operationId,
+    code: 'terminal_session_not_attached',
+    message: 'current',
+  });
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_op_close_match'), false);
+});
+
+test('TerminalPanel broadcast closed updates lifecycle but only matching operationId clears pendingClose', () => {
+  let disposeCalls = 0;
+  function TrackingTerminal() {
+    return {
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) { this.onDataHandler = handler; },
+      onResize(handler) { this.onResizeHandler = handler; },
+      write() {},
+      dispose() { disposeCalls += 1; },
+    };
+  }
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal({
+    Terminal: TrackingTerminal,
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_broadcast', processStatus: 'running' });
+  TerminalPanel.closeSession('term_op_broadcast');
+  const operationId = emitted.find((entry) => entry.event === 'terminal:close_session').payload.operationId;
+  assert.equal(TerminalPanel.pendingCloseSessionIds.get('term_op_broadcast'), operationId);
+
+  socketHandlers.get('terminal:session_closed')({
+    action: 'close',
+    sessionId: 'term_op_broadcast',
+    operationId: 'other-client-close-op',
+  });
+
+  assert.equal(TerminalPanel.state.getSession('term_op_broadcast'), null);
+  assert.equal(TerminalPanel.terms.has('term_op_broadcast'), false);
+  assert.equal(disposeCalls, 1);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.get('term_op_broadcast'), operationId);
+
+  // Re-create local tab state and a fresh pending close to prove match still works.
+  TerminalPanel.ensureSession({ sessionId: 'term_op_broadcast2', processStatus: 'running' });
+  TerminalPanel.closeSession('term_op_broadcast2');
+  const op2 = emitted.filter((entry) => entry.event === 'terminal:close_session').at(-1).payload.operationId;
+  socketHandlers.get('terminal:session_closed')({
+    action: 'close',
+    sessionId: 'term_op_broadcast2',
+    operationId: op2,
+  });
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_op_broadcast2'), false);
+  assert.equal(TerminalPanel.state.getSession('term_op_broadcast2'), null);
+});
+
+test('TerminalPanel action-scoped errors do not clear the other pending operation', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_op_scope', processStatus: 'running' });
+  TerminalPanel.pendingAttachSessionIds.set('term_op_scope', 'attach-op-1');
+  TerminalPanel.pendingCloseSessionIds.set('term_op_scope', 'close-op-1');
+
+  socketHandlers.get('terminal:error')({
+    action: 'attach',
+    sessionId: 'term_op_scope',
+    operationId: 'attach-op-1',
+    code: 'terminal_session_not_attached',
+    message: 'attach path',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_op_scope'), false);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.get('term_op_scope'), 'close-op-1');
+
+  TerminalPanel.pendingAttachSessionIds.set('term_op_scope', 'attach-op-2');
+  socketHandlers.get('terminal:error')({
+    action: 'close',
+    sessionId: 'term_op_scope',
+    operationId: 'close-op-1',
+    code: 'terminal_session_not_attached',
+    message: 'close path',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.get('term_op_scope'), 'attach-op-2');
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_op_scope'), false);
 });

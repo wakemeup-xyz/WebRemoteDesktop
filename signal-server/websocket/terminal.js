@@ -16,6 +16,21 @@ function getClientLabel(socket) {
     : String(rawLabel).slice(0, 128);
 }
 
+function normalizeOperationId(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 128);
+}
+
+function buildOperationCorrelation(action, payload = {}) {
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : null;
+  const operationId = normalizeOperationId(payload.operationId);
+  const correlation = { action, sessionId };
+  if (operationId) correlation.operationId = operationId;
+  return correlation;
+}
+
 function authenticate(socket) {
   const token = getToken(socket);
   if (!token) {
@@ -299,6 +314,7 @@ function setupTerminal(io, options = {}) {
     }
 
     function handleAttach(payload = {}) {
+      const correlation = buildOperationCorrelation('attach', payload);
       try {
         const attached = sessionManager.attachSession(payload.sessionId, {
           clientId,
@@ -307,17 +323,22 @@ function setupTerminal(io, options = {}) {
           rows: payload.rows,
           ...bindSessionCallbacks(payload.sessionId),
         });
+        const attachedPayload = {
+          ...attached,
+          ...correlation,
+          sessionId: attached.sessionId,
+        };
         socket.emit('terminal:replay', {
           sessionId: attached.sessionId,
           replay: attached.replay,
         });
-        socket.emit('terminal:session_attached', attached);
-        socket.emit('terminal:attached', attached);
+        socket.emit('terminal:session_attached', attachedPayload);
+        socket.emit('terminal:attached', attachedPayload);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
         socket.emit('terminal:error', {
-          sessionId: payload.sessionId || null,
+          ...correlation,
           code: err.code || 'terminal_attach_failed',
           message: err.message,
         });
@@ -344,14 +365,20 @@ function setupTerminal(io, options = {}) {
     }
 
     function handleClose(payload = {}) {
+      const correlation = buildOperationCorrelation('close', payload);
       try {
         const closed = sessionManager.closeSession(payload.sessionId, {
           clientId,
           socketId,
           reason: 'user-close',
         });
-        terminalNamespace.emit('terminal:session_closed', closed);
-        terminalNamespace.emit('terminal:closed', closed);
+        const closedPayload = {
+          ...closed,
+          ...correlation,
+          sessionId: closed.sessionId || correlation.sessionId,
+        };
+        terminalNamespace.emit('terminal:session_closed', closedPayload);
+        terminalNamespace.emit('terminal:closed', closedPayload);
         emitPoolSnapshot();
       } catch (err) {
         const code = err.code || 'terminal_close_failed';
@@ -367,7 +394,7 @@ function setupTerminal(io, options = {}) {
           });
         }
         socket.emit('terminal:error', {
-          sessionId: payload.sessionId || null,
+          ...correlation,
           code,
           message: err.message,
         });

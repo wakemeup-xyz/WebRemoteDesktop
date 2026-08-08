@@ -122,6 +122,32 @@ const TERMINAL_PENDING_CLOSE_ERROR_CODES = new Set([
   'terminal_close_failed',
 ]);
 
+function normalizeTerminalOperationId(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 128);
+}
+
+function makeTerminalOperationId(kind = 'op') {
+  const prefix = typeof kind === 'string' && kind ? kind : 'op';
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`.slice(0, 128);
+}
+
+function clearPendingOperation(pendingMap, sessionId, operationId, options = {}) {
+  if (!pendingMap || !sessionId || !pendingMap.has(sessionId)) return false;
+  const current = pendingMap.get(sessionId);
+  const normalized = normalizeTerminalOperationId(operationId);
+  if (normalized) {
+    if (current !== normalized) return false;
+    pendingMap.delete(sessionId);
+    return true;
+  }
+  if (options.allowLegacy === false) return false;
+  pendingMap.delete(sessionId);
+  return true;
+}
+
 function createFallbackTerminalDraftStore() {
   return {
     get() {
@@ -321,8 +347,8 @@ const TerminalPanel = {
   terms: new Map(),
   fitAddons: new Map(),
   attachedSessionIds: new Set(),
-  pendingAttachSessionIds: new Set(),
-  pendingCloseSessionIds: new Set(),
+  pendingAttachSessionIds: new Map(),
+  pendingCloseSessionIds: new Map(),
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
@@ -866,11 +892,19 @@ const TerminalPanel = {
     const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
     if (!sessionId) return;
     const code = payload.code;
-    if (TERMINAL_PENDING_ATTACH_ERROR_CODES.has(code)) {
-      this.pendingAttachSessionIds.delete(sessionId);
+    const action = typeof payload.action === 'string' ? payload.action : '';
+    if (action && action !== 'attach' && action !== 'close') return;
+
+    const clearAttach = action === 'attach'
+      || (!action && TERMINAL_PENDING_ATTACH_ERROR_CODES.has(code));
+    const clearClose = action === 'close'
+      || (!action && TERMINAL_PENDING_CLOSE_ERROR_CODES.has(code));
+
+    if (clearAttach) {
+      clearPendingOperation(this.pendingAttachSessionIds, sessionId, payload.operationId);
     }
-    if (TERMINAL_PENDING_CLOSE_ERROR_CODES.has(code)) {
-      this.pendingCloseSessionIds.delete(sessionId);
+    if (clearClose) {
+      clearPendingOperation(this.pendingCloseSessionIds, sessionId, payload.operationId);
     }
   },
 
@@ -1488,9 +1522,14 @@ const TerminalPanel = {
         this.attachedSessionIds.delete(sessionId);
       }
     });
-    this.pendingAttachSessionIds.forEach((sessionId) => {
+    this.pendingAttachSessionIds.forEach((_operationId, sessionId) => {
       if (!liveSessionIds.has(sessionId)) {
         this.pendingAttachSessionIds.delete(sessionId);
+      }
+    });
+    this.pendingCloseSessionIds.forEach((_operationId, sessionId) => {
+      if (!liveSessionIds.has(sessionId)) {
+        this.pendingCloseSessionIds.delete(sessionId);
       }
     });
     const persistedLastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
@@ -1539,7 +1578,10 @@ const TerminalPanel = {
 
   attachSessionState(session) {
     const shouldActivate = session.sessionId === localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    this.pendingAttachSessionIds.delete(session.sessionId);
+    const action = typeof session.action === 'string' ? session.action : '';
+    if (!action || action === 'attach') {
+      clearPendingOperation(this.pendingAttachSessionIds, session.sessionId, session.operationId);
+    }
     this.attachedSessionIds.add(session.sessionId);
     this.ensureSession(session, {
       activate: shouldActivate,
@@ -1570,7 +1612,11 @@ const TerminalPanel = {
   },
 
   handleSessionClosed(session) {
-    this.pendingCloseSessionIds.delete(session.sessionId);
+    const action = typeof session.action === 'string' ? session.action : '';
+    if (!action || action === 'close') {
+      clearPendingOperation(this.pendingCloseSessionIds, session.sessionId, session.operationId);
+    }
+    // Session is gone authoritatively — drop any attach pending for this id.
     this.pendingAttachSessionIds.delete(session.sessionId);
     this.attachedSessionIds.delete(session.sessionId);
     if (!this.state.getSession(session.sessionId) && !this.terms.has(session.sessionId)) {
@@ -1587,11 +1633,13 @@ const TerminalPanel = {
     if (this.attachedSessionIds.has(sessionId) || this.pendingAttachSessionIds.has(sessionId)) {
       return;
     }
-    this.pendingAttachSessionIds.add(sessionId);
+    const operationId = makeTerminalOperationId('attach');
+    this.pendingAttachSessionIds.set(sessionId, operationId);
     this.socket.emit('terminal:attach_session', {
       sessionId,
       cols: 120,
       rows: 32,
+      operationId,
     });
   },
 
@@ -1718,8 +1766,9 @@ const TerminalPanel = {
       return;
     }
     if (!sessionId || this.pendingCloseSessionIds.has(sessionId)) return;
-    this.pendingCloseSessionIds.add(sessionId);
-    this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close' });
+    const operationId = makeTerminalOperationId('close');
+    this.pendingCloseSessionIds.set(sessionId, operationId);
+    this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close', operationId });
     this.render();
   },
 
