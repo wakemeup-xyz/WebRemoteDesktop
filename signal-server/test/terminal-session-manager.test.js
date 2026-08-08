@@ -1336,3 +1336,71 @@ test('session manager detaches only an overflowing observer after replaying the 
   });
   assert.deepEqual(pty.writeCalls, ['fresh']);
 });
+
+test('createSession rejects out-of-range cols/rows before pty spawn', () => {
+  let spawned = 0;
+  const manager = createTerminalSessionManager({
+    config: { enabled: true, adminPassword: 'test-admin' },
+    ptyFactory() {
+      spawned += 1;
+      throw new Error('should not spawn');
+    },
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  assert.throws(
+    () => manager.createSession({ cols: 999999, rows: 24, clientId: 'c', socketId: 's' }),
+    (err) => err.code === 'terminal_invalid_size',
+  );
+  assert.equal(spawned, 0);
+});
+
+test('attachSession rejects invalid size before adding observer', () => {
+  const ptys = [];
+  const manager = createTerminalSessionManager({
+    config: { enabled: true, adminPassword: 'test-admin' },
+    ptyFactory() {
+      const pty = createFakePty();
+      ptys.push(pty);
+      return pty;
+    },
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  const created = manager.createSession({ clientId: 'creator', socketId: 'sock-creator', cols: 80, rows: 24 });
+  ptys[0].emitData('ready');
+  assert.throws(
+    () => manager.attachSession(created.sessionId, {
+      clientId: 'other',
+      socketId: 'sock-other',
+      cols: 99999,
+      rows: 1,
+    }),
+    (err) => err.code === 'terminal_invalid_size',
+  );
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'sock-other' }), false);
+  assert.equal(manager.getPresence(created.sessionId).observerCount, 1);
+});
+
+test('resizeSession rejects out-of-range geometry', () => {
+  const ptys = [];
+  const manager = createTerminalSessionManager({
+    config: { enabled: true, adminPassword: 'test-admin' },
+    ptyFactory() {
+      const pty = createFakePty();
+      ptys.push(pty);
+      return pty;
+    },
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  const created = manager.createSession({ clientId: 'c1', socketId: 's1', cols: 80, rows: 24 });
+  ptys[0].emitData('ready');
+  assert.throws(
+    () => manager.resizeSession(created.sessionId, {
+      clientId: 'c1',
+      socketId: 's1',
+      cols: 99999,
+      rows: 24,
+    }),
+    (err) => err.code === 'terminal_invalid_size',
+  );
+  assert.deepEqual(ptys[0].resizeCalls, []);
+});

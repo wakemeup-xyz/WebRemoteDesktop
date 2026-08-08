@@ -556,43 +556,44 @@ function setupTerminal(io, options = {}) {
       if (!requireAttachedSession(payload.sessionId, 'terminal_resize_rejected')) {
         return;
       }
-      const cols = Number(payload.cols);
-      const rows = Number(payload.rows);
-      if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || cols > 300 || rows < 5 || rows > 100) {
-        audit.warn('terminal_resize_rejected', {
-          sessionId: payload.sessionId,
-          clientId,
-          socketId,
-          code: 'terminal_resize_out_of_range',
-          cols,
-          rows,
-        });
-        socket.emit('terminal:error', {
-          code: 'terminal_resize_out_of_range',
-          message: 'Terminal resize is out of range',
-        });
-        return;
-      }
       try {
         sessionManager.resizeSession(payload.sessionId, {
           clientId,
           socketId,
-          cols,
-          rows,
+          cols: payload.cols,
+          rows: payload.rows,
         });
         emitPoolSnapshot();
       } catch (err) {
-        audit.error('terminal_error', {
-          sessionId: payload.sessionId || null,
-          clientId,
-          socketId,
-          action: 'resize',
-          code: err.code || 'terminal_resize_failed',
-          message: err.message,
-        });
+        const code = err.code === 'terminal_invalid_size'
+          ? 'terminal_resize_out_of_range'
+          : (err.code || 'terminal_resize_failed');
+        if (code === 'terminal_resize_out_of_range') {
+          audit.warn('terminal_resize_rejected', {
+            sessionId: payload.sessionId,
+            clientId,
+            socketId,
+            code,
+            cols: payload.cols,
+            rows: payload.rows,
+          });
+        } else {
+          audit.error('terminal_error', {
+            sessionId: payload.sessionId || null,
+            clientId,
+            socketId,
+            action: 'resize',
+            code,
+            message: err.message,
+          });
+        }
         socket.emit('terminal:error', {
-          code: err.code || 'terminal_resize_failed',
-          message: err.message,
+          code,
+          message: code === 'terminal_resize_out_of_range'
+            ? 'Terminal resize is out of range'
+            : err.message,
+          action: 'resize',
+          sessionId: payload.sessionId || null,
         });
       }
     });

@@ -1,11 +1,8 @@
 const crypto = require('node:crypto');
 
-// Keep parity with Socket.IO terminal input/resize gates in websocket/terminal.js.
+// Keep parity with Socket.IO terminal input gates in websocket/terminal.js.
 const TERMINAL_INPUT_MAX_BYTES = 64 * 1024;
-const TERMINAL_RESIZE_COLS_MIN = 10;
-const TERMINAL_RESIZE_COLS_MAX = 300;
-const TERMINAL_RESIZE_ROWS_MIN = 5;
-const TERMINAL_RESIZE_ROWS_MAX = 100;
+const { assertTerminalSize } = require('./geometry');
 
 function loadNodeDataChannel() {
   try {
@@ -195,23 +192,18 @@ function createTerminalWebRtcGateway(options = {}) {
     }
     if (type === 'resize') {
       const sid = String(message.sid || entry.sessionId || '');
-      const cols = Number(message.cols);
-      const rows = Number(message.rows);
-      if (
-        !Number.isInteger(cols)
-        || !Number.isInteger(rows)
-        || cols < TERMINAL_RESIZE_COLS_MIN
-        || cols > TERMINAL_RESIZE_COLS_MAX
-        || rows < TERMINAL_RESIZE_ROWS_MIN
-        || rows > TERMINAL_RESIZE_ROWS_MAX
-      ) {
+      let cols;
+      let rows;
+      try {
+        ({ cols, rows } = assertTerminalSize(message.cols, message.rows));
+      } catch (error) {
         sendJson(entry.dc, {
           t: 'error',
           sid,
           code: 'terminal_resize_out_of_range',
           message: 'Terminal resize is out of range',
-          cols,
-          rows,
+          cols: message.cols,
+          rows: message.rows,
         });
         return;
       }
@@ -224,10 +216,13 @@ function createTerminalWebRtcGateway(options = {}) {
         });
         sendJson(entry.dc, { t: 'resized', sid });
       } catch (error) {
+        const code = error.code === 'terminal_invalid_size'
+          ? 'terminal_resize_out_of_range'
+          : (error.code || 'terminal_resize_failed');
         sendJson(entry.dc, {
           t: 'error',
           sid,
-          code: error.code || 'terminal_resize_failed',
+          code,
           message: error.message,
         });
       }
@@ -447,10 +442,11 @@ function createTerminalWebRtcGateway(options = {}) {
 
 module.exports = {
   TERMINAL_INPUT_MAX_BYTES,
-  TERMINAL_RESIZE_COLS_MIN,
-  TERMINAL_RESIZE_COLS_MAX,
-  TERMINAL_RESIZE_ROWS_MIN,
-  TERMINAL_RESIZE_ROWS_MAX,
+  // Compatibility re-exports for tests/callers that imported gateway size constants.
+  TERMINAL_RESIZE_COLS_MIN: require('./geometry').COLS_LIMIT.min,
+  TERMINAL_RESIZE_COLS_MAX: require('./geometry').COLS_LIMIT.max,
+  TERMINAL_RESIZE_ROWS_MIN: require('./geometry').ROWS_LIMIT.min,
+  TERMINAL_RESIZE_ROWS_MAX: require('./geometry').ROWS_LIMIT.max,
   createTerminalWebRtcGateway,
   loadNodeDataChannel,
   toNodeIceServers,

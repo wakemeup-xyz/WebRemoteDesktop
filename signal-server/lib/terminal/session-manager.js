@@ -10,6 +10,7 @@ const {
   makeTerminalError,
   transitionProcessState,
 } = require('./lifecycle');
+const { normalizeTerminalSize, assertTerminalSize } = require('./geometry');
 
 const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
@@ -546,8 +547,7 @@ function createTerminalSessionManager(options = {}) {
       });
     }
     const sessionId = 'term_' + crypto.randomBytes(8).toString('hex');
-    const cols = Number(input.cols || 80);
-    const rows = Number(input.rows || 24);
+    const { cols, rows } = normalizeTerminalSize(input);
     const title = String(input.title || 'Terminal ' + (sessions.size + 1));
     let pty;
     try {
@@ -665,17 +665,28 @@ function createTerminalSessionManager(options = {}) {
   function attachSession(sessionId, input = {}) {
     const attachStartedAt = Date.now();
     const session = ensureSession(sessionId);
+    // Validate geometry before addObserver so a bad size never leaves a partial attach.
+    // Treat undefined like omitted (adapters often pass cols: payload.cols).
+    const hasCols = Object.hasOwn(input, 'cols') && input.cols !== undefined;
+    const hasRows = Object.hasOwn(input, 'rows') && input.rows !== undefined;
+    let attachSize = null;
+    if (hasCols || hasRows) {
+      attachSize = normalizeTerminalSize({
+        ...(hasCols ? { cols: input.cols } : {}),
+        ...(hasRows ? { rows: input.rows } : {}),
+      });
+    }
     addObserver(session, input);
     if (
-      session.processStatus === PROCESS_STATUS.RUNNING
-      && input.cols
-      && input.rows
+      attachSize
+      && session.processStatus === PROCESS_STATUS.RUNNING
       && session.activePresenterClientId === input.clientId
     ) {
       resizeSession(sessionId, {
         clientId: input.clientId,
-        cols: input.cols,
-        rows: input.rows,
+        socketId: input.socketId,
+        cols: attachSize.cols,
+        rows: attachSize.rows,
       });
     }
     audit.info('terminal_session_attached', {
@@ -826,17 +837,15 @@ function createTerminalSessionManager(options = {}) {
 
   function resizeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
+    // Size is validated before lifecycle/auth so adapters can map a stable out-of-range code.
+    const { cols, rows } = assertTerminalSize(input.cols, input.rows);
     assertProcessWritable(session.processStatus);
     const clientId = String(input.clientId || '').trim();
     const socketId = String(input.socketId || '').trim();
-    const cols = Number(input.cols || 0);
-    const rows = Number(input.rows || 0);
     if (
       !clientId ||
       !isObserverAttached(sessionId, { clientId, socketId }) ||
-      session.activePresenterClientId !== clientId ||
-      !cols ||
-      !rows
+      session.activePresenterClientId !== clientId
     ) {
       return snapshotSession(session);
     }
