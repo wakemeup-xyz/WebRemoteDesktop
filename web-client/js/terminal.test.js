@@ -2972,3 +2972,66 @@ test('TerminalPanel action-scoped errors do not clear the other pending operatio
   assert.equal(TerminalPanel.pendingAttachSessionIds.get('term_op_scope'), 'attach-op-2');
   assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_op_scope'), false);
 });
+
+test('TerminalPanel does not cache bootstrapAuthToken on failed bootstrap and retries next ensure', async () => {
+  let bootstrapCalls = 0;
+  const { TerminalPanel } = loadTerminal({
+    fetch: async (url) => {
+      if (!String(url).endsWith('/api/terminal/bootstrap')) {
+        return { ok: true, json: async () => ({}) };
+      }
+      bootstrapCalls += 1;
+      if (bootstrapCalls === 1) {
+        return { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) };
+      }
+      return { ok: true, json: async () => ({ allowPolling: true }) };
+    },
+  });
+
+  await TerminalPanel.ensureTerminalBootstrap('tok-a');
+  assert.equal(TerminalPanel.bootstrapAuthToken, null);
+  assert.equal(TerminalPanel.allowPolling, false);
+
+  await TerminalPanel.ensureTerminalBootstrap('tok-a');
+  assert.equal(bootstrapCalls, 2);
+  assert.equal(TerminalPanel.bootstrapAuthToken, 'tok-a');
+  assert.equal(TerminalPanel.allowPolling, true);
+});
+
+test('TerminalPanel does not reuse in-flight bootstrap promise across different tokens', async () => {
+  const started = [];
+  const gates = new Map();
+  const { TerminalPanel } = loadTerminal({
+    fetch: async (url, options) => {
+      if (!String(url).endsWith('/api/terminal/bootstrap')) {
+        return { ok: true, json: async () => ({}) };
+      }
+      const auth = options?.headers?.Authorization || '';
+      const token = auth.replace(/^Bearer\s+/i, '');
+      started.push(token);
+      await new Promise((resolve) => {
+        gates.set(token, resolve);
+      });
+      return {
+        ok: true,
+        json: async () => ({ allowPolling: token === 'tok-b' }),
+      };
+    },
+  });
+
+  const pA = TerminalPanel.ensureTerminalBootstrap('tok-a');
+  const pB = TerminalPanel.ensureTerminalBootstrap('tok-b');
+  assert.equal(started.length, 2);
+  assert.notEqual(pA, pB);
+
+  gates.get('tok-a')();
+  await pA;
+  assert.equal(TerminalPanel.bootstrapAuthToken, 'tok-a');
+  assert.equal(TerminalPanel.allowPolling, false);
+
+  gates.get('tok-b')();
+  await pB;
+  assert.equal(TerminalPanel.bootstrapAuthToken, 'tok-b');
+  assert.equal(TerminalPanel.allowPolling, true);
+});
+

@@ -272,7 +272,7 @@ const TerminalPanel = {
   poolCapacity: null,
   allowPolling: false,
   bootstrapAuthToken: null,
-  bootstrapPromise: null,
+  bootstrapPromisesByToken: new Map(),
   transportLatency: new Map(),
   aliasedEvents: new Map(),
   _initialized: false,
@@ -1207,9 +1207,12 @@ const TerminalPanel = {
   },
 
   ensureTerminalBootstrap(token) {
+    if (!token) return Promise.resolve();
     if (this.bootstrapAuthToken === token) return Promise.resolve();
-    if (this.bootstrapPromise) return this.bootstrapPromise;
-    this.bootstrapPromise = (async () => {
+    const existing = this.bootstrapPromisesByToken.get(token);
+    if (existing) return existing;
+
+    const promise = (async () => {
       try {
         const response = await fetch(RuntimeConfig.url('/api/terminal/bootstrap'), {
           headers: { Authorization: `Bearer ${token}` },
@@ -1217,14 +1220,18 @@ const TerminalPanel = {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
         this.applyBootstrap(body);
+        // F-08: only cache successful bootstrap for this token.
+        this.bootstrapAuthToken = token;
       } catch (err) {
+        // Apply websocket-only for this attempt, but do not cache success.
         this.applyBootstrap({ allowPolling: false });
       } finally {
-        this.bootstrapAuthToken = token;
-        this.bootstrapPromise = null;
+        this.bootstrapPromisesByToken.delete(token);
       }
     })();
-    return this.bootstrapPromise;
+
+    this.bootstrapPromisesByToken.set(token, promise);
+    return promise;
   },
 
   dispatchAliasedEvent(kind, payload = {}, apply) {
