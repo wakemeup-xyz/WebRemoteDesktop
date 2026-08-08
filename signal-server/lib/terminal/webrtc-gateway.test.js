@@ -187,3 +187,91 @@ test('acceptOffer answers, bridges output, and handles ping/input', () => {
     }, 20);
   });
 });
+
+test('closePeer detaches only the webrtc observerId and leaves Socket.IO observer', () => {
+  const detaches = [];
+  class FakePC {
+    constructor() {
+      this.handlers = {};
+    }
+    onLocalDescription(fn) { this.handlers.localDescription = fn; }
+    onLocalCandidate() {}
+    onDataChannel(fn) { this.handlers.dataChannel = fn; }
+    setRemoteDescription() {
+      queueMicrotask(() => {
+        this.handlers.localDescription?.('v=0 answer', 'answer');
+        const dc = {
+          sendMessage() {},
+          onOpen(fn) { this._open = fn; },
+          onClosed() {},
+          onMessage(fn) { this._message = fn; },
+          close() {},
+        };
+        this.handlers.dataChannel?.(dc);
+        dc._open?.();
+        this._dc = dc;
+      });
+    }
+    addRemoteCandidate() {}
+    close() {}
+  }
+
+  const gateway = createTerminalWebRtcGateway({
+    config: {
+      turnUrls: ['turn:relay.example.com:3478?transport=udp'],
+      turnUsername: 'u',
+      turnCredential: 'p',
+    },
+    PeerConnection: FakePC,
+    sessionManager: {
+      attachSession(sid, input) {
+        return { sessionId: sid, replay: [], observerId: input.observerId };
+      },
+      detachObserver(sid, input) {
+        detaches.push({
+          sid,
+          observerId: input.observerId || null,
+          socketId: input.socketId || null,
+          clientId: input.clientId || null,
+          reason: input.reason || null,
+        });
+      },
+      writeInput() {},
+      resizeSession() {},
+    },
+  });
+
+  const live = gateway.acceptOffer({
+    socketId: 'sock-dual',
+    clientId: 'client-dual',
+    offer: { type: 'offer', sdp: 'v=0 offer' },
+    onLocalDescription() {},
+    onLocalCandidate() {},
+  });
+
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      try {
+        live.dc._message?.(JSON.stringify({
+          t: 'bind',
+          sid: 'term_dual',
+          preferDcOutput: true,
+        }));
+        assert.equal(live.outputObserverId, 'webrtc:sock-dual');
+        assert.equal(live.outputAttached, true);
+
+        gateway.closePeer('sock-dual', 'test-close');
+
+        assert.equal(detaches.length, 1);
+        assert.equal(detaches[0].observerId, 'webrtc:sock-dual');
+        assert.equal(detaches[0].socketId, 'sock-dual');
+        assert.equal(detaches[0].clientId, 'client-dual');
+        // Exact observerId means presence must not expand to the Socket.IO observer.
+        assert.match(detaches[0].reason, /webrtc-/);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    }, 20);
+  });
+});

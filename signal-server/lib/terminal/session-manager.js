@@ -11,6 +11,7 @@ const {
   transitionProcessState,
 } = require('./lifecycle');
 const { normalizeTerminalSize, assertTerminalSize } = require('./geometry');
+const { removeObservers, hasObserver } = require('./presence');
 
 const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
@@ -709,43 +710,27 @@ function createTerminalSessionManager(options = {}) {
     const observerId = String(input.observerId || '').trim();
     const socketId = String(input.socketId || '').trim();
     const clientId = String(input.clientId || '').trim();
-    let removedClientId = '';
-    let removedObserver = false;
+    const { removed, removedCount } = removeObservers(session.observers, {
+      observerId,
+      socketId,
+      clientId,
+    });
 
-    if (observerId && session.observers.has(observerId)) {
-      removedClientId = session.observers.get(observerId)?.clientId || '';
-      session.observers.delete(observerId);
-      session.outputDispatcher.detach(observerId);
-      removedObserver = true;
-    } else if (socketId) {
-      for (const [key, observer] of session.observers.entries()) {
-        if (observer.socketId === socketId) {
-          removedClientId = observer.clientId || '';
-          session.observers.delete(key);
-          session.outputDispatcher.detach(key);
-          removedObserver = true;
-          break;
-        }
-      }
-    } else if (clientId) {
-      for (const [key, observer] of session.observers.entries()) {
-        if (observer.clientId === clientId) {
-          removedClientId = observer.clientId || '';
-          session.observers.delete(key);
-          session.outputDispatcher.detach(key);
-          removedObserver = true;
-          break;
-        }
-      }
+    for (const observer of removed) {
+      session.outputDispatcher.detach(observer.observerId);
     }
 
+    // Recompute presenter once after all removals.
     if (
-      removedClientId &&
-      session.activePresenterClientId === removedClientId &&
-      !Array.from(session.observers.values()).some((observer) => observer.clientId === removedClientId)
+      session.activePresenterClientId
+      && !Array.from(session.observers.values()).some(
+        (observer) => observer.clientId === session.activePresenterClientId,
+      )
     ) {
       session.activePresenterClientId = session.observers.values().next().value?.clientId || null;
     }
+
+    const removedClientId = removed[0]?.clientId || '';
     updatePresence(session, input.reason || 'detached');
     audit.info('terminal_session_detached', {
       sessionId: session.sessionId,
@@ -755,7 +740,7 @@ function createTerminalSessionManager(options = {}) {
       observerCount: session.observers.size,
       reason: input.reason || 'detached',
     });
-    if (removedObserver) metrics.recordCounter('session_detach');
+    if (removedCount > 0) metrics.recordCounter('session_detach');
     return snapshotSession(session);
   }
 
@@ -984,10 +969,12 @@ function createTerminalSessionManager(options = {}) {
       };
     }
     for (const session of sessions.values()) {
-      const hasMatch = Array.from(session.observers.values()).some((observer) => (
-        socketId ? observer.socketId === socketId : observer.clientId === clientId
-      ));
-      if (hasMatch) {
+      const selector = socketId
+        ? { socketId }
+        : { clientId };
+      if (hasObserver(session.observers, selector)) {
+        // One detach per session: presence removes every socketId/clientId match
+        // (Socket.IO + webrtc:<socketId> when they share the same socketId).
         detachObserver(session.sessionId, {
           clientId,
           socketId,

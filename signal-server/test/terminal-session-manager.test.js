@@ -1064,6 +1064,82 @@ test('terminal session manager emits structured create, attach, and detach audit
   assert.equal(events[2].meta.reason, 'manual-detach');
 });
 
+test('detachObserver by socketId removes Socket.IO and webrtc observers sharing that socket', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    socketId: 'sock-1',
+  });
+  manager.attachSession(created.sessionId, {
+    clientId: 'browser-a',
+    socketId: 'sock-1',
+    observerId: 'webrtc:sock-1',
+  });
+
+  const session = manager._getSession(created.sessionId);
+  assert.equal(session.observers.size, 2);
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'sock-1' }), true);
+
+  manager.detachObserver(created.sessionId, {
+    socketId: 'sock-1',
+    reason: 'socket-disconnect',
+  });
+
+  assert.equal(session.observers.size, 0);
+  assert.equal(manager.isObserverAttached(created.sessionId, { socketId: 'sock-1' }), false);
+  assert.equal(manager.getPoolSnapshot().sessions[0].status, 'detached');
+});
+
+test('handleSocketDisconnect by socketId clears both Socket.IO and webrtc observers', () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalShell: '/bin/zsh',
+      terminalCwd: '/tmp',
+      terminalIdleTimeoutMs: 0,
+      terminalStartupTimeoutMs: 10000,
+      terminalRecordIo: false,
+    },
+  });
+
+  const created = manager.createSession({
+    clientId: 'browser-a',
+    socketId: 'sock-1',
+  });
+  manager.attachSession(created.sessionId, {
+    clientId: 'browser-a',
+    socketId: 'sock-1',
+    observerId: 'webrtc:sock-1',
+  });
+
+  const result = manager.handleSocketDisconnect({
+    clientId: 'browser-a',
+    socketId: 'sock-1',
+    reason: 'socket-disconnect',
+  });
+
+  assert.deepEqual(result.affectedSessionIds, [created.sessionId]);
+  assert.equal(manager._getSession(created.sessionId).observers.size, 0);
+});
+
 test('buildTerminalEnv compatibility export uses the secure environment allowlist', () => {
   const env = buildTerminalEnv({
     HOME: '/Users/tester',
