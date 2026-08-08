@@ -3035,3 +3035,54 @@ test('TerminalPanel does not reuse in-flight bootstrap promise across different 
   assert.equal(TerminalPanel.allowPolling, true);
 });
 
+test('TerminalPanel fits and emits terminal:resize once when processStatus becomes running', () => {
+  let fitCalls = 0;
+  function TrackingFitAddon() {
+    this.fit = () => { fitCalls += 1; };
+  }
+  function SizedTerminal() {
+    return {
+      cols: 101,
+      rows: 37,
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) { this.onDataHandler = handler; },
+      onResize(handler) { this.onResizeHandler = handler; },
+      write() {},
+      dispose() {},
+    };
+  }
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal({
+    Terminal: SizedTerminal,
+    FitAddon: { FitAddon: TrackingFitAddon },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_start_run', processStatus: 'starting' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term_start_run');
+  fitCalls = 0;
+  const before = emitted.filter((entry) => entry.event === 'terminal:resize').length;
+
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_start_run',
+    data: 'ready\r\n',
+  });
+
+  assert.equal(TerminalPanel.state.getSession('term_start_run').processStatus, 'running');
+  assert.equal(fitCalls >= 1, true);
+  const resizes = emitted.filter((entry) => entry.event === 'terminal:resize');
+  assert.equal(resizes.length, before + 1);
+  assert.equal(resizes.at(-1).payload.sessionId, 'term_start_run');
+  assert.equal(resizes.at(-1).payload.cols, 101);
+  assert.equal(resizes.at(-1).payload.rows, 37);
+
+  socketHandlers.get('terminal:output')({
+    sessionId: 'term_start_run',
+    data: 'again\r\n',
+  });
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:resize').length, before + 1);
+});

@@ -618,8 +618,7 @@ const TerminalPanel = {
         }
         const session = this.state.getSession(payload.sessionId);
         if (session?.processStatus === 'starting') {
-          this.state.updateSession(payload.sessionId, { processStatus: 'running' });
-          this.render();
+          this.markProcessRunningFromOutput(payload.sessionId);
         }
         this.writeOutput(payload.sessionId, payload.data);
       } finally {
@@ -1084,8 +1083,7 @@ const TerminalPanel = {
       if (!sessionId) return;
       const session = this.state.getSession(sessionId);
       if (session?.processStatus === 'starting') {
-        this.state.updateSession(sessionId, { processStatus: 'running' });
-        this.render();
+        this.markProcessRunningFromOutput(sessionId);
       }
       this.writeOutput(sessionId, message.data || '');
       return;
@@ -1959,6 +1957,33 @@ const TerminalPanel = {
     if (typeof term.clear === 'function') {
       term.clear();
     }
+  },
+
+  markProcessRunningFromOutput(sessionId) {
+    if (!sessionId) return false;
+    const session = this.state.getSession(sessionId);
+    if (session?.processStatus !== 'starting') return false;
+    this.state.updateSession(sessionId, { processStatus: 'running' });
+    this.render();
+    // F-09: compensate for fit/resize dropped while PTY was still starting.
+    if (this.state.activeSessionId() === sessionId) {
+      this.fitActiveTerminal();
+      this.emitTerminalResize(sessionId);
+    }
+    return true;
+  },
+
+  emitTerminalResize(sessionId) {
+    if (!this.socket?.connected || !sessionId) return false;
+    if (this.state.getSession(sessionId)?.processStatus !== 'running') return false;
+    const term = this.terms.get(sessionId);
+    const cols = Number(term?.cols);
+    const rows = Number(term?.rows);
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+      return false;
+    }
+    this.socket.emit('terminal:resize', { sessionId, cols, rows });
+    return true;
   },
 
   fitActiveTerminal() {
