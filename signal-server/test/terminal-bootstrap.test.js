@@ -91,16 +91,25 @@ async function startServer() {
 
 function createFakePty() {
   let dataHandler = null;
+  let exitHandler = null;
   return {
     onData(handler) {
       dataHandler = handler;
     },
-    onExit() {},
+    onExit(handler) {
+      exitHandler = handler;
+    },
     write() {},
     resize() {},
-    kill() {},
+    kill() {
+      // Confirm exit immediately so async escalated cleanup can finish in tests.
+      exitHandler?.({ exitCode: 0, signal: 0 });
+    },
     emitData(data) {
       dataHandler?.(data);
+    },
+    emitExit(event) {
+      exitHandler?.(event || { exitCode: 0, signal: 0 });
     },
   };
 }
@@ -209,7 +218,7 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
   const { port } = runtime.server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
-    const created = runtime.terminal.sessionManager.createSession({
+    const created = await runtime.terminal.sessionManager.createSession({
       clientId: 'bootstrap-browser',
       cols: 80,
       rows: 24,
@@ -240,7 +249,9 @@ test('/api/terminal/bootstrap returns the live shared pool snapshot after a sess
     assert.equal(metricsResponse.status, 200);
     assert.equal(metricsBody.metrics.counters.session_created, 1);
     assert.equal(metricsBody.pool.sessions[0].sessionId, created.sessionId);
-    runtime.terminal.sessionManager.closeSession(created.sessionId, {
+    // Confirm PTY exit so async escalated cleanup can complete under the new kill contract.
+    pty.emitExit({ exitCode: 0, signal: 0 });
+    await runtime.terminal.sessionManager.closeSession(created.sessionId, {
       clientId: 'bootstrap-browser',
     });
   } finally {

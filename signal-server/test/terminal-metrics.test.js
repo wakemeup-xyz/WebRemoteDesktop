@@ -154,7 +154,7 @@ test('TerminalMetrics never stores raw metadata arguments', () => {
   assert.equal(JSON.stringify(metrics.snapshot()).includes('SECRET_'), false);
 });
 
-test('session manager records lifecycle, IO, and attach metrics exactly once', () => {
+test('session manager records lifecycle, IO, and attach metrics exactly once', async () => {
   let nowMs = 0;
   const metrics = new TerminalMetrics();
   const pty = createFakePty();
@@ -166,7 +166,7 @@ test('session manager records lifecycle, IO, and attach metrics exactly once', (
     audit: { info() {}, warn() {}, error() {} },
     config: managerConfig(),
   });
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'creator',
     socketId: 'socket-a',
     onData() {},
@@ -193,7 +193,7 @@ test('session manager records lifecycle, IO, and attach metrics exactly once', (
     socketId: 'socket-b',
   });
   pty.emitExit({ exitCode: 0, signal: 0 });
-  manager.closeSession(created.sessionId, {
+  await manager.closeSession(created.sessionId, {
     clientId: 'creator',
     socketId: 'socket-a',
   });
@@ -213,7 +213,7 @@ test('session manager records lifecycle, IO, and attach metrics exactly once', (
   assert.equal(JSON.stringify(snapshot).includes('SECRET_INPUT'), false);
 });
 
-test('session manager records spawn failure and startup timeout once', () => {
+test('session manager records spawn failure and startup timeout once', async () => {
   const metrics = new TerminalMetrics();
   const spawnFailureManager = createTerminalSessionManager({
     metrics,
@@ -223,9 +223,10 @@ test('session manager records spawn failure and startup timeout once', () => {
     audit: { info() {}, warn() {}, error() {} },
     config: managerConfig(),
   });
-  assert.throws(() => spawnFailureManager.createSession({ clientId: 'creator' }), {
-    code: 'pty_spawn_failed',
-  });
+  await assert.rejects(
+    () => spawnFailureManager.createSession({ clientId: 'creator' }),
+    { code: 'pty_spawn_failed' },
+  );
 
   let startupCallback = null;
   const timeoutManager = createTerminalSessionManager({
@@ -239,8 +240,8 @@ test('session manager records spawn failure and startup timeout once', () => {
     audit: { info() {}, warn() {}, error() {} },
     config: managerConfig(),
   });
-  timeoutManager.createSession({ clientId: 'creator' });
-  startupCallback();
+  await timeoutManager.createSession({ clientId: 'creator' });
+  await startupCallback();
 
   const snapshot = metrics.snapshot();
   assert.equal(snapshot.counters.pty_spawn_failed, 1);
@@ -248,7 +249,7 @@ test('session manager records spawn failure and startup timeout once', () => {
   assert.equal(JSON.stringify(snapshot).includes('SECRET_VALUE'), false);
 });
 
-test('session manager records output backpressure once without raw output', () => {
+test('session manager records output backpressure once without raw output', async () => {
   const metrics = new TerminalMetrics();
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
@@ -258,7 +259,7 @@ test('session manager records output backpressure once without raw output', () =
     audit: { info() {}, warn() {}, error() {} },
     config: managerConfig({ terminalMaxObserverQueueBytes: 1 }),
   });
-  manager.createSession({
+  await manager.createSession({
     clientId: 'slow',
     socketId: 'slow-socket',
     onData(_data, _metadata, _acknowledge) {},
