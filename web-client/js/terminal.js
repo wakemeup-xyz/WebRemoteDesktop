@@ -98,6 +98,24 @@ function getTerminalComposerApi() {
     || null;
 }
 
+function getTerminalInputGateApi() {
+  return (typeof window !== 'undefined' && window.TerminalInputGate)
+    || (typeof globalThis !== 'undefined' && globalThis.TerminalInputGate)
+    || null;
+}
+
+const TERMINAL_PENDING_ATTACH_ERROR_CODES = new Set([
+  'terminal_attach_failed',
+  'terminal_session_not_found',
+  'terminal_session_not_attached',
+]);
+const TERMINAL_PENDING_CLOSE_ERROR_CODES = new Set([
+  'terminal_session_not_attached',
+  'terminal_session_not_found',
+  'pty_cleanup_failed',
+  'terminal_close_failed',
+]);
+
 function createFallbackTerminalDraftStore() {
   return {
     get() {
@@ -769,17 +787,15 @@ const TerminalPanel = {
       }
       if (
         payload.sessionId
-        && ['pty_cleanup_failed', 'terminal_close_failed'].includes(payload.code)
+        && payload.code === 'pty_cleanup_failed'
       ) {
-        this.pendingCloseSessionIds.delete(payload.sessionId);
-        if (payload.code === 'pty_cleanup_failed') {
-          this.ensureSession({
-            sessionId: payload.sessionId,
-            processStatus: 'closed',
-          });
-        }
+        this.ensureSession({
+          sessionId: payload.sessionId,
+          processStatus: 'closed',
+        });
         this.render();
       }
+      this.releasePendingForTerminalError(payload);
       this.handleTerminalError(payload);
     });
     return this.socket;
@@ -799,11 +815,50 @@ const TerminalPanel = {
     return `${sessionId || 'term'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   },
 
-  emitTerminalInput(sessionId, data, options = {}) {
-    if (!this.socket?.connected || !sessionId) {
-      return null;
+  decideTerminalInput(sessionId) {
+    const gateApi = getTerminalInputGateApi();
+    if (!gateApi?.createTerminalInputGate) {
+      if (!sessionId) return { allowed: false, reason: 'session_missing' };
+      if (!this.socket?.connected) return { allowed: false, reason: 'socket_disconnected' };
+      if (!this.attachedSessionIds.has(sessionId)) return { allowed: false, reason: 'session_not_attached' };
+      if (this.state.getSession(sessionId)?.processStatus !== 'running') {
+        return { allowed: false, reason: 'process_not_running' };
+      }
+      if (this.preferredTransport === 'webrtc-turn') {
+        const turnReady = Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open');
+        if (!turnReady) return { allowed: false, reason: 'transport_not_ready' };
+      }
+      return { allowed: true, reason: null };
     }
-    if (this.state.getSession(sessionId)?.processStatus && this.state.getSession(sessionId)?.processStatus !== 'running') {
+    const gate = gateApi.createTerminalInputGate({
+      isConnected: () => Boolean(this.socket?.connected),
+      isAttached: (id) => this.attachedSessionIds.has(id),
+      processStatus: (id) => this.state.getSession(id)?.processStatus || null,
+      transportCanSend: () => {
+        if (this.preferredTransport === 'webrtc-turn') {
+          return Boolean(this.webrtcReady && this.webrtcDc?.readyState === 'open');
+        }
+        return true;
+      },
+    });
+    return gate.decide(sessionId);
+  },
+
+  releasePendingForTerminalError(payload = {}) {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+    if (!sessionId) return;
+    const code = payload.code;
+    if (TERMINAL_PENDING_ATTACH_ERROR_CODES.has(code)) {
+      this.pendingAttachSessionIds.delete(sessionId);
+    }
+    if (TERMINAL_PENDING_CLOSE_ERROR_CODES.has(code)) {
+      this.pendingCloseSessionIds.delete(sessionId);
+    }
+  },
+
+  emitTerminalInput(sessionId, data, options = {}) {
+    const decision = this.decideTerminalInput(sessionId);
+    if (!decision.allowed) {
       return null;
     }
     const inputId = this.makeInputId(sessionId);
@@ -813,12 +868,12 @@ const TerminalPanel = {
       clientSentAt,
       ...options.pendingAckMeta,
     });
-    if (options.optimisticEcho) {
-      this.applyOptimisticLocalEcho(sessionId, data);
-    }
 
-    if (this.preferredTransport === 'webrtc-turn' && this.webrtcReady && this.webrtcDc?.readyState === 'open') {
-      try {
+    let accepted = false;
+    let path = 'socketio';
+    try {
+      if (this.preferredTransport === 'webrtc-turn' && this.webrtcReady && this.webrtcDc?.readyState === 'open') {
+        path = 'webrtc-turn';
         this.webrtcDc.send(JSON.stringify({
           t: 'in',
           sid: sessionId,
@@ -826,21 +881,36 @@ const TerminalPanel = {
           inputId,
           clientSentAt,
         }));
-        return { inputId, clientSentAt, path: 'webrtc-turn' };
-      } catch (error) {
-        this.setTransportStatus(`TURN DataChannel 发送失败：${error?.message || error}`, 'error');
-        // Explicit policy: do not silently fall back to socketio.
-        return null;
+        accepted = true;
+      } else if (this.preferredTransport === 'webrtc-turn') {
+        // Preferred TURN but not ready: never silent-fallback to socketio (Task 4 hardens further).
+        accepted = false;
+      } else {
+        this.socket.emit('terminal:input', {
+          sessionId,
+          data,
+          inputId,
+          clientSentAt,
+        });
+        accepted = true;
+        path = 'socketio';
       }
+    } catch (error) {
+      if (path === 'webrtc-turn') {
+        this.setTransportStatus(`TURN DataChannel 发送失败：${error?.message || error}`, 'error');
+      }
+      accepted = false;
     }
 
-    this.socket.emit('terminal:input', {
-      sessionId,
-      data,
-      inputId,
-      clientSentAt,
-    });
-    return { inputId, clientSentAt, path: 'socketio' };
+    if (!accepted) {
+      this.pendingInputAcks.delete(inputId);
+      return null;
+    }
+
+    if (options.optimisticEcho) {
+      this.applyOptimisticLocalEcho(sessionId, data);
+    }
+    return { inputId, clientSentAt, path };
   },
 
   setPreferredTransport(mode) {
@@ -1694,11 +1764,7 @@ const TerminalPanel = {
 
   isComposerReady() {
     const activeSessionId = this.state.activeSessionId();
-    return Boolean(
-      this.socket?.connected
-      && activeSessionId
-      && this.attachedSessionIds.has(activeSessionId)
-    );
+    return this.decideTerminalInput(activeSessionId).allowed;
   },
 
   refreshComposer(options = {}) {

@@ -317,6 +317,7 @@ function setupTerminal(io, options = {}) {
         emitPoolSnapshot();
       } catch (err) {
         socket.emit('terminal:error', {
+          sessionId: payload.sessionId || null,
           code: err.code || 'terminal_attach_failed',
           message: err.message,
         });

@@ -257,6 +257,8 @@ function loadTerminal(overrides = {}) {
   });
   context.globalThis = context;
   vm.createContext(context);
+  const gateSource = fs.readFileSync(path.join(__dirname, 'terminal-input-gate.js'), 'utf8');
+  vm.runInContext(gateSource, context);
   const composerSource = fs.readFileSync(path.join(__dirname, 'terminal-composer.js'), 'utf8');
   vm.runInContext(composerSource, context);
   const source = fs.readFileSync(path.join(__dirname, 'terminal.js'), 'utf8');
@@ -2120,6 +2122,11 @@ test('TerminalPanel never writes an unconfirmed password probe to xterm', () => 
     status: 'attached',
     creatorClientId: TerminalPanel.getBrowserSessionId(),
   });
+  socketHandlers.get('terminal:session_attached')({
+    sessionId: 'term_password',
+    status: 'attached',
+    processStatus: 'running',
+  });
 
   TerminalPanel.terms.get('term_password').onDataHandler('Secret123');
 
@@ -2501,4 +2508,178 @@ test('TerminalPanel applies canonical and legacy session aliases once', () => {
   socketHandlers.get('terminal:closed')(session);
 
   assert.deepEqual(calls, { snapshot: 1, attach: 1, close: 1 });
+});
+
+test('TerminalPanel clears sticky pendingAttach on attach failure so second activate re-emits', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_attach_retry', processStatus: 'running' });
+
+  TerminalPanel.activateSession('term_attach_retry');
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_attach_retry').length,
+    1,
+  );
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_attach_retry'), true);
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_attach_retry',
+    code: 'terminal_attach_failed',
+    message: 'attach failed',
+  });
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_attach_retry'), false);
+
+  TerminalPanel.activateSession('term_attach_retry');
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session' && entry.payload.sessionId === 'term_attach_retry').length,
+    2,
+  );
+});
+
+test('TerminalPanel clears sticky pendingClose on terminal_session_not_attached so second close re-emits', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_close_retry', processStatus: 'running' });
+
+  TerminalPanel.closeSession('term_close_retry');
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:close_session').length, 1);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_close_retry'), true);
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_close_retry',
+    code: 'terminal_session_not_attached',
+    message: 'Terminal session is not attached',
+  });
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_close_retry'), false);
+
+  TerminalPanel.closeSession('term_close_retry');
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:close_session').length, 2);
+});
+
+test('TerminalPanel does not clear attach or close pending on input rate-limit errors', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+  TerminalPanel.ensureSession({ sessionId: 'term_rate', processStatus: 'running' });
+  TerminalPanel.pendingAttachSessionIds.add('term_rate');
+  TerminalPanel.pendingCloseSessionIds.add('term_rate');
+
+  socketHandlers.get('terminal:error')({
+    sessionId: 'term_rate',
+    code: 'terminal_input_rate_limited',
+    message: 'too fast',
+  });
+
+  assert.equal(TerminalPanel.pendingAttachSessionIds.has('term_rate'), true);
+  assert.equal(TerminalPanel.pendingCloseSessionIds.has('term_rate'), true);
+});
+
+test('TerminalPanel disables composer for exited active session even when attached', () => {
+  const { TerminalPanel, elements } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = { connected: true, emit() {} };
+  TerminalPanel.ensureSession({
+    sessionId: 'term_exited_composer',
+    status: 'attached',
+    processStatus: 'exited',
+  }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term_exited_composer');
+  TerminalPanel.refreshComposer();
+
+  assert.equal(elements.get('terminalComposer').disabled, true);
+  assert.equal(elements.get('terminalComposerSubmit').disabled, true);
+  assert.equal(TerminalPanel.isComposerReady(), false);
+});
+
+test('TerminalPanel emitTerminalInput returns null without pending ack or echo when unattached', () => {
+  function BufferingTerminal() {
+    return {
+      writes: [],
+      open() {},
+      focus() {},
+      loadAddon() {},
+      onData(handler) { this.onDataHandler = handler; },
+      onResize(handler) { this.onResizeHandler = handler; },
+      write(data) { this.writes.push(String(data)); },
+      dispose() {},
+    };
+  }
+
+  const { TerminalPanel, emitted, createdTerms } = loadTerminal({ Terminal: BufferingTerminal });
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = {
+    connected: true,
+    emit(event, payload) { emitted.push({ event, payload }); },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term_unattached_input', processStatus: 'running' }, { activate: true });
+  const term = createdTerms[0] || TerminalPanel.terms.get('term_unattached_input');
+  const beforePending = TerminalPanel.pendingInputAcks.size;
+
+  const result = TerminalPanel.emitTerminalInput('term_unattached_input', 'x', { optimisticEcho: true });
+  if (term?.onDataHandler) {
+    term.onDataHandler('y');
+  }
+
+  assert.equal(result, null);
+  assert.equal(TerminalPanel.pendingInputAcks.size, beforePending);
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:input'), false);
+  assert.equal(term.writes.length, 0);
+});
+
+test('TerminalPanel emitTerminalInput returns null without side effects when process is not running', () => {
+  const { TerminalPanel, emitted } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = {
+    connected: true,
+    emit(event, payload) { emitted.push({ event, payload }); },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term_exited_input', processStatus: 'exited' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term_exited_input');
+  const beforePending = TerminalPanel.pendingInputAcks.size;
+
+  const result = TerminalPanel.emitTerminalInput('term_exited_input', 'x', { optimisticEcho: true });
+
+  assert.equal(result, null);
+  assert.equal(TerminalPanel.pendingInputAcks.size, beforePending);
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:input'), false);
+});
+
+test('TerminalPanel registers pending input before adapter send and rolls back without echo on throw', () => {
+  const seenDuringSend = [];
+  const { TerminalPanel } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.socketState = 'connected';
+  TerminalPanel.socket = { connected: true, emit() {} };
+  TerminalPanel.preferredTransport = 'webrtc-turn';
+  TerminalPanel.webrtcReady = true;
+  TerminalPanel.webrtcDc = {
+    readyState: 'open',
+    send() {
+      seenDuringSend.push(TerminalPanel.pendingInputAcks.size);
+      throw new Error('dc closed');
+    },
+  };
+  TerminalPanel.ensureSession({ sessionId: 'term_dc_fail', processStatus: 'running' }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term_dc_fail');
+  const beforePending = TerminalPanel.pendingInputAcks.size;
+
+  const result = TerminalPanel.emitTerminalInput('term_dc_fail', 'a', { optimisticEcho: true });
+
+  assert.equal(result, null);
+  assert.deepEqual(seenDuringSend, [beforePending + 1]);
+  assert.equal(TerminalPanel.pendingInputAcks.size, beforePending);
 });
