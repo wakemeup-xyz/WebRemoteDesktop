@@ -392,6 +392,12 @@ function createServerApp(options = {}) {
     terminalAudit,
     recentEventStore,
     structuredLogger,
+    async close(reason = 'system:shutdown') {
+      if (typeof terminal?.close === 'function') {
+        return terminal.close(reason);
+      }
+      return { closedSessionIds: [], failures: [], reason };
+    },
   };
 }
 
@@ -415,11 +421,57 @@ async function startServerFromSource(options = {}) {
   return start(options.serverOptions || {});
 }
 
-if (require.main === module) {
-  startServerFromSource().catch((error) => {
-    console.error('[web-assets] build failed:', error.message);
-    process.exitCode = 1;
+function registerShutdownHandlers(runtime, options = {}) {
+  if (registerShutdownHandlers._registered) {
+    return;
+  }
+  registerShutdownHandlers._registered = true;
+  const logger = options.logger || console;
+  const timeoutMs = Math.max(1000, Number(options.shutdownTimeoutMs) || 10000);
+  let shuttingDown = false;
+
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.log?.(`[signal-server] ${signal} received, harvesting terminal sessions...`);
+    const timer = setTimeout(() => {
+      logger.error?.('[signal-server] shutdown timed out');
+      process.exit(1);
+    }, timeoutMs);
+    timer.unref?.();
+    try {
+      const summary = await runtime.close('system:shutdown');
+      if (summary?.failures?.length) {
+        logger.error?.('[signal-server] terminal shutdown failures', summary.failures);
+      }
+      runtime.server.close(() => {
+        clearTimeout(timer);
+        process.exit(summary?.failures?.length ? 1 : 0);
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      logger.error?.('[signal-server] shutdown failed', error);
+      process.exit(1);
+    }
+  };
+
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
   });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+}
+
+if (require.main === module) {
+  startServerFromSource()
+    .then((runtime) => {
+      registerShutdownHandlers(runtime);
+    })
+    .catch((error) => {
+      console.error('[web-assets] build failed:', error.message);
+      process.exitCode = 1;
+    });
 }
 
 module.exports = {

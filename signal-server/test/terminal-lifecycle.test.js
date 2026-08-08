@@ -55,3 +55,94 @@ test('terminal lifecycle creates stable errors without exposing mutable detail o
   assert.equal(cleanupError.code, 'pty_cleanup_failed');
   assert.equal(cleanupError.message, 'Unable to clean up terminal process');
 });
+
+test('planPtyKillSignals freezes SIGHUP → SIGTERM → SIGKILL steps with wait budgets', () => {
+  const { planPtyKillSignals } = lifecycle;
+  const steps = planPtyKillSignals({ waitMs: 0 });
+
+  assert.equal(Object.isFrozen(steps), true);
+  assert.deepEqual(
+    steps.map((step) => ({ signal: step.signal, waitMs: step.waitMs })),
+    [
+      { signal: 'SIGHUP', waitMs: 0 },
+      { signal: 'SIGTERM', waitMs: 0 },
+      { signal: 'SIGKILL', waitMs: 0 },
+    ],
+  );
+  assert.equal(Object.isFrozen(steps[0]), true);
+});
+
+test('cleanup escalates SIGHUP to SIGTERM to SIGKILL and waits for confirmed exit', async () => {
+  const { cleanupPtyWithEscalation } = lifecycle;
+  const signals = [];
+  const pty = {
+    kill(sig) {
+      signals.push(sig);
+    },
+  };
+
+  const result = await cleanupPtyWithEscalation(pty, {
+    waitForExit: async () => signals.at(-1) === 'SIGKILL',
+    isAlive: () => signals.length < 3,
+    steps: [
+      { signal: 'SIGHUP', waitMs: 0 },
+      { signal: 'SIGTERM', waitMs: 0 },
+      { signal: 'SIGKILL', waitMs: 0 },
+    ],
+  });
+
+  assert.deepEqual(signals, ['SIGHUP', 'SIGTERM', 'SIGKILL']);
+  assert.equal(result.killed, true);
+  assert.equal(result.confirmed, true);
+  assert.deepEqual(result.signalsSent, ['SIGHUP', 'SIGTERM', 'SIGKILL']);
+});
+
+test('cleanupPtyWithEscalation stops early when exit is confirmed after SIGHUP', async () => {
+  const { cleanupPtyWithEscalation } = lifecycle;
+  const signals = [];
+  const pty = {
+    kill(sig) {
+      signals.push(sig);
+    },
+  };
+
+  const result = await cleanupPtyWithEscalation(pty, {
+    waitForExit: async () => signals.at(-1) === 'SIGHUP',
+    isAlive: () => signals.length === 0,
+    steps: [
+      { signal: 'SIGHUP', waitMs: 0 },
+      { signal: 'SIGTERM', waitMs: 0 },
+      { signal: 'SIGKILL', waitMs: 0 },
+    ],
+  });
+
+  assert.deepEqual(signals, ['SIGHUP']);
+  assert.equal(result.killed, true);
+  assert.equal(result.finalSignal, 'SIGHUP');
+});
+
+test('cleanupPtyWithEscalation treats kill throw as hard failure without pretending success', async () => {
+  const { cleanupPtyWithEscalation } = lifecycle;
+  const signals = [];
+  const pty = {
+    kill(sig) {
+      signals.push(sig);
+      throw new Error('kill failed SECRET');
+    },
+  };
+
+  const result = await cleanupPtyWithEscalation(pty, {
+    waitForExit: async () => false,
+    isAlive: () => true,
+    steps: [
+      { signal: 'SIGHUP', waitMs: 0 },
+      { signal: 'SIGTERM', waitMs: 0 },
+      { signal: 'SIGKILL', waitMs: 0 },
+    ],
+  });
+
+  assert.deepEqual(signals, ['SIGHUP']);
+  assert.equal(result.killed, false);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.error instanceof Error, true);
+});

@@ -29,6 +29,8 @@ function createFakePty() {
     },
     kill(signal) {
       this.killCalls.push(signal);
+      // Confirmed cleanup requires observed exit; default happy-path mock dies immediately.
+      this.emitExit({ exitCode: 0, signal });
     },
     emitData(data) {
       handlers.data.forEach((handler) => handler(data));
@@ -39,7 +41,7 @@ function createFakePty() {
   };
 }
 
-test('shared session manager enforces a hard session ceiling and reports bounded capacity', () => {
+test('shared session manager enforces a hard session ceiling and reports bounded capacity', async () => {
   const ptys = [];
   const manager = createTerminalSessionManager({
     ptyFactory: () => {
@@ -56,10 +58,9 @@ test('shared session manager enforces a hard session ceiling and reports bounded
     },
   });
 
-  const first = manager.createSession({ clientId: 'browser-a' });
-  manager.createSession({ clientId: 'browser-a' });
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  const first = await manager.createSession({ clientId: 'browser-a' });
+  await manager.createSession({ clientId: 'browser-a' });
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'terminal_session_limit',
   );
   assert.equal(ptys.length, 2);
@@ -72,12 +73,12 @@ test('shared session manager enforces a hard session ceiling and reports bounded
     maxReplayBytes: 2048,
   });
 
-  manager.closeSession(first.sessionId, { clientId: 'browser-a', reason: 'user-close' });
-  manager.createSession({ clientId: 'browser-a' });
+  await manager.closeSession(first.sessionId, { clientId: 'browser-a', reason: 'user-close' });
+  await manager.createSession({ clientId: 'browser-a' });
   assert.equal(ptys.length, 3);
 });
 
-test('idle detached sessions are reaped using the configured timeout', () => {
+test('idle detached sessions are reaped using the configured timeout', async () => {
   let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
   const pty = createFakePty();
   const events = [];
@@ -96,11 +97,11 @@ test('idle detached sessions are reaped using the configured timeout', () => {
       terminalIdleTimeoutMs: 1000,
     },
   });
-  const created = manager.createSession({ clientId: 'browser-a' });
+  const created = await manager.createSession({ clientId: 'browser-a' });
   manager.detachSession(created.sessionId, 'test-detach');
 
   nowMs += 1001;
-  assert.deepEqual(manager.reapIdleSessions(), [created.sessionId]);
+  assert.deepEqual(await manager.reapIdleSessions(), [created.sessionId]);
   assert.equal(manager.listSessions().length, 0);
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
   assert.equal(
@@ -112,7 +113,7 @@ test('idle detached sessions are reaped using the configured timeout', () => {
   );
 });
 
-test('closeSession rejects a known session when the caller is not an attached observer', () => {
+test('closeSession rejects a known session when the caller is not an attached observer', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -122,10 +123,9 @@ test('closeSession rejects a known session when the caller is not an attached ob
       terminalAdminPassword: 'test-terminal-admin-password',
     },
   });
-  const created = manager.createSession({ clientId: 'socket-a', socketId: 'socket-a' });
+  const created = await manager.createSession({ clientId: 'socket-a', socketId: 'socket-a' });
 
-  assert.throws(
-    () => manager.closeSession(created.sessionId, {
+  await assert.rejects(async () => manager.closeSession(created.sessionId, {
       clientId: 'socket-b',
       socketId: 'socket-b',
       reason: 'system:shutdown',
@@ -137,7 +137,7 @@ test('closeSession rejects a known session when the caller is not an attached ob
   assert.deepEqual(pty.killCalls, []);
 });
 
-test('idle reaping retains failed cleanup sessions and continues with later sessions', () => {
+test('idle reaping retains failed cleanup sessions and continues with later sessions', async () => {
   let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
   const events = [];
   const failedPty = createFakePty();
@@ -163,13 +163,13 @@ test('idle reaping retains failed cleanup sessions and continues with later sess
       terminalIdleTimeoutMs: 1000,
     },
   });
-  const failed = manager.createSession({ clientId: 'browser-a' });
-  const successful = manager.createSession({ clientId: 'browser-b' });
+  const failed = await manager.createSession({ clientId: 'browser-a' });
+  const successful = await manager.createSession({ clientId: 'browser-b' });
   manager.detachSession(failed.sessionId, 'test-detach');
   manager.detachSession(successful.sessionId, 'test-detach');
 
   nowMs += 1001;
-  assert.deepEqual(manager.reapIdleSessions(), [successful.sessionId]);
+  assert.deepEqual(await manager.reapIdleSessions(), [successful.sessionId]);
   assert.deepEqual(manager.listSessions().map((session) => session.sessionId), [failed.sessionId]);
   assert.deepEqual(failedPty.killCalls, ['SIGHUP', 'SIGHUP']);
   assert.deepEqual(successfulPty.killCalls, ['SIGHUP']);
@@ -181,7 +181,7 @@ test('idle reaping retains failed cleanup sessions and continues with later sess
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 });
 
-test('createSession contains idle cleanup failures while successful reaping frees capacity', () => {
+test('createSession contains idle cleanup failures while successful reaping frees capacity', async () => {
   let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
   const failedPty = createFakePty();
   failedPty.kill = function kill(signal) {
@@ -202,13 +202,13 @@ test('createSession contains idle cleanup failures while successful reaping free
       terminalIdleTimeoutMs: 1000,
     },
   });
-  const failed = manager.createSession({ clientId: 'browser-a' });
-  const successful = manager.createSession({ clientId: 'browser-b' });
+  const failed = await manager.createSession({ clientId: 'browser-a' });
+  const successful = await manager.createSession({ clientId: 'browser-b' });
   manager.detachSession(failed.sessionId, 'test-detach');
   manager.detachSession(successful.sessionId, 'test-detach');
 
   nowMs += 1001;
-  const replacement = manager.createSession({ clientId: 'browser-c' });
+  const replacement = await manager.createSession({ clientId: 'browser-c' });
 
   assert.deepEqual(manager.listSessions().map((session) => session.sessionId), [
     failed.sessionId,
@@ -220,7 +220,7 @@ test('createSession contains idle cleanup failures while successful reaping free
   assert.deepEqual(successfulPty.killCalls, ['SIGHUP']);
 });
 
-test('shared session manager stores sessions in the default pool and no longer exposes ownerSub ownership', () => {
+test('shared session manager stores sessions in the default pool and no longer exposes ownerSub ownership', async () => {
   const manager = createTerminalSessionManager({
     ptyFactory: createFakePty,
     logger: { warn() {}, info() {}, error() {} },
@@ -237,7 +237,7 @@ test('shared session manager stores sessions in the default pool and no longer e
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     cols: 120,
     rows: 32,
@@ -253,7 +253,7 @@ test('shared session manager stores sessions in the default pool and no longer e
   assert.equal(manager.getPoolSnapshot().sessions[0].creatorClientId, 'browser-a');
 });
 
-test('shared session manager broadcasts PTY output to every attached observer and replays recent output on reattach', () => {
+test('shared session manager broadcasts PTY output to every attached observer and replays recent output on reattach', async () => {
   const pty = createFakePty();
   const deliveredA = [];
   const deliveredB = [];
@@ -273,7 +273,7 @@ test('shared session manager broadcasts PTY output to every attached observer an
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     cols: 80,
     rows: 24,
@@ -297,7 +297,7 @@ test('shared session manager broadcasts PTY output to every attached observer an
   assert.equal(replay.replay[0].data, 'first line\r\n');
 });
 
-test('shared session manager trims replay entries when the bounded buffer is exceeded', () => {
+test('shared session manager trims replay entries when the bounded buffer is exceeded', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -315,7 +315,7 @@ test('shared session manager trims replay entries when the bounded buffer is exc
     },
   });
 
-  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
   pty.emitData('1234567890');
   pty.emitData('abcdefghij');
   pty.emitData('KLMNOPQRST');
@@ -324,7 +324,7 @@ test('shared session manager trims replay entries when the bounded buffer is exc
   assert.deepEqual(attached.replay.map((entry) => entry.data), ['abcdefghij', 'KLMNOPQRST']);
 });
 
-test('shared session manager retains the newest replay chunk even when it alone exceeds the replay byte limit', () => {
+test('shared session manager retains the newest replay chunk even when it alone exceeds the replay byte limit', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -342,14 +342,14 @@ test('shared session manager retains the newest replay chunk even when it alone 
     },
   });
 
-  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
   pty.emitData('1234567890');
 
   const attached = manager.attachSession(created.sessionId, { clientId: 'browser-b' });
   assert.deepEqual(attached.replay.map((entry) => entry.data), ['1234567890']);
 });
 
-test('shared session manager keeps PTY alive after detach and requires reattach before explicit close', () => {
+test('shared session manager keeps PTY alive after detach and requires reattach before explicit close', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -366,24 +366,23 @@ test('shared session manager keeps PTY alive after detach and requires reattach 
     },
   });
 
-  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
   manager.detachObserver(created.sessionId, { clientId: 'browser-a', reason: 'page-close' });
 
   assert.equal(manager.getPoolSnapshot().sessions[0].observerCount, 0);
   assert.equal(pty.killCalls.length, 0);
 
-  assert.throws(
-    () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
+  await assert.rejects(async () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
     (error) => error.code === 'terminal_session_not_attached',
   );
   assert.equal(pty.killCalls.length, 0);
 
   manager.attachSession(created.sessionId, { clientId: 'browser-a' });
-  manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
+  await manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
   assert.equal(pty.killCalls.length, 1);
 });
 
-test('only the active presenter may resize the shared PTY', () => {
+test('only the active presenter may resize the shared PTY', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -400,7 +399,7 @@ test('only the active presenter may resize the shared PTY', () => {
     },
   });
 
-  const created = manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
   pty.emitData('ready');
   manager.attachSession(created.sessionId, { clientId: 'browser-b' });
   manager.setActivePresenter(created.sessionId, { clientId: 'browser-a' });
@@ -410,7 +409,7 @@ test('only the active presenter may resize the shared PTY', () => {
   assert.deepEqual(pty.resizeCalls, [{ cols: 132, rows: 36 }]);
 });
 
-test('session manager exposes public observer, input, presenter, and resize methods without requiring internal session access', () => {
+test('session manager exposes public observer, input, presenter, and resize methods without requiring internal session access', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -427,7 +426,7 @@ test('session manager exposes public observer, input, presenter, and resize meth
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     socketId: 'socket-a',
     cols: 80,
@@ -453,7 +452,7 @@ test('session manager exposes public observer, input, presenter, and resize meth
   assert.deepEqual(pty.resizeCalls, [{ cols: 100, rows: 30 }]);
 });
 
-test('synchronous PTY spawn failure is stable, audited without raw secrets, and never pooled', () => {
+test('synchronous PTY spawn failure is stable, audited without raw secrets, and never pooled', async () => {
   const events = [];
   const manager = createTerminalSessionManager({
     ptyFactory() {
@@ -474,8 +473,7 @@ test('synchronous PTY spawn failure is stable, audited without raw secrets, and 
     },
   });
 
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'pty_spawn_failed' && !error.message.includes('SECRET_VALUE'),
   );
   assert.equal(manager.listSessions().length, 0);
@@ -483,7 +481,7 @@ test('synchronous PTY spawn failure is stable, audited without raw secrets, and 
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 });
 
-test('first PTY output marks a starting session ready exactly once and clears its startup timer', () => {
+test('first PTY output marks a starting session ready exactly once and clears its startup timer', async () => {
   let nowMs = Date.parse('2026-07-19T00:00:00.000Z');
   const timers = [];
   const cleared = [];
@@ -513,7 +511,7 @@ test('first PTY output marks a starting session ready exactly once and clears it
     },
   });
 
-  const created = manager.createSession({ clientId: 'browser-a' });
+  const created = await manager.createSession({ clientId: 'browser-a' });
   assert.equal(created.status, 'attached');
   assert.equal(created.processStatus, 'starting');
   assert.equal(timers.length, 1);
@@ -530,7 +528,7 @@ test('first PTY output marks a starting session ready exactly once and clears it
   assert.equal(readyEvents[0].meta.startupDurationMs, 250);
 });
 
-test('synchronous PTY data during callback registration clears the timer and reaches the creator', () => {
+test('synchronous PTY data during callback registration clears the timer and reaches the creator', async () => {
   const activeTimers = new Set();
   const delivered = [];
   const pty = createFakePty();
@@ -554,7 +552,7 @@ test('synchronous PTY data during callback registration clears the timer and rea
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     onData: (data, metadata) => delivered.push({ data, metadata }),
   });
@@ -568,7 +566,7 @@ test('synchronous PTY data during callback registration clears the timer and rea
   assert.equal(manager.listSessions().length, 1);
 });
 
-test('synchronous PTY exit during callback registration notifies the creator and leaves failed state without a timer', () => {
+test('synchronous PTY exit during callback registration notifies the creator and leaves failed state without a timer', async () => {
   const activeTimers = new Set();
   const exits = [];
   const pty = createFakePty();
@@ -591,7 +589,7 @@ test('synchronous PTY exit during callback registration notifies the creator and
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     onExit: (payload) => exits.push(payload),
   });
@@ -605,7 +603,7 @@ test('synchronous PTY exit during callback registration notifies the creator and
   assert.equal(manager.listSessions().length, 1);
 });
 
-test('PTY callback registration failure retries one failed kill before removing the session', () => {
+test('PTY callback registration failure retries one failed kill before removing the session', async () => {
   const activeTimers = new Set();
   const events = [];
   const pty = createFakePty();
@@ -617,6 +615,7 @@ test('PTY callback registration failure retries one failed kill before removing 
     if (killAttempts === 1) {
       throw new Error('registration kill SECRET_VALUE');
     }
+    this.emitExit({ exitCode: 0, signal });
   };
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -641,8 +640,7 @@ test('PTY callback registration failure retries one failed kill before removing 
     },
   });
 
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'pty_spawn_failed' && !error.message.includes('SECRET_VALUE'),
   );
   assert.equal(manager.listSessions().length, 0);
@@ -655,7 +653,7 @@ test('PTY callback registration failure retries one failed kill before removing 
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 });
 
-test('PTY callback registration cleanup stops after two failed kill attempts and audits bounded failure', () => {
+test('PTY callback registration cleanup stops after two failed kill attempts and audits bounded failure', async () => {
   const events = [];
   const pty = createFakePty();
   pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
@@ -680,8 +678,7 @@ test('PTY callback registration cleanup stops after two failed kill attempts and
     },
   });
 
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'pty_spawn_failed',
   );
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP']);
@@ -691,7 +688,7 @@ test('PTY callback registration cleanup stops after two failed kill attempts and
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 });
 
-test('failed registration cleanup is quarantined and one scheduled retry restores capacity', () => {
+test('failed registration cleanup is quarantined and one scheduled retry restores capacity', async () => {
   const timers = [];
   const pty = createFakePty();
   pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
@@ -701,6 +698,7 @@ test('failed registration cleanup is quarantined and one scheduled retry restore
     if (!cleanupCanSucceed) {
       throw new Error('cleanup SECRET_VALUE');
     }
+    this.emitExit({ exitCode: 0, signal });
   };
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -725,8 +723,7 @@ test('failed registration cleanup is quarantined and one scheduled retry restore
     },
   });
 
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'pty_spawn_failed',
   );
   const cleanupTimers = timers.filter((timer) => timer.delay === 1000);
@@ -744,7 +741,7 @@ test('failed registration cleanup is quarantined and one scheduled retry restore
   assert.equal(cleanupTimers[0].unrefCalled, true);
 
   cleanupCanSucceed = true;
-  cleanupTimers[0].handler();
+  await cleanupTimers[0].handler();
 
   assert.equal(manager._getCleanupPendingCount(), 0);
   assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 2);
@@ -752,7 +749,7 @@ test('failed registration cleanup is quarantined and one scheduled retry restore
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
 });
 
-test('failed scheduled quarantine cleanup retries with bounded backoff until capacity is restored', () => {
+test('failed scheduled quarantine cleanup retries with bounded backoff until capacity is restored', async () => {
   const timers = [];
   const pty = createFakePty();
   pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
@@ -763,6 +760,7 @@ test('failed scheduled quarantine cleanup retries with bounded backoff until cap
     if (!cleanupCanSucceed) {
       throw new Error('cleanup SECRET_VALUE');
     }
+    this.emitExit({ exitCode: 0, signal });
   };
   const manager = createTerminalSessionManager({
     ptyFactory() {
@@ -784,12 +782,11 @@ test('failed scheduled quarantine cleanup retries with bounded backoff until cap
     },
   });
 
-  assert.throws(
-    () => manager.createSession({ clientId: 'browser-a' }),
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
     (error) => error.code === 'pty_spawn_failed',
   );
   const cleanupTimer = timers.find((timer) => timer.delay === 1000);
-  cleanupTimer.handler();
+  await cleanupTimer.handler();
 
   assert.equal(manager._getCleanupPendingCount(), 1);
   assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 0);
@@ -798,17 +795,17 @@ test('failed scheduled quarantine cleanup retries with bounded backoff until cap
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP']);
 
   cleanupCanSucceed = true;
-  timers.find((timer) => timer.delay === 2000).handler();
+  await timers.find((timer) => timer.delay === 2000).handler();
 
   assert.equal(manager._getCleanupPendingCount(), 0);
   assert.equal(manager.getPoolSnapshot().capacity.availableSessions, 1);
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP', 'SIGHUP']);
-  const created = manager.createSession({ clientId: 'browser-b' });
+  const created = await manager.createSession({ clientId: 'browser-b' });
   assert.ok(created.sessionId);
   assert.equal(manager.listSessions().length, 1);
 });
 
-test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', () => {
+test('PTY startup timeout fails once, kills once, notifies once, and retains replayable session state', async () => {
   let startupHandler;
   const pty = createFakePty();
   const errors = [];
@@ -827,7 +824,7 @@ test('PTY startup timeout fails once, kills once, notifies once, and retains rep
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     onError: (error) => errors.push(error),
     onExit: (payload) => exits.push(payload),
@@ -843,16 +840,15 @@ test('PTY startup timeout fails once, kills once, notifies once, and retains rep
   assert.equal(errors.length, 1);
   assert.equal(errors[0].code, 'pty_startup_timeout');
   assert.equal(exits.length, 1);
-  manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
+  await manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
-  assert.throws(
-    () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
+  await assert.rejects(async () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
     (error) => error.code === 'terminal_session_not_found',
   );
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
 });
 
-test('PTY startup timeout kill failure is retried successfully by close before pool removal', () => {
+test('PTY startup timeout kill failure is retried successfully by close before pool removal', async () => {
   let startupHandler;
   const events = [];
   const errors = [];
@@ -865,6 +861,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
     if (killAttempts <= 2) {
       throw new Error('kill SECRET_VALUE');
     }
+    this.emitExit({ exitCode: 0, signal });
   };
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -884,7 +881,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
       terminalStartupTimeoutMs: 1000,
     },
   });
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     onError: (error) => errors.push(error),
     onExit: (payload) => exits.push(payload),
@@ -898,7 +895,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
   assert.equal(exits.length, 1);
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
-  assert.doesNotThrow(() => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }));
+  await assert.doesNotReject(async () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }));
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
   assert.equal(manager.listSessions().length, 0);
   assert.equal(errors.length, 1);
@@ -906,7 +903,7 @@ test('PTY startup timeout kill failure is retried successfully by close before p
 });
 
 for (const terminalState of ['running', 'exited']) {
-  test(`explicit close retains ${terminalState} session after two failed kills and a later close retries`, () => {
+  test(`explicit close retains ${terminalState} session after two failed kills and a later close retries`, async () => {
     const activeTimers = new Set();
     const events = [];
     const pty = createFakePty();
@@ -917,6 +914,7 @@ for (const terminalState of ['running', 'exited']) {
       if (killAttempts <= 2) {
         throw new Error('close kill SECRET_VALUE');
       }
+      this.emitExit({ exitCode: 0, signal });
     };
     const manager = createTerminalSessionManager({
       ptyFactory: () => pty,
@@ -940,15 +938,31 @@ for (const terminalState of ['running', 'exited']) {
         terminalStartupTimeoutMs: 10000,
       },
     });
-    const created = manager.createSession({ clientId: 'browser-a' });
+    const created = await manager.createSession({ clientId: 'browser-a' });
     const session = manager._getSession(created.sessionId);
     pty.emitData('ready');
     if (terminalState === 'exited') {
       pty.emitExit({ exitCode: 0, signal: 0 });
     }
 
-    assert.throws(
-      () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
+    if (terminalState === 'exited') {
+      // Exit already observed: cleanup confirms without signaling and removes the session.
+      await assert.doesNotReject(async () => manager.closeSession(created.sessionId, {
+        clientId: 'browser-a',
+        reason: 'user-close',
+      }));
+      assert.equal(session.processStatus, 'closed');
+      assert.equal(session.status, 'detached');
+      assert.equal(session.observers.size, 0);
+      assert.equal(manager.listSessions().length, 0);
+      assert.deepEqual(pty.killCalls, []);
+      await assert.rejects(async () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
+        (error) => error.code === 'terminal_session_not_found',
+      );
+      return;
+    }
+
+    await assert.rejects(async () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
       (error) => error.code === 'pty_cleanup_failed' && !error.message.includes('SECRET_VALUE'),
     );
     assert.equal(session.processStatus, 'closed');
@@ -960,20 +974,19 @@ for (const terminalState of ['running', 'exited']) {
     assert.equal(events.some((entry) => entry.event === 'terminal_pty_kill_failed'), true);
     assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
 
-    assert.doesNotThrow(() => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'retry-close' }));
+    await assert.doesNotReject(async () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'retry-close' }));
     assert.equal(session.status, 'detached');
     assert.equal(session.observers.size, 0);
     assert.equal(manager.listSessions().length, 0);
     assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
-    assert.throws(
-      () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
+    await assert.rejects(async () => manager.closeSession(created.sessionId, { reason: 'repeat-close' }),
       (error) => error.code === 'terminal_session_not_found',
     );
     assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
   });
 }
 
-test('PTY exit is processed once and exited sessions reject write and resize without touching the PTY', () => {
+test('PTY exit is processed once and exited sessions reject write and resize without touching the PTY', async () => {
   const pty = createFakePty();
   const exits = [];
   const manager = createTerminalSessionManager({
@@ -987,7 +1000,7 @@ test('PTY exit is processed once and exited sessions reject write and resize wit
       terminalStartupTimeoutMs: 10000,
     },
   });
-  const created = manager.createSession({ clientId: 'browser-a', onExit: (payload) => exits.push(payload) });
+  const created = await manager.createSession({ clientId: 'browser-a', onExit: (payload) => exits.push(payload) });
   pty.emitData('ready');
   pty.emitExit({ exitCode: 7, signal: 0 });
   pty.emitExit({ exitCode: 9, signal: 1 });
@@ -1008,7 +1021,7 @@ test('PTY exit is processed once and exited sessions reject write and resize wit
   assert.equal(manager._getSession(created.sessionId).exitCode, 7);
 });
 
-test('terminal session manager emits structured create, attach, and detach audit events', () => {
+test('terminal session manager emits structured create, attach, and detach audit events', async () => {
   const events = [];
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
@@ -1037,7 +1050,7 @@ test('terminal session manager emits structured create, attach, and detach audit
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     socketId: 'socket-a',
     cols: 100,
@@ -1064,7 +1077,7 @@ test('terminal session manager emits structured create, attach, and detach audit
   assert.equal(events[2].meta.reason, 'manual-detach');
 });
 
-test('detachObserver by socketId removes Socket.IO and webrtc observers sharing that socket', () => {
+test('detachObserver by socketId removes Socket.IO and webrtc observers sharing that socket', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -1080,7 +1093,7 @@ test('detachObserver by socketId removes Socket.IO and webrtc observers sharing 
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     socketId: 'sock-1',
   });
@@ -1104,7 +1117,7 @@ test('detachObserver by socketId removes Socket.IO and webrtc observers sharing 
   assert.equal(manager.getPoolSnapshot().sessions[0].status, 'detached');
 });
 
-test('handleSocketDisconnect by socketId clears both Socket.IO and webrtc observers', () => {
+test('handleSocketDisconnect by socketId clears both Socket.IO and webrtc observers', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -1120,7 +1133,7 @@ test('handleSocketDisconnect by socketId clears both Socket.IO and webrtc observ
     },
   });
 
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'browser-a',
     socketId: 'sock-1',
   });
@@ -1166,7 +1179,7 @@ test('buildTerminalEnv compatibility export uses the secure environment allowlis
   assert.equal(env.JWT_SECRET, undefined);
 });
 
-test('session manager passes isolated environment, shell args, and canonical config into the pty factory', () => {
+test('session manager passes isolated environment, shell args, and canonical config into the pty factory', async () => {
   const spawnCalls = [];
   const previousEnv = { ...process.env };
   process.env.HOME = '/Users/tester';
@@ -1193,7 +1206,7 @@ test('session manager passes isolated environment, shell args, and canonical con
       },
     });
 
-    manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
+    await manager.createSession({ clientId: 'browser-a', cols: 80, rows: 24 });
   } finally {
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, previousEnv);
@@ -1224,7 +1237,7 @@ test('session manager passes isolated environment, shell args, and canonical con
   ]);
 });
 
-test('session manager carries the legacy terminalPathEntries alias into the PTY environment', () => {
+test('session manager carries the legacy terminalPathEntries alias into the PTY environment', async () => {
   let spawnedEnvironment;
   const manager = createTerminalSessionManager({
     ptyFactory: (shell, args, options) => {
@@ -1241,12 +1254,12 @@ test('session manager carries the legacy terminalPathEntries alias into the PTY 
     },
   });
 
-  manager.createSession({ clientId: 'browser-a' });
+  await manager.createSession({ clientId: 'browser-a' });
 
   assert.equal(spawnedEnvironment.PATH.split(path.delimiter).at(-1), '/opt/legacy-tools');
 });
 
-test('session manager rate limits each attached observer by UTF-8 bytes and refills without detaching', () => {
+test('session manager rate limits each attached observer by UTF-8 bytes and refills without detaching', async () => {
   let nowMs = 0;
   const pty = createFakePty();
   const auditEvents = [];
@@ -1265,7 +1278,7 @@ test('session manager rate limits each attached observer by UTF-8 bytes and refi
       inputRate: { bytesPerSecond: 10, burstBytes: 10 },
     },
   });
-  const created = manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
+  const created = await manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
   pty.emitData('ready');
 
   manager.writeInput(created.sessionId, {
@@ -1313,7 +1326,7 @@ test('session manager rate limits each attached observer by UTF-8 bytes and refi
   assert.deepEqual(pty.writeCalls, ['\u4f60\u4f60\u4f60x', 'accepted']);
 });
 
-test('session manager accepts legacy input-rate aliases and retains the bucket while attached', () => {
+test('session manager accepts legacy input-rate aliases and retains the bucket while attached', async () => {
   const pty = createFakePty();
   const manager = createTerminalSessionManager({
     ptyFactory: () => pty,
@@ -1327,7 +1340,7 @@ test('session manager accepts legacy input-rate aliases and retains the bucket w
       terminalInputBurstBytes: 2,
     },
   });
-  const created = manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
+  const created = await manager.createSession({ clientId: 'browser-a', socketId: 'socket-a' });
   pty.emitData('ready');
   manager.writeInput(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a', data: 'a' });
   manager.attachSession(created.sessionId, { clientId: 'browser-a', socketId: 'socket-a' });
@@ -1341,7 +1354,7 @@ test('session manager accepts legacy input-rate aliases and retains the bucket w
   );
 });
 
-test('session manager pipes terminalMaxInFlight* config into the output dispatcher window', () => {
+test('session manager pipes terminalMaxInFlight* config into the output dispatcher window', async () => {
   const pty = createFakePty();
   const scheduled = [];
   const delivered = [];
@@ -1357,7 +1370,7 @@ test('session manager pipes terminalMaxInFlight* config into the output dispatch
       terminalMaxInFlightBytes: 4096,
     },
   });
-  manager.createSession({
+  await manager.createSession({
     clientId: 'browser-a',
     socketId: 'socket-a',
     onData(data, _metadata, acknowledge) {
@@ -1380,7 +1393,7 @@ test('session manager pipes terminalMaxInFlight* config into the output dispatch
   assert.equal(acks.length, 8);
 });
 
-test('session manager detaches only an overflowing observer after replaying the full chunk', () => {
+test('session manager detaches only an overflowing observer after replaying the full chunk', async () => {
   const pty = createFakePty();
   const scheduled = [];
   const slowWarnings = [];
@@ -1401,7 +1414,7 @@ test('session manager detaches only an overflowing observer after replaying the 
       replayBufferBytes: 64,
     },
   });
-  const created = manager.createSession({
+  const created = await manager.createSession({
     clientId: 'slow-client',
     socketId: 'slow-socket',
     onWarning: (warning) => slowWarnings.push(warning),
@@ -1452,7 +1465,7 @@ test('session manager detaches only an overflowing observer after replaying the 
   assert.deepEqual(pty.writeCalls, ['fresh']);
 });
 
-test('createSession rejects out-of-range cols/rows before pty spawn', () => {
+test('createSession rejects out-of-range cols/rows before pty spawn', async () => {
   let spawned = 0;
   const manager = createTerminalSessionManager({
     config: { enabled: true, adminPassword: 'test-admin' },
@@ -1462,14 +1475,13 @@ test('createSession rejects out-of-range cols/rows before pty spawn', () => {
     },
     logger: { warn() {}, info() {}, error() {} },
   });
-  assert.throws(
-    () => manager.createSession({ cols: 999999, rows: 24, clientId: 'c', socketId: 's' }),
+  await assert.rejects(async () => manager.createSession({ cols: 999999, rows: 24, clientId: 'c', socketId: 's' }),
     (err) => err.code === 'terminal_invalid_size',
   );
   assert.equal(spawned, 0);
 });
 
-test('attachSession rejects invalid size before adding observer', () => {
+test('attachSession rejects invalid size before adding observer', async () => {
   const ptys = [];
   const manager = createTerminalSessionManager({
     config: { enabled: true, adminPassword: 'test-admin' },
@@ -1480,7 +1492,7 @@ test('attachSession rejects invalid size before adding observer', () => {
     },
     logger: { warn() {}, info() {}, error() {} },
   });
-  const created = manager.createSession({ clientId: 'creator', socketId: 'sock-creator', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'creator', socketId: 'sock-creator', cols: 80, rows: 24 });
   ptys[0].emitData('ready');
   assert.throws(
     () => manager.attachSession(created.sessionId, {
@@ -1495,7 +1507,7 @@ test('attachSession rejects invalid size before adding observer', () => {
   assert.equal(manager.getPresence(created.sessionId).observerCount, 1);
 });
 
-test('resizeSession rejects out-of-range geometry', () => {
+test('resizeSession rejects out-of-range geometry', async () => {
   const ptys = [];
   const manager = createTerminalSessionManager({
     config: { enabled: true, adminPassword: 'test-admin' },
@@ -1506,7 +1518,7 @@ test('resizeSession rejects out-of-range geometry', () => {
     },
     logger: { warn() {}, info() {}, error() {} },
   });
-  const created = manager.createSession({ clientId: 'c1', socketId: 's1', cols: 80, rows: 24 });
+  const created = await manager.createSession({ clientId: 'c1', socketId: 's1', cols: 80, rows: 24 });
   ptys[0].emitData('ready');
   assert.throws(
     () => manager.resizeSession(created.sessionId, {
@@ -1518,4 +1530,98 @@ test('resizeSession rejects out-of-range geometry', () => {
     (err) => err.code === 'terminal_invalid_size',
   );
   assert.deepEqual(ptys[0].resizeCalls, []);
+});
+
+test('closeAllAsSystem harvests all sessions and reports empty failures on success', async () => {
+  const ptys = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => {
+      const pty = createFakePty();
+      ptys.push(pty);
+      return pty;
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 4,
+    },
+  });
+
+  const first = await manager.createSession({ clientId: 'browser-a' });
+  const second = await manager.createSession({ clientId: 'browser-b' });
+  const summary = await manager.closeAllAsSystem('system:shutdown');
+
+  assert.deepEqual(summary.closedSessionIds.sort(), [first.sessionId, second.sessionId].sort());
+  assert.deepEqual(summary.failures, []);
+  assert.equal(summary.reason, 'system:shutdown');
+  assert.equal(manager.listSessions().length, 0);
+  assert.deepEqual(ptys[0].killCalls, ['SIGHUP']);
+  assert.deepEqual(ptys[1].killCalls, ['SIGHUP']);
+});
+
+test('closeAllAsSystem is idempotent and continues after a failed session cleanup', async () => {
+  const events = [];
+  const failedPty = createFakePty();
+  failedPty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    throw new Error('shutdown SECRET_VALUE');
+  };
+  const okPty = createFakePty();
+  const ptys = [failedPty, okPty];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => ptys.shift(),
+    audit: {
+      info(event, meta) { events.push({ level: 'info', event, meta }); },
+      warn(event, meta) { events.push({ level: 'warn', event, meta }); },
+      error(event, meta) { events.push({ level: 'error', event, meta }); },
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+      terminalMaxSessions: 4,
+    },
+  });
+
+  const failed = await manager.createSession({ clientId: 'browser-a' });
+  const ok = await manager.createSession({ clientId: 'browser-b' });
+  const summary = await manager.closeAllAsSystem('system:shutdown');
+
+  assert.deepEqual(summary.closedSessionIds, [ok.sessionId]);
+  assert.equal(summary.failures.length, 1);
+  assert.equal(summary.failures[0].sessionId, failed.sessionId);
+  assert.equal(summary.failures[0].code, 'pty_cleanup_failed');
+  assert.equal(manager.listSessions().map((s) => s.sessionId).join(','), failed.sessionId);
+  assert.equal(JSON.stringify(summary).includes('SECRET_VALUE'), false);
+
+  const again = await manager.closeAllAsSystem('system:shutdown');
+  assert.deepEqual(again.closedSessionIds, []);
+  assert.equal(again.failures.length, 1);
+  assert.equal(again.failures[0].sessionId, failed.sessionId);
+});
+
+test('cleanup escalates signals through session close when exit is delayed until SIGKILL', async () => {
+  const signals = [];
+  const pty = createFakePty();
+  pty.kill = function kill(signal) {
+    signals.push(signal);
+    this.killCalls.push(signal);
+    if (signal === 'SIGKILL') {
+      this.emitExit({ exitCode: 0, signal });
+    }
+  };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    ptyKillWaitMs: 0,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+  const created = await manager.createSession({ clientId: 'browser-a' });
+  await manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' });
+  assert.deepEqual(signals, ['SIGHUP', 'SIGTERM', 'SIGKILL']);
+  assert.equal(manager.listSessions().length, 0);
 });

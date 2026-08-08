@@ -45,7 +45,15 @@ class FakeSocket extends EventEmitter {
   }
 
   trigger(event, data) {
-    return super.emit(event, data);
+    const listeners = this.rawListeners(event);
+    const results = listeners.map((listener) => {
+      try {
+        return listener.call(this, data);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    });
+    return Promise.all(results.map((result) => Promise.resolve(result)));
   }
 }
 
@@ -70,6 +78,7 @@ function createFakePty() {
     },
     kill(signal) {
       this.killCalls.push(signal);
+      this.emitExit({ exitCode: 0, signal });
     },
     emitData(data) {
       handlers.data.forEach((handler) => handler(data));
@@ -174,13 +183,13 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
     },
   });
   const originalCreateSession = sessionManager.createSession;
-  sessionManager.createSession = (input) => {
-    const created = originalCreateSession(input);
+  sessionManager.createSession = async (input) => {
+    const created = await originalCreateSession(input);
     ptyBySessionId.set(created.sessionId, sessionManager._getSession(created.sessionId).pty);
     return created;
   };
 
-  setupTerminal(io, {
+  const terminal = setupTerminal(io, {
     config: {
       enableTerminal: true,
       terminalAdminPassword: 'test-terminal-admin-password',
@@ -197,6 +206,7 @@ function buildTerminalHarness(configOverrides = {}, harnessOptions = {}) {
     sessionManager,
     auditEvents,
     metrics: harnessOptions.metrics,
+    terminal,
     getPty(sessionId) {
       return ptyBySessionId.get(sessionId);
     },
@@ -213,16 +223,16 @@ test('terminal namespace accepts admin and rejects viewer tokens', () => {
   assert.throws(() => namespace.connect(viewer), /Admin role required/);
 });
 
-test('terminal namespace broadcasts shared session output and presence to multiple admin sockets', () => {
+test('terminal namespace broadcasts shared session output and presence to multiple admin sockets', async () => {
   const { namespace, sessionManager, getPty } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
 
   assert.equal(created.creatorClientId, 'admin-a');
-  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
   getPty(created.sessionId).emitData('pwd\r\n');
 
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:output' && message.data.data === 'pwd\r\n'), true);
@@ -232,13 +242,13 @@ test('terminal namespace broadcasts shared session output and presence to multip
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 2);
 });
 
-test('socket identity prevents equal browser labels from merging observers or granting session actions', () => {
+test('socket identity prevents equal browser labels from merging observers or granting session actions', async () => {
   const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness();
   const longSharedLabel = 'shared-browser-label-'.repeat(20);
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin', 'admin', longSharedLabel));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin', 'admin', longSharedLabel));
 
-  adminA.trigger('terminal:create_session', { title: 'Identity-bound shell' });
+  await adminA.trigger('terminal:create_session', { title: 'Identity-bound shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
   const pty = getPty(created.sessionId);
 
@@ -246,9 +256,9 @@ test('socket identity prevents equal browser labels from merging observers or gr
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
   assert.equal(auditEvents.find((entry) => entry.event === 'terminal_socket_connected').meta.clientLabel.length, 128);
 
-  adminB.trigger('terminal:input', { sessionId: created.sessionId, data: 'forged\n' });
-  adminB.trigger('terminal:set_active_presenter', { sessionId: created.sessionId });
-  adminB.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:input', { sessionId: created.sessionId, data: 'forged\n' });
+  await adminB.trigger('terminal:set_active_presenter', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:close_session', { sessionId: created.sessionId });
 
   assert.deepEqual(pty.writeCalls, []);
   assert.equal(sessionManager._getSession(created.sessionId).activePresenterClientId, 'admin-a');
@@ -263,7 +273,7 @@ test('socket identity prevents equal browser labels from merging observers or gr
   assert.notEqual(sessionManager._getSession(created.sessionId), null);
 });
 
-test('unattached close attempts emit a redacted socket-owned audit warning', () => {
+test('unattached close attempts emit a redacted socket-owned audit warning', async () => {
   const { namespace, sessionManager, auditEvents } = buildTerminalHarness();
   const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const attacker = namespace.connect(new FakeSocket(
@@ -272,10 +282,10 @@ test('unattached close attempts emit a redacted socket-owned audit warning', () 
     'admin',
     'spoofed-client-label-SECRET_LABEL',
   ));
-  creator.trigger('terminal:create_session', { title: 'Protected shell' });
+  await creator.trigger('terminal:create_session', { title: 'Protected shell' });
   const created = creator.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  attacker.trigger('terminal:close_session', {
+  await attacker.trigger('terminal:close_session', {
     sessionId: created.sessionId,
     reason: 'system:shutdown-SECRET_REASON',
     raw: 'SECRET_RAW_PAYLOAD',
@@ -295,7 +305,7 @@ test('unattached close attempts emit a redacted socket-owned audit warning', () 
   assert.notEqual(sessionManager._getSession(created.sessionId), null);
 });
 
-test('create requestId is bounded and returned only to the creator on both aliases', () => {
+test('create requestId is bounded and returned only to the creator on both aliases', async () => {
   const { namespace } = buildTerminalHarness();
   const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const observer = namespace.connect(new FakeSocket('admin-b', 'admin'));
@@ -303,7 +313,7 @@ test('create requestId is bounded and returned only to the creator on both alias
   observer.sent.length = 0;
   const requestId = 'request-'.repeat(30);
 
-  creator.trigger('terminal:create_session', { title: 'Correlated shell', requestId });
+  await creator.trigger('terminal:create_session', { title: 'Correlated shell', requestId });
 
   for (const event of ['terminal:session_created', 'terminal:created']) {
     const creatorMessages = creator.sent.filter((message) => message.event === event);
@@ -319,13 +329,13 @@ test('create requestId is bounded and returned only to the creator on both alias
   }
 });
 
-test('browser close reasons cannot spoof system authority', () => {
+test('browser close reasons cannot spoof system authority', async () => {
   const { namespace } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
-  admin.trigger('terminal:create_session', { title: 'User shell' });
+  await admin.trigger('terminal:create_session', { title: 'User shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  admin.trigger('terminal:close_session', {
+  await admin.trigger('terminal:close_session', {
     sessionId: created.sessionId,
     reason: 'system:shutdown',
     system: true,
@@ -335,13 +345,13 @@ test('browser close reasons cannot spoof system authority', () => {
   assert.equal(closed.data.detachedReason, 'user-close');
 });
 
-test('synchronous PTY output is emitted once after session creation with the authoritative session id', () => {
+test('synchronous PTY output is emitted once after session creation with the authoritative session id', async () => {
   const pty = createFakePty();
   pty.onData = (handler) => handler('instant prompt');
   const { namespace } = buildTerminalHarness({}, { ptyFactory: () => pty });
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { title: 'Instant shell' });
+  await admin.trigger('terminal:create_session', { title: 'Instant shell' });
 
   const createdIndex = admin.sent.findIndex((message) => message.event === 'terminal:session_created');
   const outputIndexes = admin.sent
@@ -355,7 +365,7 @@ test('synchronous PTY output is emitted once after session creation with the aut
   assert.equal(outputIndexes[0].message.data.data, 'instant prompt');
 });
 
-test('synchronous create-time output overflow preserves creation event ordering and detached state', () => {
+test('synchronous create-time output overflow preserves creation event ordering and detached state', async () => {
   const pty = createFakePty();
   pty.onData = (handler) => handler('123456');
   const { namespace } = buildTerminalHarness({
@@ -366,7 +376,7 @@ test('synchronous create-time output overflow preserves creation event ordering 
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
   admin.sent.length = 0;
 
-  admin.trigger('terminal:create_session', { title: 'Immediate overflow shell' });
+  await admin.trigger('terminal:create_session', { title: 'Immediate overflow shell' });
 
   const created = admin.sent.find((message) => message.event === 'terminal:session_created');
   assert.ok(created);
@@ -391,13 +401,13 @@ test('synchronous create-time output overflow preserves creation event ordering 
   assert.equal(finalSession.observerCount, 0);
 });
 
-test('synchronous PTY exit is emitted once after session creation with the authoritative session id', () => {
+test('synchronous PTY exit is emitted once after session creation with the authoritative session id', async () => {
   const pty = createFakePty();
   pty.onExit = (handler) => handler({ exitCode: 2, signal: 0 });
   const { namespace } = buildTerminalHarness({}, { ptyFactory: () => pty });
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { title: 'Immediate exit shell' });
+  await admin.trigger('terminal:create_session', { title: 'Immediate exit shell' });
 
   const createdIndex = admin.sent.findIndex((message) => message.event === 'terminal:session_created');
   const exitIndexes = admin.sent
@@ -411,29 +421,29 @@ test('synchronous PTY exit is emitted once after session creation with the autho
   assert.equal(exitIndexes[0].message.data.processStatus, 'failed');
 });
 
-test('socket disconnect detaches only the disconnected socket observer without closing the shared PTY', () => {
+test('socket disconnect detaches only the disconnected socket observer without closing the shared PTY', async () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin', 'admin', 'shared-browser'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin', 'admin', 'shared-browser'));
 
-  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
-  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
 
-  adminA.trigger('disconnect');
+  await adminA.trigger('disconnect');
 
   const session = sessionManager._getSession(created.sessionId);
   assert.equal(session.observers.size, 1);
   assert.equal(session.pty.killCalls.length, 0);
 });
 
-test('legacy terminal:create and terminal:attach aliases still map into shared session semantics', () => {
+test('legacy terminal:create and terminal:attach aliases still map into shared session semantics', async () => {
   const { namespace } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
-  adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
+  await adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  adminA.trigger('terminal:attach', { sessionId: created.sessionId });
+  await adminA.trigger('terminal:attach', { sessionId: created.sessionId });
 
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_created'), true);
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:created'), true);
@@ -441,25 +451,25 @@ test('legacy terminal:create and terminal:attach aliases still map into shared s
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:attached'), true);
 });
 
-test('terminal:detach_session detaches only the calling observer and terminal:close_session removes the shared session', () => {
+test('terminal:detach_session detaches only the calling observer and terminal:close_session removes the shared session', async () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
-  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:attach_session', { sessionId: created.sessionId });
 
-  adminB.trigger('terminal:detach_session', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:detach_session', { sessionId: created.sessionId });
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:session_detached'), true);
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
 
-  adminA.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await adminA.trigger('terminal:close_session', { sessionId: created.sessionId });
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_closed' && message.data.sessionId === created.sessionId), true);
   assert.equal(sessionManager._getSession(created.sessionId), null);
 });
 
-test('terminal close cleanup failure retains the session snapshot and retry success broadcasts closed', () => {
+test('terminal close cleanup failure retains the session snapshot and retry success broadcasts closed', async () => {
   const pty = createFakePty();
   let killAttempts = 0;
   pty.kill = function kill(signal) {
@@ -468,15 +478,16 @@ test('terminal close cleanup failure retains the session snapshot and retry succ
     if (killAttempts <= 2) {
       throw new Error('cleanup SECRET_VALUE');
     }
+    this.emitExit({ exitCode: 0, signal });
   };
   const { namespace, sessionManager } = buildTerminalHarness({}, { ptyFactory: () => pty });
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
-  admin.trigger('terminal:create_session', { title: 'Retry close shell' });
+  await admin.trigger('terminal:create_session', { title: 'Retry close shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
   pty.emitData('ready');
   const closedBefore = admin.sent.filter((message) => message.event === 'terminal:session_closed').length;
 
-  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await admin.trigger('terminal:close_session', { sessionId: created.sessionId });
 
   const cleanupError = admin.sent.findLast((message) => (
     message.event === 'terminal:error' && message.data.code === 'pty_cleanup_failed'
@@ -494,7 +505,7 @@ test('terminal close cleanup failure retains the session snapshot and retry succ
   assert.equal(retainedSnapshot.sessions[0].processStatus, 'closed');
   assert.notEqual(sessionManager._getSession(created.sessionId), null);
 
-  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await admin.trigger('terminal:close_session', { sessionId: created.sessionId });
 
   assert.equal(
     admin.sent.filter((message) => message.event === 'terminal:session_closed').length,
@@ -504,23 +515,23 @@ test('terminal close cleanup failure retains the session snapshot and retry succ
   assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGHUP', 'SIGHUP']);
 });
 
-test('late Terminal events after session close return stable errors without escaping the handlers', () => {
+test('late Terminal events after session close return stable errors without escaping the handlers', async () => {
   const { namespace, auditEvents } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Closing shell' });
+  await admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Closing shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
-  admin.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await admin.trigger('terminal:close_session', { sessionId: created.sessionId });
 
-  assert.doesNotThrow(() => {
-    admin.trigger('terminal:input', {
+  await assert.doesNotReject(async () => {
+    await admin.trigger('terminal:input', {
       sessionId: created.sessionId,
       data: 'late-sensitive-input',
       inputId: 'late-input',
     });
   });
-  assert.doesNotThrow(() => {
-    admin.trigger('terminal:resize', {
+  await assert.doesNotReject(async () => {
+    await admin.trigger('terminal:resize', {
       sessionId: created.sessionId,
       cols: 120,
       rows: 32,
@@ -536,34 +547,34 @@ test('late Terminal events after session close return stable errors without esca
   assert.equal(JSON.stringify(auditEvents).includes('late-sensitive-input'), false);
 });
 
-test('terminal input rejections preserve input correlation for unattached, closed, and failed PTY writes', () => {
+test('terminal input rejections preserve input correlation for unattached, closed, and failed PTY writes', async () => {
   const { namespace, getPty } = buildTerminalHarness();
   const owner = namespace.connect(new FakeSocket('owner', 'admin'));
   const observer = namespace.connect(new FakeSocket('observer', 'admin'));
 
-  owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Input failures' });
+  await owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Input failures' });
   const created = owner.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  observer.trigger('terminal:input', {
+  await observer.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'unattached draft',
     inputId: 'input-unattached',
   });
-  owner.trigger('terminal:close_session', { sessionId: created.sessionId });
-  owner.trigger('terminal:input', {
+  await owner.trigger('terminal:close_session', { sessionId: created.sessionId });
+  await owner.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'closed draft',
     inputId: 'input-closed',
   });
 
-  owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Write failure' });
+  await owner.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Write failure' });
   const writable = owner.sent.filter((message) => message.event === 'terminal:session_created').at(-1).data;
   // main lifecycle starts sessions in `starting`; mark ready before write-failure probe.
   getPty(writable.sessionId).emitData('ready');
   getPty(writable.sessionId).write = () => {
     throw Object.assign(new Error('PTY write failed'), { code: 'terminal_write_failed' });
   };
-  owner.trigger('terminal:input', {
+  await owner.trigger('terminal:input', {
     sessionId: writable.sessionId,
     data: 'retryable draft',
     inputId: 'input-write-failed',
@@ -588,54 +599,54 @@ test('terminal input rejections preserve input correlation for unattached, close
   assert.equal(writeError.data.code, 'terminal_write_failed');
 });
 
-test('legacy terminal:detach and terminal:close aliases still map into shared session semantics', () => {
+test('legacy terminal:detach and terminal:close aliases still map into shared session semantics', async () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
+  await adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
-  adminB.trigger('terminal:attach', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:attach', { sessionId: created.sessionId });
 
-  adminB.trigger('terminal:detach', { sessionId: created.sessionId });
+  await adminB.trigger('terminal:detach', { sessionId: created.sessionId });
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:session_detached'), true);
   assert.equal(sessionManager._getSession(created.sessionId).observers.size, 1);
 
-  adminA.trigger('terminal:close', { sessionId: created.sessionId });
+  await adminA.trigger('terminal:close', { sessionId: created.sessionId });
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_closed' && message.data.sessionId === created.sessionId), true);
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:closed' && message.data.sessionId === created.sessionId), true);
   assert.equal(sessionManager._getSession(created.sessionId), null);
 });
 
-test('shared observers may send input and must use the websocket active-presenter flow before resize mutates the PTY', () => {
+test('shared observers may send input and must use the websocket active-presenter flow before resize mutates the PTY', async () => {
   const { namespace, sessionManager, getPty } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
   getPty(created.sessionId).emitData('ready');
-  adminB.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 120, rows: 32 });
+  await adminB.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 120, rows: 32 });
 
-  adminB.trigger('terminal:input', {
+  await adminB.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'ls\n',
   });
-  adminB.trigger('terminal:resize', {
+  await adminB.trigger('terminal:resize', {
     sessionId: created.sessionId,
     cols: 5,
     rows: 200,
   });
-  adminB.trigger('terminal:resize', {
+  await adminB.trigger('terminal:resize', {
     sessionId: created.sessionId,
     cols: 132,
     rows: 36,
   });
 
-  adminB.trigger('terminal:set_active_presenter', {
+  await adminB.trigger('terminal:set_active_presenter', {
     sessionId: created.sessionId,
   });
-  adminB.trigger('terminal:resize', {
+  await adminB.trigger('terminal:resize', {
     sessionId: created.sessionId,
     cols: 144,
     rows: 40,
@@ -648,19 +659,19 @@ test('shared observers may send input and must use the websocket active-presente
   assert.equal(adminB.sent.some((message) => message.event === 'terminal:presence' && message.data.activePresenterClientId === 'admin-b'), true);
 });
 
-test('terminal namespace responds to terminal:ping and terminal:input with latency metadata', () => {
+test('terminal namespace responds to terminal:ping and terminal:input with latency metadata', async () => {
   const { namespace, getPty } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
   getPty(created.sessionId).emitData('ready');
 
-  admin.trigger('terminal:ping', {
+  await admin.trigger('terminal:ping', {
     nonce: 'ping-1',
     clientSentAt: 1234,
   });
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'pwd\n',
     inputId: 'input-1',
@@ -684,18 +695,18 @@ test('terminal namespace responds to terminal:ping and terminal:input with laten
   assert.equal(typeof ack.data.serverSentAt, 'number');
 });
 
-test('terminal websocket sends lifecycle errors without acknowledging rejected input', () => {
+test('terminal websocket sends lifecycle errors without acknowledging rejected input', async () => {
   const { namespace, getPty } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { title: 'Exited shell' });
+  await admin.trigger('terminal:create_session', { title: 'Exited shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
   const pty = getPty(created.sessionId);
   pty.emitData('ready');
   pty.emitExit({ exitCode: 0, signal: 0 });
   const ackCountBefore = admin.sent.filter((message) => message.event === 'terminal:input_ack').length;
 
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'must-not-write',
     inputId: 'rejected-input',
@@ -709,19 +720,19 @@ test('terminal websocket sends lifecycle errors without acknowledging rejected i
   );
 });
 
-test('terminal:set_active_presenter rejects callers that are not attached observers', () => {
+test('terminal:set_active_presenter rejects callers that are not attached observers', async () => {
   const { namespace } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const adminB = namespace.connect(new FakeSocket('admin-b', 'admin'));
 
-  adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await adminA.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
 
   const successEventsBefore = adminB.sent.filter((message) => (
     message.event === 'terminal:session_attached' || message.event === 'terminal:attached'
   )).length;
 
-  adminB.trigger('terminal:set_active_presenter', {
+  await adminB.trigger('terminal:set_active_presenter', {
     sessionId: created.sessionId,
   });
 
@@ -733,19 +744,19 @@ test('terminal:set_active_presenter rejects callers that are not attached observ
   assert.equal(successEventsAfter, successEventsBefore);
 });
 
-test('terminal websocket emits audit events for rejected resize and oversized input', () => {
+test('terminal websocket emits audit events for rejected resize and oversized input', async () => {
   const { namespace, auditEvents } = buildTerminalHarness();
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
+  await admin.trigger('terminal:create_session', { cols: 120, rows: 32, title: 'Shared shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
 
-  admin.trigger('terminal:resize', {
+  await admin.trigger('terminal:resize', {
     sessionId: created.sessionId,
     cols: 5,
     rows: 999,
   });
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'x'.repeat(70 * 1024),
   });
@@ -754,12 +765,12 @@ test('terminal websocket emits audit events for rejected resize and oversized in
   assert.equal(auditEvents.some((entry) => entry.event === 'terminal_input_rejected'), true);
 });
 
-test('terminal websocket returns a stable error when the hard session limit is reached', () => {
+test('terminal websocket returns a stable error when the hard session limit is reached', async () => {
   const { namespace } = buildTerminalHarness({ terminalMaxSessions: 1 });
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
 
-  admin.trigger('terminal:create_session', { title: 'one' });
-  admin.trigger('terminal:create_session', { title: 'two' });
+  await admin.trigger('terminal:create_session', { title: 'one' });
+  await admin.trigger('terminal:create_session', { title: 'two' });
 
   assert.equal(
     admin.sent.some((message) => message.event === 'terminal:error' && message.data.code === 'terminal_session_limit'),
@@ -767,7 +778,7 @@ test('terminal websocket returns a stable error when the hard session limit is r
   );
 });
 
-test('terminal websocket reports input rate limits without ack or raw input and accepts after refill', () => {
+test('terminal websocket reports input rate limits without ack or raw input and accepts after refill', async () => {
   let nowMs = 0;
   const { namespace, getPty, auditEvents } = buildTerminalHarness({
     terminalInputBytesPerSecond: 10,
@@ -776,18 +787,18 @@ test('terminal websocket reports input rate limits without ack or raw input and 
     now: () => new Date(nowMs),
   });
   const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
-  admin.trigger('terminal:create_session', { title: 'Rate limited shell' });
+  await admin.trigger('terminal:create_session', { title: 'Rate limited shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
   const pty = getPty(created.sessionId);
   pty.emitData('ready');
 
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: '1234567890',
     inputId: 'accepted-first',
   });
   const ackCount = admin.sent.filter((message) => message.event === 'terminal:input_ack').length;
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'SECRET_INPUT',
     inputId: 'rejected',
@@ -812,7 +823,7 @@ test('terminal websocket reports input rate limits without ack or raw input and 
   );
 
   nowMs = 1200;
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'accepted',
     inputId: 'accepted-after-refill',
@@ -824,7 +835,7 @@ test('terminal websocket reports input rate limits without ack or raw input and 
   )), true);
 });
 
-test('terminal websocket records socket and input metrics once on the shared instance', () => {
+test('terminal websocket records socket and input metrics once on the shared instance', async () => {
   let nowMs = 0;
   const metrics = new TerminalMetrics();
   const { namespace, getPty } = buildTerminalHarness({
@@ -835,28 +846,28 @@ test('terminal websocket records socket and input metrics once on the shared ins
     now: () => new Date(nowMs),
   });
   const admin = namespace.connect(new FakeSocket('admin-metrics', 'admin'));
-  admin.trigger('terminal:create_session', { title: 'Metrics shell' });
+  await admin.trigger('terminal:create_session', { title: 'Metrics shell' });
   const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
   getPty(created.sessionId).emitData('ready');
 
-  admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'x' });
-  admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'SECRET_INPUT' });
-  admin.trigger('terminal:input', {
+  await admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'x' });
+  await admin.trigger('terminal:input', { sessionId: created.sessionId, data: 'SECRET_INPUT' });
+  await admin.trigger('terminal:input', {
     sessionId: created.sessionId,
     data: 'x'.repeat(65 * 1024),
   });
-  admin.trigger('terminal:client_metrics', {
+  await admin.trigger('terminal:client_metrics', {
     name: 'socket_rtt_ms',
     transport: 'websocket',
     value: 42,
   });
-  admin.trigger('terminal:client_metrics', {
+  await admin.trigger('terminal:client_metrics', {
     name: 'input_ack_rtt_ms',
     transport: 'polling',
     value: 84,
   });
   nowMs = 3;
-  admin.trigger('disconnect');
+  await admin.trigger('disconnect');
 
   const snapshot = metrics.snapshot();
   assert.equal(snapshot.counters.socket_connected, 1);
@@ -895,19 +906,19 @@ test('terminal setup rejects a metrics instance that conflicts with the injected
   }), /metrics instance/i);
 });
 
-test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', () => {
+test('terminal websocket warns and detaches only a slow observer while replay retains overflow output', async () => {
   const { namespace, sessionManager, getPty, auditEvents } = buildTerminalHarness({
     terminalMaxObserverQueueBytes: 5,
   });
   const slow = namespace.connect(new FakeSocket('admin-slow', 'admin'));
   const fast = namespace.connect(new FakeSocket('admin-fast', 'admin'));
   slow.autoAcknowledgeOutput = false;
-  slow.trigger('terminal:create_session', { title: 'Backpressure shell' });
+  await slow.trigger('terminal:create_session', { title: 'Backpressure shell' });
   const created = slow.sent.find((message) => message.event === 'terminal:session_created').data;
   const pty = getPty(created.sessionId);
 
   pty.emitData('12345');
-  fast.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  await fast.trigger('terminal:attach_session', { sessionId: created.sessionId });
   pty.emitData('x');
 
   const warning = slow.sent.find((message) => (
@@ -939,21 +950,21 @@ test('terminal websocket warns and detaches only a slow observer while replay re
   slowOutput.acknowledge();
   assert.equal(sessionManager.isObserverAttached(created.sessionId, { socketId: 'admin-slow' }), false);
 
-  slow.trigger('terminal:attach_session', { sessionId: created.sessionId });
+  await slow.trigger('terminal:attach_session', { sessionId: created.sessionId });
   const replay = slow.sent.findLast((message) => message.event === 'terminal:replay').data.replay;
   assert.deepEqual(replay.map((entry) => entry.data), ['12345', 'x']);
 });
 
-test('attach success and error echo action sessionId operationId (bounded)', () => {
+test('attach success and error echo action sessionId operationId (bounded)', async () => {
   const { namespace, sessionManager } = buildTerminalHarness();
   const creator = namespace.connect(new FakeSocket('admin-a', 'admin'));
   const joiner = namespace.connect(new FakeSocket('admin-b', 'admin'));
-  creator.trigger('terminal:create_session', { title: 'Op shell' });
+  await creator.trigger('terminal:create_session', { title: 'Op shell' });
   const created = creator.sent.find((message) => message.event === 'terminal:session_created').data;
   const operationId = `attach-${'x'.repeat(200)}`;
 
   joiner.sent.length = 0;
-  joiner.trigger('terminal:attach_session', {
+  await joiner.trigger('terminal:attach_session', {
     sessionId: created.sessionId,
     cols: 120,
     rows: 32,
@@ -970,7 +981,7 @@ test('attach success and error echo action sessionId operationId (bounded)', () 
 
   joiner.sent.length = 0;
   const missingOp = 'missing-attach-op-1';
-  joiner.trigger('terminal:attach_session', {
+  await joiner.trigger('terminal:attach_session', {
     sessionId: 'missing-session',
     operationId: missingOp,
   });
@@ -983,18 +994,18 @@ test('attach success and error echo action sessionId operationId (bounded)', () 
   assert.notEqual(sessionManager._getSession(created.sessionId), null);
 });
 
-test('close success broadcast and close error echo action sessionId operationId', () => {
+test('close success broadcast and close error echo action sessionId operationId', async () => {
   const { namespace } = buildTerminalHarness();
   const owner = namespace.connect(new FakeSocket('admin-owner', 'admin'));
   const peer = namespace.connect(new FakeSocket('admin-peer', 'admin'));
-  owner.trigger('terminal:create_session', { title: 'Close op shell' });
+  await owner.trigger('terminal:create_session', { title: 'Close op shell' });
   const created = owner.sent.find((message) => message.event === 'terminal:session_created').data;
-  peer.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 80, rows: 24 });
+  await peer.trigger('terminal:attach_session', { sessionId: created.sessionId, cols: 80, rows: 24 });
 
   const closeOp = 'close-op-abc';
   owner.sent.length = 0;
   peer.sent.length = 0;
-  owner.trigger('terminal:close_session', {
+  await owner.trigger('terminal:close_session', {
     sessionId: created.sessionId,
     operationId: closeOp,
   });
@@ -1011,7 +1022,7 @@ test('close success broadcast and close error echo action sessionId operationId'
 
   const stranger = namespace.connect(new FakeSocket('admin-stranger', 'admin'));
   stranger.sent.length = 0;
-  stranger.trigger('terminal:close_session', {
+  await stranger.trigger('terminal:close_session', {
     sessionId: 'nope',
     operationId: 'close-fail-1',
   });
@@ -1020,4 +1031,21 @@ test('close success broadcast and close error echo action sessionId operationId'
   assert.equal(error.data.action, 'close');
   assert.equal(error.data.sessionId, 'nope');
   assert.equal(error.data.operationId, 'close-fail-1');
+});
+
+test('setup close harvests open terminal sessions and is idempotent', async () => {
+  const { namespace, sessionManager, terminal } = buildTerminalHarness();
+  const admin = namespace.connect(new FakeSocket('admin-a', 'admin'));
+  await admin.trigger('terminal:create_session', { title: 'Shutdown shell' });
+  const created = admin.sent.find((message) => message.event === 'terminal:session_created').data;
+  assert.notEqual(sessionManager._getSession(created.sessionId), null);
+
+  const first = await terminal.close('system:shutdown');
+  assert.deepEqual(first.closedSessionIds, [created.sessionId]);
+  assert.deepEqual(first.failures, []);
+  assert.equal(sessionManager._getSession(created.sessionId), null);
+
+  const second = await terminal.close('system:shutdown');
+  assert.deepEqual(second.closedSessionIds, []);
+  assert.deepEqual(second.failures, []);
 });

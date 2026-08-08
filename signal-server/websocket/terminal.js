@@ -75,11 +75,19 @@ function setupTerminal(io, options = {}) {
   ) {
     const intervalMs = Math.min(60000, Math.max(1000, Math.floor(Number(config.terminalIdleTimeoutMs) / 2)));
     idleReaperTimer = setInterval(() => {
-      const reaped = sessionManager.reapIdleSessions();
-      if (!reaped.length) return;
-      const snapshot = sessionManager.getPoolSnapshot();
-      terminalNamespace.emit('terminal:pool_snapshot', snapshot);
-      terminalNamespace.emit('terminal:snapshot', snapshot);
+      Promise.resolve(sessionManager.reapIdleSessions())
+        .then((reaped) => {
+          if (!reaped.length) return;
+          const snapshot = sessionManager.getPoolSnapshot();
+          terminalNamespace.emit('terminal:pool_snapshot', snapshot);
+          terminalNamespace.emit('terminal:snapshot', snapshot);
+        })
+        .catch((error) => {
+          audit.error('terminal_idle_reap_failed', {
+            code: error?.code || 'terminal_idle_reap_failed',
+            message: error?.message || 'idle reap failed',
+          });
+        });
     }, intervalMs);
     idleReaperTimer.unref?.();
   }
@@ -216,7 +224,7 @@ function setupTerminal(io, options = {}) {
       };
     }
 
-    function handleCreate(payload = {}) {
+    async function handleCreate(payload = {}) {
       try {
         const requestId = typeof payload.requestId === 'string'
           ? payload.requestId.slice(0, 128)
@@ -238,7 +246,7 @@ function setupTerminal(io, options = {}) {
             socket.emit(event, correlatedPayload);
           }
         };
-        const created = sessionManager.createSession({
+        const created = await sessionManager.createSession({
           clientId,
           socketId,
           title: payload.title,
@@ -364,10 +372,10 @@ function setupTerminal(io, options = {}) {
       }
     }
 
-    function handleClose(payload = {}) {
+    async function handleClose(payload = {}) {
       const correlation = buildOperationCorrelation('close', payload);
       try {
-        const closed = sessionManager.closeSession(payload.sessionId, {
+        const closed = await sessionManager.closeSession(payload.sessionId, {
           clientId,
           socketId,
           reason: 'user-close',
@@ -647,16 +655,52 @@ function setupTerminal(io, options = {}) {
     });
   });
 
+  let closePromise = null;
+  let closeCompleted = false;
+
+  async function close(reason = 'system:shutdown') {
+    if (closeCompleted) {
+      return {
+        closedSessionIds: [],
+        failures: [],
+        reason,
+      };
+    }
+    if (closePromise) {
+      return closePromise;
+    }
+    closePromise = (async () => {
+      if (idleReaperTimer) {
+        clearInterval(idleReaperTimer);
+        idleReaperTimer = null;
+      }
+      if (typeof webrtcGateway.closeAll === 'function') {
+        webrtcGateway.closeAll('setup-close');
+      }
+      let summary = {
+        closedSessionIds: [],
+        failures: [],
+        reason,
+      };
+      if (typeof sessionManager.closeAllAsSystem === 'function') {
+        summary = await sessionManager.closeAllAsSystem(reason);
+      }
+      closeCompleted = true;
+      return summary;
+    })();
+    try {
+      return await closePromise;
+    } finally {
+      // Keep closePromise so concurrent callers share one in-flight harvest.
+    }
+  }
+
   return {
     namespace: terminalNamespace,
     sessionManager,
     metrics,
     webrtcGateway,
-    close() {
-      if (idleReaperTimer) clearInterval(idleReaperTimer);
-      idleReaperTimer = null;
-      webrtcGateway.closeAll('setup-close');
-    },
+    close,
   };
 }
 

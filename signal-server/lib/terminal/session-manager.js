@@ -7,7 +7,9 @@ const { TerminalMetrics } = require('./metrics');
 const {
   PROCESS_STATUS,
   assertProcessWritable,
+  cleanupPtyWithEscalation,
   makeTerminalError,
+  planPtyKillSignals,
   transitionProcessState,
 } = require('./lifecycle');
 const { normalizeTerminalSize, assertTerminalSize } = require('./geometry');
@@ -17,6 +19,8 @@ const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
 const CLEANUP_RETRY_DELAY_MS = 1000;
 const MAX_CLEANUP_RETRY_DELAY_MS = 60 * 1000;
+// Default 0 keeps unit tests fast; production may raise via terminalPtyKillWaitMs.
+const DEFAULT_PTY_KILL_WAIT_MS = 0;
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -123,6 +127,16 @@ function createTerminalSessionManager(options = {}) {
   const scheduleTimeout = options.setTimeout || setTimeout;
   const cancelTimeout = options.clearTimeout || clearTimeout;
   const outputSchedule = options.outputSchedule || setImmediate;
+  const ptyKillWaitMs = Math.max(
+    0,
+    Number(
+      options.ptyKillWaitMs
+      ?? rawConfig.ptyKillWaitMs
+      ?? rawConfig.terminalPtyKillWaitMs
+      ?? DEFAULT_PTY_KILL_WAIT_MS,
+    ) || 0,
+  );
+  const runPtyCleanup = options.cleanupPtyWithEscalation || cleanupPtyWithEscalation;
   const sessions = new Map();
   const cleanupQuarantine = new Map();
   const systemCloseCapability = Object.freeze({});
@@ -317,31 +331,75 @@ function createTerminalSessionManager(options = {}) {
     return true;
   }
 
+  function markExitObserved(session, exitInfo = {}) {
+    if (session.exitObserved) {
+      return false;
+    }
+    session.exitObserved = true;
+    if (Object.prototype.hasOwnProperty.call(exitInfo, 'exitCode')) {
+      session.exitCode = exitInfo.exitCode;
+    }
+    if (Object.prototype.hasOwnProperty.call(exitInfo, 'signal')) {
+      session.signal = exitInfo.signal;
+    }
+    if (typeof session.resolveExit === 'function') {
+      session.resolveExit({
+        exitCode: session.exitCode,
+        signal: session.signal,
+      });
+    }
+    return true;
+  }
+
+  function isPtyAlive(session) {
+    if (session.exitObserved || session.killState === 'confirmed') {
+      return false;
+    }
+    if (!session.pty) {
+      return false;
+    }
+    if (typeof session.pty.isAlive === 'function') {
+      return Boolean(session.pty.isAlive());
+    }
+    return true;
+  }
+
+  function ensureExitLatch(session) {
+    if (session.exitPromise) {
+      return session.exitPromise;
+    }
+    session.exitPromise = new Promise((resolve) => {
+      session.resolveExit = resolve;
+    });
+    if (session.exitObserved && typeof session.resolveExit === 'function') {
+      session.resolveExit({
+        exitCode: session.exitCode,
+        signal: session.signal,
+      });
+    }
+    return session.exitPromise;
+  }
+
   function killPtyOnce(session) {
-    if (session.killState === 'confirmed') {
-      return { attempted: false, killed: true, attemptCount: session.killAttemptCount };
-    }
-    if (
-      session.killState === 'in_progress'
-    ) {
-      return { attempted: false, killed: false, attemptCount: session.killAttemptCount };
-    }
-    if (!session.pty || typeof session.pty.kill !== 'function') {
+    if (session.killState === 'confirmed' || session.exitObserved) {
       session.killState = 'confirmed';
       return { attempted: false, killed: true, attemptCount: session.killAttemptCount };
     }
+    if (!session.pty || typeof session.pty.kill !== 'function') {
+      session.killState = 'confirmed';
+      session.exitObserved = true;
+      return { attempted: false, killed: true, attemptCount: session.killAttemptCount };
+    }
 
-    session.killState = 'in_progress';
     session.killAttemptCount = Math.min(
       MAX_AUDIT_KILL_ATTEMPTS,
       session.killAttemptCount + 1,
     );
     try {
+      // Best-effort single signal for startup-timeout; confirmation still needs onExit.
       session.pty.kill('SIGHUP');
-      session.killState = 'confirmed';
-      return { attempted: true, killed: true, attemptCount: session.killAttemptCount };
+      return { attempted: true, killed: false, attemptCount: session.killAttemptCount };
     } catch {
-      session.killState = 'idle';
       audit.error('terminal_pty_kill_failed', {
         sessionId: session.sessionId,
         clientId: session.creatorClientId,
@@ -353,22 +411,125 @@ function createTerminalSessionManager(options = {}) {
     }
   }
 
-  function cleanupPty(session, maxAttempts = MAX_PTY_CLEANUP_ATTEMPTS) {
-    let operationAttemptCount = 0;
-    let result = {
-      attempted: false,
-      killed: session.killState === 'confirmed',
-      attemptCount: session.killAttemptCount,
-    };
-    while (!result.killed && operationAttemptCount < maxAttempts) {
-      result = killPtyOnce(session);
-      if (!result.attempted) break;
-      operationAttemptCount += 1;
+  async function runCleanupPtyEscalation(session) {
+    if (session.killState === 'confirmed' || session.exitObserved || !isPtyAlive(session)) {
+      session.killState = 'confirmed';
+      session.exitObserved = true;
+      return {
+        attempted: false,
+        killed: true,
+        attemptCount: session.killAttemptCount,
+        operationAttemptCount: 0,
+        signalsSent: [],
+      };
     }
+
+    ensureExitLatch(session);
+    session.killState = 'in_progress';
+    const steps = planPtyKillSignals({ waitMs: ptyKillWaitMs });
+    const result = await runPtyCleanup(session.pty, {
+      steps,
+      waitMs: ptyKillWaitMs,
+      isAlive: () => isPtyAlive(session),
+      waitForExit: async () => {
+        if (session.exitObserved) {
+          return true;
+        }
+        await Promise.resolve();
+        return Boolean(session.exitObserved);
+      },
+    });
+
+    session.killAttemptCount = Math.min(
+      MAX_AUDIT_KILL_ATTEMPTS,
+      session.killAttemptCount + (result.signalsSent?.length || (result.attempted ? 1 : 0)),
+    );
+
+    if (result.error) {
+      session.killState = 'idle';
+      audit.error('terminal_pty_kill_failed', {
+        sessionId: session.sessionId,
+        clientId: session.creatorClientId,
+        code: 'pty_kill_failed',
+        processStatus: session.processStatus,
+        attemptCount: session.killAttemptCount,
+      });
+      return {
+        attempted: true,
+        killed: false,
+        attemptCount: session.killAttemptCount,
+        operationAttemptCount: result.signalsSent?.length || 1,
+        signalsSent: result.signalsSent || [],
+        error: result.error,
+      };
+    }
+
+    if (result.killed || result.confirmed || session.exitObserved || !isPtyAlive(session)) {
+      session.killState = 'confirmed';
+      session.exitObserved = true;
+      return {
+        attempted: Boolean(result.attempted),
+        killed: true,
+        attemptCount: session.killAttemptCount,
+        operationAttemptCount: result.signalsSent?.length || 0,
+        signalsSent: result.signalsSent || [],
+        finalSignal: result.finalSignal,
+      };
+    }
+
+    session.killState = 'idle';
     return {
-      ...result,
-      operationAttemptCount,
+      attempted: Boolean(result.attempted),
+      killed: false,
+      attemptCount: session.killAttemptCount,
+      operationAttemptCount: result.signalsSent?.length || 0,
+      signalsSent: result.signalsSent || [],
     };
+  }
+
+  function cleanupPty(session, maxAttempts = MAX_PTY_CLEANUP_ATTEMPTS) {
+    if (session.cleanupPromise) {
+      return session.cleanupPromise;
+    }
+
+    session.cleanupPromise = (async () => {
+      let operationAttemptCount = 0;
+      let result = {
+        attempted: false,
+        killed: session.killState === 'confirmed' || session.exitObserved,
+        attemptCount: session.killAttemptCount,
+        operationAttemptCount: 0,
+        signalsSent: [],
+      };
+
+      while (!result.killed && operationAttemptCount < maxAttempts) {
+        const pass = await runCleanupPtyEscalation(session);
+        operationAttemptCount += 1;
+        result = {
+          ...pass,
+          operationAttemptCount,
+        };
+        if (!pass.attempted && !pass.killed) {
+          break;
+        }
+        if (pass.error) {
+          continue;
+        }
+        if (!pass.killed) {
+          break;
+        }
+      }
+
+      return result;
+    })();
+
+    const tracked = session.cleanupPromise;
+    tracked.finally(() => {
+      if (session.cleanupPromise === tracked) {
+        session.cleanupPromise = null;
+      }
+    });
+    return tracked;
   }
 
   function auditCleanupFailure(session, cleanupResult) {
@@ -381,7 +542,7 @@ function createTerminalSessionManager(options = {}) {
     });
   }
 
-  function retryQuarantinedSession(session, options = {}) {
+  async function retryQuarantinedSession(session, options = {}) {
     if (!cleanupQuarantine.has(session.sessionId)) return true;
     if (session.cleanupRetryTimer !== null) {
       const timer = session.cleanupRetryTimer;
@@ -390,7 +551,7 @@ function createTerminalSessionManager(options = {}) {
         cancelTimeout(timer);
       }
     }
-    const cleanupResult = cleanupPty(session);
+    const cleanupResult = await cleanupPty(session);
     if (cleanupResult.killed) {
       cleanupQuarantine.delete(session.sessionId);
       session.cleanupRetryDelayMs = null;
@@ -401,9 +562,9 @@ function createTerminalSessionManager(options = {}) {
     return false;
   }
 
-  function retryCleanupQuarantine() {
+  async function retryCleanupQuarantine() {
     for (const session of Array.from(cleanupQuarantine.values())) {
-      retryQuarantinedSession(session);
+      await retryQuarantinedSession(session);
     }
   }
 
@@ -418,7 +579,16 @@ function createTerminalSessionManager(options = {}) {
     session.cleanupRetryDelayMs = Math.min(delay * 2, MAX_CLEANUP_RETRY_DELAY_MS);
     session.cleanupRetryTimer = scheduleTimeout(() => {
       session.cleanupRetryTimer = null;
-      retryQuarantinedSession(session, { fromScheduledRetry: true });
+      const retry = Promise.resolve(retryQuarantinedSession(session, { fromScheduledRetry: true }));
+      retry.catch((error) => {
+        audit.error('terminal_pty_cleanup_failed', {
+          sessionId: session.sessionId,
+          clientId: session.creatorClientId,
+          code: error?.code || 'pty_cleanup_failed',
+        });
+        scheduleQuarantineRetry(session);
+      });
+      return retry;
     }, delay);
     session.cleanupRetryTimer?.unref?.();
   }
@@ -487,6 +657,33 @@ function createTerminalSessionManager(options = {}) {
   }
 
   function wirePty(session, pty) {
+    // Register onExit before onData so a registration failure still latches process death.
+    if (typeof pty.onExit === 'function') {
+      pty.onExit(({ exitCode, signal }) => {
+        // Always latch process exit first so cleanup can confirm death even when
+        // notifications are suppressed (user close / system close).
+        markExitObserved(session, { exitCode, signal });
+        session.killState = 'confirmed';
+        if (session.exitHandled) return;
+        session.exitHandled = true;
+        clearStartupTimer(session);
+        session.processStatus = transitionProcessState(session.processStatus, 'exit');
+        session.lastActiveAt = timestamp();
+        audit.info('terminal_pty_exited', {
+          sessionId: session.sessionId,
+          clientId: session.creatorClientId,
+          exitCode,
+          signal,
+          processStatus: session.processStatus,
+        });
+        metrics.recordCounter('pty_exited');
+        emitExit(session, {
+          exitCode,
+          signal,
+          processStatus: session.processStatus,
+        });
+      });
+    }
     if (typeof pty.onData === 'function') {
       pty.onData((data) => {
         if (
@@ -509,33 +706,9 @@ function createTerminalSessionManager(options = {}) {
         emitOutput(session, data);
       });
     }
-    if (typeof pty.onExit === 'function') {
-      pty.onExit(({ exitCode, signal }) => {
-        if (session.exitHandled) return;
-        session.exitHandled = true;
-        clearStartupTimer(session);
-        session.processStatus = transitionProcessState(session.processStatus, 'exit');
-        session.exitCode = exitCode;
-        session.signal = signal;
-        session.lastActiveAt = timestamp();
-        audit.info('terminal_pty_exited', {
-          sessionId: session.sessionId,
-          clientId: session.creatorClientId,
-          exitCode,
-          signal,
-          processStatus: session.processStatus,
-        });
-        metrics.recordCounter('pty_exited');
-        emitExit(session, {
-          exitCode,
-          signal,
-          processStatus: session.processStatus,
-        });
-      });
-    }
   }
 
-  function createSession(input = {}) {
+  async function createSession(input = {}) {
     if (!config.enabled) {
       throw Object.assign(new Error('Terminal disabled'), { code: 'terminal_disabled' });
     }
@@ -544,8 +717,8 @@ function createTerminalSessionManager(options = {}) {
         code: 'terminal_admin_password_missing',
       });
     }
-    retryCleanupQuarantine();
-    reapIdleSessions({ retryQuarantine: false });
+    await retryCleanupQuarantine();
+    await reapIdleSessions({ retryQuarantine: false });
     if (sessions.size + cleanupQuarantine.size >= config.maxSessions) {
       audit.warn('terminal_session_rejected', {
         code: 'terminal_session_limit',
@@ -610,11 +783,19 @@ function createTerminalSessionManager(options = {}) {
       startedAtMs,
       startupTimer: null,
       exitHandled: false,
+      exitObserved: false,
+      exitPromise: null,
+      resolveExit: null,
+      cleanupPromise: null,
       killState: 'idle',
       killAttemptCount: 0,
       exitCode: null,
       signal: null,
+      cleanupRetryTimer: null,
+      cleanupRetryDelayMs: null,
     };
+
+    ensureExitLatch(session);
 
     addObserver(session, input);
     sessions.set(sessionId, session);
@@ -639,7 +820,7 @@ function createTerminalSessionManager(options = {}) {
       clearStartupTimer(session);
       session.processStatus = transitionProcessState(session.processStatus, 'close');
       session.exitHandled = true;
-      const cleanupResult = cleanupPty(session);
+      const cleanupResult = await cleanupPty(session);
       if (!cleanupResult.killed) {
         auditCleanupFailure(session, cleanupResult);
       }
@@ -853,7 +1034,7 @@ function createTerminalSessionManager(options = {}) {
     return snapshotSession(session);
   }
 
-  function closeSession(sessionId, input = {}) {
+  async function closeSession(sessionId, input = {}) {
     const session = ensureSession(sessionId);
     const isSystemClose = input.systemCapability === systemCloseCapability;
     if (!isSystemClose && !isObserverAttached(sessionId, input)) {
@@ -865,9 +1046,12 @@ function createTerminalSessionManager(options = {}) {
       ? (input.systemReason === 'system:shutdown' ? 'system:shutdown' : 'system:idle-timeout')
       : 'user-close';
     clearStartupTimer(session);
-    session.processStatus = transitionProcessState(session.processStatus, 'close');
+    if (session.processStatus !== PROCESS_STATUS.CLOSED) {
+      session.processStatus = transitionProcessState(session.processStatus, 'close');
+    }
     session.exitHandled = true;
-    const cleanupResult = cleanupPty(session);
+    ensureExitLatch(session);
+    const cleanupResult = await cleanupPty(session);
     if (!cleanupResult.killed) {
       session.lastActiveAt = timestamp();
       audit.error('terminal_pty_cleanup_failed', {
@@ -907,13 +1091,44 @@ function createTerminalSessionManager(options = {}) {
     });
   }
 
+  async function closeAllAsSystem(systemReason = 'system:shutdown') {
+    const reason = systemReason === 'system:shutdown' ? 'system:shutdown' : 'system:idle-timeout';
+    const snapshot = Array.from(sessions.keys());
+    const closedSessionIds = [];
+    const failures = [];
+
+    for (const sessionId of snapshot) {
+      try {
+        await closeSessionAsSystem(sessionId, reason);
+        closedSessionIds.push(sessionId);
+      } catch (error) {
+        failures.push({
+          sessionId,
+          code: error?.code || 'terminal_close_failed',
+          message: error?.message || 'terminal close failed',
+        });
+        audit.error('terminal_pty_cleanup_failed', {
+          sessionId,
+          code: error?.code || 'pty_cleanup_failed',
+          reason,
+        });
+      }
+    }
+
+    return {
+      closedSessionIds,
+      failures,
+      reason,
+    };
+  }
+
   function listSessions() {
     return Array.from(sessions.values()).map(snapshotSession);
   }
 
-  function reapIdleSessions(options = {}) {
+  async function reapIdleSessions(options = {}) {
     if (options.retryQuarantine !== false) {
-      retryCleanupQuarantine();
+      await retryCleanupQuarantine();
     }
     if (!Number.isFinite(config.idleTimeoutMs) || config.idleTimeoutMs <= 0) {
       return [];
@@ -928,7 +1143,7 @@ function createTerminalSessionManager(options = {}) {
         && currentTime - lastActiveTime > config.idleTimeoutMs
       ) {
         try {
-          closeSessionAsSystem(session.sessionId, 'system:idle-timeout');
+          await closeSessionAsSystem(session.sessionId, 'system:idle-timeout');
           reaped.push(session.sessionId);
         } catch (error) {
           if (error?.code !== 'pty_cleanup_failed') throw error;
@@ -1005,6 +1220,8 @@ function createTerminalSessionManager(options = {}) {
     detachObserver,
     detachSession,
     closeSession,
+    closeSessionAsSystem,
+    closeAllAsSystem,
     isObserverAttached,
     writeInput,
     getPresence,
