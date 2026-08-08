@@ -86,3 +86,83 @@ test('marked core controls are disabled before takeover and enabled after instal
   shell.installCore(() => {});
   assert.equal(elements.coreControl.disabled, false);
 });
+
+test('DOMContentLoaded disable is skipped after deferred installCore wins the race', () => {
+  const elements = {
+    loadingText: { textContent: '' },
+    retryButton: { hidden: true },
+    coreControl: { disabled: false },
+  };
+  let domContentLoaded = null;
+  let clock = 10;
+  const context = {
+    window: null,
+    document: {
+      readyState: 'loading',
+      addEventListener(type, handler) {
+        if (type === 'DOMContentLoaded') domContentLoaded = handler;
+      },
+      getElementById(id) {
+        if (id === 'loadingText') return elements.loadingText;
+        if (id === 'coreRetryBtn') return elements.retryButton;
+        return null;
+      },
+      querySelectorAll(selector) {
+        return selector === '[data-core-control]' ? [elements.coreControl] : [];
+      },
+    },
+    performance: { now() { return clock; } },
+    setTimeout() { return 1; },
+    clearTimeout() {},
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'shell-guard.js'), 'utf8'), context);
+
+  assert.equal(typeof domContentLoaded, 'function');
+  // Deferred desktop-core installs before DOMContentLoaded (real browser order).
+  clock = 48;
+  context.__WRD_SHELL__.installCore(() => {});
+  assert.equal(elements.coreControl.disabled, false);
+
+  domContentLoaded();
+  assert.equal(elements.coreControl.disabled, false);
+  assert.equal(context.__WRD_SHELL__.snapshot().coreInstalled, true);
+});
+
+test('DOMContentLoaded still disables core controls when installCore has not run', () => {
+  const elements = {
+    loadingText: { textContent: '' },
+    retryButton: { hidden: true },
+    coreControl: { disabled: false },
+  };
+  let domContentLoaded = null;
+  const context = {
+    window: null,
+    document: {
+      readyState: 'loading',
+      addEventListener(type, handler) {
+        if (type === 'DOMContentLoaded') domContentLoaded = handler;
+      },
+      getElementById(id) {
+        if (id === 'loadingText') return elements.loadingText;
+        if (id === 'coreRetryBtn') return elements.retryButton;
+        return null;
+      },
+      querySelectorAll(selector) {
+        return selector === '[data-core-control]' ? [elements.coreControl] : [];
+      },
+    },
+    performance: { now() { return 10; } },
+    setTimeout() { return 1; },
+    clearTimeout() {},
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'shell-guard.js'), 'utf8'), context);
+
+  assert.equal(elements.coreControl.disabled, false);
+  domContentLoaded();
+  assert.equal(elements.coreControl.disabled, true);
+  assert.equal(context.__WRD_SHELL__.snapshot().coreInstalled, false);
+});

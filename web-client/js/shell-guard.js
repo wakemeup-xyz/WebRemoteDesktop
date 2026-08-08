@@ -35,8 +35,12 @@
       nodes[i].disabled = disabled;
     }
   }
+  // Disable controls once the body nodes exist. With deferred desktop-core,
+  // installCore can run before DOMContentLoaded; never re-disable after that.
   if (global.document.readyState === 'loading') {
-    global.document.addEventListener('DOMContentLoaded', () => setCoreControlsDisabled(true), { once: true });
+    global.document.addEventListener('DOMContentLoaded', () => {
+      if (!state.coreInstalled) setCoreControlsDisabled(true);
+    }, { once: true });
   } else {
     setCoreControlsDisabled(true);
   }
