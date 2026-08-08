@@ -25,6 +25,8 @@ const TERMINAL_ENV_KEYS = [
   'WRD_TERMINAL_INPUT_BYTES_PER_SECOND',
   'WRD_TERMINAL_INPUT_BURST_BYTES',
   'WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES',
+  'WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS',
+  'WRD_TERMINAL_MAX_IN_FLIGHT_BYTES',
   'WRD_TERMINAL_ALLOW_POLLING',
   'WRD_TERMINAL_AUDIT_LOG',
   'WRD_TERMINAL_RECORD_IO',
@@ -67,6 +69,8 @@ test('loadConfig exposes terminal defaults', () => {
   delete process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES;
   delete process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS;
   delete process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS;
+  delete process.env.WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS;
+  delete process.env.WRD_TERMINAL_MAX_IN_FLIGHT_BYTES;
   delete process.env.WRD_TERMINAL_AUDIT_LOG;
   delete process.env.WRD_TERMINAL_RECORD_IO;
 
@@ -81,6 +85,8 @@ test('loadConfig exposes terminal defaults', () => {
   assert.equal(config.terminalReplayBufferBytes, 256 * 1024);
   assert.equal(config.terminalIdleTimeoutMs, 0);
   assert.equal(config.terminalStartupTimeoutMs, 10000);
+  assert.equal(config.terminalMaxInFlightChunks, 32);
+  assert.equal(config.terminalMaxInFlightBytes, 65536);
   assert.equal(config.terminalAuditLog, '');
   assert.equal(config.terminalRecordIo, false);
 });
@@ -95,6 +101,8 @@ test('loadConfig parses terminal overrides', () => {
   process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES = '131072';
   process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS = '2500';
   process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS = '15000';
+  process.env.WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS = '7';
+  process.env.WRD_TERMINAL_MAX_IN_FLIGHT_BYTES = '4096';
   process.env.WRD_TERMINAL_AUDIT_LOG = '/var/log/terminal.log';
   process.env.WRD_TERMINAL_RECORD_IO = '1';
 
@@ -109,6 +117,8 @@ test('loadConfig parses terminal overrides', () => {
   assert.equal(config.terminalReplayBufferBytes, 131072);
   assert.equal(config.terminalIdleTimeoutMs, 2500);
   assert.equal(config.terminalStartupTimeoutMs, 15000);
+  assert.equal(config.terminalMaxInFlightChunks, 7);
+  assert.equal(config.terminalMaxInFlightBytes, 4096);
   assert.equal(config.terminalAuditLog, '/var/log/terminal.log');
   assert.equal(config.terminalRecordIo, true);
 });
@@ -164,6 +174,8 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     WRD_TERMINAL_INPUT_BYTES_PER_SECOND: '32768',
     WRD_TERMINAL_INPUT_BURST_BYTES: '65536',
     WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES: '262144',
+    WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS: '7',
+    WRD_TERMINAL_MAX_IN_FLIGHT_BYTES: '4096',
     WRD_TERMINAL_ALLOW_POLLING: '1',
     WRD_TERMINAL_AUDIT_LOG: ' /var/log/terminal.log ',
     WRD_TERMINAL_RECORD_IO: '1',
@@ -185,8 +197,8 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
       burstBytes: 65536,
     },
     maxObserverQueueBytes: 262144,
-    maxInFlightChunks: 32,
-    maxInFlightBytes: 65536,
+    maxInFlightChunks: 7,
+    maxInFlightBytes: 4096,
     allowPolling: true,
     auditLog: '/var/log/terminal.log',
     recordIoMetadata: true,
@@ -241,6 +253,8 @@ for (const { key, value } of [
   { key: 'WRD_TERMINAL_INPUT_BYTES_PER_SECOND', value: '1023' },
   { key: 'WRD_TERMINAL_INPUT_BURST_BYTES', value: String(2 * 1024 * 1024 + 1) },
   { key: 'WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES', value: String(64 * 1024 - 1) },
+  { key: 'WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS', value: '0' },
+  { key: 'WRD_TERMINAL_MAX_IN_FLIGHT_BYTES', value: '1023' },
   { key: 'WRD_TERMINAL_SHELL', value: '/bin/sh' },
   { key: 'WRD_TERMINAL_CWD', value: 'relative/path' },
   { key: 'WRD_TERMINAL_CWD', value: '/definitely/not/wrd-terminal' },

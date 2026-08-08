@@ -101,6 +101,16 @@ function createTerminalSessionManager(options = {}) {
       ?? rawConfig.terminalMaxObserverQueueBytes
       ?? 524288
     ),
+    maxInFlightChunks: Number(
+      rawConfig.maxInFlightChunks
+      ?? rawConfig.terminalMaxInFlightChunks
+      ?? 32
+    ),
+    maxInFlightBytes: Number(
+      rawConfig.maxInFlightBytes
+      ?? rawConfig.terminalMaxInFlightBytes
+      ?? 65536
+    ),
   };
   const now = options.now || (() => new Date());
   const inputBucketNow = typeof options.inputNow === 'function'

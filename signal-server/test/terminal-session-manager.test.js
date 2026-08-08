@@ -1341,6 +1341,45 @@ test('session manager accepts legacy input-rate aliases and retains the bucket w
   );
 });
 
+test('session manager pipes terminalMaxInFlight* config into the output dispatcher window', () => {
+  const pty = createFakePty();
+  const scheduled = [];
+  const delivered = [];
+  const acks = [];
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    outputSchedule: (drain) => scheduled.push(drain),
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enabled: true,
+      adminPassword: 'test-terminal-admin-password',
+      terminalMaxInFlightChunks: 7,
+      terminalMaxInFlightBytes: 4096,
+    },
+  });
+  manager.createSession({
+    clientId: 'browser-a',
+    socketId: 'socket-a',
+    onData(data, _metadata, acknowledge) {
+      delivered.push(data);
+      acks.push(acknowledge);
+    },
+  });
+
+  for (let i = 0; i < 8; i += 1) {
+    pty.emitData(String(i));
+  }
+  while (scheduled.length > 0) scheduled.shift()();
+
+  assert.deepEqual(delivered, ['0', '1', '2', '3', '4', '5', '6']);
+  assert.equal(acks.length, 7);
+
+  acks[0]();
+  while (scheduled.length > 0) scheduled.shift()();
+  assert.deepEqual(delivered, ['0', '1', '2', '3', '4', '5', '6', '7']);
+  assert.equal(acks.length, 8);
+});
+
 test('session manager detaches only an overflowing observer after replaying the full chunk', () => {
   const pty = createFakePty();
   const scheduled = [];

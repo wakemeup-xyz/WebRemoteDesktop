@@ -98,6 +98,8 @@ function loadConfig() {
     terminalInputBytesPerSecond: terminal.inputRate.bytesPerSecond,
     terminalInputBurstBytes: terminal.inputRate.burstBytes,
     terminalMaxObserverQueueBytes: terminal.maxObserverQueueBytes,
+    terminalMaxInFlightChunks: terminal.maxInFlightChunks,
+    terminalMaxInFlightBytes: terminal.maxInFlightBytes,
     terminalAllowPolling: terminal.allowPolling,
     terminalAuditLog: terminal.auditLog,
     terminalRecordIoMetadata: terminal.recordIoMetadata,
