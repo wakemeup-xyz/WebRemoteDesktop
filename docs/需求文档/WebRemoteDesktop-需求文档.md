@@ -252,6 +252,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_TERMINAL_INPUT_BYTES_PER_SECOND` | signal-server | 每 observer 输入 token bucket 速率，默认 `65536` |
 | `WRD_TERMINAL_INPUT_BURST_BYTES` | signal-server | 每 observer 输入 burst，默认 `131072` |
 | `WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES` | signal-server | 每 observer ack 驱动输出队列，默认 `524288` |
+| `WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS` | signal-server | 每 observer 未确认输出 chunk 窗口，默认 `32`；高 RTT 可调低做 stop-and-wait |
+| `WRD_TERMINAL_MAX_IN_FLIGHT_BYTES` | signal-server | 每 observer 未确认输出字节窗口，默认 `65536` |
 | `WRD_TERMINAL_RECORD_IO` | signal-server | 是否记录 metadata（不记录原始命令/输出），默认 `0` |
 | `WRD_HOST_VERBOSE_DIAGNOSTICS` | python-host | 是否额外逐行输出 Viewer 诊断日志，默认 `0` |
 

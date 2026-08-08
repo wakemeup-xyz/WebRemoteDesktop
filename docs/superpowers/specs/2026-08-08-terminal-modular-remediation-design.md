@@ -1,7 +1,7 @@
 # Terminal 模块化拆分与 P0/P1 契约修复设计
 
 **日期：** 2026-08-08  
-**状态：** 已复核（设计 v3，待实施）  
+**状态：** 已实施（Phase 1/2 行为 DoD；SocketTransport 抽取 residual）
 **代码基线：** 当前工作树；审查基线见 `docs/superpowers/reports/2026-08-08-terminal-systemic-review.md`  
 **关联：**  
 - `docs/superpowers/specs/2026-07-07-shared-web-terminal-design.md`  

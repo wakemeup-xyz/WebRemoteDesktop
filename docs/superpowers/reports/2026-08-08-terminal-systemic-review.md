@@ -160,3 +160,67 @@ signal-server terminal* + web-client terminal* + shell-guard
 - `web-client/dist/*` — `npm run build:web` 重建
 - `artifacts/terminal-webtest-2026-08-08/*` — webtest 与分报告
 - 本文件
+
+---
+
+## 10. 修复跟踪与 Closure（2026-08-08 实施）
+
+**状态：** Phase 1 + Phase 2 行为目标已落地；结构抽取部分完成。
+
+### 10.1 证据总表（G-01…G-09）
+
+| ID | 证据 |
+|----|------|
+| G-01 ShellGuard | `6669f34` + shell-guard 6 tests + webtest Terminal 可点 |
+| G-02 presence 全量 detach | `5a07f5a` + presence/session-manager tests |
+| G-03 geometry | `67db1d7` + geometry + manager integration tests |
+| G-04 TURN rebind/硬拒绝 | `c7955ea` + turn-transport + panel tests |
+| G-05 pending 精确释放 | `ad644fb` 最小 sticky 修复 + `9846b1d` operationId 关联 |
+| G-06 输入门闩 | `ad644fb` InputGate + composer/exited tests |
+| G-07 maxInFlight | `ef0b677` config 贯通 + manager 窗口测试 |
+| G-08 kill/shutdown | `85ef5d3` escalation + closeAllAsSystem + `dc56bcf` 测试 await 修复 |
+| G-09 bootstrap/resize | `6952064` + `eea9eea` |
+
+### 10.2 结构抽取
+
+| 模块 | 状态 |
+|------|------|
+| geometry / presence / lifecycle kill | 完成 |
+| terminal-input-gate | 完成 |
+| terminal-turn-transport | 完成 |
+| terminal-session-fsm | 完成（`a0bb924`） |
+| terminal-socket-transport | **未抽完**（bootstrap 逻辑仍主要在 panel；可后续） |
+
+### 10.3 验证（closure 时）
+
+- `node --test` terminal 相关：**274/274 PASS**
+- `npm run build:web`：成功
+- Playwright `artifacts/terminal-webtest-2026-08-08/terminal_webtest.py`：主路径 PASS
+- 未重建 tunnel
+
+### 10.4 Residual（仍不在本轮 DoD）
+
+1. SocketTransport 完整抽取  
+2. B-04 timing-safe admin password  
+3. B-06 close quarantine 策略重做  
+4. B-07 服务端强制 websocket-only  
+5. 进程组杀光保证  
+6. F-11 alt-screen 跨 chunk 等 UX 深修  
+
+### 10.5 关键 commit 链（相对 origin/main 实施段）
+
+```
+6669f34 fix(viewer): keep core controls enabled after deferred installCore
+67db1d7 fix(terminal): validate cols/rows on create attach and resize
+5a07f5a fix(terminal): detach all observers sharing a socket id
+ad644fb fix(terminal): gate input on attach and process status
+c7955ea fix(terminal): rebind turn dc on session activate and reject undeliverable input
+cdf3dc8 docs(terminal): add modular remediation spec plan and review
+ef0b677 fix(terminal): plumb max in-flight output config to dispatcher
+9846b1d fix(terminal): correlate attach close pending with operationId
+a0bb924 refactor(terminal): extract session fsm
+6952064 fix(terminal): retry failed terminal bootstrap
+eea9eea fix(terminal): resize when pty becomes running
+85ef5d3 fix(terminal): escalate pty kill and harvest sessions on shutdown
+dc56bcf test(terminal): await async session create close in metrics bootstrap
+```
