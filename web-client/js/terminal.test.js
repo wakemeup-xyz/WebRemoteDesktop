@@ -263,6 +263,8 @@ function loadTerminal(overrides = {}) {
   vm.runInContext(turnSource, context);
   const composerSource = fs.readFileSync(path.join(__dirname, 'terminal-composer.js'), 'utf8');
   vm.runInContext(composerSource, context);
+  const sessionFsmSource = fs.readFileSync(path.join(__dirname, 'terminal-session-fsm.js'), 'utf8');
+  vm.runInContext(sessionFsmSource, context);
   const source = fs.readFileSync(path.join(__dirname, 'terminal.js'), 'utf8');
   vm.runInContext(`${source}
 globalThis.__createTerminalState = createTerminalState;
