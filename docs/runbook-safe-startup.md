@@ -239,6 +239,53 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - 重启 named tunnel / `cloudflared tunnel run`：`link.stockhub.wiki` 与 `dev.link.stockhub.wiki` 同时受影响
 - 修改 Cloudflare Access：只影响 `dev.link.stockhub.wiki` 的边缘准入，不会直接重启本地 `8080` / `5173`
 
+### 4.2 Formal tunnel hardening
+
+本小节覆盖正式命名隧道（`wrd-tunnel` / `https://link.stockhub.wiki`）的升级、只读探测、有界自动 watch，以及**仅 formal connector** 的手动重启。设计见 `docs/superpowers/specs/2026-08-11-formal-tunnel-hardening-design.md`。
+
+#### 操作脚本
+
+| 目的 | 命令 | 副作用 |
+|------|------|--------|
+| 升级 `cloudflared`（≥ 2026.7.3）并只 bounce 正式 connector | `./scripts/upgrade-cloudflared.sh` | 可能 `brew upgrade cloudflared`；成功后调用 formal-only restart；失败时**不**动现有 connector |
+| 只读边缘/源站/正式入口分类探测 | `./scripts/probe-fixed-edge.sh` 然后 `cat /tmp/wrd-fixed-edge-probe.json` | 只读；不 kill / restart / rotate 任何 tunnel |
+| 手动重启正式命名隧道 | `./scripts/restart-fixed-domain-tunnel.sh` | 仅 stop/start formal connector + wait deliverable；多 owner 时拒绝；不动 signal / host / quick tunnel |
+| 安装有界 formal watcher LaunchAgent | `./scripts/install-fixed-watch.sh` | 安装并 kickstart `com.webremotedesktop.fixed-watch` |
+| 只读 preflight（ownership / credentials / protocol / timeout 分类 / health） | `./scripts/fixed-tunnel-preflight.sh` | **只读**；不 kill / pkill / `launchctl remove` / restart |
+
+#### Watch 语义（默认）
+
+`scripts/watch-fixed-domain.sh`（由 `com.webremotedesktop.fixed-watch` 常驻运行）只在 **origin 健康且 formal 持续不健康** 时考虑重启 formal connector：
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| 探测间隔 | 60s | 每 tick 检查 origin + formal health |
+| 失败阈值 | **180s** | formal 连续失败满 180s 才进入 restart 候选 |
+| 冷却 | 300s | 两次 restart 之间最短间隔 |
+| 预算 | **2 / 3600s**（每小时最多 2 次） | 窗口内超预算 → `budget-exhausted`，只 notify 不 restart |
+| origin-down | — | origin 不健康时 **不** restart formal（状态 `origin-down`） |
+| 多 owner | — | 多个 formal owner 时 skip restart，只 notify |
+
+状态与日志：
+
+- 决策状态：`/tmp/wrd-fixed-watch-state.json`
+- 应用日志：`/tmp/wrd-fixed-watch.log`
+- LaunchAgent 日志：`/tmp/wrd-fixed-watch-launch.log`
+- 告警：macOS notification + 上述 log
+
+#### 「重启服务」≠ formal tunnel restart
+
+- **`重启服务`** 只表示重启本地 `signal-server` / Host（例如 `restart-host.sh`、复用 safe 链路时重启 8080 侧）。
+- **不得**把「重启服务」解释为重建 quick tunnel，也**不得**解释为重启 formal named tunnel。
+- 允许自动重启 formal connector 的**唯一**自动化路径是已安装的 formal watcher（`com.webremotedesktop.fixed-watch` → `watch-fixed-domain.sh` → `restart-fixed-domain-tunnel.sh`）。除此之外，formal restart 必须由操作者显式执行 `./scripts/restart-fixed-domain-tunnel.sh` 或 `./scripts/upgrade-cloudflared.sh`（升级路径内嵌一次 formal bounce）。
+- `./scripts/start-fixed-domain.sh` 仍是“本地服务 + formal 启动”的宽路径；connector-only 恢复优先用 `restart-fixed-domain-tunnel.sh`，不要默认走全量 start。
+
+#### Preflight 保持只读
+
+- `fixed-tunnel-preflight.sh` 与 `probe-fixed-edge.sh` 都是诊断工具：报告 ownership、credentials-file、协议、timeout-heavy、origin/formal/edge 分类与 health。
+- 它们**不会** kill、pkill、`launchctl remove`、restart 或 rotate 任何 `cloudflared`。
+- 修复 token / multiple-owner、升级 binary、重启 formal connector，都必须走上面的显式脚本，并单独获得操作授权（agent 不得在未授权时 live 执行 brew upgrade / install LaunchAgent / formal restart）。
+
 ## 关键文件
 
 ### Safe 状态文件

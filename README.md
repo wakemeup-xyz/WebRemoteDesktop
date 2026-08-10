@@ -194,6 +194,34 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 
 脚本成功后，固定域名正式入口默认为：`https://link.stockhub.wiki`
 
+#### Formal tunnel 运维指针（hardening）
+
+正式入口 `link.stockhub.wiki` 的 connector 升级 / 只读探测 / 有界自动恢复，与「重启本地服务」分开：
+
+```bash
+# 升级 cloudflared（≥ 2026.7.3）并只 bounce 正式 connector
+./scripts/upgrade-cloudflared.sh
+
+# 只读：origin / formal / TCP 7844 边缘分类
+./scripts/probe-fixed-edge.sh
+cat /tmp/wrd-fixed-edge-probe.json
+
+# 手动只重启正式命名隧道（不动 signal / host / quick tunnel）
+./scripts/restart-fixed-domain-tunnel.sh
+
+# 安装有界 formal watcher（LaunchAgent com.webremotedesktop.fixed-watch）
+./scripts/install-fixed-watch.sh
+
+# 只读 preflight（不 kill / 不 restart）
+./scripts/fixed-tunnel-preflight.sh
+```
+
+要点：
+
+- Watch 默认：formal 连续失败 **180s** 才可 restart；每小时最多 **2** 次；**origin-down 不 restart** formal。
+- **`重启服务` ≠ formal tunnel restart**；除已安装的 formal watcher 外，不得把本地重启自动当成命名隧道重启。
+- 细节与语义表见 `docs/runbook-safe-startup.md` 的 **Formal tunnel hardening** 小节。
+
 ### 启动成功后的访问方式
 
 - 本地访问：`http://127.0.0.1:8080`
@@ -351,6 +379,15 @@ WebRemoteDesktop/
 5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址过期，脚本会自动重启并更新地址文件
 6. 如果日志已打印 trycloudflare 地址，但域名仍无法解析或状态脚本显示 `safe quick tunnel: stale`，说明公网入口实际上尚未可用；常见原因是 DNS 传播延迟，或后台进程在短生命周期 shell 退出后被回收
 7. 生产环境应使用 Cloudflare 命名隧道和固定域名
+
+### Formal 固定域名入口（link.stockhub.wiki）
+
+1. 只读分类：`./scripts/probe-fixed-edge.sh` → `cat /tmp/wrd-fixed-edge-probe.json`
+2. 只读 preflight：`./scripts/fixed-tunnel-preflight.sh`（不 kill / 不 restart）
+3. 仅 formal connector 重启：`./scripts/restart-fixed-domain-tunnel.sh`（**不是**「重启服务」）
+4. 升级 binary 并 bounce formal：`./scripts/upgrade-cloudflared.sh`
+5. 有界自动恢复：`./scripts/install-fixed-watch.sh`（180s 失败阈值 / 每小时最多 2 次 / origin-down 不 restart）
+6. 完整语义见 `docs/runbook-safe-startup.md` → Formal tunnel hardening
 
 ### 安全 Quick Tunnel（不影响 StockHub）
 
