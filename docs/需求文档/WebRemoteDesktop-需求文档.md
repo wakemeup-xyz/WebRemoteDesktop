@@ -388,7 +388,7 @@ WebRemoteDesktop/
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
 - **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
-- **系统睡眠**：远程桌面依赖实时屏幕采集，Host 必须通过 `caffeinate -dims` 防止系统/显示/磁盘睡眠；手动睡眠、断电、合盖仍可能强制中断
+- **系统睡眠与空闲锁屏**：Host 通过 `caffeinate -ims`（LaunchAgent `com.webremotedesktop.awake`）抑制空闲系统/磁盘睡眠（接通电源时含 `-s`），**不**强制禁止显示睡眠。推荐系统设置将「屏幕保护程序启动或显示器关闭后需要密码」设为**永不**，避免空闲进入密码锁屏导致远程键盘因 Secure Input 失效。本项目不支持远程解锁已锁会话；手动睡眠、断电、合盖仍可能强制中断。巡检：`scripts/check-host-lock-policy.sh`
 
 ---
 
@@ -398,7 +398,8 @@ WebRemoteDesktop/
 |------|---------|
 | 2026-05-10 | 创建需求文档，汇总当前已实现功能 |
 | 2026-05-10 | 修复键盘 `is_modifier` NameError 导致大量按键失效；新增诊断日志对话框和刷新画面按钮；优化视频延迟（jitterBufferTarget=0、GOP 1s）；HOST_PASSWORD 支持默认值 fallback；更新 Cloudflare Tunnel URL |
-| 2026-05-11 | 项目网页名称更新为 CodeHarness学习助手；新增 Host 本机浮动提示、全屏按钮、Windows 键盘兼容、WebRTC 自动重连；输入链路改为 WebRTC DataChannel 优先（可靠 `input` + 不可靠 `input-move`），Socket.IO 兜底；新增 Viewer WebRTC stats 回传；新增防睡眠 LaunchAgent（`caffeinate -dims`）；新增 quick tunnel 自恢复并将当前访问地址写入 `/tmp/wrd-current-url.txt` |
+| 2026-05-11 | 项目网页名称更新为 CodeHarness学习助手；新增 Host 本机浮动提示、全屏按钮、Windows 键盘兼容、WebRTC 自动重连；输入链路改为 WebRTC DataChannel 优先（可靠 `input` + 不可靠 `input-move`），Socket.IO 兜底；新增 Viewer WebRTC stats 回传；新增防睡眠 LaunchAgent（当时为 `caffeinate -dims`）；新增 quick tunnel 自恢复并将当前访问地址写入 `/tmp/wrd-current-url.txt` |
+| 2026-08-11 | Host 空闲策略调整为 `caffeinate -ims`（允许熄屏、抑制系统空闲睡），新增 `check-host-lock-policy.sh`；文档推荐「关闭显示器/屏保后需要密码=永不」，明确不支持远程解锁已锁会话 |
 | 2026-05-11 | 新增 WebRTC 网络模式选择和右下角网络建议浮窗；Signal Server 提供 `/api/webrtc-config`；Host 与 Viewer 均支持 `STUN_URLS` / `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`；自动模式可在 TURN 已配置时从直连降级到中继；外网中继模式仅在 TURN 配置完整时启用 |
 | 2026-06-02 | 补充公网启动约束：trycloudflare URL 写入文件不等于公网已可用；safe quick tunnel 交付前需验证进程存活、DNS 解析和 HTTP 可达性；短生命周期自动化 shell 中需避免把临时后台进程误判为常驻服务 |
 | 2026-06-06 | 同步开源前安全加固现状：Viewer 与 Host 分离认证、`/api/webrtc-config` 需要 Bearer token、TLS 默认校验开启、诊断日志默认不落仓库，仅在显式开启时写入系统临时目录 |

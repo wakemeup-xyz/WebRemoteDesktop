@@ -248,21 +248,35 @@ curl http://127.0.0.1:8080/api/status
 - `Signal server healthy: ...`
 - `Host auth preflight succeeded: ...`
 
-### 防睡眠服务
+### 防睡眠与空闲锁屏策略
 
-远程桌面依赖实时屏幕采集，Mac 不能进入系统睡眠或显示睡眠。首次部署时安装：
+远程桌面依赖 Host 进程与（通常）屏幕采集持续运行：**应阻止空闲系统睡眠**，但 **允许按系统设置关闭显示器**（省电；熄屏后远程画面可能发黑，属有意权衡）。
+
+首次部署安装 awake 守护：
 
 ```bash
 ./scripts/install-awake-keeper.sh
+./scripts/check-host-lock-policy.sh
 ```
 
-它会安装 `com.webremotedesktop.awake` LaunchAgent，运行：
+`com.webremotedesktop.awake` LaunchAgent 运行：
 
-```
-/usr/bin/caffeinate -dims
+```text
+/usr/bin/caffeinate -ims
 ```
 
-用于防止系统睡眠、显示睡眠和磁盘睡眠。
+- `-i` / `-m` / `-s`：抑制空闲系统睡、磁盘睡，并在接通电源时抑制系统睡
+- **不含 `-d`**：不强制面板常亮
+
+另请在 **系统设置 → 锁定屏幕** 确认（远程 Host 推荐基线）：
+
+| 设置 | 推荐 |
+|------|------|
+| 屏幕保护程序启动或显示器关闭后需要密码 | **永不**（避免空闲后掉进密码锁屏，远程键盘常因 Secure Input 失效） |
+| 电源适配器下关闭显示器 | **永不**（插电远程采集更稳） |
+| 电池下关闭显示器 | 允许有限时间（例如 2 分钟） |
+
+边界：手动锁定（Ctrl+Cmd+Q）、合盖、断电、电池上过短的 `pmset sleep` 仍可能中断；本项目 **不支持远程解锁已锁会话**。
 
 ### 本地访问
 
@@ -553,16 +567,17 @@ TURN_CREDENTIAL=你的凭证
 
 ### Mac 待机后服务不可用
 
-1. 检查防睡眠：`pmset -g assertions`
-2. 应看到 `PreventSystemSleep`、`PreventUserIdleDisplaySleep`、`PreventDiskIdle`
+1. 跑策略检查：`./scripts/check-host-lock-policy.sh`（exit `0` OK，`1` 硬失败，`2` 仅警告）
+2. 检查断言：`pmset -g assertions`，应看到由 caffeinate 持有的 `PreventUserIdleSystemSleep`（**不再**要求 `PreventUserIdleDisplaySleep`）
 3. 检查守护进程：`launchctl print gui/$(id -u)/com.webremotedesktop.awake`
+4. 若未安装：`./scripts/install-awake-keeper.sh`
 
 ## 已知限制
 
 1. **屏幕录制权限**: Python Host 需要屏幕录制权限，首次运行需要在系统设置中授权
 2. **辅助功能权限**: Python Host 需要辅助功能权限才能执行远程输入
 3. **临时 tunnel**: trycloudflare 地址在 quick tunnel 存活期间通常保持不变，但在进程退出、过期重建或显式停 tunnel 后会变化；safe 模式读取 `/tmp/wrd-safe-current-url.txt`
-4. **系统睡眠**: 已通过 `caffeinate -dims` 防止主动睡眠；手动睡眠、合盖、断电仍可能中断
+4. **系统睡眠 / 空闲锁屏**: 通过 `caffeinate -ims` 抑制空闲系统睡；显示可按系统策略熄灭。请将「关闭显示器/屏保后需要密码」设为永不，否则空闲后可能进入密码锁屏且远程键盘无效。手动睡眠、合盖、断电仍可能中断
 
 ## 下一步优化
 

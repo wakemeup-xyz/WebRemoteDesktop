@@ -466,6 +466,24 @@ tail -100 /tmp/wrd-safe-quicktunnel.log
 5. 若 `safe quick tunnel` 为 `running` 但 DNS 仍长期不解析，改用固定域名方案 `./scripts/start-fixed-domain.sh`
 6. 若公共 DNS 已能解析、而只有本机 resolver 长期不解析，应优先修本机 DNS；当前脚本已会在这类情况下保留 tunnel，不再把它误判成不可交付
 
+## Host 空闲锁屏 / 防睡眠巡检
+
+远程 Host 推荐：
+
+1. 已安装 awake：`./scripts/install-awake-keeper.sh`（`caffeinate -ims`，**不含** `-d`，允许熄屏）
+2. 系统设置 → 锁定屏幕：**屏幕保护程序启动或显示器关闭后需要密码 = 永不**
+3. 巡检：
+
+```bash
+./scripts/check-host-lock-policy.sh
+echo exit=$?
+# 0 = OK；1 = 硬失败（awake 未跑或仍用 -d）；2 = 仅警告（如密码策略需人工确认、电池 sleep 过短）
+```
+
+边界：手动锁定、合盖、电池系统睡眠、熄屏后画面发黑不在自动修复范围；不支持远程解锁密码锁屏。
+
+设计：`docs/superpowers/specs/2026-08-11-host-no-idle-lock-allow-display-sleep-design.md`
+
 ## 明确边界
 
 以下行为 **禁止默认执行**：
