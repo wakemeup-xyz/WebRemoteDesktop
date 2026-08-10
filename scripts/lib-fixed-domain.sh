@@ -87,3 +87,18 @@ wrd_fixed_wait_formal_health() {
   done
   return 1
 }
+
+wrd_fixed_parse_cloudflared_version() {
+  # stdin or arg: raw --version text → X.Y.Z
+  local raw="${1:-}"
+  if [ -z "$raw" ]; then
+    raw="$("$CLOUDFLARED" --version 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$raw" | awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH); exit }'
+}
+
+wrd_fixed_version_ge() {
+  # usage: wrd_fixed_version_ge <have> <need>
+  local have="$1" need="$2"
+  printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1 | grep -qx "$need"
+}
