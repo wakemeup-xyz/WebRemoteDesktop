@@ -1102,20 +1102,24 @@ const WebRTC = {
 
   configureVideoReceiver(receiver) {
     if (!receiver?.track || receiver.track.kind !== 'video') return;
-    // Chromium exposes playoutDelayHint as one numeric delay in seconds,
-    // not the min/max object accepted by older experimental builds.
+    const isRelay = this.networkMode === 'relay'
+      || this.lastCandidateType === 'relay';
+
+    // playoutDelayHint: relay 下给 80ms 下限减少黑屏，直连保持 0
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = 0;
-        console.log('[LATENCY] Set playoutDelayHint = 0s');
+        receiver.playoutDelayHint = isRelay ? 0.08 : 0;
+        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.08s (relay)' : '0s (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
     }
+
+    // jitterBufferTarget: relay 路径 80ms 吸收抖动，直连保持 1ms 低延迟
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = 1;
-        console.log('[LATENCY] Set jitterBufferTarget = 1');
+        receiver.jitterBufferTarget = isRelay ? 80 : 1;
+        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '80ms (relay)' : '1ms (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
