@@ -254,3 +254,36 @@ def test_reconcile_preserves_real_cmd_c_modifier(monkeypatch):
 
     assert handler._modifier_flags & ih.kCGEventFlagMaskCommand, \
         "real Cmd flag must NOT be cleared during Cmd+C"
+
+
+def test_reconcile_does_not_fire_for_ime_nav_keys(monkeypatch):
+    """Arrow keys must bypass reconcile even when phantom modifier flags are set."""
+    calls = patch_quartz(monkeypatch)
+    import input_handler as ih
+    monkeypatch.setattr(ih, "CGEventCreateKeyboardEvent",
+                        lambda src, kc, down: {"source": src, "key_code": kc, "is_down": down, "flags": None})
+    monkeypatch.setattr(ih, "CGEventSetFlags",
+                        lambda ev, fl: ev.__setitem__("flags", fl))
+    monkeypatch.setattr(ih, "CGEventPost",
+                        lambda _tap, ev: calls.events.append(ev))
+    monkeypatch.setattr(ih, "CGEventSourceCreate", lambda _: "source")
+
+    handler = ih.InputHandler.__new__(ih.InputHandler)
+    handler.source = "source"
+    handler._modifier_flags = ih.kCGEventFlagMaskControl  # phantom Control
+    handler._pressed_modifier_key_codes = set()
+    handler._pressed_key_codes = set()
+    handler._last_key_flags = {}
+    handler._modifier_stale_seconds = 8.0
+
+    # Left Arrow (key_code=123) is in _ime_nav_keys — reconcile must NOT fire
+    payload = {
+        "code": "ArrowLeft",
+        "key": "ArrowLeft",
+        "modifiers": {"ctrl": False, "shift": False, "alt": False, "meta": False},
+        "phase": "down",
+    }
+    handler._handle_keyboard("keydown", payload)
+
+    assert handler._modifier_flags & ih.kCGEventFlagMaskControl, \
+        "reconcile must NOT clear phantom Control when key is an IME nav key (arrow/Esc)"

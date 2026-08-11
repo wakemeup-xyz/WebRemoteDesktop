@@ -709,12 +709,12 @@ class InputHandler:
         # Any bit set in _modifier_flags but absent in payload_flags means the
         # keyup was lost (e.g. DataChannel drop). Clear phantom bits immediately
         # so macOS does not misinterpret subsequent keystrokes as Ctrl/Cmd chords.
-        if action == 'keydown' and not is_modifier:
+        if action == 'keydown' and not is_modifier and key_code not in _ime_nav_keys:
             lost_flags = self._modifier_flags & ~payload_flags
             if lost_flags:
                 self._release_lost_modifier_flags(lost_flags, reason="reconcile")
 
-        if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0:
+        if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0 and key_code not in _ime_nav_keys:
             self.release_all_modifiers(reason="plain-key-reset")
 
         # Create and post event
