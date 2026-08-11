@@ -83,6 +83,7 @@ const WebRTC = {
   _iceRestartAttempts: 0,
   _reconnectAttempt: 0,
   _relayHardRefreshCount: 0,
+  _rebuildingDc: false,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
   currentConnectionAttemptId: '',
@@ -3974,7 +3975,41 @@ if (this.tunnelLastObjectUrl) {
     return true;
   },
 
+  async rebuildDataChannels(reason) {
+    if (this._rebuildingDc) return false;
+    if (!this.pc || this.pc.connectionState !== 'connected') return false;
+    if (this.pc.sctp?.state !== 'connected') {
+      // SCTP association already dead — need full reconnect
+      this.scheduleReconnect(reason);
+      return false;
+    }
+    this._rebuildingDc = true;
+    console.warn('[INPUT-DC] Rebuilding DataChannels without refresh reason=%s', reason);
+    try {
+      // Drop stale references so onclose callbacks on old channels don't re-trigger
+      this.inputChannel = null;
+      this.inputMoveChannel = null;
+      this.createInputChannel();
+      await this.createOffer();
+    } catch (err) {
+      console.warn('[INPUT-DC] rebuildDataChannels failed:', err?.message || err);
+      this.scheduleReconnect(reason);
+      return false;
+    } finally {
+      this._rebuildingDc = false;
+    }
+    return true;
+  },
+
   noteDataChannelFault(reason) {
+    // In relay mode with a healthy PC, only rebuild the DataChannel — do NOT tear
+    // down the video relay. A full refresh is only needed when the PC itself fails.
+    if (this.networkMode === 'relay'
+        && this.pc?.connectionState === 'connected'
+        && !this._rebuildingDc) {
+      this.rebuildDataChannels(reason);
+      return true;
+    }
     if (!this.shouldReconnectForDataChannelFault(reason)) {
       this._inputDcDegraded = true;
       console.warn('[INPUT-DC] degraded reason=%s video-healthy=true skip-reconnect', reason);

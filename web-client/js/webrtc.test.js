@@ -3978,3 +3978,71 @@ test('first-frame timeout exits connecting without reviving a stale attempt', ()
   timerCallback();
   assert.equal(WebRTC.currentConnectionAttemptId, 'attempt-2');
 });
+
+test('rebuildDataChannels rebuilds DC without refresh when SCTP is connected', async () => {
+  // Arrange: minimal WebRTC stub with relay mode and connected SCTP
+  const calls = { createOffer: 0, refresh: 0, scheduleReconnect: 0, createInputChannel: 0 };
+  const { WebRTC } = loadWebRTC();
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _rebuildingDc: false,
+    inputChannel: null,
+    inputMoveChannel: null,
+    pc: {
+      connectionState: 'connected',
+      sctp: { state: 'connected' },
+    },
+    createInputChannel() { calls.createInputChannel++; },
+    async createOffer() { calls.createOffer++; },
+    async refresh() { calls.refresh++; },
+    scheduleReconnect(r) { calls.scheduleReconnect++; },
+  });
+
+  const result = await wrtc.rebuildDataChannels('dc-closed');
+
+  assert.equal(result, true, 'rebuildDataChannels should return true on success');
+  assert.equal(calls.createInputChannel, 1, 'createInputChannel called once');
+  assert.equal(calls.createOffer, 1, 'createOffer called once');
+  assert.equal(calls.refresh, 0, 'refresh must NOT be called');
+  assert.equal(calls.scheduleReconnect, 0, 'scheduleReconnect must NOT be called');
+});
+
+test('rebuildDataChannels falls back to scheduleReconnect when SCTP is not connected', async () => {
+  const calls = { scheduleReconnect: 0, createInputChannel: 0 };
+  const { WebRTC } = loadWebRTC();
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _rebuildingDc: false,
+    pc: {
+      connectionState: 'connected',
+      sctp: { state: 'closed' },
+    },
+    createInputChannel() { calls.createInputChannel++; },
+    scheduleReconnect(r) { calls.scheduleReconnect++; },
+  });
+
+  const result = await wrtc.rebuildDataChannels('dc-closed');
+
+  assert.equal(result, false);
+  assert.equal(calls.createInputChannel, 0, 'should not create DC when SCTP closed');
+  assert.equal(calls.scheduleReconnect, 1, 'must fall back to scheduleReconnect');
+});
+
+test('noteDataChannelFault routes to rebuildDataChannels in relay mode with connected PC', async () => {
+  const calls = { rebuild: 0, scheduleReconnect: 0 };
+  const { WebRTC } = loadWebRTC();
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _rebuildingDc: false,
+    pc: { connectionState: 'connected' },
+    async rebuildDataChannels(r) { calls.rebuild++; return true; },
+    scheduleReconnect(r) { calls.scheduleReconnect++; },
+    shouldReconnectForDataChannelFault() { return true; },
+  });
+
+  wrtc.noteDataChannelFault('dc-closed');
+  await new Promise(r => setTimeout(r, 0)); // flush microtasks
+
+  assert.equal(calls.rebuild, 1, 'relay path must call rebuildDataChannels');
+  assert.equal(calls.scheduleReconnect, 0, 'must not scheduleReconnect in relay path');
+});
