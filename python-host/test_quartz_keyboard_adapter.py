@@ -178,3 +178,79 @@ def test_no_startup_input_method_side_effects_remain():
     assert "ApplePressAndHoldEnabled" not in handler_source
     assert "_setup_macos_input" not in handler_source
     assert "_switch_to_abc_keyboard" not in handler_source
+
+
+def test_reconcile_releases_phantom_control_on_next_plain_keydown(monkeypatch):
+    """
+    Scenario: viewer sent ControlLeft keydown but its keyup was lost (DataChannel hiccup).
+    On the next plain-key keydown with modifiers.ctrl=False, the phantom Control
+    must be cleared via _release_lost_modifier_flags before the key is posted.
+    """
+    calls = patch_quartz(monkeypatch)
+    import input_handler as ih
+    monkeypatch.setattr(ih, "CGEventCreateKeyboardEvent",
+                        lambda src, kc, down: {"source": src, "key_code": kc, "is_down": down, "flags": None})
+    monkeypatch.setattr(ih, "CGEventSetFlags",
+                        lambda ev, fl: ev.__setitem__("flags", fl))
+    monkeypatch.setattr(ih, "CGEventPost",
+                        lambda _tap, ev: calls.events.append(ev))
+    monkeypatch.setattr(ih, "CGEventSourceCreate", lambda _: "source")
+
+    handler = ih.InputHandler.__new__(ih.InputHandler)
+    handler.source = "source"
+    handler._modifier_flags = ih.kCGEventFlagMaskControl  # phantom Control
+    handler._pressed_modifier_key_codes = set()            # keyup was lost — not tracked
+    handler._pressed_key_codes = set()
+    handler._last_key_flags = {}
+    handler._modifier_stale_seconds = 8.0
+
+    # Simulate plain 'A' keydown (code=KeyA) with no modifiers from browser
+    payload = {
+        "code": "KeyA",
+        "key": "a",
+        "modifiers": {"ctrl": False, "shift": False, "alt": False, "meta": False},
+        "phase": "down",
+    }
+    handler._handle_keyboard("keydown", payload)
+
+    # _modifier_flags must be cleared
+    assert handler._modifier_flags == 0, \
+        f"phantom Control flag not cleared: 0x{handler._modifier_flags:08x}"
+    # No CGEvent keyup for Control should have been posted because pressed set was empty
+    # (the flag is still cleared via bit mask even without a physical keyup event)
+
+
+def test_reconcile_preserves_real_cmd_c_modifier(monkeypatch):
+    """
+    Scenario: user presses Cmd+C normally — MetaLeft is truly held.
+    The reconcile must NOT clear the Meta flag because payload.meta=True matches.
+    """
+    calls = patch_quartz(monkeypatch)
+    import input_handler as ih
+    monkeypatch.setattr(ih, "CGEventCreateKeyboardEvent",
+                        lambda src, kc, down: {"source": src, "key_code": kc, "is_down": down, "flags": None})
+    monkeypatch.setattr(ih, "CGEventSetFlags",
+                        lambda ev, fl: ev.__setitem__("flags", fl))
+    monkeypatch.setattr(ih, "CGEventPost",
+                        lambda _tap, ev: calls.events.append(ev))
+    monkeypatch.setattr(ih, "CGEventSourceCreate", lambda _: "source")
+
+    handler = ih.InputHandler.__new__(ih.InputHandler)
+    handler.source = "source"
+    handler._modifier_flags = ih.kCGEventFlagMaskCommand  # real Cmd held
+    handler._pressed_modifier_key_codes = {55}             # MetaLeft tracked
+    handler._pressed_key_codes = {55}
+    handler._last_key_flags = {}
+    handler._modifier_stale_seconds = 8.0
+
+    # C keydown while Cmd is genuinely held
+    payload = {
+        "code": "KeyC",
+        "key": "c",
+        "modifiers": {"ctrl": False, "shift": False, "alt": False, "meta": True},
+        "phase": "down",
+    }
+    handler._handle_keyboard("keydown", payload)
+
+    assert handler._modifier_flags & ih.kCGEventFlagMaskCommand, \
+        "real Cmd flag must NOT be cleared during Cmd+C"
