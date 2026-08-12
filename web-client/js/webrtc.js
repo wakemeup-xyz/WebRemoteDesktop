@@ -84,6 +84,7 @@ const WebRTC = {
   _reconnectAttempt: 0,
   _relayHardRefreshCount: 0,
   _rebuildingDc: false,
+  _noRelayReceiveCount: 0,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
   currentConnectionAttemptId: '',
@@ -179,7 +180,7 @@ const WebRTC = {
     }
     if (typeof MediaActivityRuntime !== 'undefined' && !this.mediaActivityRuntime) {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
-        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : this.networkMode === 'relay' ? 4000 : 1500,
         onPhaseChange: (_runtimeSnapshot, meta) => {
           if (meta?.reason === 'request-timeout') {
             this.handleMediaRequestFailure('request-timeout');
@@ -284,7 +285,7 @@ const WebRTC = {
     this.initializeMediaActivity();
     if (!this.mediaActivityRuntime && typeof MediaActivityRuntime !== 'undefined') {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
-        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : 1500,
+        requestTimeoutMs: this.networkMode === 'tunnel' ? 2500 : this.networkMode === 'relay' ? 4000 : 1500,
         onPhaseChange: (_runtimeSnapshot, meta) => {
           if (meta?.reason === 'request-timeout') {
             this.handleMediaRequestFailure('request-timeout');
@@ -953,6 +954,7 @@ const WebRTC = {
     this.resetCandidateSummary();
     this.lastCandidateType = '';
     this.noMediaTicks = 0;
+    this._noRelayReceiveCount = 0;
     this._iceRestartAttempts = 0;
     this.inputChannel = null;
     this.inputMoveChannel = null;
@@ -2598,6 +2600,7 @@ const WebRTC = {
     this.config = this.buildPeerConfig();
     this.resetCandidateSummary();
     this.noMediaTicks = 0;
+    this._noRelayReceiveCount = 0;
     this.lastCandidateType = '';
     this.selectedCandidatePair = null;
     if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
@@ -3796,6 +3799,23 @@ if (this.tunnelLastObjectUrl) {
       } else if (selectedCandidateType === 'relay') {
         this.clearFailureRecommendation();
         this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
+
+        // TURN channel dead detection: ICE stays "completed" via STUN consent probes
+        // even after the TURN data channel silently times out (~26s without traffic).
+        // If bytesReceived has been 0 for 20 consecutive 1s samples while relay is the
+        // selected path, the channel is dead — trigger a full reconnect to recover.
+        if (!this.isMediaHealthSuppressed()
+            && this.pc?.iceConnectionState === 'completed'
+            && bytesReceived === 0) {
+          this._noRelayReceiveCount = (this._noRelayReceiveCount || 0) + 1;
+          if (this._noRelayReceiveCount >= 20) {
+            this._noRelayReceiveCount = 0;
+            console.warn('[TURN] channel appears dead (20s no bytes on relay), triggering refresh');
+            this.refresh({ reason: 'turn-channel-dead' });
+          }
+        } else {
+          this._noRelayReceiveCount = 0;
+        }
       } else if (selectedCandidateType === 'host') {
         this.clearFailureRecommendation();
         this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
@@ -3984,13 +4004,15 @@ if (this.tunnelLastObjectUrl) {
       return false;
     }
     this._rebuildingDc = true;
-    console.warn('[INPUT-DC] Rebuilding DataChannels without refresh reason=%s', reason);
+    console.warn('[INPUT-DC] Rebuilding DataChannels (no re-offer) reason=%s', reason);
     try {
-      // Drop stale references so onclose callbacks on old channels don't re-trigger
+      // Drop stale references so onclose callbacks on old channels don't re-trigger.
+      // Un-negotiated DataChannels can be created on an existing PC without re-offer;
+      // the host receives them via @pc.on("datachannel") and does NOT need to rebuild
+      // ScreenCaptureTrack. Calling createOffer() here would cause host full teardown.
       this.inputChannel = null;
       this.inputMoveChannel = null;
       this.createInputChannel();
-      await this.createOffer();
     } catch (err) {
       console.warn('[INPUT-DC] rebuildDataChannels failed:', err?.message || err);
       this.scheduleReconnect(reason);

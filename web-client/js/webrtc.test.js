@@ -4002,7 +4002,7 @@ test('rebuildDataChannels rebuilds DC without refresh when SCTP is connected', a
 
   assert.equal(result, true, 'rebuildDataChannels should return true on success');
   assert.equal(calls.createInputChannel, 1, 'createInputChannel called once');
-  assert.equal(calls.createOffer, 1, 'createOffer called once');
+  assert.equal(calls.createOffer, 0, 'createOffer must NOT be called — un-negotiated DC needs no re-offer');
   assert.equal(calls.refresh, 0, 'refresh must NOT be called');
   assert.equal(calls.scheduleReconnect, 0, 'scheduleReconnect must NOT be called');
 });
@@ -4045,4 +4045,124 @@ test('noteDataChannelFault routes to rebuildDataChannels in relay mode with conn
 
   assert.equal(calls.rebuild, 1, 'relay path must call rebuildDataChannels');
   assert.equal(calls.scheduleReconnect, 0, 'must not scheduleReconnect in relay path');
+});
+
+test('TURN dead detection: 20 consecutive bytes=0 on relay triggers refresh', () => {
+  const { WebRTC } = loadWebRTC();
+  const calls = { refresh: 0 };
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _noRelayReceiveCount: 0,
+    isMediaHealthSuppressed() { return false; },
+    pc: { iceConnectionState: 'completed' },
+    clearFailureRecommendation() {},
+    updateNetworkUI() {},
+    refresh(opts) { calls.refresh++; },
+    // stub out everything processStatsSnapshot touches
+    selectedCandidatePair: {},
+    _lastInboundFramesDecoded: 0,
+    _lastInboundFramesDecodedAt: 0,
+    _mediaResumeFramePending: false,
+    noMediaTicks: 0,
+    lastCandidateType: 'relay',
+    adaptiveMediaEnabled: false,
+    _autoFailCount: 0,
+    handlePortSearchMedia() {},
+    handleReceiverStats() {},
+    setFailureRecommendation() {},
+    _videoFrameSeq: 0,
+  });
+
+  const statsZeroBytes = {
+    fps: 0, rttMs: 30, jitterBufferMs: 0,
+    framesReceived: 0, framesDecoded: 0, packetsLost: 0,
+    bytesReceived: 0, codec: 'H264',
+    selectedCandidateType: 'relay',
+    selectedCandidatePair: {},
+  };
+
+  // 19 samples — must NOT refresh yet
+  for (let i = 0; i < 19; i++) {
+    wrtc.processStatsSnapshot(statsZeroBytes);
+  }
+  assert.equal(calls.refresh, 0, 'must not refresh before 20 samples');
+  assert.equal(wrtc._noRelayReceiveCount, 19);
+
+  // 20th sample — must refresh
+  wrtc.processStatsSnapshot(statsZeroBytes);
+  assert.equal(calls.refresh, 1, 'must refresh after 20 consecutive zero-byte samples');
+  assert.equal(wrtc._noRelayReceiveCount, 0, 'counter must reset after refresh');
+});
+
+test('TURN dead detection: non-zero bytes resets counter', () => {
+  const { WebRTC } = loadWebRTC();
+  const calls = { refresh: 0 };
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _noRelayReceiveCount: 18,
+    isMediaHealthSuppressed() { return false; },
+    pc: { iceConnectionState: 'completed' },
+    clearFailureRecommendation() {},
+    updateNetworkUI() {},
+    refresh(opts) { calls.refresh++; },
+    selectedCandidatePair: {},
+    _lastInboundFramesDecoded: 100,
+    _lastInboundFramesDecodedAt: Date.now(),
+    _mediaResumeFramePending: false,
+    noMediaTicks: 0,
+    lastCandidateType: 'relay',
+    adaptiveMediaEnabled: false,
+    _autoFailCount: 0,
+    handlePortSearchMedia() {},
+    handleReceiverStats() {},
+    setFailureRecommendation() {},
+    _videoFrameSeq: 0,
+  });
+
+  // sample with actual bytes arriving
+  wrtc.processStatsSnapshot({
+    fps: 20, rttMs: 35, jitterBufferMs: 8,
+    framesReceived: 20, framesDecoded: 20, packetsLost: 0,
+    bytesReceived: 150000, codec: 'H264',
+    selectedCandidateType: 'relay',
+    selectedCandidatePair: {},
+  });
+  assert.equal(calls.refresh, 0, 'must NOT refresh when bytes arrive');
+  assert.equal(wrtc._noRelayReceiveCount, 0, 'counter must reset when bytes arrive');
+});
+
+test('TURN dead detection: suppressed media does not count toward dead-channel threshold', () => {
+  const { WebRTC } = loadWebRTC();
+  const calls = { refresh: 0 };
+  const wrtc = Object.assign(Object.create(WebRTC), {
+    networkMode: 'relay',
+    _noRelayReceiveCount: 19,
+    isMediaHealthSuppressed() { return true; }, // page-hidden
+    pc: { iceConnectionState: 'completed' },
+    clearFailureRecommendation() {},
+    updateNetworkUI() {},
+    refresh(opts) { calls.refresh++; },
+    selectedCandidatePair: {},
+    _lastInboundFramesDecoded: 0,
+    _lastInboundFramesDecodedAt: 0,
+    _mediaResumeFramePending: false,
+    noMediaTicks: 0,
+    lastCandidateType: 'relay',
+    adaptiveMediaEnabled: false,
+    _autoFailCount: 0,
+    handlePortSearchMedia() {},
+    handleReceiverStats() {},
+    setFailureRecommendation() {},
+    _videoFrameSeq: 0,
+  });
+
+  // 20th sample — but suppressed, so must NOT refresh
+  wrtc.processStatsSnapshot({
+    fps: 0, rttMs: 30, jitterBufferMs: 0,
+    framesReceived: 0, framesDecoded: 0, packetsLost: 0,
+    bytesReceived: 0, codec: 'H264',
+    selectedCandidateType: 'relay',
+    selectedCandidatePair: {},
+  });
+  assert.equal(calls.refresh, 0, 'must NOT refresh while media is intentionally suppressed');
 });

@@ -2783,7 +2783,7 @@ class WebRemoteHost:
                                 fresh = await asyncio.to_thread(
                                     screen_track.wait_for_fresh_capture,
                                     baseline,
-                                    0.5,
+                                    2.0,  # relay paths need more warmup time under CPU load
                                 )
                                 if fresh is not True:
                                     step_ok["capture"] = False

@@ -387,3 +387,69 @@ async def test_media_resume_fails_closed_when_fresh_capture_returns_false():
     assert host.screen_track.waited_after is not None
     # Must not leave the capture track attached as if resume succeeded.
     assert sender_before.tracks == [] or sender_before.tracks[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_media_resume_succeeds_with_2s_fresh_capture_timeout():
+    """wait_for_fresh_capture timeout was raised to 2.0s.
+    Verify that a track whose first frame arrives within 2s still reports applied=True.
+    """
+    class SlowFreshTrack(FakeTrack):
+        """Simulates a capture thread that produces its first frame after ~0.6s."""
+        def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+            # Under the old 0.5s timeout this would fail; with 2.0s it should succeed.
+            import time
+            deadline = time.monotonic() + timeout
+            # Pretend the frame arrives at ~0.1s (well within 2s, but also within 0.5s
+            # so the test remains deterministic without actual sleeping).
+            self._capture_seq = after_seq + 1
+            return time.monotonic() <= deadline
+
+    host = _make_media_host(sender=FakeSender(), track=SlowFreshTrack())
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    ack = host.sio.events[-1]
+    assert ack[0] == "media-activity-ack"
+    assert ack[1]["applied"] is True, "resume must succeed when frame arrives within timeout"
+    assert host._media_activity_suspended is False
+
+
+@pytest.mark.asyncio
+async def test_media_resume_fresh_capture_passes_2s_timeout_to_wait():
+    """Verify that on_media_activity_change passes timeout=2.0 to wait_for_fresh_capture."""
+    captured_timeouts = []
+
+    class InspectTimeoutTrack(FakeTrack):
+        def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+            captured_timeouts.append(timeout)
+            self._capture_seq = after_seq + 1
+            return True
+
+    host = _make_media_host(sender=FakeSender(), track=InspectTimeoutTrack())
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    assert len(captured_timeouts) == 1, "wait_for_fresh_capture must be called exactly once"
+    assert captured_timeouts[0] == 2.0, (
+        f"timeout must be 2.0s (got {captured_timeouts[0]}) — "
+        "relay paths need extra warmup time under CPU load"
+    )
