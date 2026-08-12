@@ -4418,6 +4418,11 @@ function bootViewerShell() {
   if (window.__WRD_SHELL__ && typeof window.__WRD_SHELL__.installCore === 'function') {
     window.__WRD_SHELL__.installCore(startHandler);
   }
+  // Bind network mode controls immediately after core is interactive,
+  // regardless of bootstrap path. configureNetworkControls is idempotent
+  // (guarded by dataset.bound), so the init() call later is a no-op.
+  WebRTC.configureNetworkControls();
+  WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
   if (typeof StartupTelemetry !== 'undefined' && typeof StartupTelemetry.importMarks === 'function') {
     const shellSnapAfter = window.__WRD_SHELL__?.snapshot?.();
     if (shellSnapAfter?.marks?.length) {
