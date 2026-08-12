@@ -715,6 +715,12 @@ body.controls-hidden .network-advisor.visible:not(.collapsed) {
   border-radius: 12px 0 0 12px;
 }
 
+/* When chrome is hidden, anchor the advisor near the bottom edge instead
+   of floating at 148px (which assumed the two docks were visible). */
+body.controls-hidden .network-advisor.visible {
+  bottom: 20px;
+}
+
 .control-btn {
   padding: 8px 16px;
   border: none;
