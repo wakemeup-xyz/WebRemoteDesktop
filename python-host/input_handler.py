@@ -705,7 +705,16 @@ class InputHandler:
         # Pinyin candidate window instead of navigating it.
         _ime_nav_keys = {123, 124, 125, 126, 53}  # Left, Right, Down, Up, Escape
 
-        if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0:
+        # Reconcile: browser payload is the authoritative modifier state.
+        # Any bit set in _modifier_flags but absent in payload_flags means the
+        # keyup was lost (e.g. DataChannel drop). Clear phantom bits immediately
+        # so macOS does not misinterpret subsequent keystrokes as Ctrl/Cmd chords.
+        if action == 'keydown' and not is_modifier and key_code not in _ime_nav_keys:
+            lost_flags = self._modifier_flags & ~payload_flags
+            if lost_flags:
+                self._release_lost_modifier_flags(lost_flags, reason="reconcile")
+
+        if action == 'keydown' and not is_modifier and self._modifier_flags and flags == 0 and key_code not in _ime_nav_keys:
             self.release_all_modifiers(reason="plain-key-reset")
 
         # Create and post event
@@ -756,6 +765,40 @@ class InputHandler:
         if action == 'keydown':
             return bool(payload_flags)
         return bool(payload_flags) and self._last_key_flags.get(key_code) == payload_flags
+
+    def _release_lost_modifier_flags(self, lost_flags: int, reason: str = "reconcile") -> None:
+        """
+        Reconcile: clear modifier flags whose keyup was lost (e.g. DataChannel drop).
+        Emits CGEvent keyup for each flag bit found in _pressed_modifier_key_codes;
+        always clears the bit from _modifier_flags even if no physical code is tracked.
+        """
+        flag_to_keycodes = {
+            kCGEventFlagMaskCommand:   [55, 54],   # MetaLeft, MetaRight
+            kCGEventFlagMaskShift:     [56, 60],   # ShiftLeft, ShiftRight
+            kCGEventFlagMaskAlternate: [58, 61],   # AltLeft, AltRight
+            kCGEventFlagMaskControl:   [59, 62],   # ControlLeft, ControlRight
+        }
+        logger.warning(
+            "reconcile: releasing lost modifier flags=0x%08x reason=%s",
+            lost_flags, reason,
+        )
+        for flag, keycodes in flag_to_keycodes.items():
+            if not (lost_flags & flag):
+                continue
+            self._modifier_flags &= ~flag
+            # Emit a physical keyup only if we tracked the key as pressed
+            for kc in keycodes:
+                if kc in self._pressed_modifier_key_codes:
+                    self._pressed_modifier_key_codes.discard(kc)
+                    self._pressed_key_codes.discard(kc)
+                    event = CGEventCreateKeyboardEvent(self.source, kc, False)
+                    CGEventSetFlags(event, self._modifier_flags)
+                    CGEventPost(kCGHIDEventTap, event)
+                    logger.info(
+                        "  -> reconcile keyup mac_code=%s flag=0x%08x reason=%s",
+                        kc, flag, reason,
+                    )
+                    break  # one keyup per modifier family is enough
 
     def release_all_modifiers(self, reason="manual"):
         """Release host-side modifier state when a browser keyup is lost."""

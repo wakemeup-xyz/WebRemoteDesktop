@@ -83,6 +83,7 @@ const WebRTC = {
   _iceRestartAttempts: 0,
   _reconnectAttempt: 0,
   _relayHardRefreshCount: 0,
+  _rebuildingDc: false,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
   currentConnectionAttemptId: '',
@@ -1102,20 +1103,24 @@ const WebRTC = {
 
   configureVideoReceiver(receiver) {
     if (!receiver?.track || receiver.track.kind !== 'video') return;
-    // Chromium exposes playoutDelayHint as one numeric delay in seconds,
-    // not the min/max object accepted by older experimental builds.
+    const isRelay = this.networkMode === 'relay'
+      || this.lastCandidateType === 'relay';
+
+    // playoutDelayHint: relay 下给 80ms 下限减少黑屏，直连保持 0
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = 0;
-        console.log('[LATENCY] Set playoutDelayHint = 0s');
+        receiver.playoutDelayHint = isRelay ? 0.08 : 0;
+        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.08s (relay)' : '0s (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
     }
+
+    // jitterBufferTarget: relay 路径 80ms 吸收抖动，直连保持 1ms 低延迟
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = 1;
-        console.log('[LATENCY] Set jitterBufferTarget = 1');
+        receiver.jitterBufferTarget = isRelay ? 80 : 1;
+        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '80ms (relay)' : '1ms (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
@@ -3970,7 +3975,41 @@ if (this.tunnelLastObjectUrl) {
     return true;
   },
 
+  async rebuildDataChannels(reason) {
+    if (this._rebuildingDc) return false;
+    if (!this.pc || this.pc.connectionState !== 'connected') return false;
+    if (this.pc.sctp?.state !== 'connected') {
+      // SCTP association already dead — need full reconnect
+      this.scheduleReconnect(reason);
+      return false;
+    }
+    this._rebuildingDc = true;
+    console.warn('[INPUT-DC] Rebuilding DataChannels without refresh reason=%s', reason);
+    try {
+      // Drop stale references so onclose callbacks on old channels don't re-trigger
+      this.inputChannel = null;
+      this.inputMoveChannel = null;
+      this.createInputChannel();
+      await this.createOffer();
+    } catch (err) {
+      console.warn('[INPUT-DC] rebuildDataChannels failed:', err?.message || err);
+      this.scheduleReconnect(reason);
+      return false;
+    } finally {
+      this._rebuildingDc = false;
+    }
+    return true;
+  },
+
   noteDataChannelFault(reason) {
+    // In relay mode with a healthy PC, only rebuild the DataChannel — do NOT tear
+    // down the video relay. A full refresh is only needed when the PC itself fails.
+    if (this.networkMode === 'relay'
+        && this.pc?.connectionState === 'connected'
+        && !this._rebuildingDc) {
+      this.rebuildDataChannels(reason);
+      return true;
+    }
     if (!this.shouldReconnectForDataChannelFault(reason)) {
       this._inputDcDegraded = true;
       console.warn('[INPUT-DC] degraded reason=%s video-healthy=true skip-reconnect', reason);
