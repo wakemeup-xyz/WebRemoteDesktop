@@ -3647,8 +3647,10 @@ if (this.tunnelLastObjectUrl) {
       this._networkAdvisorPinned = false;
       this.expandNetworkAdvisor({ reschedule: true });
     } else if (!advisor.classList.contains('collapsed') && !this._networkAdvisorHover && !this._networkAdvisorPinned) {
-      // Content refreshed while expanded — keep idle collapse armed.
-      this.scheduleNetworkAdvisorCollapse();
+      // Content refreshed while expanded — arm idle collapse only if not already running.
+      if (!this._networkAdvisorCollapseTimer) {
+        this.scheduleNetworkAdvisorCollapse();
+      }
     }
   },
   
