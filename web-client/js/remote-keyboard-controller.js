@@ -74,6 +74,12 @@
         return;
       }
       if (snapshot.state === 'ready') {
+        // Transport has a fresh active lease with no barrier. If resetRequired is set
+        // but resetBarrierPending is false (old barrier expired without ack), the reset
+        // is stale — clear it so the keyboard doesn't stay stuck in RESET_REQUIRED.
+        if (resetRequired && !resetBarrierPending) {
+          resetRequired = false;
+        }
         reconcilePendingMode();
         notify();
       }

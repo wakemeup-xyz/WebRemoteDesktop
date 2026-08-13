@@ -87,6 +87,7 @@ const WebRTC = {
   _noRelayReceiveCount: 0,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
+  _lastRefreshAt: 0,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
   selectedCandidatePair: null,
@@ -2544,6 +2545,15 @@ const WebRTC = {
         }
         return;
       }
+      // If DC is dead while PC is still connected, do a proactive refresh instead of
+      // waiting for the 3s DC-close timer → noteDataChannelFault cycle that causes storms.
+      if (this.pc?.connectionState === 'connected'
+          && this.inputChannel?.readyState !== 'open'
+          && !this._refreshing && !this.manualDisconnect) {
+        console.warn('[INPUT-DC] DC dead on tab return, proactive refresh');
+        this.refresh({ reason: 'dc-dead-on-resume' });
+        return;
+      }
       if (this.hasActiveControl()) this.syncDesktopInputGate();
       // Returning to the tab must not leave Host suspended with a black frame.
       this.ensureMediaActiveIfVisible('visibility-visible');
@@ -3910,6 +3920,7 @@ if (this.tunnelLastObjectUrl) {
       }
     }
     this._refreshing = true;
+    this._lastRefreshAt = Date.now();
     this.manualDisconnect = false;
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -4052,6 +4063,12 @@ if (this.tunnelLastObjectUrl) {
       return;
     }
     if (this.manualDisconnect || this.reconnectTimer || this._refreshing) {
+      return;
+    }
+    // Prevent rapid reconnect storm: brief PC connect resets _reconnectAttempt to 0,
+    // which would loop at 1500ms forever. Suppress if a refresh fired within 3s.
+    if (Date.now() - (this._lastRefreshAt || 0) < 3000) {
+      console.warn('[RECOVERY] Suppressing rapid reconnect — last refresh was <3s ago reason=%s', reason);
       return;
     }
     if (this.isPortSearchActive()) {
