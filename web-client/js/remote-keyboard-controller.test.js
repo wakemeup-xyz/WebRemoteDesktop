@@ -372,3 +372,50 @@ test('mode change clears state through a reset barrier before exposing the new m
   assert.equal(JSON.stringify(controller.getSnapshot()).includes('lease-000000000001'), false);
   assert.equal(JSON.stringify(controller.getSnapshot()).includes('KeyM'), false);
 });
+
+test('transport barrier timeout then new lease clears stale resetRequired', () => {
+  // Reproduces the "keyboard stuck at RESET_REQUIRED" bug:
+  // 1. DC dies → markAdapterUnavailable → sendReset → barrier deadline = now+3000ms
+  // 2. 3 seconds pass with no ack → expireBarrier → reacquireRequired=true, leaseId=null
+  // 3. syncTransportState notifies controller: state='reacquire-required'
+  //    → resetRequired=true, resetBarrierPending=false
+  // 4. New lease arrives → setLease(newLease) → transport state='ready'
+  //    → syncTransportState('ready') → must clear resetRequired even though
+  //      resetBarrierPending=false (old barrier expired, not pending)
+  let now = 0;
+  const dataChannel = [];
+  const socket = [];
+  let nextId = 0;
+  const transport = KeyboardTransport.create({
+    sendDataChannel(payload) { dataChannel.push(payload); return true; },
+    sendSocket(payload) { socket.push(payload); return true; },
+    makeInputId: () => `kb-${++nextId}`,
+    now: () => now,
+    ackTimeoutMs: 3000,
+  });
+  const controller = RemoteKeyboardController.create({ transport });
+  controller.setLease({ leaseId: 'lease-001', leaseEpoch: 1 });
+
+  // DC dies → transport sends reset, controller enters RESET_REQUIRED
+  transport.markAdapterUnavailable('dataChannel');
+  assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+
+  // Barrier timeout: advance past 3000ms deadline without ack
+  now = 4000;
+  // Trigger expireBarrier by calling state (KeyboardTransport calls it lazily)
+  transport.getSnapshot(); // forces expireBarrier; reacquireRequired=true now
+
+  // New lease arrives (new connection established)
+  controller.setLease({ leaseId: 'lease-002', leaseEpoch: 2 });
+
+  // MUST be READY — the stale reset context (barrier expired, old lease gone)
+  // must not leave the keyboard stuck in RESET_REQUIRED
+  assert.equal(
+    controller.getSnapshot().state, 'READY',
+    'keyboard must recover to READY when transport is ready with a fresh lease'
+  );
+  assert.equal(
+    controller.handleDomEvent(keyEvent('keydown', { code: 'KeyA', key: 'a' })), true,
+    'keydown must be accepted after fresh lease with no pending barrier'
+  );
+});

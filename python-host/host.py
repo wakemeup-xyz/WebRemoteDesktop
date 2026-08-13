@@ -1544,6 +1544,10 @@ class WebRemoteHost:
                     self.current_viewer_id,
                 )
                 return
+            if input_type == 'dc_keepalive':
+                # Viewer-side keepalive ping to prevent SCTP idle timeout and
+                # maintain Chrome background-tab exemption. No action needed.
+                return
             if input_type not in ('mouse', 'keyboard', 'command'):
                 logger.warning("Unknown input type")
                 return

@@ -88,6 +88,7 @@ const WebRTC = {
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
   _lastRefreshAt: 0,
+  _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
   selectedCandidatePair: null,
@@ -2524,6 +2525,35 @@ const WebRTC = {
     this._controlHeartbeatTimer = null;
   },
 
+  // DataChannel application-layer keepalive.
+  // Sends a small ping every 15 seconds to:
+  //   1. Prevent SCTP association from timing out on idle relay paths.
+  //   2. Maintain Chrome's "open RTCDataChannel" exemption from intensive
+  //      background-tab throttling (Chrome 88+) and Energy Saver freeze
+  //      (Chrome 133+). Without an active DataChannel, Chrome may freeze the
+  //      tab after 5 minutes in the background.
+  startDcKeepalive() {
+    this.stopDcKeepalive();
+    this._dcKeepaliveTimer = setInterval(() => {
+      const ch = this.inputChannel;
+      if (ch && ch.readyState === 'open') {
+        try {
+          ch.send(JSON.stringify({ type: 'dc_keepalive' }));
+        } catch (_) {
+          // Ignore: if the channel is closing the send will throw; onclose
+          // will handle recovery. Do not call stopDcKeepalive here — the
+          // interval must keep running until onclose fires to avoid a race
+          // where stop is called before the channel close is fully processed.
+        }
+      }
+    }, 15000);
+  },
+
+  stopDcKeepalive() {
+    if (this._dcKeepaliveTimer) { clearInterval(this._dcKeepaliveTimer); }
+    this._dcKeepaliveTimer = null;
+  },
+
   releaseControl(reason) {
     const wasActive = this.hasActiveControl();
     if (typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
@@ -2887,6 +2917,9 @@ const WebRTC = {
       this._inputDcDegraded = false;
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
+      // Start keepalive to prevent SCTP idle timeout and maintain Chrome's
+      // "open DataChannel" exemption from background tab intensive throttling.
+      this.startDcKeepalive();
     };
     inputChannel.onclose = () => {
       if (this.inputChannel !== inputChannel) return;
@@ -2896,6 +2929,7 @@ const WebRTC = {
         this.pc ? this.pc.connectionState : 'no-pc',
         this.pc ? this.pc.iceConnectionState : 'no-pc');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      this.stopDcKeepalive();
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Defer reconnect to avoid cascading on brief DC hiccups
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
@@ -3945,6 +3979,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._dcReconnectTimer);
       this._dcReconnectTimer = null;
     }
+    this.stopDcKeepalive();
     const videoElement = document.getElementById('remoteVideo');
     videoElement.classList.remove('connected');
     document.body.classList.remove('stream-connected');
@@ -4023,6 +4058,7 @@ if (this.tunnelLastObjectUrl) {
       // Un-negotiated DataChannels can be created on an existing PC without re-offer;
       // the host receives them via @pc.on("datachannel") and does NOT need to rebuild
       // ScreenCaptureTrack. Calling createOffer() here would cause host full teardown.
+      this.stopDcKeepalive();
       this.inputChannel = null;
       this.inputMoveChannel = null;
       this.createInputChannel();
