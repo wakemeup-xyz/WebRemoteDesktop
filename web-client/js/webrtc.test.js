@@ -3286,6 +3286,43 @@ test('resume failures use one refresh fallback and keep desktop input disabled',
   assert.equal(input.active, false);
 });
 
+test('closed media failure replays intent and never refreshes', () => {
+  const emitted = [];
+  const { WebRTC, context } = loadWebRTC();
+  const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
+  require('node:vm').runInContext(runtimeSource, context);
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-closed';
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+  let refreshes = 0;
+  WebRTC.refresh = () => { refreshes += 1; };
+
+  WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
+  emitted.length = 0;
+
+  const closedAck = {
+    state: 'suspended',
+    generation: 2,
+    connectionAttemptId: 'attempt-closed',
+    applied: false,
+    reason: 'closed',
+  };
+  // Production path: Host fail-closed arrives as media-activity-ack, not a
+  // direct handleMediaRequestFailure('closed') call.
+  WebRTC.handleMediaActivityAck(closedAck);
+  // Distinct failureKey so the second ack is not dual-route-deduped.
+  WebRTC.handleMediaActivityAck({ ...closedAck, state: 'active' });
+
+  const replays = emitted.filter(([event]) => event === 'media-activity-change');
+  assert.equal(replays.length, 1);
+  assert.equal(refreshes, 0);
+});
+
 test('dual-routed applied:false ack triggers only one bounded replay', () => {
   const emitted = [];
   const { WebRTC, context } = loadWebRTC();

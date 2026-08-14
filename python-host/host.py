@@ -2780,7 +2780,18 @@ class WebRemoteHost:
                     # Resume: capture ready, then sender/keyframe, then tunnel.
                     capture_failed_reason = None
                     relay = getattr(self, "relay_streamer", None)
-                    if screen_track is not None and hasattr(screen_track, "set_suspended"):
+                    pc = getattr(self, "pc", None)
+                    pc_state = None
+                    try:
+                        pc_state = getattr(pc, "connectionState", None) or getattr(pc, "iceConnectionState", None)
+                    except Exception:
+                        pc_state = None
+                    # Tunnel has no PC by design. WebRTC resume on a missing/dead PC
+                    # must not wait 2s for capture or report success on a dead sender.
+                    if not tunnel_mode and (pc is None or pc_state in {"closed", "failed"}):
+                        step_ok["sender"] = False
+                        capture_failed_reason = "closed"
+                    elif screen_track is not None and hasattr(screen_track, "set_suspended"):
                         try:
                             baseline = screen_track.set_suspended(False)
                             if hasattr(screen_track, "wait_for_fresh_capture"):
@@ -2798,7 +2809,7 @@ class WebRemoteHost:
                             capture_failed_reason = "fresh-capture-timeout"
                             logger.warning("media resume capture failed: %s", type(exc).__name__)
                     keyframe_requested = False
-                    if step_ok["capture"]:
+                    if step_ok["capture"] and capture_failed_reason != "closed":
                         sender_adapter = getattr(self, "media_sender", None)
                         if sender_adapter is None:
                             sender_adapter = AiortcMediaSender(getattr(self, "video_sender", None))

@@ -77,6 +77,11 @@ class FakeSocket:
         self.events.append((event, payload))
 
 
+class FakePC:
+    connectionState = "connected"
+    iceConnectionState = "connected"
+
+
 class FakeTrack:
     def __init__(self):
         self.suspended = False
@@ -123,6 +128,7 @@ async def test_host_applies_suspend_and_resume_with_sender_and_capture():
     host.media_sender = AiortcMediaSender(host.video_sender)
     host.media_sender.bind(host.video_sender, object())
     host.screen_track = FakeTrack()
+    host.pc = FakePC()
     host.relay_streamer = None
     host.input_handler = type("Input", (), {
         "release_all_mouse_buttons": lambda self, reason: None,
@@ -189,7 +195,10 @@ async def test_host_retries_same_generation_after_transient_resume_failure():
     assert host._media_activity_binding["generation"] == 1
 
 
-def _make_media_host(*, sender=None, track=None, relay=None, pc=None):
+_UNSET = object()
+
+
+def _make_media_host(*, sender=None, track=None, relay=None, pc=_UNSET):
     host = object.__new__(WebRemoteHost)
     host.sio = FakeSocket()
     host._active_input_binding = {
@@ -213,7 +222,7 @@ def _make_media_host(*, sender=None, track=None, relay=None, pc=None):
         host.media_sender.bind(sender, track)
     host.screen_track = track
     host.relay_streamer = relay
-    host.pc = pc
+    host.pc = FakePC() if pc is _UNSET else pc
     host.input_handler = type("Input", (), {
         "release_all_mouse_buttons": lambda self, reason: None,
         "release_all_keys": lambda self, reason: None,
@@ -453,3 +462,37 @@ async def test_media_resume_fresh_capture_passes_2s_timeout_to_wait():
         f"timeout must be 2.0s (got {captured_timeouts[0]}) — "
         "relay paths need extra warmup time under CPU load"
     )
+
+
+@pytest.mark.asyncio
+async def test_media_resume_fails_closed_immediately_when_pc_missing():
+    # pc is None → must NOT call wait_for_fresh_capture
+    called = {"wait": 0}
+
+    class Track(FakeTrack):
+        def wait_for_fresh_capture(self, after_seq, timeout=0.5):
+            called["wait"] += 1
+            self.waited_after = after_seq
+            self._capture_seq = after_seq + 1
+            return True
+
+    host = _make_media_host(sender=FakeSender(), track=Track(), pc=None)
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    await host.on_media_activity_change({
+        "schemaVersion": 1,
+        "state": "active",
+        "reasons": [],
+        "generation": 1,
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 3,
+    })
+    ack = host.sio.events[-1]
+    assert ack[0] == "media-activity-ack"
+    assert ack[1]["applied"] is False
+    assert "closed" in str(ack[1].get("reason") or "")
+    assert called["wait"] == 0
+    assert host._media_activity_suspended is True
+    assert host.screen_track.suspended is True

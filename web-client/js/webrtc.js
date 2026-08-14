@@ -497,6 +497,10 @@ const WebRTC = {
       }
       return this.replayMediaActivityIntent(reason);
     }
+    // A closed PC cannot be recovered by refresh(); only one bounded replay.
+    if (reason === 'closed') {
+      return false;
+    }
     if (snapshot.state === 'active' && !this._mediaResumeRefreshFallbackUsed) {
       this._mediaResumeRefreshFallbackUsed = true;
       if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
@@ -582,7 +586,7 @@ const WebRTC = {
       // media-activity-ack. Apply the failure path only once per generation.
       if (this._mediaFailureHandledKey === failureKey) return;
       this._mediaFailureHandledKey = failureKey;
-      this.handleMediaRequestFailure('applied-false');
+      this.handleMediaRequestFailure(data.reason === 'closed' ? 'closed' : 'applied-false');
       return;
     }
     if (!result.accepted) return;
