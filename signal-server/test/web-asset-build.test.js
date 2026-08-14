@@ -10,6 +10,11 @@ const { buildWebClient } = require('../scripts/build-web-client');
 test('asset graph keeps desktop critical and Terminal optional sources separate', () => {
   const graph = require('../scripts/web-asset-graph');
   assert.ok(graph.desktopScripts.includes('js/webrtc.js'));
+  assert.ok(graph.desktopScripts.includes('js/chrome-layout.js'));
+  assert.ok(
+    graph.desktopScripts.indexOf('js/chrome-layout.js') < graph.desktopScripts.indexOf('js/ui.js'),
+    'chrome-layout.js must load before ui.js',
+  );
   assert.ok(!graph.desktopScripts.includes('js/terminal.js'));
   assert.deepEqual(graph.terminalScripts, [
     'js/terminal-echo-controller.js',

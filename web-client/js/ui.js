@@ -1,5 +1,6 @@
 const UI = {
   init() {
+    if (typeof ChromeLayout !== 'undefined') ChromeLayout.init();
     this.setupResolutionModal();
     this.setupControlButtons();
   },

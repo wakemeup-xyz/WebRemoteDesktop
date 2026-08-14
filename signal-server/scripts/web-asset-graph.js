@@ -20,6 +20,7 @@ module.exports = Object.freeze({
     'js/keyboard-transport.js',
     'js/remote-keyboard-controller.js',
     'js/input.js',
+    'js/chrome-layout.js',
     'js/ui.js',
   ]),
   // Loaded after core-interactive; must not block Start/signaling.

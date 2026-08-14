@@ -60,3 +60,8 @@ test('hidden attribute cannot be overridden by flex buttons', () => {
 test('viewer css no longer redefines the :root token block', () => {
   assert.doesNotMatch(css, /:root\s*\{[^}]*--bg-primary/);
 });
+
+test('viewer layout uses --chrome-top instead of a hardcoded 56px body pad', () => {
+  assert.match(css, /padding-top\s*:\s*var\(--chrome-top\)/);
+  assert.doesNotMatch(css, /body\s*\{[^}]*padding-top\s*:\s*56px/);
+});
