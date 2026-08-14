@@ -3460,7 +3460,7 @@ if (this.tunnelLastObjectUrl) {
             this.setNetworkMode(selected.value);
           } else if (this.socket && this.socket.connected) {
             this.beginConnectionAttempt('manual-turn-switch');
-            this.refresh();
+            this.refresh({ reason: 'manual-turn-switch' });
           }
           modal?.classList.add('hidden');
         };
@@ -3523,7 +3523,7 @@ if (this.tunnelLastObjectUrl) {
       return;
     }
     if (this.socket && this.socket.connected) {
-      this.refresh();
+      this.refresh({ reason: 'manual-mode-switch' });
     }
     this.renderPortSearchStatus();
   },
@@ -3928,15 +3928,32 @@ if (this.tunnelLastObjectUrl) {
       }
   },
 
-  async refresh(options) {
-    if (this._superseded) {
-      return;
+  RECOVERY_REFRESH_COOLDOWN_MS: 3000,
+  isForcedRefreshReason(reason) {
+    return reason == null
+      || reason === 'manual'
+      || reason === 'manual-mode-switch'
+      || reason === 'manual-turn-switch';
+  },
+  canBeginRefresh(reason) {
+    if (this.isForcedRefreshReason(reason)) return true;
+    if (Date.now() - (this._lastRefreshAt || 0) < this.RECOVERY_REFRESH_COOLDOWN_MS) {
+      console.warn('[RECOVERY] Suppressing refresh reason=%s', reason);
+      return false;
     }
+    return true;
+  },
+
+  async refresh(options = {}) {
     let reason = null;
     if (typeof options === 'string') {
       reason = options;
     } else if (options && typeof options === 'object') {
       reason = options.reason || null;
+    }
+    if (!this.canBeginRefresh(reason)) return;
+    if (this._superseded) {
+      return;
     }
     this._refreshReason = reason || null;
     if (this._refreshReason === 'fresh-frame-timeout' && this.networkMode === 'relay') {
@@ -4600,7 +4617,7 @@ function bootViewerShell() {
         return;
       }
       lastRefreshTime = now;
-      WebRTC.refresh();
+      WebRTC.refresh({ reason: 'manual' });
     });
   }
 

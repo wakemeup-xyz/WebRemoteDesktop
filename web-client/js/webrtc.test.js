@@ -4166,3 +4166,33 @@ test('TURN dead detection: suppressed media does not count toward dead-channel t
   });
   assert.equal(calls.refresh, 0, 'must NOT refresh while media is intentionally suppressed');
 });
+
+test('recovery refresh is suppressed within 3s of last refresh', async () => {
+  const { WebRTC } = loadWebRTC();
+  let closed = 0;
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
+  WebRTC.createOffer = () => {};
+  WebRTC.pc = { close() { closed += 1; } };
+  WebRTC._lastRefreshAt = Date.now();
+  await WebRTC.refresh({ reason: 'dc-dead-on-resume' });
+  assert.equal(closed, 0);
+});
+
+test('manual refresh bypasses recovery cooldown', async () => {
+  const { WebRTC } = loadWebRTC();
+  let closed = 0;
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
+  WebRTC.createOffer = () => {};
+  WebRTC.pc = { close() { closed += 1; } };
+  WebRTC._lastRefreshAt = Date.now();
+  await WebRTC.refresh({ reason: 'manual' });
+  assert.equal(closed, 1);
+});
