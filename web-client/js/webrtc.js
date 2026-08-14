@@ -2632,7 +2632,98 @@ const WebRTC = {
       }
     }
   },
-  
+
+  STABLE_RECOVERY_RESET_MS: 5000,
+  armStableRecoveryReset() {
+    if (this._stableResetTimer) clearTimeout(this._stableResetTimer);
+    this._stableResetTimer = setTimeout(() => {
+      this._stableResetTimer = null;
+      if (this.pc?.connectionState !== 'connected') return;
+      this._reconnectAttempt = 0;
+      this._relayHardRefreshCount = 0;
+      this._mediaResumeSoftRecoverUsed = false;
+      this._mediaResumeRefreshFallbackUsed = false;
+    }, this.STABLE_RECOVERY_RESET_MS);
+    this._stableResetTimer.unref?.();
+  },
+
+  onPeerConnected() {
+    if (this._refreshing) {
+      if (this.inputChannel?.readyState === 'open') {
+        this.markRefreshSettled('pc-connected');
+      } else {
+        const waitTimer = setTimeout(() => {
+          this.markRefreshSettled('pc-connected-dc-wait');
+        }, 2000);
+        waitTimer.unref?.();
+      }
+    }
+    // Cancel any pending disconnected-recovery timers
+    if (this._disconnectedTimer) {
+      clearTimeout(this._disconnectedTimer);
+      this._disconnectedTimer = null;
+      console.log('[RECOVERY] PC recovered from disconnected, canceling scheduled reconnect');
+    }
+    if (this._iceDisconnectedTimer) {
+      clearTimeout(this._iceDisconnectedTimer);
+      this._iceDisconnectedTimer = null;
+      console.log('[RECOVERY] ICE recovered from disconnected, canceling scheduled reconnect');
+    }
+    console.log('WebRTC connected, initializing input...');
+    // Start stats ASAP — before any other init that could throw
+    this.startStats();
+    this.startVideoFrameTracking();
+    this.syncMediaProfile();
+    this.clearFailureRecommendation();
+    this.updateNetworkUI('媒体链路已连接');
+    this._autoFailCount = 0;
+    this._iceRestartAttempts = 0;
+    this._inputDcDegraded = false;
+    if (this._mediaResumeArmPending) {
+      this.ensureMediaResumeFallbackArmed('pc-connected');
+    }
+    // Connected + visible ⇒ do not stay black due to a stuck page-hidden suspend.
+    this.ensureMediaActiveIfVisible('pc-connected');
+    if (this.isPortSearchActive()) {
+      this.armPortSearchDeadline();
+    }
+
+    // Safety net: hide loading spinner (primary hide is in ontrack via video events)
+    const loadingEl = document.getElementById('loading');
+    if (loadingEl && !loadingEl.classList.contains('hidden')) {
+      console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
+      loadingEl.classList.add('hidden');
+      document.body.classList.add('stream-connected');
+      updateConnectionStatus('connected');
+      const videoEl = document.getElementById('remoteVideo');
+      if (videoEl) videoEl.classList.add('connected');
+    }
+    // Stop tunnel relay if it was running (auto fallback case)
+    if (this.tunnelRelayActive) {
+      console.log('[NETWORK] WebRTC connected, stopping tunnel relay');
+      this.stopTunnelRelay();
+    }
+    if (typeof Input !== 'undefined') {
+      Input.init();
+      this.syncDesktopInputGate();
+    }
+    // Start latency clock sync after connection is stable
+    setTimeout(() => {
+      if (typeof LatencyMonitor !== 'undefined') {
+        LatencyMonitor.requestClockSync();
+        // Re-sync every 30 seconds
+        if (!this._latencySyncInterval) {
+          this._latencySyncInterval = setInterval(() => {
+            if (typeof LatencyMonitor !== 'undefined') {
+              LatencyMonitor.requestClockSync();
+            }
+          }, 30000);
+        }
+      }
+    }, 2000);
+    this.armStableRecoveryReset();
+  },
+
   createPeerConnection() {
     if (this.networkMode === 'tunnel') {
       return;
@@ -2702,86 +2793,14 @@ const WebRTC = {
     this.pc.onconnectionstatechange = () => {
       console.log('Viewer Connection state:', this.pc.connectionState);
       if (this.pc.connectionState === 'connected') {
-        if (this._refreshing) {
-          if (this.inputChannel?.readyState === 'open') {
-            this.markRefreshSettled('pc-connected');
-          } else {
-            const waitTimer = setTimeout(() => {
-              this.markRefreshSettled('pc-connected-dc-wait');
-            }, 2000);
-            waitTimer.unref?.();
-          }
-        }
-        // Cancel any pending disconnected-recovery timers
-        if (this._disconnectedTimer) {
-          clearTimeout(this._disconnectedTimer);
-          this._disconnectedTimer = null;
-          console.log('[RECOVERY] PC recovered from disconnected, canceling scheduled reconnect');
-        }
-        if (this._iceDisconnectedTimer) {
-          clearTimeout(this._iceDisconnectedTimer);
-          this._iceDisconnectedTimer = null;
-          console.log('[RECOVERY] ICE recovered from disconnected, canceling scheduled reconnect');
-        }
-        console.log('WebRTC connected, initializing input...');
-        // Start stats ASAP — before any other init that could throw
-        this.startStats();
-        this.startVideoFrameTracking();
-        this.syncMediaProfile();
-        this.clearFailureRecommendation();
-        this.updateNetworkUI('媒体链路已连接');
-        this._autoFailCount = 0;
-        this._iceRestartAttempts = 0;
-        this._reconnectAttempt = 0;
-        this._relayHardRefreshCount = 0;
-        this._mediaResumeSoftRecoverUsed = false;
-        this._mediaResumeRefreshFallbackUsed = false;
-        this._inputDcDegraded = false;
-        if (this._mediaResumeArmPending) {
-          this.ensureMediaResumeFallbackArmed('pc-connected');
-        }
-        // Connected + visible ⇒ do not stay black due to a stuck page-hidden suspend.
-        this.ensureMediaActiveIfVisible('pc-connected');
-        if (this.isPortSearchActive()) {
-          this.armPortSearchDeadline();
-        }
-
-        // Safety net: hide loading spinner (primary hide is in ontrack via video events)
-        const loadingEl = document.getElementById('loading');
-        if (loadingEl && !loadingEl.classList.contains('hidden')) {
-          console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
-          loadingEl.classList.add('hidden');
-          document.body.classList.add('stream-connected');
-          updateConnectionStatus('connected');
-          const videoEl = document.getElementById('remoteVideo');
-          if (videoEl) videoEl.classList.add('connected');
-        }
-        // Stop tunnel relay if it was running (auto fallback case)
-        if (this.tunnelRelayActive) {
-          console.log('[NETWORK] WebRTC connected, stopping tunnel relay');
-          this.stopTunnelRelay();
-        }
-        if (typeof Input !== 'undefined') {
-          Input.init();
-          this.syncDesktopInputGate();
-        }
-        // Start latency clock sync after connection is stable
-        setTimeout(() => {
-          if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.requestClockSync();
-            // Re-sync every 30 seconds
-            if (!this._latencySyncInterval) {
-              this._latencySyncInterval = setInterval(() => {
-                if (typeof LatencyMonitor !== 'undefined') {
-                  LatencyMonitor.requestClockSync();
-                }
-              }, 30000);
-            }
-          }
-        }, 2000);
+        this.onPeerConnected();
       } else if (this._refreshing) {
         return;
       } else if (['failed', 'disconnected', 'closed'].includes(this.pc.connectionState)) {
+        if (this._stableResetTimer) {
+          clearTimeout(this._stableResetTimer);
+          this._stableResetTimer = null;
+        }
         this.stopMediaTelemetry();
         if (typeof Input !== 'undefined') {
           Input.setActive(false);
@@ -4030,6 +4049,10 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._dcReconnectTimer);
       this._dcReconnectTimer = null;
     }
+    if (this._stableResetTimer) {
+      clearTimeout(this._stableResetTimer);
+      this._stableResetTimer = null;
+    }
     this.stopDcKeepalive();
     const videoElement = document.getElementById('remoteVideo');
     videoElement.classList.remove('connected');
@@ -4287,6 +4310,10 @@ if (this.tunnelLastObjectUrl) {
     if (this._dcReconnectTimer) {
       clearTimeout(this._dcReconnectTimer);
       this._dcReconnectTimer = null;
+    }
+    if (this._stableResetTimer) {
+      clearTimeout(this._stableResetTimer);
+      this._stableResetTimer = null;
     }
     this.releaseControl('viewer-disconnect');
     this.stopMediaTelemetry();

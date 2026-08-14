@@ -4261,3 +4261,60 @@ test('scheduleReconnect is a no-op while _refreshing', () => {
   assert.equal(refreshes, 0);
   assert.equal(WebRTC.reconnectTimer, null);
 });
+
+test('brief PC connect does not reset recovery circuit breakers', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._reconnectAttempt = 3;
+  WebRTC._relayHardRefreshCount = 2;
+  WebRTC._mediaResumeRefreshFallbackUsed = true;
+  WebRTC._mediaResumeSoftRecoverUsed = true;
+  WebRTC.pc = {
+    connectionState: 'connected',
+    iceConnectionState: 'completed',
+  };
+  WebRTC.startStats = () => {};
+  WebRTC.startVideoFrameTracking = () => {};
+  WebRTC.syncMediaProfile = () => {};
+  WebRTC.clearFailureRecommendation = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.ensureMediaActiveIfVisible = () => {};
+  WebRTC.syncDesktopInputGate = () => {};
+  // 调用将要抽出的方法
+  WebRTC.onPeerConnected();
+  assert.equal(WebRTC._reconnectAttempt, 3);
+  assert.equal(WebRTC._relayHardRefreshCount, 2);
+  assert.equal(WebRTC._mediaResumeRefreshFallbackUsed, true);
+  assert.equal(WebRTC._mediaResumeSoftRecoverUsed, true);
+});
+
+test('stable window resets circuit breakers after 5s connected', () => {
+  const timers = [];
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  global.setTimeout = (fn, ms) => {
+    const handle = { fn, ms, cleared: false };
+    timers.push(handle);
+    return handle;
+  };
+  global.clearTimeout = (handle) => { if (handle) handle.cleared = true; };
+  try {
+    const { WebRTC } = loadWebRTC();
+    WebRTC._reconnectAttempt = 3;
+    WebRTC.pc = { connectionState: 'connected' };
+    WebRTC.startStats = () => {};
+    WebRTC.startVideoFrameTracking = () => {};
+    WebRTC.syncMediaProfile = () => {};
+    WebRTC.clearFailureRecommendation = () => {};
+    WebRTC.updateNetworkUI = () => {};
+    WebRTC.ensureMediaActiveIfVisible = () => {};
+    WebRTC.syncDesktopInputGate = () => {};
+    WebRTC.onPeerConnected();
+    const stable = timers.find((t) => t.ms === 5000);
+    assert.ok(stable);
+    stable.fn();
+    assert.equal(WebRTC._reconnectAttempt, 0);
+  } finally {
+    global.setTimeout = realSetTimeout;
+    global.clearTimeout = realClearTimeout;
+  }
+});
