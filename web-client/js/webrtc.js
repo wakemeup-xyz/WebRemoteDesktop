@@ -2375,6 +2375,16 @@ const WebRTC = {
     return Boolean(this.controlState?.controller && this.controlState?.state === 'ACTIVE' && this.controlState?.lease);
   },
 
+  rebindActiveKeyboardLease(reason = 'rebind') {
+    if (!this.hasActiveControl()) return false;
+    const lease = this.controlState.lease;
+    if (!lease || typeof Input === 'undefined') return false;
+    Input.setControlLease(lease);
+    Input.setKeyboardDataChannelAvailable?.(this.inputChannel?.readyState === 'open');
+    Input.updateKeyboardUI?.();
+    return true;
+  },
+
   activeLeaseEnvelope() {
     if (!this.hasActiveControl()) return null;
     const lease = this.controlState.lease;
@@ -2580,28 +2590,36 @@ const WebRTC = {
       if (document.hidden) {
         if (typeof Input !== 'undefined') {
           Input.releasePointer?.('visibility-hidden');
-          Input.resetKeyboard?.('visibility-hidden');
+          if (this.inputChannel?.readyState === 'open') {
+            Input.resetKeyboard?.('visibility-hidden');
+          } else {
+            Input.parkKeyboard?.('visibility-hidden');
+          }
         }
         return;
       }
       if (this._refreshing || this.manualDisconnect) {
         if (this.hasActiveControl()) this.syncDesktopInputGate();
         this.ensureMediaActiveIfVisible('visibility-visible');
+        this.rebindActiveKeyboardLease('visibility-visible');
         return;
       }
       if (this.pc?.connectionState === 'connected' && this.inputChannel?.readyState !== 'open') {
         if (this.pc.sctp?.state === 'connected') {
           Promise.resolve(this.rebuildDataChannels('dc-dead-on-resume')).then((ok) => {
             if (!ok && !this._refreshing) this.refresh({ reason: 'dc-dead-on-resume' });
+            this.rebindActiveKeyboardLease('visibility-visible');
           });
         } else {
           this.refresh({ reason: 'dc-dead-on-resume' });
+          this.rebindActiveKeyboardLease('visibility-visible');
         }
         return;
       }
       if (this.hasActiveControl()) this.syncDesktopInputGate();
       // Returning to the tab must not leave Host suspended with a black frame.
       this.ensureMediaActiveIfVisible('visibility-visible');
+      this.rebindActiveKeyboardLease('visibility-visible');
     });
     window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
   },
@@ -2874,6 +2892,7 @@ const WebRTC = {
         } else if (el && el.classList.contains('hidden')) {
           console.log('[LOADING] Already hidden, skipping');
         }
+        this.hideReconnectHud();
       };
 
       // If metadata already loaded, hide loading immediately (race condition fix)
@@ -2964,6 +2983,7 @@ const WebRTC = {
       this._inputDcDegraded = false;
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
+      this.rebindActiveKeyboardLease('dc-open');
       // Start keepalive to prevent SCTP idle timeout and maintain Chrome's
       // "open DataChannel" exemption from background tab intensive throttling.
       this.startDcKeepalive();
@@ -3975,6 +3995,37 @@ if (this.tunnelLastObjectUrl) {
       }
   },
 
+  captureLastFrameHold(videoElement) {
+    const video = videoElement || document.getElementById('remoteVideo');
+    const canvas = document.getElementById('lastFrameHold');
+    if (!video || !canvas || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      return false;
+    }
+    try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return false;
+      ctx.drawImage(video, 0, 0);
+      canvas.classList.remove('hidden');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  showReconnectHud(text) {
+    const hud = document.getElementById('reconnectHud');
+    const label = document.getElementById('reconnectHudText');
+    if (label && text) label.textContent = text;
+    hud?.classList.remove('hidden');
+  },
+
+  hideReconnectHud() {
+    document.getElementById('reconnectHud')?.classList.add('hidden');
+    document.getElementById('lastFrameHold')?.classList.add('hidden');
+  },
+
   RECOVERY_REFRESH_COOLDOWN_MS: 3000,
   isForcedRefreshReason(reason) {
     return reason == null
@@ -3997,6 +4048,7 @@ if (this.tunnelLastObjectUrl) {
       this._refreshSettleTimer = null;
     }
     this._refreshing = false;
+    this.hideReconnectHud();
   },
 
   async refresh(options = {}) {
@@ -4065,10 +4117,15 @@ if (this.tunnelLastObjectUrl) {
     }
     this.stopDcKeepalive();
     const videoElement = document.getElementById('remoteVideo');
-    videoElement.classList.remove('connected');
-    document.body.classList.remove('stream-connected');
-    document.getElementById('loading').classList.remove('hidden');
-    updateLoadingText('正在重新连接...');
+    const heldLastFrame = this.captureLastFrameHold(videoElement);
+    if (heldLastFrame) {
+      this.showReconnectHud('正在重新连接…');
+    } else {
+      videoElement?.classList.remove('connected');
+      document.body.classList.remove('stream-connected');
+      document.getElementById('loading')?.classList.remove('hidden');
+      updateLoadingText('正在重新连接...');
+    }
     this.stopTunnelRelay();
 
     if (this.pc) {

@@ -4383,3 +4383,38 @@ test('tab return rebuilds DataChannels instead of full refresh when SCTP is live
   assert.equal(rebuilds, 1);
   assert.equal(refreshes, 0);
 });
+
+test('rebindActiveKeyboardLease reapplies the current control lease', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const leases = [];
+  context.Input = {
+    setControlLease(lease) { leases.push(lease); },
+    setKeyboardDataChannelAvailable() {},
+    updateKeyboardUI() {},
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    lease: { leaseId: 'lease-live-00000001', leaseEpoch: 3 },
+  };
+  WebRTC.inputChannel = { readyState: 'open' };
+  assert.equal(WebRTC.rebindActiveKeyboardLease('test'), true);
+  assert.equal(leases.length, 1);
+  assert.equal(leases[0].leaseId, 'lease-live-00000001');
+});
+
+test('refresh with last-frame hold keeps the full-screen loader hidden', async () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
+  WebRTC.createOffer = () => {};
+  WebRTC.pc = { close() {} };
+  WebRTC.captureLastFrameHold = () => true;
+  const loading = context.document.getElementById('loading');
+  loading.classList.add('hidden');
+  await WebRTC.refresh({ reason: 'manual' });
+  assert.equal(loading.classList.contains('hidden'), true);
+});

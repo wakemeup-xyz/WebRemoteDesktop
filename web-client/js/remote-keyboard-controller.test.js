@@ -419,3 +419,35 @@ test('transport barrier timeout then new lease clears stale resetRequired', () =
     'keydown must be accepted after fresh lease with no pending barrier'
   );
 });
+
+test('rebinding the same lease after barrier expiry clears RESET_REQUIRED', () => {
+  let now = 0;
+  const dataChannel = [];
+  const socket = [];
+  let nextId = 0;
+  const transport = KeyboardTransport.create({
+    sendDataChannel(payload) { dataChannel.push(payload); return true; },
+    sendSocket(payload) { socket.push(payload); return true; },
+    makeInputId: () => `kb-${++nextId}`,
+    now: () => now,
+    ackTimeoutMs: 3000,
+  });
+  const controller = RemoteKeyboardController.create({ transport });
+  const lease = { leaseId: 'lease-001', leaseEpoch: 1 };
+  controller.setLease(lease);
+  transport.markAdapterUnavailable('dataChannel');
+  now = 4000;
+  transport.getSnapshot();
+  assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+  controller.setLease(lease);
+  assert.equal(controller.getSnapshot().state, 'READY');
+  assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyA', key: 'a' })), true);
+});
+
+test('park clears local keys without entering RESET_REQUIRED', () => {
+  const { controller } = makeController();
+  controller.handleDomEvent(keyEvent('keydown', { code: 'KeyA', key: 'a' }));
+  controller.park('visibility-hidden');
+  assert.equal(controller.getSnapshot().state, 'READY');
+  assert.equal(controller.getSnapshot().pressedKeyCount, 0);
+});

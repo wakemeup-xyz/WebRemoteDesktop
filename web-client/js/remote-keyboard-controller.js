@@ -369,6 +369,14 @@
       return Boolean(beginReset(reason || 'manual'));
     }
 
+    // Clear local pressed keys without a transport reset barrier.
+    // Used when the tab hides and DataChannel is already dead — sendReset would
+    // fail, expire the lease, and leave RESET_REQUIRED until a new grant.
+    function park(_reason) {
+      pressed.clear();
+      notify();
+    }
+
     function getSnapshot() {
       return {
         state: state(),
@@ -378,7 +386,7 @@
       };
     }
 
-    return { setLease, setMode, handleDomEvent, sendChord, sendText, reset, getSnapshot };
+    return { setLease, setMode, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
   }
 
   return { create };

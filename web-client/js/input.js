@@ -134,7 +134,12 @@ const Input = {
     relayImage?.addEventListener('contextmenu', (event) => event.preventDefault());
     window.addEventListener('blur', () => {
       this.releasePointer('window-blur');
-      this.resetKeyboard('window-blur');
+      // Do not sendReset when DC is already down — that expires the lease and
+      // leaves RESET_REQUIRED until the next control-grant (which we no longer
+      // fire on a live PC).
+      const dcOpen = typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open';
+      if (dcOpen) this.resetKeyboard('window-blur');
+      else this.parkKeyboard('window-blur');
     });
   },
 
@@ -207,6 +212,16 @@ const Input = {
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
     return this.keyboardController?.reset(reason) || false;
+  },
+
+  parkKeyboard(reason) {
+    this.lastKeyboardResetReason = reason;
+    if (this.keyboardController && typeof this.keyboardController.park === 'function') {
+      this.keyboardController.park(reason);
+      this.updateKeyboardUI();
+      return true;
+    }
+    return false;
   },
 
   getDiagnosticState() {
