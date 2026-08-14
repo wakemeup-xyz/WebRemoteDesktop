@@ -58,47 +58,49 @@
       </div>
     </div>
 
-    <div class="control-bar">
-      <button id="scaleBtn" class="control-btn" data-core-control>
-        缩放：自适应
-      </button>
-      <button id="resolutionBtn" class="control-btn" data-core-control>
-        分辨率设置
-      </button>
-      <button id="fullscreenBtn" class="control-btn" data-core-control>
-        全屏
-      </button>
-      <button id="networkModeBtn" class="control-btn" data-core-control>
-        网络：自动
-      </button>
-      <button id="portSearchBtn" class="control-btn" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search">
-        搜索端口
-      </button>
-      <button id="pauseBtn" class="control-btn" data-core-control>
-        暂停
-      </button>
-      <button id="disconnectBtn" class="control-btn danger" data-core-control>
-        断开连接
-      </button>
-    </div>
+    <div id="chromeDocks" class="chrome-docks" aria-label="桌面控件">
+      <div class="action-bar">
+        <button class="action-btn" data-action="enter" data-core-control>回车</button>
+        <button class="action-btn" data-action="up" data-core-control>上</button>
+        <button class="action-btn" data-action="down" data-core-control>下</button>
+        <button class="action-btn" data-action="left" data-core-control>左</button>
+        <button class="action-btn" data-action="right" data-core-control>右</button>
+        <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
+        <button class="action-btn" data-action="copy" data-core-control>复制</button>
+        <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
+        <button class="action-btn" data-action="cut" data-core-control>剪切</button>
+        <button class="action-btn" data-action="undo" data-core-control>撤销</button>
+        <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
+        <button class="action-btn" data-action="save" data-core-control>保存</button>
+        <button class="action-btn" data-action="find" data-core-control>查找</button>
+        <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
+        <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
+        <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
+      </div>
 
-    <div class="action-bar">
-      <button class="action-btn" data-action="enter" data-core-control>回车</button>
-      <button class="action-btn" data-action="up" data-core-control>上</button>
-      <button class="action-btn" data-action="down" data-core-control>下</button>
-      <button class="action-btn" data-action="left" data-core-control>左</button>
-      <button class="action-btn" data-action="right" data-core-control>右</button>
-      <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
-      <button class="action-btn" data-action="copy" data-core-control>复制</button>
-      <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
-      <button class="action-btn" data-action="cut" data-core-control>剪切</button>
-      <button class="action-btn" data-action="undo" data-core-control>撤销</button>
-      <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
-      <button class="action-btn" data-action="save" data-core-control>保存</button>
-      <button class="action-btn" data-action="find" data-core-control>查找</button>
-      <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
-      <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
-      <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
+      <div class="control-bar">
+        <button id="scaleBtn" class="control-btn" data-core-control>
+          缩放：自适应
+        </button>
+        <button id="resolutionBtn" class="control-btn" data-core-control>
+          分辨率设置
+        </button>
+        <button id="fullscreenBtn" class="control-btn" data-core-control>
+          全屏
+        </button>
+        <button id="networkModeBtn" class="control-btn" data-core-control>
+          网络：自动
+        </button>
+        <button id="portSearchBtn" class="control-btn" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search">
+          搜索端口
+        </button>
+        <button id="pauseBtn" class="control-btn" data-core-control>
+          暂停
+        </button>
+        <button id="disconnectBtn" class="control-btn danger" data-core-control>
+          断开连接
+        </button>
+      </div>
     </div>
   </main>
 

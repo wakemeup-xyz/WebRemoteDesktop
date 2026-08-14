@@ -683,11 +683,31 @@ body.stream-connected .status-action-secondary:focus-visible {
 }
 
 /* ========== Control Bar (Dock) ========== */
-.control-bar {
+.chrome-docks {
   position: fixed;
-  bottom: 24px;
   left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+
+.chrome-docks .action-bar,
+.chrome-docks .control-bar {
+  position: static;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  pointer-events: auto;
+  max-width: 100%;
+}
+
+.control-bar {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -711,8 +731,7 @@ body:not(.stream-connected) .control-bar {
   opacity: 1;
 }
 
-body.controls-hidden .control-bar,
-body.controls-hidden .action-bar {
+body.controls-hidden .chrome-docks {
   display: none !important;
 }
 
@@ -1200,10 +1219,6 @@ body.controls-hidden .network-advisor.visible {
 
 /* ========== Action Bar (Dock) ========== */
 .action-bar {
-  position: fixed;
-  bottom: 84px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;

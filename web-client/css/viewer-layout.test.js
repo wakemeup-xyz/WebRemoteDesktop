@@ -65,3 +65,16 @@ test('viewer layout uses --chrome-top instead of a hardcoded 56px body pad', () 
   assert.match(css, /padding-top\s*:\s*var\(--chrome-top\)/);
   assert.doesNotMatch(css, /body\s*\{[^}]*padding-top\s*:\s*56px/);
 });
+
+test('docks share one fixed column wrapper', () => {
+  assert.match(html, /id="chromeDocks"[\s\S]*class="action-bar"[\s\S]*class="control-bar"/);
+  const docks = getBlock('.chrome-docks');
+  assert.match(docks, /position\s*:\s*fixed/);
+  assert.match(docks, /flex-direction\s*:\s*column/);
+  // getBlock() is a first-substring matcher; `.chrome-docks .control-bar {`
+  // would steal `.control-bar`. Anchor to a line-start rule instead.
+  assert.match(css, /(?:^|\n)\.action-bar\s*\{[^}]*display\s*:\s*flex/);
+  assert.doesNotMatch(css, /(?:^|\n)\.action-bar\s*\{[^}]*position\s*:\s*fixed/);
+  assert.match(css, /(?:^|\n)\.control-bar\s*\{[^}]*display\s*:\s*flex/);
+  assert.doesNotMatch(css, /(?:^|\n)\.control-bar\s*\{[^}]*position\s*:\s*fixed/);
+});
