@@ -129,12 +129,78 @@ def test_post_key_uses_optional_source_and_posts_modifier_flags(monkeypatch):
     }]
 
 
+def test_post_key_always_sets_flags_when_modifier_mask_is_zero(monkeypatch):
+    """Letter keys must call CGEventSetFlags even when no modifiers are held.
+
+    Quartz arrow/function-key events carry SecondaryFn. If the next letter
+    skips SetFlags, macOS treats it as Globe/Fn+letter (emoji palette / IME).
+    """
+    calls = patch_quartz(monkeypatch)
+    adapter = QuartzKeyboardAdapter(source="given-source")
+
+    adapter.post_key("KeyE", True, 0)
+    adapter.post_key("KeyE", False, 0)
+
+    assert [event["flags"] for event in calls.events] == [0, 0]
+
+
+def test_letter_after_arrow_does_not_keep_secondary_fn(monkeypatch):
+    calls = patch_quartz(monkeypatch)
+    adapter = QuartzKeyboardAdapter(source="given-source")
+
+    adapter.post_key("ArrowLeft", True, 0)
+    adapter.post_key("ArrowLeft", False, 0)
+    adapter.post_key("KeyE", True, 0)
+    adapter.post_key("KeyE", False, 0)
+
+    letter_flags = [event["flags"] for event in calls.events if event["key_code"] == 14]
+    assert letter_flags == [0, 0]
+    assert all(
+        (flags & adapter_module.kCGEventFlagMaskSecondaryFn) == 0
+        for flags in letter_flags
+    )
+
+
+def test_arrow_keys_keep_native_function_flags(monkeypatch):
+    calls = patch_quartz(monkeypatch)
+    adapter = QuartzKeyboardAdapter(source="given-source")
+
+    adapter.post_key("ArrowLeft", True, 0)
+
+    expected = (
+        adapter_module.kCGEventFlagMaskSecondaryFn
+        | adapter_module.kCGEventFlagMaskNumericPad
+    )
+    assert calls.events[0]["flags"] == expected
+
+
 def test_text_uses_unicode_events_without_global_input_source_mutation(monkeypatch):
     calls = patch_quartz(monkeypatch)
     QuartzKeyboardAdapter().post_text("中文🙂")
 
     assert calls.unicode_strings == ["中文🙂"]
     assert [event["key_code"] for event in calls.events] == [0]
+    assert [event["flags"] for event in calls.events] == [0]
+
+
+def test_post_text_after_arrow_does_not_keep_secondary_fn(monkeypatch):
+    calls = patch_quartz(monkeypatch)
+    adapter = QuartzKeyboardAdapter(source="given-source")
+
+    adapter.post_key("ArrowUp", True, 0)
+    adapter.post_key("ArrowUp", False, 0)
+    adapter.post_text("e")
+
+    text_events = [event for event in calls.events if event["key_code"] == 0]
+    assert text_events == [{
+        "source": "given-source", "key_code": 0, "is_down": True, "flags": 0,
+    }]
+
+
+def test_numlock_keeps_native_function_flag(monkeypatch):
+    calls = patch_quartz(monkeypatch)
+    QuartzKeyboardAdapter(source="given-source").post_key("NumLock", True, 0)
+    assert calls.events[0]["flags"] == adapter_module.kCGEventFlagMaskSecondaryFn
 
 
 def test_text_chunks_without_splitting_utf16_surrogate_pairs(monkeypatch):

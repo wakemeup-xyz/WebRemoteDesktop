@@ -8,6 +8,8 @@ from Quartz import (
     CGEventSourceCreate,
     CGEventSourceFlagsState,
     kCGEventFlagMaskAlphaShift,
+    kCGEventFlagMaskNumericPad,
+    kCGEventFlagMaskSecondaryFn,
     kCGEventSourceStateHIDSystemState,
     kCGHIDEventTap,
 )
@@ -57,7 +59,26 @@ MAC_KEY_CODE_BY_DOM_CODE = {
 
 UNSUPPORTED_DOM_CODES = frozenset({"ContextMenu", "Convert", "NonConvert"})
 
+# Quartz tags these as function keys. Arrow events also carry NumericPad.
+# post_key must set flags on every event so a later letter cannot inherit Fn.
+_ARROW_DOM_CODES = frozenset({"ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"})
+_FUNCTION_DOM_CODES = frozenset({
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10",
+    "F11", "F12", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20",
+    "Home", "End", "PageUp", "PageDown", "Delete", "Insert",
+    "NumLock", "NumpadClear",
+})
+
 _MAX_UNICODE_UTF16_UNITS = 1024
+
+
+def quartz_flags_for_dom_code(code: str, modifier_mask: int = 0) -> int:
+    flags = int(modifier_mask or 0)
+    if code in _ARROW_DOM_CODES:
+        return flags | kCGEventFlagMaskSecondaryFn | kCGEventFlagMaskNumericPad
+    if code in _FUNCTION_DOM_CODES:
+        return flags | kCGEventFlagMaskSecondaryFn
+    return flags
 
 
 def _unicode_chunks(text: str):
@@ -96,13 +117,16 @@ class QuartzKeyboardAdapter:
         if mac_code is None:
             raise UnsupportedPhysicalCode(code)
         event = CGEventCreateKeyboardEvent(self._source, mac_code, is_down)
-        if modifier_mask:
-            CGEventSetFlags(event, modifier_mask)
+        # Always set flags, including 0. Arrow/Fn events leave SecondaryFn on
+        # the source; skipping SetFlags makes the next letter look like Globe+key.
+        CGEventSetFlags(event, quartz_flags_for_dom_code(code, modifier_mask))
         CGEventPost(kCGHIDEventTap, event)
 
     def post_text(self, text: str) -> None:
         for chunk in _unicode_chunks(text):
             event = CGEventCreateKeyboardEvent(self._source, 0, True)
+            # Same contract as post_key: never inherit leftover SecondaryFn.
+            CGEventSetFlags(event, 0)
             CGEventKeyboardSetUnicodeString(
                 event,
                 len(chunk.encode("utf-16-le", errors="surrogatepass")) // 2,
