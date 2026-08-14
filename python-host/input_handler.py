@@ -87,8 +87,7 @@ class InputHandler:
         )
         for key_code, is_down, flags in steps:
             event = CGEventCreateKeyboardEvent(self.source, key_code, is_down)
-            if flags:
-                CGEventSetFlags(event, flags)
+            CGEventSetFlags(event, flags)
             CGEventPost(kCGHIDEventTap, event)
         logger.info("Requested input method switch with Control+Space")
 

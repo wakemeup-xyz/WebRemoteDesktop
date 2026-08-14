@@ -91,6 +91,72 @@ def test_old_datachannel_and_mismatched_lease_are_rejected_after_takeover():
     }) is None
 
 
+def test_live_datachannel_follows_control_rebind_without_new_offer():
+    """Granting control updates the lease; the existing DC must use the new binding."""
+    host = object.__new__(WebRemoteHost)
+    old_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 7,
+        "connectionGeneration": 4,
+    }
+    new_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000002",
+        "leaseEpoch": 8,
+        "connectionGeneration": 5,
+    }
+    channel = SimpleNamespace(label="input")
+    host._active_input_binding = new_binding
+    host._input_datachannel = channel
+    host._input_move_datachannel = None
+
+    data = host._prepare_bound_datachannel_input(old_binding, {
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "leaseId": new_binding["leaseId"],
+        "leaseEpoch": new_binding["leaseEpoch"],
+        "seq": 1,
+        "inputIds": ["input-1"],
+        "payload": {},
+    }, channel=channel)
+
+    assert data["viewerId"] == "viewer-1"
+    assert data["leaseId"] == new_binding["leaseId"]
+    assert data["leaseEpoch"] == 8
+    assert data["connectionGeneration"] == 5
+
+
+def test_stale_datachannel_does_not_inherit_rebinding_even_for_same_viewer():
+    host = object.__new__(WebRemoteHost)
+    old_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 7,
+        "connectionGeneration": 4,
+    }
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000002",
+        "leaseEpoch": 8,
+        "connectionGeneration": 5,
+    }
+    stale = SimpleNamespace(label="input")
+    live = SimpleNamespace(label="input")
+    host._input_datachannel = live
+    host._input_move_datachannel = None
+
+    assert host._prepare_bound_datachannel_input(old_binding, {
+        "schemaVersion": 2,
+        "type": "mouse",
+        "action": "move",
+        "leaseId": "lease-000000000002",
+        "leaseEpoch": 8,
+        "payload": {"relX": 0.5, "relY": 0.5},
+    }, channel=stale) is None
+
+
 @pytest.mark.asyncio
 async def test_v2_input_uses_active_lease_binding_instead_of_legacy_offer_viewer():
     binding = {
