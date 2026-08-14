@@ -2580,13 +2580,19 @@ const WebRTC = {
         }
         return;
       }
-      // If DC is dead while PC is still connected, do a proactive refresh instead of
-      // waiting for the 3s DC-close timer → noteDataChannelFault cycle that causes storms.
-      if (this.pc?.connectionState === 'connected'
-          && this.inputChannel?.readyState !== 'open'
-          && !this._refreshing && !this.manualDisconnect) {
-        console.warn('[INPUT-DC] DC dead on tab return, proactive refresh');
-        this.refresh({ reason: 'dc-dead-on-resume' });
+      if (this._refreshing || this.manualDisconnect) {
+        if (this.hasActiveControl()) this.syncDesktopInputGate();
+        this.ensureMediaActiveIfVisible('visibility-visible');
+        return;
+      }
+      if (this.pc?.connectionState === 'connected' && this.inputChannel?.readyState !== 'open') {
+        if (this.pc.sctp?.state === 'connected') {
+          Promise.resolve(this.rebuildDataChannels('dc-dead-on-resume')).then((ok) => {
+            if (!ok && !this._refreshing) this.refresh({ reason: 'dc-dead-on-resume' });
+          });
+        } else {
+          this.refresh({ reason: 'dc-dead-on-resume' });
+        }
         return;
       }
       if (this.hasActiveControl()) this.syncDesktopInputGate();

@@ -4318,3 +4318,31 @@ test('stable window resets circuit breakers after 5s connected', () => {
     global.clearTimeout = realClearTimeout;
   }
 });
+
+test('tab return rebuilds DataChannels instead of full refresh when SCTP is live', () => {
+  const listeners = {};
+  const { WebRTC } = loadWebRTC({
+    document: {
+      hidden: false,
+      body: makeElement(),
+      addEventListener(type, fn) { listeners[type] = fn; },
+      getElementById() { return makeElement(); },
+      querySelector: () => null,
+    },
+  });
+  let refreshes = 0;
+  let rebuilds = 0;
+  WebRTC._controlLifecycleBound = false;
+  WebRTC.bindControlLifecycle();
+  WebRTC.pc = { connectionState: 'connected', sctp: { state: 'connected' } };
+  WebRTC.inputChannel = { readyState: 'closing' };
+  WebRTC.manualDisconnect = false;
+  WebRTC._refreshing = false;
+  WebRTC.hasActiveControl = () => false;
+  WebRTC.ensureMediaActiveIfVisible = () => false;
+  WebRTC.refresh = () => { refreshes += 1; };
+  WebRTC.rebuildDataChannels = () => { rebuilds += 1; return true; };
+  listeners.visibilitychange();
+  assert.equal(rebuilds, 1);
+  assert.equal(refreshes, 0);
+});
