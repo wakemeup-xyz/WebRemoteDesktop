@@ -1389,6 +1389,7 @@ class WebRemoteHost:
         self.overlay = OverlayNotifier()
         self.relay_streamer = None
         self._input_datachannel = None
+        self._input_move_datachannel = None
         self._active_input_binding = None
         self._connection_generation = 0
         self._input_lifecycle_tasks = set()
@@ -1774,11 +1775,25 @@ class WebRemoteHost:
             for field in ("viewerId", "leaseId", "leaseEpoch", "connectionGeneration")
         )
 
-    def _prepare_bound_datachannel_input(self, binding, data):
-        """Apply immutable offer context to one direct DataChannel message."""
-        if not isinstance(data, dict) or not self._binding_matches(
-            binding, getattr(self, "_active_input_binding", None)
-        ):
+    def _is_live_input_channel(self, channel):
+        return channel is not None and (
+            channel is getattr(self, "_input_datachannel", None)
+            or channel is getattr(self, "_input_move_datachannel", None)
+        )
+
+    def _prepare_bound_datachannel_input(self, binding, data, channel=None):
+        """Stamp one DataChannel message with the current live lease.
+
+        Control grant updates `_active_input_binding` without a new offer.
+        The live input/input-move channels must follow that lease; a captured
+        snapshot from channel-open is only used to reject leftover channels.
+        """
+        if not isinstance(data, dict):
+            return None
+        active = getattr(self, "_active_input_binding", None)
+        if self._is_live_input_channel(channel) and isinstance(active, dict):
+            binding = active
+        elif not self._binding_matches(binding, active):
             return None
         if data.get("schemaVersion") == 2 and (
             data.get("leaseId") != binding["leaseId"]
@@ -1811,6 +1826,10 @@ class WebRemoteHost:
 
     def _handle_datachannel_close(self, channel, binding):
         """Only the active reliable input channel can end a keyboard lease."""
+        if getattr(channel, "label", None) == "input-move":
+            if channel is getattr(self, "_input_move_datachannel", None):
+                self._input_move_datachannel = None
+            return
         if getattr(channel, "label", None) != "input":
             return
         if channel is not getattr(self, "_input_datachannel", None):
@@ -1951,6 +1970,7 @@ class WebRemoteHost:
         closing_pc = getattr(self, "pc", None)
         closing_track = getattr(self, "screen_track", None)
         closing_channel = getattr(self, "_input_datachannel", None)
+        closing_move_channel = getattr(self, "_input_move_datachannel", None)
         closing_candidates = getattr(self, "pending_candidates", None)
         closing_binding = getattr(self, "_active_input_binding", None)
         closing_epoch = (
@@ -1962,6 +1982,8 @@ class WebRemoteHost:
         self._active_input_binding = None
         if self._input_datachannel is closing_channel:
             self._input_datachannel = None
+        if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
+            self._input_move_datachannel = None
         await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
 
         if closing_pc:
@@ -2117,6 +2139,8 @@ class WebRemoteHost:
                     binding = dict(self._active_input_binding or {})
                     if channel.label == "input":
                         self._input_datachannel = channel
+                    elif channel.label == "input-move":
+                        self._input_move_datachannel = channel
 
                     @channel.on("close")
                     def on_close():
@@ -2150,7 +2174,7 @@ class WebRemoteHost:
                                 channel.send(json.dumps(resp))
                                 return
 
-                            bound = self._prepare_bound_datachannel_input(binding, data)
+                            bound = self._prepare_bound_datachannel_input(binding, data, channel=channel)
                             if bound is None:
                                 logger.warning("Ignoring unbound or stale DataChannel input")
                                 return
