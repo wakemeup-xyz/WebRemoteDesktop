@@ -3667,6 +3667,42 @@ test('control grant honors the media input gate before a fresh frame', () => {
   assert.deepEqual(inputCalls, [false]);
 });
 
+test('control grant does not createOffer when PC and DC are already live', () => {
+  const { WebRTC, context } = loadWebRTC();
+  let offers = 0;
+  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  WebRTC.startControlHeartbeat = () => {};
+  WebRTC.updateControlUI = () => {};
+  WebRTC.createOffer = () => { offers += 1; };
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.bindCurrentConnectionAttempt = () => false;
+  WebRTC.replayMediaActivityIntent = () => false;
+  WebRTC.ensureMediaActiveIfVisible = () => false;
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = { connectionState: 'connected' };
+  WebRTC.inputChannel = { readyState: 'open' };
+  WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 1 });
+  assert.equal(offers, 0);
+});
+
+test('control grant still creates offer when PC is missing', () => {
+  const { WebRTC, context } = loadWebRTC();
+  let offers = 0;
+  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  WebRTC.startControlHeartbeat = () => {};
+  WebRTC.updateControlUI = () => {};
+  WebRTC.createOffer = () => { offers += 1; };
+  WebRTC.createPeerConnection = () => { WebRTC.pc = { connectionState: 'new' }; };
+  WebRTC.bindCurrentConnectionAttempt = () => false;
+  WebRTC.replayMediaActivityIntent = () => false;
+  WebRTC.ensureMediaActiveIfVisible = () => false;
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = null;
+  WebRTC.inputChannel = null;
+  WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 1 });
+  assert.equal(offers, 1);
+});
+
 test('starting a new tunnel producer resets the frame-id cursor', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();

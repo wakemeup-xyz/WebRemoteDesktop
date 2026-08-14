@@ -2480,10 +2480,14 @@ const WebRTC = {
       this.replayMediaActivityIntent('control-regrant');
     } else {
       const pcState = this.pc?.connectionState;
-      if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
-        this.createPeerConnection();
+      const dcOpen = this.inputChannel?.readyState === 'open';
+      const live = pcState === 'connected' && (dcOpen || this._refreshing);
+      if (!live) {
+        if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
+          this.createPeerConnection();
+        }
+        this.createOffer();
       }
-      this.createOffer();
       this.replayMediaActivityIntent('control-regrant');
     }
   },
