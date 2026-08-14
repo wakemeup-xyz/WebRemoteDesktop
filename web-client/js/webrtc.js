@@ -4226,7 +4226,7 @@ if (this.tunnelLastObjectUrl) {
         if (this.manualDisconnect || !this.socket || !this.socket.connected) {
           return;
         }
-        this.refresh();
+        this.refresh({ reason: 'reconnect:ice-restart-timeout' });
       }, 1500);
       return;
     }
