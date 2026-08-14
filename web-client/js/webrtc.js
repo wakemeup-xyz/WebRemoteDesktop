@@ -913,6 +913,7 @@ const WebRTC = {
   },
 
   enterUnavailableRelayState(message) {
+    this.markRefreshSettled('unavailable-relay');
     this.offerInProgress = false;
     this._offerEpoch += 1;
     if (this.reconnectTimer) {
@@ -2675,11 +2676,12 @@ const WebRTC = {
 
     this.pc.oniceconnectionstatechange = () => {
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
-      if (this._refreshing) return;
       if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
         if (this._mediaResumeArmPending) {
           this.ensureMediaResumeFallbackArmed('ice-connected');
         }
+      } else if (this._refreshing) {
+        return;
       } else if (this.pc.iceConnectionState === 'disconnected') {
         // Disconnected is often temporary; wait 5s for auto-recovery before forcing reconnect
         if (this._iceDisconnectedTimer) return;
@@ -2699,8 +2701,17 @@ const WebRTC = {
 
     this.pc.onconnectionstatechange = () => {
       console.log('Viewer Connection state:', this.pc.connectionState);
-      if (this._refreshing) return;
       if (this.pc.connectionState === 'connected') {
+        if (this._refreshing) {
+          if (this.inputChannel?.readyState === 'open') {
+            this.markRefreshSettled('pc-connected');
+          } else {
+            const waitTimer = setTimeout(() => {
+              this.markRefreshSettled('pc-connected-dc-wait');
+            }, 2000);
+            waitTimer.unref?.();
+          }
+        }
         // Cancel any pending disconnected-recovery timers
         if (this._disconnectedTimer) {
           clearTimeout(this._disconnectedTimer);
@@ -2768,6 +2779,8 @@ const WebRTC = {
             }
           }
         }, 2000);
+      } else if (this._refreshing) {
+        return;
       } else if (['failed', 'disconnected', 'closed'].includes(this.pc.connectionState)) {
         this.stopMediaTelemetry();
         if (typeof Input !== 'undefined') {
@@ -2916,6 +2929,7 @@ const WebRTC = {
 
     inputChannel.onopen = () => {
       if (this.inputChannel !== inputChannel) return;
+      if (this._refreshing) this.markRefreshSettled('dc-open');
       console.log('[INPUT-DC] DataChannel open');
       if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
       this._inputDcDegraded = false;
@@ -3948,6 +3962,14 @@ if (this.tunnelLastObjectUrl) {
     return true;
   },
 
+  markRefreshSettled(_reason) {
+    if (this._refreshSettleTimer) {
+      clearTimeout(this._refreshSettleTimer);
+      this._refreshSettleTimer = null;
+    }
+    this._refreshing = false;
+  },
+
   async refresh(options = {}) {
     let reason = null;
     if (typeof options === 'string') {
@@ -3975,6 +3997,14 @@ if (this.tunnelLastObjectUrl) {
       }
     }
     this._refreshing = true;
+    if (this._refreshSettleTimer) {
+      clearTimeout(this._refreshSettleTimer);
+      this._refreshSettleTimer = null;
+    }
+    this._refreshSettleTimer = setTimeout(() => {
+      this.markRefreshSettled('timeout');
+    }, 8000);
+    this._refreshSettleTimer.unref?.();
     this._lastRefreshAt = Date.now();
     this.manualDisconnect = false;
     this.offerInProgress = false;
@@ -4025,8 +4055,6 @@ if (this.tunnelLastObjectUrl) {
     this._iceRestartAttempts = 0;
     this.stopMediaTelemetry();
     if (typeof Input !== 'undefined') Input.setActive(false);
-
-    this._refreshing = false;
 
     if (this.networkMode === 'relay' && !this.hasTurnConfigured()) {
       this.setFailureRecommendation('relay-unavailable-no-turn', 'warning');
@@ -4239,6 +4267,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   disconnect() {
+    this.markRefreshSettled('disconnect');
     this.stopPortSearch('disconnect');
     this.manualDisconnect = true;
     this.offerInProgress = false;

@@ -4232,3 +4232,32 @@ test('manual refresh bypasses recovery cooldown', async () => {
   await WebRTC.refresh({ reason: 'manual' });
   assert.equal(closed, 1);
 });
+
+test('refresh keeps _refreshing true until settled', async () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {}, connectionState: 'connecting' }; };
+  WebRTC.createOffer = () => {};
+  WebRTC.pc = { close() {} };
+  await WebRTC.refresh({ reason: 'manual' });
+  assert.equal(WebRTC._refreshing, true);
+  WebRTC.markRefreshSettled('test');
+  assert.equal(WebRTC._refreshing, false);
+});
+
+test('scheduleReconnect is a no-op while _refreshing', () => {
+  const { WebRTC } = loadWebRTC();
+  let refreshes = 0;
+  WebRTC.manualDisconnect = false;
+  WebRTC._refreshing = true;
+  WebRTC.reconnectTimer = null;
+  WebRTC.isMediaHealthSuppressed = () => false;
+  WebRTC.isPortSearchActive = () => false;
+  WebRTC.refresh = () => { refreshes += 1; };
+  WebRTC.scheduleReconnect('ice-closed');
+  assert.equal(refreshes, 0);
+  assert.equal(WebRTC.reconnectTimer, null);
+});
