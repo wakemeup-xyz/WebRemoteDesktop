@@ -1,8 +1,8 @@
 # 复盘报告：黑屏重连风暴 + 键盘需复位
 
 **日期**：2026-08-13  
-**涉及提交**：`3ff9859`、`2d244e8`、`57632aa`、`949db96`  
-**状态**：第四轮修复已实施，初步数据有效
+**涉及提交**：`3ff9859`、`2d244e8`、`57632aa`、`949db96`、`ec1cc81`  
+**状态**：第五轮修复已实施（keepalive + 测试补充），等待长效验证
 
 ---
 
@@ -188,3 +188,60 @@ FIX-A2（proactive refresh on tab return）依赖一个假设：重连后新 DC 
 **Commit SHA**：`949db96`  
 **文件改动**：`web-client/js/webrtc.js`（+17行）、`web-client/js/remote-keyboard-controller.js`（+6行）  
 **测试**：167 JS tests pass
+
+---
+
+## 八、第五轮补充修复：`ec1cc81`（2026-08-14，DC keepalive）
+
+### 背景研究结论
+
+查阅 Chrome 官方文档后确认：
+
+- **Chrome 88+**：background tab 在满足「5分钟后台 + 无活跃实时连接 + 无声音」时，JS timer 被 intensive throttle（最多1分钟一次）。豁免条件：有 `open RTCDataChannel` 或 live `MediaStreamTrack`。
+- **Chrome 133+**：Energy Saver 模式下 CPU 密集的 background tab 会被**完全 freeze**。豁免条件完全相同。
+- **Screen Wake Lock API 无效**：该 API 在 tab 变 hidden 时自动释放，对防止后台 DC 死亡毫无帮助。
+- **SCTP heartbeat**：运行在 C++ 网络线程，理论上不受 JS timer throttle 影响，但 SCTP 本身有空闲超时（协议默认约30s无流量可超时），且 renderer 进程被 freeze 后包发送通道同样受阻。
+
+**核心悖论**：DataChannel 死了 → 失去 Chrome 豁免 → Chrome 更激进地 freeze tab → SCTP 更难恢复 → 形成恶性循环。
+
+### 修复内容
+
+**DC 应用层 keepalive**（`webrtc.js` + `host.py`）
+
+每 15 秒通过 `inputChannel` 发送一条 `{type:'dc_keepalive'}` 消息：
+- **防 SCTP 空闲超时**：打破30s无流量的空闲计时
+- **维持 Chrome open-DC 豁免**：让 Chrome 认为 tab 仍有活跃 DataChannel，不进入 intensive throttle / Energy Saver freeze
+
+集成点：
+- `inputChannel.onopen` → `startDcKeepalive()`
+- `inputChannel.onclose` → `stopDcKeepalive()`
+- `refresh()` / `rebuildDataChannels()` → `stopDcKeepalive()`（重建前清理旧定时器）
+
+`host.py` 增加 `dc_keepalive` 类型过滤，静默丢弃，不当作输入处理。
+
+**补充键盘 reset 专项测试**（`remote-keyboard-controller.test.js`）
+
+补写了 `949db96` 修复路径的专项测试（之前遗漏）：barrier 超时 → 新 lease 到来 → `resetRequired` 被清除 → 键盘恢复 READY。测试覆盖完整状态转换链路。
+
+### 防御深度
+
+| 层次 | 机制 | 触发时机 | 对应提交 |
+|------|------|----------|---------|
+| 预防 | DC keepalive 每 15s 发 ping | DC 打开后持续运行 | `ec1cc81` |
+| 检测 | tab 返回时主动检查 DC 状态 | visibilitychange visible | `949db96` |
+| 熔断 | scheduleReconnect 3s 冷却 | 任何重连请求 | `949db96` |
+
+---
+
+## 九、最终问题清单
+
+| 问题 | 状态 | 修复提交 |
+|------|------|---------|
+| 黑屏 / fps=0 周期性假死 | ✅ 已修 | `3ff9859` jitterBuffer 80ms |
+| 重连风暴（tab 切换触发）| ✅ 基本解决 | `949db96` 冷却+检测；`ec1cc81` keepalive 预防 |
+| 键盘需复位 | ✅ 已修 | `949db96` 清除过期 resetRequired |
+| 幽灵 Ctrl/Cmd 按键 | ✅ 已修 | `6610705` modifier reconcile |
+| IME 丢失 + 方向键弹表情 | ✅ 已修 | `6411c87`+`6610705` |
+| 长时间黑屏不自愈（14min）| ✅ 已修 | `57632aa` F3 dead detection |
+
+**遗留说明**：SCTP 被 Chrome 后台杀死是浏览器行为，无法从代码层完全消除。现有三层防御将用户体验从「数十轮无法用」降级为「偶发一次短暂重连」，属于可接受的工程权衡。
