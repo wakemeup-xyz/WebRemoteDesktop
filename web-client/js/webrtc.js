@@ -159,7 +159,7 @@ const WebRTC = {
   // Remote-desktop users alt-tab constantly. The original 750ms page-hidden delay
   // suspended capture ~2s after connect and left Host at FPS=0 while ICE stayed up
   // ("can't connect"). Keep intentional suspend, but require a sustained hide.
-  PAGE_HIDDEN_SUSPEND_DELAY_MS: 30000,
+  PAGE_HIDDEN_SUSPEND_DELAY_MS: 300000,
 
   initializeMediaActivity() {
     if (this.mediaActivityController) {
