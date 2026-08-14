@@ -44,3 +44,19 @@ test('status bar groups metrics and actions for operator chrome', () => {
   const metrics = getBlock('.status-metrics');
   assert.match(metrics, /inline-flex/);
 });
+
+test('tokens define chrome geometry and secondary text', () => {
+  const tokens = fs.readFileSync(path.join(__dirname, 'tokens.css'), 'utf8');
+  assert.match(tokens, /--chrome-top\s*:\s*56px/);
+  assert.match(tokens, /--text-secondary\s*:\s*#cbd5e1/i);
+  assert.match(tokens, /--touch-min\s*:\s*44px/);
+  assert.match(tokens, /--focus-ring/);
+});
+
+test('hidden attribute cannot be overridden by flex buttons', () => {
+  assert.match(css, /\[hidden\]\s*,\s*\.hidden\s*\{[^}]*display\s*:\s*none\s*!important/);
+});
+
+test('viewer css no longer redefines the :root token block', () => {
+  assert.doesNotMatch(css, /:root\s*\{[^}]*--bg-primary/);
+});

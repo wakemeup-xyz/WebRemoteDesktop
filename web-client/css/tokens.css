@@ -1,0 +1,33 @@
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-gradient-start: #0f1117;
+  --bg-gradient-end: #050508;
+  --bg-surface: rgba(30, 41, 59, 0.55);
+  --bg-surface-solid: #1e293b;
+  --bg-surface-hover: rgba(51, 65, 85, 0.7);
+  --border-subtle: rgba(148, 163, 184, 0.1);
+  --border-active: rgba(59, 130, 246, 0.4);
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --accent-primary: #3b82f6;
+  --accent-primary-glow: rgba(59, 130, 246, 0.25);
+  --accent-success: #22c55e;
+  --accent-success-glow: rgba(34, 197, 94, 0.3);
+  --accent-warning: #f59e0b;
+  --accent-warning-glow: rgba(245, 158, 11, 0.3);
+  --accent-danger: #ef4444;
+  --accent-danger-glow: rgba(239, 68, 68, 0.3);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 100px;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-glow-blue: 0 0 20px rgba(59, 130, 246, 0.15);
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --text-secondary: #cbd5e1;
+  --chrome-top: 56px;
+  --focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.45);
+  --touch-min: 44px;
+}

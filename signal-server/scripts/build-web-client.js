@@ -66,7 +66,8 @@ async function buildWebClient({ sourceDir, outDir }) {
       fs.readFileSync(path.join(sourceDir, 'js/shell-guard.js'), 'utf8'),
       'shell-guard.js',
     );
-    const viewerCss = fs.readFileSync(path.join(sourceDir, 'css/viewer.css'), 'utf8');
+    const tokenCss = fs.readFileSync(path.join(sourceDir, 'css/tokens.css'), 'utf8');
+    const viewerCss = `${tokenCss}\n${fs.readFileSync(path.join(sourceDir, 'css/viewer.css'), 'utf8')}`;
 
     const assets = {
       desktopJs: writeHashed(path.join(staging, 'assets'), 'desktop-core', 'js', desktopJs),
@@ -130,6 +131,7 @@ async function buildWebClient({ sourceDir, outDir }) {
     fs.copyFileSync(path.join(sourceDir, 'index.html'), path.join(staging, 'index.html'));
     fs.mkdirSync(path.join(staging, 'css'));
     fs.copyFileSync(path.join(sourceDir, 'css/login.css'), path.join(staging, 'css/login.css'));
+    fs.copyFileSync(path.join(sourceDir, 'css/tokens.css'), path.join(staging, 'css/tokens.css'));
     const licenses = [
       ['socket.io', path.join(socketRoot, 'LICENSE')],
       ['@xterm/xterm', path.join(xtermRoot, 'LICENSE')],

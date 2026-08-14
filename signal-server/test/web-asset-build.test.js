@@ -66,6 +66,9 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
     html,
     /<(?:script[^>]+src|link[^>]+href)="[^"]*(?:xterm|addon-fit|terminal\.[a-f0-9]+\.(?:js|css)|desktop-deferred)/i,
   );
+  const viewerCss = fs.readFileSync(path.join(outA, a.assets.viewerCss), 'utf8');
+  assert.match(viewerCss, /--chrome-top/);
+  assert.match(viewerCss, /--text-secondary/);
 });
 
 test('build keeps previous dist when a subsequent build fails', async () => {
