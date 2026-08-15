@@ -78,3 +78,14 @@ test('docks share one fixed column wrapper', () => {
   assert.match(css, /(?:^|\n)\.control-bar\s*\{[^}]*display\s*:\s*flex/);
   assert.doesNotMatch(css, /(?:^|\n)\.control-bar\s*\{[^}]*position\s*:\s*fixed/);
 });
+
+test('narrow overflow menu exists', () => {
+  assert.match(html, /id="moreActionsBtn"/);
+  assert.match(html, /id="moreActionsMenu"/);
+  assert.match(css, /min-height\s*:\s*var\(--touch-min\)/);
+  assert.match(html, /data-action="enter"[^>]*data-pin="always"/);
+  assert.match(html, /id="keyboardModeBtn"[^>]*data-pin="always"/);
+  assert.match(html, /id="portSearchBtn"[^>]*class="control-btn"/);
+  assert.match(css, /#moreActionsMenu\s+\.action-btn\s*\{[^}]*display\s*:\s*flex/);
+  assert.match(css, /@media\s*\(max-width:\s*899px\)/);
+});

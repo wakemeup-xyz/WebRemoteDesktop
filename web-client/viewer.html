@@ -60,12 +60,12 @@
 
     <div id="chromeDocks" class="chrome-docks" aria-label="桌面控件">
       <div class="action-bar">
-        <button class="action-btn" data-action="enter" data-core-control>回车</button>
+        <button class="action-btn" data-action="enter" data-core-control data-pin="always">回车</button>
         <button class="action-btn" data-action="up" data-core-control>上</button>
         <button class="action-btn" data-action="down" data-core-control>下</button>
         <button class="action-btn" data-action="left" data-core-control>左</button>
         <button class="action-btn" data-action="right" data-core-control>右</button>
-        <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
+        <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control data-pin="always">键盘：-</button>
         <button class="action-btn" data-action="copy" data-core-control>复制</button>
         <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
         <button class="action-btn" data-action="cut" data-core-control>剪切</button>
@@ -76,6 +76,8 @@
         <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
         <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
         <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
+        <button id="moreActionsBtn" class="action-btn action-more" type="button" aria-expanded="false" aria-controls="moreActionsMenu">更多</button>
+        <div id="moreActionsMenu" class="more-actions-menu" hidden role="menu"></div>
       </div>
 
       <div class="control-bar">

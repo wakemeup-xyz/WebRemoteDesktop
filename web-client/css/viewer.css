@@ -707,6 +707,10 @@ body.stream-connected .status-action-secondary:focus-visible {
   max-width: 100%;
 }
 
+.chrome-docks .action-bar {
+  position: relative;
+}
+
 .control-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1266,6 +1270,45 @@ body:not(.stream-connected) .action-bar {
 
 .action-btn:active {
   transform: translateY(0) scale(0.96);
+}
+
+.control-btn, .action-btn, .view-tab-btn, .modal-btn, .start-btn {
+  min-height: var(--touch-min);
+}
+
+.action-btn[data-action="up"],
+.action-btn[data-action="down"],
+.action-btn[data-action="left"],
+.action-btn[data-action="right"] {
+  min-width: var(--touch-min);
+}
+
+.more-actions-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  z-index: 110;
+  min-width: 160px;
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+#moreActionsMenu .action-btn {
+  display: flex;
+}
+
+@media (max-width: 899px) {
+  .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
+  body.more-open .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
 }
 
 /* ========== Scrollbar (Webkit) ========== */
