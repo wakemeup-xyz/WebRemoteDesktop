@@ -1,13 +1,138 @@
 const OVERFLOW_ACTION_SELECTOR = '.action-btn:not(.action-more):not([data-pin="always"])';
+const IDLE_EDGE_PX = 80;
 
 const ChromeLayout = {
+  IDLE_MS: 2500,
+  _lastActivity: 0,
+  _idleTimer: null,
+  _wasStreamConnected: false,
+  _wasControlsHidden: false,
   init() {
     const statusEl = typeof document !== 'undefined' ? document.getElementById('statusBar') : null;
     const unobserve = this.observeStatusBar(statusEl);
     const unbindMore = this.bindMoreMenu();
+    const unbindIdle = this.bindIdle();
     return () => {
       unobserve();
       unbindMore();
+      unbindIdle();
+    };
+  },
+  shouldIdle({ streamConnected, controlsHidden, menuOpen, modalOpen, idleMs } = {}) {
+    return !!streamConnected
+      && !controlsHidden
+      && !menuOpen
+      && !modalOpen
+      && Number(idleMs) >= this.IDLE_MS;
+  },
+  collectIdleInputs(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    const moreBtn = root?.getElementById?.('moreActionsBtn') || root?.querySelector?.('#moreActionsBtn');
+    const menuOpen = !!body?.classList?.contains?.('more-open')
+      || moreBtn?.getAttribute?.('aria-expanded') === 'true';
+    return {
+      streamConnected: !!body?.classList?.contains?.('stream-connected'),
+      controlsHidden: !!body?.classList?.contains?.('controls-hidden'),
+      menuOpen,
+      modalOpen: !!root?.querySelector?.('.modal:not(.hidden)'),
+      idleMs: Date.now() - (this._lastActivity || 0),
+    };
+  },
+  enterIdle(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    body?.classList?.add?.('chrome-idle');
+    const advisor = root?.getElementById?.('networkAdvisor') || root?.querySelector?.('#networkAdvisor');
+    if (advisor?.classList?.contains?.('visible')) advisor.classList.add('collapsed');
+  },
+  bump(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    body?.classList?.remove?.('chrome-idle');
+    this._lastActivity = Date.now();
+    this.armIdleTimer(root);
+  },
+  clearIdleTimer() {
+    if (this._idleTimer) {
+      clearTimeout(this._idleTimer);
+      this._idleTimer = null;
+    }
+  },
+  armIdleTimer(rootEl) {
+    this.clearIdleTimer();
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    this._idleTimer = setTimeout(() => {
+      this._idleTimer = null;
+      const inputs = this.collectIdleInputs(root);
+      if (this.shouldIdle(inputs)) this.enterIdle(root);
+      else if (inputs.streamConnected && !inputs.controlsHidden) this.armIdleTimer(root);
+    }, this.IDLE_MS);
+  },
+  bindIdle(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    if (!root?.addEventListener) return () => {};
+    const body = root.body || root.querySelector?.('body');
+    const docks = root.getElementById?.('chromeDocks') || root.querySelector?.('#chromeDocks');
+    const view = root.defaultView || (typeof globalThis !== 'undefined' ? globalThis : null);
+    this._lastActivity = Date.now();
+    this._wasStreamConnected = !!body?.classList?.contains?.('stream-connected');
+    this._wasControlsHidden = !!body?.classList?.contains?.('controls-hidden');
+
+    const isBottomEdge = (event) => {
+      const height = view?.innerHeight;
+      return Number.isFinite(event?.clientY)
+        && Number.isFinite(height)
+        && event.clientY > height - IDLE_EDGE_PX;
+    };
+    const overDocks = (event) => docks && typeof docks.contains === 'function' && docks.contains(event.target);
+    const onPointerMove = (event) => {
+      if (event.pointerType === 'touch') return;
+      if (overDocks(event) || isBottomEdge(event)) this.bump(root);
+    };
+    const onPointerDown = (event) => {
+      if (event.pointerType !== 'touch') return;
+      if (isBottomEdge(event)) this.bump(root);
+    };
+    const onDocksEnter = () => this.bump(root);
+
+    root.addEventListener('pointermove', onPointerMove);
+    root.addEventListener('pointerdown', onPointerDown);
+    const dockTargets = [docks];
+    docks?.querySelectorAll?.('.action-bar, .control-bar')?.forEach?.((el) => dockTargets.push(el));
+    dockTargets.filter(Boolean).forEach((el) => el.addEventListener?.('pointerenter', onDocksEnter));
+
+    const onMutate = () => {
+      const inputs = this.collectIdleInputs(root);
+      const connectedBecame = inputs.streamConnected && !this._wasStreamConnected;
+      const unhid = this._wasControlsHidden && !inputs.controlsHidden;
+      this._wasStreamConnected = inputs.streamConnected;
+      this._wasControlsHidden = inputs.controlsHidden;
+      if (!inputs.streamConnected || inputs.controlsHidden || inputs.menuOpen || inputs.modalOpen) {
+        body?.classList?.remove?.('chrome-idle');
+      }
+      if (connectedBecame || (inputs.streamConnected && unhid)) {
+        this.bump(root);
+        return;
+      }
+      if (inputs.streamConnected && !inputs.controlsHidden) this.armIdleTimer(root);
+      else this.clearIdleTimer();
+    };
+    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(onMutate) : null;
+    if (mo && body) mo.observe(body, { attributes: true, attributeFilter: ['class'] });
+    if (mo) {
+      root.querySelectorAll?.('.modal')?.forEach?.((modal) => {
+        mo.observe(modal, { attributes: true, attributeFilter: ['class'] });
+      });
+    }
+    if (this._wasStreamConnected && !this._wasControlsHidden) this.armIdleTimer(root);
+
+    return () => {
+      root.removeEventListener('pointermove', onPointerMove);
+      root.removeEventListener('pointerdown', onPointerDown);
+      dockTargets.filter(Boolean).forEach((el) => el.removeEventListener?.('pointerenter', onDocksEnter));
+      mo?.disconnect();
+      this.clearIdleTimer();
     };
   },
   syncChromeTop(px, rootEl) {

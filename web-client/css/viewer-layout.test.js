@@ -79,6 +79,10 @@ test('docks share one fixed column wrapper', () => {
   assert.doesNotMatch(css, /(?:^|\n)\.control-bar\s*\{[^}]*position\s*:\s*fixed/);
 });
 
+test('connected docks no longer use hover-only 0.22 opacity', () => {
+  assert.doesNotMatch(css, /body\.stream-connected[^{]*\{[^}]*opacity\s*:\s*0\.22/);
+});
+
 test('narrow overflow menu exists', () => {
   assert.match(html, /id="moreActionsBtn"/);
   assert.match(html, /id="moreActionsMenu"/);

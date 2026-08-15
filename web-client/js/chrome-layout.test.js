@@ -139,3 +139,21 @@ test('toggleMoreMenu moves overflow nodes and restores original order', () => {
   assert.equal(menu.children.length, 0);
   assert.deepEqual(names(), ['enter', 'up', 'down', 'keyboard', 'copy', 'more']);
 });
+
+test('shouldIdle only when streaming, chrome visible, idle long enough', () => {
+  assert.equal(ChromeLayout.shouldIdle({
+    streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: false, idleMs: 2500,
+  }), true);
+  assert.equal(ChromeLayout.shouldIdle({
+    streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: false, idleMs: 2499,
+  }), false);
+  assert.equal(ChromeLayout.shouldIdle({
+    streamConnected: false, controlsHidden: false, menuOpen: false, modalOpen: false, idleMs: 5000,
+  }), false);
+  assert.equal(ChromeLayout.shouldIdle({
+    streamConnected: true, controlsHidden: false, menuOpen: true, modalOpen: false, idleMs: 5000,
+  }), false);
+  assert.equal(ChromeLayout.shouldIdle({
+    streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: true, idleMs: 5000,
+  }), false);
+});

@@ -687,7 +687,9 @@ body.stream-connected .status-action-secondary:focus-visible {
   position: fixed;
   left: 50%;
   bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
+  --docks-shift: 0px;
+  transform: translateX(-50%) translateY(var(--docks-shift));
+  transition: transform 200ms var(--transition-base);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -695,6 +697,10 @@ body.stream-connected .status-action-secondary:focus-visible {
   z-index: 100;
   max-width: calc(100vw - 32px);
   pointer-events: none;
+}
+
+body.chrome-idle .chrome-docks {
+  --docks-shift: calc(100% + 20px);
 }
 
 .chrome-docks .action-bar,
@@ -717,7 +723,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   justify-content: center;
   gap: 6px;
   z-index: 100;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.35s var(--transition-base), transform 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
@@ -729,27 +735,8 @@ body.stream-connected .status-action-secondary:focus-visible {
   max-width: calc(100vw - 32px);
 }
 
-body:hover .control-bar,
-.control-bar:hover,
-body:not(.stream-connected) .control-bar {
-  opacity: 1;
-}
-
 body.controls-hidden .chrome-docks {
   display: none !important;
-}
-
-/* Immersive streaming: chrome stays quiet until the user hovers the docks. */
-body.stream-connected:not(.controls-hidden) .control-bar,
-body.stream-connected:not(.controls-hidden) .action-bar {
-  opacity: 0.22;
-}
-
-body.stream-connected:not(.controls-hidden):hover .control-bar,
-body.stream-connected:not(.controls-hidden):hover .action-bar,
-body.stream-connected:not(.controls-hidden) .control-bar:hover,
-body.stream-connected:not(.controls-hidden) .action-bar:hover {
-  opacity: 1;
 }
 
 body.controls-hidden .network-advisor.visible:not(.collapsed) .network-advisor__body {
@@ -1228,7 +1215,7 @@ body.controls-hidden .network-advisor.visible {
   justify-content: center;
   gap: 4px;
   z-index: 100;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
@@ -1238,12 +1225,6 @@ body.controls-hidden .network-advisor.visible {
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-md);
   max-width: calc(100vw - 32px);
-}
-
-body:hover .action-bar,
-.action-bar:hover,
-body:not(.stream-connected) .action-bar {
-  opacity: 1;
 }
 
 .action-btn {
