@@ -429,12 +429,32 @@ body.stream-connected .status-action-secondary:focus-visible {
   position: fixed;
   inset: var(--chrome-top) 0 0;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "auth"
+    "toolbar"
+    "note"
+    "transport"
+    "status"
+    "warning"
+    "retry"
+    "workspace"
+    "composer";
+  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 14px;
   background: #050508;
   z-index: 80;
 }
+
+.terminal-auth-form { grid-area: auth; }
+.terminal-toolbar { grid-area: toolbar; }
+.terminal-pool-note { grid-area: note; }
+.terminal-transport-row { grid-area: transport; }
+#terminalStatus { grid-area: status; }
+#terminalWarning { grid-area: warning; }
+#terminalLoadRetryBtn { grid-area: retry; }
+.terminal-workspace { grid-area: workspace; }
+.terminal-composer { grid-area: composer; }
 
 .terminal-auth-form,
 .terminal-toolbar,
@@ -629,7 +649,6 @@ body.stream-connected .status-action-secondary:focus-visible {
 }
 
 .terminal-workspace {
-  grid-row: 5;
   min-height: 0;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: var(--radius-md);

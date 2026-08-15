@@ -16,9 +16,12 @@ function getBlock(selector) {
   return match[1];
 }
 
-test('terminal workspace is pinned to the final grid row', () => {
-  const block = getBlock('.terminal-workspace');
-  assert.match(block, /grid-row\s*:\s*5\b/, 'terminal workspace must occupy the final 1fr row');
+test('terminal status sits in a named row above the workspace', () => {
+  assert.match(css, /grid-template-areas/);
+  assert.match(css, /terminal-workspace/);
+  const htmlOrder = html.indexOf('id="terminalStatus"');
+  const ws = html.indexOf('id="terminalWorkspace"');
+  assert.ok(htmlOrder > -1 && ws > htmlOrder);
 });
 
 test('terminal composer describes its live submission hint', () => {

@@ -2066,6 +2066,13 @@ const TerminalPanel = {
     const connected = Boolean(this.socket?.connected);
     this.elements.authForm?.classList.toggle('hidden', authorized);
     this.elements.newButton?.classList.toggle('hidden', !authorized);
+    const chrome = [
+      this.elements.root?.querySelector('.terminal-toolbar'),
+      this.elements.root?.querySelector('.terminal-transport-row'),
+      this.elements.workspace,
+      this.elements.root?.querySelector('.terminal-composer'),
+    ];
+    chrome.forEach((el) => el?.classList.toggle('hidden', !authorized));
     if (this.elements.newButton) {
       const atCapacity = Number(this.poolCapacity?.availableSessions) === 0
         && Number(this.poolCapacity?.maxSessions) > 0;
