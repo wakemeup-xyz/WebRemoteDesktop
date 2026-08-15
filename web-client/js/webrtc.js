@@ -3748,11 +3748,13 @@ if (this.tunnelLastObjectUrl) {
     state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
     advisor.classList.add('visible');
 
-    const shouldExpand = firstShow
+    const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 768px)').matches;
+    const shouldExpand = (firstShow
       || severityUp
       || (meaningfulChange && (effectiveSeverity === 'warning' || effectiveSeverity === 'danger'
         || genericMessage || !message
-        || /失败|不可用|切换|重连|建议|耗尽|超时|中断/.test(String(baseMessage || ''))));
+        || /失败|不可用|切换|重连|建议|耗尽|超时|中断/.test(String(baseMessage || '')))))
+      && !(narrow && (effectiveSeverity === 'info' || effectiveSeverity === ''));
 
     if (shouldExpand) {
       this._networkAdvisorPinned = false;

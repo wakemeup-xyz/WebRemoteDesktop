@@ -8,7 +8,9 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'viewer.html'), 'utf8');
 
 function getBlock(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'm');
+  // Anchor to a line-start rule so prefixed selectors like
+  // `body.controls-hidden .network-advisor.visible` cannot steal the block.
+  const pattern = new RegExp(`^\\s*${escaped}\\s*\\{([^}]*)\\}`, 'm');
   const match = css.match(pattern);
   assert.ok(match, `missing CSS block for ${selector}`);
   return match[1];
@@ -92,4 +94,9 @@ test('narrow overflow menu exists', () => {
   assert.match(html, /id="portSearchBtn"[^>]*class="control-btn"/);
   assert.match(css, /#moreActionsMenu\s+\.action-btn\s*\{[^}]*display\s*:\s*flex/);
   assert.match(css, /@media\s*\(max-width:\s*899px\)/);
+});
+
+test('narrow advisor cannot stretch to half the viewport', () => {
+  assert.match(css, /max-height\s*:\s*min\(\s*240px,\s*40vh\s*\)/);
+  assert.match(css, /align-items\s*:\s*flex-start/);
 });

@@ -1010,7 +1010,7 @@ body.controls-hidden .network-advisor.visible {
   right: 18px;
   bottom: 148px;
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 0;
   width: min(360px, calc(100vw - 36px));
   max-width: min(360px, calc(100vw - 18px));
@@ -1042,13 +1042,26 @@ body.controls-hidden .network-advisor.visible {
   pointer-events: auto;
 }
 
+.network-advisor.visible:not(.collapsed) {
+  max-height: min(240px, 40vh);
+}
+
+.network-advisor.visible:not(.collapsed) .network-advisor__body {
+  overflow-y: auto;
+}
+
 /* Auto-collapse: keep a right-edge tab; full card slides mostly off-screen. */
 .network-advisor.visible.collapsed {
   right: 0;
   width: 44px;
   max-width: 44px;
+  max-height: 120px;
   border-radius: 12px 0 0 12px;
   transform: translateY(0);
+}
+
+body.terminal-active .network-advisor.visible:not(.collapsed) {
+  bottom: 88px;
 }
 
 .network-advisor.warning {
