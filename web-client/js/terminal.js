@@ -351,6 +351,8 @@ const TerminalPanel = {
     this.elements.terminalPanel?.classList.add('hidden');
     this.elements.desktopTab?.classList.add('active');
     this.elements.terminalTab?.classList.remove('active');
+    this.elements.desktopTab?.setAttribute?.('aria-selected', 'true');
+    this.elements.terminalTab?.setAttribute?.('aria-selected', 'false');
   },
 
   showTerminal() {
@@ -363,6 +365,8 @@ const TerminalPanel = {
     this.elements.terminalPanel?.classList.remove('hidden');
     this.elements.desktopTab?.classList.remove('active');
     this.elements.terminalTab?.classList.add('active');
+    this.elements.desktopTab?.setAttribute?.('aria-selected', 'false');
+    this.elements.terminalTab?.setAttribute?.('aria-selected', 'true');
     if (this.hasAdminToken()) {
       this.connectSocket();
     }
@@ -2066,6 +2070,13 @@ const TerminalPanel = {
     const connected = Boolean(this.socket?.connected);
     this.elements.authForm?.classList.toggle('hidden', authorized);
     this.elements.newButton?.classList.toggle('hidden', !authorized);
+    const chrome = [
+      this.elements.root?.querySelector('.terminal-toolbar'),
+      this.elements.root?.querySelector('.terminal-transport-row'),
+      this.elements.workspace,
+      this.elements.root?.querySelector('.terminal-composer'),
+    ];
+    chrome.forEach((el) => el?.classList.toggle('hidden', !authorized));
     if (this.elements.newButton) {
       const atCapacity = Number(this.poolCapacity?.availableSessions) === 0
         && Number(this.poolCapacity?.maxSessions) > 0;

@@ -10,6 +10,11 @@ const { buildWebClient } = require('../scripts/build-web-client');
 test('asset graph keeps desktop critical and Terminal optional sources separate', () => {
   const graph = require('../scripts/web-asset-graph');
   assert.ok(graph.desktopScripts.includes('js/webrtc.js'));
+  assert.ok(graph.desktopScripts.includes('js/chrome-layout.js'));
+  assert.ok(
+    graph.desktopScripts.indexOf('js/chrome-layout.js') < graph.desktopScripts.indexOf('js/ui.js'),
+    'chrome-layout.js must load before ui.js',
+  );
   assert.ok(!graph.desktopScripts.includes('js/terminal.js'));
   assert.deepEqual(graph.terminalScripts, [
     'js/terminal-echo-controller.js',
@@ -66,6 +71,9 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
     html,
     /<(?:script[^>]+src|link[^>]+href)="[^"]*(?:xterm|addon-fit|terminal\.[a-f0-9]+\.(?:js|css)|desktop-deferred)/i,
   );
+  const viewerCss = fs.readFileSync(path.join(outA, a.assets.viewerCss), 'utf8');
+  assert.match(viewerCss, /--chrome-top/);
+  assert.match(viewerCss, /--text-secondary/);
 });
 
 test('build keeps previous dist when a subsequent build fails', async () => {

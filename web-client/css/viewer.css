@@ -1,3 +1,4 @@
+/* tokens.css is prepended at build time; keep this file token-free at :root */
 /* First-party system font stack only — no runtime CDN font CSS. */
 * {
   margin: 0;
@@ -5,49 +6,21 @@
   box-sizing: border-box;
 }
 
-:root {
-  --bg-primary: #0a0a0f;
-  --bg-gradient-start: #0f1117;
-  --bg-gradient-end: #050508;
-  --bg-surface: rgba(30, 41, 59, 0.55);
-  --bg-surface-solid: #1e293b;
-  --bg-surface-hover: rgba(51, 65, 85, 0.7);
-  --border-subtle: rgba(148, 163, 184, 0.1);
-  --border-active: rgba(59, 130, 246, 0.4);
-  --text-primary: #f1f5f9;
-  --text-muted: #94a3b8;
-  --accent-primary: #3b82f6;
-  --accent-primary-glow: rgba(59, 130, 246, 0.25);
-  --accent-success: #22c55e;
-  --accent-success-glow: rgba(34, 197, 94, 0.3);
-  --accent-warning: #f59e0b;
-  --accent-warning-glow: rgba(245, 158, 11, 0.3);
-  --accent-danger: #ef4444;
-  --accent-danger-glow: rgba(239, 68, 68, 0.3);
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-pill: 100px;
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow-blue: 0 0 20px rgba(59, 130, 246, 0.15);
-  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: linear-gradient(180deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
-  padding-top: 56px;
+  padding-top: var(--chrome-top);
   color: var(--text-primary);
 }
 
 /* ========== Viewer Container ========== */
 .viewer-container {
   width: 100vw;
-  height: calc(100vh - 56px);
+  height: calc(100vh - var(--chrome-top));
+  height: calc(100dvh - var(--chrome-top));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,6 +42,21 @@ body {
   max-width: 100vw;
   max-height: 100vh;
   border-radius: 0;
+}
+
+.fullscreen-exit-btn {
+  display: none;
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 30;
+  min-height: var(--touch-min);
+  min-width: var(--touch-min);
+  padding: 0 12px;
+}
+.viewer-container:fullscreen .fullscreen-exit-btn {
+  display: inline-flex;
+  align-items: center;
 }
 
 /* ========== Video ========== */
@@ -196,6 +184,10 @@ body.tunnel-relay-active #remoteVideo {
   pointer-events: none;
 }
 
+.stream-placeholder:not(.is-connecting) .spinner {
+  display: none;
+}
+
 .spinner {
   width: 56px;
   height: 56px;
@@ -318,7 +310,7 @@ body.tunnel-relay-active #remoteVideo {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 500;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   letter-spacing: 0.02em;
   padding: 2px 8px;
   border-right: 1px solid rgba(148, 163, 184, 0.12);
@@ -352,7 +344,7 @@ body.stream-connected .status-action-secondary:focus-visible {
 }
 
 .key-input-display {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   background: rgba(59, 130, 246, 0.1);
   padding: 4px 12px;
   border-radius: var(--radius-sm);
@@ -427,6 +419,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   color: var(--text-primary);
 }
 
+[hidden],
 .hidden {
   display: none !important;
 }
@@ -434,14 +427,34 @@ body.stream-connected .status-action-secondary:focus-visible {
 /* ========== Terminal Workspace ========== */
 .terminal-panel {
   position: fixed;
-  inset: 56px 0 0;
+  inset: var(--chrome-top) 0 0;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "auth"
+    "toolbar"
+    "note"
+    "transport"
+    "status"
+    "warning"
+    "retry"
+    "workspace"
+    "composer";
+  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 14px;
   background: #050508;
   z-index: 80;
 }
+
+.terminal-auth-form { grid-area: auth; }
+.terminal-toolbar { grid-area: toolbar; }
+.terminal-pool-note { grid-area: note; }
+.terminal-transport-row { grid-area: transport; }
+#terminalStatus { grid-area: status; }
+#terminalWarning { grid-area: warning; }
+#terminalLoadRetryBtn { grid-area: retry; }
+.terminal-workspace { grid-area: workspace; }
+.terminal-composer { grid-area: composer; }
 
 .terminal-auth-form,
 .terminal-toolbar,
@@ -464,7 +477,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   border-radius: var(--radius-md);
   background: rgba(15, 23, 42, 0.78);
   color: var(--text-primary);
-  font: 13px 'JetBrains Mono', monospace;
+  font: 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   outline: none;
 }
 
@@ -509,7 +522,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   border-radius: var(--radius-md);
   background: rgba(59, 130, 246, 0.08);
   color: #bfdbfe;
-  font: 12px/1.4 'JetBrains Mono', monospace;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .terminal-transport-row {
@@ -605,7 +618,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   padding: 7px 10px;
   border-radius: var(--radius-md);
   font-size: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .terminal-status {
@@ -636,7 +649,6 @@ body.stream-connected .status-action-secondary:focus-visible {
 }
 
 .terminal-workspace {
-  grid-row: 5;
   min-height: 0;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: var(--radius-md);
@@ -658,7 +670,7 @@ body.stream-connected .status-action-secondary:focus-visible {
   background: rgba(15, 23, 42, 0.78);
   color: var(--text-primary);
   resize: vertical;
-  font: 13px/1.45 'JetBrains Mono', monospace;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   outline: none;
 }
 
@@ -685,7 +697,7 @@ body.stream-connected .status-action-secondary:focus-visible {
 
 .terminal-composer-hint {
   color: var(--text-muted);
-  font: 12px 'JetBrains Mono', monospace;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .terminal-instance,
@@ -704,22 +716,52 @@ body.stream-connected .status-action-secondary:focus-visible {
   margin: 0;
   color: var(--text-primary);
   background: #050508;
-  font: 13px/1.5 'JetBrains Mono', monospace;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: pre-wrap;
 }
 
 /* ========== Control Bar (Dock) ========== */
-.control-bar {
+.chrome-docks {
   position: fixed;
-  bottom: 24px;
   left: 50%;
-  transform: translateX(-50%);
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  --docks-shift: 0px;
+  transform: translateX(-50%) translateY(var(--docks-shift));
+  transition: transform 200ms var(--transition-base);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+
+body.chrome-idle .chrome-docks {
+  --docks-shift: calc(100% + 20px);
+}
+
+.chrome-docks .action-bar,
+.chrome-docks .control-bar {
+  position: static;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  pointer-events: auto;
+  max-width: 100%;
+}
+
+.chrome-docks .action-bar {
+  position: relative;
+}
+
+.control-bar {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
   z-index: 100;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.35s var(--transition-base), transform 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
@@ -731,28 +773,8 @@ body.stream-connected .status-action-secondary:focus-visible {
   max-width: calc(100vw - 32px);
 }
 
-body:hover .control-bar,
-.control-bar:hover,
-body:not(.stream-connected) .control-bar {
-  opacity: 1;
-}
-
-body.controls-hidden .control-bar,
-body.controls-hidden .action-bar {
+body.controls-hidden .chrome-docks {
   display: none !important;
-}
-
-/* Immersive streaming: chrome stays quiet until the user hovers the docks. */
-body.stream-connected:not(.controls-hidden) .control-bar,
-body.stream-connected:not(.controls-hidden) .action-bar {
-  opacity: 0.22;
-}
-
-body.stream-connected:not(.controls-hidden):hover .control-bar,
-body.stream-connected:not(.controls-hidden):hover .action-bar,
-body.stream-connected:not(.controls-hidden) .control-bar:hover,
-body.stream-connected:not(.controls-hidden) .action-bar:hover {
-  opacity: 1;
 }
 
 body.controls-hidden .network-advisor.visible:not(.collapsed) .network-advisor__body {
@@ -931,8 +953,40 @@ body.controls-hidden .network-advisor.visible {
   font-weight: 500;
 }
 
+.resolution-option.adaptive-resolution-option {
+  margin-top: 12px;
+  align-items: flex-start;
+}
+
+.resolution-option small {
+  display: block;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
 .network-modal-content {
   width: min(520px, 92vw);
+}
+
+.network-turn-select-row {
+  margin: 12px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.network-turn-select-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.network-turn-select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text-primary);
 }
 
 .network-options {
@@ -995,7 +1049,7 @@ body.controls-hidden .network-advisor.visible {
   border-radius: var(--radius-sm, 8px);
   background: rgba(0, 0, 0, 0.28);
   color: var(--text-secondary);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -1026,7 +1080,7 @@ body.controls-hidden .network-advisor.visible {
   right: 18px;
   bottom: 148px;
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 0;
   width: min(360px, calc(100vw - 36px));
   max-width: min(360px, calc(100vw - 18px));
@@ -1058,13 +1112,28 @@ body.controls-hidden .network-advisor.visible {
   pointer-events: auto;
 }
 
+.network-advisor.visible:not(.collapsed) {
+  max-height: min(240px, 40vh);
+}
+
+.network-advisor.visible:not(.collapsed) .network-advisor__body {
+  max-height: min(240px, 40vh);
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Auto-collapse: keep a right-edge tab; full card slides mostly off-screen. */
 .network-advisor.visible.collapsed {
   right: 0;
   width: 44px;
   max-width: 44px;
+  max-height: 120px;
   border-radius: 12px 0 0 12px;
   transform: translateY(0);
+}
+
+body.terminal-active .network-advisor.visible:not(.collapsed) {
+  bottom: 88px;
 }
 
 .network-advisor.warning {
@@ -1226,16 +1295,12 @@ body.controls-hidden .network-advisor.visible {
 
 /* ========== Action Bar (Dock) ========== */
 .action-bar {
-  position: fixed;
-  bottom: 84px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 4px;
   z-index: 100;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.35s var(--transition-base);
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
@@ -1245,12 +1310,6 @@ body.controls-hidden .network-advisor.visible {
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-md);
   max-width: calc(100vw - 32px);
-}
-
-body:hover .action-bar,
-.action-bar:hover,
-body:not(.stream-connected) .action-bar {
-  opacity: 1;
 }
 
 .action-btn {
@@ -1279,6 +1338,45 @@ body:not(.stream-connected) .action-bar {
   transform: translateY(0) scale(0.96);
 }
 
+.control-btn, .action-btn, .view-tab-btn, .modal-btn, .start-btn {
+  min-height: var(--touch-min);
+}
+
+.action-btn[data-action="up"],
+.action-btn[data-action="down"],
+.action-btn[data-action="left"],
+.action-btn[data-action="right"] {
+  min-width: var(--touch-min);
+}
+
+.more-actions-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  z-index: 110;
+  min-width: 160px;
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+#moreActionsMenu .action-btn {
+  display: flex;
+}
+
+@media (max-width: 899px) {
+  .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
+  body.more-open .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
+}
+
 /* ========== Scrollbar (Webkit) ========== */
 ::-webkit-scrollbar {
   width: 6px;
@@ -1297,6 +1395,66 @@ body:not(.stream-connected) .action-bar {
   background: rgba(148, 163, 184, 0.35);
 }
 
+.diag-modal {
+  width: min(720px, calc(100vw - 24px));
+  max-width: 90vw;
+}
+
+.diag-modal > p {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.diag-modal #diagLogArea {
+  width: 100%;
+  height: 320px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #c3e88d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+}
+
+.diag-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.latency-panel {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.latency-panel h4 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.latency-panel #latencyStats {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px;
+  gap: 4px 8px;
+  color: var(--text-secondary);
+}
+
+.latency-panel #latencySync {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .latency-bar {
   background: rgba(255,255,255,0.1);
   height: 12px;
@@ -1310,3 +1468,16 @@ body:not(.stream-connected) .action-bar {
 }
 .latency-bar > div.warning { background: #facc15; }
 .latency-bar > div.danger { background: #f87171; }
+
+:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -86,8 +86,9 @@ function makeElement(id) {
       if (match) {
         return children.find((child) => child.dataset.sessionId === match[1]) || null;
       }
-      if (selector === '.xterm-helper-textarea') {
-        return children.find((child) => child.className.includes('xterm-helper-textarea')) || null;
+      if (selector.startsWith('.')) {
+        const cls = selector.slice(1);
+        return children.find((child) => String(child.className).split(/\s+/).includes(cls)) || null;
       }
       return null;
     },
@@ -138,6 +139,18 @@ function loadTerminal(overrides = {}) {
     'toggleControlsBtn',
   ];
   ids.forEach((id) => elements.set(id, makeElement(id)));
+
+  const terminalPanel = elements.get('terminalPanel');
+  const toolbar = makeElement('terminalToolbar');
+  toolbar.className = 'terminal-toolbar';
+  const transportRow = makeElement('terminalTransportRow');
+  transportRow.className = 'terminal-transport-row';
+  const composerWrap = makeElement('terminalComposerWrap');
+  composerWrap.className = 'terminal-composer';
+  terminalPanel.appendChild(toolbar);
+  terminalPanel.appendChild(transportRow);
+  terminalPanel.appendChild(elements.get('terminalWorkspace'));
+  terminalPanel.appendChild(composerWrap);
 
   const sessionStorageMap = new Map();
   const localStorageMap = new Map();
@@ -1861,6 +1874,31 @@ test('expired terminal admin token is cleared on connect_error so the auth form 
   assert.equal(sessionStorageMap.has(tokenKey), false);
   assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), false);
   assert.match(elements.get('terminalStatus').textContent, /重新授权|重新登录|过期/i);
+});
+
+test('TerminalPanel hides transport, workspace, and composer until admin auth', () => {
+  const { TerminalPanel, elements, sessionStorageMap, tokenKey } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.render();
+
+  const root = elements.get('terminalPanel');
+  const transport = root.querySelector('.terminal-transport-row');
+  const composer = root.querySelector('.terminal-composer');
+  const workspace = elements.get('terminalWorkspace');
+
+  assert.equal(transport.classList.contains('hidden'), true);
+  assert.equal(workspace.classList.contains('hidden'), true);
+  assert.equal(composer.classList.contains('hidden'), true);
+  assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), false);
+  assert.equal(elements.get('terminalStatus').classList.contains('hidden'), false);
+
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.render();
+
+  assert.equal(transport.classList.contains('hidden'), false);
+  assert.equal(workspace.classList.contains('hidden'), false);
+  assert.equal(composer.classList.contains('hidden'), false);
+  assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), true);
 });
 
 test('TerminalPanel records terminal latency state and suppresses duplicated remote echo after optimistic local echo', () => {

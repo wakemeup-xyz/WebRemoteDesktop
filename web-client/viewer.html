@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CodeHarness学习助手 - 控制台</title>
   <!-- WRD_BUILD_HEAD_START -->
+  <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/viewer.css">
   <script src="js/shell-guard.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
@@ -16,8 +17,8 @@
 <body>
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
-      <button id="desktopTabBtn" class="view-tab-btn active" type="button">桌面</button>
-      <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control>Terminal</button>
+      <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
+      <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control role="tab" aria-controls="terminalPanel" aria-selected="false">Terminal</button>
     </div>
     <span id="connectionStatus" class="status connecting">连接中</span>
     <div class="status-metrics" aria-label="链路指标">
@@ -40,6 +41,7 @@
   <main id="desktopPanel">
     <div class="viewer-container">
       <video id="remoteVideo" autoplay playsinline></video>
+      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
       <canvas id="lastFrameHold" class="last-frame-hold hidden" aria-hidden="true"></canvas>
       <div id="reconnectHud" class="reconnect-hud hidden" role="status" aria-live="polite">
         <span class="reconnect-hud-dot"></span>
@@ -57,47 +59,51 @@
       </div>
     </div>
 
-    <div class="control-bar">
-      <button id="scaleBtn" class="control-btn" data-core-control>
-        缩放：自适应
-      </button>
-      <button id="resolutionBtn" class="control-btn" data-core-control>
-        分辨率设置
-      </button>
-      <button id="fullscreenBtn" class="control-btn" data-core-control>
-        全屏
-      </button>
-      <button id="networkModeBtn" class="control-btn" data-core-control>
-        网络：自动
-      </button>
-      <button id="portSearchBtn" class="control-btn" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search">
-        搜索端口
-      </button>
-      <button id="pauseBtn" class="control-btn" data-core-control>
-        暂停
-      </button>
-      <button id="disconnectBtn" class="control-btn danger" data-core-control>
-        断开连接
-      </button>
-    </div>
+    <div id="chromeDocks" class="chrome-docks" aria-label="桌面控件">
+      <div class="action-bar">
+        <button class="action-btn" data-action="enter" data-core-control data-pin="always">回车</button>
+        <button class="action-btn" data-action="up" data-core-control>上</button>
+        <button class="action-btn" data-action="down" data-core-control>下</button>
+        <button class="action-btn" data-action="left" data-core-control>左</button>
+        <button class="action-btn" data-action="right" data-core-control>右</button>
+        <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control data-pin="always">键盘：-</button>
+        <button class="action-btn" data-action="copy" data-core-control>复制</button>
+        <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
+        <button class="action-btn" data-action="cut" data-core-control>剪切</button>
+        <button class="action-btn" data-action="undo" data-core-control>撤销</button>
+        <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
+        <button class="action-btn" data-action="save" data-core-control>保存</button>
+        <button class="action-btn" data-action="find" data-core-control>查找</button>
+        <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
+        <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
+        <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
+        <button id="moreActionsBtn" class="action-btn action-more" type="button" aria-expanded="false" aria-controls="moreActionsMenu">更多</button>
+        <div id="moreActionsMenu" class="more-actions-menu" hidden role="menu"></div>
+      </div>
 
-    <div class="action-bar">
-      <button class="action-btn" data-action="enter" data-core-control>回车</button>
-      <button class="action-btn" data-action="up" data-core-control>上</button>
-      <button class="action-btn" data-action="down" data-core-control>下</button>
-      <button class="action-btn" data-action="left" data-core-control>左</button>
-      <button class="action-btn" data-action="right" data-core-control>右</button>
-      <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
-      <button class="action-btn" data-action="copy" data-core-control>复制</button>
-      <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
-      <button class="action-btn" data-action="cut" data-core-control>剪切</button>
-      <button class="action-btn" data-action="undo" data-core-control>撤销</button>
-      <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
-      <button class="action-btn" data-action="save" data-core-control>保存</button>
-      <button class="action-btn" data-action="find" data-core-control>查找</button>
-      <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
-      <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
-      <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
+      <div class="control-bar">
+        <button id="scaleBtn" class="control-btn" data-core-control>
+          缩放：自适应
+        </button>
+        <button id="resolutionBtn" class="control-btn" data-core-control>
+          分辨率设置
+        </button>
+        <button id="fullscreenBtn" class="control-btn" data-core-control>
+          全屏
+        </button>
+        <button id="networkModeBtn" class="control-btn" data-core-control>
+          网络：自动
+        </button>
+        <button id="portSearchBtn" class="control-btn" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search">
+          搜索端口
+        </button>
+        <button id="pauseBtn" class="control-btn" data-core-control>
+          暂停
+        </button>
+        <button id="disconnectBtn" class="control-btn danger" data-core-control>
+          断开连接
+        </button>
+      </div>
     </div>
   </main>
 
@@ -142,9 +148,9 @@
     </div>
   </section>
   
-  <div id="resolutionModal" class="modal hidden">
+  <div id="resolutionModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-content">
-      <h3>选择分辨率</h3>
+      <h3 tabindex="-1">选择分辨率</h3>
       <div class="resolution-options">
         <label class="resolution-option">
           <input type="radio" name="resolution" value="540p" data-width="960" data-height="540">
@@ -163,11 +169,11 @@
           <span>1080p (超清 · 高性能)</span>
         </label>
       </div>
-      <label class="resolution-option" style="margin-top: 12px; align-items: flex-start;">
+      <label class="resolution-option adaptive-resolution-option">
         <input type="checkbox" id="adaptiveResolutionToggle">
         <span>
           <strong>自动调整分辨率</strong>
-          <small style="display:block; color: var(--text-muted); margin-top: 4px;">
+          <small>
             默认关闭。开启后会按链路质量自动改宽高（如 720p→480p）；关闭时仅允许自动调整帧率/码率，不改你选的分辨率。
           </small>
         </span>
@@ -190,9 +196,9 @@
     </div>
   </div>
 
-  <div id="networkModal" class="modal hidden">
+  <div id="networkModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-content network-modal-content">
-      <h3>网络模式</h3>
+      <h3 tabindex="-1">网络模式</h3>
       <div class="network-options">
         <label class="network-option">
           <input type="radio" name="networkMode" value="lan">
@@ -230,9 +236,9 @@
           </span>
         </label>
       </div>
-      <div class="network-turn-select-row" style="margin: 12px 0 8px; display: flex; flex-direction: column; gap: 6px;">
-        <label class="network-turn-select-label" for="turnServerSelect" style="font-size: 13px; color: var(--text-secondary);">TURN 节点</label>
-        <select id="turnServerSelect" class="network-turn-select" style="width: 100%; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: rgba(0,0,0,0.35); color: var(--text-primary);">
+      <div class="network-turn-select-row">
+        <label class="network-turn-select-label" for="turnServerSelect">TURN 节点</label>
+        <select id="turnServerSelect" class="network-turn-select">
           <option value="">未配置</option>
         </select>
       </div>
@@ -246,13 +252,13 @@
     </div>
   </div>
   
-  <div id="diagModal" class="modal hidden">
-    <div class="modal-content" style="min-width: 600px; max-width: 90vw;">
-      <h3>前端诊断日志</h3>
-      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">最近捕获的浏览器控制台日志，点击发送可将日志传给服务端分析。</p>
-      <div id="latencyPanel" style="margin-bottom: 16px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: var(--radius-md); font-family: 'JetBrains Mono', monospace; font-size: 12px;">
-        <h4 style="margin: 0 0 8px 0; color: var(--text-primary); font-size: 13px;">延迟分析 (5秒窗口)</h4>
-        <div id="latencyStats" style="display: grid; grid-template-columns: 80px 1fr 80px; gap: 4px 8px; color: var(--text-secondary);">
+  <div id="diagModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-content diag-modal">
+      <h3 tabindex="-1">前端诊断日志</h3>
+      <p>最近捕获的浏览器控制台日志，点击发送可将日志传给服务端分析。</p>
+      <div id="latencyPanel" class="latency-panel">
+        <h4>延迟分析 (5秒窗口)</h4>
+        <div id="latencyStats">
           <span>采集:</span> <div class="latency-bar"><div id="barCapture" style="width:0%"></div></div> <span id="valCapture">-</span>
           <span>编码:</span> <div class="latency-bar"><div id="barEncode" style="width:0%"></div></div> <span id="valEncode">-</span>
           <span>执行:</span> <div class="latency-bar"><div id="barExecute" style="width:0%"></div></div> <span id="valExecute">-</span>
@@ -260,10 +266,10 @@
           <span>缓冲:</span> <div class="latency-bar"><div id="barPlayout" style="width:0%"></div></div> <span id="valPlayout">-</span>
           <span>输入→画面:</span> <div class="latency-bar"><div id="barInput" style="width:0%"></div></div> <span id="valInput">-</span>
         </div>
-        <div id="latencySync" style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">时钟同步: 未同步</div>
+        <div id="latencySync">时钟同步: 未同步</div>
       </div>
-      <textarea id="diagLogArea" readonly style="width: 100%; height: 320px; background: rgba(0,0,0,0.4); color: #c3e88d; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; resize: none; outline: none; line-height: 1.5;"></textarea>
-      <div style="display: flex; gap: 10px; margin-top: 16px;">
+      <textarea id="diagLogArea" readonly></textarea>
+      <div class="diag-modal-actions">
         <button id="sendDiagBtn" class="modal-btn primary">发送日志到服务端</button>
         <button id="clearDiagBtn" class="modal-btn">清空日志</button>
         <button id="closeDiagBtn" class="modal-btn">关闭</button>
@@ -309,6 +315,7 @@
   <script src="js/keyboard-transport.js"></script>
   <script src="js/remote-keyboard-controller.js"></script>
   <script src="js/input.js"></script>
+  <script src="js/chrome-layout.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/latency-monitor.js"></script>
   <script src="js/diagnostic.js"></script>

@@ -1164,6 +1164,48 @@ test('resolution modal changes its display and closes only after a successful re
   assert.equal(modal.classList.contains('hidden'), true);
 });
 
+test('bindSettingsModal focuses the title and consumes Escape before remote keyboard', () => {
+  const { WebRTC } = loadWebRTC();
+  const title = makeElement();
+  title.focusCalls = 0;
+  title.focus = function focus() { this.focusCalls += 1; };
+  const modal = makeElement();
+  modal.querySelector = (selector) => (selector === 'h3' ? title : null);
+  modal.classList.add('hidden');
+  const closeBtn = makeElement();
+  const rootListeners = [];
+  const root = {
+    addEventListener(type, handler, options) {
+      rootListeners.push({ type, handler, options });
+    },
+  };
+
+  const api = WebRTC.bindSettingsModal(modal, { closeBtn, root });
+  api.open();
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(title.focusCalls, 1);
+
+  const keydown = rootListeners.find((item) => item.type === 'keydown');
+  assert.ok(keydown, 'settings modal must listen for Escape');
+  assert.equal(keydown.options === true || keydown.options?.capture === true, true);
+
+  let stopped = false;
+  let immediate = false;
+  keydown.handler({
+    key: 'Escape',
+    preventDefault() {},
+    stopPropagation() { stopped = true; },
+    stopImmediatePropagation() { immediate = true; },
+  });
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(stopped, true);
+  assert.equal(immediate, true);
+
+  api.open();
+  closeBtn.listeners.get('click')();
+  assert.equal(modal.classList.contains('hidden'), true);
+});
+
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
   let createCalls = 0;
   let startCalls = 0;
@@ -1914,6 +1956,49 @@ test('network advisor expands on update then auto-collapses to the right edge ta
   // Routine RTT refresh must not yank the tab open again.
   WebRTC.updateNetworkUI('当前通过 TURN 中继传输。RTT 120 ms，适合受限外网但延迟会高于本地直连。');
   assert.equal(advisor.classList.contains('collapsed'), true);
+});
+
+function prepareRelayAdvisor(WebRTC) {
+  WebRTC.networkMode = 'relay';
+  WebRTC.serverConfig = {
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example:3478'],
+    iceServers: [{ urls: ['turn:turn.example:3478'], username: 'u', credential: 'p' }],
+  };
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.getPublicEntryUrl = () => '';
+  WebRTC.getRecommendationMessage = () => '';
+  WebRTC.getDefaultNetworkGuidance = () => '外网中继已就绪';
+}
+
+test('narrow viewport keeps info advisor collapsed on first show', () => {
+  const { WebRTC, context } = loadWebRTC({
+    matchMedia: (query) => ({ matches: String(query).includes('max-width: 768px') }),
+  });
+  prepareRelayAdvisor(WebRTC);
+
+  WebRTC.updateNetworkUI('外网中继已连接', '');
+  const advisor = context.document.getElementById('networkAdvisor');
+  assert.equal(advisor.classList.contains('visible'), true);
+  assert.equal(advisor.classList.contains('collapsed'), true);
+  assert.equal(advisor.getAttribute('aria-expanded'), 'false');
+
+  WebRTC.updateNetworkUI('外网中继失败，请切换隧道中继。', 'warning');
+  assert.equal(advisor.classList.contains('collapsed'), false);
+  assert.equal(advisor.getAttribute('aria-expanded'), 'true');
+});
+
+test('narrow viewport still expands danger advisor on first show', () => {
+  const { WebRTC, context } = loadWebRTC({
+    matchMedia: (query) => ({ matches: String(query).includes('max-width: 768px') }),
+  });
+  prepareRelayAdvisor(WebRTC);
+
+  WebRTC.updateNetworkUI('端口搜索已达上限，未自动切换 TURN 或媒体隧道。', 'danger');
+  const advisor = context.document.getElementById('networkAdvisor');
+  assert.equal(advisor.classList.contains('visible'), true);
+  assert.equal(advisor.classList.contains('collapsed'), false);
 });
 
 test('collectNetworkSnapshot summarizes candidate and state context', () => {

@@ -991,6 +991,7 @@ const WebRTC = {
       resolutionEl.textContent = '-';
     }
     document.getElementById('loading')?.classList.remove('hidden');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     updateLoadingText('TURN 未配置，外网中继不可用。请手动切换到其他网络模式。');
     this.updateNetworkUI(
@@ -1367,6 +1368,7 @@ const WebRTC = {
 
   endConnectingWithFailure(reason = 'first-frame-timeout') {
     this.clearFirstFrameDeadline();
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
@@ -1381,6 +1383,7 @@ const WebRTC = {
 
   enterBootstrapFailure(error) {
     this.clearFirstFrameDeadline();
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
@@ -1392,6 +1395,7 @@ const WebRTC = {
   async startViewer(controller = null) {
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = 'none';
+    document.getElementById('loading')?.classList.add('is-connecting');
     updateLoadingText('正在连接...');
     if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
       StartupTelemetry.mark('start-click');
@@ -2721,6 +2725,7 @@ const WebRTC = {
     if (loadingEl && !loadingEl.classList.contains('hidden')) {
       console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
       loadingEl.classList.add('hidden');
+      loadingEl.classList.remove('is-connecting');
       document.body.classList.add('stream-connected');
       updateConnectionStatus('connected');
       const videoEl = document.getElementById('remoteVideo');
@@ -2886,10 +2891,12 @@ const WebRTC = {
         if (el && !el.classList.contains('hidden')) {
           console.log('Hiding loading spinner');
           el.classList.add('hidden');
+          el.classList.remove('is-connecting');
           document.body.classList.add('stream-connected');
           updateConnectionStatus('connected');
           videoElement.classList.add('connected');
         } else if (el && el.classList.contains('hidden')) {
+          el.classList.remove('is-connecting');
           console.log('[LOADING] Already hidden, skipping');
         }
         this.hideReconnectHud();
@@ -2932,6 +2939,7 @@ const WebRTC = {
           console.warn('[LOADING] Fallback timeout triggered: force-hiding spinner. Video readyState=%s paused=%s',
             video ? video.readyState : 'no-video', video ? video.paused : 'no-video');
           el.classList.add('hidden');
+          el.classList.remove('is-connecting');
           document.body.classList.add('stream-connected');
           updateConnectionStatus('connected');
           if (video) video.classList.add('connected');
@@ -3134,6 +3142,7 @@ const WebRTC = {
     this.tunnelStartedAt = performance.now();
     document.body.classList.add('tunnel-relay-active');
     document.getElementById('loading')?.classList.remove('hidden');
+    document.getElementById('loading')?.classList.add('is-connecting');
     updateLoadingText('正在启动隧道中继...');
     updateConnectionStatus('connecting');
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
@@ -3306,6 +3315,7 @@ if (this.tunnelLastObjectUrl) {
     // Keep the media element box mounted; only toggle visibility class.
     relayImage.classList.remove('hidden');
     document.getElementById('loading')?.classList.add('hidden');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     document.body.classList.add('stream-connected');
     updateConnectionStatus('connected');
     const latencyEl = document.getElementById('latencyDisplay');
@@ -3463,6 +3473,45 @@ if (this.tunnelLastObjectUrl) {
     return true;
   },
 
+  bindSettingsModal(modal, options = {}) {
+    if (!modal) {
+      return { open() {}, close() {} };
+    }
+    const closeBtn = options.closeBtn || null;
+    const root = options.root || (typeof document !== 'undefined' ? document : null);
+    const close = () => {
+      modal.classList.add('hidden');
+    };
+    const open = () => {
+      modal.classList.remove('hidden');
+      const title = typeof modal.querySelector === 'function' ? modal.querySelector('h3') : null;
+      const focusEl = title || closeBtn;
+      if (focusEl && typeof focusEl.focus === 'function') {
+        focusEl.focus();
+      }
+    };
+    const onKeydown = (event) => {
+      if (!event || event.key !== 'Escape') return;
+      if (modal.classList.contains('hidden')) return;
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      close();
+    };
+    if (closeBtn && !closeBtn.dataset?.bound) {
+      if (closeBtn.dataset) closeBtn.dataset.bound = '1';
+      closeBtn.addEventListener('click', close);
+    }
+    if (!modal.dataset?.bound) {
+      if (modal.dataset) modal.dataset.bound = '1';
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) close();
+      });
+      root?.addEventListener?.('keydown', onKeydown, true);
+    }
+    return { open, close };
+  },
+
   configureNetworkControls() {
     const modeBtn = document.getElementById('networkModeBtn');
     const modal = document.getElementById('networkModal');
@@ -3475,22 +3524,12 @@ if (this.tunnelLastObjectUrl) {
       modeBtn.dataset.bound = '1';
       modeBtn.addEventListener('click', () => {
         this.syncNetworkModal();
-        modal?.classList.remove('hidden');
+        this._networkModalApi?.open();
       });
     }
 
-    if (closeBtn && !closeBtn.dataset.bound) {
-      closeBtn.dataset.bound = '1';
-      closeBtn.addEventListener('click', () => modal?.classList.add('hidden'));
-    }
-
-    if (modal && !modal.dataset.bound) {
-      modal.dataset.bound = '1';
-      modal.addEventListener('click', (event) => {
-        if (event.target === modal) {
-          modal.classList.add('hidden');
-        }
-      });
+    if (modal && !this._networkModalApi) {
+      this._networkModalApi = this.bindSettingsModal(modal, { closeBtn });
     }
 
     if (applyBtn && !applyBtn.dataset.bound) {
@@ -3748,15 +3787,19 @@ if (this.tunnelLastObjectUrl) {
     state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
     advisor.classList.add('visible');
 
-    const shouldExpand = firstShow
+    const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 768px)').matches;
+    const shouldExpand = (firstShow
       || severityUp
       || (meaningfulChange && (effectiveSeverity === 'warning' || effectiveSeverity === 'danger'
         || genericMessage || !message
-        || /失败|不可用|切换|重连|建议|耗尽|超时|中断/.test(String(baseMessage || ''))));
+        || /失败|不可用|切换|重连|建议|耗尽|超时|中断/.test(String(baseMessage || '')))))
+      && !(narrow && (effectiveSeverity === 'info' || effectiveSeverity === ''));
 
     if (shouldExpand) {
       this._networkAdvisorPinned = false;
       this.expandNetworkAdvisor({ reschedule: true });
+    } else if (narrow && (effectiveSeverity === 'info' || effectiveSeverity === '')) {
+      this.collapseNetworkAdvisor();
     } else if (!advisor.classList.contains('collapsed') && !this._networkAdvisorHover && !this._networkAdvisorPinned) {
       // Content refreshed while expanded — arm idle collapse only if not already running.
       if (!this._networkAdvisorCollapseTimer) {
@@ -4124,6 +4167,7 @@ if (this.tunnelLastObjectUrl) {
       videoElement?.classList.remove('connected');
       document.body.classList.remove('stream-connected');
       document.getElementById('loading')?.classList.remove('hidden');
+      document.getElementById('loading')?.classList.add('is-connecting');
       updateLoadingText('正在重新连接...');
     }
     this.stopTunnelRelay();
@@ -4299,6 +4343,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('strict-stun-exhausted');
@@ -4310,6 +4355,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('strict-stun-exhausted');
@@ -4320,12 +4366,14 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网中继无 TURN 配置，建议切换到隧道中继。', 'danger');
       updateLoadingText('TURN 未配置，无法中继…');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       return;
     } else {
       updateLoadingText('连接中断，正在自动重连...');
     }
     document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('loading').classList.add('is-connecting');
     document.body.classList.remove('stream-connected');
 
     if (this.networkMode === 'relay' && (Number(this._relayHardRefreshCount) || 0) >= 5) {
@@ -4336,6 +4384,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网中继多次重连失败，请手动刷新或切换隧道中继。', 'danger');
       updateLoadingText('中继重连已停止，请手动重试');
       document.getElementById('loading')?.classList.remove('hidden');
+      document.getElementById('loading')?.classList.remove('is-connecting');
       return;
     }
 
@@ -4395,6 +4444,7 @@ if (this.tunnelLastObjectUrl) {
     }
     document.getElementById('remoteVideo').classList.remove('connected');
     document.body.classList.remove('stream-connected');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     Auth.logout();
   },
 
@@ -4475,6 +4525,7 @@ if (this.tunnelLastObjectUrl) {
     }
     document.body?.classList?.remove('stream-connected');
     document.getElementById('loading')?.classList?.add('hidden');
+    document.getElementById('loading')?.classList?.remove('is-connecting');
     updateConnectionStatus('disconnected');
 
     if (this.socket) {
@@ -4516,6 +4567,7 @@ if (this.tunnelLastObjectUrl) {
     this.beginConnectionAttempt('reclaim');
     updateConnectionStatus('connecting');
     document.getElementById('loading')?.classList?.remove('hidden');
+    document.getElementById('loading')?.classList?.add('is-connecting');
     updateLoadingText('正在重新连接桌面…');
     this.createSignalingSocket(true);
     if (this.networkMode !== 'tunnel') {
@@ -4789,15 +4841,14 @@ function bootViewerShell() {
       WebRTC.setAdaptiveResolutionEnabled(adaptiveToggle.checked);
     });
   }
+  if (resolutionModal) {
+    WebRTC._resolutionModalApi = WebRTC._resolutionModalApi
+      || WebRTC.bindSettingsModal(resolutionModal, { closeBtn: closeResolution });
+  }
   if (resolutionBtn && resolutionModal) {
     resolutionBtn.addEventListener('click', () => {
       if (adaptiveToggle) adaptiveToggle.checked = WebRTC.adaptiveResolutionEnabled === true;
-      resolutionModal.classList.remove('hidden');
-    });
-  }
-  if (closeResolution && resolutionModal) {
-    closeResolution.addEventListener('click', () => {
-      resolutionModal.classList.add('hidden');
+      WebRTC._resolutionModalApi.open();
     });
   }
   if (applyResolution && resolutionModal) {
@@ -4812,14 +4863,7 @@ function bootViewerShell() {
         const changed = await WebRTC.requestResolution(width, height);
         if (!changed) return;
         document.getElementById('resolutionDisplay').textContent = `${width}x${height}`;
-        resolutionModal.classList.add('hidden');
-      }
-    });
-  }
-  if (resolutionModal) {
-    resolutionModal.addEventListener('click', (event) => {
-      if (event.target === resolutionModal) {
-        resolutionModal.classList.add('hidden');
+        WebRTC._resolutionModalApi.close();
       }
     });
   }
