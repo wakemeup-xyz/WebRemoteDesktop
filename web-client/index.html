@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CodeHarness学习助手 - 登录</title>
+  <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/login.css">
 </head>
 <body>
@@ -13,40 +14,56 @@
       <div class="input-group">
         <label for="password">访问密码</label>
         <input type="password" id="password" name="password" required
+               autocomplete="current-password"
                placeholder="请输入访问密码">
       </div>
       <button type="submit">连接</button>
-      <div id="error" class="error-message"></div>
+      <div id="error" class="error-message" role="alert" aria-live="polite"></div>
     </form>
   </div>
-  
+
   <script>
     const API_BASE = window.location.origin;
-    
+    const ERRORS = {
+      'Invalid password': '密码错误',
+      'Password required': '请输入访问密码',
+    };
+
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      
-      const password = document.getElementById('password').value;
+
+      const input = document.getElementById('password');
+      const password = input.value;
       const errorDiv = document.getElementById('error');
-      
+      const button = e.target.querySelector('button[type="submit"]');
+
+      button.disabled = true;
+      button.textContent = '连接中…';
+      input.removeAttribute('aria-invalid');
+      errorDiv.textContent = '';
+
       try {
         const response = await fetch(`${API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        
+
         const data = await response.json();
-        
+
         if (response.ok) {
           sessionStorage.setItem('wrd_token', data.token);
           localStorage.removeItem('wrd_token');
           window.location.href = 'viewer.html';
         } else {
-          errorDiv.textContent = data.error || '登录失败';
+          input.setAttribute('aria-invalid', 'true');
+          errorDiv.textContent = ERRORS[data.error] || data.error || '登录失败';
         }
       } catch (err) {
         errorDiv.textContent = '网络错误，请检查服务器连接';
+      } finally {
+        button.disabled = false;
+        button.textContent = '连接';
       }
     });
   </script>
