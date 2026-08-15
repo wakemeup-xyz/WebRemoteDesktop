@@ -3496,10 +3496,17 @@ if (this.tunnelLastObjectUrl) {
 
     if (modal && !modal.dataset.bound) {
       modal.dataset.bound = '1';
+      const closeNetworkModal = () => modal.classList.add('hidden');
       modal.addEventListener('click', (event) => {
         if (event.target === modal) {
-          modal.classList.add('hidden');
+          closeNetworkModal();
         }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (modal.classList.contains('hidden')) return;
+        event.preventDefault();
+        closeNetworkModal();
       });
     }
 
@@ -4840,10 +4847,17 @@ function bootViewerShell() {
     });
   }
   if (resolutionModal) {
+    const closeResolutionModal = () => resolutionModal.classList.add('hidden');
     resolutionModal.addEventListener('click', (event) => {
       if (event.target === resolutionModal) {
-        resolutionModal.classList.add('hidden');
+        closeResolutionModal();
       }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      if (resolutionModal.classList.contains('hidden')) return;
+      event.preventDefault();
+      closeResolutionModal();
     });
   }
 }

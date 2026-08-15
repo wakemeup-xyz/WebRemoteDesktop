@@ -150,6 +150,12 @@
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.classList.add('hidden');
     });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      if (modal.classList.contains('hidden')) return;
+      event.preventDefault();
+      modal.classList.add('hidden');
+    });
 
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {

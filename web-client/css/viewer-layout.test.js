@@ -112,3 +112,12 @@ test('placeholder spinner is opt-in via is-connecting', () => {
   assert.match(css, /\.stream-placeholder:not\(\.is-connecting\)\s+\.spinner/);
   assert.match(html, /id="exitFullscreenBtn"/);
 });
+
+test('workspace tabs expose tab semantics', () => {
+  assert.match(html, /id="desktopTabBtn"[^>]*role="tab"[^>]*aria-controls="desktopPanel"/);
+  assert.match(html, /id="terminalTabBtn"[^>]*role="tab"[^>]*aria-controls="terminalPanel"/);
+  assert.match(html, /id="resolutionModal"[^>]*role="dialog"/);
+  assert.match(html, /id="networkModal"[^>]*role="dialog"/);
+  assert.match(html, /id="diagModal"[^>]*role="dialog"/);
+  assert.doesNotMatch(html, /min-width:\s*600px/);
+});

@@ -351,6 +351,8 @@ const TerminalPanel = {
     this.elements.terminalPanel?.classList.add('hidden');
     this.elements.desktopTab?.classList.add('active');
     this.elements.terminalTab?.classList.remove('active');
+    this.elements.desktopTab?.setAttribute?.('aria-selected', 'true');
+    this.elements.terminalTab?.setAttribute?.('aria-selected', 'false');
   },
 
   showTerminal() {
@@ -363,6 +365,8 @@ const TerminalPanel = {
     this.elements.terminalPanel?.classList.remove('hidden');
     this.elements.desktopTab?.classList.remove('active');
     this.elements.terminalTab?.classList.add('active');
+    this.elements.desktopTab?.setAttribute?.('aria-selected', 'false');
+    this.elements.terminalTab?.setAttribute?.('aria-selected', 'true');
     if (this.hasAdminToken()) {
       this.connectSocket();
     }
