@@ -991,6 +991,7 @@ const WebRTC = {
       resolutionEl.textContent = '-';
     }
     document.getElementById('loading')?.classList.remove('hidden');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     updateLoadingText('TURN 未配置，外网中继不可用。请手动切换到其他网络模式。');
     this.updateNetworkUI(
@@ -1367,6 +1368,7 @@ const WebRTC = {
 
   endConnectingWithFailure(reason = 'first-frame-timeout') {
     this.clearFirstFrameDeadline();
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
@@ -1381,6 +1383,7 @@ const WebRTC = {
 
   enterBootstrapFailure(error) {
     this.clearFirstFrameDeadline();
+    document.getElementById('loading')?.classList.remove('is-connecting');
     updateConnectionStatus('disconnected');
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
@@ -1392,6 +1395,7 @@ const WebRTC = {
   async startViewer(controller = null) {
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = 'none';
+    document.getElementById('loading')?.classList.add('is-connecting');
     updateLoadingText('正在连接...');
     if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
       StartupTelemetry.mark('start-click');
@@ -2721,6 +2725,7 @@ const WebRTC = {
     if (loadingEl && !loadingEl.classList.contains('hidden')) {
       console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
       loadingEl.classList.add('hidden');
+      loadingEl.classList.remove('is-connecting');
       document.body.classList.add('stream-connected');
       updateConnectionStatus('connected');
       const videoEl = document.getElementById('remoteVideo');
@@ -2886,10 +2891,12 @@ const WebRTC = {
         if (el && !el.classList.contains('hidden')) {
           console.log('Hiding loading spinner');
           el.classList.add('hidden');
+          el.classList.remove('is-connecting');
           document.body.classList.add('stream-connected');
           updateConnectionStatus('connected');
           videoElement.classList.add('connected');
         } else if (el && el.classList.contains('hidden')) {
+          el.classList.remove('is-connecting');
           console.log('[LOADING] Already hidden, skipping');
         }
         this.hideReconnectHud();
@@ -2932,6 +2939,7 @@ const WebRTC = {
           console.warn('[LOADING] Fallback timeout triggered: force-hiding spinner. Video readyState=%s paused=%s',
             video ? video.readyState : 'no-video', video ? video.paused : 'no-video');
           el.classList.add('hidden');
+          el.classList.remove('is-connecting');
           document.body.classList.add('stream-connected');
           updateConnectionStatus('connected');
           if (video) video.classList.add('connected');
@@ -3134,6 +3142,7 @@ const WebRTC = {
     this.tunnelStartedAt = performance.now();
     document.body.classList.add('tunnel-relay-active');
     document.getElementById('loading')?.classList.remove('hidden');
+    document.getElementById('loading')?.classList.add('is-connecting');
     updateLoadingText('正在启动隧道中继...');
     updateConnectionStatus('connecting');
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
@@ -3306,6 +3315,7 @@ if (this.tunnelLastObjectUrl) {
     // Keep the media element box mounted; only toggle visibility class.
     relayImage.classList.remove('hidden');
     document.getElementById('loading')?.classList.add('hidden');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     document.body.classList.add('stream-connected');
     updateConnectionStatus('connected');
     const latencyEl = document.getElementById('latencyDisplay');
@@ -4128,6 +4138,7 @@ if (this.tunnelLastObjectUrl) {
       videoElement?.classList.remove('connected');
       document.body.classList.remove('stream-connected');
       document.getElementById('loading')?.classList.remove('hidden');
+      document.getElementById('loading')?.classList.add('is-connecting');
       updateLoadingText('正在重新连接...');
     }
     this.stopTunnelRelay();
@@ -4303,6 +4314,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('strict-stun-exhausted');
@@ -4314,6 +4326,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
       updateLoadingText('直连失败，诊断日志已发送。');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('strict-stun-exhausted');
@@ -4324,12 +4337,14 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网中继无 TURN 配置，建议切换到隧道中继。', 'danger');
       updateLoadingText('TURN 未配置，无法中继…');
       document.getElementById('loading').classList.remove('hidden');
+      document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
       return;
     } else {
       updateLoadingText('连接中断，正在自动重连...');
     }
     document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('loading').classList.add('is-connecting');
     document.body.classList.remove('stream-connected');
 
     if (this.networkMode === 'relay' && (Number(this._relayHardRefreshCount) || 0) >= 5) {
@@ -4340,6 +4355,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('外网中继多次重连失败，请手动刷新或切换隧道中继。', 'danger');
       updateLoadingText('中继重连已停止，请手动重试');
       document.getElementById('loading')?.classList.remove('hidden');
+      document.getElementById('loading')?.classList.remove('is-connecting');
       return;
     }
 
@@ -4399,6 +4415,7 @@ if (this.tunnelLastObjectUrl) {
     }
     document.getElementById('remoteVideo').classList.remove('connected');
     document.body.classList.remove('stream-connected');
+    document.getElementById('loading')?.classList.remove('is-connecting');
     Auth.logout();
   },
 
@@ -4479,6 +4496,7 @@ if (this.tunnelLastObjectUrl) {
     }
     document.body?.classList?.remove('stream-connected');
     document.getElementById('loading')?.classList?.add('hidden');
+    document.getElementById('loading')?.classList?.remove('is-connecting');
     updateConnectionStatus('disconnected');
 
     if (this.socket) {
@@ -4520,6 +4538,7 @@ if (this.tunnelLastObjectUrl) {
     this.beginConnectionAttempt('reclaim');
     updateConnectionStatus('connecting');
     document.getElementById('loading')?.classList?.remove('hidden');
+    document.getElementById('loading')?.classList?.add('is-connecting');
     updateLoadingText('正在重新连接桌面…');
     this.createSignalingSocket(true);
     if (this.networkMode !== 'tunnel') {

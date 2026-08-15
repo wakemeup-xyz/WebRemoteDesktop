@@ -27,6 +27,7 @@ const UI = {
     const disconnectBtn = document.getElementById('disconnectBtn');
     const scaleBtn = document.getElementById('scaleBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const exitFullscreenBtn = document.getElementById('exitFullscreenBtn');
     const video = document.getElementById('remoteVideo');
     const relayImage = document.getElementById('relayImage');
     const viewerContainer = document.querySelector('.viewer-container');
@@ -64,6 +65,14 @@ const UI = {
           [video, relayImage].forEach((el) => el?.classList.add('scale-fill'));
         }
         scaleBtn.textContent = `缩放：${scaleLabels[scaleIndex]}`;
+      });
+    }
+
+    if (exitFullscreenBtn) {
+      exitFullscreenBtn.addEventListener('click', () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        }
       });
     }
 

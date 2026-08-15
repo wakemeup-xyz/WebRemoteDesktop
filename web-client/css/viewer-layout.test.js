@@ -104,3 +104,8 @@ test('narrow advisor cannot stretch to half the viewport', () => {
   assert.match(body, /min-height\s*:\s*0/);
   assert.match(body, /overflow-y\s*:\s*auto/);
 });
+
+test('placeholder spinner is opt-in via is-connecting', () => {
+  assert.match(css, /\.stream-placeholder:not\(\.is-connecting\)\s+\.spinner/);
+  assert.match(html, /id="exitFullscreenBtn"/);
+});
