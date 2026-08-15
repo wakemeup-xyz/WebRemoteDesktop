@@ -123,7 +123,13 @@
     if (!modal || !area) return;
     area.value = this.logs.map((entry) => this.formatLogEntry(entry)).join('\n');
     area.scrollTop = area.scrollHeight;
+    if (this._settingsModal) {
+      this._settingsModal.open();
+      return;
+    }
     modal.classList.remove('hidden');
+    const title = typeof modal.querySelector === 'function' ? modal.querySelector('h3') : null;
+    if (title && typeof title.focus === 'function') title.focus();
   },
 
   setupUI() {
@@ -141,21 +147,33 @@
       diagBtn.addEventListener('click', () => this.openPanel());
     }
 
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        modal.classList.add('hidden');
+    if (typeof WebRTC !== 'undefined' && typeof WebRTC.bindSettingsModal === 'function') {
+      this._settingsModal = WebRTC.bindSettingsModal(modal, { closeBtn });
+    } else {
+      const close = () => modal.classList.add('hidden');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', close);
+      }
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) close();
       });
+      document.addEventListener('keydown', (event) => {
+        if (!event || event.key !== 'Escape') return;
+        if (modal.classList.contains('hidden')) return;
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        if (typeof event.stopPropagation === 'function') event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        close();
+      }, true);
+      this._settingsModal = {
+        open() {
+          modal.classList.remove('hidden');
+          const title = typeof modal.querySelector === 'function' ? modal.querySelector('h3') : null;
+          if (title && typeof title.focus === 'function') title.focus();
+        },
+        close,
+      };
     }
-
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) modal.classList.add('hidden');
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
-      if (modal.classList.contains('hidden')) return;
-      event.preventDefault();
-      modal.classList.add('hidden');
-    });
 
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {

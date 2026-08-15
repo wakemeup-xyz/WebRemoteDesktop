@@ -1164,6 +1164,48 @@ test('resolution modal changes its display and closes only after a successful re
   assert.equal(modal.classList.contains('hidden'), true);
 });
 
+test('bindSettingsModal focuses the title and consumes Escape before remote keyboard', () => {
+  const { WebRTC } = loadWebRTC();
+  const title = makeElement();
+  title.focusCalls = 0;
+  title.focus = function focus() { this.focusCalls += 1; };
+  const modal = makeElement();
+  modal.querySelector = (selector) => (selector === 'h3' ? title : null);
+  modal.classList.add('hidden');
+  const closeBtn = makeElement();
+  const rootListeners = [];
+  const root = {
+    addEventListener(type, handler, options) {
+      rootListeners.push({ type, handler, options });
+    },
+  };
+
+  const api = WebRTC.bindSettingsModal(modal, { closeBtn, root });
+  api.open();
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(title.focusCalls, 1);
+
+  const keydown = rootListeners.find((item) => item.type === 'keydown');
+  assert.ok(keydown, 'settings modal must listen for Escape');
+  assert.equal(keydown.options === true || keydown.options?.capture === true, true);
+
+  let stopped = false;
+  let immediate = false;
+  keydown.handler({
+    key: 'Escape',
+    preventDefault() {},
+    stopPropagation() { stopped = true; },
+    stopImmediatePropagation() { immediate = true; },
+  });
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(stopped, true);
+  assert.equal(immediate, true);
+
+  api.open();
+  closeBtn.listeners.get('click')();
+  assert.equal(modal.classList.contains('hidden'), true);
+});
+
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
   let createCalls = 0;
   let startCalls = 0;
