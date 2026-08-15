@@ -1047,6 +1047,8 @@ body.controls-hidden .network-advisor.visible {
 }
 
 .network-advisor.visible:not(.collapsed) .network-advisor__body {
+  max-height: min(240px, 40vh);
+  min-height: 0;
   overflow-y: auto;
 }
 

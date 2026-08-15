@@ -3759,6 +3759,8 @@ if (this.tunnelLastObjectUrl) {
     if (shouldExpand) {
       this._networkAdvisorPinned = false;
       this.expandNetworkAdvisor({ reschedule: true });
+    } else if (narrow && (effectiveSeverity === 'info' || effectiveSeverity === '')) {
+      this.collapseNetworkAdvisor();
     } else if (!advisor.classList.contains('collapsed') && !this._networkAdvisorHover && !this._networkAdvisorPinned) {
       // Content refreshed while expanded — arm idle collapse only if not already running.
       if (!this._networkAdvisorCollapseTimer) {

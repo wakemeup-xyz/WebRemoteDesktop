@@ -99,4 +99,8 @@ test('narrow overflow menu exists', () => {
 test('narrow advisor cannot stretch to half the viewport', () => {
   assert.match(css, /max-height\s*:\s*min\(\s*240px,\s*40vh\s*\)/);
   assert.match(css, /align-items\s*:\s*flex-start/);
+  const body = getBlock('.network-advisor.visible:not(.collapsed) .network-advisor__body');
+  assert.match(body, /max-height\s*:\s*min\(\s*240px,\s*40vh\s*\)/, 'body must have a real max-height so overflow can scroll');
+  assert.match(body, /min-height\s*:\s*0/);
+  assert.match(body, /overflow-y\s*:\s*auto/);
 });
