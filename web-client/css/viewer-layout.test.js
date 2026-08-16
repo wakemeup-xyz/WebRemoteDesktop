@@ -50,6 +50,13 @@ test('status bar groups metrics and actions for operator chrome', () => {
   assert.match(metrics, /inline-flex/);
 });
 
+test('show-controls button is a permanent labeled action plus a restore fab', () => {
+  assert.match(html, /id="showControlsBtn"[^>]*>显示控件/);
+  assert.match(html, /id="showControlsFab"[^>]*>显示控件/);
+  assert.match(css, /\.show-controls-fab\s*\{/);
+  assert.match(css, /#showControlsBtn\s*\{/);
+});
+
 test('tokens define chrome geometry and secondary text', () => {
   const tokens = fs.readFileSync(path.join(__dirname, 'tokens.css'), 'utf8');
   assert.match(tokens, /--chrome-top\s*:\s*56px/);

@@ -21,6 +21,27 @@ test('toggleMoreMenu sets hidden and aria-expanded', () => {
   assert.equal(typeof ChromeLayout.toggleMoreMenu, 'function');
 });
 
+test('revealViewerChrome clears hidden and idle and shows the fab only when docks are away', () => {
+  const classes = new Set(['stream-connected', 'controls-hidden', 'chrome-idle']);
+  const fab = { hidden: true };
+  const root = {
+    body: {
+      classList: {
+        contains: (name) => classes.has(name),
+        add: (name) => { classes.add(name); },
+        remove: (name) => { classes.delete(name); },
+      },
+    },
+    getElementById: (id) => (id === 'showControlsFab' ? fab : null),
+  };
+  ChromeLayout.syncShowControlsFab(root);
+  assert.equal(fab.hidden, false);
+  ChromeLayout.revealViewerChrome(root);
+  assert.equal(classes.has('controls-hidden'), false);
+  assert.equal(classes.has('chrome-idle'), false);
+  assert.equal(fab.hidden, true);
+});
+
 function createMoreMenuDom() {
   const ids = {};
   const match = (el, selector) => {

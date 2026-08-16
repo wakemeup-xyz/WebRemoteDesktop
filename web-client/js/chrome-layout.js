@@ -12,11 +12,31 @@ const ChromeLayout = {
     const unobserve = this.observeStatusBar(statusEl);
     const unbindMore = this.bindMoreMenu();
     const unbindIdle = this.bindIdle();
+    this.syncShowControlsFab();
     return () => {
       unobserve();
       unbindMore();
       unbindIdle();
     };
+  },
+  docksAreAway(body) {
+    return !!body?.classList?.contains?.('controls-hidden')
+      || !!body?.classList?.contains?.('chrome-idle');
+  },
+  syncShowControlsFab(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    const fab = root?.getElementById?.('showControlsFab') || root?.querySelector?.('#showControlsFab');
+    if (!fab) return;
+    fab.hidden = !this.docksAreAway(body);
+  },
+  revealViewerChrome(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    body?.classList?.remove?.('controls-hidden');
+    body?.classList?.remove?.('chrome-idle');
+    this.bump(root);
+    this.syncShowControlsFab(root);
   },
   shouldIdle({ streamConnected, controlsHidden, menuOpen, modalOpen, idleMs } = {}) {
     return !!streamConnected
@@ -43,6 +63,7 @@ const ChromeLayout = {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
     body?.classList?.add?.('chrome-idle');
+    this.syncShowControlsFab(root);
     const advisor = root?.getElementById?.('networkAdvisor') || root?.querySelector?.('#networkAdvisor');
     if (advisor?.classList?.contains?.('visible')) advisor.classList.add('collapsed');
   },
@@ -50,6 +71,7 @@ const ChromeLayout = {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
     body?.classList?.remove?.('chrome-idle');
+    this.syncShowControlsFab(root);
     this._lastActivity = Date.now();
     this.armIdleTimer(root);
   },
@@ -111,6 +133,7 @@ const ChromeLayout = {
       if (!inputs.streamConnected || inputs.controlsHidden || inputs.menuOpen || inputs.modalOpen) {
         body?.classList?.remove?.('chrome-idle');
       }
+      this.syncShowControlsFab(root);
       if (connectedBecame || (inputs.streamConnected && unhid)) {
         this.bump(root);
         return;

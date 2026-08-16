@@ -30,13 +30,15 @@
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
+      <button id="showControlsBtn" class="control-btn" type="button" data-core-control>显示控件</button>
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
       <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
       <button id="refreshBtn" class="control-btn" data-core-control>刷新画面</button>
       <button id="diagBtn" class="control-btn status-action-secondary" type="button" disabled aria-busy="true" title="诊断组件加载中…">诊断日志</button>
-      <button id="toggleControlsBtn" class="control-btn status-action-secondary" data-core-control>隐藏控件</button>
+      <button id="toggleControlsBtn" class="control-btn status-action-secondary" type="button" data-core-control>隐藏控件</button>
     </div>
   </div>
+  <button id="showControlsFab" class="show-controls-fab" type="button" hidden>显示控件</button>
   
   <main id="desktopPanel">
     <div class="viewer-container">
