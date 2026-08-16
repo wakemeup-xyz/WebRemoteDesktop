@@ -50,11 +50,12 @@ test('status bar groups metrics and actions for operator chrome', () => {
   assert.match(metrics, /inline-flex/);
 });
 
-test('show-controls button is a permanent labeled action plus a restore fab', () => {
-  assert.match(html, /id="showControlsBtn"[^>]*>显示控件/);
-  assert.match(html, /id="showControlsFab"[^>]*>显示控件/);
-  assert.match(css, /\.show-controls-fab\s*\{/);
-  assert.match(css, /#showControlsBtn\s*\{/);
+test('toggle controls is a single status-bar button, not a separate fab', () => {
+  assert.match(html, /id="toggleControlsBtn"/);
+  assert.doesNotMatch(html, /id="showControlsBtn"/);
+  assert.doesNotMatch(html, /id="showControlsFab"/);
+  assert.match(css, /#toggleControlsBtn\s*\{/);
+  assert.match(css, /body\.(controls-hidden|chrome-idle)\s+#toggleControlsBtn/);
 });
 
 test('tokens define chrome geometry and secondary text', () => {

@@ -21,10 +21,10 @@ test('toggleMoreMenu sets hidden and aria-expanded', () => {
   assert.equal(typeof ChromeLayout.toggleMoreMenu, 'function');
 });
 
-test('revealViewerChrome clears hidden and idle and shows the fab only when docks are away', () => {
-  const classes = new Set(['stream-connected', 'controls-hidden', 'chrome-idle']);
-  const fab = { hidden: true };
-  const root = {
+function fakeToggleRoot(bodyClass) {
+  const classes = new Set(String(bodyClass || '').split(/\s+/).filter(Boolean));
+  const btn = { id: 'toggleControlsBtn', textContent: '隐藏控件' };
+  return {
     body: {
       classList: {
         contains: (name) => classes.has(name),
@@ -32,14 +32,32 @@ test('revealViewerChrome clears hidden and idle and shows the fab only when dock
         remove: (name) => { classes.delete(name); },
       },
     },
-    getElementById: (id) => (id === 'showControlsFab' ? fab : null),
+    getElementById: (id) => (id === 'toggleControlsBtn' ? btn : null),
+    btn,
+    classes,
   };
-  ChromeLayout.syncShowControlsFab(root);
-  assert.equal(fab.hidden, false);
+}
+
+test('toggle label is 显示控件 when docks are hidden or idle', () => {
+  const hidden = fakeToggleRoot('controls-hidden');
+  ChromeLayout.syncToggleControlsLabel(hidden);
+  assert.equal(hidden.btn.textContent, '显示控件');
+
+  const idle = fakeToggleRoot('stream-connected chrome-idle');
+  ChromeLayout.syncToggleControlsLabel(idle);
+  assert.equal(idle.btn.textContent, '显示控件');
+
+  const shown = fakeToggleRoot('stream-connected');
+  ChromeLayout.syncToggleControlsLabel(shown);
+  assert.equal(shown.btn.textContent, '隐藏控件');
+});
+
+test('revealViewerChrome clears hidden and idle', () => {
+  const root = fakeToggleRoot('stream-connected controls-hidden chrome-idle');
   ChromeLayout.revealViewerChrome(root);
-  assert.equal(classes.has('controls-hidden'), false);
-  assert.equal(classes.has('chrome-idle'), false);
-  assert.equal(fab.hidden, true);
+  assert.equal(root.classes.has('controls-hidden'), false);
+  assert.equal(root.classes.has('chrome-idle'), false);
+  assert.equal(root.btn.textContent, '隐藏控件');
 });
 
 function createMoreMenuDom() {
@@ -177,4 +195,21 @@ test('shouldIdle only when streaming, chrome visible, idle long enough', () => {
   assert.equal(ChromeLayout.shouldIdle({
     streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: true, idleMs: 5000,
   }), false);
+});
+
+test('auto idle is off so enterIdle does not hide docks', () => {
+  assert.equal(ChromeLayout.autoIdleEnabled, false);
+  const classes = new Set(['stream-connected']);
+  const root = {
+    body: {
+      classList: {
+        contains: (name) => classes.has(name),
+        add: (name) => { classes.add(name); },
+        remove: (name) => { classes.delete(name); },
+      },
+    },
+    getElementById: () => null,
+  };
+  ChromeLayout.enterIdle(root);
+  assert.equal(classes.has('chrome-idle'), false);
 });

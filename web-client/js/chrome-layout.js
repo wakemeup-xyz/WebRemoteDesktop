@@ -3,6 +3,7 @@ const IDLE_EDGE_PX = 80;
 
 const ChromeLayout = {
   IDLE_MS: 2500,
+  autoIdleEnabled: false,
   _lastActivity: 0,
   _idleTimer: null,
   _wasStreamConnected: false,
@@ -12,7 +13,7 @@ const ChromeLayout = {
     const unobserve = this.observeStatusBar(statusEl);
     const unbindMore = this.bindMoreMenu();
     const unbindIdle = this.bindIdle();
-    this.syncShowControlsFab();
+    this.syncToggleControlsLabel();
     return () => {
       unobserve();
       unbindMore();
@@ -23,12 +24,12 @@ const ChromeLayout = {
     return !!body?.classList?.contains?.('controls-hidden')
       || !!body?.classList?.contains?.('chrome-idle');
   },
-  syncShowControlsFab(rootEl) {
+  syncToggleControlsLabel(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
-    const fab = root?.getElementById?.('showControlsFab') || root?.querySelector?.('#showControlsFab');
-    if (!fab) return;
-    fab.hidden = !this.docksAreAway(body);
+    const btn = root?.getElementById?.('toggleControlsBtn') || root?.querySelector?.('#toggleControlsBtn');
+    if (!btn) return;
+    btn.textContent = this.docksAreAway(body) ? '显示控件' : '隐藏控件';
   },
   revealViewerChrome(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
@@ -36,7 +37,15 @@ const ChromeLayout = {
     body?.classList?.remove?.('controls-hidden');
     body?.classList?.remove?.('chrome-idle');
     this.bump(root);
-    this.syncShowControlsFab(root);
+    this.syncToggleControlsLabel(root);
+  },
+  onToggleControlsClick(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    if (!body?.classList) return;
+    if (this.docksAreAway(body)) this.revealViewerChrome(root);
+    else body.classList.add('controls-hidden');
+    this.syncToggleControlsLabel(root);
   },
   shouldIdle({ streamConnected, controlsHidden, menuOpen, modalOpen, idleMs } = {}) {
     return !!streamConnected
@@ -60,18 +69,22 @@ const ChromeLayout = {
     };
   },
   enterIdle(rootEl) {
+    if (!this.autoIdleEnabled) return;
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
     body?.classList?.add?.('chrome-idle');
-    this.syncShowControlsFab(root);
+    this.syncToggleControlsLabel(root);
     const advisor = root?.getElementById?.('networkAdvisor') || root?.querySelector?.('#networkAdvisor');
     if (advisor?.classList?.contains?.('visible')) advisor.classList.add('collapsed');
   },
   bump(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
-    body?.classList?.remove?.('chrome-idle');
-    this.syncShowControlsFab(root);
+    const wasIdle = !!body?.classList?.contains?.('chrome-idle');
+    if (wasIdle) {
+      body.classList.remove('chrome-idle');
+      this.syncToggleControlsLabel(root);
+    }
     this._lastActivity = Date.now();
     this.armIdleTimer(root);
   },
@@ -92,6 +105,7 @@ const ChromeLayout = {
     }, this.IDLE_MS);
   },
   bindIdle(rootEl) {
+    if (!this.autoIdleEnabled) return () => {};
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     if (!root?.addEventListener) return () => {};
     const body = root.body || root.querySelector?.('body');
@@ -130,10 +144,11 @@ const ChromeLayout = {
       const unhid = this._wasControlsHidden && !inputs.controlsHidden;
       this._wasStreamConnected = inputs.streamConnected;
       this._wasControlsHidden = inputs.controlsHidden;
-      if (!inputs.streamConnected || inputs.controlsHidden || inputs.menuOpen || inputs.modalOpen) {
-        body?.classList?.remove?.('chrome-idle');
+      if (body?.classList?.contains?.('chrome-idle')
+          && (!inputs.streamConnected || inputs.controlsHidden || inputs.menuOpen || inputs.modalOpen)) {
+        body.classList.remove('chrome-idle');
       }
-      this.syncShowControlsFab(root);
+      this.syncToggleControlsLabel(root);
       if (connectedBecame || (inputs.streamConnected && unhid)) {
         this.bump(root);
         return;

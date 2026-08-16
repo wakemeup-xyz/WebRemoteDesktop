@@ -99,31 +99,16 @@ const UI = {
       });
     }
 
-    const showControls = () => {
-      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.revealViewerChrome === 'function') {
-        ChromeLayout.revealViewerChrome();
-        return;
-      }
-      document.body.classList.remove('controls-hidden');
-      document.body.classList.remove('chrome-idle');
-    };
-    const showControlsBtn = document.getElementById('showControlsBtn');
-    const showControlsFab = document.getElementById('showControlsFab');
-    showControlsBtn?.addEventListener('click', (event) => {
-      event.preventDefault();
-      showControls();
-    });
-    showControlsFab?.addEventListener('click', (event) => {
-      event.preventDefault();
-      showControls();
-    });
     const toggleControlsBtn = document.getElementById('toggleControlsBtn');
     if (toggleControlsBtn) {
       toggleControlsBtn.addEventListener('click', () => {
-        document.body.classList.add('controls-hidden');
-        if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.syncShowControlsFab === 'function') {
-          ChromeLayout.syncShowControlsFab();
+        if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.onToggleControlsClick === 'function') {
+          ChromeLayout.onToggleControlsClick();
+          return;
         }
+        document.body.classList.toggle('controls-hidden');
+        const hidden = document.body.classList.contains('controls-hidden');
+        toggleControlsBtn.textContent = hidden ? '显示控件' : '隐藏控件';
       });
     }
   }

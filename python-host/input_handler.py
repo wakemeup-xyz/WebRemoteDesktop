@@ -2,6 +2,7 @@
 """macOS Input Controller using Quartz"""
 import asyncio
 import logging
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -271,101 +272,26 @@ class InputHandler:
         elif action == 'switchInputMethod':
             self._switch_input_method()
 
-    def _dock_orientation(self):
-        """Return macOS Dock edge: bottom|left|right (default bottom)."""
+    def _show_dock(self):
+        """Open Launchpad (启动台). The toolbar label is 显示程序坞; operators
+        expect the app grid, not a silent cursor nudge toward the Dock edge.
+        """
         try:
-            import subprocess
             result = subprocess.run(
-                ["defaults", "read", "com.apple.dock", "orientation"],
+                ["open", "-a", "Launchpad"],
                 capture_output=True,
                 text=True,
-                timeout=1.0,
+                timeout=2.0,
                 check=False,
             )
-            value = str(result.stdout or "").strip().lower()
-            if value in {"left", "right", "bottom"}:
-                return value
-        except Exception:
-            pass
-        return "bottom"
-
-    def _post_mouse_move(self, x, y):
-        event = CGEventCreateMouseEvent(
-            self.source, kCGEventMouseMoved, (float(x), float(y)), kCGMouseButtonLeft
-        )
-        if event is None:
-            return False
-        CGEventPost(kCGHIDEventTap, event)
-        return True
-
-    def _show_dock(self):
-        """Reveal auto-hidden Dock and leave the cursor near it so it stays visible.
-
-        Previous implementation restored the cursor to the pre-click position after
-        0.6s, which immediately re-hid an auto-hide Dock and looked like a no-op.
-        """
-        if not self.monitor:
-            logger.warning("Show dock failed: no monitor info")
-            return
-
-        try:
-            event = CGEventCreate(self.source)
-            if event is None:
-                logger.warning("Show dock: CGEventCreate returned None")
+            if result.returncode != 0:
+                logger.warning(
+                    "Show dock: open Launchpad failed rc=%s stderr=%s",
+                    result.returncode,
+                    (result.stderr or "").strip(),
+                )
                 return
-            current_pos = CGEventGetLocation(event)
-            current_x = float(current_pos.x)
-            current_y = float(current_pos.y)
-
-            left = float(getattr(self.monitor, "x", 0) or 0)
-            top = float(getattr(self.monitor, "y", 0) or 0)
-            width = float(getattr(self.monitor, "width", 0) or 0)
-            height = float(getattr(self.monitor, "height", 0) or 0)
-            if width <= 0 or height <= 0:
-                logger.warning("Show dock failed: invalid monitor size")
-                return
-
-            orientation = self._dock_orientation()
-            mid_x = left + width / 2.0
-            mid_y = top + height / 2.0
-            # Hot-edge positions: approach the edge, then push past it, then rest
-            # just inside so the Dock remains visible for interaction.
-            if orientation == "left":
-                approach = (left + 1.0, mid_y)
-                push = (left - 20.0, mid_y)
-                rest = (left + 36.0, mid_y)
-            elif orientation == "right":
-                approach = (left + width - 1.0, mid_y)
-                push = (left + width + 20.0, mid_y)
-                rest = (left + width - 36.0, mid_y)
-            else:
-                approach = (mid_x, top + height - 1.0)
-                push = (mid_x, top + height + 20.0)
-                rest = (mid_x, top + height - 48.0)
-
-            logger.info(
-                "Show dock: orientation=%s approach=(%.0f,%.0f) push=(%.0f,%.0f) rest=(%.0f,%.0f)",
-                orientation,
-                approach[0], approach[1],
-                push[0], push[1],
-                rest[0], rest[1],
-            )
-
-            # Multi-step reveal: macOS sometimes ignores a single jump past the edge.
-            for point in (approach, push, push, rest):
-                if not self._post_mouse_move(point[0], point[1]):
-                    logger.warning("Show dock: failed to post mouse move")
-                    return
-                time.sleep(0.05)
-
-            # Dwell near the Dock so autohide stays open long enough to click icons.
-            time.sleep(1.2)
-            self._post_mouse_move(rest[0], rest[1])
-            logger.info(
-                "Show dock: left cursor near dock (was %.0f,%.0f); not restoring far position",
-                current_x,
-                current_y,
-            )
+            logger.info("Show dock: opened Launchpad")
         except Exception as e:
             logger.error("Show dock failed: %s", e, exc_info=True)
 

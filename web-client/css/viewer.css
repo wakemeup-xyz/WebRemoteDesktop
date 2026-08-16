@@ -334,25 +334,16 @@ body.tunnel-relay-active #remoteVideo {
   margin-left: auto;
 }
 
-#showControlsBtn {
+#toggleControlsBtn {
   flex-shrink: 0;
 }
 
-.show-controls-fab {
-  position: fixed;
-  top: calc(var(--chrome-top) + 10px);
-  right: 16px;
-  z-index: 250;
-  min-height: var(--touch-min);
-  padding: 10px 16px;
-  border: 0;
-  border-radius: var(--radius-md);
+body.controls-hidden #toggleControlsBtn,
+body.chrome-idle #toggleControlsBtn {
+  opacity: 1;
   background: #2563eb;
   color: #fff;
-  font-size: 14px;
   font-weight: 600;
-  cursor: pointer;
-  box-shadow: var(--shadow-md);
 }
 
 body.stream-connected .status-action-secondary {

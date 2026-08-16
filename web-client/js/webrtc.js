@@ -2931,13 +2931,20 @@ const WebRTC = {
         setTimeout(() => this.requestKeyframe('ontrack-first-video-retry'), 700);
       }
 
-      // Last-resort fallback: if loading still visible after 8s, force hide
+      // Last-resort fallback: only hide the spinner if a real frame landed.
+      // Forcing 已连接 with a 0x0 video looks like a frozen black page.
       setTimeout(() => {
         const el = document.getElementById('loading');
         const video = document.getElementById('remoteVideo');
         if (el && !el.classList.contains('hidden')) {
-          console.warn('[LOADING] Fallback timeout triggered: force-hiding spinner. Video readyState=%s paused=%s',
-            video ? video.readyState : 'no-video', video ? video.paused : 'no-video');
+          const hasFrame = !!(video && video.videoWidth > 0 && video.videoHeight > 0);
+          console.warn('[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s hasFrame=%s',
+            video ? video.readyState : 'no-video',
+            video ? video.paused : 'no-video',
+            video ? video.videoWidth : 0,
+            video ? video.videoHeight : 0,
+            hasFrame);
+          if (!hasFrame) return;
           el.classList.add('hidden');
           el.classList.remove('is-connecting');
           document.body.classList.add('stream-connected');
