@@ -174,3 +174,49 @@ def test_continuity_action_keyframe_on_media_profile():
     })
     # Profile unchanged, but keyframe still requested.
     host.media_sender.request_keyframe.assert_called_once()
+
+
+def test_lock_adopts_720p_connection_sync_over_stale_1080p():
+    host = _make_host(1920, 1080)
+    host.on_media_profile_change({
+        "viewerId": "viewer-1",
+        "profile": "high",
+        "width": 1280,
+        "height": 720,
+        "targetFps": 20,
+        "videoBitrateKbps": 2500,
+        "reason": "connection-sync",
+        "adaptiveResolution": False,
+        "connectionAttemptId": "wrd-new",
+    })
+    assert host.media_profile["width"] == 1280
+    assert host.media_profile["height"] == 720
+    assert host._user_resolution == {"width": 1280, "height": 720}
+
+
+def test_lock_still_rejects_survival_auto_size():
+    host = _make_host(1280, 720)
+    host.on_media_profile_change({
+        "viewerId": "viewer-1",
+        "profile": "survival",
+        "width": 640,
+        "height": 360,
+        "targetFps": 8,
+        "videoBitrateKbps": 500,
+        "reason": "packet-loss",
+        "adaptiveResolution": False,
+    })
+    assert host.media_profile["width"] == 1280
+    assert host.media_profile["height"] == 720
+
+
+def test_bind_session_presentation_resets_stale_user_resolution():
+    host = _make_host(1920, 1080)
+    host._bind_session_presentation({
+        "width": 1280,
+        "height": 720,
+        "networkMode": "relay",
+        "connectionAttemptId": "wrd-1",
+        "viewerId": "v1",
+    })
+    assert host._user_resolution == {"width": 1280, "height": 720}

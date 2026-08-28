@@ -132,6 +132,9 @@ MEDIA_PROFILE_DEFAULT = {
     "video_bitrate_kbps": 2500,
 }
 
+LOCK_AUTO_SHRINK_SIZES = {(640, 360), (854, 480)}
+PRESENTATION_RUNGS = {(960, 540), (1280, 720), (1600, 900), (1920, 1080)}
+
 TUNNEL_RELAY_PROFILE_ORDER = ["high", "medium", "low", "survival"]
 TUNNEL_RELAY_PROFILES = {
     "high": {
@@ -325,6 +328,10 @@ def clamp_int(value, minimum, maximum, fallback):
     except (TypeError, ValueError):
         return fallback
     return max(minimum, min(maximum, parsed))
+
+
+def is_lock_rejected_size(width, height) -> bool:
+    return (int(width), int(height)) in LOCK_AUTO_SHRINK_SIZES
 
 
 def build_ice_servers(mode="auto", turn_server_id=None):
@@ -2064,6 +2071,15 @@ class WebRemoteHost:
                         "state": "active",
                     }
 
+                try:
+                    offer_width = int(data.get("width") or 0)
+                    offer_height = int(data.get("height") or 0)
+                except (TypeError, ValueError):
+                    offer_width = 0
+                    offer_height = 0
+                if offer_width > 0 and offer_height > 0:
+                    self._bind_session_presentation(data)
+
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
                 turn_server_id = (
@@ -2439,6 +2455,34 @@ class WebRemoteHost:
             profile["height"] = height
         return width, height
 
+    def _bind_session_presentation(self, data):
+        width = clamp_int(data.get("width"), 320, 1920, MEDIA_PROFILE_DEFAULT["width"])
+        height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
+        prev = dict(getattr(self, "_user_resolution", None) or {})
+        adopted = self._set_user_resolution(width, height)
+        emit_host_event(
+            logger,
+            event="host_session_presentation",
+            message="Session presentation bound",
+            correlation={"connectionAttemptId": data.get("connectionAttemptId")},
+            meta={
+                "width": adopted[0],
+                "height": adopted[1],
+                "networkMode": data.get("networkMode") or data.get("iceMode"),
+                "previousUserResolution": prev,
+                "adopted": True,
+                "path": data.get("networkMode") or data.get("iceMode"),
+            },
+        )
+        logger.info(
+            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s",
+            adopted[0], adopted[1],
+            data.get("networkMode") or "-",
+            prev,
+            data.get("connectionAttemptId") or "-",
+        )
+        return adopted
+
     def _request_keyframe(self, reason="media-stalled", viewer_id="-"):
         """Request encoder keyframe with a 1/s host-wide rate limit."""
         now = time.monotonic()
@@ -2516,18 +2560,31 @@ class WebRemoteHost:
                 width, height = requested_width, requested_height
                 self._set_user_resolution(width, height)
             else:
-                locked_width, locked_height = self._locked_user_size()
-                width, height = locked_width, locked_height
-                if requested_width != locked_width or requested_height != locked_height:
+                if is_lock_rejected_size(requested_width, requested_height):
+                    width, height = self._locked_user_size()
                     logger.info(
                         "WRD_MEDIA_PROFILE size locked user=%sx%s requested=%sx%s viewer=%s adaptiveResolution=%s",
-                        locked_width,
-                        locked_height,
+                        width,
+                        height,
                         requested_width,
                         requested_height,
                         payload.get("viewerId", "-"),
                         adaptive_resolution,
                     )
+                elif (requested_width, requested_height) in PRESENTATION_RUNGS:
+                    width, height = self._set_user_resolution(requested_width, requested_height)
+                else:
+                    width, height = self._locked_user_size()
+                    if requested_width != width or requested_height != height:
+                        logger.info(
+                            "WRD_MEDIA_PROFILE size locked user=%sx%s requested=%sx%s viewer=%s adaptiveResolution=%s",
+                            width,
+                            height,
+                            requested_width,
+                            requested_height,
+                            payload.get("viewerId", "-"),
+                            adaptive_resolution,
+                        )
             next_profile = {
                 "profile": profile,
                 "width": width,
