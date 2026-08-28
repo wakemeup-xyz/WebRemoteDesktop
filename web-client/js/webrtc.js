@@ -56,6 +56,7 @@ const WebRTC = {
     } catch (_err) { /* non-DOM test env */ }
     return { width: 1280, height: 720, label: '1280x720' };
   })(),
+  _explicitOverride1080: false,
   linkQualityController: null,
   mediaActivityController: null,
   mediaActivityLifecycle: null,
@@ -752,6 +753,7 @@ const WebRTC = {
     }
 
     if (trigger === 'viewer-open' || trigger === 'manual-mode-switch') {
+      this._explicitOverride1080 = false;
       this._reconnectAttempt = 0;
       this._relayHardRefreshCount = 0;
       this._mediaResumeSoftRecoverUsed = false;
@@ -1042,6 +1044,44 @@ const WebRTC = {
     return changed;
   },
 
+  getUserPreference() {
+    const cur = this.currentResolution || { width: 1280, height: 720 };
+    return (typeof PresentationBudget !== 'undefined'
+      ? PresentationBudget.nearestPresentationRung(cur.width, cur.height)
+      : { width: 1280, height: 720, label: '1280x720' });
+  },
+
+  getSessionPresentation() {
+    const pref = this.getUserPreference();
+    // Tunnel JPEG keeps its own size path and must not use the WebRTC cap contract.
+    if (this.networkMode === 'tunnel') {
+      return {
+        ...pref,
+        capped: false,
+        pathCap: pref,
+        userPreference: pref,
+        explicitOverride1080: this._explicitOverride1080 === true,
+      };
+    }
+    const budget = typeof PresentationBudget !== 'undefined'
+      ? PresentationBudget.computeSessionPresentation({
+        userPreference: pref,
+        networkMode: this.networkMode,
+        lastCandidateType: this.lastCandidateType,
+        explicitOverride1080: this._explicitOverride1080 === true,
+      })
+      : {
+        width: 1280,
+        height: 720,
+        label: '1280x720',
+        capped: false,
+        pathCap: { width: 1280, height: 720 },
+        userPreference: pref,
+        explicitOverride1080: false,
+      };
+    return budget;
+  },
+
   qualityFloorsForResolution(width, height) {
     const w = Number(width) || 0;
     const h = Number(height) || 0;
@@ -1158,12 +1198,13 @@ const WebRTC = {
     const lease = this.activeLeaseEnvelope();
     if (!profile || !lease) return false;
     const allowResolutionChange = this.adaptiveResolutionEnabled === true;
+    const session = allowResolutionChange ? null : this.getSessionPresentation();
     const width = allowResolutionChange
       ? Number(profile.width) || Number(this.currentResolution?.width) || 960
-      : Number(this.currentResolution?.width) || Number(profile.width) || 960;
+      : Number(session?.width) || Number(this.currentResolution?.width) || Number(profile.width) || 960;
     const height = allowResolutionChange
       ? Number(profile.height) || Number(this.currentResolution?.height) || 540
-      : Number(this.currentResolution?.height) || Number(profile.height) || 540;
+      : Number(session?.height) || Number(this.currentResolution?.height) || Number(profile.height) || 540;
     // When resolution is locked high, do not starve the encoder with survival bitrates
     // designed for 360p — that creates encode backlog and multi-second jitter spikes.
     let bitrateKbps = Number(profile.bitrateKbps) || 900;
@@ -3396,6 +3437,7 @@ if (this.tunnelLastObjectUrl) {
         this.currentConnectionAttemptId = this.createConnectionAttemptId();
       }
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
+      const session = this.getSessionPresentation();
       this.socket.emit('offer', {
         offer: this.pc.localDescription,
         epoch,
@@ -3407,6 +3449,8 @@ if (this.tunnelLastObjectUrl) {
         leaseEpoch: this.controlState.lease.leaseEpoch,
         connectionAttemptId: this.currentConnectionAttemptId,
         connectionAttemptSequence: Number(this.connectionAttemptSequence) || 1,
+        width: session.width,
+        height: session.height,
       });
       console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {
@@ -3473,7 +3517,9 @@ if (this.tunnelLastObjectUrl) {
     const lease = this.activeLeaseEnvelope();
     if (!lease || !this.socket?.connected) return false;
     this.currentResolution = { width, height, label: `${width}x${height}` };
-    this.socket.emit('resolution-change', { ...lease, width, height });
+    this._explicitOverride1080 = Number(width) >= 1920 && Number(height) >= 1080;
+    const session = this.getSessionPresentation();
+    this.socket.emit('resolution-change', { ...lease, width: session.width, height: session.height });
     if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {
       this.startTunnelRelay();
     }

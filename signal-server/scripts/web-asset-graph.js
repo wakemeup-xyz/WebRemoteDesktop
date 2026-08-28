@@ -15,6 +15,7 @@ module.exports = Object.freeze({
     'js/bootstrap-controller.js',
     'js/terminal-loader.js',
     'js/diagnostic-core.js',
+    'js/presentation-budget.js',
     'js/webrtc.js',
     'js/input-geometry.js',
     'js/keyboard-transport.js',

@@ -94,6 +94,16 @@ function loadWebRTC(overrides = {}) {
   }
   context.globalThis = context;
   vm.createContext(context);
+  if (!overrides.PresentationBudget) {
+    const budgetSource = fs.readFileSync(
+      path.join(__dirname, 'presentation-budget.js'),
+      'utf8',
+    );
+    vm.runInContext(budgetSource, context);
+    if (!context.PresentationBudget && context.window?.PresentationBudget) {
+      context.PresentationBudget = context.window.PresentationBudget;
+    }
+  }
   if (!overrides.StunPortSearchController) {
     const controllerSource = fs.readFileSync(
       path.join(__dirname, 'stun-port-search-controller.js'),
@@ -4502,4 +4512,103 @@ test('refresh with last-frame hold keeps the full-screen loader hidden', async (
   loading.classList.add('hidden');
   await WebRTC.refresh({ reason: 'manual' });
   assert.equal(loading.classList.contains('hidden'), true);
+});
+
+test('relay applyMediaProfile uses 720p cap when pref is 1080p', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC._explicitOverride1080 = false;
+  WebRTC.currentResolution = { width: 1920, height: 1080, label: '1920x1080' };
+  WebRTC.socket = { connected: true, emit(event, payload) { context._last = [event, payload]; } };
+  WebRTC.controlState = { lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.activeLeaseEnvelope = () => WebRTC.controlState.lease;
+  WebRTC.applyMediaProfile({ name: 'high', width: 1280, height: 720, fps: 20, bitrateKbps: 2500 }, 'connection-sync');
+  assert.equal(context._last[0], 'media-profile-change');
+  assert.equal(context._last[1].width, 1280);
+  assert.equal(context._last[1].height, 720);
+  assert.equal(context._last[1].adaptiveResolution, false);
+});
+
+test('beginConnectionAttempt viewer-open clears 1080p override', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._explicitOverride1080 = true;
+  WebRTC.beginConnectionAttempt('viewer-open');
+  assert.equal(WebRTC._explicitOverride1080, false);
+});
+
+test('refresh attempt keeps 1080p override', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._explicitOverride1080 = true;
+  WebRTC.beginConnectionAttempt('refresh');
+  assert.equal(WebRTC._explicitOverride1080, true);
+});
+
+test('requestResolution 1080p on relay sets override flag', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC.socket = { connected: true, emit() {} };
+  WebRTC.controlState = { lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.activeLeaseEnvelope = () => WebRTC.controlState.lease;
+  WebRTC.requestResolution(1920, 1080);
+  assert.equal(WebRTC._explicitOverride1080, true);
+  const pres = WebRTC.getSessionPresentation();
+  assert.equal(pres.width, 1920);
+});
+
+test('beginConnectionAttempt manual-mode-switch clears 1080p override', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._explicitOverride1080 = true;
+  WebRTC.beginConnectionAttempt('manual-mode-switch');
+  assert.equal(WebRTC._explicitOverride1080, false);
+});
+
+test('requestResolution 1600p on relay emits 720p session size', async () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC._explicitOverride1080 = false;
+  WebRTC.socket = { connected: true, emit(event, payload) { context._last = [event, payload]; } };
+  WebRTC.controlState = { lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.activeLeaseEnvelope = () => WebRTC.controlState.lease;
+  await WebRTC.requestResolution(1600, 900);
+  assert.equal(WebRTC._explicitOverride1080, false);
+  assert.equal(WebRTC.currentResolution.width, 1600);
+  assert.equal(context._last[0], 'resolution-change');
+  assert.equal(context._last[1].width, 1280);
+  assert.equal(context._last[1].height, 720);
+});
+
+test('createOffer emits session presentation size', async () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = {
+    connected: true,
+    emit(...args) { emitted.push(args); },
+  };
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 },
+  };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC._explicitOverride1080 = false;
+  WebRTC.currentResolution = { width: 1920, height: 1080, label: '1920x1080' };
+  WebRTC.currentConnectionAttemptId = 'attempt-from-begin';
+  WebRTC.pc = {
+    getTransceivers: () => [],
+    addTransceiver: () => ({}),
+    createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    setLocalDescription: async () => {},
+    localDescription: { type: 'offer', sdp: 'v=0' },
+    iceGatheringState: 'complete',
+    close() {},
+  };
+  WebRTC.preferH264 = () => {};
+
+  await WebRTC.createOffer();
+  const offerEmit = emitted.find((entry) => entry[0] === 'offer');
+  assert.ok(offerEmit);
+  assert.equal(offerEmit[1].width, 1280);
+  assert.equal(offerEmit[1].height, 720);
 });
