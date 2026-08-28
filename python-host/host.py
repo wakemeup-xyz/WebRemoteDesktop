@@ -1418,6 +1418,7 @@ class WebRemoteHost:
             "height": MEDIA_PROFILE_DEFAULT["height"],
         }
         self._last_keyframe_request_at = 0.0
+        self._stall_sample_count = 0
         self._input_event_count = 0
         self._last_input_at_monotonic = None
         # Per-offer media demand binding: generation is monotonic per attempt.
@@ -2436,6 +2437,22 @@ class WebRemoteHost:
                 (self._last_diag_network or {}).get("turnConfigured", False),
                 (self._last_diag_network or {}).get("turnStatus", "unknown"),
             )
+            fps = float(data.get("fps") or 0)
+            received = int(data.get("framesReceived") or 0)
+            decoded = int(data.get("framesDecoded") or 0)
+            if fps == 0 and received > 0:
+                count = int(getattr(self, "_stall_sample_count", 0) or 0) + 1
+                self._stall_sample_count = count
+                if count % 5 == 0:
+                    logger.info(
+                        "WRD_STALL_SAMPLE count=%s received=%s decoded=%s viewer=%s",
+                        count,
+                        received,
+                        decoded,
+                        data.get("viewerId", "-"),
+                    )
+            else:
+                self._stall_sample_count = 0
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
 

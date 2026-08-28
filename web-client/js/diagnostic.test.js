@@ -295,6 +295,54 @@ test('buildConnectionDiagnostic includes adaptive media summary from WebRTC', ()
   });
 });
 
+test('buildConnectionDiagnostic includes paint continuity fields', () => {
+  const { context, elements } = createDiagnosticContext();
+  const video = elements.get('remoteVideo');
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.readyState = 2;
+  context.WebRTC.getSessionPresentation = () => ({
+    width: 1280, height: 720, label: '1280x720',
+    capped: true,
+    pathCap: { width: 1280, height: 720 },
+    userPreference: { width: 1920, height: 1080 },
+    explicitOverride1080: false,
+  });
+  context.WebRTC.uiPhase = 'media-stalled';
+  context.WebRTC.hasPaintedFrame = true;
+  context.WebRTC._lastInboundFramesDecoded = 0;
+  context.WebRTC._lastPaintStats = {
+    framesReceived: 19,
+    framesDecoded: 0,
+    fps: 0,
+    jitterBufferMs: 40,
+    bytesReceived: 1234,
+    videoWidth: 1280,
+    videoHeight: 720,
+  };
+  context.WebRTC._lastKeyframeRequestAt = 1;
+  context.WebRTC._keyframeEmitted = false;
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'media-stalled' });
+  assert.equal(payload.schemaVersion, 3);
+  assert.equal(payload.traceSummary.uiPhase, 'media-stalled');
+  assert.equal(payload.traceSummary.sessionPresentation.width, 1280);
+  assert.equal(payload.traceSummary.pathCap.height, 720);
+  assert.equal(payload.traceSummary.hasPaintedFrame, true);
+  assert.deepEqual(payload.traceSummary.userPreference, { width: 1920, height: 1080 });
+  assert.equal(payload.traceSummary.explicitOverride1080, false);
+  assert.equal(payload.traceSummary.videoWidth, 1280);
+  assert.equal(payload.traceSummary.videoHeight, 720);
+  assert.equal(payload.traceSummary.readyState, 2);
+  assert.equal(payload.traceSummary.framesReceived, 19);
+  assert.equal(payload.traceSummary.framesDecoded, 0);
+  assert.equal(payload.traceSummary.fps, 0);
+  assert.equal(payload.traceSummary.jitterBufferMs, 40);
+  assert.equal(payload.traceSummary.bytesReceived, 1234);
+  assert.equal(payload.traceSummary.keyframeRequested, true);
+  assert.equal(payload.traceSummary.keyframeEmitted, false);
+});
+
 test('sendConnectionDiagnostic queues payload when socket and fetch fail', async () => {
   const { context, storage } = createDiagnosticContext({
     fetch: async () => ({ ok: false, status: 500 }),

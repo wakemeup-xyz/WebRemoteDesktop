@@ -373,6 +373,19 @@
       ? TerminalPanel.getDiagnosticState()
       : null;
     const network = this.getNetworkSnapshot();
+    const session = (typeof WebRTC !== 'undefined'
+      && typeof WebRTC.getSessionPresentation === 'function')
+      ? (WebRTC.getSessionPresentation() || {})
+      : {};
+    const lastStats = (typeof WebRTC !== 'undefined' && WebRTC._lastPaintStats)
+      ? WebRTC._lastPaintStats
+      : {};
+    const videoEl = (typeof document !== 'undefined' && typeof document.getElementById === 'function')
+      ? document.getElementById('remoteVideo')
+      : null;
+    const framesDecoded = lastStats.framesDecoded != null
+      ? Number(lastStats.framesDecoded)
+      : Number((typeof WebRTC !== 'undefined' && WebRTC._lastInboundFramesDecoded) || 0);
 
     return {
       type: 'connection-diagnostic',
@@ -394,6 +407,27 @@
         ...(basePayload.traceSummary || snapshot.traceSummary || {}),
         trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',
         reason: meta.reason || basePayload.traceSummary?.reason || null,
+        uiPhase: (typeof WebRTC !== 'undefined' && WebRTC.uiPhase) || null,
+        hasPaintedFrame: typeof WebRTC !== 'undefined' ? WebRTC.hasPaintedFrame === true : false,
+        userPreference: session.userPreference || null,
+        pathCap: session.pathCap || null,
+        sessionPresentation: session.width
+          ? { width: session.width, height: session.height, label: session.label, capped: session.capped }
+          : null,
+        explicitOverride1080: session.explicitOverride1080 === true
+          || (typeof WebRTC !== 'undefined' && WebRTC._explicitOverride1080 === true),
+        videoWidth: Number(lastStats.videoWidth || videoEl?.videoWidth || 0),
+        videoHeight: Number(lastStats.videoHeight || videoEl?.videoHeight || 0),
+        readyState: Number(videoEl?.readyState || 0),
+        framesReceived: Number(lastStats.framesReceived || 0),
+        framesDecoded,
+        fps: Number(lastStats.fps || 0),
+        jitterBufferMs: Number(lastStats.jitterBufferMs || 0),
+        bytesReceived: Number(lastStats.bytesReceived || 0),
+        keyframeRequested: typeof WebRTC !== 'undefined'
+          ? Boolean(WebRTC._lastKeyframeRequestAt || WebRTC._keyframeRequested)
+          : false,
+        keyframeEmitted: typeof WebRTC !== 'undefined' ? WebRTC._keyframeEmitted === true : false,
       },
       redaction: {
         ...(basePayload.redaction || snapshot.redaction || {}),

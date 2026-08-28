@@ -5035,3 +5035,51 @@ test('relay stats tick keeps media-pending copy', () => {
   assert.match(advisorText(), /链路已通，正在等待第一帧/);
   assert.doesNotMatch(advisorText(), /当前通过 TURN 中继传输/);
 });
+
+test('media-pending 8s auto-sends paint-pending-timeout', () => {
+  const timers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback, ms) {
+      timers.set(ms, callback);
+      return ms;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const sent = [];
+  context.Diagnostic = {
+    autoSendFailure(reason) { sent.push(reason); },
+  };
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
+  assert.equal(typeof timers.get(8000), 'function');
+  timers.get(8000)();
+  assert.deepEqual(sent, ['paint-pending-timeout']);
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+});
+
+test('media-stalled lasting 3s auto-sends media-stalled', () => {
+  const timers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback, ms) {
+      timers.set(ms, callback);
+      return ms;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const sent = [];
+  context.Diagnostic = {
+    autoSendFailure(reason) { sent.push(reason); },
+  };
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setFailureRecommendation = () => {};
+  WebRTC.setUiPhase('media-stalled', { reason: 'zero-fps' });
+  assert.equal(typeof timers.get(3000), 'function');
+  timers.get(3000)();
+  assert.deepEqual(sent, ['media-stalled']);
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+});

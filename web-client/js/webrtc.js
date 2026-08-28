@@ -103,8 +103,12 @@ const WebRTC = {
   _stallSince: null,
   _paintPending3sTimer: null,
   _paintPending8sTimer: null,
+  _paintStalled3sTimer: null,
   _paintStalled6sTimer: null,
   _paintIssueKind: null,
+  _lastPaintStats: null,
+  _keyframeRequested: false,
+  _keyframeEmitted: false,
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -1169,6 +1173,7 @@ const WebRTC = {
       if (phase === 'media-stalled') {
         this.announcePaintIssue('media-stalled');
         this.schedulePaintStalledCopyTimer();
+        this.schedulePaintStalledAutoSend();
       }
       console.log('[PAINT-GATE] uiPhase=%s reason=%s painted=%s', phase, reason || '', this.hasPaintedFrame);
     }
@@ -1187,6 +1192,10 @@ const WebRTC = {
   },
 
   clearPaintStalledCopyTimer() {
+    if (this._paintStalled3sTimer) {
+      clearTimeout(this._paintStalled3sTimer);
+      this._paintStalled3sTimer = null;
+    }
     if (this._paintStalled6sTimer) {
       clearTimeout(this._paintStalled6sTimer);
       this._paintStalled6sTimer = null;
@@ -1212,6 +1221,7 @@ const WebRTC = {
         this._paintPending8sTimer = null;
         if (this.uiPhase !== 'media-pending') return;
         this.announcePaintIssue('media-pending-8s');
+        this.autoSendPaintFailure('paint-pending-timeout');
       }, 8000);
     }
   },
@@ -1223,6 +1233,21 @@ const WebRTC = {
       if (this.uiPhase !== 'media-stalled') return;
       this.announcePaintIssue('media-stalled-6s');
     }, 6000);
+  },
+
+  schedulePaintStalledAutoSend() {
+    if (this._paintStalled3sTimer) return;
+    this._paintStalled3sTimer = setTimeout(() => {
+      this._paintStalled3sTimer = null;
+      if (this.uiPhase !== 'media-stalled') return;
+      this.autoSendPaintFailure('media-stalled');
+    }, 3000);
+  },
+
+  autoSendPaintFailure(reason) {
+    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
+      Diagnostic.autoSendFailure(reason);
+    }
   },
 
   announcePaintIssue(kind) {
@@ -1260,6 +1285,15 @@ const WebRTC = {
     const framesReceived = Number(stats.framesReceived || 0);
     const fps = Number(stats.fps || 0);
     const baseline = Number(this._paintDecodedBaseline) || 0;
+    this._lastPaintStats = {
+      videoWidth,
+      videoHeight: Number(stats.videoHeight || 0),
+      framesDecoded,
+      framesReceived,
+      fps,
+      jitterBufferMs: Number(stats.jitterBufferMs || 0),
+      bytesReceived: Number(stats.bytesReceived || 0),
+    };
 
     if (!this.hasPaintedFrame) {
       if (videoWidth > 0 && framesDecoded > baseline) {
@@ -1328,6 +1362,8 @@ const WebRTC = {
     const lease = this.activeLeaseEnvelope();
     if (!lease || !this.socket?.connected) return false;
     this._lastKeyframeRequestAt = now;
+    this._keyframeRequested = true;
+    this._keyframeEmitted = false;
     // Re-assert low-latency playout after stalls so the browser does not keep a multi-second buffer.
     try {
       const receiver = this.pc?.getReceivers?.()?.find((entry) => entry?.track?.kind === 'video');

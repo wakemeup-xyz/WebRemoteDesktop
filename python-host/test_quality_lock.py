@@ -126,6 +126,53 @@ def test_resolution_change_updates_user_size_truth():
     assert host.media_profile["target_fps"] == 15
 
 
+def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
+    import asyncio
+
+    host = object.__new__(WebRemoteHost)
+    host._last_diag_network = {}
+    host._stall_sample_count = 0
+    handler = ListHandler()
+    logger = logging.getLogger("host")
+    original_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        loop = asyncio.get_event_loop()
+        payload = {
+            "viewerId": "viewer-1",
+            "fps": 0,
+            "framesReceived": 19,
+            "framesDecoded": 0,
+            "rttMs": 180,
+            "jitterBufferMs": 40,
+            "packetsLost": 0,
+            "bytesReceived": 1234,
+            "codec": "H264",
+            "selectedCandidateType": "relay",
+        }
+        for _ in range(4):
+            loop.run_until_complete(host.on_viewer_stats(payload))
+        stall_before = [
+            record.getMessage()
+            for record in handler.records
+            if "WRD_STALL_SAMPLE" in record.getMessage()
+        ]
+        assert stall_before == []
+        loop.run_until_complete(host.on_viewer_stats(payload))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+
+    messages = [record.getMessage() for record in handler.records]
+    stall = [msg for msg in messages if "WRD_STALL_SAMPLE" in msg]
+    assert len(stall) == 1
+    assert "count=5" in stall[0]
+    assert "received=19" in stall[0]
+    assert "decoded=0" in stall[0]
+    assert "viewer=viewer-1" in stall[0]
+
+
 def test_keyframe_handler_invokes_request_path():
     host = _make_host()
     handler = ListHandler()
