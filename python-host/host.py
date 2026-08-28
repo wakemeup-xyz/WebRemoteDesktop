@@ -2556,6 +2556,7 @@ class WebRemoteHost:
             adaptive_resolution = payload.get("adaptiveResolution") is True
             requested_width = clamp_int(payload.get("width"), 320, 1920, 960)
             requested_height = clamp_int(payload.get("height"), 180, 1080, 540)
+            current = dict(getattr(self, "media_profile", None) or {})
             if adaptive_resolution:
                 width, height = requested_width, requested_height
                 self._set_user_resolution(width, height)
@@ -2592,7 +2593,6 @@ class WebRemoteHost:
                 "target_fps": clamp_int(payload.get("targetFps"), 5, 30, 15),
                 "video_bitrate_kbps": clamp_int(payload.get("videoBitrateKbps"), 250, 5000, 1400),
             }
-            current = getattr(self, "media_profile", None) or {}
             same = (
                 current.get("profile") == next_profile["profile"]
                 and int(current.get("width") or 0) == next_profile["width"]

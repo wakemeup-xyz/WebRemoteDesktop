@@ -594,6 +594,14 @@ function setupSignaling(io, options = {}) {
     if (turnServerId) {
       forwarded.turnServerId = turnServerId;
     }
+    const width = Number(data.width);
+    const height = Number(data.height);
+    if (Number.isFinite(width) && width > 0) {
+      forwarded.width = clampInt(width, 320, 1920, 1280);
+    }
+    if (Number.isFinite(height) && height > 0) {
+      forwarded.height = clampInt(height, 180, 1080, 720);
+    }
     connections.host.emit('offer', forwarded);
     return true;
   }

@@ -178,6 +178,8 @@ def test_continuity_action_keyframe_on_media_profile():
 
 def test_lock_adopts_720p_connection_sync_over_stale_1080p():
     host = _make_host(1920, 1080)
+    host.screen_track = MagicMock()
+    host.screen_track.apply_media_profile.return_value = {"sizeChanged": True}
     host.on_media_profile_change({
         "viewerId": "viewer-1",
         "profile": "high",
@@ -192,6 +194,10 @@ def test_lock_adopts_720p_connection_sync_over_stale_1080p():
     assert host.media_profile["width"] == 1280
     assert host.media_profile["height"] == 720
     assert host._user_resolution == {"width": 1280, "height": 720}
+    host.screen_track.apply_media_profile.assert_called_once()
+    applied = host.screen_track.apply_media_profile.call_args[0][0]
+    assert applied["width"] == 1280
+    assert applied["height"] == 720
 
 
 def test_lock_still_rejects_survival_auto_size():

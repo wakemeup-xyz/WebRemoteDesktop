@@ -1442,6 +1442,41 @@ test('host-capabilities are cached and forwarded to viewers; offer includes netw
   assert.equal(forwarded.data.connectionAttemptId, 'attempt-turn-1');
 });
 
+test('offer forwards session width and height to host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-offer-size', 'host');
+  host.handshake.auth.inputProtocolVersion = 2;
+  const viewer = new FakeSocket('viewer-offer-size', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'offer-size' });
+  const transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.filter((entry) => entry.event === 'control-grant').at(-1).data;
+
+  viewer.trigger('offer', {
+    offer: { type: 'offer', sdp: 'v=0' },
+    epoch: 1,
+    schemaVersion: 2,
+    networkMode: 'relay',
+    iceMode: 'relay',
+    width: 1280,
+    height: 720,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-size-1',
+  });
+
+  const forwarded = host.sent.filter((entry) => entry.event === 'offer').at(-1);
+  assert.ok(forwarded);
+  assert.equal(forwarded.data.width, 1280);
+  assert.equal(forwarded.data.height, 720);
+});
+
 test('legacy controller is single-writer and a later v2 viewer acquires only after reset', () => {
   // single-desktop-viewer policy: cannot keep legacy + second legacy + v2 online;
   // sole legacy writer, then supersede by v2, then acquire after FREE (not dual online takeover).
