@@ -104,6 +104,7 @@ const WebRTC = {
   _paintPending3sTimer: null,
   _paintPending8sTimer: null,
   _paintStalled6sTimer: null,
+  _paintIssueKind: null,
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -1161,6 +1162,9 @@ const WebRTC = {
     if (previous !== phase) {
       if (phase !== 'media-pending') this.clearPaintPendingCopyTimers();
       if (phase !== 'media-stalled') this.clearPaintStalledCopyTimer();
+      if (phase !== 'media-pending' && phase !== 'media-stalled') {
+        this._paintIssueKind = null;
+      }
       if (phase === 'media-pending') this.schedulePaintPendingCopyTimers();
       if (phase === 'media-stalled') {
         this.announcePaintIssue('media-stalled');
@@ -1192,6 +1196,7 @@ const WebRTC = {
   clearPaintIssueTimers() {
     this.clearPaintPendingCopyTimers();
     this.clearPaintStalledCopyTimer();
+    this._paintIssueKind = null;
   },
 
   schedulePaintPendingCopyTimers() {
@@ -1231,7 +1236,14 @@ const WebRTC = {
     }
     const copy = PAINT_ISSUE_COPY[kind];
     if (!copy) return;
+    this._paintIssueKind = kind;
     this.updateNetworkUI(copy.text, copy.severity);
+  },
+
+  shouldPreservePaintIssueAdvisor() {
+    return this.uiPhase === 'media-pending'
+      || this.uiPhase === 'media-stalled'
+      || Boolean(this._paintIssueKind);
   },
 
   isPeerMediaConnected() {
@@ -4215,8 +4227,10 @@ if (this.tunnelLastObjectUrl) {
       if (this.isMediaHealthSuppressed()) {
         // Intentional suspension must not trigger degraded quality recovery.
       } else if (selectedCandidateType === 'relay') {
-        this.clearFailureRecommendation();
-        this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
+        if (!this.shouldPreservePaintIssueAdvisor()) {
+          this.clearFailureRecommendation();
+          this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
+        }
 
         // TURN channel dead detection: ICE stays "completed" via STUN consent probes
         // even after the TURN data channel silently times out (~26s without traffic).
@@ -4235,11 +4249,15 @@ if (this.tunnelLastObjectUrl) {
           this._noRelayReceiveCount = 0;
         }
       } else if (selectedCandidateType === 'host') {
-        this.clearFailureRecommendation();
-        this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
+        if (!this.shouldPreservePaintIssueAdvisor()) {
+          this.clearFailureRecommendation();
+          this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
+        }
       } else if (selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx') {
-        this.clearFailureRecommendation();
-        this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
+        if (!this.shouldPreservePaintIssueAdvisor()) {
+          this.clearFailureRecommendation();
+          this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
+        }
       } else if (this.noMediaTicks >= 3) {
         const hasTurn = this.hasTurnConfigured();
         this.setFailureRecommendation(

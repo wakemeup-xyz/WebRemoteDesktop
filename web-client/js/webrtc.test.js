@@ -4948,3 +4948,90 @@ test('relay stall lasting 6s suggests tunnel as danger without switching mode', 
   assert.deepEqual(modes, []);
   assert.equal(WebRTC.networkMode, 'relay');
 });
+
+test('relay stats tick keeps stall copy and 6s recommendation', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.getPublicEntryUrl = () => '';
+  WebRTC.socket = { connected: false, emit() {} };
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'completed' };
+  WebRTC.isMediaHealthSuppressed = () => false;
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 1000;
+  WebRTC.uiPhase = 'connected';
+  WebRTC.notePaintStats({
+    framesDecoded: 40,
+    framesReceived: 19,
+    fps: 0,
+    videoWidth: 1280,
+    videoHeight: 720,
+  });
+  const advisorText = () => context.document.getElementById('networkAdvisorText').textContent;
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.match(advisorText(), /外网中继正在追帧/);
+  assert.doesNotMatch(advisorText(), /当前通过 TURN 中继传输/);
+
+  WebRTC.announcePaintIssue('media-stalled-6s');
+  assert.match(advisorText(), /当前中继出画不稳定/);
+  assert.equal(WebRTC.recommendationState.failureCode, 'relay-failed-suggest-tunnel');
+  assert.equal(WebRTC.recommendationState.nextSuggestedMode, 'tunnel');
+
+  WebRTC.processStatsSnapshot({
+    fps: 0,
+    rttMs: 180,
+    jitterBufferMs: 40,
+    framesReceived: 19,
+    framesDecoded: 40,
+    packetsLost: 0,
+    bytesReceived: 50000,
+    codec: 'H264',
+    selectedCandidateType: 'relay',
+    videoWidth: 1280,
+    videoHeight: 720,
+  });
+
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.match(advisorText(), /当前中继出画不稳定/);
+  assert.doesNotMatch(advisorText(), /当前通过 TURN 中继传输/);
+  assert.equal(WebRTC.recommendationState?.failureCode, 'relay-failed-suggest-tunnel');
+  assert.equal(WebRTC.recommendationState?.nextSuggestedMode, 'tunnel');
+});
+
+test('relay stats tick keeps media-pending copy', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasTurnConfigured = () => true;
+  WebRTC.getPublicEntryUrl = () => '';
+  WebRTC.socket = { connected: false, emit() {} };
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC.isMediaHealthSuppressed = () => false;
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+  WebRTC.hasPaintedFrame = false;
+  WebRTC._paintDecodedBaseline = 0;
+  WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
+  WebRTC.announcePaintIssue('media-pending-3s');
+  const advisorText = () => context.document.getElementById('networkAdvisorText').textContent;
+  assert.match(advisorText(), /链路已通，正在等待第一帧/);
+
+  WebRTC.processStatsSnapshot({
+    fps: 0,
+    rttMs: 180,
+    jitterBufferMs: 0,
+    framesReceived: 0,
+    framesDecoded: 0,
+    packetsLost: 0,
+    bytesReceived: 1200,
+    codec: 'H264',
+    selectedCandidateType: 'relay',
+    videoWidth: 0,
+    videoHeight: 0,
+  });
+
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.match(advisorText(), /链路已通，正在等待第一帧/);
+  assert.doesNotMatch(advisorText(), /当前通过 TURN 中继传输/);
+});
