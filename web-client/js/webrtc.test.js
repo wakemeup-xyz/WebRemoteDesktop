@@ -4612,3 +4612,116 @@ test('createOffer emits session presentation size', async () => {
   assert.equal(offerEmit[1].width, 1280);
   assert.equal(offerEmit[1].height, 720);
 });
+
+test('ontrack with paused=false and readyState=0 does not mark connected', () => {
+  const { WebRTC, elements, context } = loadWebRTC();
+  const video = elements.get('remoteVideo') || context.document.getElementById('remoteVideo');
+  video.readyState = 0;
+  video.paused = false;
+  video.videoWidth = 0;
+  video.videoHeight = 0;
+  WebRTC.uiPhase = 'signaling';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.markRemoteTrack({ readyState: 0, paused: false });
+  assert.notEqual(elements.get('connectionStatus').textContent, '已连接');
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+});
+
+test('framesDecoded growth sets connected', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC._paintDecodedBaseline = 0;
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.notePaintStats({ framesDecoded: 1, framesReceived: 1, fps: 12, videoWidth: 1280, videoHeight: 720 });
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(WebRTC.hasPaintedFrame, true);
+  assert.equal(elements.get('connectionStatus').textContent, '已连接');
+});
+
+test('stall 1s with received>0 does not scheduleReconnect', () => {
+  const { WebRTC } = loadWebRTC();
+  const reconnects = [];
+  WebRTC.scheduleReconnect = (reason) => reconnects.push(reason);
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 1000;
+  WebRTC.notePaintStats({ framesDecoded: 40, framesReceived: 19, fps: 0, videoWidth: 1280, videoHeight: 720 });
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.deepEqual(reconnects, []);
+});
+
+test('shouldHideLoading is true only after a painted frame', () => {
+  const { WebRTC } = loadWebRTC();
+  assert.equal(WebRTC.shouldHideLoading({ hasPaintedFrame: false }), false);
+  assert.equal(WebRTC.shouldHideLoading({ readyState: 4, paused: false, hasPaintedFrame: false }), false);
+  assert.equal(WebRTC.shouldHideLoading({ hasPaintedFrame: true }), true);
+});
+
+test('framesDecoded without videoWidth does not mark connected', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC._paintDecodedBaseline = 0;
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.notePaintStats({ framesDecoded: 4, framesReceived: 4, fps: 12, videoWidth: 0, videoHeight: 0 });
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.notEqual(WebRTC.uiPhase, 'connected');
+  assert.notEqual(context.document.getElementById('connectionStatus').textContent, '已连接');
+});
+
+test('onPeerConnected safety net stays media-pending', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.uiPhase = 'signaling';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'completed' };
+  WebRTC.startStats = () => {};
+  WebRTC.startVideoFrameTracking = () => {};
+  WebRTC.syncMediaProfile = () => {};
+  WebRTC.clearFailureRecommendation = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.ensureMediaActiveIfVisible = () => {};
+  WebRTC.syncDesktopInputGate = () => {};
+  WebRTC.onPeerConnected();
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.equal(elements.get('connectionStatus').textContent, '正在出画');
+  assert.notEqual(elements.get('connectionStatus').textContent, '已连接');
+});
+
+test('8s paint fallback stays media-pending without painted frame', () => {
+  const { WebRTC, elements } = loadWebRTC();
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.applyPaintFallback();
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.equal(elements.get('connectionStatus').textContent, '正在出画');
+  assert.equal(WebRTC.hasPaintedFrame, false);
+});
+
+test('capture_stats does not overwrite playback fpsDisplay', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const fpsEl = context.document.getElementById('fpsDisplay');
+  fpsEl.textContent = '12 FPS';
+  WebRTC.pc = {
+    createDataChannel() {
+      return { readyState: 'connecting', bufferedAmount: 0, send() {}, bufferedAmountLowThreshold: 0 };
+    },
+  };
+  WebRTC.createInputChannel();
+  WebRTC.inputChannel.onmessage({ data: JSON.stringify({ type: 'capture_stats', fps: 60 }) });
+  assert.equal(fpsEl.textContent, '12 FPS');
+  assert.equal(WebRTC._hostCaptureFps, 60);
+});
+
+test('updateConnectionStatus exposes paint-gate labels', () => {
+  const { context } = loadWebRTC();
+  const statusEl = context.document.getElementById('connectionStatus');
+  context.updateConnectionStatus('connecting');
+  assert.equal(statusEl.textContent, '连接中');
+  context.updateConnectionStatus('media-pending');
+  assert.equal(statusEl.textContent, '正在出画');
+  context.updateConnectionStatus('connected');
+  assert.equal(statusEl.textContent, '已连接');
+  context.updateConnectionStatus('media-stalled');
+  assert.equal(statusEl.textContent, '画面卡顿');
+  context.updateConnectionStatus('disconnected');
+  assert.equal(statusEl.textContent, '已断开');
+});

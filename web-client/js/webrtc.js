@@ -74,6 +74,11 @@ const WebRTC = {
   _lastInboundFramesDecoded: 0,
   _lastInboundFramesDecodedAt: 0,
   _videoFrameSeq: 0,
+  uiPhase: 'signaling',
+  hasPaintedFrame: false,
+  _paintDecodedBaseline: 0,
+  _stallSince: null,
+  _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
   // Default OFF so user-chosen resolution is stable (esp. on high-RTT TURN).
@@ -744,6 +749,10 @@ const WebRTC = {
     this._mediaResumeSoftRecoverUsed = false;
     this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
+    this.hasPaintedFrame = false;
+    this._paintDecodedBaseline = Number(this._lastInboundFramesDecoded) || 0;
+    this._stallSince = null;
+    this.setUiPhase('signaling', { reason: trigger });
 
     const inheritHardRefresh = trigger === 'refresh' && this._refreshReason === 'fresh-frame-timeout';
     if (inheritHardRefresh) {
@@ -1080,6 +1089,103 @@ const WebRTC = {
         explicitOverride1080: false,
       };
     return budget;
+  },
+
+  shouldHideLoading({ hasPaintedFrame } = {}) {
+    return hasPaintedFrame === true;
+  },
+
+  hidePaintLoading() {
+    const el = document.getElementById('loading');
+    if (el) {
+      el.classList.add('hidden');
+      el.classList.remove('is-connecting');
+    }
+    document.body.classList.add('stream-connected');
+    const videoEl = document.getElementById('remoteVideo');
+    if (videoEl) videoEl.classList.add('connected');
+    this.hideReconnectHud();
+  },
+
+  setUiPhase(phase, { reason } = {}) {
+    const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled'];
+    if (!allowed.includes(phase)) return this.uiPhase;
+    const previous = this.uiPhase;
+    this.uiPhase = phase;
+    if (phase === 'signaling') {
+      updateConnectionStatus('connecting');
+    } else {
+      updateConnectionStatus(phase);
+    }
+    if (phase === 'connected' && this.shouldHideLoading({ hasPaintedFrame: this.hasPaintedFrame })) {
+      this.hidePaintLoading();
+    }
+    if (previous !== phase) {
+      console.log('[PAINT-GATE] uiPhase=%s reason=%s painted=%s', phase, reason || '', this.hasPaintedFrame);
+    }
+    return this.uiPhase;
+  },
+
+  isPeerMediaConnected() {
+    const pcState = this.pc?.connectionState;
+    const iceState = this.pc?.iceConnectionState;
+    return pcState === 'connected'
+      || iceState === 'connected'
+      || iceState === 'completed';
+  },
+
+  notePaintStats(stats = {}) {
+    const videoWidth = Number(stats.videoWidth || 0);
+    const framesDecoded = Number(stats.framesDecoded || 0);
+    const framesReceived = Number(stats.framesReceived || 0);
+    const fps = Number(stats.fps || 0);
+    const baseline = Number(this._paintDecodedBaseline) || 0;
+
+    if (!this.hasPaintedFrame) {
+      if (videoWidth > 0 && framesDecoded > baseline) {
+        this.hasPaintedFrame = true;
+        this._stallSince = null;
+        this.setUiPhase('connected', { reason: stats.source || 'paint-growth' });
+        return this.uiPhase;
+      }
+      if (this.isPeerMediaConnected()) {
+        this.setUiPhase('media-pending', { reason: stats.source || 'awaiting-paint' });
+      }
+      return this.uiPhase;
+    }
+
+    if (fps === 0 && framesReceived > 0) {
+      if (!this._stallSince) this._stallSince = Date.now();
+      if (Date.now() - this._stallSince >= 1000) {
+        this.setUiPhase('media-stalled', { reason: stats.source || 'zero-fps' });
+      }
+      return this.uiPhase;
+    }
+
+    this._stallSince = null;
+    this.setUiPhase('connected', { reason: stats.source || 'paint-resume' });
+    return this.uiPhase;
+  },
+
+  applyPaintFallback() {
+    if (this.hasPaintedFrame) return this.uiPhase;
+    this.setUiPhase('media-pending', { reason: 'paint-fallback-8s' });
+    return this.uiPhase;
+  },
+
+  markRemoteTrack({ readyState, paused } = {}) {
+    if (this.shouldHideLoading({
+      readyState,
+      paused,
+      hasPaintedFrame: this.hasPaintedFrame,
+    })) {
+      this.setUiPhase('connected', { reason: 'remote-track' });
+      return this.uiPhase;
+    }
+    if (this.isPeerMediaConnected() || paused === false || Number(readyState) >= 0) {
+      this.setUiPhase('media-pending', { reason: 'remote-track' });
+    }
+    return this.uiPhase;
   },
 
   qualityFloorsForResolution(width, height) {
@@ -2761,16 +2867,10 @@ const WebRTC = {
       this.armPortSearchDeadline();
     }
 
-    // Safety net: hide loading spinner (primary hide is in ontrack via video events)
-    const loadingEl = document.getElementById('loading');
-    if (loadingEl && !loadingEl.classList.contains('hidden')) {
-      console.log('[LOADING] Hiding spinner from connectionstatechange (safety net)');
-      loadingEl.classList.add('hidden');
-      loadingEl.classList.remove('is-connecting');
-      document.body.classList.add('stream-connected');
-      updateConnectionStatus('connected');
-      const videoEl = document.getElementById('remoteVideo');
-      if (videoEl) videoEl.classList.add('connected');
+    // Safety net: peer is up, but painted frames are still required for 已连接.
+    if (!this.hasPaintedFrame) {
+      this.setUiPhase('media-pending', { reason: 'pc-connected' });
+      updateLoadingText('正在等待第一帧');
     }
     // Stop tunnel relay if it was running (auto fallback case)
     if (this.tunnelRelayActive) {
@@ -2925,41 +3025,36 @@ const WebRTC = {
         console.error('Video play failed:', err);
       });
 
-      const hideLoading = () => {
-        const el = document.getElementById('loading');
-        const state = `readyState=${videoElement.readyState} paused=${videoElement.paused} hasHidden=${el ? el.classList.contains('hidden') : 'no-el'}`;
-        console.log('[LOADING] hideLoading called:', state);
-        if (el && !el.classList.contains('hidden')) {
-          console.log('Hiding loading spinner');
-          el.classList.add('hidden');
-          el.classList.remove('is-connecting');
-          document.body.classList.add('stream-connected');
-          updateConnectionStatus('connected');
-          videoElement.classList.add('connected');
-        } else if (el && el.classList.contains('hidden')) {
-          el.classList.remove('is-connecting');
-          console.log('[LOADING] Already hidden, skipping');
+      const tryPaintGate = () => {
+        if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
+          this.notePaintStats({
+            framesDecoded: this._lastInboundFramesDecoded || 0,
+            framesReceived: 0,
+            fps: 0,
+            videoWidth: videoElement.videoWidth,
+            videoHeight: videoElement.videoHeight,
+            source: 'video-element',
+          });
         }
-        this.hideReconnectHud();
       };
 
-      // If metadata already loaded, hide loading immediately (race condition fix)
+      this.markRemoteTrack({
+        readyState: videoElement.readyState,
+        paused: videoElement.paused,
+      });
+
       if (videoElement.readyState >= 1) {
-        hideLoading();
+        tryPaintGate();
       } else {
         videoElement.onloadedmetadata = () => {
           console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-          hideLoading();
+          tryPaintGate();
         };
       }
 
-      // If already playing, hide immediately; otherwise wait for playing event
-      if (!videoElement.paused) {
-        hideLoading();
-      }
       videoElement.onplaying = () => {
         console.log('Video is now playing');
-        hideLoading();
+        tryPaintGate();
       };
 
       this.remoteStream.getTracks().forEach(track => {
@@ -2972,26 +3067,16 @@ const WebRTC = {
         setTimeout(() => this.requestKeyframe('ontrack-first-video-retry'), 700);
       }
 
-      // Last-resort fallback: only hide the spinner if a real frame landed.
-      // Forcing 已连接 with a 0x0 video looks like a frozen black page.
+      // Last-resort fallback: stay media-pending unless a decoded frame actually landed.
       setTimeout(() => {
-        const el = document.getElementById('loading');
         const video = document.getElementById('remoteVideo');
-        if (el && !el.classList.contains('hidden')) {
-          const hasFrame = !!(video && video.videoWidth > 0 && video.videoHeight > 0);
-          console.warn('[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s hasFrame=%s',
-            video ? video.readyState : 'no-video',
-            video ? video.paused : 'no-video',
-            video ? video.videoWidth : 0,
-            video ? video.videoHeight : 0,
-            hasFrame);
-          if (!hasFrame) return;
-          el.classList.add('hidden');
-          el.classList.remove('is-connecting');
-          document.body.classList.add('stream-connected');
-          updateConnectionStatus('connected');
-          if (video) video.classList.add('connected');
-        }
+        console.warn('[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s painted=%s',
+          video ? video.readyState : 'no-video',
+          video ? video.paused : 'no-video',
+          video ? video.videoWidth : 0,
+          video ? video.videoHeight : 0,
+          this.hasPaintedFrame);
+        this.applyPaintFallback();
       }, 8000);
     };
   },
@@ -3107,10 +3192,10 @@ const WebRTC = {
           }
           return;
         }
-        // Host capture stats → update FPS display as fallback
+        // Host capture fps is not playback fps; keep it off the status-bar counter.
         if (data.type === 'capture_stats') {
           if (data.fps !== undefined) {
-            document.getElementById('fpsDisplay').textContent = `${Math.round(data.fps)} FPS`;
+            this._hostCaptureFps = Number(data.fps) || 0;
           }
           return;
         }
@@ -3365,7 +3450,8 @@ if (this.tunnelLastObjectUrl) {
     document.getElementById('loading')?.classList.add('hidden');
     document.getElementById('loading')?.classList.remove('is-connecting');
     document.body.classList.add('stream-connected');
-    updateConnectionStatus('connected');
+    this.hasPaintedFrame = true;
+    this.setUiPhase('connected', { reason: 'tunnel-frame' });
     const latencyEl = document.getElementById('latencyDisplay');
     const latency = data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0;
     if (latencyEl) {
@@ -4089,6 +4175,17 @@ if (this.tunnelLastObjectUrl) {
           selectedCandidateType
         });
       }
+
+      const videoEl = document.getElementById('remoteVideo');
+      this.notePaintStats({
+        ...stats,
+        fps,
+        framesReceived,
+        framesDecoded,
+        videoWidth: Number(stats.videoWidth || videoEl?.videoWidth || 0),
+        videoHeight: Number(stats.videoHeight || videoEl?.videoHeight || 0),
+        source: 'stats',
+      });
   },
 
   captureLastFrameHold(videoElement) {
@@ -4634,9 +4731,11 @@ function updateConnectionStatus(status) {
   statusEl.className = 'status ' + status;
   
   const statusText = {
-    'connecting': '连接中',
-    'connected': '已连接',
-    'disconnected': '已断开'
+    connecting: '连接中',
+    'media-pending': '正在出画',
+    connected: '已连接',
+    'media-stalled': '画面卡顿',
+    disconnected: '已断开',
   };
   statusEl.textContent = statusText[status] || status;
 }

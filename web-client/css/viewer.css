@@ -283,6 +283,13 @@ body.tunnel-relay-active #remoteVideo {
   box-shadow: 0 0 12px var(--accent-warning-glow);
 }
 
+.status.media-pending,
+.status.media-stalled {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-warning);
+  box-shadow: 0 0 12px var(--accent-warning-glow);
+}
+
 .status.connected {
   background: rgba(34, 197, 94, 0.12);
   color: var(--accent-success);
