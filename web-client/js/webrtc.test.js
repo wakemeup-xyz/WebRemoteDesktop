@@ -4725,3 +4725,109 @@ test('updateConnectionStatus exposes paint-gate labels', () => {
   context.updateConnectionStatus('disconnected');
   assert.equal(statusEl.textContent, '已断开');
 });
+
+test('first-frame deadline is cancelled by painted-frame growth', () => {
+  let timerCallback = null;
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback) { timerCallback = callback; return 1; },
+    clearTimeout() { timerCallback = null; },
+  });
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setFailureRecommendation = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-paint';
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC._paintDecodedBaseline = 0;
+  WebRTC.beginFirstFrameDeadline('attempt-paint', 8000);
+  WebRTC.notePaintStats({
+    framesDecoded: 1,
+    framesReceived: 1,
+    fps: 12,
+    videoWidth: 1280,
+    videoHeight: 720,
+  });
+  assert.equal(WebRTC.hasPaintedFrame, true);
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(timerCallback, null);
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已连接');
+});
+
+test('media-pending with PC connected cancels first-frame deadline', () => {
+  let timerCallback = null;
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback) { timerCallback = callback; return 1; },
+    clearTimeout() { timerCallback = null; },
+  });
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-pending';
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'completed' };
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.beginFirstFrameDeadline('attempt-pending', 8000);
+  WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
+  assert.equal(timerCallback, null);
+});
+
+test('same-window first-frame deadline and paint fallback stay consistent', () => {
+  let deadlineCb = null;
+  let deadlineFired = false;
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback, ms) {
+      if (ms === 8000) {
+        deadlineCb = () => { deadlineFired = true; callback(); };
+        return 1;
+      }
+      return 2;
+    },
+    clearTimeout() { deadlineCb = null; },
+  });
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setFailureRecommendation = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-window';
+  WebRTC.uiPhase = 'signaling';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.pc = { connectionState: 'connecting', iceConnectionState: 'checking' };
+  WebRTC.beginFirstFrameDeadline('attempt-window', 8000);
+  assert.equal(typeof deadlineCb, 'function');
+  WebRTC.applyPaintFallback();
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '正在出画');
+  assert.equal(typeof deadlineCb, 'function');
+  deadlineCb();
+  assert.equal(deadlineFired, true);
+  assert.equal(WebRTC.uiPhase, 'disconnected');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
+  WebRTC.applyPaintFallback();
+  assert.equal(WebRTC.uiPhase, 'disconnected');
+});
+
+test('applyPaintFallback does not resurrect status after first-frame failure', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setFailureRecommendation = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-fail';
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC.endConnectingWithFailure('first-frame-timeout');
+  assert.equal(WebRTC.uiPhase, 'disconnected');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
+  WebRTC.applyPaintFallback();
+  assert.equal(WebRTC.uiPhase, 'disconnected');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
+});
+
+test('scheduleReconnect keeps uiPhase in sync with disconnected status', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.manualDisconnect = false;
+  WebRTC.reconnectTimer = null;
+  WebRTC._refreshing = false;
+  WebRTC._superseded = false;
+  WebRTC._lastRefreshAt = 0;
+  WebRTC.isMediaHealthSuppressed = () => false;
+  WebRTC.isPortSearchActive = () => false;
+  WebRTC.hasTurnConfigured = () => false;
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.scheduleReconnect('pc-failed');
+  assert.equal(WebRTC.uiPhase, 'disconnected');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
+});

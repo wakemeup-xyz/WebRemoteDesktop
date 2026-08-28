@@ -706,6 +706,9 @@ const WebRTC = {
     if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
     this.clearFirstFrameDeadline();
+    if (this.hasPaintedFrame && this.uiPhase !== 'disconnected') {
+      this.setUiPhase('connected', { reason: 'media-ready' });
+    }
     this.syncDesktopInputGate();
     if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
       const names = new Set(
@@ -1003,7 +1006,7 @@ const WebRTC = {
     }
     document.getElementById('loading')?.classList.remove('hidden');
     document.getElementById('loading')?.classList.remove('is-connecting');
-    updateConnectionStatus('disconnected');
+    this.setUiPhase('disconnected', { reason: 'relay-unavailable' });
     updateLoadingText('TURN 未配置，外网中继不可用。请手动切换到其他网络模式。');
     this.updateNetworkUI(
       message || '外网中继当前不可用，请手动切换到“隧道中继”或其他可用模式。',
@@ -1108,8 +1111,11 @@ const WebRTC = {
   },
 
   setUiPhase(phase, { reason } = {}) {
-    const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled'];
+    const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
     if (!allowed.includes(phase)) return this.uiPhase;
+    if (this.uiPhase === 'disconnected' && phase !== 'signaling' && phase !== 'disconnected') {
+      return this.uiPhase;
+    }
     const previous = this.uiPhase;
     this.uiPhase = phase;
     if (phase === 'signaling') {
@@ -1119,6 +1125,11 @@ const WebRTC = {
     }
     if (phase === 'connected' && this.shouldHideLoading({ hasPaintedFrame: this.hasPaintedFrame })) {
       this.hidePaintLoading();
+    }
+    if (this.hasPaintedFrame
+      || phase === 'connected'
+      || (phase === 'media-pending' && this.isPeerMediaConnected())) {
+      this.clearFirstFrameDeadline();
     }
     if (previous !== phase) {
       console.log('[PAINT-GATE] uiPhase=%s reason=%s painted=%s', phase, reason || '', this.hasPaintedFrame);
@@ -1145,6 +1156,7 @@ const WebRTC = {
       if (videoWidth > 0 && framesDecoded > baseline) {
         this.hasPaintedFrame = true;
         this._stallSince = null;
+        this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
         this.setUiPhase('connected', { reason: stats.source || 'paint-growth' });
         return this.uiPhase;
       }
@@ -1169,6 +1181,7 @@ const WebRTC = {
 
   applyPaintFallback() {
     if (this.hasPaintedFrame) return this.uiPhase;
+    if (this.uiPhase === 'disconnected') return this.uiPhase;
     this.setUiPhase('media-pending', { reason: 'paint-fallback-8s' });
     return this.uiPhase;
   },
@@ -1506,9 +1519,17 @@ const WebRTC = {
   beginFirstFrameDeadline(attemptId, timeoutMs = 8000) {
     this.clearFirstFrameDeadline();
     const expectedAttemptId = attemptId || this.currentConnectionAttemptId;
+    if (this.hasPaintedFrame
+      || this.isCurrentAttemptMediaReady(expectedAttemptId)
+      || (this.uiPhase === 'media-pending' && this.isPeerMediaConnected())) {
+      return;
+    }
     this._firstFrameTimer = setTimeout(() => {
       if (expectedAttemptId !== this.currentConnectionAttemptId) return;
+      if (this.hasPaintedFrame) return;
       if (this.isCurrentAttemptMediaReady(expectedAttemptId)) return;
+      if (this.uiPhase === 'media-pending' && this.isPeerMediaConnected()) return;
+      if (this.uiPhase === 'connected' || this.uiPhase === 'media-stalled') return;
       this.endConnectingWithFailure('first-frame-timeout');
     }, timeoutMs);
   },
@@ -1516,7 +1537,7 @@ const WebRTC = {
   endConnectingWithFailure(reason = 'first-frame-timeout') {
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
-    updateConnectionStatus('disconnected');
+    this.setUiPhase('disconnected', { reason });
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
     if (reason === 'first-frame-timeout') {
@@ -1531,7 +1552,7 @@ const WebRTC = {
   enterBootstrapFailure(error) {
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
-    updateConnectionStatus('disconnected');
+    this.setUiPhase('disconnected', { reason: 'bootstrap-failure' });
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = '';
     const message = error?.message || '启动配置加载失败';
@@ -2368,7 +2389,9 @@ const WebRTC = {
       if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
         StartupTelemetry.mark('signal-connected');
       }
-      updateConnectionStatus('connecting');
+      if (this.uiPhase === 'disconnected' || this.uiPhase === 'signaling') {
+        this.setUiPhase('signaling', { reason: 'signal-connected' });
+      }
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
       }
@@ -2431,7 +2454,7 @@ const WebRTC = {
           this.renderPortSearchStatus();
         }
         this.freezeControl('host-offline');
-        updateConnectionStatus('disconnected');
+        this.setUiPhase('disconnected', { reason: 'host-offline' });
         updateLoadingText('Host已离线');
       }
     });
@@ -2490,7 +2513,7 @@ const WebRTC = {
         this.handleViewerSuperseded({ reason: 'server-kick', bySocketId: null });
         return;
       }
-      updateConnectionStatus('disconnected');
+      this.setUiPhase('disconnected', { reason: 'signal-disconnect' });
       document.getElementById('remoteVideo')?.classList.remove('connected');
       this.freezeControl('signal-disconnect');
       if (this.isPortSearchActive()) {
@@ -3277,7 +3300,7 @@ const WebRTC = {
     document.getElementById('loading')?.classList.remove('hidden');
     document.getElementById('loading')?.classList.add('is-connecting');
     updateLoadingText('正在启动隧道中继...');
-    updateConnectionStatus('connecting');
+    this.setUiPhase('signaling', { reason: 'tunnel-start' });
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
     this.emitRelayStreamControl();
   },
@@ -4452,7 +4475,7 @@ if (this.tunnelLastObjectUrl) {
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
       Diagnostic.autoSendFailure(reason);
     }
-    updateConnectionStatus('disconnected');
+    this.setUiPhase('disconnected', { reason });
     this._autoFailCount += 1;
 
     const hasTurn = this.hasTurnConfigured();
@@ -4676,7 +4699,7 @@ if (this.tunnelLastObjectUrl) {
     document.body?.classList?.remove('stream-connected');
     document.getElementById('loading')?.classList?.add('hidden');
     document.getElementById('loading')?.classList?.remove('is-connecting');
-    updateConnectionStatus('disconnected');
+    this.setUiPhase('disconnected', { reason: 'viewer-superseded' });
 
     if (this.socket) {
       try {
@@ -4715,7 +4738,6 @@ if (this.tunnelLastObjectUrl) {
     this.offerInProgress = false;
     this._offerEpoch += 1;
     this.beginConnectionAttempt('reclaim');
-    updateConnectionStatus('connecting');
     document.getElementById('loading')?.classList?.remove('hidden');
     document.getElementById('loading')?.classList?.add('is-connecting');
     updateLoadingText('正在重新连接桌面…');
