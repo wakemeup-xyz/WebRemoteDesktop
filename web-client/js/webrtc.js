@@ -7,6 +7,29 @@ const MEDIA_RESUME_FRAME_TIMEOUT_MS = {
   default: 8000,
 };
 
+const PAINT_ISSUE_COPY = {
+  'media-pending-3s': {
+    text: '链路已通，正在等待第一帧。',
+    severity: 'warning',
+  },
+  'media-pending-8s': {
+    text: '第一帧仍未到达，请点击「刷新画面」。',
+    severity: 'warning',
+  },
+  'media-stalled': {
+    text: '外网中继正在追帧，画面可能短暂发黑。若反复出现，请改用 720p 或手动切换「隧道中继」。',
+    severity: 'warning',
+  },
+  'explicit-1080': {
+    text: '外网中继上 1080p 容易卡顿，建议改回 720p 或改用隧道中继。',
+    severity: 'warning',
+  },
+  'media-stalled-6s': {
+    text: '当前中继出画不稳定，请手动切换「隧道中继」。',
+    severity: 'danger',
+  },
+};
+
 const WebRTC = {
   pc: null,
   socket: null,
@@ -78,6 +101,9 @@ const WebRTC = {
   hasPaintedFrame: false,
   _paintDecodedBaseline: 0,
   _stallSince: null,
+  _paintPending3sTimer: null,
+  _paintPending8sTimer: null,
+  _paintStalled6sTimer: null,
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -755,6 +781,7 @@ const WebRTC = {
     this.hasPaintedFrame = false;
     this._paintDecodedBaseline = Number(this._lastInboundFramesDecoded) || 0;
     this._stallSince = null;
+    this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
 
     const inheritHardRefresh = trigger === 'refresh' && this._refreshReason === 'fresh-frame-timeout';
@@ -1132,9 +1159,79 @@ const WebRTC = {
       this.clearFirstFrameDeadline();
     }
     if (previous !== phase) {
+      if (phase !== 'media-pending') this.clearPaintPendingCopyTimers();
+      if (phase !== 'media-stalled') this.clearPaintStalledCopyTimer();
+      if (phase === 'media-pending') this.schedulePaintPendingCopyTimers();
+      if (phase === 'media-stalled') {
+        this.announcePaintIssue('media-stalled');
+        this.schedulePaintStalledCopyTimer();
+      }
       console.log('[PAINT-GATE] uiPhase=%s reason=%s painted=%s', phase, reason || '', this.hasPaintedFrame);
     }
     return this.uiPhase;
+  },
+
+  clearPaintPendingCopyTimers() {
+    if (this._paintPending3sTimer) {
+      clearTimeout(this._paintPending3sTimer);
+      this._paintPending3sTimer = null;
+    }
+    if (this._paintPending8sTimer) {
+      clearTimeout(this._paintPending8sTimer);
+      this._paintPending8sTimer = null;
+    }
+  },
+
+  clearPaintStalledCopyTimer() {
+    if (this._paintStalled6sTimer) {
+      clearTimeout(this._paintStalled6sTimer);
+      this._paintStalled6sTimer = null;
+    }
+  },
+
+  clearPaintIssueTimers() {
+    this.clearPaintPendingCopyTimers();
+    this.clearPaintStalledCopyTimer();
+  },
+
+  schedulePaintPendingCopyTimers() {
+    if (!this._paintPending3sTimer) {
+      this._paintPending3sTimer = setTimeout(() => {
+        this._paintPending3sTimer = null;
+        if (this.uiPhase !== 'media-pending') return;
+        this.announcePaintIssue('media-pending-3s');
+      }, 3000);
+    }
+    if (!this._paintPending8sTimer) {
+      this._paintPending8sTimer = setTimeout(() => {
+        this._paintPending8sTimer = null;
+        if (this.uiPhase !== 'media-pending') return;
+        this.announcePaintIssue('media-pending-8s');
+      }, 8000);
+    }
+  },
+
+  schedulePaintStalledCopyTimer() {
+    if (this.networkMode !== 'relay' || this._paintStalled6sTimer) return;
+    this._paintStalled6sTimer = setTimeout(() => {
+      this._paintStalled6sTimer = null;
+      if (this.uiPhase !== 'media-stalled') return;
+      this.announcePaintIssue('media-stalled-6s');
+    }, 6000);
+  },
+
+  announcePaintIssue(kind) {
+    if (kind === 'media-stalled' && this.networkMode !== 'relay') return;
+    if (kind === 'media-stalled-6s' && this.networkMode !== 'relay') return;
+    if (kind === 'explicit-1080' && (this.networkMode !== 'relay' || this._explicitOverride1080 !== true)) {
+      return;
+    }
+    if (kind === 'media-stalled-6s') {
+      this.setFailureRecommendation('relay-failed-suggest-tunnel', 'danger');
+    }
+    const copy = PAINT_ISSUE_COPY[kind];
+    if (!copy) return;
+    this.updateNetworkUI(copy.text, copy.severity);
   },
 
   isPeerMediaConnected() {
@@ -3627,6 +3724,9 @@ if (this.tunnelLastObjectUrl) {
     if (!lease || !this.socket?.connected) return false;
     this.currentResolution = { width, height, label: `${width}x${height}` };
     this._explicitOverride1080 = Number(width) >= 1920 && Number(height) >= 1080;
+    if (this.networkMode === 'relay' && this._explicitOverride1080) {
+      this.announcePaintIssue('explicit-1080');
+    }
     const session = this.getSessionPresentation();
     this.socket.emit('resolution-change', { ...lease, width: session.width, height: session.height });
     if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {

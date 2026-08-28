@@ -4753,32 +4753,38 @@ test('first-frame deadline is cancelled by painted-frame growth', () => {
 });
 
 test('media-pending with PC connected cancels first-frame deadline', () => {
-  let timerCallback = null;
+  const timers = new Map();
+  let nextId = 1;
   const { WebRTC } = loadWebRTC({
-    setTimeout(callback) { timerCallback = callback; return 1; },
-    clearTimeout() { timerCallback = null; },
+    setTimeout(callback, ms) {
+      const id = nextId++;
+      timers.set(id, { callback, ms });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
   });
   WebRTC.updateNetworkUI = () => {};
   WebRTC.currentConnectionAttemptId = 'attempt-pending';
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'completed' };
   WebRTC.hasPaintedFrame = false;
   WebRTC.beginFirstFrameDeadline('attempt-pending', 8000);
+  assert.ok(WebRTC._firstFrameTimer);
   WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
-  assert.equal(timerCallback, null);
+  assert.equal(WebRTC._firstFrameTimer, null);
+  assert.equal(timers.has(WebRTC._paintPending3sTimer), true);
+  assert.equal(timers.has(WebRTC._paintPending8sTimer), true);
 });
 
 test('same-window first-frame deadline and paint fallback stay consistent', () => {
-  let deadlineCb = null;
-  let deadlineFired = false;
+  const timers = new Map();
+  let nextId = 1;
   const { WebRTC, context } = loadWebRTC({
     setTimeout(callback, ms) {
-      if (ms === 8000) {
-        deadlineCb = () => { deadlineFired = true; callback(); };
-        return 1;
-      }
-      return 2;
+      const id = nextId++;
+      timers.set(id, { callback, ms });
+      return id;
     },
-    clearTimeout() { deadlineCb = null; },
+    clearTimeout(id) { timers.delete(id); },
   });
   WebRTC.updateNetworkUI = () => {};
   WebRTC.setFailureRecommendation = () => {};
@@ -4787,13 +4793,13 @@ test('same-window first-frame deadline and paint fallback stay consistent', () =
   WebRTC.hasPaintedFrame = false;
   WebRTC.pc = { connectionState: 'connecting', iceConnectionState: 'checking' };
   WebRTC.beginFirstFrameDeadline('attempt-window', 8000);
-  assert.equal(typeof deadlineCb, 'function');
+  const deadline = timers.get(WebRTC._firstFrameTimer);
+  assert.equal(typeof deadline?.callback, 'function');
   WebRTC.applyPaintFallback();
   assert.equal(WebRTC.uiPhase, 'media-pending');
   assert.equal(context.document.getElementById('connectionStatus').textContent, '正在出画');
-  assert.equal(typeof deadlineCb, 'function');
-  deadlineCb();
-  assert.equal(deadlineFired, true);
+  assert.equal(timers.has(WebRTC._firstFrameTimer), true);
+  deadline.callback();
   assert.equal(WebRTC.uiPhase, 'disconnected');
   assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
   WebRTC.applyPaintFallback();
@@ -4830,4 +4836,115 @@ test('scheduleReconnect keeps uiPhase in sync with disconnected status', () => {
   WebRTC.scheduleReconnect('pc-failed');
   assert.equal(WebRTC.uiPhase, 'disconnected');
   assert.equal(context.document.getElementById('connectionStatus').textContent, '已断开');
+});
+
+test('relay stall copy suggests tunnel without switching mode', () => {
+  const { WebRTC } = loadWebRTC();
+  const modes = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.enforceSupportedNetworkMode = (m) => modes.push(m);
+  WebRTC.updateNetworkUI = (text) => { WebRTC._ui = text; };
+  WebRTC.announcePaintIssue('media-stalled');
+  assert.match(WebRTC._ui, /隧道中继/);
+  assert.deepEqual(modes, []);
+  assert.equal(WebRTC.networkMode, 'relay');
+});
+
+test('media-pending 3s and 8s copy stay warning without switching mode', () => {
+  const timers = new Map();
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) {
+      timers.set(ms, callback);
+      return ms;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const modes = [];
+  const ui = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC.enforceSupportedNetworkMode = (m) => modes.push(m);
+  WebRTC.updateNetworkUI = (text, severity) => { ui.push([text, severity]); };
+  WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
+  assert.equal(typeof timers.get(3000), 'function');
+  assert.equal(typeof timers.get(8000), 'function');
+  timers.get(3000)();
+  timers.get(8000)();
+  assert.deepEqual(ui, [
+    ['链路已通，正在等待第一帧。', 'warning'],
+    ['第一帧仍未到达，请点击「刷新画面」。', 'warning'],
+  ]);
+  assert.deepEqual(modes, []);
+  assert.equal(WebRTC.networkMode, 'relay');
+});
+
+test('beginConnectionAttempt clears media-pending copy timers', () => {
+  const timers = new Map();
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) {
+      timers.set(ms, callback);
+      return ms;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
+  assert.equal(timers.has(3000), true);
+  assert.equal(timers.has(8000), true);
+  WebRTC.beginConnectionAttempt('refresh');
+  assert.equal(timers.has(3000), false);
+  assert.equal(timers.has(8000), false);
+});
+
+test('explicit 1080p on relay warns without switching mode', async () => {
+  const { WebRTC } = loadWebRTC();
+  const modes = [];
+  const ui = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.socket = { connected: true, emit() {} };
+  WebRTC.controlState = { lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.activeLeaseEnvelope = () => WebRTC.controlState.lease;
+  WebRTC.enforceSupportedNetworkMode = (m) => modes.push(m);
+  WebRTC.updateNetworkUI = (text, severity) => { ui.push([text, severity]); };
+  const pending = WebRTC.requestResolution(1920, 1080);
+  assert.deepEqual(ui, [['外网中继上 1080p 容易卡顿，建议改回 720p 或改用隧道中继。', 'warning']]);
+  assert.deepEqual(modes, []);
+  assert.equal(WebRTC.networkMode, 'relay');
+  await pending;
+});
+
+test('relay stall lasting 6s suggests tunnel as danger without switching mode', () => {
+  const timers = new Map();
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) {
+      timers.set(ms, callback);
+      return ms;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const modes = [];
+  const recs = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.enforceSupportedNetworkMode = (m) => modes.push(m);
+  const originalSetFailureRecommendation = WebRTC.setFailureRecommendation.bind(WebRTC);
+  WebRTC.setFailureRecommendation = (code, severity) => {
+    recs.push([code, severity]);
+    return originalSetFailureRecommendation(code, severity);
+  };
+  WebRTC.updateNetworkUI = (text, severity) => { WebRTC._ui = text; WebRTC._sev = severity; };
+  WebRTC.setUiPhase('media-stalled', { reason: 'zero-fps' });
+  assert.equal(WebRTC._ui, '外网中继正在追帧，画面可能短暂发黑。若反复出现，请改用 720p 或手动切换「隧道中继」。');
+  assert.equal(WebRTC._sev, 'warning');
+  assert.deepEqual(recs, []);
+  assert.equal(typeof timers.get(6000), 'function');
+  timers.get(6000)();
+  assert.equal(WebRTC._ui, '当前中继出画不稳定，请手动切换「隧道中继」。');
+  assert.equal(WebRTC._sev, 'danger');
+  assert.deepEqual(recs, [['relay-failed-suggest-tunnel', 'danger']]);
+  assert.equal(WebRTC.recommendationState.nextSuggestedMode, 'tunnel');
+  assert.deepEqual(modes, []);
+  assert.equal(WebRTC.networkMode, 'relay');
 });
