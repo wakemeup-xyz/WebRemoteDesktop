@@ -386,6 +386,17 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 6. 如果 `back-debug.log` 出现 `No usable monitor reported by MSS`，按 Host 捕获源异常处理；这不是 Cloudflare 入口故障，也不是 TURN 故障
 7. 当前 Host 在 `MSS` 只返回 `0x0` monitor 时会自动回退到 `screeninfo`；如果刚修复完或刚更新代码，优先执行本地 `restart-local` 让新 Host 进程生效
 
+#### 已连接但黑屏
+
+网页已打开、信令已通、ICE 已 connected，但画面仍黑或周期性 0 FPS。这不是 Cloudflare 入口故障，也不要把「已连接」当成已经出画。
+
+1. 先看 `WRD_SESSION_PRESENTATION` 是否 1280x720（relay 默认 cap）。若仍是 `1728x1080` / 进程旧 1080p，说明本次会话 size 未绑定。
+2. 再看 `WRD_KEYFRAME emitted=`。`emitted=true` 才表示编码器产出了 IDR；`emitted=false` / `pending` 表示关键帧没真正发出，不要把 `requested=true` 当成已恢复。
+3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。出画后又连续 ≥1s 0 FPS 应为「画面卡顿」。
+4. 不要重建 tunnel；Host 用 `./scripts/restart-host.sh`。
+
+设计：`docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`
+
 家庭路由器端口转发只有在 Host 侧 WebRTC UDP 端口范围可控时才有稳定意义。当前 aiortc/aioice 默认随机绑定本地 UDP 端口（系统分配，绑定 `0`），手动搜索端口也只是反复重建连接以换取新的系统端口，因此不要把 TP-LINK “虚拟服务器”里配置单个端口当作已解决 Strict STUN 可达性问题。
 
 #### TURN / 外网中继排查（手动）

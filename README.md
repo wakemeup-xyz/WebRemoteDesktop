@@ -442,6 +442,17 @@ WebRemoteDesktop/
 5. 如果 Host 日志出现 `No usable monitor reported by MSS`，说明这次失败是 Host 屏幕枚举异常，不是公网入口异常；当前 Host 会优先用 `MSS`，若只拿到 `0x0` monitor 再回退到 `screeninfo`
 6. 2026-07-09 已验证：`https://link.stockhub.wiki` 下手动切到 `隧道中继` 可以真实出画，Viewer 状态会显示 `已连接 / 链路 tunnel / Tunnel relay stream`
 
+#### 已连接但黑屏
+
+信令已通、ICE 已 connected，但画面仍黑或周期性 0 FPS。这不是公网入口故障，也不要把「已连接」当成已经出画。
+
+1. 先看 `WRD_SESSION_PRESENTATION` 是否 1280x720（relay 默认 cap）。若仍是 `1728x1080` / 进程旧 1080p，说明本次会话 size 未绑定。
+2. 再看 `WRD_KEYFRAME emitted=`。`emitted=true` 才表示编码器产出了 IDR；`emitted=false` / `pending` 表示关键帧没真正发出，不要把 `requested=true` 当成已恢复。
+3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。出画后又连续 ≥1s 0 FPS 应为「画面卡顿」。
+4. 不要重建 tunnel；Host 用 `./scripts/restart-host.sh`。
+
+设计：`docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`
+
 ### Strict STUN 自适应优化
 
 `auto` / `stun` 模式会在直连媒体链路恶化时先自动降载：720p/20fps → 540p/15fps → 480p/12fps → 360p/8fps。触发信号包括连续 0 FPS、RTT/Jitter 异常和丢包突增。若降载后仍未恢复，Viewer 会主动尝试一次 ICE restart。

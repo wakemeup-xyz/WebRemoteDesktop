@@ -350,3 +350,5 @@ Unlock 模式不作为本阶段主验收路径，但不得回归死循环 thrash
 | Host/Viewer 默认不一致 | 中 | 缺省 Lock；字段显式传递 |
 | 与“不压画质”冲突的 survival | 高 | Lock 禁止 size 来源 |
 | 工作量过大一次做完 | 中 | 分 Phase，DoD 可分期勾选 |
+
+relay 默认 cap 见 2026-08-29：`docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`。
