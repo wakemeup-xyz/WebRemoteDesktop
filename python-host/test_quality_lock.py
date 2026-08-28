@@ -2,6 +2,7 @@ import logging
 import time
 from unittest.mock import MagicMock
 
+from h264_videotoolbox_encoder import get_session_gop_size, set_session_gop_size
 from host import WebRemoteHost
 
 
@@ -142,10 +143,12 @@ def test_keyframe_handler_invokes_request_path():
         logger.setLevel(original_level)
 
     host.media_sender.request_keyframe.assert_called_once()
-    assert any(
-        "WRD_KEYFRAME reason=media-stalled" in record.getMessage()
-        for record in handler.records
-    )
+    messages = [record.getMessage() for record in handler.records]
+    assert any("WRD_KEYFRAME requested=true emitted=pending" in msg for msg in messages)
+    assert any("reason=media-stalled" in msg for msg in messages)
+    assert any("viewer=viewer-1" in msg for msg in messages)
+    assert any("gop=" in msg for msg in messages)
+    assert any("size=" in msg for msg in messages)
 
 
 def test_keyframe_rate_limited_to_one_per_second():
@@ -226,3 +229,45 @@ def test_bind_session_presentation_resets_stale_user_resolution():
         "viewerId": "v1",
     })
     assert host._user_resolution == {"width": 1280, "height": 720}
+
+
+def test_bind_session_presentation_sets_relay_gop_and_logs_it():
+    host = _make_host(1920, 1080)
+    set_session_gop_size(40)
+    handler = ListHandler()
+    logger = logging.getLogger("host")
+    original_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        host._bind_session_presentation({
+            "width": 1280,
+            "height": 720,
+            "networkMode": "relay",
+            "connectionAttemptId": "wrd-1",
+            "viewerId": "v1",
+        })
+        assert get_session_gop_size() == 20
+        assert any(
+            "WRD_SESSION_PRESENTATION" in record.getMessage() and "gop=20" in record.getMessage()
+            for record in handler.records
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        set_session_gop_size(40)
+
+
+def test_bind_session_presentation_sets_direct_gop_40():
+    host = _make_host(1280, 720)
+    set_session_gop_size(20)
+    try:
+        host._bind_session_presentation({
+            "width": 1280,
+            "height": 720,
+            "networkMode": "direct",
+            "connectionAttemptId": "wrd-2",
+        })
+        assert get_session_gop_size() == 40
+    finally:
+        set_session_gop_size(40)

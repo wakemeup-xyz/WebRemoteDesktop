@@ -23,8 +23,49 @@ MAX_BITRATE = 8000000  # 8 Mbps
 MAX_FRAME_RATE = 20
 PACKET_MAX = 1300
 
+NAL_TYPE_IDR = 5
 NAL_TYPE_FU_A = 28
 NAL_TYPE_STAP_A = 24
+
+_session_gop_size = 40
+
+
+def set_session_gop_size(gop: int) -> int:
+    global _session_gop_size
+    _session_gop_size = max(10, min(int(gop), 120))
+    return _session_gop_size
+
+
+def get_session_gop_size() -> int:
+    return _session_gop_size
+
+
+def bitstream_contains_idr(data: bytes) -> bool:
+    if not data:
+        return False
+    for nal in H264VideoToolboxEncoder._split_bitstream(
+        data if data.startswith(b"\x00\x00") else b"\x00\x00\x00\x01" + data
+    ):
+        if not nal:
+            continue
+        nal_type = nal[0] & 0x1F
+        if nal_type == NAL_TYPE_IDR:
+            return True
+        if nal_type == NAL_TYPE_FU_A and len(nal) >= 2:
+            if (nal[1] & 0x1F) == NAL_TYPE_IDR:
+                return True
+        if nal_type == NAL_TYPE_STAP_A:
+            pos = 1
+            while pos + 2 <= len(nal):
+                length = int.from_bytes(nal[pos:pos + 2], "big")
+                pos += 2
+                if pos + length > len(nal):
+                    break
+                unit = nal[pos:pos + length]
+                pos += length
+                if unit and (unit[0] & 0x1F) == NAL_TYPE_IDR:
+                    return True
+    return False
 
 NAL_HEADER_SIZE = 1
 FU_A_HEADER_SIZE = 2
@@ -116,6 +157,9 @@ class H264VideoToolboxEncoder(Encoder):
         self.codec: Optional[VideoCodecContext] = None
         self.codec_name = _preferred_h264_codec
         self.__target_bitrate = DEFAULT_BITRATE
+        self.gop_size = get_session_gop_size()
+        self.last_force_emitted_idr = False
+        self.last_idr_recreated = False
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -255,6 +299,10 @@ class H264VideoToolboxEncoder(Encoder):
         if self.codec is None:
             self.codec = self._create_codec(frame, self.codec_name)
 
+        if force_keyframe:
+            self.last_force_emitted_idr = False
+            self.last_idr_recreated = False
+
         data_to_send = b""
         try:
             for package in self.codec.encode(frame):
@@ -271,6 +319,32 @@ class H264VideoToolboxEncoder(Encoder):
                     data_to_send += bytes(package)
             else:
                 raise
+
+        if force_keyframe:
+            if bitstream_contains_idr(data_to_send):
+                self.last_force_emitted_idr = True
+            else:
+                self.codec = None
+                self.codec = self._create_codec(frame, self.codec_name)
+                self.last_idr_recreated = True
+                data_to_send = b""
+                for package in self.codec.encode(frame):
+                    data_to_send += bytes(package)
+                self.last_force_emitted_idr = bitstream_contains_idr(data_to_send)
+            logger.info(
+                "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
+                self.last_force_emitted_idr,
+                self.last_idr_recreated,
+                getattr(self, "gop_size", get_session_gop_size()),
+                frame.width,
+                frame.height,
+            )
+            if self.last_idr_recreated:
+                logger.info(
+                    "WRD_IDR_RECREATE success=%s codec=%s",
+                    self.last_force_emitted_idr,
+                    self.codec_name,
+                )
 
         if data_to_send:
             yield from self._split_bitstream(data_to_send)
@@ -303,8 +377,7 @@ class H264VideoToolboxEncoder(Encoder):
         codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
         codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
         codec.profile = "Baseline"
-        # Shorter GOP for remote-desktop recovery (was 3s); stall path also force-keyframe.
-        codec.gop_size = max(MAX_FRAME_RATE, MAX_FRAME_RATE * 2)
+        codec.gop_size = int(getattr(self, "gop_size", None) or get_session_gop_size())
         try:
             codec.max_b_frames = 0
         except Exception:

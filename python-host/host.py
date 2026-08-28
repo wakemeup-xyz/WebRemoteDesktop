@@ -33,7 +33,11 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import screeninfo
 from input_handler import InputHandler
-from h264_videotoolbox_encoder import H264VideoToolboxEncoder
+from h264_videotoolbox_encoder import (
+    H264VideoToolboxEncoder,
+    get_session_gop_size,
+    set_session_gop_size,
+)
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
 
@@ -2079,6 +2083,9 @@ class WebRemoteHost:
                     offer_height = 0
                 if offer_width > 0 and offer_height > 0:
                     self._bind_session_presentation(data)
+                else:
+                    gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
+                    set_session_gop_size(gop)
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
@@ -2460,6 +2467,8 @@ class WebRemoteHost:
         height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
         prev = dict(getattr(self, "_user_resolution", None) or {})
         adopted = self._set_user_resolution(width, height)
+        gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
+        set_session_gop_size(gop)
         emit_host_event(
             logger,
             event="host_session_presentation",
@@ -2475,11 +2484,12 @@ class WebRemoteHost:
             },
         )
         logger.info(
-            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s",
+            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s gop=%s",
             adopted[0], adopted[1],
             data.get("networkMode") or "-",
             prev,
             data.get("connectionAttemptId") or "-",
+            get_session_gop_size(),
         )
         return adopted
 
@@ -2512,10 +2522,14 @@ class WebRemoteHost:
                 logger.debug("video_sender keyframe failed: %s", type(exc).__name__)
                 ok = False
         logger.info(
-            "WRD_KEYFRAME reason=%s viewer=%s ok=%s",
+            "WRD_KEYFRAME requested=true emitted=%s reason=%s viewer=%s codec=%s gop=%s size=%sx%s",
+            "pending" if ok else "false",
             reason_s,
             viewer_s,
-            ok,
+            getattr(getattr(self, "media_sender", None), "codec_name", "-"),
+            get_session_gop_size(),
+            (self._user_resolution or {}).get("width"),
+            (self._user_resolution or {}).get("height"),
         )
         return ok
 
