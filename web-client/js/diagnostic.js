@@ -265,39 +265,38 @@
       ? TerminalPanel.getDiagnosticState()
       : null;
 
-    const payload = {
-      type: 'diagnostic',
-      timestamp: Date.now(),
-      browserSessionId: this.ensureBrowserSessionId(),
-      userAgent: navigator.userAgent,
-      screen: `${window.screen.width}x${window.screen.height}`,
-      latency: latencyStats,
-      logs: this.logs.slice(-120),
+    const payload = this.buildConnectionDiagnostic({
       trigger: meta.trigger || 'manual',
       reason: meta.reason || null,
-      network: this.getNetworkSnapshot(),
-      keyboardMode: inputState?.keyboardMode || null,
-      terminal: terminalState,
-      inputState: inputState ? {
-        keyboardMode: inputState.keyboardMode || null,
-        isActive: Boolean(inputState.isActive),
-        hasLease: Boolean(inputState.hasLease),
-        leaseEpoch: Number(inputState.leaseEpoch || 0),
-        gate: inputState.gate && typeof inputState.gate === 'object' ? { ...inputState.gate } : null,
-        keyboard: inputState.keyboard ? {
-          leaseState: inputState.keyboard.leaseState || null,
-          epoch: Number(inputState.keyboard.epoch || 0),
-          lastSent: Number(inputState.keyboard.lastSent || 0),
-          lastApplied: Number(inputState.keyboard.lastApplied || 0),
-          pendingCount: Number(inputState.keyboard.pendingCount || 0),
-          pressedCount: Number(inputState.keyboard.pressedCount || 0),
-          modifierMask: Number(inputState.keyboard.modifierMask || 0),
-          adapter: inputState.keyboard.adapter || null,
-          lastResetReason: inputState.keyboard.lastResetReason || null,
-        } : null,
+    });
+    payload.type = payload.type || 'diagnostic';
+    payload.timestamp = Date.now();
+    payload.userAgent = navigator.userAgent;
+    payload.screen = `${window.screen.width}x${window.screen.height}`;
+    payload.latency = latencyStats;
+    payload.logs = this.logs.slice(-120);
+    payload.network = payload.network || this.getNetworkSnapshot();
+    payload.keyboardMode = inputState?.keyboardMode || null;
+    payload.terminal = terminalState || payload.terminal;
+    payload.inputState = inputState ? {
+      keyboardMode: inputState.keyboardMode || null,
+      isActive: Boolean(inputState.isActive),
+      hasLease: Boolean(inputState.hasLease),
+      leaseEpoch: Number(inputState.leaseEpoch || 0),
+      gate: inputState.gate && typeof inputState.gate === 'object' ? { ...inputState.gate } : null,
+      keyboard: inputState.keyboard ? {
+        leaseState: inputState.keyboard.leaseState || null,
+        epoch: Number(inputState.keyboard.epoch || 0),
+        lastSent: Number(inputState.keyboard.lastSent || 0),
+        lastApplied: Number(inputState.keyboard.lastApplied || 0),
+        pendingCount: Number(inputState.keyboard.pendingCount || 0),
+        pressedCount: Number(inputState.keyboard.pressedCount || 0),
+        modifierMask: Number(inputState.keyboard.modifierMask || 0),
+        adapter: inputState.keyboard.adapter || null,
+        lastResetReason: inputState.keyboard.lastResetReason || null,
       } : null,
-      inputChannelTimeline: this.getInputChannelTimeline()
-    };
+    } : null;
+    payload.inputChannelTimeline = this.getInputChannelTimeline();
 
     // Use WebRTC socket if available, otherwise try to emit directly
     if (typeof WebRTC !== 'undefined' && WebRTC.socket && WebRTC.socket.connected) {
@@ -392,6 +391,8 @@
       schemaVersion: 3,
       browserSessionId: this.ensureBrowserSessionId(),
       connectionAttemptId,
+      trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',
+      reason: meta.reason || basePayload.traceSummary?.reason || null,
       entrypoint,
       mode,
       recommendation,

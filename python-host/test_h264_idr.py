@@ -24,6 +24,16 @@ def test_non_idr_slice_false():
     assert bitstream_contains_idr(nal) is False
 
 
+def test_idr_detects_avcc_length_prefixed_type5():
+    nal = bytes([0x65, 0, 1, 2])
+    avcc = (4).to_bytes(4, "big") + nal
+    assert bitstream_contains_idr(avcc) is True
+
+
+def test_idr_detects_bare_type5_without_start_code():
+    assert bitstream_contains_idr(bytes([0x65, 0, 1])) is True
+
+
 def test_set_session_gop_clamps():
     assert set_session_gop_size(20) == 20
     assert get_session_gop_size() == 20

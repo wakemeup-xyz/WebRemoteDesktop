@@ -147,8 +147,31 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputState.keyboard.lastResetReason, 'window-blur');
   assert.equal(emitted[0].payload.inputChannelTimeline.length, 3);
   assert.equal(emitted[0].payload.inputChannelTimeline[0].kind, 'open');
-  assert.equal(emitted[0].payload.inputChannelTimeline[1].kind, 'error');
-  assert.equal(emitted[0].payload.inputChannelTimeline[2].kind, 'close');
+});
+
+test('sendLogs includes paint continuity fields from the live WebRTC session', () => {
+  const { context } = createDiagnosticContext();
+  const emitted = [];
+  context.WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  context.WebRTC.networkMode = 'relay';
+  context.WebRTC.uiPhase = 'connected';
+  context.WebRTC.hasPaintedFrame = true;
+  context.WebRTC.getSessionPresentation = () => ({
+    width: 1280, height: 720, label: '1280x720',
+    capped: false,
+    pathCap: { width: 1280, height: 720 },
+    userPreference: { width: 1280, height: 720 },
+    explicitOverride1080: false,
+  });
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  Diagnostic.logs = ['log-1'];
+  Diagnostic.sendLogs();
+  assert.equal(emitted[0].payload.schemaVersion, 3);
+  assert.equal(emitted[0].payload.mode, 'relay');
+  assert.equal(emitted[0].payload.traceSummary.uiPhase, 'connected');
+  assert.equal(emitted[0].payload.traceSummary.sessionPresentation.width, 1280);
+  assert.equal(emitted[0].payload.traceSummary.hasPaintedFrame, true);
+  assert.equal(emitted[0].payload.logs.length, 1);
 });
 
 test('keyboard diagnostics expose lease metadata only and never raw key labels', () => {

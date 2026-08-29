@@ -40,31 +40,44 @@ def get_session_gop_size() -> int:
     return _session_gop_size
 
 
+def _nal_is_idr(nal: bytes) -> bool:
+    if not nal:
+        return False
+    nal_type = nal[0] & 0x1F
+    if nal_type == NAL_TYPE_IDR:
+        return True
+    if nal_type == NAL_TYPE_FU_A and len(nal) >= 2:
+        return (nal[1] & 0x1F) == NAL_TYPE_IDR
+    if nal_type == NAL_TYPE_STAP_A:
+        pos = 1
+        while pos + 2 <= len(nal):
+            length = int.from_bytes(nal[pos:pos + 2], "big")
+            pos += 2
+            if pos + length > len(nal):
+                break
+            unit = nal[pos:pos + length]
+            pos += length
+            if unit and (unit[0] & 0x1F) == NAL_TYPE_IDR:
+                return True
+    return False
+
+
 def bitstream_contains_idr(data: bytes) -> bool:
     if not data:
         return False
-    for nal in H264VideoToolboxEncoder._split_bitstream(
-        data if data.startswith(b"\x00\x00") else b"\x00\x00\x00\x01" + data
-    ):
-        if not nal:
-            continue
-        nal_type = nal[0] & 0x1F
-        if nal_type == NAL_TYPE_IDR:
+    annexb = data if data.startswith(b"\x00\x00") else b"\x00\x00\x00\x01" + data
+    for nal in H264VideoToolboxEncoder._split_bitstream(annexb):
+        if _nal_is_idr(nal):
             return True
-        if nal_type == NAL_TYPE_FU_A and len(nal) >= 2:
-            if (nal[1] & 0x1F) == NAL_TYPE_IDR:
-                return True
-        if nal_type == NAL_TYPE_STAP_A:
-            pos = 1
-            while pos + 2 <= len(nal):
-                length = int.from_bytes(nal[pos:pos + 2], "big")
-                pos += 2
-                if pos + length > len(nal):
-                    break
-                unit = nal[pos:pos + length]
-                pos += length
-                if unit and (unit[0] & 0x1F) == NAL_TYPE_IDR:
-                    return True
+    pos = 0
+    while pos + 4 <= len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        pos += 4
+        if length <= 0 or pos + length > len(data):
+            break
+        if _nal_is_idr(data[pos:pos + length]):
+            return True
+        pos += length
     return False
 
 NAL_HEADER_SIZE = 1
