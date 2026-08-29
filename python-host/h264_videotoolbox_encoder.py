@@ -311,10 +311,13 @@ class H264VideoToolboxEncoder(Encoder):
             self._frames_since_idr = 0
 
         gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
-        periodic_idr = self._frames_since_idr >= max(1, gop)
-        want_idr = bool(force_keyframe or periodic_idr)
-        if want_idr:
-            # VideoToolbox ignores codec.gop_size; force I on the GOP cadence.
+        waiting = self._idr_wait_remaining > 0
+        due = (not waiting) and (
+            force_keyframe or self._frames_since_idr >= max(1, gop)
+        )
+        # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
+        # the delayed IDR instead of stuffing I-frames every follow-up tick.
+        if due:
             frame.pict_type = av.video.frame.PictureType.I
         else:
             frame.pict_type = av.video.frame.PictureType.NONE
@@ -322,10 +325,10 @@ class H264VideoToolboxEncoder(Encoder):
         if self.codec is None:
             self.codec = self._create_codec(frame, self.codec_name)
 
-        if want_idr:
+        if due:
             self.last_force_emitted_idr = False
-            if self._idr_wait_remaining <= 0:
-                self._idr_wait_remaining = IDR_WAIT_FRAMES
+            self._idr_wait_remaining = IDR_WAIT_FRAMES
+            waiting = True
 
         data_to_send = b""
         try:
@@ -346,6 +349,7 @@ class H264VideoToolboxEncoder(Encoder):
 
         recreated_this_call = False
         waiting = self._idr_wait_remaining > 0
+        want_idr = due or waiting
         if bitstream_contains_idr(data_to_send):
             self._frames_since_idr = 0
             if waiting or want_idr:

@@ -100,13 +100,19 @@ def test_force_keyframe_empty_output_waits_for_delayed_idr(monkeypatch):
         return codec
 
     monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    import av
+    first = _fake_frame()
+    second = _fake_frame()
+    third = _fake_frame()
+    list(enc._encode_frame(first, force_keyframe=True))
     assert calls["create"] == 1
     assert enc.last_force_emitted_idr is False
     assert enc.last_idr_recreated is False
-    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert first.pict_type == av.video.frame.PictureType.I
+    list(enc._encode_frame(second, force_keyframe=False))
     assert calls["create"] == 1
-    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert second.pict_type == av.video.frame.PictureType.NONE
+    list(enc._encode_frame(third, force_keyframe=False))
     assert calls["create"] == 1
     assert enc.last_force_emitted_idr is True
     assert enc.last_idr_recreated is False
