@@ -994,8 +994,33 @@ test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
   };
   WebRTC.networkMode = 'relay';
   WebRTC.configureVideoReceiver(receiver);
-  assert.deepEqual(hints, [0.4]);
-  assert.deepEqual(jitter, [400]);
+  assert.deepEqual(hints, [0.08]);
+  assert.deepEqual(jitter, [80]);
+});
+
+test('relay does not request keyframe while packets still arrive at 0 fps', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.networkMode = 'relay';
+  WebRTC.adaptiveMediaEnabled = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 },
+  };
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
+  WebRTC.ensureLinkQualityController();
+  WebRTC.handleReceiverStats({
+    fps: 0,
+    rttMs: 40,
+    jitterBufferMs: 0,
+    packetsLost: 0,
+    framesDecoded: 0,
+    framesReceived: 19,
+    selectedCandidateType: 'relay',
+    interval: true,
+  });
+  assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), false);
 });
 
 test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {

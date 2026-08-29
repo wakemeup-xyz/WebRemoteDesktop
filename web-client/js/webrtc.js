@@ -1398,7 +1398,11 @@ const WebRTC = {
     if (!result || result.action === 'hold') return;
 
     if (result.shouldRequestKeyframe || result.action === 'recover') {
-      this.requestKeyframe(result.reason || 'media-stalled');
+      const inboundStillFlowing = Number(stats.framesReceived || 0) > 0
+        && Number(stats.fps || 0) === 0;
+      if (!(this.networkMode === 'relay' && inboundStillFlowing)) {
+        this.requestKeyframe(result.reason || 'media-stalled');
+      }
     }
 
     if (result.profileConfig) {
@@ -1415,12 +1419,12 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // playoutDelayHint / jitterBufferTarget: relay must absorb ~720p IDR bursts
-    // (80ms still overflowed GOP IDRs into 1–2s decoded=0). Direct stays low-latency.
+    // playoutDelayHint / jitterBufferTarget: relay 80ms absorbs RTT jitter.
+    // Wider 400ms delayed first paint (FPS=1) without stopping GOP-IDR stalls.
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = isRelay ? 0.4 : 0;
-        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.4s (relay)' : '0s (direct)');
+        receiver.playoutDelayHint = isRelay ? 0.08 : 0;
+        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.08s (relay)' : '0s (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
@@ -1428,8 +1432,8 @@ const WebRTC = {
 
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = isRelay ? 400 : 1;
-        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '400ms (relay)' : '1ms (direct)');
+        receiver.jitterBufferTarget = isRelay ? 80 : 1;
+        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '80ms (relay)' : '1ms (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
