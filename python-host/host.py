@@ -1410,7 +1410,6 @@ class WebRemoteHost:
         self._offer_epoch = 0
         self._reconnecting = False
         self._last_diag_network = None
-        self._stall_decoder_refresh_armed = True
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
         # User-owned presentation size (resolution-change / adaptive size). Quality Lock
         # ignores media-profile size when adaptiveResolution is false.
@@ -2466,7 +2465,6 @@ class WebRemoteHost:
                     )
             else:
                 self._stall_sample_count = 0
-            self._refresh_decoder_on_stall(data)
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
 
@@ -2690,48 +2688,19 @@ class WebRemoteHost:
         except Exception as e:
             logger.error(f"Error handling media profile change: {e}")
 
-    def _video_encoder(self):
-        sender = getattr(self, "video_sender", None)
-        if sender is None:
-            return None
-        encoder = getattr(sender, "_encoder", None)
-        if encoder is None:
-            encoder = getattr(sender, "_RTCRtpSender__encoder", None)
-        return encoder
-
-    def _refresh_decoder_on_stall(self, data):
-        """Same-size SPS refresh on the freeze second. GOP IDRs do not unstick Chrome."""
-        try:
-            fps = float(data.get("fps") or 0)
-            received = int(data.get("framesReceived") or 0)
-        except (TypeError, ValueError):
-            return False
-        if fps > 0:
-            self._stall_decoder_refresh_armed = True
-            return False
-        if received <= 0:
-            return False
-        if not getattr(self, "_stall_decoder_refresh_armed", True):
-            return False
-        encoder = self._video_encoder()
-        refresh = getattr(encoder, "request_decoder_refresh", None)
-        if not callable(refresh):
-            return False
-        try:
-            if refresh():
-                self._stall_decoder_refresh_armed = False
-                return True
-        except Exception as exc:
-            logger.debug("decoder refresh failed: %s", type(exc).__name__)
-        return False
-
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps):
         """Hot-update encoder target bitrate when possible (no codec reopen)."""
         try:
             bitrate_bps = max(250_000, min(int(bitrate_kbps) * 1000, 8_000_000))
         except (TypeError, ValueError):
             return False
-        encoder = self._video_encoder()
+        sender = getattr(self, "video_sender", None)
+        if sender is None:
+            return False
+        encoder = getattr(sender, "_encoder", None)
+        if encoder is None:
+            # aiortc private name variants
+            encoder = getattr(sender, "_RTCRtpSender__encoder", None)
         if encoder is None:
             return False
         try:
