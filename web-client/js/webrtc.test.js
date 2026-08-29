@@ -5083,3 +5083,10 @@ test('media-stalled lasting 3s auto-sends media-stalled', () => {
   assert.deepEqual(sent, ['media-stalled']);
   assert.equal(WebRTC.uiPhase, 'media-stalled');
 });
+
+test('classic bundle exposes WebRTC on globalThis for deferred diagnostic.js', () => {
+  const { WebRTC, context } = loadWebRTC();
+  assert.equal(context.globalThis.WebRTC, WebRTC);
+  assert.equal(typeof context.globalThis.WebRTC.getSessionPresentation, 'function');
+  assert.equal(typeof context.globalThis.WebRTC.uiPhase, 'string');
+});

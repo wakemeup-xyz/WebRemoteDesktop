@@ -108,3 +108,6 @@ def test_force_keyframe_recreates_at_most_once(monkeypatch):
     assert calls["create"] == 2
     assert enc.last_force_emitted_idr is False
     assert enc.last_idr_recreated is True
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 2
+    assert enc.last_idr_recreated is True

@@ -4902,6 +4902,10 @@ if (this.tunnelLastObjectUrl) {
   }
 };
 
+if (typeof globalThis !== 'undefined') {
+  globalThis.WebRTC = WebRTC;
+}
+
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
   statusEl.className = 'status ' + status;
