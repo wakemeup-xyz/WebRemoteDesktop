@@ -1364,11 +1364,6 @@ const WebRTC = {
     this._lastKeyframeRequestAt = now;
     this._keyframeRequested = true;
     this._keyframeEmitted = false;
-    // Re-assert low-latency playout after stalls so the browser does not keep a multi-second buffer.
-    try {
-      const receiver = this.pc?.getReceivers?.()?.find((entry) => entry?.track?.kind === 'video');
-      if (receiver) this.configureVideoReceiver(receiver);
-    } catch (_err) { /* ignore */ }
     this.socket.emit('request-keyframe', {
       ...lease,
       schemaVersion: 2,
@@ -1420,21 +1415,21 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // playoutDelayHint: relay 下给 80ms 下限减少黑屏，直连保持 0
+    // playoutDelayHint / jitterBufferTarget: relay must absorb ~720p IDR bursts
+    // (80ms still overflowed GOP IDRs into 1–2s decoded=0). Direct stays low-latency.
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = isRelay ? 0.08 : 0;
-        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.08s (relay)' : '0s (direct)');
+        receiver.playoutDelayHint = isRelay ? 0.4 : 0;
+        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.4s (relay)' : '0s (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
     }
 
-    // jitterBufferTarget: relay 路径 80ms 吸收抖动，直连保持 1ms 低延迟
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = isRelay ? 80 : 1;
-        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '80ms (relay)' : '1ms (direct)');
+        receiver.jitterBufferTarget = isRelay ? 400 : 1;
+        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '400ms (relay)' : '1ms (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }

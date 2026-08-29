@@ -981,6 +981,23 @@ test('WebRTC configures a finite numeric video playout delay hint', () => {
   assert.equal(Number.isFinite(values[0]), true);
 });
 
+test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
+  const { WebRTC } = loadWebRTC();
+  const hints = [];
+  const jitter = [];
+  const receiver = {
+    track: { kind: 'video' },
+    get playoutDelayHint() { return null; },
+    set playoutDelayHint(value) { hints.push(value); },
+    get jitterBufferTarget() { return null; },
+    set jitterBufferTarget(value) { jitter.push(value); },
+  };
+  WebRTC.networkMode = 'relay';
+  WebRTC.configureVideoReceiver(receiver);
+  assert.deepEqual(hints, [0.4]);
+  assert.deepEqual(jitter, [400]);
+});
+
 test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const { WebRTC } = loadWebRTC({ LinkQualityController });
