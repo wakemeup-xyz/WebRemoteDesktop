@@ -9,7 +9,6 @@ from h264_videotoolbox_encoder import (
     libx264_zerolatency_options,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
-    RELAY_DECODER_REFRESH_FRAMES,
 )
 
 
@@ -47,18 +46,8 @@ def test_packetize_does_not_staple_sei_with_sps_pps():
     packets = H264VideoToolboxEncoder._packetize([sps, pps, sei, idr])
     types = [p[0] & 0x1F for p in packets]
     assert 6 not in types
-    stap = next(p for p in packets if (p[0] & 0x1F) == 24)
-    pos = 1
-    units = []
-    while pos + 2 <= len(stap):
-        length = int.from_bytes(stap[pos:pos + 2], "big")
-        pos += 2
-        unit = stap[pos:pos + length]
-        pos += length
-        if unit:
-            units.append(unit[0] & 0x1F)
-    assert 6 not in units
-    assert 7 in units and 8 in units
+    assert types[:2] == [7, 8]
+    assert 24 not in types
 
 
 def test_annexb_p_slice_payload_0x65_is_not_idr():
@@ -365,33 +354,5 @@ def test_libx264_wait_does_not_recreate_codec(monkeypatch):
             list(enc._encode_frame(_fake_frame(), force_keyframe=False))
         assert calls["create"] == 1
         assert enc.last_idr_recreated is False
-    finally:
-        set_session_gop_size(40)
-
-
-def test_relay_decoder_refresh_is_mid_gop_not_2s():
-    assert RELAY_DECODER_REFRESH_FRAMES == 50
-    assert RELAY_DECODER_REFRESH_FRAMES % 20 == 10
-
-
-def test_libx264_refreshes_sps_mid_gop_not_on_gop_boundary(monkeypatch):
-    set_session_gop_size(20)
-    try:
-        enc = H264VideoToolboxEncoder()
-        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-        calls = {"create": 0}
-
-        def fake_create(self, frame, codec_name):
-            calls["create"] += 1
-            return FakeCodec([p_slice], repeat=True)
-
-        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        for _ in range(RELAY_DECODER_REFRESH_FRAMES - 1):
-            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 1
-        assert enc._frames_encoded == RELAY_DECODER_REFRESH_FRAMES
-        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 2
     finally:
         set_session_gop_size(40)
