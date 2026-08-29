@@ -9,6 +9,7 @@ from h264_videotoolbox_encoder import (
     libx264_zerolatency_options,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
+    RELAY_DECODER_REFRESH_FRAMES,
 )
 
 
@@ -378,5 +379,33 @@ def test_request_decoder_refresh_reopens_same_size(monkeypatch):
         assert calls["create"] == 2
         assert enc.request_decoder_refresh() is True
         assert enc.request_decoder_refresh() is False
+    finally:
+        set_session_gop_size(40)
+
+
+def test_relay_decoder_refresh_is_mid_gop_5s():
+    assert RELAY_DECODER_REFRESH_FRAMES == 110
+    assert RELAY_DECODER_REFRESH_FRAMES % 20 == 10
+
+
+def test_libx264_refreshes_sps_mid_gop_not_on_gop_boundary(monkeypatch):
+    set_session_gop_size(20)
+    try:
+        enc = H264VideoToolboxEncoder()
+        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+        calls = {"create": 0}
+
+        def fake_create(self, frame, codec_name):
+            calls["create"] += 1
+            return FakeCodec([p_slice], repeat=True)
+
+        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+        for _ in range(RELAY_DECODER_REFRESH_FRAMES - 1):
+            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        assert calls["create"] == 1
+        assert enc._frames_encoded == RELAY_DECODER_REFRESH_FRAMES
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        assert calls["create"] == 2
     finally:
         set_session_gop_size(40)

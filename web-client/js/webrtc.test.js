@@ -1348,22 +1348,6 @@ test('WebRTC owns one stats sampler and stops it during telemetry teardown', () 
   assert.equal(stopCalls, 1);
 });
 
-test('relay stats sampler uses 250ms so freeze-second SPS refresh can beat 1s 0-FPS', () => {
-  const intervals = [];
-  const { WebRTC } = loadWebRTC({
-    WebRtcStats: {
-      createWebRtcStatsSampler(options) {
-        intervals.push(options.intervalMs);
-        return { start() {}, stop() {}, snapshot() { return null; } };
-      },
-    },
-  });
-  WebRTC.networkMode = 'relay';
-  WebRTC.pc = { getStats: async () => new Map() };
-  WebRTC.startStats();
-  assert.deepEqual(intervals, [250]);
-});
-
 test('video frame callback is cancelled and never accumulates on restart', () => {
   const { WebRTC, context } = loadWebRTC();
   const video = context.document.getElementById('remoteVideo');

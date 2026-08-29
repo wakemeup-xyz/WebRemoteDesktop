@@ -4137,11 +4137,7 @@ if (this.tunnelLastObjectUrl) {
       this.ensureLinkQualityController()?.beginConnection?.();
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),
-        // Relay freeze recovery needs the Host SPS refresh before the 1s
-        // 0-FPS accept line. 1Hz stats arrive after that line is already lit.
-        intervalMs: (this.networkMode === 'relay' || this.lastCandidateType === 'relay')
-          ? 250
-          : 1000,
+        intervalMs: 1000,
         onSample: (snapshot) => this.processStatsSnapshot(snapshot),
         onError: (error) => console.warn('[STATS] getStats failed:', error?.message || error),
       });
