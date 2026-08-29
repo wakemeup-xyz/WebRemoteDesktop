@@ -1293,6 +1293,12 @@ const WebRTC = {
       fps,
       jitterBufferMs: Number(stats.jitterBufferMs || 0),
       bytesReceived: Number(stats.bytesReceived || 0),
+      framesDropped: Number(stats.framesDropped || 0),
+      packetsReceived: Number(stats.packetsReceived || 0),
+      nackCount: Number(stats.nackCount || 0),
+      pliCount: Number(stats.pliCount || 0),
+      firCount: Number(stats.firCount || 0),
+      freezeCount: Number(stats.freezeCount || 0),
     };
 
     if (!this.hasPaintedFrame) {
@@ -4193,6 +4199,12 @@ if (this.tunnelLastObjectUrl) {
       const framesDecoded = Number(stats.framesDecoded || 0);
       const packetsLost = Number(stats.packetsLost || 0);
       const bytesReceived = Number(stats.bytesReceived || 0);
+      const framesDropped = Number(stats.framesDropped || 0);
+      const packetsReceived = Number(stats.packetsReceived || 0);
+      const nackCount = Number(stats.nackCount || 0);
+      const pliCount = Number(stats.pliCount || 0);
+      const firCount = Number(stats.firCount || 0);
+      const freezeCount = Number(stats.freezeCount || 0);
       const codec = String(stats.codec || '');
       const selectedCandidateType = String(stats.selectedCandidateType || '');
       if (Number.isFinite(framesDecoded)) {
@@ -4320,6 +4332,8 @@ if (this.tunnelLastObjectUrl) {
       console.log(`[STATS] FPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
                   `Recv=${framesReceived}, Decoded=${framesDecoded}, Lost=${packetsLost}, ` +
+                  `Dropped=${framesDropped}, Packets=${packetsReceived}, NACK=${nackCount}, ` +
+                  `PLI=${pliCount}, FIR=${firCount}, Freeze=${freezeCount}, ` +
                   `IntervalBytes=${(bytesReceived/1024).toFixed(1)}KiB`);
       if (this.selectedCandidatePair?.localType || this.selectedCandidatePair?.remoteType) {
         console.log('[NETWORK] Selected candidate pair:', this.selectedCandidatePair);
@@ -4351,6 +4365,12 @@ if (this.tunnelLastObjectUrl) {
           framesDecoded,
           packetsLost,
           bytesReceived,
+          framesDropped,
+          packetsReceived,
+          nackCount,
+          pliCount,
+          firCount,
+          freezeCount,
           codec,
           selectedCandidateType
         });

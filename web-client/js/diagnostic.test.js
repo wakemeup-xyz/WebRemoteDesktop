@@ -342,6 +342,12 @@ test('buildConnectionDiagnostic includes paint continuity fields', () => {
     bytesReceived: 1234,
     videoWidth: 1280,
     videoHeight: 720,
+    framesDropped: 3,
+    packetsReceived: 40,
+    nackCount: 2,
+    pliCount: 1,
+    firCount: 0,
+    freezeCount: 1,
   };
   context.WebRTC._lastKeyframeRequestAt = 1;
   context.WebRTC._keyframeEmitted = false;
@@ -362,6 +368,12 @@ test('buildConnectionDiagnostic includes paint continuity fields', () => {
   assert.equal(payload.traceSummary.fps, 0);
   assert.equal(payload.traceSummary.jitterBufferMs, 40);
   assert.equal(payload.traceSummary.bytesReceived, 1234);
+  assert.equal(payload.traceSummary.framesDropped, 3);
+  assert.equal(payload.traceSummary.packetsReceived, 40);
+  assert.equal(payload.traceSummary.nackCount, 2);
+  assert.equal(payload.traceSummary.pliCount, 1);
+  assert.equal(payload.traceSummary.firCount, 0);
+  assert.equal(payload.traceSummary.freezeCount, 1);
   assert.equal(payload.traceSummary.keyframeRequested, true);
   assert.equal(payload.traceSummary.keyframeEmitted, false);
 });

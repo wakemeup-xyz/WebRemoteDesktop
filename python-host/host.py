@@ -2415,7 +2415,7 @@ class WebRemoteHost:
         """Handle periodic WebRTC stats from viewer."""
         try:
             logger.info(
-                "VIEWER_STATS viewer=%s codec=%s fps=%.1f rtt=%sms jitter_buffer=%sms decoded=%s received=%s lost=%s candidate=%s bytes=%.2fMB",
+                "VIEWER_STATS viewer=%s codec=%s fps=%.1f rtt=%sms jitter_buffer=%sms decoded=%s received=%s lost=%s dropped=%s packets=%s nack=%s pli=%s fir=%s freeze=%s candidate=%s bytes=%.2fMB",
                 data.get("viewerId", "-"),
                 data.get("codec") or "unknown",
                 float(data.get("fps") or 0),
@@ -2424,6 +2424,12 @@ class WebRemoteHost:
                 data.get("framesDecoded", 0),
                 data.get("framesReceived", 0),
                 data.get("packetsLost", 0),
+                data.get("framesDropped", 0),
+                data.get("packetsReceived", 0),
+                data.get("nackCount", 0),
+                data.get("pliCount", 0),
+                data.get("firCount", 0),
+                data.get("freezeCount", 0),
                 data.get("selectedCandidateType") or "unknown",
                 float(data.get("bytesReceived") or 0) / 1024 / 1024,
             )
@@ -2445,10 +2451,16 @@ class WebRemoteHost:
                 self._stall_sample_count = count
                 if count % 5 == 0:
                     logger.info(
-                        "WRD_STALL_SAMPLE count=%s received=%s decoded=%s viewer=%s",
+                        "WRD_STALL_SAMPLE count=%s received=%s decoded=%s dropped=%s packets=%s nack=%s pli=%s fir=%s freeze=%s viewer=%s",
                         count,
                         received,
                         decoded,
+                        int(data.get("framesDropped") or 0),
+                        int(data.get("packetsReceived") or 0),
+                        int(data.get("nackCount") or 0),
+                        int(data.get("pliCount") or 0),
+                        int(data.get("firCount") or 0),
+                        int(data.get("freezeCount") or 0),
                         data.get("viewerId", "-"),
                     )
             else:

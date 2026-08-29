@@ -60,6 +60,12 @@ const WebRtcStats = (() => {
       previous?.jitterBufferEmittedCount,
       current?.jitterBufferEmittedCount,
     );
+    const framesDropped = nonNegativeDelta(previous?.framesDropped, current?.framesDropped);
+    const packetsReceived = nonNegativeDelta(previous?.packetsReceived, current?.packetsReceived);
+    const nackCount = nonNegativeDelta(previous?.nackCount, current?.nackCount);
+    const pliCount = nonNegativeDelta(previous?.pliCount, current?.pliCount);
+    const firCount = nonNegativeDelta(previous?.firCount, current?.firCount);
+    const freezeCount = nonNegativeDelta(previous?.freezeCount, current?.freezeCount);
     return {
       elapsedMs,
       fps: elapsedMs > 0 ? Math.round((framesDecoded * 1000 / elapsedMs) * 10) / 10 : 0,
@@ -68,6 +74,12 @@ const WebRtcStats = (() => {
       packetsLost,
       bytesReceived,
       jitterBufferMs: jitterCount > 0 ? Math.round((jitterDelay / jitterCount * 1000) * 10) / 10 : 0,
+      framesDropped,
+      packetsReceived,
+      nackCount,
+      pliCount,
+      firCount,
+      freezeCount,
     };
   }
 
@@ -98,6 +110,12 @@ const WebRtcStats = (() => {
       bytesReceived: Number(inbound.bytesReceived || 0),
       jitterBufferDelay: Number(inbound.jitterBufferDelay || 0),
       jitterBufferEmittedCount: Number(inbound.jitterBufferEmittedCount || 0),
+      framesDropped: Number(inbound.framesDropped || 0),
+      packetsReceived: Number(inbound.packetsReceived || 0),
+      nackCount: Number(inbound.nackCount || 0),
+      pliCount: Number(inbound.pliCount || 0),
+      firCount: Number(inbound.firCount || 0),
+      freezeCount: Number(inbound.freezeCount || 0),
     };
     const interval = previous
       ? deriveIntervalMediaStats(previous, current)
@@ -111,6 +129,12 @@ const WebRtcStats = (() => {
           jitterBufferMs: current.jitterBufferEmittedCount > 0
             ? Math.round((current.jitterBufferDelay / current.jitterBufferEmittedCount * 1000) * 10) / 10
             : 0,
+          framesDropped: 0,
+          packetsReceived: 0,
+          nackCount: 0,
+          pliCount: 0,
+          firCount: 0,
+          freezeCount: 0,
         };
     const rttMs = Number.isFinite(Number(selected.pair?.currentRoundTripTime))
       ? Math.round(Number(selected.pair.currentRoundTripTime) * 1000)

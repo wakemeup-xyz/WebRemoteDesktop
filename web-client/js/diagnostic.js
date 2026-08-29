@@ -425,6 +425,12 @@
         fps: Number(lastStats.fps || 0),
         jitterBufferMs: Number(lastStats.jitterBufferMs || 0),
         bytesReceived: Number(lastStats.bytesReceived || 0),
+        framesDropped: Number(lastStats.framesDropped || 0),
+        packetsReceived: Number(lastStats.packetsReceived || 0),
+        nackCount: Number(lastStats.nackCount || 0),
+        pliCount: Number(lastStats.pliCount || 0),
+        firCount: Number(lastStats.firCount || 0),
+        freezeCount: Number(lastStats.freezeCount || 0),
         keyframeRequested: typeof WebRTC !== 'undefined'
           ? Boolean(WebRTC._lastKeyframeRequestAt || WebRTC._keyframeRequested)
           : false,

@@ -150,6 +150,12 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
             "bytesReceived": 1234,
             "codec": "H264",
             "selectedCandidateType": "relay",
+            "framesDropped": 3,
+            "packetsReceived": 40,
+            "nackCount": 2,
+            "pliCount": 1,
+            "firCount": 0,
+            "freezeCount": 1,
         }
         for _ in range(4):
             loop.run_until_complete(host.on_viewer_stats(payload))
@@ -170,7 +176,16 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     assert "count=5" in stall[0]
     assert "received=19" in stall[0]
     assert "decoded=0" in stall[0]
+    assert "dropped=3" in stall[0]
+    assert "pli=1" in stall[0]
+    assert "nack=2" in stall[0]
+    assert "freeze=1" in stall[0]
+    assert "packets=40" in stall[0]
     assert "viewer=viewer-1" in stall[0]
+    stats = [msg for msg in messages if "VIEWER_STATS" in msg]
+    assert stats
+    assert "dropped=3" in stats[-1]
+    assert "pli=1" in stats[-1]
 
 
 def test_keyframe_handler_invokes_request_path():

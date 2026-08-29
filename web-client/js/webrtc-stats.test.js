@@ -47,6 +47,12 @@ test('interval media stats derive deltas instead of session averages', () => {
     bytesReceived: 1000,
     jitterBufferDelay: 2,
     jitterBufferEmittedCount: 20,
+    framesDropped: 1,
+    packetsReceived: 800,
+    nackCount: 2,
+    pliCount: 0,
+    firCount: 0,
+    freezeCount: 0,
   };
   const current = {
     sampledAt: 2000,
@@ -56,6 +62,12 @@ test('interval media stats derive deltas instead of session averages', () => {
     bytesReceived: 5000,
     jitterBufferDelay: 3.2,
     jitterBufferEmittedCount: 30,
+    framesDropped: 4,
+    packetsReceived: 860,
+    nackCount: 5,
+    pliCount: 1,
+    firCount: 0,
+    freezeCount: 2,
   };
 
   assert.deepEqual(WebRtcStats.deriveIntervalMediaStats(previous, current), {
@@ -66,6 +78,12 @@ test('interval media stats derive deltas instead of session averages', () => {
     packetsLost: 2,
     bytesReceived: 4000,
     jitterBufferMs: 120,
+    framesDropped: 3,
+    packetsReceived: 60,
+    nackCount: 3,
+    pliCount: 1,
+    firCount: 0,
+    freezeCount: 2,
   });
 });
 
