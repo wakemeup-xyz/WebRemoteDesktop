@@ -1313,6 +1313,7 @@ const WebRTC = {
       if (!this._stallSince) this._stallSince = Date.now();
       if (Date.now() - this._stallSince >= 1000) {
         this.setUiPhase('media-stalled', { reason: stats.source || 'zero-fps' });
+        this.kickFrozenRelayDecoder({ fps, framesReceived });
       }
       return this.uiPhase;
     }
@@ -1419,15 +1420,15 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // Relay 160ms absorbs a VBV-capped IDR (~22KB) without the 400ms first-paint stall.
+    // Relay 240ms covers a VBV-capped IDR (~8–16KB) plus TURN jitter.
     // Chrome may shrink the target toward 0 after a quiet stretch; re-assert it.
-    const delayHint = isRelay ? 0.16 : 0;
-    const jitterTarget = isRelay ? 160 : 1;
+    const delayHint = isRelay ? 0.24 : 0;
+    const jitterTarget = isRelay ? 240 : 1;
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
         if (receiver.playoutDelayHint !== delayHint) {
           receiver.playoutDelayHint = delayHint;
-          console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.16s (relay)' : '0s (direct)');
+          console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.24s (relay)' : '0s (direct)');
         }
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
@@ -1438,12 +1439,39 @@ const WebRTC = {
       try {
         if (receiver.jitterBufferTarget !== jitterTarget) {
           receiver.jitterBufferTarget = jitterTarget;
-          console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '160ms (relay)' : '1ms (direct)');
+          console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '240ms (relay)' : '1ms (direct)');
         }
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
     }
+  },
+
+  kickFrozenRelayDecoder(stats = {}) {
+    if (this.networkMode !== 'relay' && this.lastCandidateType !== 'relay') return false;
+    if (Number(stats.fps || 0) !== 0) return false;
+    if (Number(stats.framesReceived || 0) <= 0) return false;
+    const now = Date.now();
+    if (this._lastRelayDecoderKickAt && now - this._lastRelayDecoderKickAt < 4000) {
+      return false;
+    }
+    const video = document.getElementById('remoteVideo');
+    const stream = this.remoteStream;
+    if (!video || !stream) return false;
+    this._lastRelayDecoderKickAt = now;
+    try {
+      video.srcObject = null;
+      video.srcObject = stream;
+      if (typeof video.play === 'function') {
+        Promise.resolve(video.play()).catch(() => {});
+      }
+    } catch (error) {
+      console.warn('[MEDIA] relay decoder kick failed:', error?.message || error);
+      return false;
+    }
+    this.requestKeyframe('relay-decoder-kick');
+    console.warn('[MEDIA] relay decoder kick: rebound srcObject');
+    return true;
   },
 
   syncMediaProfile() {
