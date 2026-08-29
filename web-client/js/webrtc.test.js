@@ -994,8 +994,8 @@ test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
   };
   WebRTC.networkMode = 'relay';
   WebRTC.configureVideoReceiver(receiver);
-  assert.deepEqual(hints, [0.24]);
-  assert.deepEqual(jitter, [240]);
+  assert.deepEqual(hints, [0.16]);
+  assert.deepEqual(jitter, [160]);
 });
 
 test('relay does not request keyframe while packets still arrive at 0 fps', () => {
@@ -1049,20 +1049,22 @@ test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () =>
     framesReceived: 19,
     selectedCandidateType: 'relay',
   });
-  assert.deepEqual(jitter, [240]);
+  assert.deepEqual(jitter, [160]);
 });
 
-test('relay freeze rebinds video srcObject without tearing down the peer connection', () => {
+test('relay freeze pause/plays video without tearing down the peer connection', () => {
   const { WebRTC, context } = loadWebRTC();
   const vid = context.document.getElementById('remoteVideo');
-  vid.srcObject = { id: 'stream-1' };
+  const stream = { id: 'stream-1' };
+  vid.srcObject = stream;
+  vid.pause = function pause() { this.pauseCalls = (this.pauseCalls || 0) + 1; };
   vid.play = function play() {
     this.playCalls = (this.playCalls || 0) + 1;
     return Promise.resolve();
   };
   const emitted = [];
   WebRTC.networkMode = 'relay';
-  WebRTC.remoteStream = vid.srcObject;
+  WebRTC.remoteStream = stream;
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
@@ -1072,7 +1074,8 @@ test('relay freeze rebinds video srcObject without tearing down the peer connect
   WebRTC._lastKeyframeRequestAt = 0;
   const kicked = WebRTC.kickFrozenRelayDecoder({ fps: 0, framesReceived: 19 });
   assert.equal(kicked, true);
-  assert.equal(vid.srcObject, WebRTC.remoteStream);
+  assert.equal(vid.srcObject, stream);
+  assert.equal(vid.pauseCalls, 1);
   assert.equal(vid.playCalls >= 1, true);
   assert.equal(WebRTC.pc.connectionState, 'connected');
   assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), true);

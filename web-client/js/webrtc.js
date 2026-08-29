@@ -1310,10 +1310,10 @@ const WebRTC = {
     }
 
     if (fps === 0 && framesReceived > 0) {
+      this.kickFrozenRelayDecoder({ fps, framesReceived });
       if (!this._stallSince) this._stallSince = Date.now();
       if (Date.now() - this._stallSince >= 1000) {
         this.setUiPhase('media-stalled', { reason: stats.source || 'zero-fps' });
-        this.kickFrozenRelayDecoder({ fps, framesReceived });
       }
       return this.uiPhase;
     }
@@ -1420,16 +1420,13 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // Relay 240ms covers a VBV-capped IDR (~8–16KB) plus TURN jitter.
-    // Chrome may shrink the target toward 0 after a quiet stretch; re-assert it.
-    const delayHint = isRelay ? 0.24 : 0;
-    const jitterTarget = isRelay ? 240 : 1;
+    // Relay 160ms matches the passing 60s run. Always re-assert: Chrome reports
+    // the target while the actual buffer still shrinks toward 0.
+    const delayHint = isRelay ? 0.16 : 0;
+    const jitterTarget = isRelay ? 160 : 1;
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        if (receiver.playoutDelayHint !== delayHint) {
-          receiver.playoutDelayHint = delayHint;
-          console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.24s (relay)' : '0s (direct)');
-        }
+        receiver.playoutDelayHint = delayHint;
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
@@ -1437,10 +1434,7 @@ const WebRTC = {
 
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        if (receiver.jitterBufferTarget !== jitterTarget) {
-          receiver.jitterBufferTarget = jitterTarget;
-          console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '240ms (relay)' : '1ms (direct)');
-        }
+        receiver.jitterBufferTarget = jitterTarget;
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
@@ -1452,16 +1446,14 @@ const WebRTC = {
     if (Number(stats.fps || 0) !== 0) return false;
     if (Number(stats.framesReceived || 0) <= 0) return false;
     const now = Date.now();
-    if (this._lastRelayDecoderKickAt && now - this._lastRelayDecoderKickAt < 4000) {
+    if (this._lastRelayDecoderKickAt && now - this._lastRelayDecoderKickAt < 1500) {
       return false;
     }
     const video = document.getElementById('remoteVideo');
-    const stream = this.remoteStream;
-    if (!video || !stream) return false;
+    if (!video) return false;
     this._lastRelayDecoderKickAt = now;
     try {
-      video.srcObject = null;
-      video.srcObject = stream;
+      if (typeof video.pause === 'function') video.pause();
       if (typeof video.play === 'function') {
         Promise.resolve(video.play()).catch(() => {});
       }
@@ -1470,7 +1462,7 @@ const WebRTC = {
       return false;
     }
     this.requestKeyframe('relay-decoder-kick');
-    console.warn('[MEDIA] relay decoder kick: rebound srcObject');
+    console.warn('[MEDIA] relay decoder kick: pause/play');
     return true;
   },
 
