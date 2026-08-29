@@ -981,7 +981,7 @@ test('WebRTC configures a finite numeric video playout delay hint', () => {
   assert.equal(Number.isFinite(values[0]), true);
 });
 
-test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
+test('WebRTC relay pins skip-wait playout delay', () => {
   const { WebRTC } = loadWebRTC();
   const hints = [];
   const jitter = [];
@@ -994,8 +994,8 @@ test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
   };
   WebRTC.networkMode = 'relay';
   WebRTC.configureVideoReceiver(receiver);
-  assert.deepEqual(hints, [0.16]);
-  assert.deepEqual(jitter, [160]);
+  assert.deepEqual(hints, [0]);
+  assert.deepEqual(jitter, [0]);
 });
 
 test('relay does not request keyframe while packets still arrive at 0 fps', () => {
@@ -1023,7 +1023,36 @@ test('relay does not request keyframe while packets still arrive at 0 fps', () =
   assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), false);
 });
 
-test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () => {
+test('relay stats re-apply skip-wait jitter so Chrome cannot grow it', () => {
+  const { WebRTC } = loadWebRTC();
+  const jitter = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = {
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+    getReceivers() {
+      return [{
+        track: { kind: 'video' },
+        get playoutDelayHint() { return 0; },
+        set playoutDelayHint(_value) {},
+        get jitterBufferTarget() { return 160; },
+        set jitterBufferTarget(value) { jitter.push(value); },
+      }];
+    },
+  };
+  WebRTC.processStatsSnapshot({
+    fps: 19,
+    rttMs: 30,
+    jitterBufferMs: 0.2,
+    packetsLost: 0,
+    framesDecoded: 19,
+    framesReceived: 19,
+    selectedCandidateType: 'relay',
+  });
+  assert.deepEqual(jitter, [0]);
+});
+
+test('relay freeze second keeps skip-wait jitter without tearing down PC', () => {
   const { WebRTC } = loadWebRTC();
   const jitter = [];
   WebRTC.networkMode = 'relay';
@@ -1041,35 +1070,6 @@ test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () =>
     },
   };
   WebRTC.processStatsSnapshot({
-    fps: 19,
-    rttMs: 30,
-    jitterBufferMs: 0.2,
-    packetsLost: 0,
-    framesDecoded: 19,
-    framesReceived: 19,
-    selectedCandidateType: 'relay',
-  });
-  assert.deepEqual(jitter, [160]);
-});
-
-test('relay drop stall uses skip-wait jitter without tearing down PC', () => {
-  const { WebRTC } = loadWebRTC();
-  const jitter = [];
-  WebRTC.networkMode = 'relay';
-  WebRTC.pc = {
-    connectionState: 'connected',
-    iceConnectionState: 'connected',
-    getReceivers() {
-      return [{
-        track: { kind: 'video' },
-        get playoutDelayHint() { return 0.16; },
-        set playoutDelayHint(_value) {},
-        get jitterBufferTarget() { return 160; },
-        set jitterBufferTarget(value) { jitter.push(value); },
-      }];
-    },
-  };
-  WebRTC.processStatsSnapshot({
     fps: 0,
     rttMs: 38,
     jitterBufferMs: 0,
@@ -1081,7 +1081,7 @@ test('relay drop stall uses skip-wait jitter without tearing down PC', () => {
     freezeCount: 0,
     selectedCandidateType: 'relay',
   });
-  assert.equal(jitter.includes(0), true);
+  assert.deepEqual(jitter, [0]);
   assert.equal(WebRTC.pc.connectionState, 'connected');
 });
 
