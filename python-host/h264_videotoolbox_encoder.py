@@ -312,8 +312,8 @@ class H264VideoToolboxEncoder(Encoder):
 
         gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
         waiting = self._idr_wait_remaining > 0
-        due = (not waiting) and (
-            force_keyframe or self._frames_since_idr >= max(1, gop)
+        due = bool(force_keyframe) or (
+            (not waiting) and self._frames_since_idr >= max(1, gop)
         )
         # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
         # the delayed IDR instead of stuffing I-frames every follow-up tick.

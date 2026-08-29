@@ -118,6 +118,28 @@ def test_force_keyframe_empty_output_waits_for_delayed_idr(monkeypatch):
     assert enc.last_idr_recreated is False
 
 
+def test_host_force_during_wait_submits_another_i(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([b"", p_slice, idr])
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: codec,
+    )
+    import av
+    first = _fake_frame()
+    second = _fake_frame()
+    third = _fake_frame()
+    list(enc._encode_frame(first, force_keyframe=True))
+    assert first.pict_type == av.video.frame.PictureType.I
+    list(enc._encode_frame(second, force_keyframe=True))
+    assert second.pict_type == av.video.frame.PictureType.I
+    list(enc._encode_frame(third, force_keyframe=False))
+    assert enc.last_force_emitted_idr is True
+
+
 def test_force_keyframe_p_slice_does_not_recreate_immediately(monkeypatch):
     enc = H264VideoToolboxEncoder()
     p_slice = bytes([0, 0, 0, 1, 0x41, 0])
