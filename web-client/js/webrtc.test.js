@@ -994,8 +994,8 @@ test('WebRTC relay playout delay absorbs GOP IDR bursts', () => {
   };
   WebRTC.networkMode = 'relay';
   WebRTC.configureVideoReceiver(receiver);
-  assert.deepEqual(hints, [0.08]);
-  assert.deepEqual(jitter, [80]);
+  assert.deepEqual(hints, [0.16]);
+  assert.deepEqual(jitter, [160]);
 });
 
 test('relay does not request keyframe while packets still arrive at 0 fps', () => {

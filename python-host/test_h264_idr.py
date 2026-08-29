@@ -4,6 +4,9 @@ from h264_videotoolbox_encoder import (
     bitstream_contains_idr,
     set_session_gop_size,
     get_session_gop_size,
+    codec_name_for_gop,
+    min_bitrate_bps,
+    libx264_zerolatency_options,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
 )
@@ -33,6 +36,13 @@ def test_idr_detects_avcc_length_prefixed_type5():
 
 def test_idr_detects_bare_type5_without_start_code():
     assert bitstream_contains_idr(bytes([0x65, 0, 1])) is True
+
+
+def test_annexb_p_slice_payload_0x65_is_not_idr():
+    """AVCC fallback must not treat Annex-B payload bytes as a length+NAL."""
+    # start-code + type1 + fake length=5 + 0x65. Annex-B scan is one P-slice.
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0, 0, 0, 5, 0x65, 0, 0, 0])
+    assert bitstream_contains_idr(p_slice) is False
 
 
 def test_set_session_gop_clamps():
@@ -223,3 +233,62 @@ def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
     assert calls["create"] == 1
     assert enc.last_force_emitted_idr is True
     assert enc.last_idr_recreated is False
+
+
+def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    enc.gop_size = 3
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0, 0, 0, 5, 0x65, 0, 0, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([p_slice, p_slice, p_slice, idr])
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: codec,
+    )
+    import av
+    frames = [_fake_frame() for _ in range(4)]
+    for frame in frames:
+        list(enc._encode_frame(frame, force_keyframe=False))
+    assert frames[3].pict_type == av.video.frame.PictureType.I
+    assert enc.last_force_emitted_idr is True
+
+
+def test_relay_gop_uses_libx264_and_vbv_cap():
+    assert codec_name_for_gop(20) == "libx264"
+    assert codec_name_for_gop(40) == "h264_videotoolbox"
+    assert min_bitrate_bps(20, 1280, 720) == 1_800_000
+    assert min_bitrate_bps(20, 1920, 1080) == 2_500_000
+    assert min_bitrate_bps(40, 1280, 720) == 500_000
+    opts = libx264_zerolatency_options(2_500_000, 20)
+    assert opts["tune"] == "zerolatency"
+    assert opts["scenecut"] == "0"
+    assert int(opts["vbv-bufsize"]) == 400
+    assert int(opts["vbv-maxrate"]) == 2500
+    set_session_gop_size(20)
+    try:
+        enc = H264VideoToolboxEncoder()
+        assert enc.codec_name == "libx264"
+    finally:
+        set_session_gop_size(40)
+
+
+def test_encoder_adopts_relay_gop_from_session(monkeypatch):
+    set_session_gop_size(40)
+    enc = H264VideoToolboxEncoder()
+    assert enc.codec_name == "h264_videotoolbox"
+    created = []
+
+    def fake_create(self, frame, codec_name):
+        created.append(codec_name)
+        return FakeCodec([bytes([0, 0, 0, 1, 0x65, 0])])
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    set_session_gop_size(20)
+    try:
+        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+        assert enc.gop_size == 20
+        assert enc.codec_name == "libx264"
+        assert created[-1] == "libx264"
+    finally:
+        set_session_gop_size(40)

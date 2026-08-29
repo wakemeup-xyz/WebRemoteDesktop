@@ -1419,12 +1419,11 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // playoutDelayHint / jitterBufferTarget: relay 80ms absorbs RTT jitter.
-    // Wider 400ms delayed first paint (FPS=1) without stopping GOP-IDR stalls.
+    // Relay 160ms absorbs a VBV-capped IDR (~50KB) without the 400ms first-paint stall.
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = isRelay ? 0.08 : 0;
-        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.08s (relay)' : '0s (direct)');
+        receiver.playoutDelayHint = isRelay ? 0.16 : 0;
+        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.16s (relay)' : '0s (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
@@ -1432,8 +1431,8 @@ const WebRTC = {
 
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = isRelay ? 80 : 1;
-        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '80ms (relay)' : '1ms (direct)');
+        receiver.jitterBufferTarget = isRelay ? 160 : 1;
+        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '160ms (relay)' : '1ms (direct)');
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }

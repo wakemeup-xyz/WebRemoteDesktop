@@ -43,6 +43,40 @@ def get_session_gop_size() -> int:
     return _session_gop_size
 
 
+def codec_name_for_gop(gop: int) -> str:
+    """Relay GOP (~1s) uses libx264+VBV; VideoToolbox IDRs are too large for TURN."""
+    return "libx264" if int(gop or 0) <= 20 else "h264_videotoolbox"
+
+
+def min_bitrate_bps(gop: int, width: int, height: int) -> int:
+    pixels = max(1, int(width or 0) * int(height or 0))
+    if int(gop or 0) <= 20:
+        if pixels >= 1920 * 1080:
+            return 2_500_000
+        if pixels >= 1280 * 720:
+            return 1_800_000
+        return 1_200_000
+    return MIN_BITRATE
+
+
+def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
+    kbps = max(1, int(bitrate_bps) // 1000)
+    # ~160ms of bits: 2.5 Mbps → vbv-bufsize=400 kbit (~50KB IDR cap).
+    bufsize = max(200, int(bitrate_bps) // 6250)
+    gop_s = str(max(1, int(gop or 20)))
+    return {
+        "preset": "ultrafast",
+        "tune": "zerolatency",
+        "scenecut": "0",
+        "keyint": gop_s,
+        "min-keyint": gop_s,
+        "repeat-headers": "1",
+        "bframes": "0",
+        "vbv-maxrate": str(kbps),
+        "vbv-bufsize": str(bufsize),
+    }
+
+
 def _nal_is_idr(nal: bytes) -> bool:
     if not nal:
         return False
@@ -68,20 +102,27 @@ def _nal_is_idr(nal: bytes) -> bool:
 def bitstream_contains_idr(data: bytes) -> bool:
     if not data:
         return False
-    annexb = data if data.startswith(b"\x00\x00") else b"\x00\x00\x00\x01" + data
-    for nal in H264VideoToolboxEncoder._split_bitstream(annexb):
-        if _nal_is_idr(nal):
-            return True
+    # Annex-B and AVCC must not be mixed: payload 0x00000005 0x65 inside a
+    # P-slice is not an IDR NAL.
+    if data.startswith(b"\x00\x00\x00\x01") or data.startswith(b"\x00\x00\x01"):
+        for nal in H264VideoToolboxEncoder._split_bitstream(data):
+            if _nal_is_idr(nal):
+                return True
+        return False
     pos = 0
+    scanned = False
     while pos + 4 <= len(data):
         length = int.from_bytes(data[pos:pos + 4], "big")
         pos += 4
         if length <= 0 or pos + length > len(data):
             break
+        scanned = True
         if _nal_is_idr(data[pos:pos + length]):
             return True
         pos += length
-    return False
+    if scanned:
+        return False
+    return _nal_is_idr(data)
 
 NAL_HEADER_SIZE = 1
 FU_A_HEADER_SIZE = 2
@@ -171,9 +212,9 @@ class H264VideoToolboxEncoder(Encoder):
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
         self.codec: Optional[VideoCodecContext] = None
-        self.codec_name = _preferred_h264_codec
-        self.__target_bitrate = DEFAULT_BITRATE
         self.gop_size = get_session_gop_size()
+        self.codec_name = codec_name_for_gop(self.gop_size)
+        self.__target_bitrate = DEFAULT_BITRATE
         self.last_force_emitted_idr = False
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
@@ -310,7 +351,20 @@ class H264VideoToolboxEncoder(Encoder):
             self._idr_wait_remaining = 0
             self._frames_since_idr = 0
 
-        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
+        session_gop = get_session_gop_size()
+        wanted_codec = codec_name_for_gop(session_gop)
+        if self.gop_size in (20, 40) and (
+            self.gop_size != session_gop or self.codec_name != wanted_codec
+        ):
+            self.gop_size = session_gop
+            self.codec_name = wanted_codec
+            if self.codec is not None:
+                self.codec = None
+                self.last_idr_recreated = False
+                self._idr_wait_remaining = 0
+                self._frames_since_idr = 0
+
+        gop = int(getattr(self, "gop_size", None) or session_gop)
         waiting = self._idr_wait_remaining > 0
         due = (not waiting) and (
             bool(force_keyframe) or self._frames_since_idr >= max(1, gop)
@@ -357,12 +411,13 @@ class H264VideoToolboxEncoder(Encoder):
                 self.last_idr_recreated = False
                 self._idr_wait_remaining = 0
                 logger.info(
-                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
+                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
                     True,
                     False,
                     getattr(self, "gop_size", get_session_gop_size()),
                     frame.width,
                     frame.height,
+                    len(data_to_send),
                 )
         elif waiting:
             self._frames_since_idr += 1
@@ -381,12 +436,13 @@ class H264VideoToolboxEncoder(Encoder):
                     self.last_idr_recreated = False
                     self._frames_since_idr = 0
                 logger.info(
-                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
+                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
                     self.last_force_emitted_idr,
                     True,
                     getattr(self, "gop_size", get_session_gop_size()),
                     frame.width,
                     frame.height,
+                    len(data_to_send),
                 )
                 logger.info(
                     "WRD_IDR_RECREATE success=%s codec=%s",
@@ -395,12 +451,13 @@ class H264VideoToolboxEncoder(Encoder):
                 )
             elif due:
                 logger.info(
-                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
+                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
                     False,
                     False,
                     getattr(self, "gop_size", get_session_gop_size()),
                     frame.width,
                     frame.height,
+                    len(data_to_send),
                 )
         else:
             self._frames_since_idr += 1
@@ -409,16 +466,22 @@ class H264VideoToolboxEncoder(Encoder):
             yield from self._split_bitstream(data_to_send)
 
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
-        pixels = frame.width * frame.height
+        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
+        if codec_name_for_gop(gop) == "libx264":
+            codec_name = "libx264"
+            self.codec_name = "libx264"
+        floor = min_bitrate_bps(gop, frame.width, frame.height)
         if self.__target_bitrate and self.__target_bitrate > 0:
             bitrate = int(self.__target_bitrate)
-        elif pixels <= 1280 * 720:
+        elif frame.width * frame.height <= 1280 * 720:
             bitrate = 2_500_000
-        elif pixels <= 1920 * 1080:
+        elif frame.width * frame.height <= 1920 * 1080:
             bitrate = 4_000_000
         else:
             bitrate = 6_000_000
-        bitrate = max(MIN_BITRATE, min(bitrate, MAX_BITRATE))
+        if gop <= 20:
+            bitrate = min(bitrate, 2_500_000)
+        bitrate = max(floor, min(bitrate, MAX_BITRATE))
         self.__target_bitrate = bitrate
 
         logger.info(
@@ -436,7 +499,7 @@ class H264VideoToolboxEncoder(Encoder):
         codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
         codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
         codec.profile = "Baseline"
-        codec.gop_size = int(getattr(self, "gop_size", None) or get_session_gop_size())
+        codec.gop_size = gop
         try:
             codec.max_b_frames = 0
         except Exception:
@@ -447,10 +510,7 @@ class H264VideoToolboxEncoder(Encoder):
         except Exception:
             pass
         if codec_name == "libx264":
-            codec.options = {
-                "preset": "ultrafast",
-                "tune": "zerolatency",
-            }
+            codec.options = libx264_zerolatency_options(bitrate, gop)
         return codec
 
     def encode(
@@ -476,7 +536,13 @@ class H264VideoToolboxEncoder(Encoder):
 
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
-        bitrate = max(MIN_BITRATE, min(int(bitrate), MAX_BITRATE))
+        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
+        width = getattr(self.codec, "width", 1280) if self.codec is not None else 1280
+        height = getattr(self.codec, "height", 720) if self.codec is not None else 720
+        bitrate = min(int(bitrate), MAX_BITRATE)
+        if gop <= 20:
+            bitrate = min(bitrate, 2_500_000)
+        bitrate = max(min_bitrate_bps(gop, width, height), bitrate)
         self.__target_bitrate = bitrate
         # Hot-update without reopening the codec when size is unchanged.
         if self.codec is not None:
