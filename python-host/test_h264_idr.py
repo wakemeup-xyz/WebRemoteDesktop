@@ -370,7 +370,7 @@ def test_libx264_wait_does_not_recreate_codec(monkeypatch):
 
 
 def test_relay_decoder_refresh_is_mid_gop_not_2s():
-    assert RELAY_DECODER_REFRESH_FRAMES == 110
+    assert RELAY_DECODER_REFRESH_FRAMES == 50
     assert RELAY_DECODER_REFRESH_FRAMES % 20 == 10
 
 

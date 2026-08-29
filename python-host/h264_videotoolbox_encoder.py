@@ -25,10 +25,12 @@ PACKET_MAX = 1300
 # VideoToolbox buffers 4–6 frames; force_keyframe must wait for that IDR
 # instead of reopening the codec (which discards the in-flight IDR).
 IDR_WAIT_FRAMES = 8
-# Chrome's TURN decoder freezes around 8s despite 1s IDRs; only a new SPS
-# unsticks it. 2s/GOP-aligned reopen (encoded=40) froze a healthy stream.
-# 110 frames = 5.5s at 20fps and 110 % 20 = 10 (mid-GOP).
-RELAY_DECODER_REFRESH_FRAMES = 110
+# Chrome's TURN decoder freezes around 8-11s despite 1s IDRs; only a new SPS
+# unsticks it. GOP-aligned reopen (encoded=40) froze a healthy 19fps stream.
+# Mid-GOP 110 (5.5s) did not interrupt 19fps, but freeze still hit at ~11s
+# and the in-stall refresh did not recover within 1s. 50 frames = 2.5s at
+# 20fps and 50 % 20 = 10 (mid-GOP) — the cadence of the only 60s pass.
+RELAY_DECODER_REFRESH_FRAMES = 50
 
 NAL_TYPE_IDR = 5
 NAL_TYPE_FU_A = 28
