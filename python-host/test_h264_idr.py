@@ -5,6 +5,7 @@ from h264_videotoolbox_encoder import (
     set_session_gop_size,
     get_session_gop_size,
     H264VideoToolboxEncoder,
+    IDR_WAIT_FRAMES,
 )
 
 
@@ -50,16 +51,18 @@ class FakePacket:
 
 
 class FakeCodec:
-    def __init__(self, payloads):
+    def __init__(self, payloads, repeat=False):
         self.width = 16
         self.height = 16
         self._payloads = list(payloads)
+        self._repeat = repeat
         self.closed = False
 
     def encode(self, frame):
         if not self._payloads:
             return []
-        return [FakePacket(self._payloads.pop(0))]
+        payload = self._payloads[0] if self._repeat else self._payloads.pop(0)
+        return [FakePacket(payload)]
 
 
 def _fake_frame():
@@ -67,24 +70,6 @@ def _fake_frame():
     frame.width = 16
     frame.height = 16
     return frame
-
-
-def test_force_keyframe_recreates_when_first_encode_has_no_idr(monkeypatch):
-    enc = H264VideoToolboxEncoder()
-    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-    idr = bytes([0, 0, 0, 1, 0x65, 0])
-    calls = {"create": 0}
-    codecs = [FakeCodec([p_slice]), FakeCodec([idr])]
-
-    def fake_create(self, frame, codec_name):
-        calls["create"] += 1
-        return codecs.pop(0)
-
-    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-    assert calls["create"] == 2
-    assert enc.last_force_emitted_idr is True
-    assert enc.last_idr_recreated is True
 
 
 def test_force_keyframe_skips_recreate_when_first_encode_has_idr(monkeypatch):
@@ -103,11 +88,51 @@ def test_force_keyframe_skips_recreate_when_first_encode_has_idr(monkeypatch):
     assert enc.last_idr_recreated is False
 
 
-def test_force_keyframe_recreates_at_most_once(monkeypatch):
+def test_force_keyframe_empty_output_waits_for_delayed_idr(monkeypatch):
+    """VideoToolbox delays IDR ~4-6 frames; empty force must not reopen."""
+    enc = H264VideoToolboxEncoder()
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    calls = {"create": 0}
+    codec = FakeCodec([b"", b"", idr])
+
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return codec
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 1
+    assert enc.last_force_emitted_idr is False
+    assert enc.last_idr_recreated is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 1
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 1
+    assert enc.last_force_emitted_idr is True
+    assert enc.last_idr_recreated is False
+
+
+def test_force_keyframe_p_slice_does_not_recreate_immediately(monkeypatch):
     enc = H264VideoToolboxEncoder()
     p_slice = bytes([0, 0, 0, 1, 0x41, 0])
     calls = {"create": 0}
-    codecs = [FakeCodec([p_slice]), FakeCodec([p_slice]), FakeCodec([p_slice])]
+
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 1
+    assert enc.last_idr_recreated is False
+
+
+def test_force_keyframe_recreates_after_wait_when_no_idr(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    calls = {"create": 0}
+    codecs = [FakeCodec([p_slice], repeat=True), FakeCodec([idr])]
 
     def fake_create(self, frame, codec_name):
         calls["create"] += 1
@@ -115,9 +140,38 @@ def test_force_keyframe_recreates_at_most_once(monkeypatch):
 
     monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
     list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 1
+    for _ in range(IDR_WAIT_FRAMES - 2):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        assert calls["create"] == 1
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
     assert calls["create"] == 2
-    assert enc.last_force_emitted_idr is False
-    assert enc.last_idr_recreated is True
+    assert enc.last_force_emitted_idr is True
+
+
+def test_force_keyframe_recreates_at_most_once(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    calls = {"create": 0}
+    codecs = [
+        FakeCodec([p_slice], repeat=True),
+        FakeCodec([p_slice], repeat=True),
+        FakeCodec([p_slice], repeat=True),
+    ]
+
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return codecs.pop(0)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
     list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 2
+    assert enc.last_idr_recreated is True
+    assert enc.last_force_emitted_idr is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
     assert calls["create"] == 2
     assert enc.last_idr_recreated is True
