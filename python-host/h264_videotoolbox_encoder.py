@@ -25,9 +25,6 @@ PACKET_MAX = 1300
 # VideoToolbox buffers 4–6 frames; force_keyframe must wait for that IDR
 # instead of reopening the codec (which discards the in-flight IDR).
 IDR_WAIT_FRAMES = 8
-# Chrome TURN decoder freezes despite 1s IDRs; a new SPS every ~2s
-# (the accidental wait-window reopen) was the only 60s-passing recovery.
-RELAY_DECODER_REFRESH_FRAMES = 40
 
 NAL_TYPE_IDR = 5
 NAL_TYPE_FU_A = 28
@@ -375,22 +372,6 @@ class H264VideoToolboxEncoder(Encoder):
                 self._frames_encoded = 0
 
         gop = int(getattr(self, "gop_size", None) or session_gop)
-        if (
-            gop <= 20
-            and self.codec is not None
-            and self._frames_encoded > 0
-            and self._frames_encoded % RELAY_DECODER_REFRESH_FRAMES == 0
-        ):
-            self.codec = None
-            self.last_idr_recreated = False
-            self._idr_wait_remaining = 0
-            logger.info(
-                "WRD_DECODER_REFRESH encoded=%s gop=%s size=%sx%s",
-                self._frames_encoded,
-                gop,
-                frame.width,
-                frame.height,
-            )
         # libx264 already emits IDR without a wait-window; waiting would
         # block GOP cadence and then miss delayed type-5 NALs.
         use_wait = self.codec_name != "libx264"

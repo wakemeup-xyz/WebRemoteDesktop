@@ -342,10 +342,5 @@ def test_libx264_wait_does_not_recreate_codec(monkeypatch):
             list(enc._encode_frame(_fake_frame(), force_keyframe=False))
         assert calls["create"] == 1
         assert enc.last_idr_recreated is False
-        for _ in range(40 - (1 + IDR_WAIT_FRAMES + 4)):
-            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 1
-        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 2
     finally:
         set_session_gop_size(40)
