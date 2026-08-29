@@ -433,7 +433,11 @@ class H264VideoToolboxEncoder(Encoder):
         elif waiting:
             self._frames_since_idr += 1
             self._idr_wait_remaining -= 1
-            if self._idr_wait_remaining <= 0 and not self.last_idr_recreated:
+            if (
+                self._idr_wait_remaining <= 0
+                and not self.last_idr_recreated
+                and self.codec_name != "libx264"
+            ):
                 self.codec = None
                 self.codec = self._create_codec(frame, self.codec_name)
                 recreated_this_call = True

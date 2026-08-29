@@ -317,3 +317,26 @@ def test_encoder_adopts_relay_gop_from_session(monkeypatch):
         assert created[-1] == "libx264"
     finally:
         set_session_gop_size(40)
+
+
+def test_libx264_wait_does_not_recreate_codec(monkeypatch):
+    """VT wait-window recreate is for delayed IDR; libx264 must keep one codec."""
+    set_session_gop_size(20)
+    try:
+        enc = H264VideoToolboxEncoder()
+        assert enc.codec_name == "libx264"
+        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+        calls = {"create": 0}
+
+        def fake_create(self, frame, codec_name):
+            calls["create"] += 1
+            return FakeCodec([p_slice], repeat=True)
+
+        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+        for _ in range(IDR_WAIT_FRAMES + 4):
+            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        assert calls["create"] == 1
+        assert enc.last_idr_recreated is False
+    finally:
+        set_session_gop_size(40)
