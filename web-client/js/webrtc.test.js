@@ -1023,6 +1023,35 @@ test('relay does not request keyframe while packets still arrive at 0 fps', () =
   assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), false);
 });
 
+test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () => {
+  const { WebRTC } = loadWebRTC();
+  const jitter = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = {
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+    getReceivers() {
+      return [{
+        track: { kind: 'video' },
+        get playoutDelayHint() { return 0; },
+        set playoutDelayHint(_value) {},
+        get jitterBufferTarget() { return 0; },
+        set jitterBufferTarget(value) { jitter.push(value); },
+      }];
+    },
+  };
+  WebRTC.processStatsSnapshot({
+    fps: 19,
+    rttMs: 30,
+    jitterBufferMs: 0.2,
+    packetsLost: 0,
+    framesDecoded: 19,
+    framesReceived: 19,
+    selectedCandidateType: 'relay',
+  });
+  assert.deepEqual(jitter, [160]);
+});
+
 test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const { WebRTC } = loadWebRTC({ LinkQualityController });

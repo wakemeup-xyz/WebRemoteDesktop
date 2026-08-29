@@ -288,6 +288,8 @@ def test_relay_gop_uses_libx264_and_vbv_cap():
     assert "vbv-bufsize=180" in params
     assert "vbv-init=0.4" in params
     assert "nal-hrd=none" in params
+    assert "sliced-threads=0" in params
+    assert "slices=1" in params
     set_session_gop_size(20)
     try:
         enc = H264VideoToolboxEncoder()

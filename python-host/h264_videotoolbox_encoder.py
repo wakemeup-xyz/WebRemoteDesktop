@@ -73,7 +73,8 @@ def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
         "tune": "zerolatency",
         "x264-params": (
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
-            f"repeat-headers=1:vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
+            f"sliced-threads=0:slices=1:repeat-headers=1:"
+            f"vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
             f"vbv-init=0.4:nal-hrd=none"
         ),
     }

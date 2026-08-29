@@ -1419,11 +1419,16 @@ const WebRTC = {
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // Relay 160ms absorbs a VBV-capped IDR (~50KB) without the 400ms first-paint stall.
+    // Relay 160ms absorbs a VBV-capped IDR (~22KB) without the 400ms first-paint stall.
+    // Chrome may shrink the target toward 0 after a quiet stretch; re-assert it.
+    const delayHint = isRelay ? 0.16 : 0;
+    const jitterTarget = isRelay ? 160 : 1;
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
-        receiver.playoutDelayHint = isRelay ? 0.16 : 0;
-        console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.16s (relay)' : '0s (direct)');
+        if (receiver.playoutDelayHint !== delayHint) {
+          receiver.playoutDelayHint = delayHint;
+          console.log('[LATENCY] Set playoutDelayHint =', isRelay ? '0.16s (relay)' : '0s (direct)');
+        }
       } catch (error) {
         console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
       }
@@ -1431,8 +1436,10 @@ const WebRTC = {
 
     if (typeof receiver.jitterBufferTarget !== 'undefined') {
       try {
-        receiver.jitterBufferTarget = isRelay ? 160 : 1;
-        console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '160ms (relay)' : '1ms (direct)');
+        if (receiver.jitterBufferTarget !== jitterTarget) {
+          receiver.jitterBufferTarget = jitterTarget;
+          console.log('[LATENCY] Set jitterBufferTarget =', isRelay ? '160ms (relay)' : '1ms (direct)');
+        }
       } catch (error) {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
@@ -4234,6 +4241,10 @@ if (this.tunnelLastObjectUrl) {
         candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
       }
       this.lastCandidateType = selectedCandidateType || '';
+      if (this.networkMode === 'relay' || selectedCandidateType === 'relay') {
+        const receivers = this.pc?.getReceivers?.() || [];
+        receivers.forEach((receiver) => this.configureVideoReceiver(receiver));
+      }
       this.handlePortSearchMedia({
         selectedCandidateType,
         framesDecoded,
