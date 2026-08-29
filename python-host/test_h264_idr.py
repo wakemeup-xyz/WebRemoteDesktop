@@ -356,3 +356,27 @@ def test_libx264_wait_does_not_recreate_codec(monkeypatch):
         assert enc.last_idr_recreated is False
     finally:
         set_session_gop_size(40)
+
+
+def test_request_decoder_refresh_reopens_same_size(monkeypatch):
+    set_session_gop_size(20)
+    try:
+        enc = H264VideoToolboxEncoder()
+        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+        calls = {"create": 0}
+
+        def fake_create(self, frame, codec_name):
+            calls["create"] += 1
+            return FakeCodec([p_slice], repeat=True)
+
+        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+        assert calls["create"] == 1
+        assert enc.request_decoder_refresh() is True
+        assert enc.codec is None
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        assert calls["create"] == 2
+        assert enc.request_decoder_refresh() is True
+        assert enc.request_decoder_refresh() is False
+    finally:
+        set_session_gop_size(40)

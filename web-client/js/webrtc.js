@@ -17,7 +17,7 @@ const PAINT_ISSUE_COPY = {
     severity: 'warning',
   },
   'media-stalled': {
-    text: '外网中继正在追帧，画面可能短暂发黑。若反复出现，请改用 720p 或手动切换「隧道中继」。',
+    text: '外网中继正在追帧，画面可能短暂发黑（约 2 秒）。若 3 秒内不恢复或反复出现，请改用 720p 或手动切换「隧道中继」。',
     severity: 'warning',
   },
   'explicit-1080': {
@@ -1279,6 +1279,11 @@ const WebRTC = {
       || iceState === 'completed';
   },
 
+  paintStallThresholdMs() {
+    const isRelay = this.networkMode === 'relay' || this.lastCandidateType === 'relay';
+    return isRelay ? 2000 : 1000;
+  },
+
   notePaintStats(stats = {}) {
     const videoWidth = Number(stats.videoWidth || 0);
     const framesDecoded = Number(stats.framesDecoded || 0);
@@ -1317,7 +1322,8 @@ const WebRTC = {
 
     if (fps === 0 && framesReceived > 0) {
       if (!this._stallSince) this._stallSince = Date.now();
-      if (Date.now() - this._stallSince >= 1000) {
+      const stallMs = this.paintStallThresholdMs();
+      if (Date.now() - this._stallSince >= stallMs) {
         this.setUiPhase('media-stalled', { reason: stats.source || 'zero-fps' });
       }
       return this.uiPhase;

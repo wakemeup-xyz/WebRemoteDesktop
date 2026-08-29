@@ -4754,6 +4754,22 @@ test('stall 1s with received>0 does not scheduleReconnect', () => {
   assert.deepEqual(reconnects, []);
 });
 
+test('relay 1s zero-fps chase stays connected; 2s becomes media-stalled', () => {
+  const { WebRTC } = loadWebRTC();
+  const reconnects = [];
+  WebRTC.scheduleReconnect = (reason) => reconnects.push(reason);
+  WebRTC.networkMode = 'relay';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 1000;
+  WebRTC.notePaintStats({ framesDecoded: 40, framesReceived: 19, fps: 0, videoWidth: 1280, videoHeight: 720 });
+  assert.equal(WebRTC.uiPhase, 'connected');
+  WebRTC._stallSince = Date.now() - 2000;
+  WebRTC.notePaintStats({ framesDecoded: 40, framesReceived: 19, fps: 0, videoWidth: 1280, videoHeight: 720 });
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.deepEqual(reconnects, []);
+});
+
 test('shouldHideLoading is true only after a painted frame', () => {
   const { WebRTC } = loadWebRTC();
   assert.equal(WebRTC.shouldHideLoading({ hasPaintedFrame: false }), false);
@@ -5040,7 +5056,7 @@ test('relay stall lasting 6s suggests tunnel as danger without switching mode', 
   };
   WebRTC.updateNetworkUI = (text, severity) => { WebRTC._ui = text; WebRTC._sev = severity; };
   WebRTC.setUiPhase('media-stalled', { reason: 'zero-fps' });
-  assert.equal(WebRTC._ui, '外网中继正在追帧，画面可能短暂发黑。若反复出现，请改用 720p 或手动切换「隧道中继」。');
+  assert.equal(WebRTC._ui, '外网中继正在追帧，画面可能短暂发黑（约 2 秒）。若 3 秒内不恢复或反复出现，请改用 720p 或手动切换「隧道中继」。');
   assert.equal(WebRTC._sev, 'warning');
   assert.deepEqual(recs, []);
   assert.equal(typeof timers.get(6000), 'function');
@@ -5064,7 +5080,7 @@ test('relay stats tick keeps stall copy and 6s recommendation', () => {
   WebRTC.handlePortSearchMedia = () => {};
   WebRTC.handleReceiverStats = () => {};
   WebRTC.hasPaintedFrame = true;
-  WebRTC._stallSince = Date.now() - 1000;
+  WebRTC._stallSince = Date.now() - 2000;
   WebRTC.uiPhase = 'connected';
   WebRTC.notePaintStats({
     framesDecoded: 40,

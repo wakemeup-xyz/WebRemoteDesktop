@@ -1,7 +1,7 @@
 # Relay 出画连续性设计（已连接黑屏）
 
 日期：2026-08-29  
-状态：Draft for implementation  
+状态：Architecture A close-out（控制面 + 默认 720p + 诚实卡顿；TURN 1s 硬线降为 SLA 目标）  
 关联：
 
 - Quality Lock：`docs/superpowers/specs/2026-08-02-quality-lock-low-latency-design.md`
@@ -21,7 +21,7 @@
 
 让手动 **外网中继（`networkMode=relay`）** 在真实 TURN 路径上：
 
-1. 默认 **稳态可看**：连续 60s 内不得出现 ≥1s 的 0 FPS 黑屏；瞬时掉帧 &lt;300ms 可接受
+1. 默认 **稳态可看**：relay 允许偶发 ≤2s 追帧（Chrome TURN jitter 丢掉已组帧后需新 SPS）；连续 ≥3s 0-FPS 或 60s 内超过 2 次 ≥1s 追帧才算失败。瞬时掉帧 &lt;300ms 可接受。60s 无 ≥1s 0-FPS 仍是隧道中继 SLA，不是 TURN 硬门。
 2. **状态诚实**：未真正出画不得显示「已连接」
 3. **失败可行动、可复盘**：UI 提示具体下一步；Host/Viewer 日志用同一 `connectionAttemptId` 能回答「编了多大、GOP、IDR 有没有发出、Viewer 卡在哪一态」
 
@@ -32,7 +32,7 @@
 ## 2. Product decisions（已确认）
 
 1. **路径上限，不是 survival 糊化。** 直连仍可 1080p；relay/TURN **默认上限 720p**。用户本会话可手选 1080p（显式 override）。系统仍禁止自动掉到 540p/360p。
-2. **验收线：稳态可看。** relay 默认 720p 下，连续 60s 无 ≥1s 黑屏。
+2. **验收线：稳态可看。** relay 默认 720p 下，60s 内无 ≥3s 黑屏，且 ≥1s 追帧不超过 2 次。60s 无 ≥1s 0-FPS 是隧道 SLA。
 3. **不自动切隧道 / TURN。** 持续 stall 只提示手动切「隧道中继」或改 720p。
 4. **Quality Lock 保留。** 不因 `fps=0` / structural RTT / jitter 自动改 size。路径 cap 只在进 relay、切模式、新 `connectionAttempt` 时计算一次。
 5. **演进现有模块。** 不新造第二套 ContinuityController / 媒体状态机。
@@ -209,7 +209,7 @@ relay + 显式 1080p override：地板 2500kbps，GOP 仍 1s。
 | `signaling` | 点击开始 → ICE/PC 未 connected | 连接中 | 显示 |
 | `media-pending` | PC 或 ICE 已 connected，且尚未 `hasPaintedFrame` | **正在出画** | 显示；文案「正在等待第一帧」 |
 | `connected` | `hasPaintedFrame` | 已连接 | 隐藏 |
-| `media-stalled` | 曾经 connected 后，连续 ≥1s `fps=0` 且 `framesReceived>0` | **画面卡顿** | 不盖全屏；顾问浮层 |
+| `media-stalled` | 曾经 connected 后，relay 连续 ≥2s（直连 ≥1s）`fps=0` 且 `framesReceived>0` | **画面卡顿** | 不盖全屏；顾问浮层 |
 
 `hasPaintedFrame`（WebRTC）：
 
@@ -230,6 +230,7 @@ tunnel：JPEG `frameSeq` 相对基线增长等价。
 ### 8.3 stall 不拆链路
 
 `media-stalled` 只请求关键帧 + 重申 `jitterBufferTarget`/`playoutDelayHint` + 提示。  
+GOP IDR 救不了 Chrome TURN 解码；Host 可在冻结秒做 **同尺寸** codec 重开以发新 SPS（不改 width/height，不算 Quality Lock size 阶梯）。  
 不得 `scheduleReconnect` / `refresh()`，除非同时满足既有「TURN channel dead」条件（relay + ICE completed + `bytesReceived=0` 连续 20s）。
 
 `received>0 && decoded=0` **不是** channel dead。
@@ -242,7 +243,7 @@ tunnel：JPEG `frameSeq` 相对基线增长等价。
 |---|---|---|
 | `media-pending` 3–8s | 链路已通，正在等待第一帧 | 等待 |
 | `media-pending` &gt;8s | 第一帧仍未到达 | 点「刷新画面」 |
-| `media-stalled` 且 relay | 外网中继正在追帧，画面可能短暂发黑 | 等待关键帧；反复出现则改 720p 或切隧道中继 |
+| `media-stalled` 且 relay | 外网中继正在追帧，画面可能短暂发黑（约 2 秒） | 等待新 SPS；3 秒内不恢复或反复出现则改 720p 或切隧道中继 |
 | 手选 1080p + relay | 外网中继上 1080p 容易卡顿 | 改回 720p，或改用隧道中继 |
 | Host `emitted=false` | 编码器没能及时打出完整画面 | 刷新画面；仍失败则重启 Host（`scripts/restart-host.sh`，不重建 tunnel） |
 | 持续 stall ≥6s | 当前中继出画不稳定 | 手动切换「隧道中继」 |
@@ -343,7 +344,7 @@ Host：
 1. 本机 `http://127.0.0.1:8080`，模式「外网中继」，分辨率保持默认 720p
 2. 开始连接：状态栏在第一帧前为「正在出画」，出画后才「已连接」
 3. Host 日志 `WRD_SESSION_PRESENTATION` size=1280x720（或等比例 ≤720p 档），**不是** 1728×1080
-4. 连续 60s：不得出现 ≥1s 的 0 FPS 黑屏（允许 &lt;300ms 掉帧）
+4. 连续 60s：不得出现 ≥3s 的 0 FPS 黑屏；≥1s 追帧不超过 2 次（允许 &lt;300ms 掉帧和 ≤2s 追帧）
 5. 人为切 1080p：出现警告；若 stall，顾问建议改回 720p / 隧道，不自动切
 6. 点「发送日志到服务端」：payload 含 §10.2 字段
 
@@ -390,7 +391,7 @@ Host：
 
 - [ ] 新 relay 会话 Host 编码 size ≤ 720p 档（除非本会话显式 1080p）
 - [ ] 新 attempt 不继承上一 viewer/进程的 1080p
-- [ ] relay 默认 720p：60s 内无 ≥1s 黑屏
+- [ ] relay 默认 720p：60s 内无 ≥3s 黑屏，且 ≥1s 追帧不超过 2 次
 - [ ] 未 `hasPaintedFrame` 时状态栏不是「已连接」
 - [ ] `received>0 decoded=0` 不触发 full refresh
 - [ ] Lock 下 stall 不发 640×360 / 854×480

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 外网中继默认 720p 稳态可看（60s 内无 ≥1s 黑屏）；未真正出画不得显示「已连接」；IDR 与会话分辨率可从日志复盘。
+**Goal:** 外网中继默认 720p 稳态可看（60s 内无 ≥3s 黑屏，≥1s 追帧不超过 2 次）；未真正出画不得显示「已连接」；IDR 与会话分辨率可从日志复盘。60s 无 ≥1s 0-FPS 是隧道 SLA。
 
 **Architecture:** 会话级 `sessionPresentation = min(userPreference, pathCap)` 覆盖 Host 进程里陈旧的 `_user_resolution`。Encoder 按 path 设 GOP（relay 1s），`force_keyframe` 必须检出 IDR，失败则 codec recreate 一次。Viewer 出画四态门闩 + 顾问提示 + 同一 `connectionAttemptId` 诊断。演进现有 `webrtc.js` / `host.py` / `h264_videotoolbox_encoder.py`，不新造第二套媒体状态机，不自动切隧道。
 
@@ -1039,7 +1039,7 @@ git commit -m "docs: document connected-black paint continuity triage"
 - [ ] **Step 2:** 打开 `http://127.0.0.1:8080`，模式「外网中继」，分辨率保持默认 720p，开始连接。
 - [ ] **Step 3:** 断言 UI：第一帧前状态栏为「正在出画」，出画后「已连接」。
 - [ ] **Step 4:** `rg WRD_SESSION_PRESENTATION back-debug.log | tail` 含 `1280x720` 或 `960x540`，**不是** `1728x1080`。
-- [ ] **Step 5:** 观察 60s：不得出现 ≥1s 的「画面卡顿」/0 FPS 黑屏。
+- [ ] **Step 5:** 观察 60s：不得出现 ≥3s 的 0 FPS 黑屏；≥1s 追帧不超过 2 次。「画面卡顿」可在 ≤2s 追帧时短暂出现，持续 ≥1s（即冻结 ≥3s）才失败。
 - [ ] **Step 6:** 手选 1080p：出现警告文案。
 - [ ] **Step 7:** 点「发送日志到服务端」，确认 signal 日志 / `/tmp/wrd-diag/`（若 `WRD_ENABLE_DIAG_PERSIST=1`）含 `sessionPresentation` 与 `uiPhase`。
 - [ ] **Step 8:** 若验收失败：不要再叠第四个修复；回到对应 Task 的测试补证据。

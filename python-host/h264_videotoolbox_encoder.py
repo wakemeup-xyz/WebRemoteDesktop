@@ -500,6 +500,27 @@ class H264VideoToolboxEncoder(Encoder):
         if data_to_send:
             yield from self._split_bitstream(data_to_send)
 
+    def request_decoder_refresh(self) -> bool:
+        """Drop the codec so the next encode emits a fresh SPS/PPS/IDR.
+
+        Same-size reopen. Chrome on TURN recovers from a new SPS, not from a
+        GOP IDR on the existing parameter set. Recovery itself is ~1-2s of
+        0-FPS, which is within the TURN chase-frame SLA.
+        """
+        if self.codec is None:
+            return False
+        logger.info(
+            "WRD_DECODER_REFRESH reason=stall encoded=%s gop=%s size=%sx%s",
+            self._frames_encoded,
+            getattr(self, "gop_size", get_session_gop_size()),
+            getattr(self.codec, "width", 0),
+            getattr(self.codec, "height", 0),
+        )
+        self.codec = None
+        self.last_idr_recreated = False
+        self._idr_wait_remaining = 0
+        return True
+
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
         gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
         if codec_name_for_gop(gop) == "libx264":
