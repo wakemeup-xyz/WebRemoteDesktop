@@ -235,6 +235,25 @@ def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
     assert enc.last_idr_recreated is False
 
 
+def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
+    """Cadence is encode-count, not bitstream scan; false IDRs must not skip I."""
+    enc = H264VideoToolboxEncoder()
+    enc.gop_size = 3
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([idr], repeat=True)
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: codec,
+    )
+    import av
+    frames = [_fake_frame() for _ in range(6)]
+    for frame in frames:
+        list(enc._encode_frame(frame, force_keyframe=False))
+    assert frames[0].pict_type == av.video.frame.PictureType.NONE
+    assert frames[3].pict_type == av.video.frame.PictureType.I
+
+
 def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
     enc = H264VideoToolboxEncoder()
     enc.gop_size = 3

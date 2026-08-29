@@ -221,6 +221,7 @@ class H264VideoToolboxEncoder(Encoder):
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
         self._frames_since_idr = 0
+        self._frames_encoded = 0
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -352,6 +353,7 @@ class H264VideoToolboxEncoder(Encoder):
             self.last_idr_recreated = False
             self._idr_wait_remaining = 0
             self._frames_since_idr = 0
+            self._frames_encoded = 0
 
         session_gop = get_session_gop_size()
         wanted_codec = codec_name_for_gop(session_gop)
@@ -365,11 +367,15 @@ class H264VideoToolboxEncoder(Encoder):
                 self.last_idr_recreated = False
                 self._idr_wait_remaining = 0
                 self._frames_since_idr = 0
+                self._frames_encoded = 0
 
         gop = int(getattr(self, "gop_size", None) or session_gop)
         waiting = self._idr_wait_remaining > 0
+        # Cadence is encode-count. Bitstream IDR scans can false-positive on
+        # P-slice payload and must not skip the 1s relay keyframe.
         due = (not waiting) and (
-            bool(force_keyframe) or self._frames_since_idr >= max(1, gop)
+            bool(force_keyframe)
+            or (self._frames_encoded > 0 and self._frames_encoded % max(1, gop) == 0)
         )
         # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
         # the delayed IDR instead of stuffing I-frames every follow-up tick.
@@ -406,20 +412,22 @@ class H264VideoToolboxEncoder(Encoder):
         recreated_this_call = False
         waiting = self._idr_wait_remaining > 0
         want_idr = due or waiting
+        self._frames_encoded += 1
         if bitstream_contains_idr(data_to_send):
             self._frames_since_idr = 0
+            self._idr_wait_remaining = 0
             if waiting or want_idr:
                 self.last_force_emitted_idr = True
                 self.last_idr_recreated = False
-                self._idr_wait_remaining = 0
                 logger.info(
-                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
+                    "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s encoded=%s",
                     True,
                     False,
                     getattr(self, "gop_size", get_session_gop_size()),
                     frame.width,
                     frame.height,
                     len(data_to_send),
+                    self._frames_encoded,
                 )
         elif waiting:
             self._frames_since_idr += 1
