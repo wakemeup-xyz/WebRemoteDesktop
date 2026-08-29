@@ -1052,44 +1052,6 @@ test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () =>
   assert.deepEqual(jitter, [160]);
 });
 
-test('relay freeze plays video without tearing down the peer connection', () => {
-  const { WebRTC, context } = loadWebRTC();
-  const vid = context.document.getElementById('remoteVideo');
-  const stream = { id: 'stream-1' };
-  vid.srcObject = stream;
-  vid.play = function play() {
-    this.playCalls = (this.playCalls || 0) + 1;
-    return Promise.resolve();
-  };
-  const emitted = [];
-  WebRTC.networkMode = 'relay';
-  WebRTC.remoteStream = stream;
-  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
-  WebRTC.controlState = {
-    state: 'ACTIVE', controller: true, hostOnline: true,
-    lease: { leaseId: 'lease-000000000001', leaseEpoch: 8 },
-  };
-  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
-  WebRTC._lastKeyframeRequestAt = 0;
-  const kicked = WebRTC.kickFrozenRelayDecoder({ fps: 0, framesReceived: 19 });
-  assert.equal(kicked, true);
-  assert.equal(vid.srcObject, stream);
-  assert.equal(vid.playCalls >= 1, true);
-  assert.equal(WebRTC.pc.connectionState, 'connected');
-  assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), true);
-  WebRTC._lastKeyframeRequestAt = 0;
-  const second = WebRTC.kickFrozenRelayDecoder({ fps: 0, framesReceived: 19 });
-  assert.equal(second, false);
-});
-
-test('relay decoder kick is skipped while frames still decode', () => {
-  const loaded = loadWebRTC();
-  const wrd = loaded.WebRTC;
-  wrd.networkMode = 'relay';
-  wrd.remoteStream = { id: 'stream-1' };
-  assert.equal(wrd.kickFrozenRelayDecoder({ fps: 19, framesReceived: 19 }), false);
-});
-
 test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const { WebRTC } = loadWebRTC({ LinkQualityController });

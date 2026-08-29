@@ -1310,7 +1310,6 @@ const WebRTC = {
     }
 
     if (fps === 0 && framesReceived > 0) {
-      this.kickFrozenRelayDecoder({ fps, framesReceived });
       if (!this._stallSince) this._stallSince = Date.now();
       if (Date.now() - this._stallSince >= 1000) {
         this.setUiPhase('media-stalled', { reason: stats.source || 'zero-fps' });
@@ -1439,30 +1438,6 @@ const WebRTC = {
         console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
       }
     }
-  },
-
-  kickFrozenRelayDecoder(stats = {}) {
-    if (this.networkMode !== 'relay' && this.lastCandidateType !== 'relay') return false;
-    if (Number(stats.fps || 0) !== 0) return false;
-    if (Number(stats.framesReceived || 0) <= 0) return false;
-    const now = Date.now();
-    if (this._lastRelayDecoderKickAt && now - this._lastRelayDecoderKickAt < 1500) {
-      return false;
-    }
-    const video = document.getElementById('remoteVideo');
-    if (!video) return false;
-    this._lastRelayDecoderKickAt = now;
-    try {
-      if (typeof video.play === 'function') {
-        Promise.resolve(video.play()).catch(() => {});
-      }
-    } catch (error) {
-      console.warn('[MEDIA] relay decoder kick failed:', error?.message || error);
-      return false;
-    }
-    this.requestKeyframe('relay-decoder-kick');
-    console.warn('[MEDIA] relay decoder kick: play');
-    return true;
   },
 
   syncMediaProfile() {
