@@ -1076,9 +1076,9 @@ test('relay drop stall uses skip-wait jitter without tearing down PC', () => {
     packetsLost: 0,
     framesDecoded: 0,
     framesReceived: 19,
-    framesDropped: 57,
-    pliCount: 1,
-    freezeCount: 1,
+    framesDropped: 0,
+    pliCount: 0,
+    freezeCount: 0,
     selectedCandidateType: 'relay',
   });
   assert.equal(jitter.includes(0), true);

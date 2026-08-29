@@ -4249,8 +4249,9 @@ if (this.tunnelLastObjectUrl) {
       }
       this.lastCandidateType = selectedCandidateType || '';
       if (this.networkMode === 'relay' || selectedCandidateType === 'relay') {
-        const skipWait = fps === 0 && framesReceived > 0
-          && (framesDropped > 0 || pliCount > 0 || freezeCount > 0);
+        // Dropped/PLI are reported on the recover tick; freeze seconds show
+        // decoded=0 received≈19 dropped=0. Skip-wait on that stall itself.
+        const skipWait = fps === 0 && framesReceived > 0;
         if (skipWait) {
           console.warn('[MEDIA] relay skip-wait: dropped=%s pli=%s freeze=%s',
             framesDropped, pliCount, freezeCount);
