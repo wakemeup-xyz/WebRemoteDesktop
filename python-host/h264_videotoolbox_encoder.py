@@ -73,8 +73,9 @@ def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
         "tune": "zerolatency",
         "x264-params": (
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
-            f"sliced-threads=0:slices=1:repeat-headers=1:"
-            f"vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
+            f"threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+            f"rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+            f"forced-idr=1:vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
             f"vbv-init=0.4:nal-hrd=none"
         ),
     }
@@ -371,7 +372,10 @@ class H264VideoToolboxEncoder(Encoder):
                 self._frames_encoded = 0
 
         gop = int(getattr(self, "gop_size", None) or session_gop)
-        waiting = self._idr_wait_remaining > 0
+        # libx264 already emits IDR without a wait-window; waiting would
+        # block GOP cadence and then miss delayed type-5 NALs.
+        use_wait = self.codec_name != "libx264"
+        waiting = use_wait and self._idr_wait_remaining > 0
         # Cadence is encode-count. Bitstream IDR scans can false-positive on
         # P-slice payload and must not skip the 1s relay keyframe.
         due = (not waiting) and (
@@ -382,6 +386,10 @@ class H264VideoToolboxEncoder(Encoder):
         # the delayed IDR instead of stuffing I-frames every follow-up tick.
         if due:
             frame.pict_type = av.video.frame.PictureType.I
+            try:
+                frame.key_frame = True
+            except Exception:
+                pass
         else:
             frame.pict_type = av.video.frame.PictureType.NONE
 
@@ -390,13 +398,13 @@ class H264VideoToolboxEncoder(Encoder):
 
         if due:
             self.last_force_emitted_idr = False
-            self._idr_wait_remaining = IDR_WAIT_FRAMES
-            waiting = True
+            if use_wait:
+                self._idr_wait_remaining = IDR_WAIT_FRAMES
+                waiting = True
 
-        data_to_send = b""
+        encoded_packets: list[bytes] = []
         try:
-            for package in self.codec.encode(frame):
-                data_to_send += bytes(package)
+            encoded_packets = [bytes(package) for package in self.codec.encode(frame)]
         except av.FFmpegError as exc:
             if self.codec_name != "libx264":
                 global _preferred_h264_codec
@@ -404,17 +412,19 @@ class H264VideoToolboxEncoder(Encoder):
                 _preferred_h264_codec = "libx264"
                 self.codec_name = "libx264"
                 self.codec = self._create_codec(frame, self.codec_name)
-                data_to_send = b""
-                for package in self.codec.encode(frame):
-                    data_to_send += bytes(package)
+                encoded_packets = [bytes(package) for package in self.codec.encode(frame)]
             else:
                 raise
+        data_to_send = b"".join(encoded_packets)
 
         recreated_this_call = False
         waiting = self._idr_wait_remaining > 0
         want_idr = due or waiting
         self._frames_encoded += 1
-        if bitstream_contains_idr(data_to_send):
+        has_idr = bitstream_contains_idr(data_to_send) or any(
+            _nal_is_idr(packet) for packet in encoded_packets
+        )
+        if has_idr:
             self._frames_since_idr = 0
             self._idr_wait_remaining = 0
             if waiting or want_idr:
@@ -529,7 +539,11 @@ class H264VideoToolboxEncoder(Encoder):
             pass
         try:
             from av.codec.context import Flags
-            codec.flags = int(codec.flags) | int(Flags.low_delay)
+            flags = int(codec.flags) | int(Flags.low_delay)
+            closed = getattr(Flags, "closed_gop", None)
+            if closed is not None:
+                flags |= int(closed)
+            codec.flags = flags
         except Exception:
             pass
         if codec_name == "libx264":
