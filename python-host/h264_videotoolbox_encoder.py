@@ -330,7 +330,11 @@ class H264VideoToolboxEncoder(Encoder):
     def _packetize(cls, packages: Iterable[bytes]) -> list[bytes]:
         packetized_packages = []
 
-        packages_iterator = iter(packages)
+        # SEI/AUD in the same STAP-A as SPS/PPS made Chrome drop assembled
+        # frames and fire PLI despite a 1s IDR.
+        packages_iterator = iter(
+            nal for nal in packages if nal and (nal[0] & 0x1F) not in (6, 9)
+        )
         package = next(packages_iterator, None)
         while package is not None:
             if len(package) > PACKET_MAX:

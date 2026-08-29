@@ -1420,15 +1420,16 @@ const WebRTC = {
     }
   },
 
-  configureVideoReceiver(receiver) {
+  configureVideoReceiver(receiver, options = {}) {
     if (!receiver?.track || receiver.track.kind !== 'video') return;
     const isRelay = this.networkMode === 'relay'
       || this.lastCandidateType === 'relay';
 
-    // Relay 160ms matches the passing 60s run. Always re-assert: Chrome reports
-    // the target while the actual buffer still shrinks toward 0.
-    const delayHint = isRelay ? 0.16 : 0;
-    const jitterTarget = isRelay ? 160 : 1;
+    // Relay 160ms is the default. Skip-wait (0ms) only when Chrome is dropping
+    // assembled frames (dropped↑ / PLI) so the next IDR is not held.
+    const skipWait = isRelay && options.skipWait === true;
+    const delayHint = isRelay ? (skipWait ? 0 : 0.16) : 0;
+    const jitterTarget = isRelay ? (skipWait ? 0 : 160) : 1;
     if (typeof receiver.playoutDelayHint !== 'undefined') {
       try {
         receiver.playoutDelayHint = delayHint;
@@ -4248,8 +4249,14 @@ if (this.tunnelLastObjectUrl) {
       }
       this.lastCandidateType = selectedCandidateType || '';
       if (this.networkMode === 'relay' || selectedCandidateType === 'relay') {
+        const skipWait = fps === 0 && framesReceived > 0
+          && (framesDropped > 0 || pliCount > 0 || freezeCount > 0);
+        if (skipWait) {
+          console.warn('[MEDIA] relay skip-wait: dropped=%s pli=%s freeze=%s',
+            framesDropped, pliCount, freezeCount);
+        }
         const receivers = this.pc?.getReceivers?.() || [];
-        receivers.forEach((receiver) => this.configureVideoReceiver(receiver));
+        receivers.forEach((receiver) => this.configureVideoReceiver(receiver, { skipWait }));
       }
       this.handlePortSearchMedia({
         selectedCandidateType,

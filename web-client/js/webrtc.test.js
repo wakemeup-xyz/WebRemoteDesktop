@@ -1052,6 +1052,39 @@ test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () =>
   assert.deepEqual(jitter, [160]);
 });
 
+test('relay drop stall uses skip-wait jitter without tearing down PC', () => {
+  const { WebRTC } = loadWebRTC();
+  const jitter = [];
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = {
+    connectionState: 'connected',
+    iceConnectionState: 'connected',
+    getReceivers() {
+      return [{
+        track: { kind: 'video' },
+        get playoutDelayHint() { return 0.16; },
+        set playoutDelayHint(_value) {},
+        get jitterBufferTarget() { return 160; },
+        set jitterBufferTarget(value) { jitter.push(value); },
+      }];
+    },
+  };
+  WebRTC.processStatsSnapshot({
+    fps: 0,
+    rttMs: 38,
+    jitterBufferMs: 0,
+    packetsLost: 0,
+    framesDecoded: 0,
+    framesReceived: 19,
+    framesDropped: 57,
+    pliCount: 1,
+    freezeCount: 1,
+    selectedCandidateType: 'relay',
+  });
+  assert.equal(jitter.includes(0), true);
+  assert.equal(WebRTC.pc.connectionState, 'connected');
+});
+
 test('WebRTC syncs the adaptive profile when a new media connection becomes active', () => {
   const { LinkQualityController } = loadLinkQualityController();
   const { WebRTC } = loadWebRTC({ LinkQualityController });

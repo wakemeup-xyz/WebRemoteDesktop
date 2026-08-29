@@ -38,6 +38,28 @@ def test_idr_detects_bare_type5_without_start_code():
     assert bitstream_contains_idr(bytes([0x65, 0, 1])) is True
 
 
+def test_packetize_does_not_staple_sei_with_sps_pps():
+    sps = bytes([0x67, 0x42, 0xC0, 0x1E] + [0] * 18)
+    pps = bytes([0x68, 0xCE, 0x38, 0x80])
+    sei = bytes([0x06] + [0xAB] * 200)
+    idr = bytes([0x65] + [0x11] * 40)
+    packets = H264VideoToolboxEncoder._packetize([sps, pps, sei, idr])
+    types = [p[0] & 0x1F for p in packets]
+    assert 6 not in types
+    stap = next(p for p in packets if (p[0] & 0x1F) == 24)
+    pos = 1
+    units = []
+    while pos + 2 <= len(stap):
+        length = int.from_bytes(stap[pos:pos + 2], "big")
+        pos += 2
+        unit = stap[pos:pos + length]
+        pos += length
+        if unit:
+            units.append(unit[0] & 0x1F)
+    assert 6 not in units
+    assert 7 in units and 8 in units
+
+
 def test_annexb_p_slice_payload_0x65_is_not_idr():
     """AVCC fallback must not treat Annex-B payload bytes as a length+NAL."""
     # start-code + type1 + fake length=5 + 0x65. Annex-B scan is one P-slice.
