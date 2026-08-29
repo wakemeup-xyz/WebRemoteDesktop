@@ -258,13 +258,17 @@ def test_relay_gop_uses_libx264_and_vbv_cap():
     assert codec_name_for_gop(20) == "libx264"
     assert codec_name_for_gop(40) == "h264_videotoolbox"
     assert min_bitrate_bps(20, 1280, 720) == 1_800_000
+    assert min_bitrate_bps(20, 1152, 720) == 1_800_000
     assert min_bitrate_bps(20, 1920, 1080) == 2_500_000
     assert min_bitrate_bps(40, 1280, 720) == 500_000
-    opts = libx264_zerolatency_options(2_500_000, 20)
+    opts = libx264_zerolatency_options(1_800_000, 20)
     assert opts["tune"] == "zerolatency"
-    assert opts["scenecut"] == "0"
-    assert int(opts["vbv-bufsize"]) == 400
-    assert int(opts["vbv-maxrate"]) == 2500
+    params = opts["x264-params"]
+    assert "scenecut=0" in params
+    assert "vbv-maxrate=1800" in params
+    assert "vbv-bufsize=180" in params
+    assert "vbv-init=0.4" in params
+    assert "nal-hrd=none" in params
     set_session_gop_size(20)
     try:
         enc = H264VideoToolboxEncoder()

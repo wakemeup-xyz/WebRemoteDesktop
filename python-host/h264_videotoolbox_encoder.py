@@ -49,11 +49,14 @@ def codec_name_for_gop(gop: int) -> str:
 
 
 def min_bitrate_bps(gop: int, width: int, height: int) -> int:
-    pixels = max(1, int(width or 0) * int(height or 0))
+    width = int(width or 0)
+    height = int(height or 0)
+    pixels = max(1, width * height)
     if int(gop or 0) <= 20:
-        if pixels >= 1920 * 1080:
+        # Capture may be 1152x720 under a 1280x720 session cap.
+        if height >= 1000 or pixels >= 1920 * 1080:
             return 2_500_000
-        if pixels >= 1280 * 720:
+        if height >= 700 or pixels >= 1152 * 720:
             return 1_800_000
         return 1_200_000
     return MIN_BITRATE
@@ -61,19 +64,18 @@ def min_bitrate_bps(gop: int, width: int, height: int) -> int:
 
 def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
     kbps = max(1, int(bitrate_bps) // 1000)
-    # ~160ms of bits: 2.5 Mbps → vbv-bufsize=400 kbit (~50KB IDR cap).
-    bufsize = max(200, int(bitrate_bps) // 6250)
+    # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
+    # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
+    bufsize = max(120, int(bitrate_bps) // 10000)
     gop_s = str(max(1, int(gop or 20)))
     return {
         "preset": "ultrafast",
         "tune": "zerolatency",
-        "scenecut": "0",
-        "keyint": gop_s,
-        "min-keyint": gop_s,
-        "repeat-headers": "1",
-        "bframes": "0",
-        "vbv-maxrate": str(kbps),
-        "vbv-bufsize": str(bufsize),
+        "x264-params": (
+            f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
+            f"repeat-headers=1:vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
+            f"vbv-init=0.4:nal-hrd=none"
+        ),
     }
 
 
@@ -214,7 +216,7 @@ class H264VideoToolboxEncoder(Encoder):
         self.codec: Optional[VideoCodecContext] = None
         self.gop_size = get_session_gop_size()
         self.codec_name = codec_name_for_gop(self.gop_size)
-        self.__target_bitrate = DEFAULT_BITRATE
+        self.__target_bitrate = 0
         self.last_force_emitted_idr = False
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
@@ -473,6 +475,8 @@ class H264VideoToolboxEncoder(Encoder):
         floor = min_bitrate_bps(gop, frame.width, frame.height)
         if self.__target_bitrate and self.__target_bitrate > 0:
             bitrate = int(self.__target_bitrate)
+        elif gop <= 20:
+            bitrate = floor
         elif frame.width * frame.height <= 1280 * 720:
             bitrate = 2_500_000
         elif frame.width * frame.height <= 1920 * 1080:
@@ -485,16 +489,22 @@ class H264VideoToolboxEncoder(Encoder):
         self.__target_bitrate = bitrate
 
         logger.info(
-            "Opening H.264 encoder codec=%s size=%dx%d bitrate=%d",
+            "Opening H.264 encoder codec=%s size=%dx%d bitrate=%d gop=%s",
             codec_name,
             frame.width,
             frame.height,
             bitrate,
+            gop,
         )
         codec = av.CodecContext.create(codec_name, "w")
         codec.width = frame.width
         codec.height = frame.height
         codec.bit_rate = bitrate
+        try:
+            codec.rc_max_rate = bitrate
+            codec.rc_buffer_size = max(120_000, bitrate // 10)
+        except Exception:
+            pass
         codec.pix_fmt = "yuv420p"
         codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
         codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
@@ -511,6 +521,10 @@ class H264VideoToolboxEncoder(Encoder):
             pass
         if codec_name == "libx264":
             codec.options = libx264_zerolatency_options(bitrate, gop)
+            logger.info(
+                "WRD_ENCODER_X264 params=%s",
+                (codec.options or {}).get("x264-params", "-"),
+            )
         return codec
 
     def encode(
