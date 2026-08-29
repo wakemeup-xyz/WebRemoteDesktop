@@ -1052,12 +1052,11 @@ test('relay stats re-apply jitter target so Chrome cannot shrink it to 0', () =>
   assert.deepEqual(jitter, [160]);
 });
 
-test('relay freeze pause/plays video without tearing down the peer connection', () => {
+test('relay freeze plays video without tearing down the peer connection', () => {
   const { WebRTC, context } = loadWebRTC();
   const vid = context.document.getElementById('remoteVideo');
   const stream = { id: 'stream-1' };
   vid.srcObject = stream;
-  vid.pause = function pause() { this.pauseCalls = (this.pauseCalls || 0) + 1; };
   vid.play = function play() {
     this.playCalls = (this.playCalls || 0) + 1;
     return Promise.resolve();
@@ -1075,7 +1074,6 @@ test('relay freeze pause/plays video without tearing down the peer connection', 
   const kicked = WebRTC.kickFrozenRelayDecoder({ fps: 0, framesReceived: 19 });
   assert.equal(kicked, true);
   assert.equal(vid.srcObject, stream);
-  assert.equal(vid.pauseCalls, 1);
   assert.equal(vid.playCalls >= 1, true);
   assert.equal(WebRTC.pc.connectionState, 'connected');
   assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), true);

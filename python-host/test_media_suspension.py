@@ -69,6 +69,25 @@ def test_capture_suspend_idempotent():
     assert track._capture_generation == gen
 
 
+def test_screen_track_pts_steps_by_20fps():
+    import asyncio
+
+    track = object.__new__(ScreenCaptureTrack)
+    track._rtp_pts = 0
+    track._target_fps = 20
+
+    async def sample():
+        first, tb = await track.next_timestamp()
+        second, _ = await track.next_timestamp()
+        third, _ = await track.next_timestamp()
+        return first, second, third, tb
+
+    first, second, third, tb = asyncio.run(sample())
+    assert tb == 90000
+    assert second - first == 4500
+    assert third - second == 4500
+
+
 class FakeSocket:
     def __init__(self):
         self.events = []

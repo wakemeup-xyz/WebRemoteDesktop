@@ -966,6 +966,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.last_time = time.time()
         self._start = time.time()
         self._last_frame_time = 0
+        self._rtp_pts = 0
         self._target_fps = target_fps
         self._frame_interval = 1.0 / target_fps
         self._max_width = max_width
@@ -1101,7 +1102,12 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 pass
 
     async def next_timestamp(self):
-        pts = int((time.time() - self._start) * 90000)
+        # Wall-clock PTS lets Chrome jitter grow (50ms+) until decode freezes
+        # on TURN. Step by 1/fps at the RTP 90kHz clock instead.
+        fps = max(1, int(getattr(self, "_target_fps", 20) or 20))
+        step = 90000 // fps
+        pts = int(getattr(self, "_rtp_pts", 0) or 0)
+        self._rtp_pts = pts + step
         return pts, 90000
 
     async def recv(self):

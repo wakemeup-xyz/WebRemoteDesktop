@@ -1453,7 +1453,6 @@ const WebRTC = {
     if (!video) return false;
     this._lastRelayDecoderKickAt = now;
     try {
-      if (typeof video.pause === 'function') video.pause();
       if (typeof video.play === 'function') {
         Promise.resolve(video.play()).catch(() => {});
       }
@@ -1462,7 +1461,7 @@ const WebRTC = {
       return false;
     }
     this.requestKeyframe('relay-decoder-kick');
-    console.warn('[MEDIA] relay decoder kick: pause/play');
+    console.warn('[MEDIA] relay decoder kick: play');
     return true;
   },
 
