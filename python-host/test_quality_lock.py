@@ -204,6 +204,7 @@ def test_viewer_stats_refreshes_decoder_once_per_freeze():
     host._last_diag_network = {"networkMode": "relay"}
     host._stall_sample_count = 0
     host._stall_decoder_refresh_armed = True
+    host._stall_decoder_refresh_at = 0.0
     encoder = FakeEncoder()
     host.video_sender = type("Sender", (), {"_encoder": encoder})()
     loop = asyncio.get_event_loop()
@@ -219,11 +220,16 @@ def test_viewer_stats_refreshes_decoder_once_per_freeze():
         "codec": "H264",
         "selectedCandidateType": "relay",
     }
+    spike = dict(freeze, fps=88, framesDecoded=10)
     healthy = dict(freeze, fps=19, framesDecoded=19)
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
+    loop.run_until_complete(host.on_viewer_stats(spike))
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 1
+    host._stall_decoder_refresh_at = 0.0
     loop.run_until_complete(host.on_viewer_stats(healthy))
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 2

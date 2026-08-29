@@ -1411,6 +1411,7 @@ class WebRemoteHost:
         self._reconnecting = False
         self._last_diag_network = None
         self._stall_decoder_refresh_armed = True
+        self._stall_decoder_refresh_at = 0.0
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
         # User-owned presentation size (resolution-change / adaptive size). Quality Lock
         # ignores media-profile size when adaptiveResolution is false.
@@ -2700,18 +2701,27 @@ class WebRemoteHost:
         return encoder
 
     def _refresh_decoder_on_stall(self, data):
-        """Same-size SPS refresh on the freeze second. GOP IDRs do not unstick Chrome."""
+        """Same-size SPS refresh on the freeze second. GOP IDRs do not unstick Chrome.
+
+        Re-arm only after 12s and a healthy 8-25 FPS sample. Recover spikes
+        (fps=50-160, jitter 400ms) used to re-arm immediately and cycle.
+        """
         try:
             fps = float(data.get("fps") or 0)
             received = int(data.get("framesReceived") or 0)
         except (TypeError, ValueError):
             return False
-        if fps > 0:
+        now = time.monotonic()
+        last = float(getattr(self, "_stall_decoder_refresh_at", 0.0) or 0.0)
+        if 8.0 <= fps <= 25.0 and (now - last) >= 12.0:
             self._stall_decoder_refresh_armed = True
+        if fps > 0:
             return False
         if received <= 0:
             return False
         if not getattr(self, "_stall_decoder_refresh_armed", True):
+            return False
+        if last and (now - last) < 12.0:
             return False
         encoder = self._video_encoder()
         refresh = getattr(encoder, "request_decoder_refresh", None)
@@ -2720,6 +2730,7 @@ class WebRemoteHost:
         try:
             if refresh():
                 self._stall_decoder_refresh_armed = False
+                self._stall_decoder_refresh_at = now
                 return True
         except Exception as exc:
             logger.debug("decoder refresh failed: %s", type(exc).__name__)
