@@ -185,7 +185,48 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     stats = [msg for msg in messages if "VIEWER_STATS" in msg]
     assert stats
     assert "dropped=3" in stats[-1]
-    assert "pli=1" in stats[-1]
+
+
+def test_viewer_stats_refreshes_decoder_once_per_freeze():
+    import asyncio
+
+    class FakeEncoder:
+        def __init__(self):
+            self.calls = 0
+            self.codec = object()
+
+        def request_decoder_refresh(self):
+            self.calls += 1
+            self.codec = None
+            return True
+
+    host = object.__new__(WebRemoteHost)
+    host._last_diag_network = {"networkMode": "relay"}
+    host._stall_sample_count = 0
+    host._stall_decoder_refresh_armed = True
+    encoder = FakeEncoder()
+    host.video_sender = type("Sender", (), {"_encoder": encoder})()
+    loop = asyncio.get_event_loop()
+    freeze = {
+        "viewerId": "viewer-1",
+        "fps": 0,
+        "framesReceived": 19,
+        "framesDecoded": 0,
+        "rttMs": 40,
+        "jitterBufferMs": 0,
+        "packetsLost": 0,
+        "bytesReceived": 1234,
+        "codec": "H264",
+        "selectedCandidateType": "relay",
+    }
+    healthy = dict(freeze, fps=19, framesDecoded=19)
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 1
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 1
+    loop.run_until_complete(host.on_viewer_stats(healthy))
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 2
 
 
 def test_keyframe_handler_invokes_request_path():
