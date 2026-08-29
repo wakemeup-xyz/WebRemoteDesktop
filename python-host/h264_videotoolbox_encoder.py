@@ -177,6 +177,7 @@ class H264VideoToolboxEncoder(Encoder):
         self.last_force_emitted_idr = False
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
+        self._frames_since_idr = 0
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -307,18 +308,21 @@ class H264VideoToolboxEncoder(Encoder):
             self.codec = None
             self.last_idr_recreated = False
             self._idr_wait_remaining = 0
+            self._frames_since_idr = 0
 
-        if force_keyframe:
-            # force a complete image
+        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
+        periodic_idr = self._frames_since_idr >= max(1, gop)
+        want_idr = bool(force_keyframe or periodic_idr)
+        if want_idr:
+            # VideoToolbox ignores codec.gop_size; force I on the GOP cadence.
             frame.pict_type = av.video.frame.PictureType.I
         else:
-            # reset the picture type, otherwise no B-frames are produced
             frame.pict_type = av.video.frame.PictureType.NONE
 
         if self.codec is None:
             self.codec = self._create_codec(frame, self.codec_name)
 
-        if force_keyframe:
+        if want_idr:
             self.last_force_emitted_idr = False
             if self._idr_wait_remaining <= 0:
                 self._idr_wait_remaining = IDR_WAIT_FRAMES
@@ -343,7 +347,8 @@ class H264VideoToolboxEncoder(Encoder):
         recreated_this_call = False
         waiting = self._idr_wait_remaining > 0
         if bitstream_contains_idr(data_to_send):
-            if waiting or force_keyframe:
+            self._frames_since_idr = 0
+            if waiting or want_idr:
                 self.last_force_emitted_idr = True
                 self.last_idr_recreated = False
                 self._idr_wait_remaining = 0
@@ -356,6 +361,7 @@ class H264VideoToolboxEncoder(Encoder):
                     frame.height,
                 )
         elif waiting:
+            self._frames_since_idr += 1
             self._idr_wait_remaining -= 1
             if self._idr_wait_remaining <= 0 and not self.last_idr_recreated:
                 self.codec = None
@@ -369,6 +375,7 @@ class H264VideoToolboxEncoder(Encoder):
                 self._idr_wait_remaining = 0 if self.last_force_emitted_idr else IDR_WAIT_FRAMES
                 if self.last_force_emitted_idr:
                     self.last_idr_recreated = False
+                    self._frames_since_idr = 0
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
                     self.last_force_emitted_idr,
@@ -382,7 +389,7 @@ class H264VideoToolboxEncoder(Encoder):
                     self.last_force_emitted_idr,
                     self.codec_name,
                 )
-            elif self._idr_wait_remaining <= 0 and force_keyframe:
+            elif self._idr_wait_remaining <= 0 and want_idr:
                 self.last_force_emitted_idr = False
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
@@ -392,7 +399,7 @@ class H264VideoToolboxEncoder(Encoder):
                     frame.width,
                     frame.height,
                 )
-            elif force_keyframe:
+            elif want_idr:
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d",
                     False,
@@ -401,6 +408,8 @@ class H264VideoToolboxEncoder(Encoder):
                     frame.width,
                     frame.height,
                 )
+        else:
+            self._frames_since_idr += 1
 
         if data_to_send:
             yield from self._split_bitstream(data_to_send)

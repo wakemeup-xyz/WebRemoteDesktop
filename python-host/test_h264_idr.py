@@ -175,3 +175,23 @@ def test_force_keyframe_recreates_at_most_once(monkeypatch):
         list(enc._encode_frame(_fake_frame(), force_keyframe=False))
     assert calls["create"] == 2
     assert enc.last_idr_recreated is True
+
+
+def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    enc.gop_size = 3
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    calls = {"create": 0}
+    codec = FakeCodec([p_slice, p_slice, p_slice, b"", b"", idr])
+
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return codec
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    for _ in range(6):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 1
+    assert enc.last_force_emitted_idr is True
+    assert enc.last_idr_recreated is False
