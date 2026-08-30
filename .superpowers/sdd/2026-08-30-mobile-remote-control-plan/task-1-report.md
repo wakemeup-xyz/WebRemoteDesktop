@@ -52,7 +52,7 @@ Passed with no whitespace errors.
 
 ## Commit
 
-Commit hash: `10b54a20c36df9a454efd369743c5970096e070b` (amended after report update).
+Implementation commit hash: `4bf35c394f580a6859afdf417dc6ce8bc9a77abd`.
 
 ## Remaining concerns
 
