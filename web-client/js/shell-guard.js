@@ -79,6 +79,7 @@
     installCore,
     failCore,
     coreDeadlineMs: CORE_DEADLINE_MS,
+    sessionSnapshot: () => global.DesktopSessionState?.snapshot?.() || null,
     snapshot: () => ({
       coreInstalled: state.coreInstalled,
       queuedStart: state.queuedStart,

@@ -1,4 +1,15 @@
 const UI = {
+  getDesktopSessionSnapshot() {
+    return typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopSessionSnapshot === 'function'
+      ? WebRTC.getDesktopSessionSnapshot()
+      : null;
+  },
+
+  canUseDesktopControls() {
+    const snapshot = this.getDesktopSessionSnapshot();
+    return snapshot ? snapshot.canInput === true : true;
+  },
+
   init() {
     if (typeof ChromeLayout !== 'undefined') ChromeLayout.init();
     this.setupResolutionModal();

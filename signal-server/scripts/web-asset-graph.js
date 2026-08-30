@@ -6,6 +6,7 @@ module.exports = Object.freeze({
   desktopScripts: Object.freeze([
     'js/runtime-config.js',
     'js/auth.js',
+    'js/desktop-session-state.js',
     'js/webrtc-stats.js',
     'js/link-quality-controller.js',
     'js/media-activity-controller.js',

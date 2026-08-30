@@ -395,6 +395,12 @@ WebRemoteDesktop/
 
 ## 6. 变更记录
 
+### Desktop Session State 验收边界（2026-08-30）
+
+Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契约：每个连接 attempt 使用单调 `attemptId`，PeerConnection connected 只代表 `media=pending`，只有真实 fresh frame 才进入 `media=live/phase=connected`。媒体卡顿、控制租约切换/复位锁定、Socket 离线和旧 attempt 事件均必须 fail-closed；输入只有 `control=active`、`media=live`、`socket=online` 时可用。
+
+`scripts/desktop-session-acceptance.sh --local-only` 只做本地 health preflight 并输出证据字段和验收矩阵。首帧、卡顿恢复、断开复位、双 Viewer、tunnel、公网和物理输入没有真实运行证据时保持 `NOT RUN`/`BLOCKED`，不得用 synthetic frame、ack、health 200 或 URL 文件替代。
+
 | 日期 | 变更内容 |
 |------|---------|
 | 2026-05-10 | 创建需求文档，汇总当前已实现功能 |

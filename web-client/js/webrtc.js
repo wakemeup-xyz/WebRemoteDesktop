@@ -128,6 +128,7 @@ const WebRTC = {
   _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
+  desktopSessionState: null,
   selectedCandidatePair: null,
   candidateSummary: {
     local: { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 },
@@ -753,8 +754,28 @@ const WebRTC = {
 
   syncDesktopInputGate() {
     if (typeof Input === 'undefined') return;
-    const enable = this.canEnableDesktopInput();
+    const snapshot = this.getDesktopSessionSnapshot();
+    const enable = snapshot.canInput === true && this.canEnableDesktopInput();
     Input.setActive(enable);
+  },
+
+  ensureDesktopSessionState() {
+    if (!this.desktopSessionState && typeof createDesktopSessionState === 'function') {
+      this.desktopSessionState = createDesktopSessionState();
+    }
+    return this.desktopSessionState;
+  },
+
+  getDesktopSessionSnapshot() {
+    return this.ensureDesktopSessionState()?.snapshot?.() || {
+      attemptId: this.currentConnectionAttemptId || null,
+      phase: this.uiPhase || 'idle',
+      media: this.hasPaintedFrame ? 'live' : 'none',
+      control: this.hasActiveControl() ? 'active' : 'free',
+      socket: this.socket?.connected ? 'online' : 'offline',
+      canInput: this.canEnableDesktopInput(),
+      lastTransitionAt: Date.now(),
+    };
   },
 
   hasTurnConfigured() {
@@ -777,6 +798,9 @@ const WebRTC = {
   beginConnectionAttempt(trigger = 'viewer-open') {
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
+      socket: this.socket?.connected ? 'online' : 'connecting',
+    });
     this._mediaReadyConnectionAttemptId = null;
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
@@ -1142,18 +1166,34 @@ const WebRTC = {
     this.hideReconnectHud();
   },
 
-  setUiPhase(phase, { reason } = {}) {
+  setUiPhase(phase, { reason, attemptId } = {}) {
     const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
     if (!allowed.includes(phase)) return this.uiPhase;
+    if (attemptId && this.currentConnectionAttemptId && attemptId !== this.currentConnectionAttemptId) {
+      return this.uiPhase;
+    }
     if (this.uiPhase === 'disconnected' && phase !== 'signaling' && phase !== 'disconnected') {
       return this.uiPhase;
     }
     const previous = this.uiPhase;
     this.uiPhase = phase;
-    if (phase === 'signaling') {
+    const session = this.ensureDesktopSessionState();
+    if (session) {
+      if (phase === 'media-pending') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'pending' });
+      else if (phase === 'media-stalled') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'stalled' });
+      else if (phase === 'connected') session.applyMedia({
+        attemptId: this.currentConnectionAttemptId,
+        event: 'fresh-frame',
+        fresh: this.hasPaintedFrame === true,
+      });
+      else if (phase === 'disconnected') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'disconnected', socket: 'offline' });
+      else if (phase === 'signaling') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'signaling' });
+    }
+    const sessionPhase = session ? this.getDesktopSessionSnapshot().phase : phase;
+    if (sessionPhase === 'signaling') {
       updateConnectionStatus('connecting');
     } else {
-      updateConnectionStatus(phase);
+      updateConnectionStatus(sessionPhase || phase);
     }
     if (phase === 'connected' && this.shouldHideLoading({ hasPaintedFrame: this.hasPaintedFrame })) {
       this.hidePaintLoading();
@@ -1309,6 +1349,11 @@ const WebRTC = {
     if (!this.hasPaintedFrame) {
       if (videoWidth > 0 && framesDecoded > baseline) {
         this.hasPaintedFrame = true;
+        this.ensureDesktopSessionState()?.applyMedia({
+          attemptId: this.currentConnectionAttemptId,
+          event: 'fresh-frame',
+          fresh: true,
+        });
         this._stallSince = null;
         this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
         this.setUiPhase('connected', { reason: stats.source || 'paint-growth' });
@@ -2540,6 +2585,11 @@ const WebRTC = {
   
   setupSocketListeners() {
     this.socket.on('connect', async () => {
+      this.ensureDesktopSessionState()?.applyConnection({
+        attemptId: this.currentConnectionAttemptId,
+        state: 'online',
+        socket: 'online',
+      });
       console.log('[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s',
         this.offerInProgress, !!this.pc, this.pc?.connectionState);
       if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
@@ -2661,6 +2711,11 @@ const WebRTC = {
     });
 
     this.socket.on('disconnect', (reason) => {
+      this.ensureDesktopSessionState()?.applyConnection({
+        attemptId: this.currentConnectionAttemptId,
+        state: 'offline',
+        socket: 'offline',
+      });
       console.log('Signaling disconnected', reason || '');
       if (this._superseded) {
         return;
@@ -2779,6 +2834,11 @@ const WebRTC = {
 
   handleControlState(data = {}) {
     this.controlState = { ...this.controlState, ...data, lease: data.controller ? this.controlState.lease : null };
+    this.ensureDesktopSessionState()?.applyControl({
+      attemptId: this.currentConnectionAttemptId,
+      state: this.isControlResetBlocked() ? 'blocked' : this.controlState.state,
+      blocked: this.isControlResetBlocked(),
+    });
     // During GRANTING/REVOKING, controller is false for everyone — do not treat as
     // permanent readonly freeze (that raced with acquire and left sticky UI).
     const transitioning = data.state === 'GRANTING' || data.state === 'REVOKING';
@@ -2807,6 +2867,7 @@ const WebRTC = {
       return;
     }
     this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
+    this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
     if (typeof Input !== 'undefined') {
       Input.init();
       Input.setControlLease(this.controlState.lease);
@@ -2851,6 +2912,11 @@ const WebRTC = {
       Input.setActive(false, { resetKeyboard: false, reason: reason || 'control-lost' });
     }
     this.controlState = { ...this.controlState, controller: false, lease: null };
+    this.ensureDesktopSessionState()?.applyControl({
+      attemptId: this.currentConnectionAttemptId,
+      state: this.isControlResetBlocked() ? 'blocked' : 'free',
+      blocked: this.isControlResetBlocked(),
+    });
     if (this.isPortSearchActive()) {
       this.stopPortSearch(reason === 'host-offline' ? 'host-offline' : 'control-lost');
     } else {
@@ -2965,6 +3031,15 @@ const WebRTC = {
   },
 
   updateControlUI(status) {
+    const session = this.ensureDesktopSessionState();
+    if (session) {
+      session.applyControl({
+        attemptId: this.currentConnectionAttemptId,
+        state: this.isControlResetBlocked() ? 'blocked' : this.controlState.state,
+        blocked: this.isControlResetBlocked(),
+      });
+    }
+    const sessionControl = this.getDesktopSessionSnapshot().control;
     const transitioning = this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING';
     const resetBlocked = this.isControlResetBlocked();
     if (!status && !this.controlState.controller) {
@@ -2973,9 +3048,9 @@ const WebRTC = {
       else status = '只读';
     }
     const label = status
-      || (this.hasActiveControl()
+      || (sessionControl === 'active' && this.hasActiveControl()
         ? '已控制'
-        : (this.controlState.state === 'FREE' ? '只读' : (resetBlocked ? 'Host 输入复位未确认，控制已安全锁定' : '控制权正在切换')));
+        : (sessionControl === 'free' ? '只读' : (resetBlocked ? 'Host 输入复位未确认，控制已安全锁定' : '控制权正在切换')));
     const statusEl = document.getElementById('controlStatus');
     const button = document.getElementById('requestControlBtn');
     if (statusEl) statusEl.textContent = label;
@@ -3550,6 +3625,11 @@ if (this.tunnelLastObjectUrl) {
     if (!this.tunnelRelayActive) {
       return;
     }
+    if (data?.connectionAttemptId
+      && this.currentConnectionAttemptId
+      && data.connectionAttemptId !== this.currentConnectionAttemptId) {
+      return;
+    }
     if (this.isMediaHealthSuppressed() && this.getMediaAppliedPhase() === 'suspended') {
       // Intentional suspension: drop late frames without reviving FPS/health.
       return;
@@ -3580,6 +3660,11 @@ if (this.tunnelLastObjectUrl) {
       const frameSeq = (Number(this._videoFrameSeq) || 0) + 1;
       this._videoFrameSeq = frameSeq;
       this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
+      this.ensureDesktopSessionState()?.applyMedia({
+        attemptId: this.currentConnectionAttemptId,
+        event: 'fresh-frame',
+        fresh: true,
+      });
       this._lastRenderedRelayFrame = {
         frameId: frameId || this.tunnelLastFrameId,
         frameSeq,
@@ -4170,6 +4255,11 @@ if (this.tunnelLastObjectUrl) {
       if (this._videoFrameElement !== video) return;
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
       this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
+      this.ensureDesktopSessionState()?.applyMedia({
+        attemptId: this.currentConnectionAttemptId,
+        event: 'fresh-frame',
+        fresh: true,
+      });
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
@@ -4802,6 +4892,11 @@ if (this.tunnelLastObjectUrl) {
       this.socket.disconnect();
       this.socket = null;
     }
+    this.ensureDesktopSessionState()?.applyConnection({
+      attemptId: this.currentConnectionAttemptId,
+      state: 'disconnected',
+      socket: 'offline',
+    });
     document.getElementById('remoteVideo').classList.remove('connected');
     document.body.classList.remove('stream-connected');
     document.getElementById('loading')?.classList.remove('is-connecting');
