@@ -94,6 +94,13 @@ function loadWebRTC(overrides = {}) {
   }
   context.globalThis = context;
   vm.createContext(context);
+  if (!overrides.createDesktopSessionState) {
+    const stateSource = fs.readFileSync(path.join(__dirname, 'desktop-session-state.js'), 'utf8');
+    vm.runInContext(stateSource, context);
+    if (!context.createDesktopSessionState && context.window?.createDesktopSessionState) {
+      context.createDesktopSessionState = context.window.createDesktopSessionState;
+    }
+  }
   if (!overrides.PresentationBudget) {
     const budgetSource = fs.readFileSync(
       path.join(__dirname, 'presentation-budget.js'),

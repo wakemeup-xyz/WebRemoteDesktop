@@ -54,6 +54,22 @@ test('input requires live media, online socket, and active control', () => {
   assert.equal(state.snapshot().canInput, false);
 });
 
+test('stalled media and fresh frames preserve fail-closed input until control is active', () => {
+  const state = createDesktopSessionState();
+  const attempt = state.beginAttempt('attempt-owner', { socket: 'online' });
+  state.applyConnection({ attemptId: attempt.attemptId, state: 'connected' });
+  state.applyControl({ attemptId: attempt.attemptId, state: 'active' });
+  state.applyMedia({ attemptId: attempt.attemptId, event: 'fresh-frame', fresh: true });
+  assert.equal(state.snapshot().canInput, true);
+  state.applyMedia({ attemptId: attempt.attemptId, state: 'stalled' });
+  assert.equal(state.snapshot().canInput, false);
+  state.applyControl({ attemptId: attempt.attemptId, state: 'free' });
+  state.applyMedia({ attemptId: attempt.attemptId, event: 'fresh-frame', fresh: true });
+  assert.equal(state.snapshot().canInput, false);
+  state.applyControl({ attemptId: attempt.attemptId, state: 'active' });
+  assert.equal(state.snapshot().canInput, true);
+});
+
 test('stale fallback cannot grant input before the state module is available', () => {
   const session = createDesktopSessionState({ clock: () => 1 });
   assert.equal(session.snapshot().canInput, false);
