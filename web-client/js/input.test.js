@@ -180,15 +180,26 @@ test('mouse pointer cancel releases capture and sends one reset', () => {
   assert.equal(socketEvents.filter(({ payload }) => payload.action === 'reset').length, 1);
 });
 
-test('desktop mouse binding ignores touch pointers delegated to the touch adapter', () => {
+test('desktop mouse binding ignores complete touch sequences on video and relay image', () => {
   const { Input, context, socketEvents, elements } = loadInput();
   activate(Input, context);
   Input.setupEventListeners();
-  const video = elements.get('remoteVideo');
-  video.listeners.get('pointerdown')({
+  const touch = (element, type, overrides = {}) => element.listeners.get(type)({
     pointerType: 'touch', pointerId: 1, button: 0, detail: 1, timeStamp: 1,
-    clientX: 50, clientY: 50, currentTarget: video, preventDefault() {},
+    clientX: 50, clientY: 50, currentTarget: element, preventDefault() {}, ...overrides,
   });
+  for (const element of [elements.get('remoteVideo'), elements.get('relayImage')]) {
+    touch(element, 'pointerdown', {buttons: 1});
+    touch(element, 'pointermove', {clientX: 60, buttons: 1});
+    touch(element, 'pointerup', {clientX: 60, buttons: 0});
+    touch(element, 'pointerdown', {pointerId: 2, buttons: 1});
+    touch(element, 'pointercancel', {pointerId: 2, buttons: 0});
+    touch(element, 'lostpointercapture', {pointerId: 2, buttons: 0});
+    touch(element, 'wheel', {
+      pointerType: undefined, deltaX: 0, deltaY: 24,
+      sourceCapabilities: { firesTouchEvents: true },
+    });
+  }
   assert.equal(socketEvents.length, 0);
 });
 

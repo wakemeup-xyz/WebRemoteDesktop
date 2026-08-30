@@ -6,6 +6,7 @@ function makeTouchHarness() {
   const listeners = new Map(); const mouse = []; let now = 0; let timer = null; let frame = null; let lastTap = -Infinity;
   const element = {
     addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
     dispatch(type, event = {}) { listeners.get(type)?.({...event, type, currentTarget: element}); },
     setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return false; },
   };
@@ -21,7 +22,7 @@ function makeTouchHarness() {
     {pointerType: 'touch', isPrimary: true, preventDefault() {}, ...overrides});
   const advance = (ms) => { now += ms; if (timer && timer.at <= now) { const due = timer; timer = null; due.fn(); } };
   return {
-    element, mouse, pointer,
+    adapter, element, mouse, pointer,
     tap: (pointerId, atMs) => { advance(atMs - now); pointer('pointerdown', {pointerId, clientX: 40, clientY: 30, buttons: 1}); pointer('pointerup', {pointerId, clientX: 40, clientY: 30, buttons: 0}); },
     advance,
     flushAnimationFrame: () => { const due = frame; frame = null; due?.(); },
@@ -79,4 +80,40 @@ test('pointercancel and lostpointercapture emit one idempotent reset', () => {
   h.pointer('pointercancel', {pointerId: 1});
   h.element.dispatch('lostpointercapture', {pointerId: 1});
   assert.equal(h.mouse.filter(({action}) => action === 'reset').length, 1);
+});
+
+test('unbind removes touch event delivery', () => {
+  const h = makeTouchHarness();
+  h.adapter.unbind();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 40, clientY: 30, buttons: 1});
+  h.pointer('pointerup', {pointerId: 1, clientX: 40, clientY: 30, buttons: 0});
+  assert.deepEqual(h.mouse, []);
+});
+
+test('reset is idempotent and clears pending timer, frame, and gesture state', () => {
+  const h = makeTouchHarness();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});
+  h.pointer('pointermove', {pointerId: 1, clientX: 20, clientY: 10, buttons: 1});
+  h.adapter.reset('test-reset');
+  h.adapter.reset('test-reset');
+  h.advance(550);
+  h.flushAnimationFrame();
+  assert.deepEqual(h.mouse.map(({action}) => action), ['down', 'reset']);
+  const snapshot = h.adapter.getSnapshot();
+  assert.equal(snapshot.state, 'IDLE');
+  assert.equal(snapshot.bound, true);
+  assert.equal(snapshot.pendingReset, false);
+  assert.doesNotMatch(JSON.stringify(snapshot), /clientX|clientY|relX|relY|pointerId/);
+});
+
+test('explicit right click uses the latest mapped point and a paired action', () => {
+  const h = makeTouchHarness();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 80, clientY: 60, buttons: 1});
+  h.pointer('pointerup', {pointerId: 1, clientX: 80, clientY: 60, buttons: 0});
+  h.mouse.length = 0;
+  h.adapter.clickButton('right');
+  assert.deepEqual(h.mouse.map(({action, payload}) => [action, payload.button, payload.relX, payload.relY]), [
+    ['down', 'right', 0.5, 0.5],
+    ['up', 'right', 0.5, 0.5],
+  ]);
 });

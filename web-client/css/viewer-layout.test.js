@@ -89,10 +89,14 @@ test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
 test('mobile input reserves touch targets and keyboard safe area', () => {
   assert.match(html, /id="mobileTextInput"/);
   assert.match(html, /id="mobileTextInput"[^>]*inputmode="text"/);
-  assert.match(css, /touch-action\s*:\s*none/);
-  assert.match(css, /env\(safe-area-inset-bottom/);
-  assert.match(css, /keyboard-inset-height/);
-  assert.match(css, /min-height\s*:\s*var\(--touch-min\)/);
+  assert.match(html, /id="mobileInputDock"/);
+  const textInput = getBlock('#mobileTextInput');
+  const mobileDock = getBlock('#mobileInputDock');
+  const mobileControls = getBlock('#mobileInputDock .control-btn');
+  assert.match(textInput, /touch-action\s*:\s*none/);
+  assert.match(mobileDock, /env\(safe-area-inset-bottom/);
+  assert.match(mobileDock, /env\(keyboard-inset-height/);
+  assert.match(mobileControls, /min-height\s*:\s*var\(--touch-min\)/);
 });
 
 test('docks share one fixed column wrapper', () => {
