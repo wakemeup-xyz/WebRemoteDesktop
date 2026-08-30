@@ -61,3 +61,61 @@ Implementation commit hash: `4bf35c394f580a6859afdf417dc6ce8bc9a77abd`.
 - Viewer DOM/CSS still lacks the mobile input and keyboard-inset hooks.
 - The pre-existing blur failure in `web-client/js/input.test.js` remains open;
   it is unrelated to the new fixture files.
+
+## Fix round 1
+
+### Files
+
+- `web-client/js/input.test.js`
+  - Extends touch isolation through down/move/up, cancel, lost capture, and
+    touch-originated wheel on both `remoteVideo` and `relayImage`.
+- `web-client/js/touch-input-adapter.test.js`
+  - Freezes `unbind`, idempotent `reset`, `getSnapshot`, and explicit
+    `clickButton('right')` behavior with the deterministic harness.
+- `web-client/css/viewer-layout.test.js`
+  - Scopes static requirements to `#mobileTextInput`, `#mobileInputDock`, and
+    `#mobileInputDock .control-btn` instead of global CSS occurrences.
+
+### Commands and exact result summaries
+
+`node --test web-client/js/touch-input-adapter.test.js`
+
+Exit 1. `Error: Cannot find module './touch-input-adapter.js'`; `tests 1`,
+`pass 0`, `fail 1`.
+
+`node --test web-client/js/touch-input-adapter.test.js web-client/js/mobile-text-input.test.js web-client/css/viewer-layout.test.js`
+
+Exit 1. `tests 19`, `pass 16`, `fail 3`: missing
+`./touch-input-adapter.js`, missing `./mobile-text-input.js`, and the expected
+missing `id="mobileTextInput"` layout fixture.
+
+`node --test web-client/js/input.test.js`
+
+Exit 1. `tests 17`, `pass 15`, `fail 2`: the existing blur test still fails
+without a reset payload; the strengthened touch-isolation test fails with
+`10 !== 0`, proving current desktop handlers emit envelopes for the complete
+touch paths on both render surfaces.
+
+`git diff --check`
+
+Exit 0 with no output.
+
+### Commits
+
+- `71550a1c40f37ce8c6af5575ee1dde9835de65fd` - strengthened Task 1 red
+  fixtures.
+- Report evidence update committed separately after this section is added.
+
+### Self-review
+
+All three review findings are represented by deterministic contract tests. The
+tests intentionally remain red until later tasks add production adapters,
+DOM/CSS, and touch isolation in `Input`; no production module or v2 envelope was
+modified in this round.
+
+### Remaining concerns
+
+- Future implementation must honor the exact fixture selectors
+  `#mobileInputDock` and `#mobileTextInput`.
+- The existing blur test failure remains outside Task 1 scope and should be
+  investigated independently rather than masked by the mobile implementation.
