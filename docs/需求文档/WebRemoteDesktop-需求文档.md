@@ -424,3 +424,4 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-07-20 | 可靠性闭环 review 整改：ACTIVE controller disconnect 不再 FREE 窗口、媒体绑定 connectionAttemptId、resume 需真实新帧、tunnel Host applied ack（禁 synthetic applied）、Host 媒体 apply 失败 fail-closed、launchctl fixture 修复；真实验收 P95/双 Viewer/Terminal 重新标为 NOT RUN，不以旧 synthetic 结论宣称 PASS |
 | 2026-07-21 | 可靠性闭环后续：tunnel connectionAttempt 权威绑定（connectionAttemptSequence）、attempt binding 与 generation progress 拆分、Host fresh-capture false fail-closed、Viewer 有界重试/双 ack/stale frame 硬化；真实验收仍标 NOT RUN/BLOCKED，禁止伪造 PASS |
 | 2026-08-01 | 可靠性 review 修复：Host 仅在 applied 成功后推进 media generation；旧 attempt 负 ack 不再消耗当前恢复预算；新 attempt/控制权丢失后输入等待当前画面；tunnel PASS 强制 attempt 不变；双 Viewer 在缺少 Signal/Host 拒绝证据时只标 PARTIAL；runtime 报告增加不可覆盖的时间戳文件与 SHA-256 |
+| 2026-08-30 | Terminal 共享会话协议治理：snapshot 明确 processStatus/presence/presenter，canonical 事件集中适配并统计 legacy alias；Terminal UI 区分观察/控制、detach 与销毁；旧 `/input` relay 标记 deprecated 且启动断言保持未挂载 |

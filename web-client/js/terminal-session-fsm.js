@@ -56,6 +56,7 @@
         sessionId: session.sessionId,
         title: session.title || previous.title || `Terminal ${fallbackIndex}`,
         status: session.status || previous.status || 'running',
+        presence: session.presence || previous.presence || session.status || previous.status || 'attached',
         processStatus: normalizeProcessStatus(
           session.processStatus,
           normalizeProcessStatus(previous.processStatus, 'running'),

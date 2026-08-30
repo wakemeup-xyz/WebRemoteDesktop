@@ -438,7 +438,7 @@ test('socket disconnect detaches only the disconnected socket observer without c
 });
 
 test('legacy terminal:create and terminal:attach aliases still map into shared session semantics', async () => {
-  const { namespace } = buildTerminalHarness();
+  const { namespace, terminal } = buildTerminalHarness();
   const adminA = namespace.connect(new FakeSocket('admin-a', 'admin'));
   await adminA.trigger('terminal:create', { cols: 120, rows: 32, title: 'Compat shell' });
   const created = adminA.sent.find((message) => message.event === 'terminal:session_created').data;
@@ -449,6 +449,8 @@ test('legacy terminal:create and terminal:attach aliases still map into shared s
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:created'), true);
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:session_attached'), true);
   assert.equal(adminA.sent.some((message) => message.event === 'terminal:attached'), true);
+  assert.equal(terminal.getAliasTelemetry().create, 1);
+  assert.equal(terminal.getAliasTelemetry().attach, 1);
 });
 
 test('terminal:detach_session detaches only the calling observer and terminal:close_session removes the shared session', async () => {

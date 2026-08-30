@@ -123,8 +123,11 @@ function loadTerminal(overrides = {}) {
     'terminalAdminPassword',
     'terminalAuthBtn',
     'terminalNewBtn',
+    'terminalDetachBtn',
+    'terminalCloseBtn',
     'terminalSessionTabs',
     'terminalStatus',
+    'terminalSessionInfo',
     'terminalWarning',
     'terminalWorkspace',
     'terminalComposer',
@@ -1405,6 +1408,41 @@ test('TerminalPanel maps stable PTY errors to concise Chinese status', () => {
   assert.match(elements.get('terminalStatus').textContent, /正在启动/);
   socketHandlers.get('terminal:error')({ code: 'pty_exited' });
   assert.match(elements.get('terminalStatus').textContent, /已退出/);
+});
+
+test('TerminalPanel distinguishes observer role and makes detach non-destructive', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted, elements } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.ensureSession({
+    sessionId: 'term-shared',
+    title: 'Shared shell',
+    status: 'attached',
+    presence: 'attached',
+    processStatus: 'running',
+    observerCount: 2,
+    activePresenterClientId: 'other-browser',
+    callerIsPresenter: false,
+  }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term-shared');
+  TerminalPanel.render();
+
+  assert.match(elements.get('terminalSessionInfo').textContent, /观察者/);
+  assert.match(elements.get('terminalSessionInfo').textContent, /观察者 2 人/);
+  assert.equal(elements.get('terminalCloseBtn').disabled, false);
+
+  assert.equal(TerminalPanel.detachSession('term-shared'), true);
+  assert.equal(emitted.at(-1).event, 'terminal:detach_session');
+  assert.equal(emitted.at(-1).payload.sessionId, 'term-shared');
+  assert.equal(TerminalPanel.attachedSessionIds.has('term-shared'), true);
+  socketHandlers.get('terminal:session_detached')({ sessionId: 'term-shared', presence: 'detached' });
+  assert.equal(TerminalPanel.attachedSessionIds.has('term-shared'), false);
+  assert.equal(TerminalPanel.state.getSession('term-shared').processStatus, 'running');
+  assert.equal(TerminalPanel.state.getSession('term-shared').presence, 'detached');
 });
 
 test('TerminalPanel auto-attaches the default shared session from a fresh pool snapshot', () => {

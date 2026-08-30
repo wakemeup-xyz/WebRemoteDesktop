@@ -455,11 +455,12 @@ body.stream-connected .status-action-secondary:focus-visible {
     "note"
     "transport"
     "status"
+    "session-info"
     "warning"
     "retry"
     "workspace"
     "composer";
-  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto auto auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 14px;
   background: #050508;
@@ -471,6 +472,7 @@ body.stream-connected .status-action-secondary:focus-visible {
 .terminal-pool-note { grid-area: note; }
 .terminal-transport-row { grid-area: transport; }
 #terminalStatus { grid-area: status; }
+#terminalSessionInfo { grid-area: session-info; }
 #terminalWarning { grid-area: warning; }
 #terminalLoadRetryBtn { grid-area: retry; }
 .terminal-workspace { grid-area: workspace; }
@@ -645,6 +647,11 @@ body.stream-connected .status-action-secondary:focus-visible {
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(15, 23, 42, 0.6);
   color: var(--text-muted);
+}
+
+.terminal-session-info {
+  color: var(--text-muted);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .terminal-status[data-state="connected"] {

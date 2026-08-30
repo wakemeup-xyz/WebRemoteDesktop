@@ -150,7 +150,13 @@ function createTerminalSessionManager(options = {}) {
     return now().toISOString();
   }
 
-  function snapshotSession(session) {
+  function snapshotSession(session, callerClientId = null) {
+    const normalizedCallerClientId = String(callerClientId || '').trim();
+    const isPresenter = Boolean(
+      normalizedCallerClientId
+      && session.activePresenterClientId
+      && normalizedCallerClientId === session.activePresenterClientId,
+    );
     return {
       poolId: pool.poolId,
       sessionId: session.sessionId,
@@ -160,12 +166,17 @@ function createTerminalSessionManager(options = {}) {
       cols: session.cols,
       rows: session.rows,
       status: session.status,
+      // Keep observer presence separate from PTY process lifecycle.
+      presence: session.status,
       processStatus: session.processStatus,
       createdAt: session.createdAt,
       lastActiveAt: session.lastActiveAt,
       detachedReason: session.detachedReason || null,
       observerCount: session.observers.size,
       activePresenterClientId: session.activePresenterClientId || null,
+      ...(normalizedCallerClientId
+        ? { isPresenter, callerIsPresenter: isPresenter }
+        : {}),
       creatorClientId: session.creatorClientId || null,
       lastReplaySeq: session.replayBuffer.lastSeq(),
       exitCode: session.exitCode ?? null,
@@ -173,7 +184,10 @@ function createTerminalSessionManager(options = {}) {
     };
   }
 
-  function getPoolSnapshot() {
+  function getPoolSnapshot(options = {}) {
+    const callerClientId = typeof options === 'string'
+      ? options
+      : options?.clientId;
     return {
       poolId: pool.poolId,
       title: pool.title,
@@ -189,7 +203,7 @@ function createTerminalSessionManager(options = {}) {
         replayBufferBytesPerSession: config.replayBufferBytes,
         maxReplayBytes: config.maxSessions * config.replayBufferBytes,
       },
-      sessions: Array.from(sessions.values()).map(snapshotSession),
+      sessions: Array.from(sessions.values()).map((session) => snapshotSession(session, callerClientId)),
     };
   }
 
@@ -851,7 +865,7 @@ function createTerminalSessionManager(options = {}) {
       observerCount: session.observers.size,
       ioRecording: config.recordIoMetadata,
     });
-    return snapshotSession(session);
+    return snapshotSession(session, input.clientId);
   }
 
   function attachSession(sessionId, input = {}) {
@@ -891,7 +905,7 @@ function createTerminalSessionManager(options = {}) {
     metrics.recordCounter('session_attach');
     metrics.recordLatency('attach_ms', Math.max(0, Date.now() - attachStartedAt));
     return {
-      ...snapshotSession(session),
+      ...snapshotSession(session, input.clientId),
       replay: session.replayBuffer.snapshot(),
     };
   }
@@ -932,7 +946,7 @@ function createTerminalSessionManager(options = {}) {
       reason: input.reason || 'detached',
     });
     if (removedCount > 0) metrics.recordCounter('session_detach');
-    return snapshotSession(session);
+    return snapshotSession(session, input.clientId);
   }
 
   function detachSession(sessionId, reason = 'detached') {
@@ -955,7 +969,7 @@ function createTerminalSessionManager(options = {}) {
     }
     session.activePresenterClientId = clientId;
     session.lastActiveAt = timestamp();
-    return snapshotSession(session);
+    return snapshotSession(session, input.clientId);
   }
 
   function isObserverAttached(sessionId, input = {}) {
@@ -1008,7 +1022,7 @@ function createTerminalSessionManager(options = {}) {
     }
     session.lastActiveAt = timestamp();
     metrics.recordCounter('input_accepted');
-    return snapshotSession(session);
+    return snapshotSession(session, input.clientId);
   }
 
   function resizeSession(sessionId, input = {}) {
@@ -1031,7 +1045,7 @@ function createTerminalSessionManager(options = {}) {
     session.cols = cols;
     session.rows = rows;
     session.lastActiveAt = timestamp();
-    return snapshotSession(session);
+    return snapshotSession(session, input.clientId);
   }
 
   async function closeSession(sessionId, input = {}) {
@@ -1158,6 +1172,10 @@ function createTerminalSessionManager(options = {}) {
     return {
       poolId: pool.poolId,
       sessionId: session.sessionId,
+      // Presence describes attachments; processStatus remains the PTY lifecycle.
+      presence: session.status,
+      status: session.status,
+      processStatus: session.processStatus,
       observerCount: session.observers.size,
       activePresenterClientId: session.activePresenterClientId || null,
       observers: Array.from(session.observers.values()).map((observer) => ({

@@ -5,6 +5,15 @@ const { createTerminalAudit } = require('../lib/terminal/audit');
 const { TerminalMetrics } = require('../lib/terminal/metrics');
 const { createTerminalWebRtcGateway } = require('../lib/terminal/webrtc-gateway');
 
+const TERMINAL_EVENT_ALIASES = Object.freeze({
+  pool_snapshot: ['snapshot'],
+  session_created: ['created'],
+  session_attached: ['attached'],
+  session_detached: ['detached'],
+  session_closed: ['closed'],
+});
+const TERMINAL_PROTOCOL_VERSION = '2026-08-30';
+
 function getToken(socket) {
   return socket.handshake?.auth?.token || null;
 }
@@ -68,6 +77,38 @@ function setupTerminal(io, options = {}) {
   });
 
   const terminalNamespace = io.of('/terminal');
+  const aliasHitCounters = new Map();
+  function recordAliasHit(alias, canonical) {
+    const key = String(alias || '');
+    if (!key) return;
+    const count = Math.min(1000000, (aliasHitCounters.get(key) || 0) + 1);
+    aliasHitCounters.set(key, count);
+    audit.info('terminal_legacy_alias_hit', {
+      alias: key,
+      canonical,
+      count,
+      protocolVersion: TERMINAL_PROTOCOL_VERSION,
+    });
+  }
+  function emitCanonical(target, canonical, payload, acknowledge) {
+    const event = `terminal:${canonical}`;
+    if (typeof acknowledge === 'function') {
+      target.emit(event, payload, acknowledge);
+    } else {
+      target.emit(event, payload);
+    }
+    for (const alias of TERMINAL_EVENT_ALIASES[canonical] || []) {
+      if (typeof acknowledge === 'function') {
+        target.emit(`terminal:${alias}`, payload, acknowledge);
+      } else {
+        target.emit(`terminal:${alias}`, payload);
+      }
+    }
+  }
+  function redactCallerPresenter(snapshot = {}) {
+    const { isPresenter, callerIsPresenter, ...shared } = snapshot;
+    return shared;
+  }
   let idleReaperTimer = null;
   if (
     Number(config.terminalIdleTimeoutMs) > 0
@@ -79,8 +120,7 @@ function setupTerminal(io, options = {}) {
         .then((reaped) => {
           if (!reaped.length) return;
           const snapshot = sessionManager.getPoolSnapshot();
-          terminalNamespace.emit('terminal:pool_snapshot', snapshot);
-          terminalNamespace.emit('terminal:snapshot', snapshot);
+          emitCanonical(terminalNamespace, 'pool_snapshot', snapshot);
         })
         .catch((error) => {
           audit.error('terminal_idle_reap_failed', {
@@ -136,16 +176,34 @@ function setupTerminal(io, options = {}) {
     }
 
     function emitPoolSnapshot() {
-      const snapshot = sessionManager.getPoolSnapshot();
-      terminalNamespace.emit('terminal:pool_snapshot', snapshot);
-      terminalNamespace.emit('terminal:snapshot', snapshot);
+      // Socket.IO namespaces expose connected sockets in production. Emit a
+      // caller-aware snapshot there so presenter flags remain truthful; the
+      // test adapter/fallback still receives one shared snapshot.
+      if (terminalNamespace.sockets?.forEach) {
+        terminalNamespace.sockets.forEach((target) => {
+          emitCanonical(target, 'pool_snapshot', sessionManager.getPoolSnapshot({ clientId: target.id }));
+        });
+        return;
+      }
+      emitCanonical(terminalNamespace, 'pool_snapshot', sessionManager.getPoolSnapshot());
     }
 
     function emitPresence(sessionId) {
       if (typeof sessionManager.getPresence !== 'function') {
         return;
       }
-      terminalNamespace.emit('terminal:presence', sessionManager.getPresence(sessionId));
+      const presence = sessionManager.getPresence(sessionId);
+      if (terminalNamespace.sockets?.forEach) {
+        terminalNamespace.sockets.forEach((target) => {
+          target.emit('terminal:presence', {
+            ...presence,
+            isPresenter: presence.activePresenterClientId === target.id,
+            callerIsPresenter: presence.activePresenterClientId === target.id,
+          });
+        });
+        return;
+      }
+      terminalNamespace.emit('terminal:presence', presence);
     }
 
     function requireAttachedSession(sessionId, rejectionEvent, errorContext = {}) {
@@ -218,8 +276,7 @@ function setupTerminal(io, options = {}) {
         },
         onPresence: ({ presence, pool }) => {
           terminalNamespace.emit('terminal:presence', presence);
-          terminalNamespace.emit('terminal:pool_snapshot', pool);
-          terminalNamespace.emit('terminal:snapshot', pool);
+          emitCanonical(terminalNamespace, 'pool_snapshot', pool);
         },
       };
     }
@@ -283,16 +340,13 @@ function setupTerminal(io, options = {}) {
           onPresence: ({ presence, pool }) => {
             if (!sessionRef.sessionId) return;
             terminalNamespace.emit('terminal:presence', presence);
-            terminalNamespace.emit('terminal:pool_snapshot', pool);
-            terminalNamespace.emit('terminal:snapshot', pool);
+            emitCanonical(terminalNamespace, 'pool_snapshot', pool);
           },
         });
         sessionRef.sessionId = created.sessionId;
         const creatorPayload = { ...created, requestId };
-        socket.emit('terminal:session_created', creatorPayload);
-        socket.emit('terminal:created', creatorPayload);
-        socket.broadcast.emit('terminal:session_created', created);
-        socket.broadcast.emit('terminal:created', created);
+        emitCanonical(socket, 'session_created', creatorPayload);
+        emitCanonical(socket.broadcast, 'session_created', redactCallerPresenter(created));
         for (const pending of pendingLifecycleEvents) {
           const correlatedPayload = {
             ...pending.payload,
@@ -340,8 +394,7 @@ function setupTerminal(io, options = {}) {
           sessionId: attached.sessionId,
           replay: attached.replay,
         });
-        socket.emit('terminal:session_attached', attachedPayload);
-        socket.emit('terminal:attached', attachedPayload);
+        emitCanonical(socket, 'session_attached', attachedPayload);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
@@ -360,8 +413,7 @@ function setupTerminal(io, options = {}) {
           socketId,
           reason: payload.reason || 'socket-detach',
         });
-        socket.emit('terminal:session_detached', detached);
-        socket.emit('terminal:detached', detached);
+        emitCanonical(socket, 'session_detached', detached);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
@@ -385,8 +437,7 @@ function setupTerminal(io, options = {}) {
           ...correlation,
           sessionId: closed.sessionId || correlation.sessionId,
         };
-        terminalNamespace.emit('terminal:session_closed', closedPayload);
-        terminalNamespace.emit('terminal:closed', closedPayload);
+        emitCanonical(terminalNamespace, 'session_closed', closedPayload);
         emitPoolSnapshot();
       } catch (err) {
         const code = err.code || 'terminal_close_failed';
@@ -416,8 +467,7 @@ function setupTerminal(io, options = {}) {
           clientId,
           socketId,
         });
-        socket.emit('terminal:session_attached', updated);
-        socket.emit('terminal:attached', updated);
+        emitCanonical(socket, 'session_attached', updated);
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {
@@ -428,15 +478,12 @@ function setupTerminal(io, options = {}) {
       }
     }
 
-    const initialSnapshot = sessionManager.getPoolSnapshot();
-    socket.emit('terminal:pool_snapshot', initialSnapshot);
-    socket.emit('terminal:snapshot', initialSnapshot);
+    emitCanonical(socket, 'pool_snapshot', sessionManager.getPoolSnapshot({ clientId }));
     socket.emit('terminal:webrtc_capability', webrtcGateway.capability());
 
     socket.on('terminal:list', () => {
-      const snapshot = sessionManager.getPoolSnapshot();
-      socket.emit('terminal:pool_snapshot', snapshot);
-      socket.emit('terminal:snapshot', snapshot);
+      const snapshot = sessionManager.getPoolSnapshot({ clientId });
+      emitCanonical(socket, 'pool_snapshot', snapshot);
     });
 
     socket.on('terminal:create_session', handleCreate);
@@ -445,10 +492,10 @@ function setupTerminal(io, options = {}) {
     socket.on('terminal:close_session', handleClose);
     socket.on('terminal:set_active_presenter', handleSetActivePresenter);
     socket.on('terminal:set_active_session', handleSetActivePresenter);
-    socket.on('terminal:create', handleCreate);
-    socket.on('terminal:attach', handleAttach);
-    socket.on('terminal:detach', handleDetach);
-    socket.on('terminal:close', handleClose);
+    socket.on('terminal:create', (...args) => { recordAliasHit('create', 'create_session'); return handleCreate(...args); });
+    socket.on('terminal:attach', (...args) => { recordAliasHit('attach', 'attach_session'); return handleAttach(...args); });
+    socket.on('terminal:detach', (...args) => { recordAliasHit('detach', 'detach_session'); return handleDetach(...args); });
+    socket.on('terminal:close', (...args) => { recordAliasHit('close', 'close_session'); return handleClose(...args); });
     socket.on('terminal:ping', (payload = {}) => {
       const serverReceivedAt = Date.now();
       socket.emit('terminal:pong', {
@@ -701,6 +748,9 @@ function setupTerminal(io, options = {}) {
     metrics,
     webrtcGateway,
     close,
+    getAliasTelemetry() {
+      return Object.fromEntries(aliasHitCounters.entries());
+    },
   };
 }
 

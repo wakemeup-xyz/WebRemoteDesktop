@@ -190,6 +190,12 @@ function createServerApp(options = {}) {
     ...terminalOptions,
     metrics: terminalMetrics,
   });
+  // Legacy websocket/input.js is deliberately not mounted. Assert this when
+  // Socket.IO exposes its namespace registry so accidental reintroduction
+  // fails at startup instead of bypassing Terminal observer governance.
+  if (io._nsps?.has?.('/input')) {
+    throw new Error('[input] legacy input relay must remain unmounted');
+  }
 
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

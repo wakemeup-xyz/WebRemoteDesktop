@@ -1,6 +1,9 @@
-// Deprecated compatibility module. The production server uses the default
-// signaling namespace's input router; keep this isolated namespace available
-// for older embedders until their migration is verified.
+/**
+ * @deprecated Legacy desktop input relay. This module is intentionally not
+ * mounted by server.js. Terminal input must go through websocket/terminal.js,
+ * where observer authorization, lifecycle checks, and rate limiting apply.
+ * Remove only after the compatibility observation window records zero hits.
+ */
 function setupInputRelay(io, connections) {
   const inputNamespace = io.of('/input');
 

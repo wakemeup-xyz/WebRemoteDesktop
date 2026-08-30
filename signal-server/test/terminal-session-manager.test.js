@@ -78,6 +78,42 @@ test('shared session manager enforces a hard session ceiling and reports bounded
   assert.equal(ptys.length, 3);
 });
 
+test('session snapshots separate process lifecycle from presence and expose caller presenter state', async () => {
+  const pty = createFakePty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: { enabled: true, adminPassword: 'test-admin' },
+  });
+
+  const created = await manager.createSession({ clientId: 'presenter-a', socketId: 'socket-a' });
+  assert.equal(created.processStatus, 'starting');
+  assert.equal(created.presence, 'attached');
+  assert.equal(created.observerCount, 1);
+  assert.equal(created.activePresenterClientId, 'presenter-a');
+  assert.equal(created.isPresenter, true);
+  assert.equal(created.callerIsPresenter, true);
+
+  pty.emitData('ready');
+  const attached = manager.attachSession(created.sessionId, {
+    clientId: 'observer-b',
+    socketId: 'socket-b',
+  });
+  assert.equal(attached.processStatus, 'running');
+  assert.equal(attached.presence, 'attached');
+  assert.equal(attached.observerCount, 2);
+  assert.equal(attached.isPresenter, false);
+  assert.equal(attached.callerIsPresenter, false);
+
+  const detached = manager.detachObserver(created.sessionId, {
+    clientId: 'observer-b',
+    socketId: 'socket-b',
+  });
+  assert.equal(detached.processStatus, 'running');
+  assert.equal(detached.presence, 'attached');
+  assert.equal(detached.isPresenter, false);
+});
+
 test('idle detached sessions are reaped using the configured timeout', async () => {
   let nowMs = Date.parse('2026-07-18T00:00:00.000Z');
   const pty = createFakePty();

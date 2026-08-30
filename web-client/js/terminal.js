@@ -275,6 +275,7 @@ const TerminalPanel = {
   bootstrapPromisesByToken: new Map(),
   transportLatency: new Map(),
   aliasedEvents: new Map(),
+  aliasHitCounters: new Map(),
   _initialized: false,
 
   init() {
@@ -303,8 +304,11 @@ const TerminalPanel = {
       authPassword: document.getElementById('terminalAdminPassword'),
       authButton: document.getElementById('terminalAuthBtn'),
       newButton: document.getElementById('terminalNewBtn'),
+      detachButton: document.getElementById('terminalDetachBtn'),
+      closeButton: document.getElementById('terminalCloseBtn'),
       sessionTabs: document.getElementById('terminalSessionTabs'),
       status: document.getElementById('terminalStatus'),
+      sessionInfo: document.getElementById('terminalSessionInfo'),
       warning: document.getElementById('terminalWarning'),
       workspace: document.getElementById('terminalWorkspace'),
       composer: document.getElementById('terminalComposer'),
@@ -324,6 +328,14 @@ const TerminalPanel = {
       this.authorize();
     });
     this.elements.newButton?.addEventListener('click', () => this.createSession());
+    this.elements.detachButton?.addEventListener('click', () => {
+      const active = this.state.activeSessionId();
+      if (active) this.detachSession(active);
+    });
+    this.elements.closeButton?.addEventListener('click', () => {
+      const active = this.state.activeSessionId();
+      if (active) this.closeSession(active);
+    });
     this.elements.composer?.addEventListener('input', () => this.handleComposerInput());
     this.elements.composer?.addEventListener('keydown', (event) => this.handleComposerKeydown(event));
     this.elements.composerSubmit?.addEventListener('click', () => this.submitComposer());
@@ -583,7 +595,10 @@ const TerminalPanel = {
       this.pendingAttachSessionIds.clear();
       this.pendingCreateRequestId = null;
       this.setStatus('断线重连中', 'warning');
-      this.state.getSessions().forEach((session) => this.state.updateStatus(session.sessionId, 'detached'));
+      this.state.getSessions().forEach((session) => this.state.updateSession(session.sessionId, {
+        status: 'detached',
+        presence: 'detached',
+      }));
       this.render();
     });
     this.socket.on('connect_error', (err) => {
@@ -610,13 +625,16 @@ const TerminalPanel = {
     const handleSessionClosed = (session) => this.dispatchAliasedEvent(
       'closed', session, () => this.handleSessionClosed(session),
     );
+    const handleSessionDetached = (session) => this.dispatchAliasedEvent(
+      'detached', session, () => this.handleSessionDetached(session),
+    );
 
-    this.socket.on('terminal:pool_snapshot', applyPoolSnapshot);
-    this.socket.on('terminal:snapshot', applyPoolSnapshot);
-    this.socket.on('terminal:session_created', handleSessionCreated);
-    this.socket.on('terminal:created', handleSessionCreated);
-    this.socket.on('terminal:session_attached', handleSessionAttached);
-    this.socket.on('terminal:attached', handleSessionAttached);
+    this.socket.on('terminal:pool_snapshot', (payload) => applyPoolSnapshot(payload));
+    this.socket.on('terminal:snapshot', (payload) => this.dispatchAliasedEvent('snapshot', payload, () => this.applyPoolSnapshot(payload), { legacy: true }));
+    this.socket.on('terminal:session_created', (session) => handleSessionCreated(session));
+    this.socket.on('terminal:created', (session) => this.dispatchAliasedEvent('created', session, () => this.handleSessionCreated(session), { legacy: true }));
+    this.socket.on('terminal:session_attached', (session) => handleSessionAttached(session));
+    this.socket.on('terminal:attached', (session) => this.dispatchAliasedEvent('attached', session, () => this.attachSessionState(session), { legacy: true }));
     this.socket.on('terminal:output', (payload, acknowledge) => {
       try {
         // While TURN DC output is preferred and healthy, suppress Socket.IO output
@@ -679,8 +697,10 @@ const TerminalPanel = {
       this.writeOutput(payload.sessionId, `\r\n[process exited: ${payload.exitCode ?? ''} ${payload.signal || ''}]\r\n`);
       this.render();
     });
-    this.socket.on('terminal:session_closed', handleSessionClosed);
-    this.socket.on('terminal:closed', handleSessionClosed);
+    this.socket.on('terminal:session_closed', (session) => handleSessionClosed(session));
+    this.socket.on('terminal:closed', (session) => this.dispatchAliasedEvent('closed', session, () => this.handleSessionClosed(session), { legacy: true }));
+    this.socket.on('terminal:session_detached', (session) => handleSessionDetached(session));
+    this.socket.on('terminal:detached', (session) => this.dispatchAliasedEvent('detached', session, () => this.handleSessionDetached(session), { legacy: true }));
     this.socket.on('terminal:presence', (payload) => {
       this.updatePresence(payload);
     });
@@ -1240,10 +1260,16 @@ const TerminalPanel = {
     return promise;
   },
 
-  dispatchAliasedEvent(kind, payload = {}, apply) {
+  dispatchAliasedEvent(kind, payload = {}, apply, options = {}) {
+    if (options.legacy) {
+      const count = Math.min(1000000, Number(this.aliasHitCounters.get(kind) || 0) + 1);
+      this.aliasHitCounters.set(kind, count);
+    }
     const identity = payload.sessionId || payload.poolId || 'pool';
     const key = `${kind}:${identity}:${JSON.stringify(payload)}`;
-    if (this.aliasedEvents.has(key)) return false;
+    if (this.aliasedEvents.has(key)) {
+      return false;
+    }
     this.aliasedEvents.set(key, true);
     const timer = setTimeout(() => this.aliasedEvents.delete(key), 0);
     timer?.unref?.();
@@ -1530,6 +1556,18 @@ const TerminalPanel = {
     this.render();
   },
 
+  handleSessionDetached(session = {}) {
+    if (!session.sessionId) return;
+    this.attachedSessionIds.delete(session.sessionId);
+    this.pendingAttachSessionIds.delete(session.sessionId);
+    this.state.updateSession(session.sessionId, {
+      ...session,
+      presence: 'detached',
+      status: 'detached',
+    });
+    this.render();
+  },
+
   requestAttachSession(sessionId) {
     if (!this.socket?.connected || !sessionId) return;
     if (this.attachedSessionIds.has(sessionId) || this.pendingAttachSessionIds.has(sessionId)) {
@@ -1551,6 +1589,7 @@ const TerminalPanel = {
     this.state.updateSession(payload.sessionId, {
       observerCount: Number(payload.observerCount ?? 0),
       activePresenterClientId: payload.activePresenterClientId ?? null,
+      presence: payload.presence || (Number(payload.observerCount ?? 0) > 0 ? 'attached' : 'detached'),
     });
     this.render();
   },
@@ -1676,6 +1715,19 @@ const TerminalPanel = {
     this.pendingCloseSessionIds.set(sessionId, operationId);
     this.socket.emit('terminal:close_session', { sessionId, reason: 'user-close', operationId });
     this.render();
+  },
+
+  detachSession(sessionId) {
+    if (!this.socket?.connected || !sessionId) {
+      this.setStatus('终端连接不可用，请稍后重试', 'warning');
+      return false;
+    }
+    if (!this.attachedSessionIds.has(sessionId)) return false;
+    this.socket.emit('terminal:detach_session', { sessionId, reason: 'user-detach' });
+    // Keep the local attachment until the server confirms detach; this avoids
+    // diverging from shared-session truth when a request is rejected.
+    this.render();
+    return true;
   },
 
   activateSession(sessionId, options = {}) {
@@ -2104,6 +2156,30 @@ const TerminalPanel = {
 
     const sessions = this.state.getSessions();
     const activeId = this.state.activeSessionId();
+    const activeSession = activeId ? this.state.getSession(activeId) : null;
+    const activeAttached = Boolean(activeId && this.attachedSessionIds.has(activeId));
+    const activePresenter = Boolean(activeSession?.callerIsPresenter || activeSession?.isPresenter);
+    if (this.elements.detachButton) {
+      this.elements.detachButton.classList.toggle('hidden', !authorized || !activeAttached);
+      this.elements.detachButton.disabled = !connected || !activeAttached;
+      this.elements.detachButton.textContent = activePresenter ? '离开控制' : '离开观察';
+    }
+    if (this.elements.closeButton) {
+      const canClose = Boolean(authorized && activeAttached && activeSession);
+      this.elements.closeButton.classList.toggle('hidden', !canClose);
+      this.elements.closeButton.disabled = !connected || !canClose;
+    }
+    if (this.elements.sessionInfo) {
+      if (!activeSession) {
+        this.elements.sessionInfo.textContent = '';
+      } else {
+        const process = processStatusLabel(activeSession.processStatus) || '运行中';
+        const presence = activeSession.presence || activeSession.status || 'detached';
+        const role = activePresenter ? '当前控制者' : (activeAttached ? '观察者' : '可接管');
+        const presenceText = presence === 'attached' ? '已附着' : '已 detach';
+        this.elements.sessionInfo.textContent = `${role} · ${presenceText} · 观察者 ${Number(activeSession.observerCount || 0)} 人 · ${process}`;
+      }
+    }
     if (this.elements.sessionTabs) {
       this.elements.sessionTabs.innerHTML = '';
       sessions.forEach((session) => {
@@ -2123,9 +2199,11 @@ const TerminalPanel = {
         const close = document.createElement('span');
         close.className = 'terminal-session-close';
         close.textContent = '×';
+        close.title = '离开此会话（detach，不销毁 PTY）';
+        close.setAttribute?.('aria-label', '离开会话');
         close.addEventListener('click', (event) => {
           event.stopPropagation();
-          this.closeSession(session.sessionId);
+          this.detachSession(session.sessionId);
         });
         button.appendChild(close);
         this.elements.sessionTabs.appendChild(button);
