@@ -7,7 +7,7 @@ const UI = {
 
   canUseDesktopControls() {
     const snapshot = this.getDesktopSessionSnapshot();
-    return snapshot ? snapshot.canInput === true : true;
+    return snapshot ? snapshot.canInput === true : false;
   },
 
   init() {

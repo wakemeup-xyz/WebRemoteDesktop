@@ -773,7 +773,7 @@ const WebRTC = {
       media: this.hasPaintedFrame ? 'live' : 'none',
       control: this.hasActiveControl() ? 'active' : 'free',
       socket: this.socket?.connected ? 'online' : 'offline',
-      canInput: this.canEnableDesktopInput(),
+      canInput: false,
       lastTransitionAt: Date.now(),
     };
   },

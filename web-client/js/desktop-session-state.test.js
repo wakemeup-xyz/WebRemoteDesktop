@@ -53,3 +53,8 @@ test('input requires live media, online socket, and active control', () => {
   state.applyMedia({ attemptId: attempt.attemptId, state: 'stalled' });
   assert.equal(state.snapshot().canInput, false);
 });
+
+test('stale fallback cannot grant input before the state module is available', () => {
+  const session = createDesktopSessionState({ clock: () => 1 });
+  assert.equal(session.snapshot().canInput, false);
+});
