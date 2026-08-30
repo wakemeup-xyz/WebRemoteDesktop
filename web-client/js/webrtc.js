@@ -84,6 +84,8 @@ const WebRTC = {
   mediaActivityController: null,
   mediaActivityLifecycle: null,
   mediaActivityRuntime: null,
+  // Internal state seam; WebRTC remains the public facade and event owner.
+  sessionCoordinator: null,
   _mediaResumeFramePending: false,
   _mediaResumeBaseline: null,
   _mediaResumeFrameTimer: null,
@@ -737,6 +739,7 @@ const WebRTC = {
     // on full-relay paths that regularly sit at 0 FPS for multi-second gaps.
     if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
+    this.initializeSessionCoordinator()?.noteMediaPainted({ attemptId, reason: 'media-ready' });
     this.clearFirstFrameDeadline();
     if (this.hasPaintedFrame && this.uiPhase !== 'disconnected') {
       this.setUiPhase('connected', { reason: 'media-ready' });
@@ -795,12 +798,31 @@ const WebRTC = {
     return `wrd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   },
 
+  initializeSessionCoordinator() {
+    if (this.sessionCoordinator || typeof DesktopSessionCoordinator === 'undefined') {
+      return this.sessionCoordinator;
+    }
+    this.sessionCoordinator = DesktopSessionCoordinator({
+      uiPhase: this.uiPhase,
+      lease: ControlLeaseView({ ...this.controlState }),
+    });
+    return this.sessionCoordinator;
+  },
+
   beginConnectionAttempt(trigger = 'viewer-open') {
+    this.initializeSessionCoordinator();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
       socket: this.socket?.connected ? 'online' : 'connecting',
     });
+    this.sessionCoordinator?.transitionConnection({
+      type: 'signaling',
+      attemptId: this.currentConnectionAttemptId,
+      attemptSequence: this.connectionAttemptSequence,
+      reason: trigger,
+    });
+    this.sessionCoordinator?.beginMedia(this.currentConnectionAttemptId);
     this._mediaReadyConnectionAttemptId = null;
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
@@ -1191,6 +1213,7 @@ const WebRTC = {
     }
     const sessionPhase = session ? this.getDesktopSessionSnapshot().phase : phase;
     this.syncChromeCapabilities();
+    this.sessionCoordinator?.setUiPhase(phase);
     if (sessionPhase === 'signaling') {
       updateConnectionStatus('connecting');
     } else {
@@ -1383,6 +1406,7 @@ const WebRTC = {
           event: 'fresh-frame',
           fresh: true,
         });
+        this.initializeSessionCoordinator()?.noteMediaDecoded(framesDecoded - baseline);
         this._stallSince = null;
         this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
         this.setUiPhase('connected', { reason: stats.source || 'paint-growth' });
@@ -1395,6 +1419,7 @@ const WebRTC = {
     }
 
     if (fps === 0 && framesReceived > 0) {
+      this.initializeSessionCoordinator()?.markMediaStalled('zero-fps');
       if (!this._stallSince) this._stallSince = Date.now();
       const stallMs = this.paintStallThresholdMs();
       if (Date.now() - this._stallSince >= stallMs) {
@@ -2868,6 +2893,7 @@ const WebRTC = {
       state: this.isControlResetBlocked() ? 'blocked' : this.controlState.state,
       blocked: this.isControlResetBlocked(),
     });
+    this.initializeSessionCoordinator()?.applyControlLease(this.controlState);
     // During GRANTING/REVOKING, controller is false for everyone — do not treat as
     // permanent readonly freeze (that raced with acquire and left sticky UI).
     const transitioning = data.state === 'GRANTING' || data.state === 'REVOKING';
@@ -2897,6 +2923,7 @@ const WebRTC = {
     }
     this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
+    this.initializeSessionCoordinator()?.applyControlLease(this.controlState);
     if (typeof Input !== 'undefined') {
       Input.init();
       Input.setControlLease(this.controlState.lease);
@@ -2946,6 +2973,7 @@ const WebRTC = {
       state: this.isControlResetBlocked() ? 'blocked' : 'free',
       blocked: this.isControlResetBlocked(),
     });
+    this.initializeSessionCoordinator()?.clearControlLease(reason || 'control-lost');
     if (this.isPortSearchActive()) {
       this.stopPortSearch(reason === 'host-offline' ? 'host-offline' : 'control-lost');
     } else {

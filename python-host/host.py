@@ -40,12 +40,17 @@ from h264_videotoolbox_encoder import (
 )
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
+from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 
 if __name__ == "__main__":
     configure_host_logging()
 else:
     logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+async def _noop_async():
+    return None
 
 V2_INPUT_ACK_STATUSES = frozenset({
     "applied",
@@ -1392,13 +1397,21 @@ class WebRemoteHost:
         self.token = None
         self.screen_track = None
         self.video_sender = None
-        self.media_sender = AiortcMediaSender()
+        self.media_sender = MediaSenderAdapter()
         self.current_viewer_id = None
         self.pending_candidates = []
         self.input_handler = InputHandler()
         self.input_handler.start()
+        self.input_adapter = InputAdapter(self.input_handler)
+        self.capture_adapter = None
         self.overlay = OverlayNotifier()
         self.relay_streamer = None
+        self.lifecycle_coordinator = LifecycleCoordinator(
+            close_peer=lambda: self._close_peer_connection(reason="host-stop", reset_offer_state=True),
+            stop_relay=lambda: self.relay_streamer.stop() if self.relay_streamer else _noop_async(),
+            disconnect=lambda: self.sio.disconnect() if self.sio and self.sio.connected else _noop_async(),
+            stop_overlay=self.overlay.stop,
+        )
         self._input_datachannel = None
         self._input_move_datachannel = None
         self._active_input_binding = None
@@ -1539,7 +1552,8 @@ class WebRemoteHost:
                             viewer_id,
                         )
                         try:
-                            await self.input_handler.handle_input(data)
+                            input_adapter = getattr(self, "input_adapter", None) or self.input_handler
+                            await input_adapter.handle_input(data)
                         except Exception:
                             logger.exception("Mouse safety release failed")
                         return
@@ -1598,9 +1612,11 @@ class WebRemoteHost:
                     "viewerId": data.get("viewerId")
                 })
             if input_type == 'keyboard':
-                result = await self.input_handler.apply_keyboard(data, transport=transport)
+                input_adapter = getattr(self, "input_adapter", None) or self.input_handler
+                result = await input_adapter.apply_keyboard(data, transport=transport)
             else:
-                result = await self.input_handler.handle_input(data)
+                input_adapter = getattr(self, "input_adapter", None) or self.input_handler
+                result = await input_adapter.handle_input(data)
             if result and isinstance(result, dict):
                 receive_time = result.get("receiveTime")
                 execute_time = result.get("executeTime")
@@ -2214,9 +2230,10 @@ class WebRemoteHost:
                     max_width=self.media_profile["width"],
                     max_height=self.media_profile["height"],
                 )
+                self.capture_adapter = CaptureAdapter(track=self.screen_track)
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)
-                self.media_sender = AiortcMediaSender()
+                self.media_sender = MediaSenderAdapter()
                 self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
                 self._prefer_h264_transceivers()
                 logger.info("Added video track")
@@ -3512,15 +3529,10 @@ class WebRemoteHost:
             logger.info("Shutting down...")
         finally:
             lag_task.cancel()
-            if self.relay_streamer:
-                await self.relay_streamer.stop()
-            await self._close_peer_connection(reason="host-stop", reset_offer_state=True)
             lifecycle_tasks = list(self._input_lifecycle_tasks)
             if lifecycle_tasks:
                 await asyncio.gather(*lifecycle_tasks, return_exceptions=True)
-            if self.sio and self.sio.connected:
-                await self.sio.disconnect()
-            self.overlay.stop()
+            await self.lifecycle_coordinator.shutdown()
 
 
 if __name__ == "__main__":

@@ -28,6 +28,8 @@ const {
   connections,
   getConnectionStatus,
   getHostCapabilities,
+  createRuntimeContext,
+  runtimeContext: defaultSignalingRuntime,
 } = require('./websocket/signaling');
 const {
   loadRecentDiagnostics,
@@ -61,6 +63,9 @@ function requireAccessToken(req, res, next) {
 
 function createServerApp(options = {}) {
   const config = options.config || loadConfig();
+  // Keep the historical process-wide context for the default server. Tests and
+  // embedders may inject an isolated context explicitly.
+  const signalingRuntime = options.signalingRuntimeContext || defaultSignalingRuntime;
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || createRecentEventStore();
   const structuredFileSink = createRotatingFileSink({
@@ -177,7 +182,7 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger });
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, runtimeContext: signalingRuntime });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -194,7 +199,7 @@ function createServerApp(options = {}) {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      ...getConnectionStatus()
+      ...getConnectionStatus(signalingRuntime)
     });
   });
 
@@ -204,10 +209,10 @@ function createServerApp(options = {}) {
       || req.get('x-wrd-turn-server-id')
       || '',
     ).trim();
-    const connectionStatus = getConnectionStatus();
+    const connectionStatus = getConnectionStatus(signalingRuntime);
     return buildViewerBootstrapSnapshot({
       config,
-      hostCapabilities: getHostCapabilities(),
+      hostCapabilities: getHostCapabilities(signalingRuntime),
       hostOnline: Boolean(connectionStatus.hostOnline),
       turnServerId: requestedTurnServerId,
     });
@@ -248,7 +253,7 @@ function createServerApp(options = {}) {
       const timeoutMs = Math.min(15000, Math.max(1000, Number(req.body?.timeoutMs) || 10000));
       const turnServerId = String(req.body?.turnServerId || '').trim();
       const result = await turnSelfTestRunner.runFromConfig(config, { timeoutMs, turnServerId });
-      const hostCaps = getHostCapabilities();
+      const hostCaps = getHostCapabilities(signalingRuntime);
       const hostFp = hostCaps.turnFingerprint || '';
       const hostTurnServerId = hostCaps.turnServerId || hostCaps.defaultTurnServerId || '';
       // Prefer fingerprint equality: Host may label the same node as `env`
@@ -301,8 +306,8 @@ function createServerApp(options = {}) {
     recentEventStore.append(result.summaryEvent);
     structuredLogger.info(result.summaryEvent);
 
-    if (connections.host) {
-      connections.host.emit('diagnostic', result.report);
+    if (signalingRuntime.connections.host) {
+      signalingRuntime.connections.host.emit('diagnostic', result.report);
     }
 
     return res.status(202).json({
@@ -319,8 +324,8 @@ function createServerApp(options = {}) {
     const items = loadRecentDiagnostics(200, { logger });
     return res.json({
       ...buildConnectionSummary(items),
-      hostOnline: Boolean(connections.host),
-      viewerCount: connections.viewers.size,
+      hostOnline: Boolean(signalingRuntime.connections.host),
+      viewerCount: signalingRuntime.connections.viewers.size,
     });
   });
 

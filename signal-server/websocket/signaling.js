@@ -3,6 +3,7 @@ const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { ControlTransitionRetry } = require('../lib/control-transition-retry');
+const { createRuntimeContext } = require('./runtime-context');
 const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
 const {
   validateMediaActivityRequest,
@@ -24,24 +25,10 @@ const V2_INPUT_ACK_STATUSES = new Set([
   'execution-failed',
 ]);
 
-// Store connections
-const connections = {
-  host: null,
-  viewers: new Map(),
-  relayViewers: new Map()
-};
-
-// Last host-reported TURN/media capability snapshot (no secrets).
-let hostCapabilities = {
-  turnReady: false,
-  turnFingerprint: '',
-  supportsSessionTurn: false,
-  supportsMultiTurn: false,
-  turnServerId: '',
-  defaultTurnServerId: '',
-  turnServerIds: [],
-  updatedAt: null,
-};
+// The default context preserves the historical module exports. Each server
+// instance created by setupSignaling receives its own context.
+const runtime = createRuntimeContext();
+const connections = runtime.connections;
 
 function normalizeTurnServerIds(value) {
   if (!Array.isArray(value)) return [];
@@ -53,55 +40,20 @@ function normalizeTurnServerIds(value) {
   return ids;
 }
 
-function getHostCapabilities() {
-  return {
-    turnReady: Boolean(hostCapabilities.turnReady),
-    turnFingerprint: String(hostCapabilities.turnFingerprint || ''),
-    supportsSessionTurn: Boolean(hostCapabilities.supportsSessionTurn),
-    supportsMultiTurn: Boolean(hostCapabilities.supportsMultiTurn),
-    turnServerId: String(hostCapabilities.turnServerId || ''),
-    defaultTurnServerId: String(hostCapabilities.defaultTurnServerId || ''),
-    turnServerIds: Array.isArray(hostCapabilities.turnServerIds)
-      ? hostCapabilities.turnServerIds.slice()
-      : [],
-    updatedAt: hostCapabilities.updatedAt,
-  };
+function getHostCapabilities(context = runtime) {
+  return context.getHostCapabilities();
 }
 
-function setHostCapabilities(payload = {}) {
-  hostCapabilities = {
-    turnReady: Boolean(payload.turnReady),
-    turnFingerprint: String(payload.turnFingerprint || '').trim(),
-    supportsSessionTurn: Boolean(payload.supportsSessionTurn),
-    supportsMultiTurn: Boolean(payload.supportsMultiTurn),
-    turnServerId: String(payload.turnServerId || payload.selectedTurnServerId || '').trim(),
-    defaultTurnServerId: String(payload.defaultTurnServerId || '').trim(),
-    turnServerIds: normalizeTurnServerIds(payload.turnServerIds),
-    updatedAt: new Date().toISOString(),
-  };
-  return getHostCapabilities();
+function setHostCapabilities(payload = {}, context = runtime) {
+  return context.setHostCapabilities(payload);
 }
 
-function clearHostCapabilities() {
-  hostCapabilities = {
-    turnReady: false,
-    turnFingerprint: '',
-    supportsSessionTurn: false,
-    supportsMultiTurn: false,
-    turnServerId: '',
-    defaultTurnServerId: '',
-    turnServerIds: [],
-    updatedAt: null,
-  };
-  return getHostCapabilities();
+function clearHostCapabilities(context = runtime) {
+  return context.clearHostCapabilities();
 }
 
-function getViewerSnapshot() {
-  return Array.from(connections.viewers.values()).map((viewerSocket) => ({
-    id: viewerSocket.id,
-    ip: viewerSocket.handshake.address || 'unknown',
-    userAgent: viewerSocket.handshake.headers['user-agent'] || 'unknown'
-  }));
+function getViewerSnapshot(context = runtime) {
+  return context.getViewerSnapshot();
 }
 
 function emitViewerStatus(reason, viewerSocket = null) {
@@ -140,6 +92,26 @@ function clampInt(value, min, max, fallback) {
 }
 
 function setupSignaling(io, options = {}) {
+  const instanceRuntime = options.runtimeContext || runtime;
+  const connections = instanceRuntime.connections;
+  const getHostCapabilities = () => instanceRuntime.getHostCapabilities();
+  const setHostCapabilities = (payload = {}) => instanceRuntime.setHostCapabilities(payload);
+  const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
+  const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
+  const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket;
+  const emitViewerStatus = (reason, viewerSocket = null) => {
+    const payload = {
+      reason,
+      onlineCount: connections.viewers.size,
+      viewers: getViewerSnapshot(),
+      changedViewer: viewerSocket ? {
+        id: viewerSocket.id,
+        ip: viewerSocket.handshake?.address || 'unknown',
+        userAgent: viewerSocket.handshake?.headers?.['user-agent'] || 'unknown',
+      } : null,
+    };
+    if (connections.host) connections.host.emit('viewer-status', payload);
+  };
   const config = options.config || loadConfig();
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
@@ -1447,19 +1419,21 @@ function setupSignaling(io, options = {}) {
   return connections;
 }
 
-function getConnectionStatus() {
+function getConnectionStatus(context = runtime) {
   return {
-    hostOnline: Boolean(connections.host),
-    hostId: connections.host ? connections.host.id : null,
-    viewerCount: connections.viewers.size,
-    relayViewerCount: connections.relayViewers.size,
-    viewers: getViewerSnapshot()
+    hostOnline: Boolean(context.connections.host),
+    hostId: context.connections.host ? context.connections.host.id : null,
+    viewerCount: context.connections.viewers.size,
+    relayViewerCount: context.connections.relayViewers.size,
+    viewers: getViewerSnapshot(context),
   };
 }
 
 module.exports = {
   setupSignaling,
   connections,
+  runtimeContext: runtime,
+  createRuntimeContext,
   getConnectionStatus,
   getHostCapabilities,
   setHostCapabilities,

@@ -1,3 +1,6 @@
+// Deprecated compatibility module. The production server uses the default
+// signaling namespace's input router; keep this isolated namespace available
+// for older embedders until their migration is verified.
 function setupInputRelay(io, connections) {
   const inputNamespace = io.of('/input');
 
