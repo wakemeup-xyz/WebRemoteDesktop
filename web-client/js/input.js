@@ -115,6 +115,12 @@ const Input = {
     if (ack?.status !== 'applied' && ack?.status !== 'duplicate') return { status: 'stale' };
     this._pendingMouseReset = false;
     this._pendingMouseResetId = null;
+    this._touchAdapters.forEach((adapter) => adapter.flushPending?.());
+    if (this._pendingWheel) {
+      const wheel = this._pendingWheel;
+      this._pendingWheel = null;
+      this.queueWheel(wheel);
+    }
     return { status: ack.status };
   },
 
@@ -310,6 +316,7 @@ const Input = {
       const pending = this._pendingMouseMove;
       this._pendingMouseMove = null;
       if (!pending) return;
+      if (this._pendingMouseReset) return;
       // buttons===0 while we still track a local press: local desync — force reset.
       if (Number(pending.buttons) === 0 && this._pressedMouseButtons.size > 0) {
         this.releasePointer('move-buttons-clear');
@@ -339,12 +346,14 @@ const Input = {
   },
 
   releasePointer(reason = 'pointer-release') {
-    this._touchAdapters.forEach((adapter) => adapter.reset?.(reason));
+    const wasPendingReset = this._pendingMouseReset;
+    let adapterResetIssued = false;
+    this._touchAdapters.forEach((adapter) => { if (adapter.reset?.(reason)) adapterResetIssued = true; });
     const element = this._activePointerElement; const pointerId = this._activePointerId;
     if (element?.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId);
     const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
     this._pressedMouseButtons.clear(); this._activePointerId = null; this._activePointerElement = null; this._pendingMouseMove = null;
-    if (!needsReset) return null;
+    if (!needsReset || adapterResetIssued || (!wasPendingReset && this._pendingMouseReset)) return null;
     const inputId = this.sendInput('mouse', 'reset', { reason });
     this._pendingMouseReset = true;
     this._pendingMouseResetId = inputId || null;
@@ -391,7 +400,7 @@ const Input = {
     });
     element.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'touch') return;
-      if (!this.isActive) return;
+      if (!this.isActive || this._pendingMouseReset) return;
       event.preventDefault(); element.focus();
       const coords = this.getRelativeCoords(event); if (!coords) return;
       element.setPointerCapture?.(event.pointerId);
@@ -417,8 +426,6 @@ const Input = {
         this._pendingMouseReset = true;
         const resetId = this.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
         this._pendingMouseResetId = resetId || null;
-      } else {
-        this._pendingMouseReset = false;
       }
       if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
     });
@@ -465,7 +472,10 @@ const Input = {
       this._wheelScheduled = false;
       const wheel = this._pendingWheel;
       this._pendingWheel = null;
-      if (!wheel || !this.isActive) return;
+      if (!wheel || !this.isActive || this._pendingMouseReset) {
+        if (wheel && this._pendingMouseReset) this._pendingWheel = wheel;
+        return;
+      }
       if (wheel.deltaX === 0 && wheel.deltaY === 0) return;
       this.sendInput('mouse', 'wheel', wheel);
     };

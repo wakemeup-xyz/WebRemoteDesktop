@@ -2732,6 +2732,9 @@ const WebRTC = {
     });
 
     this.socket.on('input-ack', (data) => {
+      if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
+        Input.acceptMouseAck(data);
+      }
       if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
         Input.acceptKeyboardAck(data);
       }
@@ -3473,6 +3476,9 @@ const WebRTC = {
           return;
         }
         if (data.type === 'input_ack') {
+          if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
+            Input.acceptMouseAck(data);
+          }
           if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
             Input.acceptKeyboardAck(data);
           }

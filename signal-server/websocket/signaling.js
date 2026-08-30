@@ -976,22 +976,23 @@ function setupSignaling(io, options = {}) {
       const hostExecuteMs = Math.max(0, Number(data.hostExecuteMs || 0));
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
-        const validSeq = Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0;
         const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
-        const validPressed = Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0;
-        const validModifiers = Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0;
-        if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers) {
+        const mouseAck = data.inputType === 'mouse';
+        const validSeq = mouseAck || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0);
+        const validPressed = mouseAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0);
+        const validModifiers = mouseAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0);
+        if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers || (data.inputType && !mouseAck && data.inputType !== 'keyboard')) {
           logger.warn?.('[INPUT] invalid v2 ack');
           return;
         }
         viewerSocket.emit('input-ack', {
           type: 'input_ack',
           schemaVersion: 2,
+          ...(mouseAck ? { inputType: 'mouse' } : {}),
           leaseEpoch: data.leaseEpoch,
-          appliedSeq: data.appliedSeq,
+          ...(mouseAck ? {} : { appliedSeq: data.appliedSeq }),
           status: data.status,
-          pressedKeyCount: data.pressedKeyCount,
-          modifierMask: data.modifierMask,
+          ...(mouseAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
           hostExecuteMs,
           transport: 'socket',

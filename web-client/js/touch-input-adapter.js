@@ -38,7 +38,8 @@
     const reset = (reason = 'reset') => { if (state === STATES.RESETTING) return null; state = STATES.RESETTING; clearPress(); pendingWheel = null; wheelFrame = null; pendingMove = null; moveFrame = null; pointers.forEach((_, id) => releaseCapture(id)); pointers.clear(); primaryId = null; centroid = null; const shouldReset = Boolean(activeButton); activeButton = null; const id = shouldReset ? emitReset(reason) : null; state = STATES.IDLE; return id; };
     const flushMove = () => { moveFrame = null; const move = pendingMove; pendingMove = null; if (move && enabled()) sendMouse('move', move); };
     const queueMove = (point, buttons) => { pendingMove = { ...point, buttons }; if (moveFrame !== null) return; moveFrame = requestFrame(flushMove); };
-    const queueWheel = (dx, dy, point) => { if (!pendingWheel) pendingWheel = { relX: point.relX, relY: point.relY, deltaX: 0, deltaY: 0 }; pendingWheel.relX = point.relX; pendingWheel.relY = point.relY; pendingWheel.deltaX += Number(dx) || 0; pendingWheel.deltaY += Number(dy) || 0; if (wheelFrame !== null) return; wheelFrame = requestFrame(() => { wheelFrame = null; const wheel = pendingWheel; pendingWheel = null; if (wheel && enabled() && (wheel.deltaX || wheel.deltaY)) sendMouse('wheel', wheel); }); };
+    const flushWheel = () => { wheelFrame = null; const wheel = pendingWheel; if (!wheel || !enabled() || (!wheel.deltaX && !wheel.deltaY)) return; pendingWheel = null; sendMouse('wheel', wheel); };
+    const queueWheel = (dx, dy, point) => { if (!pendingWheel) pendingWheel = { relX: point.relX, relY: point.relY, deltaX: 0, deltaY: 0 }; pendingWheel.relX = point.relX; pendingWheel.relY = point.relY; pendingWheel.deltaX += Number(dx) || 0; pendingWheel.deltaY += Number(dy) || 0; if (wheelFrame !== null) return; wheelFrame = requestFrame(flushWheel); };
     function pointerdown(event) {
       if (event.pointerType !== 'touch' || !enabled() || resetSent || (event.isPrimary === false && pointers.size === 0)) return;
       event.preventDefault?.(); const point = mapped(event, false); if (!point || pointers.has(event.pointerId)) return;
@@ -70,11 +71,12 @@
       else if (state === STATES.PRESSED && point && enabled()) { const clickCount = Number(getClickCount({ button: 0, timeStamp: event.timeStamp, clientX: event.clientX, clientY: event.clientY })) || 1; const down = { ...point, button: 'left', clickCount, buttons: 1 }; const id = emit('down', down, 'tap-down-failed'); if (id) emit('up', { ...point, button: 'left', clickCount, buttons: 0 }, 'tap-up-failed'); }
       activeButton = null; primaryId = null; state = STATES.IDLE;
     }
-    function bind() { if (bound || !element?.addEventListener) return; frameScheduler = typeof root?.requestAnimationFrame === 'function' ? root.requestAnimationFrame.bind(root) : null; bound = true; Object.assign(handlers, { pointerdown, pointermove, pointerup, pointercancel: () => reset('pointer-cancel'), lostpointercapture: () => reset('lost-pointer-capture') }); Object.entries(handlers).forEach(([t, h]) => element.addEventListener(t, h)); }
+    function bind() { if (bound || !element?.addEventListener) return; frameScheduler = typeof root?.requestAnimationFrame === 'function' ? root.requestAnimationFrame.bind(root) : null; bound = true; Object.assign(handlers, { pointerdown, pointermove, pointerup, pointercancel: () => reset('pointer-cancel'), lostpointercapture: (event) => { if (event?.pointerType !== 'touch' || !pointers.has(event.pointerId)) return; reset('lost-pointer-capture'); } }); Object.entries(handlers).forEach(([t, h]) => element.addEventListener(t, h)); }
     function unbind() { if (!bound) return; Object.entries(handlers).forEach(([t, h]) => element.removeEventListener?.(t, h)); bound = false; reset('unbind'); }
     function clickButton(button, coords) { if (!enabled()) return null; const p = coords && Number.isFinite(Number(coords.relX)) ? { relX: Number(coords.relX), relY: Number(coords.relY) } : lastPoint; if (!p) return null; const b = button === 'right' || button === 2 ? 'right' : button === 'middle' || button === 1 ? 'middle' : 'left'; const id = emit('down', { ...p, button: b, clickCount: 1, buttons: b === 'right' ? 2 : 1 }, 'button-down-failed'); if (!id) return null; activeButton = b; const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed'); activeButton = null; return up || id; }
+    function flushPending() { if (pendingWheel && wheelFrame === null) wheelFrame = requestFrame(flushWheel); }
     function getSnapshot() { return { state, bound, pointerCount: pointers.size, primaryActive: primaryId !== null, activeButton, pendingReset: resetSent, wheelPending: Boolean(pendingWheel) }; }
-    return { bind, unbind, reset, clickButton, getSnapshot };
+    return { bind, unbind, reset, clickButton, flushPending, getSnapshot };
   }
   return { STATES, create };
 }));

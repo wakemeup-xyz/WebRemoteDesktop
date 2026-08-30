@@ -74,6 +74,7 @@ body {
   transition: box-shadow var(--transition-base), transform var(--transition-base);
   position: relative;
   z-index: 2;
+  touch-action: none;
 }
 
 #remoteVideo.scale-cover,

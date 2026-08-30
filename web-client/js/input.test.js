@@ -260,6 +260,44 @@ test('mouse up and reset still send when media gate is inactive', () => {
   assert.equal(socketEvents[1].payload.action, 'reset');
 });
 
+test('desktop pointerup cannot clear a pending mouse reset without a matching applied acknowledgement', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const element = makeElement();
+  Input.bindMouseEvents(element);
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'reset-1';
+  element.listeners.get('pointerup')({ pointerId: 1, button: 0, buttons: 0, clientX: 50, clientY: 50, currentTarget: element, preventDefault() {} });
+  assert.equal(Input._pendingMouseReset, true);
+  assert.equal(Input.acceptMouseAck({ status: 'applied', inputIds: ['other-reset'] }).status, 'stale');
+  assert.equal(Input._pendingMouseReset, true);
+  assert.equal(Input.acceptMouseAck({ status: 'duplicate', inputIds: ['reset-1'] }).status, 'duplicate');
+  assert.equal(Input._pendingMouseReset, false);
+  assert.equal(socketEvents.length, 1, 'safety up may send but must not clear the barrier');
+});
+
+test('touch lifecycle reset sends one mouse reset through Input ownership', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  let resetCalls = 0;
+  Input._touchAdapters.set({}, { reset() { resetCalls += 1; Input._pendingMouseReset = true; Input._pendingMouseResetId = 'adapter-reset'; return 'adapter-reset'; } });
+  Input._pressedMouseButtons.add('left');
+  Input.releasePointer('window-blur');
+  assert.equal(resetCalls, 1);
+  assert.equal(socketEvents.filter(({ payload }) => payload.action === 'reset').length, 0);
+  assert.equal(Input._pendingMouseResetId, 'adapter-reset');
+});
+
+test('matching mouse reset acknowledgement flushes deferred touch work', () => {
+  const { Input } = loadInput();
+  let flushes = 0;
+  Input._touchAdapters.set({}, { flushPending() { flushes += 1; } });
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'mouse-reset-2';
+  assert.equal(Input.acceptMouseAck({ status: 'applied', inputIds: ['mouse-reset-2'] }).status, 'applied');
+  assert.equal(flushes, 1);
+});
+
 test('pointer move with buttons 0 clears local pressed set via reset', () => {
   const { Input, context, socketEvents, elements } = loadInput();
   activate(Input, context);

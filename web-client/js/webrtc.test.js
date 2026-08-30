@@ -210,11 +210,12 @@ test('WebRTC lazily owns media activity reasons and forwards changes to its medi
   ]);
 });
 
-test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyMonitor', () => {
-  const acks = [];
+test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, keyboard, and latency consumers', () => {
+  const acks = []; const mouseAcks = []; const keyboardAcks = [];
   const channels = new Map();
   const socketHandlers = new Map();
   const { WebRTC } = loadWebRTC({
+    Input: { acceptMouseAck(payload) { mouseAcks.push(payload); }, acceptKeyboardAck(payload) { keyboardAcks.push(payload); } },
     LatencyMonitor: { onInputAck(payload) { acks.push(payload); } },
   });
   WebRTC.pc = {
@@ -242,6 +243,8 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
   socketHandlers.get('input-ack')({ type: 'input_ack', inputIds: ['socket-1'] });
 
   assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
+  assert.deepEqual(mouseAcks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
+  assert.deepEqual(keyboardAcks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
   clearTimeout(WebRTC._dcTimeout);
 });
 
@@ -282,6 +285,7 @@ test('viewer waits for an active control lease before starting an offer and rout
       setActive() {},
       setControlLease() {},
       acceptKeyboardAck() { order.push('transport'); },
+      acceptMouseAck() { order.push('mouse'); },
     },
     LatencyMonitor: { onInputAck() { order.push('latency'); } },
   });
@@ -303,7 +307,7 @@ test('viewer waits for an active control lease before starting an offer and rout
   socketHandlers.get('control-grant')({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 4 });
   assert.equal(offers, 1);
   socketHandlers.get('input-ack')({ schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
-  assert.deepEqual(order, ['transport', 'latency']);
+  assert.deepEqual(order, ['mouse', 'transport', 'latency']);
   WebRTC.stopControlHeartbeat();
 });
 

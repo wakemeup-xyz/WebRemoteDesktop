@@ -3,7 +3,7 @@ const test = require('node:test');
 const { TouchInputAdapter } = require('./touch-input-adapter.js');
 
 function makeTouchHarness() {
-  const listeners = new Map(); const mouse = []; let now = 0; let timer = null; let frame = null; let lastTap = -Infinity;
+  const listeners = new Map(); const mouse = []; let now = 0; let timer = null; let frame = null; let lastTap = -Infinity; let enabled = true;
   const element = {
     addEventListener(type, fn) { listeners.set(type, fn); },
     removeEventListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
@@ -13,7 +13,7 @@ function makeTouchHarness() {
   const adapter = TouchInputAdapter.create({
     element, mapPoint: (event) => ({relX: event.clientX / 160, relY: event.clientY / 120}),
     sendMouse: (action, payload) => { mouse.push({action, payload}); return `mouse-${mouse.length}`; },
-    isEnabled: () => true, getClickCount: () => { const count = now - lastTap <= 500 ? 2 : 1; lastTap = now; return count; }, clock: () => now,
+    isEnabled: () => enabled, getClickCount: () => { const count = now - lastTap <= 500 ? 2 : 1; lastTap = now; return count; }, clock: () => now,
     setTimer: (fn, ms) => (timer = {fn, at: now + ms}), clearTimer: (id) => { if (timer === id) timer = null; },
   });
   global.requestAnimationFrame = (fn) => { frame = fn; return 1; };
@@ -22,7 +22,7 @@ function makeTouchHarness() {
     {pointerType: 'touch', isPrimary: true, preventDefault() {}, ...overrides});
   const advance = (ms) => { now += ms; if (timer && timer.at <= now) { const due = timer; timer = null; due.fn(); } };
   return {
-    adapter, element, mouse, pointer,
+    adapter, element, mouse, pointer, setEnabled: (value) => { enabled = value; },
     tap: (pointerId, atMs) => { advance(atMs - now); pointer('pointerdown', {pointerId, clientX: 40, clientY: 30, buttons: 1}); pointer('pointerup', {pointerId, clientX: 40, clientY: 30, buttons: 0}); },
     advance,
     flushAnimationFrame: () => { const due = frame; frame = null; due?.(); },
@@ -78,8 +78,36 @@ test('pointercancel and lostpointercapture emit one idempotent reset', () => {
   h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});
   h.pointer('pointermove', {pointerId: 1, clientX: 20, clientY: 10, buttons: 1});
   h.pointer('pointercancel', {pointerId: 1});
-  h.element.dispatch('lostpointercapture', {pointerId: 1});
+  h.element.dispatch('lostpointercapture', {pointerType: 'touch', pointerId: 1});
   assert.equal(h.mouse.filter(({action}) => action === 'reset').length, 1);
+});
+
+test('lost capture after pointerup, non-touch loss, and one scroll finger release do not reset remaining touch state', () => {
+  const h = makeTouchHarness();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});
+  h.pointer('pointerdown', {pointerId: 2, clientX: 30, clientY: 30, buttons: 1, isPrimary: false});
+  h.pointer('pointerup', {pointerId: 1, clientX: 10, clientY: 10, buttons: 0});
+  h.element.dispatch('lostpointercapture', {pointerType: 'touch', pointerId: 1});
+  h.element.dispatch('lostpointercapture', {pointerType: 'mouse', pointerId: 9});
+  assert.equal(h.adapter.getSnapshot().state, 'SCROLLING');
+  assert.equal(h.adapter.getSnapshot().pointerCount, 1);
+  assert.equal(h.mouse.filter(({action}) => action === 'reset').length, 0);
+});
+
+test('wheel deltas stay queued behind a reset barrier and flush after acknowledgement', () => {
+  const h = makeTouchHarness();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});
+  h.pointer('pointermove', {pointerId: 1, clientX: 20, clientY: 10, buttons: 1});
+  h.pointer('pointerdown', {pointerId: 2, clientX: 30, clientY: 30, buttons: 1, isPrimary: false});
+  h.setEnabled(false);
+  h.pointer('pointermove', {pointerId: 2, clientX: 30, clientY: 42, buttons: 1});
+  h.flushAnimationFrame();
+  assert.equal(h.mouse.filter(({action}) => action === 'wheel').length, 0);
+  assert.equal(h.adapter.getSnapshot().wheelPending, true);
+  h.setEnabled(true);
+  h.adapter.flushPending();
+  h.flushAnimationFrame();
+  assert.equal(h.mouse.filter(({action}) => action === 'wheel').length, 1);
 });
 
 test('unbind removes touch event delivery', () => {

@@ -99,6 +99,11 @@ test('mobile input reserves touch targets and keyboard safe area', () => {
   assert.match(mobileControls, /min-height\s*:\s*var\(--touch-min\)/);
 });
 
+test('media surfaces suppress browser touch gestures', () => {
+  const surfaces = getBlock('#remoteVideo,\n#relayImage');
+  assert.match(surfaces, /touch-action\s*:\s*none/);
+});
+
 test('docks share one fixed column wrapper', () => {
   assert.match(html, /id="chromeDocks"[\s\S]*class="action-bar"[\s\S]*class="control-bar"/);
   const docks = getBlock('.chrome-docks');

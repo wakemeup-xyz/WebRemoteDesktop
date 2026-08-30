@@ -1648,7 +1648,21 @@ class WebRemoteHost:
         if not input_ids:
             return False
         transport = str(data.get("transport") or "socket")
-        if data.get("schemaVersion") == 2:
+        if data.get("schemaVersion") == 2 and data.get("type") == "mouse":
+            # Mouse actions use the v2 envelope but intentionally do not share
+            # the ordered keyboard sequence/state contract. Keep their ACK
+            # independently correlatable by lease and input id.
+            ack = {
+                "type": "input_ack",
+                "schemaVersion": 2,
+                "inputType": "mouse",
+                "leaseEpoch": data.get("leaseEpoch"),
+                "status": result.get("status") or "applied",
+                "inputIds": list(input_ids),
+                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "transport": transport,
+            }
+        elif data.get("schemaVersion") == 2:
             # v2 keyboard transport acknowledges the applied sequence and the
             # Host's post-execution state; never echo the input payload.
             pressed_key_count = result.get("pressedKeyCount")

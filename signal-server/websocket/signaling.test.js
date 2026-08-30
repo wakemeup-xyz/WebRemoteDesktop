@@ -464,6 +464,14 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
   assert.equal('payload' in ack, false);
 });
 
+test('v2 mouse input ack forwards without keyboard sequence or state fields', () => {
+  resetConnections(); const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-mouse-ack', 'host'); const viewer = new FakeSocket('viewer-mouse-ack', 'viewer'); io.connect(host); io.connect(viewer);
+  host.trigger('input-ack', { viewerId: 'viewer-mouse-ack', type: 'input_ack', schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4, status: 'applied', inputIds: ['mouse-reset-1'], hostExecuteMs: 2 });
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.equal(ack.inputType, 'mouse'); assert.equal(ack.inputIds[0], 'mouse-reset-1'); assert.equal('appliedSeq' in ack, false); assert.equal('pressedKeyCount' in ack, false);
+});
+
 test('v2 host acknowledgement forwards every documented error status without raw input data', () => {
   resetConnections();
   const io = makeIo();

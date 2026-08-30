@@ -301,6 +301,31 @@ async def test_host_v2_ack_normalizes_unknown_status_without_echoing_input():
     assert "key" not in ack
 
 
+@pytest.mark.asyncio
+async def test_host_v2_mouse_ack_uses_independent_contract_without_keyboard_fields():
+    sent = []
+    host = object.__new__(WebRemoteHost)
+    host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+    await host._send_input_ack({"schemaVersion": 2, "type": "mouse", "transport": "datachannel", "leaseEpoch": 12}, {"inputIds": ["mouse-reset-1"], "status": "applied"}, 2.0)
+    ack = __import__("json").loads(sent[0])
+    assert ack["inputType"] == "mouse"
+    assert "appliedSeq" not in ack and "pressedKeyCount" not in ack and "modifierMask" not in ack
+
+
+@pytest.mark.asyncio
+async def test_host_v2_mouse_socket_ack_is_forwardable_without_keyboard_sequence():
+    emitted = []
+    host = object.__new__(WebRemoteHost)
+    async def emit(event, payload):
+        emitted.append((event, payload))
+    host.sio = SimpleNamespace(emit=emit)
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+    await host._send_input_ack({"schemaVersion": 2, "type": "mouse", "transport": "socket", "leaseEpoch": 12, "viewerId": "viewer-1"}, {"inputIds": ["mouse-reset-2"], "status": "duplicate"}, 3.0)
+    assert emitted[0][0] == "input-ack"
+    assert emitted[0][1]["inputType"] == "mouse"
+
+
 def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
     host = object.__new__(WebRemoteHost)
     host.media_profile = {"profile": "survival", "target_fps": 8}
