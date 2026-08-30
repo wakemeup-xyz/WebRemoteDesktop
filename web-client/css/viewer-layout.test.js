@@ -86,6 +86,15 @@ test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
   assert.match(css, /\.chrome-docks[^}]*flex-direction:\s*column/);
 });
 
+test('mobile input reserves touch targets and keyboard safe area', () => {
+  assert.match(html, /id="mobileTextInput"/);
+  assert.match(html, /id="mobileTextInput"[^>]*inputmode="text"/);
+  assert.match(css, /touch-action\s*:\s*none/);
+  assert.match(css, /env\(safe-area-inset-bottom/);
+  assert.match(css, /keyboard-inset-height/);
+  assert.match(css, /min-height\s*:\s*var\(--touch-min\)/);
+});
+
 test('docks share one fixed column wrapper', () => {
   assert.match(html, /id="chromeDocks"[\s\S]*class="action-bar"[\s\S]*class="control-bar"/);
   const docks = getBlock('.chrome-docks');

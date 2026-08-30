@@ -180,6 +180,18 @@ test('mouse pointer cancel releases capture and sends one reset', () => {
   assert.equal(socketEvents.filter(({ payload }) => payload.action === 'reset').length, 1);
 });
 
+test('desktop mouse binding ignores touch pointers delegated to the touch adapter', () => {
+  const { Input, context, socketEvents, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  video.listeners.get('pointerdown')({
+    pointerType: 'touch', pointerId: 1, button: 0, detail: 1, timeStamp: 1,
+    clientX: 50, clientY: 50, currentTarget: video, preventDefault() {},
+  });
+  assert.equal(socketEvents.length, 0);
+});
+
 test('keyboard diagnostics contain only state metadata', () => {
   const { Input, context } = loadInput();
   activate(Input, context);
