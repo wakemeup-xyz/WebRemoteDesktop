@@ -10,7 +10,7 @@ Date: 2026-08-30
 - Full `node --test web-client/js/webrtc.test.js` executed **182 passing assertions**, but the existing suite leaves long-lived timers and did not emit its final summary before it was stopped; no failing assertion was observed.
 - `git diff --check`: **PASS**.
 - `PYTHONPATH=. python3 -m pytest -q` in `python-host`: **187 passed, 1 warning**.
-- `cd signal-server && npm run build:web`: **NOT RUN TO COMPLETION** (`esbuild` is not installed in this worktree); consequently `node --test test/web-asset-build.test.js` and `npm test` are blocked by the same missing dependency.
+- On the merged main branch, `cd signal-server && npm run build:web` and `node --test test/web-asset-build.test.js` both **PASS**. The implementation was initially tested in an isolated worker without `esbuild`; that environment limitation no longer applies here.
 
 The focused Node suite covers the capability matrix, geometry token/fallback, menu keyboard semantics, modal Escape/focus restoration, honest connection placeholder, Terminal authorization hiding, and dynamic Terminal tab/panel ARIA relationships.
 
@@ -23,6 +23,10 @@ The focused Node suite covers the capability matrix, geometry token/fallback, me
 | 1440x900 | NOT RUN | NOT RUN | NOT RUN |
 
 Browser acceptance was not run in this worktree because no service was started or restarted. Public/tunnel acceptance remains NOT RUN and is intentionally outside this change.
+
+## Baseline test gap
+
+- `node --test web-client/js/input.test.js` remains 15/16 because the existing blur-reset fixture emits no event when its mocked data channel is closed. The same failure reproduces on `origin/main`; this change did not touch that path.
 
 ## Known limits
 

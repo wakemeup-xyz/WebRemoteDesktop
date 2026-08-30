@@ -4,7 +4,7 @@ Date: 2026-08-30
 
 ## Automated
 
-- PASS: `cd signal-server && npm test` (314 tests)
+- PASS: `cd signal-server && npm test` (317 tests on merged main)
 - PASS: `node --test web-client/js/terminal.test.js web-client/js/terminal-session-fsm.test.js web-client/js/terminal-input-gate.test.js` (97 tests)
 - PASS: `git diff --check`
 
