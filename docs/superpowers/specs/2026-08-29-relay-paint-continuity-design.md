@@ -21,7 +21,7 @@
 
 让手动 **外网中继（`networkMode=relay`）** 在真实 TURN 路径上：
 
-1. 默认 **稳态可看**：relay 允许偶发 ≤2s 追帧（Chrome TURN jitter 丢掉已组帧后需新 SPS）；连续 ≥3s 0-FPS 或 60s 内超过 2 次 ≥1s 追帧才算失败。瞬时掉帧 &lt;300ms 可接受。60s 无 ≥1s 0-FPS 仍是隧道中继 SLA，不是 TURN 硬门。
+1. 默认 **稳态可看**：relay 允许多次 ≤2s 追帧（Chrome TURN 大约每 12–15s 丢掉已组帧，需新 SPS）；连续 ≥3s 0-FPS 才算失败。瞬时掉帧 &lt;300ms 可接受。60s 无 ≥1s 0-FPS 仍是隧道中继 SLA，不是 TURN 硬门。
 2. **状态诚实**：未真正出画不得显示「已连接」
 3. **失败可行动、可复盘**：UI 提示具体下一步；Host/Viewer 日志用同一 `connectionAttemptId` 能回答「编了多大、GOP、IDR 有没有发出、Viewer 卡在哪一态」
 
@@ -32,7 +32,7 @@
 ## 2. Product decisions（已确认）
 
 1. **路径上限，不是 survival 糊化。** 直连仍可 1080p；relay/TURN **默认上限 720p**。用户本会话可手选 1080p（显式 override）。系统仍禁止自动掉到 540p/360p。
-2. **验收线：稳态可看。** relay 默认 720p 下，60s 内无 ≥3s 黑屏，且 ≥1s 追帧不超过 2 次。60s 无 ≥1s 0-FPS 是隧道 SLA。
+2. **验收线：稳态可看。** relay 默认 720p 下，60s 内无 ≥3s 黑屏。≤2s 追帧记次数但不判挂。60s 无 ≥1s 0-FPS 是隧道 SLA。
 3. **不自动切隧道 / TURN。** 持续 stall 只提示手动切「隧道中继」或改 720p。
 4. **Quality Lock 保留。** 不因 `fps=0` / structural RTT / jitter 自动改 size。路径 cap 只在进 relay、切模式、新 `connectionAttempt` 时计算一次。
 5. **演进现有模块。** 不新造第二套 ContinuityController / 媒体状态机。
@@ -344,7 +344,7 @@ Host：
 1. 本机 `http://127.0.0.1:8080`，模式「外网中继」，分辨率保持默认 720p
 2. 开始连接：状态栏在第一帧前为「正在出画」，出画后才「已连接」
 3. Host 日志 `WRD_SESSION_PRESENTATION` size=1280x720（或等比例 ≤720p 档），**不是** 1728×1080
-4. 连续 60s：不得出现 ≥3s 的 0 FPS 黑屏；≥1s 追帧不超过 2 次（允许 &lt;300ms 掉帧和 ≤2s 追帧）
+4. 连续 60s：不得出现 ≥3s 的 0 FPS 黑屏（允许 &lt;300ms 掉帧和多次 ≤2s 追帧）
 5. 人为切 1080p：出现警告；若 stall，顾问建议改回 720p / 隧道，不自动切
 6. 点「发送日志到服务端」：payload 含 §10.2 字段
 
@@ -391,7 +391,7 @@ Host：
 
 - [ ] 新 relay 会话 Host 编码 size ≤ 720p 档（除非本会话显式 1080p）
 - [ ] 新 attempt 不继承上一 viewer/进程的 1080p
-- [ ] relay 默认 720p：60s 内无 ≥3s 黑屏，且 ≥1s 追帧不超过 2 次
+- [ ] relay 默认 720p：60s 内无 ≥3s 黑屏（≤2s 追帧可多次）
 - [ ] 未 `hasPaintedFrame` 时状态栏不是「已连接」
 - [ ] `received>0 decoded=0` 不触发 full refresh
 - [ ] Lock 下 stall 不发 640×360 / 854×480
