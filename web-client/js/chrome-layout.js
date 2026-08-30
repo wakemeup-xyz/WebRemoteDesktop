@@ -197,7 +197,7 @@ const ChromeLayout = {
     const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
       .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     const active = snapshot.activeControl === true && snapshot.controlTransition !== true;
-    const mediaReady = snapshot.streamReady === true && (phase === 'connected' || phase === 'media-stalled');
+    const mediaReady = snapshot.streamReady === true && phase === 'connected';
     const canConnect = phase === 'idle' || phase === 'disconnected';
     const canMediaActions = phase === 'media-pending' || phase === 'connected' || phase === 'media-stalled';
     return {
@@ -234,7 +234,7 @@ const ChromeLayout = {
       });
     });
     setNode('requestControlBtn', snapshot.streamReady === true
-      && ['connected', 'media-stalled'].includes(phase)
+      && phase === 'connected'
       && snapshot.activeControl !== true && snapshot.controlTransition !== true);
     setNode('terminalTabBtn', capabilities.canOpenTerminal, { hide: false });
     const mediaReady = snapshot.streamReady === true && ['connected', 'media-stalled'].includes(snapshot.uiPhase);

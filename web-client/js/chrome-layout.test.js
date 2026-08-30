@@ -52,6 +52,7 @@ test('capability matrix requires active control and terminal authorization', () 
   assert.equal(caps.canSendDesktopInput, true);
   assert.equal(caps.canOpenTerminal, true);
   assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true, controlTransition: true }).canSendDesktopInput, false);
+  assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'media-stalled', streamReady: true, activeControl: true, controlTransition: false }).canSendDesktopInput, false);
 });
 
 test('applyCapabilities updates capability-bound controls', () => {
