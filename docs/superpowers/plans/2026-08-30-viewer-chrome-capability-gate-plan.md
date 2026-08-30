@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-viewer-chrome-capability-gate-design.md`
 
+**执行结果（2026-08-30）：** 已合入 `f334b1b`、`1651eaf`、`cc66bd8`。Chrome/layout/Terminal 相关测试通过，主分支 web build 与 asset contract 通过；375/768/1440 浏览器几何、公网 tunnel 和真实 Host 未运行。
+
 ## Global Constraints
 
 - 不引入 npm 依赖、图标库、SPA 或新字体。

@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-terminal-shared-session-ux-protocol-design.md`
 
+**执行结果（2026-08-30）：** 已合入 `0e3c9d4`、`6307823`。共享 session UX、canonical/legacy adapter、alias telemetry 和 deprecated `/input` guard 已实现；Signal 317 tests、Terminal client 97 tests 通过。真实单/双浏览器和断网恢复保持 `NOT RUN`。
+
 ## Global Constraints
 
 - 不改变共享 PTY、admin 二次授权和默认 transport 语义。

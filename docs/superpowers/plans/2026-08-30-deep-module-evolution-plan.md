@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-deep-module-evolution-design.md`
 
+**执行结果（2026-08-30）：** 已合入 `a3cb2dd`。Viewer coordinator、Signal runtime context、Host adapters 和 state-owner contract 已实现；Signal 317 tests、Host 190 tests、seam tests 与 build 通过。真实媒体/输入/睡眠唤醒链路保持 `NOT RUN`。
+
 ## Global Constraints
 
 - 不改变公开事件、认证、租约、媒体或网络模式语义。

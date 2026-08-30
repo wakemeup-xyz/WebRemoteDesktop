@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-desktop-session-state-acceptance-design.md`
 
+**执行结果（2026-08-30）：** 已合入 `a75ca2e`。Snapshot/reducer、WebRTC 接入和只读验收 harness 已实现；Signal/Host/Viewer 自动化通过。真实 fresh frame、stall/resume、双 Viewer、tunnel 和物理输入保持 `NOT RUN`。
+
 ## Global Constraints
 
 - 不改变网络模式策略、WebRTC/Socket 协议或控制租约算法。

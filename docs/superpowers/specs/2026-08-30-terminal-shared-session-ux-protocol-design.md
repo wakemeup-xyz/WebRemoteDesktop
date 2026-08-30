@@ -1,6 +1,6 @@
 # Terminal 共享会话 UX 与协议治理设计
 
-**状态：** 已审查，待实施
+**状态：** 已实施；真实单/双浏览器验收待执行
 **范围：** presenter/observer 可见性、PTY 生命周期提示、事件 canonical 化和旧输入路径治理
 **明确排除：** 新增 Terminal transport、独立 WSS、PTY 安全沙箱、桌面网络模式
 

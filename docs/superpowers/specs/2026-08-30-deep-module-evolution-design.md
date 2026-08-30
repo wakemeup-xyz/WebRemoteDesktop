@@ -1,6 +1,6 @@
 # WebRTC、Host 与 Signal 深模块演进设计
 
-**状态：** 已审查，待实施
+**状态：** 已实施；真实运行链路验收待执行
 **范围：** `webrtc.js`、`host.py`、`signaling.js` 的内部 seam 和 state owner 演进
 **明确排除：** 新协议、新网络模式、一次性大拆文件、行为重写
 
