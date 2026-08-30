@@ -275,7 +275,7 @@ function setupTerminal(io, options = {}) {
           });
         },
         onPresence: ({ presence, pool }) => {
-          terminalNamespace.emit('terminal:presence', presence);
+          emitPresence(presence?.sessionId || sessionId);
           emitCanonical(terminalNamespace, 'pool_snapshot', pool);
         },
       };
@@ -339,7 +339,7 @@ function setupTerminal(io, options = {}) {
           },
           onPresence: ({ presence, pool }) => {
             if (!sessionRef.sessionId) return;
-            terminalNamespace.emit('terminal:presence', presence);
+            emitPresence(presence?.sessionId || sessionRef.sessionId);
             emitCanonical(terminalNamespace, 'pool_snapshot', pool);
           },
         });
