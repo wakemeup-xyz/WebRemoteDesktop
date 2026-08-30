@@ -97,7 +97,7 @@ const WebRTC = {
   _lastInboundFramesDecoded: 0,
   _lastInboundFramesDecodedAt: 0,
   _videoFrameSeq: 0,
-  uiPhase: 'signaling',
+  uiPhase: 'idle',
   hasPaintedFrame: false,
   _paintDecodedBaseline: 0,
   _stallSince: null,
@@ -1190,6 +1190,7 @@ const WebRTC = {
       else if (phase === 'signaling') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'signaling' });
     }
     const sessionPhase = session ? this.getDesktopSessionSnapshot().phase : phase;
+    this.syncChromeCapabilities();
     if (sessionPhase === 'signaling') {
       updateConnectionStatus('connecting');
     } else {
@@ -1218,6 +1219,34 @@ const WebRTC = {
       console.log('[PAINT-GATE] uiPhase=%s reason=%s painted=%s', phase, reason || '', this.hasPaintedFrame);
     }
     return this.uiPhase;
+  },
+
+  getChromeSnapshot() {
+    const terminalAuthorized = typeof TerminalPanel !== 'undefined'
+      && typeof TerminalPanel.hasAdminToken === 'function'
+      && TerminalPanel.hasAdminToken();
+    const modalOpen = typeof document !== 'undefined'
+      && Boolean(document.querySelector?.('.modal:not(.hidden)'));
+    const transition = this.controlState?.state === 'GRANTING'
+      || this.controlState?.state === 'REVOKING'
+      || this.isControlResetBlocked?.();
+    const streamReady = Boolean(
+      this.hasPaintedFrame
+      || (this.currentConnectionAttemptId && this._mediaReadyConnectionAttemptId === this.currentConnectionAttemptId),
+    );
+    return {
+      uiPhase: this.uiPhase,
+      streamReady,
+      activeControl: this.hasActiveControl(),
+      controlTransition: Boolean(transition),
+      terminalAuthorized,
+      modalOpen,
+    };
+  },
+
+  syncChromeCapabilities() {
+    if (typeof ChromeLayout === 'undefined' || typeof ChromeLayout.applyCapabilities !== 'function') return null;
+    return ChromeLayout.applyCapabilities(this.getChromeSnapshot());
   },
 
   clearPaintPendingCopyTimers() {
@@ -3064,6 +3093,7 @@ const WebRTC = {
         button.addEventListener('click', (event) => { event.preventDefault(); this.requestControl(); });
       }
     }
+    this.syncChromeCapabilities();
   },
 
   STABLE_RECOVERY_RESET_MS: 5000,
@@ -3885,11 +3915,18 @@ if (this.tunnelLastObjectUrl) {
     }
     const closeBtn = options.closeBtn || null;
     const root = options.root || (typeof document !== 'undefined' ? document : null);
+    let returnFocus = null;
     const close = () => {
       modal.classList.add('hidden');
+      modal.hidden = true;
+      const target = returnFocus;
+      returnFocus = null;
+      if (target && typeof target.focus === 'function') target.focus();
     };
     const open = () => {
+      returnFocus = root?.activeElement || null;
       modal.classList.remove('hidden');
+      modal.hidden = false;
       const title = typeof modal.querySelector === 'function' ? modal.querySelector('h3') : null;
       const focusEl = title || closeBtn;
       if (focusEl && typeof focusEl.focus === 'function') {
@@ -4900,6 +4937,7 @@ if (this.tunnelLastObjectUrl) {
     document.getElementById('remoteVideo').classList.remove('connected');
     document.body.classList.remove('stream-connected');
     document.getElementById('loading')?.classList.remove('is-connecting');
+    this.setUiPhase('disconnected', { reason: 'manual-disconnect' });
     Auth.logout();
   },
 
@@ -5127,6 +5165,7 @@ function bootViewerShell() {
   if (window.__WRD_SHELL__ && typeof window.__WRD_SHELL__.installCore === 'function') {
     window.__WRD_SHELL__.installCore(startHandler);
   }
+  WebRTC.syncChromeCapabilities();
   // Bind network mode controls immediately after core is interactive,
   // regardless of bootstrap path. configureNetworkControls is idempotent
   // (guarded by dataset.bound), so the init() call later is a no-op.

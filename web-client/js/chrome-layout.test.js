@@ -14,6 +14,102 @@ test('syncChromeTop ignores non-positive heights', () => {
   assert.equal(root.style['--chrome-top'], undefined);
 });
 
+test('observeStatusBar falls back to the default chrome height without ResizeObserver', () => {
+  const root = { style: {}, ownerDocument: null };
+  const status = { offsetHeight: 0 };
+  const previous = global.ResizeObserver;
+  try {
+    delete global.ResizeObserver;
+    ChromeLayout.observeStatusBar(status, root);
+    assert.equal(root.style['--chrome-top'], '56px');
+  } finally {
+    if (previous) global.ResizeObserver = previous;
+  }
+});
+
+test('capability matrix gates actions by connection phase', () => {
+  const expected = {
+    idle: { canConnect: true, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
+    signaling: { canConnect: false, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
+    'media-pending': { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: false, canDisconnect: true },
+    connected: { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: true, canDisconnect: true },
+    'media-stalled': { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: true, canDisconnect: true },
+    disconnected: { canConnect: true, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
+  };
+  for (const [phase, values] of Object.entries(expected)) {
+    assert.deepEqual(
+      ChromeLayout.getCapabilities({ uiPhase: phase, streamReady: phase === 'connected', activeControl: false }),
+      { ...values, canOpenNetwork: phase !== 'idle' && phase !== 'disconnected', canOpenResolution: phase === 'connected' || phase === 'media-stalled', canOpenTerminal: phase !== 'idle' && phase !== 'disconnected' },
+    );
+  }
+});
+
+test('capability matrix requires active control and terminal authorization', () => {
+  const caps = ChromeLayout.getCapabilities({
+    uiPhase: 'connected', streamReady: true, activeControl: true,
+    controlTransition: false, terminalAuthorized: true,
+  });
+  assert.equal(caps.canSendDesktopInput, true);
+  assert.equal(caps.canOpenTerminal, true);
+  assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true, controlTransition: true }).canSendDesktopInput, false);
+});
+
+test('applyCapabilities updates capability-bound controls', () => {
+  const make = (id) => ({ id, disabled: false, hidden: false, dataset: {} });
+  const elements = new Map(['startBtn', 'requestControlBtn', 'refreshBtn', 'pauseBtn', 'disconnectBtn', 'networkModeBtn', 'resolutionBtn', 'terminalTabBtn'].map((id) => [id, make(id)]));
+  const root = { getElementById: (id) => elements.get(id) || null, querySelectorAll: () => [] };
+  ChromeLayout.applyCapabilities({ uiPhase: 'idle', streamReady: false, activeControl: false }, root);
+  assert.equal(elements.get('startBtn').disabled, false);
+  assert.equal(elements.get('refreshBtn').disabled, true);
+  assert.equal(elements.get('refreshBtn').hidden, true);
+  assert.equal(elements.get('networkModeBtn').hidden, true);
+});
+
+test('applyCapabilities keeps request control available only when media is ready and lease is free', () => {
+  const make = (id) => ({ id, disabled: false, hidden: false, classList: { toggle() {} } });
+  const elements = new Map(['startBtn', 'requestControlBtn', 'textInputBtn', 'keyboardModeBtn', 'moreActionsBtn', 'scaleBtn', 'fullscreenBtn'].map((id) => [id, make(id)]));
+  const root = { getElementById: (id) => elements.get(id) || null, querySelectorAll: () => [] };
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: false }, root);
+  assert.equal(elements.get('requestControlBtn').disabled, false);
+  assert.equal(elements.get('requestControlBtn').hidden, false);
+  assert.equal(elements.get('textInputBtn').disabled, true);
+  assert.equal(elements.get('scaleBtn').disabled, false);
+  assert.equal(elements.get('fullscreenBtn').disabled, false);
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true }, root);
+  assert.equal(elements.get('requestControlBtn').hidden, true);
+  assert.equal(elements.get('textInputBtn').disabled, false);
+});
+
+test('more menu overflow buttons expose menuitem semantics', () => {
+  const button = { dataset: {}, setAttribute(name, value) { this[name] = value; }, getAttribute() { return null; } };
+  const bar = { querySelectorAll: () => [button] };
+  const menu = { appendChild(node) { this.child = node; } };
+  ChromeLayout.moveOverflowIntoMenu(bar, menu);
+  assert.equal(button.role, 'menuitem');
+});
+
+test('more menu keyboard navigation wraps and supports Home/End', () => {
+  const focused = [];
+  const items = [0, 1, 2].map((index) => ({
+    focus() { focused.push(index); },
+    getAttribute() { return null; },
+  }));
+  const menu = {
+    querySelectorAll() { return items; },
+    hidden: false,
+  };
+  const root = {
+    getElementById(id) { return id === 'moreActionsMenu' ? menu : null; },
+    querySelector() { return null; },
+    addEventListener() {},
+  };
+  const unbind = ChromeLayout.bindMoreMenu(root);
+  assert.equal(typeof unbind, 'function');
+  assert.equal(typeof ChromeLayout.handleMoreMenuKeydown, 'function');
+  ChromeLayout.handleMoreMenuKeydown({ key: 'End', target: menu, preventDefault() {} }, root);
+  assert.deepEqual(focused, [2]);
+});
+
 test('toggleMoreMenu sets hidden and aria-expanded', () => {
   const next = ChromeLayout.nextMoreMenuState(false);
   assert.equal(next.open, true);
@@ -197,8 +293,8 @@ test('shouldIdle only when streaming, chrome visible, idle long enough', () => {
   }), false);
 });
 
-test('auto idle is off so enterIdle does not hide docks', () => {
-  assert.equal(ChromeLayout.autoIdleEnabled, false);
+test('auto idle retreats docks after a connected idle period', () => {
+  assert.equal(ChromeLayout.autoIdleEnabled, true);
   const classes = new Set(['stream-connected']);
   const root = {
     body: {
@@ -211,5 +307,5 @@ test('auto idle is off so enterIdle does not hide docks', () => {
     getElementById: () => null,
   };
   ChromeLayout.enterIdle(root);
-  assert.equal(classes.has('chrome-idle'), false);
+  assert.equal(classes.has('chrome-idle'), true);
 });

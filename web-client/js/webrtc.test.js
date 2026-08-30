@@ -1320,6 +1320,25 @@ test('bindSettingsModal focuses the title and consumes Escape before remote keyb
   assert.equal(modal.classList.contains('hidden'), true);
 });
 
+test('bindSettingsModal restores the opener focus after close', () => {
+  const { WebRTC } = loadWebRTC();
+  const opener = { focusCalls: 0, focus() { this.focusCalls += 1; } };
+  const title = { focusCalls: 0, focus() { this.focusCalls += 1; } };
+  const closeBtn = { dataset: {}, addEventListener() {} };
+  const modal = {
+    dataset: {},
+    classList: { hidden: true, add() { this.hidden = true; }, remove() { this.hidden = false; }, contains() { return this.hidden; } },
+    querySelector() { return title; },
+    addEventListener() {},
+  };
+  const root = { addEventListener() {}, activeElement: opener };
+  const api = WebRTC.bindSettingsModal(modal, { closeBtn, root });
+  api.open();
+  assert.equal(title.focusCalls, 1);
+  api.close();
+  assert.equal(opener.focusCalls, 1);
+});
+
 test('WebRTC owns one stats sampler and stops it during telemetry teardown', () => {
   let createCalls = 0;
   let startCalls = 0;

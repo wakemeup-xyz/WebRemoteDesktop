@@ -447,15 +447,35 @@ const Input = {
     const input = document.getElementById('remoteTextInput');
     const submit = document.getElementById('textInputSubmitBtn');
     const cancel = document.getElementById('textInputCancelBtn');
-    const close = () => { modal?.classList?.add('hidden'); if (input) input.value = ''; };
+    let returnFocus = null;
+    const close = () => {
+      modal?.classList?.add('hidden');
+      if (modal) modal.hidden = true;
+      if (input) input.value = '';
+      const target = returnFocus;
+      returnFocus = null;
+      target?.focus?.();
+    };
     const commit = () => {
       const text = Array.from(input?.value || '').slice(0, 4096).join('');
       if (text && this.keyboardController?.sendText(text)) close();
     };
-    button?.addEventListener('click', (event) => { event.preventDefault(); modal?.classList?.remove('hidden'); input?.focus(); });
+    button?.addEventListener('click', (event) => {
+      event.preventDefault();
+      returnFocus = document.activeElement || button;
+      modal?.classList?.remove('hidden');
+      if (modal) modal.hidden = false;
+      input?.focus();
+    });
     submit?.addEventListener('click', (event) => { event.preventDefault(); commit(); });
     cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
     input?.addEventListener('compositionend', () => commit());
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        event.preventDefault();
+        close();
+      }
+    }, true);
   },
 };
 

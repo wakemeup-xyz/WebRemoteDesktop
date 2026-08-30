@@ -140,6 +140,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **搜索端口**：仅在 `auto` / `stun`、信令与 Host 在线，且当前 Viewer 为 ACTIVE controller 时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）；失去控制立即停止
 - [x] **全屏控制**：网页端提供全屏按钮，全屏元素内提供退出按钮，Esc 仍可用
 - [x] **顶栏与底部工具条**：顶栏高度与内容区起点绑定；底部工具条单列堆叠
+- [x] **Viewer Chrome 门禁**：连接前仅保留“开始学习助手”CTA；signaling、媒体待出画、已连接、媒体卡顿和断开阶段按 capability 门禁刷新、暂停、断开、分辨率、网络、Terminal 与桌面输入动作。控制租约仍由 WebRTC 真相维护，控制切换中 fail-closed。
+- [x] **Viewer 几何与空闲退避**：顶栏实际高度通过 `--chrome-top` 驱动画面和 Terminal 起点，支持 `dvh`/`vh` 回退与底部 safe-area；底部 action/control Dock 固定为垂直堆叠，已连接且无菜单/弹窗时 2.5 秒无底部活动自动退避，触屏仅由底部边缘或显式控件唤回。
 - [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，自动恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel，也**不**自动启动 500 轮端口搜索
 - [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
 - [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明；切换模式会取消手动端口搜索

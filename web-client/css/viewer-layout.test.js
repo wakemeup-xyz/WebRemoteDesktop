@@ -79,6 +79,13 @@ test('viewer layout uses --chrome-top instead of a hardcoded 56px body pad', () 
   assert.doesNotMatch(css, /body\s*\{[^}]*padding-top\s*:\s*56px/);
 });
 
+test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
+  assert.match(css, /height\s*:\s*calc\(100vh\s*-\s*var\(--chrome-top\)\)/);
+  assert.match(css, /height\s*:\s*calc\(100dvh\s*-\s*var\(--chrome-top\)\)/);
+  assert.match(css, /bottom:\s*calc\([^;]*env\(safe-area-inset-bottom/);
+  assert.match(css, /\.chrome-docks[^}]*flex-direction:\s*column/);
+});
+
 test('docks share one fixed column wrapper', () => {
   assert.match(html, /id="chromeDocks"[\s\S]*class="action-bar"[\s\S]*class="control-bar"/);
   const docks = getBlock('.chrome-docks');

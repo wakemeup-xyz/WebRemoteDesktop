@@ -32,6 +32,7 @@ function makeClassList() {
 
 function makeElement(id) {
   const children = [];
+  const attrs = {};
   let internalValue = '';
   const element = {
     id,
@@ -39,6 +40,8 @@ function makeElement(id) {
     dataset: {},
     className: '',
     classList: makeClassList(),
+    setAttribute(name, value) { attrs[name] = String(value); this[name] = String(value); },
+    getAttribute(name) { return attrs[name] ?? null; },
     focusCalls: 0,
     selectionStart: 0,
     selectionEnd: 0,
@@ -1899,6 +1902,29 @@ test('TerminalPanel hides transport, workspace, and composer until admin auth', 
   assert.equal(workspace.classList.contains('hidden'), false);
   assert.equal(composer.classList.contains('hidden'), false);
   assert.equal(elements.get('terminalAuthForm').classList.contains('hidden'), true);
+});
+
+test('TerminalPanel renders session tabs with complete tab semantics', () => {
+  const { TerminalPanel, elements, sessionStorageMap, tokenKey } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term-aria', title: 'ARIA shell' });
+  TerminalPanel.render();
+  const tab = elements.get('terminalSessionTabs').__children[0];
+  assert.equal(tab.getAttribute('role'), 'tab');
+  assert.equal(tab.getAttribute('aria-controls'), 'terminal-session-term-aria');
+  assert.equal(tab.getAttribute('aria-selected'), 'true');
+  assert.equal(elements.get('terminalWorkspace').__children[0].id, 'terminal-session-term-aria');
+  assert.equal(elements.get('terminalWorkspace').__children[0].getAttribute('aria-labelledby'), 'terminal-session-tab-term-aria');
+  assert.equal(elements.get('terminalWorkspace').hidden, false);
+});
+
+test('TerminalPanel hides workspace and composer with hidden attributes before admin auth', () => {
+  const { TerminalPanel, elements } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.render();
+  assert.equal(elements.get('terminalWorkspace').hidden, true);
+  assert.equal(elements.get('terminalComposer').hidden, true);
 });
 
 test('TerminalPanel records terminal latency state and suppresses duplicated remote echo after optimistic local echo', () => {

@@ -31,6 +31,7 @@ body {
 .viewer-container:fullscreen {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   padding: 0;
   background: #000;
 }
@@ -259,7 +260,7 @@ body.tunnel-relay-active #remoteVideo {
   background: var(--bg-surface);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  padding: 8px 16px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -768,6 +769,7 @@ body.chrome-idle .chrome-docks {
   transform: none;
   pointer-events: auto;
   max-width: 100%;
+  width: min(100%, calc(100vw - 32px));
 }
 
 .chrome-docks .action-bar {
@@ -1392,6 +1394,15 @@ body.terminal-active .network-advisor.visible:not(.collapsed) {
 }
 
 @media (max-width: 899px) {
+  .chrome-docks {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .chrome-docks .action-bar,
+  .chrome-docks .control-bar {
+    width: 100%;
+  }
   .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
   body.more-open .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
 }

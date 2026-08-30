@@ -349,6 +349,8 @@ const TerminalPanel = {
     document.body.classList.remove('terminal-active');
     this.elements.desktopPanel?.classList.remove('hidden');
     this.elements.terminalPanel?.classList.add('hidden');
+    if (this.elements.desktopPanel) this.elements.desktopPanel.hidden = false;
+    if (this.elements.terminalPanel) this.elements.terminalPanel.hidden = true;
     this.elements.desktopTab?.classList.add('active');
     this.elements.terminalTab?.classList.remove('active');
     this.elements.desktopTab?.setAttribute?.('aria-selected', 'true');
@@ -363,6 +365,8 @@ const TerminalPanel = {
     document.body.classList.add('terminal-active');
     this.elements.desktopPanel?.classList.add('hidden');
     this.elements.terminalPanel?.classList.remove('hidden');
+    if (this.elements.desktopPanel) this.elements.desktopPanel.hidden = true;
+    if (this.elements.terminalPanel) this.elements.terminalPanel.hidden = false;
     this.elements.desktopTab?.classList.remove('active');
     this.elements.terminalTab?.classList.add('active');
     this.elements.desktopTab?.setAttribute?.('aria-selected', 'false');
@@ -1554,6 +1558,10 @@ const TerminalPanel = {
   createTerm(sessionId) {
     const container = document.createElement('div');
     container.className = 'terminal-instance hidden';
+    container.id = `terminal-session-${sessionId}`;
+    container.setAttribute?.('role', 'tabpanel');
+    container.setAttribute?.('aria-labelledby', `terminal-session-tab-${sessionId}`);
+    container.setAttribute?.('aria-label', `Terminal ${sessionId}`);
     container.dataset.sessionId = sessionId;
     this.elements.workspace?.appendChild(container);
 
@@ -2069,14 +2077,21 @@ const TerminalPanel = {
     const authorized = this.hasAdminToken();
     const connected = Boolean(this.socket?.connected);
     this.elements.authForm?.classList.toggle('hidden', authorized);
+    if (this.elements.authForm) this.elements.authForm.hidden = authorized;
     this.elements.newButton?.classList.toggle('hidden', !authorized);
+    if (this.elements.newButton) this.elements.newButton.hidden = !authorized;
+    this.elements.composer?.classList.toggle('hidden', !authorized);
+    if (this.elements.composer) this.elements.composer.hidden = !authorized;
     const chrome = [
       this.elements.root?.querySelector('.terminal-toolbar'),
       this.elements.root?.querySelector('.terminal-transport-row'),
       this.elements.workspace,
       this.elements.root?.querySelector('.terminal-composer'),
     ];
-    chrome.forEach((el) => el?.classList.toggle('hidden', !authorized));
+    chrome.forEach((el) => {
+      el?.classList.toggle('hidden', !authorized);
+      if (el) el.hidden = !authorized;
+    });
     if (this.elements.newButton) {
       const atCapacity = Number(this.poolCapacity?.availableSessions) === 0
         && Number(this.poolCapacity?.maxSessions) > 0;
@@ -2094,6 +2109,11 @@ const TerminalPanel = {
       sessions.forEach((session) => {
         const button = document.createElement('button');
         button.className = 'terminal-session-tab';
+        button.id = `terminal-session-tab-${session.sessionId}`;
+        button.type = 'button';
+        button.setAttribute?.('role', 'tab');
+        button.setAttribute?.('aria-controls', `terminal-session-${session.sessionId}`);
+        button.setAttribute?.('aria-selected', session.sessionId === activeId ? 'true' : 'false');
         button.classList.toggle('active', session.sessionId === activeId);
         const observerLabel = session.observerCount > 0 ? ` · ${session.observerCount}人` : '';
         const processLabel = processStatusLabel(session.processStatus);
@@ -2113,7 +2133,9 @@ const TerminalPanel = {
     }
 
     this.elements.workspace?.querySelectorAll('.terminal-instance').forEach((node) => {
-      node.classList.toggle('hidden', node.dataset.sessionId !== activeId);
+      const active = node.dataset.sessionId === activeId;
+      node.classList.toggle('hidden', !active);
+      node.hidden = !active;
       const session = this.state.getSession(node.dataset.sessionId);
       const writable = session?.processStatus === 'running';
       const helper = node.querySelector?.('.xterm-helper-textarea');

@@ -1,9 +1,21 @@
 const OVERFLOW_ACTION_SELECTOR = '.action-btn:not(.action-more):not([data-pin="always"])';
 const IDLE_EDGE_PX = 80;
 
+const CAPABILITY_IDS = {
+  canConnect: ['startBtn'],
+  canSendDesktopInput: ['textInputBtn', 'keyboardModeBtn'],
+  canRefresh: ['refreshBtn'],
+  canPause: ['pauseBtn'],
+  canDisconnect: ['disconnectBtn'],
+  canOpenNetwork: ['networkModeBtn'],
+  canOpenResolution: ['resolutionBtn'],
+  canOpenTerminal: ['terminalTabBtn'],
+};
+const MEDIA_CONTROL_IDS = ['scaleBtn', 'fullscreenBtn'];
+
 const ChromeLayout = {
   IDLE_MS: 2500,
-  autoIdleEnabled: false,
+  autoIdleEnabled: true,
   _lastActivity: 0,
   _idleTimer: null,
   _wasStreamConnected: false,
@@ -177,10 +189,72 @@ const ChromeLayout = {
     const height = Number(px);
     if (!Number.isFinite(height) || height <= 0) return;
     const root = rootEl || (typeof document !== 'undefined' ? document.documentElement : null);
-    root?.style?.setProperty('--chrome-top', `${Math.round(height)}px`);
+    const value = `${Math.round(height)}px`;
+    if (typeof root?.style?.setProperty === 'function') root.style.setProperty('--chrome-top', value);
+    else if (root?.style) root.style['--chrome-top'] = value;
+  },
+  getCapabilities(snapshot = {}) {
+    const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
+      .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
+    const active = snapshot.activeControl === true && snapshot.controlTransition !== true;
+    const mediaReady = snapshot.streamReady === true && (phase === 'connected' || phase === 'media-stalled');
+    const canConnect = phase === 'idle' || phase === 'disconnected';
+    const canMediaActions = phase === 'media-pending' || phase === 'connected' || phase === 'media-stalled';
+    return {
+      canConnect,
+      canSendDesktopInput: mediaReady && active,
+      canRefresh: canMediaActions,
+      canPause: phase === 'connected' || phase === 'media-stalled',
+      canDisconnect: canMediaActions,
+      canOpenNetwork: phase !== 'idle' && phase !== 'disconnected',
+      canOpenResolution: phase === 'connected' || phase === 'media-stalled',
+      canOpenTerminal: phase !== 'idle' && phase !== 'disconnected',
+    };
+  },
+  applyCapabilities(snapshot = {}, rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const capabilities = this.getCapabilities(snapshot);
+    const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
+      .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
+    if (!root) return capabilities;
+    const setNode = (id, allowed, { hide = true } = {}) => {
+      const node = root.getElementById?.(id) || root.querySelector?.(`#${id}`);
+      if (!node) return;
+      node.disabled = !allowed;
+      if (hide) node.hidden = !allowed;
+    };
+    Object.entries(CAPABILITY_IDS).forEach(([capability, ids]) => {
+      ids.forEach((id) => {
+        let allowed = capabilities[capability] === true;
+        if (id === 'requestControlBtn') {
+          allowed = ['connected', 'media-stalled'].includes(snapshot.uiPhase)
+            && snapshot.activeControl !== true && snapshot.controlTransition !== true;
+        }
+        setNode(id, allowed, { hide: !['requestControlBtn', 'terminalTabBtn'].includes(id) });
+      });
+    });
+    setNode('requestControlBtn', snapshot.streamReady === true
+      && ['connected', 'media-stalled'].includes(phase)
+      && snapshot.activeControl !== true && snapshot.controlTransition !== true);
+    setNode('terminalTabBtn', capabilities.canOpenTerminal, { hide: false });
+    const mediaReady = snapshot.streamReady === true && ['connected', 'media-stalled'].includes(snapshot.uiPhase);
+    MEDIA_CONTROL_IDS.forEach((id) => setNode(id, mediaReady));
+    setNode('moreActionsBtn', mediaReady, { hide: false });
+    const actionNodes = root.querySelectorAll?.('[data-action]') || [];
+    actionNodes.forEach((node) => {
+      node.disabled = !capabilities.canSendDesktopInput;
+      node.hidden = !capabilities.canSendDesktopInput;
+    });
+    const loading = root.getElementById?.('loading') || root.querySelector?.('#loading');
+    if (loading?.classList?.toggle) loading.classList.toggle('is-connecting', snapshot.uiPhase === 'signaling');
+    return capabilities;
   },
   observeStatusBar(statusEl, rootEl) {
-    if (!statusEl || typeof ResizeObserver === 'undefined') return () => {};
+    if (!statusEl) return () => {};
+    if (typeof ResizeObserver === 'undefined') {
+      this.syncChromeTop(56, rootEl);
+      return () => {};
+    }
     const apply = () => this.syncChromeTop(statusEl.offsetHeight, rootEl);
     apply();
     const ro = new ResizeObserver(apply);
@@ -201,7 +275,10 @@ const ChromeLayout = {
   moveOverflowIntoMenu(bar, menu) {
     if (!bar || !menu) return;
     const overflow = Array.from(bar.querySelectorAll(OVERFLOW_ACTION_SELECTOR));
-    overflow.forEach((btn) => menu.appendChild(btn));
+    overflow.forEach((btn) => {
+      btn.setAttribute?.('role', 'menuitem');
+      menu.appendChild(btn);
+    });
   },
   restoreOverflowToBar(bar, menu) {
     if (!bar || !menu) return;
@@ -209,6 +286,7 @@ const ChromeLayout = {
     const items = Array.from(menu.querySelectorAll('.action-btn'))
       .sort((a, b) => Number(a.getAttribute('data-home-index')) - Number(b.getAttribute('data-home-index')));
     items.forEach((btn) => {
+      btn.removeAttribute?.('role');
       const target = Number(btn.getAttribute('data-home-index'));
       const current = Array.from(bar.children).filter((child) =>
         child.classList?.contains('action-btn') && !child.classList.contains('action-more')
@@ -234,6 +312,23 @@ const ChromeLayout = {
     else this.restoreOverflowToBar(bar, menu);
     return { open: nextOpen };
   },
+  handleMoreMenuKeydown(event, rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const menu = root?.getElementById?.('moreActionsMenu') || root?.querySelector?.('#moreActionsMenu');
+    if (!menu || menu.hidden) return false;
+    const items = Array.from(menu.querySelectorAll?.('[role="menuitem"], .action-btn') || []);
+    if (!items.length) return false;
+    const current = items.indexOf(root?.activeElement || event?.target);
+    let next = current;
+    if (event?.key === 'ArrowDown') next = current < items.length - 1 ? current + 1 : 0;
+    else if (event?.key === 'ArrowUp') next = current > 0 ? current - 1 : items.length - 1;
+    else if (event?.key === 'Home') next = 0;
+    else if (event?.key === 'End') next = items.length - 1;
+    else return false;
+    event.preventDefault?.();
+    items[next]?.focus?.();
+    return true;
+  },
   bindMoreMenu(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     if (!root) return () => {};
@@ -249,6 +344,7 @@ const ChromeLayout = {
       this.toggleMoreMenu(this.nextMoreMenuState(isOpen).open, root);
     };
     const onKeydown = (event) => {
+      if (this.handleMoreMenuKeydown(event, root)) return;
       if (event.key !== 'Escape') return;
       if (btn.getAttribute('aria-expanded') !== 'true') return;
       this.toggleMoreMenu(false, root);

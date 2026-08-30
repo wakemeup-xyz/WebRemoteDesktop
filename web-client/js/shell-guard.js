@@ -64,6 +64,7 @@
     global.clearTimeout(deadline);
     mark('core-interactive');
     setCoreControlsDisabled(false);
+    global.WebRTC?.syncChromeCapabilities?.();
     if (state.queuedStart) startHandler();
     return true;
   }

@@ -21,7 +21,7 @@
       <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
       <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control role="tab" aria-controls="terminalPanel" aria-selected="false">Terminal</button>
     </div>
-    <span id="connectionStatus" class="status connecting">连接中</span>
+    <span id="connectionStatus" class="status disconnected">未连接</span>
     <div class="status-metrics" aria-label="链路指标">
       <span id="resolutionDisplay" class="status-metric" title="分辨率">-</span>
       <span id="fpsDisplay" class="status-metric" title="帧率">0 FPS</span>
@@ -39,7 +39,7 @@
     </div>
   </div>
   
-  <main id="desktopPanel">
+  <main id="desktopPanel" role="tabpanel" aria-labelledby="desktopTabBtn">
     <div class="viewer-container">
       <video id="remoteVideo" autoplay playsinline></video>
       <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
@@ -78,7 +78,7 @@
         <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
         <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
         <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
-        <button id="moreActionsBtn" class="action-btn action-more" type="button" aria-expanded="false" aria-controls="moreActionsMenu">更多</button>
+        <button id="moreActionsBtn" class="action-btn action-more" type="button" data-core-control aria-expanded="false" aria-controls="moreActionsMenu">更多</button>
         <div id="moreActionsMenu" class="more-actions-menu" hidden role="menu"></div>
       </div>
 
@@ -108,7 +108,7 @@
     </div>
   </main>
 
-  <section id="terminalPanel" class="terminal-panel hidden" aria-label="Web terminal">
+  <section id="terminalPanel" class="terminal-panel hidden" hidden role="tabpanel" aria-labelledby="terminalTabBtn" aria-label="Web terminal">
     <form id="terminalAuthForm" class="terminal-auth-form">
       <input id="terminalAdminPassword" type="password" autocomplete="current-password" placeholder="Admin password" aria-label="Admin password">
       <button id="terminalAuthBtn" class="terminal-primary-btn" type="submit">授权</button>
@@ -149,9 +149,9 @@
     </div>
   </section>
   
-  <div id="resolutionModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div id="resolutionModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="resolutionModalTitle">
     <div class="modal-content">
-      <h3 tabindex="-1">选择分辨率</h3>
+      <h3 id="resolutionModalTitle" tabindex="-1">选择分辨率</h3>
       <div class="resolution-options">
         <label class="resolution-option">
           <input type="radio" name="resolution" value="540p" data-width="960" data-height="540">
@@ -197,9 +197,9 @@
     </div>
   </div>
 
-  <div id="networkModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div id="networkModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="networkModalTitle">
     <div class="modal-content network-modal-content">
-      <h3 tabindex="-1">网络模式</h3>
+      <h3 id="networkModalTitle" tabindex="-1">网络模式</h3>
       <div class="network-options">
         <label class="network-option">
           <input type="radio" name="networkMode" value="lan">
@@ -253,9 +253,9 @@
     </div>
   </div>
   
-  <div id="diagModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div id="diagModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="diagModalTitle">
     <div class="modal-content diag-modal">
-      <h3 tabindex="-1">前端诊断日志</h3>
+      <h3 id="diagModalTitle" tabindex="-1">前端诊断日志</h3>
       <p>最近捕获的浏览器控制台日志，点击发送可将日志传给服务端分析。</p>
       <div id="latencyPanel" class="latency-panel">
         <h4>延迟分析 (5秒窗口)</h4>
@@ -278,9 +278,9 @@
     </div>
   </div>
 
-  <div id="textInputModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="文本输入">
+  <div id="textInputModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="textInputModalTitle">
     <div class="modal-content text-input-modal">
-      <h3>文本输入</h3>
+      <h3 id="textInputModalTitle">文本输入</h3>
       <textarea id="remoteTextInput" maxlength="4096" rows="5" spellcheck="false" autocomplete="off"></textarea>
       <div class="text-input-actions">
         <button id="textInputSubmitBtn" class="modal-btn primary">发送</button>
