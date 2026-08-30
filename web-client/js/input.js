@@ -17,6 +17,8 @@ const Input = {
   _activePointerElement: null,
   _pressedMouseButtons: new Set(),
   _pendingMouseReset: false,
+  _pendingMouseResetId: null,
+  _touchAdapters: new Map(),
   _lastPointerCoords: null,
   _activePointerClickCount: 1,
   _lastPointerClickAt: null,
@@ -31,6 +33,7 @@ const Input = {
     if (!this.videoElement) return;
     this.socket = typeof WebRTC !== 'undefined' ? WebRTC.socket : null;
     this.initKeyboardController();
+    this.bindTouchAdapter(this.videoElement);
     if (!this._listenersBound) {
       this.setupEventListeners();
       this.setupActionButtons();
@@ -105,16 +108,28 @@ const Input = {
     return result;
   },
 
+  acceptMouseAck(ack) {
+    if (!this._pendingMouseReset) return { status: 'stale' };
+    const inputIds = Array.isArray(ack?.inputIds) ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    if (!this._pendingMouseResetId || !inputIds.includes(this._pendingMouseResetId)) return { status: 'stale' };
+    if (ack?.status !== 'applied' && ack?.status !== 'duplicate') return { status: 'stale' };
+    this._pendingMouseReset = false;
+    this._pendingMouseResetId = null;
+    return { status: ack.status };
+  },
+
   setupEventListeners() {
     const video = this.videoElement;
     video.setAttribute('tabindex', '0');
     video.style.outline = 'none';
     this.bindMouseEvents(video);
+    this.bindTouchAdapter(video);
     const relayImage = document.getElementById('relayImage');
     if (relayImage) {
       relayImage.setAttribute('tabindex', '0');
       relayImage.style.outline = 'none';
       this.bindMouseEvents(relayImage);
+      this.bindTouchAdapter(relayImage);
     }
     document.addEventListener('keydown', (event) => this.keyboardController?.handleDomEvent(event));
     document.addEventListener('keyup', (event) => this.keyboardController?.handleDomEvent(event));
@@ -324,18 +339,44 @@ const Input = {
   },
 
   releasePointer(reason = 'pointer-release') {
+    this._touchAdapters.forEach((adapter) => adapter.reset?.(reason));
     const element = this._activePointerElement; const pointerId = this._activePointerId;
     if (element?.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId);
     const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
     this._pressedMouseButtons.clear(); this._activePointerId = null; this._activePointerElement = null; this._pendingMouseMove = null;
     if (!needsReset) return null;
     const inputId = this.sendInput('mouse', 'reset', { reason });
-    this._pendingMouseReset = !inputId;
+    this._pendingMouseReset = true;
+    this._pendingMouseResetId = inputId || null;
     return inputId;
+  },
+
+  bindTouchAdapter(element) {
+    if (!element || typeof TouchInputAdapter === 'undefined' || this._touchAdapters.has(element)) {
+      return this._touchAdapters.get(element) || null;
+    }
+    const adapter = TouchInputAdapter.create({
+      element,
+      mapPoint: (event, allowOutside) => this.getRelativeCoords({ ...event, currentTarget: element }, allowOutside),
+      sendMouse: (action, payload) => {
+        const id = this.sendInput('mouse', action, payload);
+        if (action === 'reset') {
+          this._pendingMouseReset = true;
+          this._pendingMouseResetId = id || null;
+        }
+        return id;
+      },
+      isEnabled: () => this.isActive && !this._pendingMouseReset,
+      getClickCount: (event) => this.getPointerClickCount(event),
+    });
+    adapter.bind();
+    this._touchAdapters.set(element, adapter);
+    return adapter;
   },
 
   bindMouseEvents(element) {
     element.addEventListener('pointermove', (event) => {
+      if (event.pointerType === 'touch') return;
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       const coords = this.getRelativeCoords(event, this._activePointerId === event.pointerId);
       if (coords) {
@@ -349,6 +390,7 @@ const Input = {
       }
     });
     element.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'touch') return;
       if (!this.isActive) return;
       event.preventDefault(); element.focus();
       const coords = this.getRelativeCoords(event); if (!coords) return;
@@ -358,6 +400,7 @@ const Input = {
       this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
     });
     element.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'touch') return;
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
       // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
@@ -372,19 +415,25 @@ const Input = {
       this._pressedMouseButtons.delete(button);
       if (!id) {
         this._pendingMouseReset = true;
-        this.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
+        const resetId = this.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
+        this._pendingMouseResetId = resetId || null;
       } else {
         this._pendingMouseReset = false;
       }
       if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
     });
-    element.addEventListener('pointercancel', () => this.releasePointer('pointer-cancel'));
-    element.addEventListener('lostpointercapture', () => {
+    element.addEventListener('pointercancel', (event) => {
+      if (event.pointerType === 'touch') return;
+      this.releasePointer('pointer-cancel');
+    });
+    element.addEventListener('lostpointercapture', (event) => {
+      if (event.pointerType === 'touch') return;
       if (this._pressedMouseButtons.size > 0 || this._pendingMouseReset) {
         this.releasePointer('lost-pointer-capture');
       }
     });
     element.addEventListener('wheel', (event) => {
+      if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
       if (!this.isActive) return;
       event.preventDefault();
       const coords = this.getRelativeCoords(event);
