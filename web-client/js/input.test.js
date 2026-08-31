@@ -288,6 +288,22 @@ test('touch lifecycle reset sends one mouse reset through Input ownership', () =
   assert.equal(Input._pendingMouseResetId, 'adapter-reset');
 });
 
+test('pending touch reset survives lifecycle release until its first matching acknowledgement', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'touch-reset-1';
+  Input._touchAdapters.set({}, { reset() { return null; } });
+  Input._pressedMouseButtons.add('left');
+
+  Input.releasePointer('window-blur');
+
+  assert.equal(socketEvents.filter(({ payload }) => payload.action === 'reset').length, 0);
+  assert.equal(Input._pendingMouseResetId, 'touch-reset-1');
+  assert.equal(Input.acceptMouseAck({ status: 'applied', inputIds: ['touch-reset-1'] }).status, 'applied');
+  assert.equal(Input._pendingMouseReset, false);
+});
+
 test('matching mouse reset acknowledgement flushes deferred touch work', () => {
   const { Input } = loadInput();
   let flushes = 0;

@@ -353,7 +353,7 @@ const Input = {
     if (element?.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId);
     const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
     this._pressedMouseButtons.clear(); this._activePointerId = null; this._activePointerElement = null; this._pendingMouseMove = null;
-    if (!needsReset || adapterResetIssued || (!wasPendingReset && this._pendingMouseReset)) return null;
+    if (!needsReset || wasPendingReset || adapterResetIssued || this._pendingMouseReset) return null;
     const inputId = this.sendInput('mouse', 'reset', { reason });
     this._pendingMouseReset = true;
     this._pendingMouseResetId = inputId || null;
