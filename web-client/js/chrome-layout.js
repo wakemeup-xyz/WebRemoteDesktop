@@ -245,6 +245,11 @@ const ChromeLayout = {
       node.disabled = !capabilities.canSendDesktopInput;
       node.hidden = !capabilities.canSendDesktopInput;
     });
+    const mobileActionNodes = root.querySelectorAll?.('[data-mobile-action]') || [];
+    mobileActionNodes.forEach((node) => {
+      node.disabled = !capabilities.canSendDesktopInput;
+      node.hidden = !capabilities.canSendDesktopInput;
+    });
     const loading = root.getElementById?.('loading') || root.querySelector?.('#loading');
     if (loading?.classList?.toggle) loading.classList.toggle('is-connecting', snapshot.uiPhase === 'signaling');
     return capabilities;

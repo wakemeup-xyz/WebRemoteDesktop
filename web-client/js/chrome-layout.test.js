@@ -81,6 +81,21 @@ test('applyCapabilities keeps request control available only when media is ready
   assert.equal(elements.get('textInputBtn').disabled, false);
 });
 
+test('applyCapabilities gates mobile virtual keys through the desktop input capability', () => {
+  const mobileKey = { disabled: false, hidden: false };
+  const root = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll(selector) { return selector === '[data-mobile-action]' ? [mobileKey] : []; },
+  };
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: false }, root);
+  assert.equal(mobileKey.disabled, true);
+  assert.equal(mobileKey.hidden, true);
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true, controlTransition: false }, root);
+  assert.equal(mobileKey.disabled, false);
+  assert.equal(mobileKey.hidden, false);
+});
+
 test('more menu overflow buttons expose menuitem semantics', () => {
   const button = { dataset: {}, setAttribute(name, value) { this[name] = value; }, getAttribute() { return null; } };
   const bar = { querySelectorAll: () => [button] };

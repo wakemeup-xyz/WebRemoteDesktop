@@ -784,6 +784,61 @@ body.chrome-idle .chrome-docks {
   position: relative;
 }
 
+#mobileKeySurface {
+  display: none;
+  width: min(100%, calc(100vw - 16px));
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px));
+}
+
+.mobile-key-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 6px;
+  scrollbar-width: none;
+}
+
+.mobile-key-row::-webkit-scrollbar {
+  display: none;
+}
+
+#mobileKeySurface .mobile-key-btn {
+  flex: 0 0 auto;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  touch-action: manipulation;
+}
+
+#mobileKeySurface .mobile-key-btn[aria-pressed="true"] {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+#mobileInputDock {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px));
+  z-index: 110;
+}
+
+#mobileTextInput {
+  width: 100%;
+  min-height: var(--touch-min);
+  resize: none;
+  touch-action: none;
+}
+
+#mobileInputDock .control-btn {
+  min-height: var(--touch-min);
+}
+
 .control-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1413,6 +1468,7 @@ body.terminal-active .network-advisor.visible:not(.collapsed) {
   }
   .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
   body.more-open .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
+  #mobileKeySurface { display: block; }
 }
 
 /* ========== Scrollbar (Webkit) ========== */

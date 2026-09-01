@@ -20,6 +20,7 @@ const Input = {
   _pendingMouseReset: false,
   _pendingMouseResetId: null,
   _touchAdapters: new Map(),
+  _lastTouchAdapter: null,
   _lastPointerCoords: null,
   _activePointerClickCount: 1,
   _lastPointerClickAt: null,
@@ -168,6 +169,13 @@ const Input = {
       if (dcOpen) this.resetKeyboard('window-blur');
       else this.parkKeyboard('window-blur');
     });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      this.releasePointer('visibility-hidden');
+      const dcOpen = typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open';
+      if (dcOpen) this.resetKeyboard('visibility-hidden');
+      else this.parkKeyboard('visibility-hidden');
+    });
   },
 
   detectDefaultKeyboardMode() {
@@ -212,6 +220,14 @@ const Input = {
     display.textContent = labels[raw] || `键盘：${raw}`;
     display.dataset.state = raw;
     this.updateMobileTextInputButton();
+    this.updateMobileVirtualModifierButtons();
+  },
+
+  updateMobileVirtualModifierButtons() {
+    const active = new Set(this.keyboardController?.getSnapshot().virtualModifiers || []);
+    document.querySelectorAll?.('[data-mobile-modifier]').forEach((button) => {
+      button.setAttribute?.('aria-pressed', String(active.has(button.dataset.mobileModifier)));
+    });
   },
 
   supportsMobileTextInput() {
@@ -393,9 +409,14 @@ const Input = {
     if (!element || typeof TouchInputAdapter === 'undefined' || this._touchAdapters.has(element)) {
       return this._touchAdapters.get(element) || null;
     }
-    const adapter = TouchInputAdapter.create({
+    let adapter;
+    adapter = TouchInputAdapter.create({
       element,
-      mapPoint: (event, allowOutside) => this.getRelativeCoords({ ...event, currentTarget: element }, allowOutside),
+      mapPoint: (event, allowOutside) => {
+        const point = this.getRelativeCoords({ ...event, currentTarget: element }, allowOutside);
+        if (point) this._lastTouchAdapter = adapter;
+        return point;
+      },
       sendMouse: (action, payload) => {
         const id = this.sendInput('mouse', action, payload);
         if (action === 'reset') {
@@ -517,13 +538,31 @@ const Input = {
 
   setupActionButtons() {
     const actions = {
-      enter: { code: 'Enter' }, up: { code: 'ArrowUp' }, down: { code: 'ArrowDown' }, left: { code: 'ArrowLeft' }, right: { code: 'ArrowRight' },
+      escape: { code: 'Escape' }, tab: { code: 'Tab' }, backspace: { code: 'Backspace' }, enter: { code: 'Enter' },
+      up: { code: 'ArrowUp' }, down: { code: 'ArrowDown' }, left: { code: 'ArrowLeft' }, right: { code: 'ArrowRight' },
       copy: { code: 'KeyC', modifiers: { meta: true } }, paste: { code: 'KeyV', modifiers: { meta: true } }, cut: { code: 'KeyX', modifiers: { meta: true } },
       undo: { code: 'KeyZ', modifiers: { meta: true } }, selectAll: { code: 'KeyA', modifiers: { meta: true } }, save: { code: 'KeyS', modifiers: { meta: true } },
       find: { code: 'KeyF', modifiers: { meta: true } }, screenshot: { code: 'KeyA', modifiers: { meta: true, shift: true } }, switchInputMethod: { code: 'Space', modifiers: { ctrl: true } },
     };
-    document.querySelectorAll('.action-btn').forEach((button) => button.addEventListener('click', (event) => {
-      event.preventDefault(); const action = button.dataset.action;
+    const virtualModifiers = new Set(['shift', 'ctrl', 'alt', 'meta']);
+    document.querySelectorAll('.action-btn, [data-mobile-action]').forEach((button) => button.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (button.disabled) return;
+      const action = button.dataset.action || button.dataset.mobileAction;
+      if (virtualModifiers.has(action)) {
+        const pressed = button.getAttribute?.('aria-pressed') === 'true';
+        if (this.keyboardController?.setVirtualModifier(action, !pressed)) {
+          button.setAttribute?.('aria-pressed', String(!pressed));
+        }
+        return;
+      }
+      if (action === 'rightClick') {
+        const adapter = this._lastTouchAdapter
+          || this._touchAdapters.get(this.videoElement)
+          || this._touchAdapters.get(document.getElementById('relayImage'));
+        adapter?.clickButton('right');
+        return;
+      }
       if (action === 'showDock') { this.sendInput('command', 'showDock', {}); return; }
       const chord = actions[action]; if (chord) this.keyboardController?.sendChord(chord);
     }));

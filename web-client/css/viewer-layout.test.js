@@ -99,6 +99,25 @@ test('mobile input reserves touch targets and keyboard safe area', () => {
   assert.match(mobileControls, /min-height\s*:\s*var\(--touch-min\)/);
 });
 
+test('mobile virtual key surface exposes accessible navigation, modifiers, shortcuts, and right click', () => {
+  for (const action of ['escape', 'tab', 'backspace', 'enter', 'up', 'down', 'left', 'right', 'shift', 'ctrl', 'alt', 'meta', 'rightClick', 'copy', 'paste', 'cut', 'undo', 'selectAll', 'save', 'find', 'screenshot', 'switchInputMethod']) {
+    assert.match(html, new RegExp(`data-mobile-action="${action}"`), `missing mobile ${action} button`);
+  }
+  assert.match(html, /id="mobileKeySurface"[^>]*aria-label="移动远程控制按键"/);
+  assert.match(html, /data-mobile-action="shift"[^>]*aria-pressed="false"[^>]*aria-label="Shift"/);
+  assert.match(html, /data-mobile-action="rightClick"[^>]*aria-label="右键点击"/);
+
+  const keySurface = getBlock('#mobileKeySurface');
+  const keyRow = getBlock('.mobile-key-row');
+  const keyButtons = getBlock('#mobileKeySurface .mobile-key-btn');
+  assert.match(keySurface, /env\(safe-area-inset-bottom/);
+  assert.match(keySurface, /env\(keyboard-inset-height/);
+  assert.match(keyRow, /overflow-x\s*:\s*auto/);
+  assert.match(keyButtons, /min-width\s*:\s*var\(--touch-min\)/);
+  assert.match(keyButtons, /min-height\s*:\s*var\(--touch-min\)/);
+  assert.match(keyButtons, /touch-action\s*:\s*manipulation/);
+});
+
 test('media surfaces suppress browser touch gestures', () => {
   const surfaces = getBlock('#remoteVideo,\n#relayImage');
   assert.match(surfaces, /touch-action\s*:\s*none/);

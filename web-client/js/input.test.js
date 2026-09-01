@@ -102,6 +102,55 @@ test('composition submit sends one text, cancel sends none, and actions use one 
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'input.js'), 'utf8'), /setTimeout\([^)]*,\s*30\)/);
 });
 
+test('mobile modifier toggles one controller key down and up without a direct WebRTC button send', () => {
+  const { Input, context, socketEvents } = loadInput();
+  const modifierButton = makeElement();
+  modifierButton.dataset.mobileAction = 'shift';
+  const attributes = new Map([['aria-pressed', 'false']]);
+  modifierButton.setAttribute = (name, value) => attributes.set(name, String(value));
+  modifierButton.getAttribute = (name) => attributes.get(name) || null;
+  context.document.querySelectorAll = (selector) => selector === '.action-btn, [data-mobile-action]'
+    ? [modifierButton]
+    : [];
+  let directWebRtcSends = 0;
+  context.WebRTC.sendInput = () => { directWebRtcSends += 1; return true; };
+  activate(Input, context);
+  Input.setupActionButtons();
+
+  const click = modifierButton.listeners.get('click');
+  assert.equal(typeof click, 'function');
+  click({ preventDefault() {} });
+  click({ preventDefault() {} });
+
+  const keyActions = socketEvents
+    .filter(({ event, payload }) => event === 'input' && payload.action === 'key')
+    .map(({ payload }) => [payload.payload.phase, payload.payload.code]);
+  assert.deepEqual(keyActions, [['down', 'ShiftLeft'], ['up', 'ShiftLeft']]);
+  assert.equal(modifierButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(directWebRtcSends, 0);
+});
+
+test('mobile right click uses the most recently mapped touch adapter', () => {
+  const { Input, context } = loadInput();
+  const rightClickButton = makeElement();
+  rightClickButton.dataset.mobileAction = 'rightClick';
+  context.document.querySelectorAll = (selector) => selector === '.action-btn, [data-mobile-action]'
+    ? [rightClickButton]
+    : [];
+  activate(Input, context);
+  const calls = [];
+  const videoAdapter = { clickButton: (button) => calls.push(['video', button]) };
+  const relayAdapter = { clickButton: (button) => calls.push(['relay', button]) };
+  Input._touchAdapters.set(Input.videoElement, videoAdapter);
+  Input._touchAdapters.set(context.document.getElementById('relayImage'), relayAdapter);
+  Input._lastTouchAdapter = relayAdapter;
+  Input.setupActionButtons();
+
+  rightClickButton.listeners.get('click')({ preventDefault() {} });
+
+  assert.deepEqual(calls, [['relay', 'right']]);
+});
+
 test('mobile text adapter routes text and control keys through the keyboard controller', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
