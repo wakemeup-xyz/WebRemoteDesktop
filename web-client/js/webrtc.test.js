@@ -4,6 +4,14 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
+const nativeClearTimeout = global.clearTimeout;
+const nativeClearInterval = global.clearInterval;
+const activeWebRtcFixtures = new Set();
+
+test.afterEach(() => {
+  [...activeWebRtcFixtures].forEach((cleanup) => cleanup());
+});
+
 function makeElement() {
   const classes = new Set();
   const listeners = new Map();
@@ -47,12 +55,31 @@ function makeElement() {
 
 function loadWebRTC(overrides = {}) {
   const elements = new Map();
+  const timers = { timeouts: new Set(), intervals: new Set() };
+  const trackTimeout = (...args) => {
+    const timer = global.setTimeout(...args);
+    timers.timeouts.add(timer);
+    return timer;
+  };
+  const clearTrackedTimeout = (timer) => {
+    timers.timeouts.delete(timer);
+    return global.clearTimeout(timer);
+  };
+  const trackInterval = (...args) => {
+    const timer = global.setInterval(...args);
+    timers.intervals.add(timer);
+    return timer;
+  };
+  const clearTrackedInterval = (timer) => {
+    timers.intervals.delete(timer);
+    return global.clearInterval(timer);
+  };
   const context = {
     console,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+    setTimeout: trackTimeout,
+    clearTimeout: clearTrackedTimeout,
+    setInterval: trackInterval,
+    clearInterval: clearTrackedInterval,
     performance: { now: () => 0 },
     localStorage: {
       getItem: () => null,
@@ -124,8 +151,41 @@ function loadWebRTC(overrides = {}) {
   }
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
-  return { WebRTC: context.__WebRTC, context, elements };
+  const cleanup = () => {
+    const instance = context.__WebRTC;
+    instance?.stopControlHeartbeat?.();
+    instance?.stopDcKeepalive?.();
+    instance?.stopMediaTelemetry?.();
+    if (instance?._latencySyncInterval) {
+      clearTrackedInterval(instance._latencySyncInterval);
+      instance._latencySyncInterval = null;
+    }
+    timers.timeouts.forEach((timer) => nativeClearTimeout(timer));
+    timers.intervals.forEach((timer) => nativeClearInterval(timer));
+    timers.timeouts.clear();
+    timers.intervals.clear();
+    activeWebRtcFixtures.delete(cleanup);
+  };
+  activeWebRtcFixtures.add(cleanup);
+  return { WebRTC: context.__WebRTC, context, elements, cleanup };
 }
+
+test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
+  const { WebRTC, cleanup } = loadWebRTC();
+  let cleared = false;
+  WebRTC._controlHeartbeatTimer = setInterval(() => {}, 1000);
+  const original = global.clearInterval;
+  global.clearInterval = (timer) => {
+    if (timer === WebRTC._controlHeartbeatTimer) cleared = true;
+    return original(timer);
+  };
+  try {
+    cleanup();
+  } finally {
+    global.clearInterval = original;
+  }
+  assert.equal(cleared, true);
+});
 
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
@@ -1611,7 +1671,7 @@ test('createOffer emits connectionAttemptId bound to the current attempt', async
 });
 
 test('auto fallback handles relay frames while tunnel relay is active', () => {
-  const { WebRTC, elements } = loadWebRTC();
+  const { WebRTC, elements, context } = loadWebRTC();
   const relayImage = elements.get('relayImage') || makeElement();
   relayImage.classList.add('hidden');
   elements.set('relayImage', relayImage);
@@ -1627,9 +1687,10 @@ test('auto fallback handles relay frames while tunnel relay is active', () => {
     height: 540,
     timestamp: Date.now(),
   });
+  relayImage.onload();
 
   assert.equal(relayImage.classList.contains('hidden'), false);
-  assert.equal(elements.get('connectionStatus').textContent, '已连接');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已连接');
 });
 
 test('base64 relay frames ack after the browser image loads', () => {
@@ -3048,16 +3109,28 @@ test('UI init tolerates missing optional elements', () => {
   assert.doesNotThrow(() => vm.runInContext(source, context));
 });
 
-test('WebRTC fullscreen lifecycle asks ChromeLayout to recalculate geometry', () => {
+test('WebRTC fullscreen lifecycle refreshes chrome and input geometry then tears down its exact handler', () => {
   const { WebRTC, context } = loadWebRTC();
   const calls = [];
   context.ChromeLayout = { recalculate() { calls.push('recalculate'); } };
+  context.Input = { refreshGeometry() { calls.push('input-geometry'); } };
   const listeners = new Map();
   context.document.addEventListener = (type, handler) => listeners.set(type, handler);
+  context.document.removeEventListener = (type, handler) => {
+    if (listeners.get(type) === handler) listeners.delete(type);
+  };
   WebRTC._fullscreenLifecycleBound = false;
+  const teardown = WebRTC.bindFullscreenLifecycle();
+  const handler = listeners.get('fullscreenchange');
   WebRTC.bindFullscreenLifecycle();
-  listeners.get('fullscreenchange')();
-  assert.deepEqual(calls, ['recalculate']);
+
+  handler();
+  teardown();
+
+  assert.deepEqual(calls, ['recalculate', 'input-geometry']);
+  assert.equal(WebRTC._fullscreenLifecycleHandler, null);
+  assert.equal(WebRTC._fullscreenLifecycleBound, false);
+  assert.equal(listeners.has('fullscreenchange'), false);
 });
 
 
@@ -3720,6 +3793,15 @@ test('control loss keeps frame readiness so regrant can enable input without a n
     state: 'ACTIVE', controller: true, hostOnline: true,
     lease: { leaseId: 'lease-000000000002', leaseEpoch: 2 },
   };
+  WebRTC.ensureDesktopSessionState().applyConnection({
+    attemptId: 'attempt-current', state: 'online',
+  });
+  WebRTC.ensureDesktopSessionState().applyControl({
+    attemptId: 'attempt-current', state: 'active',
+  });
+  WebRTC.ensureDesktopSessionState().applyMedia({
+    attemptId: 'attempt-current', event: 'fresh-frame', fresh: true,
+  });
   WebRTC.syncDesktopInputGate();
   assert.equal(WebRTC.canEnableDesktopInput(), true);
   assert.equal(context.Input.active, true);

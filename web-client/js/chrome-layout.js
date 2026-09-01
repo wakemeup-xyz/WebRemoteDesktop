@@ -244,7 +244,8 @@ const ChromeLayout = {
   },
   setMobileKeyboardBottom(value, rootEl) {
     const { root } = this._viewportContext(rootEl);
-    const viewportHeight = this.getMobileCapabilitySnapshot({}, root).viewportHeight;
+    const viewportHeight = Number(this._mobileViewportSnapshot?.viewportHeight)
+      || this.getMobileCapabilitySnapshot({}, root).viewportHeight;
     const keyboardBottom = Math.round(Math.max(0, Math.min(viewportHeight, Number(value) || 0)));
     const documentElement = root?.documentElement || root;
     const cssValue = `${keyboardBottom}px`;
@@ -259,7 +260,7 @@ const ChromeLayout = {
     const { root } = this._viewportContext(rootEl);
     const status = root?.getElementById?.('statusBar') || root?.querySelector?.('#statusBar');
     this.syncChromeTop(status?.offsetHeight || 56, root);
-    const snapshot = this.getMobileCapabilitySnapshot({}, root);
+    const snapshot = this.getMobileCapabilitySnapshot(this._mobileViewportSnapshot || {}, root);
     this._mobileViewportSnapshot = snapshot;
     this.setMobileKeyboardBottom(snapshot.keyboardBottom, root);
     return snapshot;
@@ -274,9 +275,7 @@ const ChromeLayout = {
       listeners.push([target, type, handler]);
     };
     const update = () => {
-      const snapshot = this.getMobileCapabilitySnapshot({}, root);
-      this._mobileViewportSnapshot = snapshot;
-      this.setMobileKeyboardBottom(snapshot.keyboardBottom, root);
+      this.recalculate(root);
     };
     const keyboard = navigatorObject?.virtualKeyboard;
     if (keyboard) {
@@ -316,6 +315,9 @@ const ChromeLayout = {
   },
   applyCapabilities(snapshot = {}, rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const mobileSnapshot = this.getMobileCapabilitySnapshot(snapshot, root);
+    this._mobileViewportSnapshot = mobileSnapshot;
+    this.setMobileKeyboardBottom(mobileSnapshot.keyboardBottom, root);
     const capabilities = this.getCapabilities(snapshot);
     const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
       .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { MobileTextInput } = require('./mobile-text-input.js');
 
-function makeTextHarness({enabled = true} = {}) {
+function makeTextHarness({enabled = true, refreshViewport = () => {}} = {}) {
   const listeners = new Map(); const sent = [];
   const input = {
     value: '', selectionStart: 0, selectionEnd: 0,
@@ -15,6 +15,7 @@ function makeTextHarness({enabled = true} = {}) {
     sendText: (value) => { sent.push({kind: 'text', value}); return `text-${sent.length}`; },
     sendKey: (value) => { sent.push({kind: 'key', value}); return `key-${sent.length}`; },
     isEnabled: () => enabled,
+    refreshViewport,
   });
   adapter.attach();
   return {
@@ -91,4 +92,14 @@ test('reset retains only the invisible sentinel baseline', () => {
   const h = makeTextHarness(); h.input.value = 'text'; h.emit('input');
   h.adapter.reset('control-lost');
   assert.equal(h.input.value, '\u200B');
+});
+
+test('IME visibility asks ChromeLayout to refresh without owning viewport listeners', () => {
+  let refreshes = 0;
+  const h = makeTextHarness({ refreshViewport() { refreshes += 1; } });
+
+  h.adapter.show();
+  h.adapter.hide();
+
+  assert.equal(refreshes, 3);
 });

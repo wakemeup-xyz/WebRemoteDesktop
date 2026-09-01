@@ -25,6 +25,7 @@ function loadInput() {
   const documentListeners = new Map();
   const windowListeners = new Map();
   const socketEvents = [];
+  const bodyClasses = new Set();
   const context = {
     console, setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
@@ -33,6 +34,13 @@ function loadInput() {
     getComputedStyle: (element) => ({ objectFit: element.style.objectFit || 'contain' }),
     document: {
       hidden: false,
+      body: {
+        classList: {
+          add(name) { bodyClasses.add(name); },
+          remove(name) { bodyClasses.delete(name); },
+          contains(name) { return bodyClasses.has(name); },
+        },
+      },
       addEventListener(type, handler) { documentListeners.set(type, handler); },
       querySelectorAll: () => [],
       getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); },
@@ -262,6 +270,15 @@ test('blur resets keyboard state but leaves control ownership to WebRTC', () => 
   windowListeners.get('blur')();
   assert.equal(socketEvents.at(-1).payload.action, 'reset');
   assert.equal(Input.getDiagnosticState().keyboard.lastResetReason, 'window-blur');
+});
+
+test('mobile input reset clears the reserved Dock state', () => {
+  const { Input, context } = loadInput();
+  context.document.body.classList.add('mobile-input-visible');
+
+  Input.resetKeyboard('control-lost');
+
+  assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
 });
 
 test('mouse pointer cancel releases capture and sends one reset', () => {

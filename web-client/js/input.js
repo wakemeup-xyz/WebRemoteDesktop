@@ -7,6 +7,7 @@ const Input = {
   keyboardTransport: null,
   keyboardController: null,
   mobileTextInputAdapter: null,
+  _lastSurfaceGeometry: null,
   activeControlLease: null,
   lastKeyboardResetReason: null,
   modifierMask: 0,
@@ -270,6 +271,7 @@ const Input = {
     this.mobileTextInputAdapter?.reset(reason);
     const dock = document.getElementById('mobileInputDock');
     if (dock) dock.hidden = true;
+    document.body?.classList?.remove?.('mobile-input-visible');
     document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
     this.updateMobileTextInputButton();
     return this.keyboardController?.reset(reason) || false;
@@ -280,6 +282,7 @@ const Input = {
     this.mobileTextInputAdapter?.reset(reason);
     const dock = document.getElementById('mobileInputDock');
     if (dock) dock.hidden = true;
+    document.body?.classList?.remove?.('mobile-input-visible');
     document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
     this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
@@ -372,11 +375,19 @@ const Input = {
 
   getRelativeCoords(event, allowOutside = false) {
     const element = event.currentTarget || this.videoElement;
-    const rect = element.getBoundingClientRect();
+    const rect = this.refreshGeometry(element);
     const result = InputGeometry.mapClientPoint({ clientX: event.clientX, clientY: event.clientY, rect,
       sourceWidth: element.videoWidth || element.naturalWidth || rect.width, sourceHeight: element.videoHeight || element.naturalHeight || rect.height,
       objectFit: getComputedStyle(element).objectFit || 'contain' });
     return result.inside || allowOutside ? { relX: result.relX, relY: result.relY } : null;
+  },
+
+  refreshGeometry(element = null) {
+    const surface = element || this.videoElement;
+    if (!surface?.getBoundingClientRect) return null;
+    const rect = surface.getBoundingClientRect();
+    this._lastSurfaceGeometry = { element: surface, rect };
+    return rect;
   },
 
   getMouseButton(button) { return ['left', 'middle', 'right'][button] || 'left'; },
@@ -613,6 +624,9 @@ const Input = {
         sendText: (text) => this.keyboardController?.sendText(text),
         sendKey: (key) => this.keyboardController?.sendChord({ code: key }),
         isEnabled: () => this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
+        refreshViewport: () => {
+          if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
+        },
       });
       this.mobileTextInputAdapter.attach();
     }
@@ -621,11 +635,13 @@ const Input = {
       if (!this.isActive) return;
       if (this.mobileTextInputAdapter?.getSnapshot().shown) {
         if (mobileDock) mobileDock.hidden = true;
+        document.body?.classList?.remove?.('mobile-input-visible');
         mobileButton.setAttribute?.('aria-pressed', 'false');
         this.mobileTextInputAdapter.hide();
         return;
       }
       if (mobileDock) mobileDock.hidden = false;
+      document.body?.classList?.add?.('mobile-input-visible');
       mobileButton.setAttribute?.('aria-pressed', 'true');
       this.mobileTextInputAdapter?.show();
     });

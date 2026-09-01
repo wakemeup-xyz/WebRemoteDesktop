@@ -13,6 +13,7 @@
     const sendText = typeof config.sendText === 'function' ? config.sendText : () => false;
     const sendKey = typeof config.sendKey === 'function' ? config.sendKey : () => false;
     const isEnabled = typeof config.isEnabled === 'function' ? config.isEnabled : () => false;
+    const refreshViewport = typeof config.refreshViewport === 'function' ? config.refreshViewport : () => {};
     let attached = false;
     let shown = false;
     let composing = false;
@@ -211,28 +212,6 @@
       return true;
     }
 
-    function rootElement() {
-      return typeof document !== 'undefined' ? document.documentElement : null;
-    }
-
-    function setKeyboardBottom(value) {
-      rootElement()?.style?.setProperty?.('--mobile-keyboard-bottom', `${Math.max(0, Math.round(value || 0))}px`);
-    }
-
-    function viewportBottom() {
-      if (typeof window === 'undefined') return 0;
-      const viewport = window.visualViewport;
-      if (!viewport) return 0;
-      const height = Number(window.innerHeight) || Number(rootElement()?.clientHeight) || 0;
-      return height - Number(viewport.height || height) - Number(viewport.offsetTop || 0);
-    }
-
-    function updateKeyboardBottom() {
-      const keyboard = typeof navigator !== 'undefined' ? navigator.virtualKeyboard : null;
-      const keyboardHeight = Number(keyboard?.boundingRect?.height) || 0;
-      setKeyboardBottom(keyboardHeight || viewportBottom());
-    }
-
     function addListener(target, type, handler) {
       if (!target?.addEventListener) return;
       target.addEventListener(type, handler);
@@ -255,16 +234,7 @@
       addListener(element, 'keydown', onKeydown);
       addListener(element, 'keyup', onKeyup);
       addListener(element, 'select', onSelect);
-      if (typeof navigator !== 'undefined' && navigator.virtualKeyboard) {
-        navigator.virtualKeyboard.overlaysContent = true;
-        addListener(navigator.virtualKeyboard, 'geometrychange', updateKeyboardBottom);
-      }
-      if (typeof window !== 'undefined') {
-        addListener(window.visualViewport, 'resize', updateKeyboardBottom);
-        addListener(window.visualViewport, 'scroll', updateKeyboardBottom);
-        addListener(window, 'resize', updateKeyboardBottom);
-      }
-      updateKeyboardBottom();
+      refreshViewport();
     }
 
     function detach() {
@@ -281,13 +251,13 @@
       element?.focus?.();
       observedValue = getValue();
       flushDiff();
-      updateKeyboardBottom();
+      refreshViewport();
     }
 
     function hide() {
       shown = false;
       element?.blur?.();
-      setKeyboardBottom(0);
+      refreshViewport();
     }
 
     function reset(reason) {

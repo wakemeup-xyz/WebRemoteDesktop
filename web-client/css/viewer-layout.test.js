@@ -92,6 +92,17 @@ test('mobile viewport geometry consumes the single keyboard bottom variable', ()
   assert.match(css, /padding-bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
 });
 
+test('mobile media geometry reserves dock and keyboard occupancy outside the remote surface', () => {
+  assert.match(css, /--mobile-dock-reserve\s*:/);
+  assert.match(css, /--mobile-text-dock-reserve\s*:/);
+  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(mobileViewer, /var\(--mobile-dock-reserve\)/);
+  assert.match(mobileViewer, /var\(--mobile-keyboard-bottom/);
+  const mobileDocks = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.chrome-docks\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(mobileDocks, /var\(--mobile-text-dock-reserve\)/);
+  assert.match(mobileDocks, /var\(--mobile-keyboard-bottom/);
+});
+
 test('narrow action row remains one line with stable touch widths', () => {
   assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*flex-wrap:\s*nowrap/);
   assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*overflow-x:\s*auto/);

@@ -395,3 +395,36 @@ test('mobile viewport observer feature-detects APIs, resets on hide, and tears d
   assert.equal(visualViewport.listeners.get('scroll').size, 0);
   assert.equal(keyboard.listeners.get('geometrychange').size, 0);
 });
+
+test('viewport refresh preserves the frozen WebRTC capability derivative', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  const visualViewport = makeEventTarget();
+  visualViewport.height = 500;
+  visualViewport.offsetTop = 0;
+  windowTarget.visualViewport = visualViewport;
+  const root = {
+    defaultView: windowTarget,
+    style: {},
+    documentElement: { style: { setProperty(name, value) { this[name] = value; } } },
+    getElementById() { return null; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+
+  ChromeLayout.applyCapabilities({
+    uiPhase: 'connected', streamReady: true, activeControl: true,
+    transportReady: true, mobileInputMode: 'armed',
+  }, root);
+  const before = ChromeLayout._mobileViewportSnapshot;
+  visualViewport.height = 620;
+  const after = ChromeLayout.recalculate(root);
+
+  assert.equal(Object.isFrozen(after), true);
+  assert.equal(after.streamReady, true);
+  assert.equal(after.activeControl, true);
+  assert.equal(after.transportReady, true);
+  assert.equal(after.mobileInputMode, 'armed');
+  assert.equal(after.keyboardBottom, 180);
+  assert.notEqual(after, before);
+});

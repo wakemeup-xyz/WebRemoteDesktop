@@ -1457,10 +1457,21 @@ body.terminal-active .network-advisor.visible:not(.collapsed) {
 }
 
 @media (max-width: 899px) {
+  body {
+    --mobile-dock-reserve: calc(var(--touch-min) * 4 + 40px);
+    --mobile-text-dock-reserve: 0px;
+  }
+  body.mobile-input-visible {
+    --mobile-text-dock-reserve: var(--touch-min);
+  }
+  .viewer-container {
+    height: calc(100vh - var(--chrome-top) - var(--mobile-dock-reserve) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
+    height: calc(100dvh - var(--chrome-top) - var(--mobile-dock-reserve) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
+  }
   .chrome-docks {
     width: calc(100vw - 16px);
     max-width: calc(100vw - 16px);
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--mobile-keyboard-bottom, 0px) + var(--mobile-text-dock-reserve));
   }
   .chrome-docks .action-bar,
   .chrome-docks .control-bar {
