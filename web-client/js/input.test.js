@@ -46,7 +46,7 @@ function loadInput() {
   };
   context.globalThis = context;
   vm.createContext(context);
-  for (const filename of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'input.js']) {
+  for (const filename of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'mobile-text-input.js', 'input.js']) {
     const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
     vm.runInContext(filename === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, context);
   }
@@ -100,6 +100,23 @@ test('composition submit sends one text, cancel sends none, and actions use one 
   assert.deepEqual(keyboardPayloads.map(({ action }) => action), ['text', 'batch']);
   assert.equal(keyboardPayloads[0].payload.text, 'hello');
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'input.js'), 'utf8'), /setTimeout\([^)]*,\s*30\)/);
+});
+
+test('mobile text adapter routes text and control keys through the keyboard controller', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const input = elements.get('mobileTextInput');
+  input.value = '\u4e2d\u6587';
+  input.listeners.get('input')({ target: input });
+  input.listeners.get('keydown')({ key: 'Enter', target: input, preventDefault() {} });
+
+  const keyboardPayloads = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().attached, true);
+  assert.deepEqual(keyboardPayloads.map(({ action }) => action), ['text', 'batch']);
+  assert.equal(keyboardPayloads[0].payload.text, '\u4e2d\u6587');
+  assert.equal(keyboardPayloads[1].payload.steps.map(({ code }) => code).join(','), 'Enter,Enter');
 });
 
 test('only one keyboard transport and controller are created for an input instance', () => {

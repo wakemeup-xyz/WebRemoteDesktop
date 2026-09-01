@@ -43,6 +43,13 @@ test('deleteContentBackward sends bounded Backspace actions', () => {
   assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 16);
 });
 
+test('deletion beyond one bounded batch remains pending for retry', () => {
+  const h = makeTextHarness(); h.input.value = 'abcdefghijklmnopqr'; h.emit('input'); h.sent.length = 0;
+  h.input.value = ''; h.emit('input');
+  h.emit('input');
+  assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 18);
+});
+
 test('surrogate-pair Emoji is not split into invalid text', () => {
   const h = makeTextHarness(); h.input.value = '🙂'; h.emit('input');
   assert.deepEqual(h.sent, [{kind: 'text', value: '🙂'}]);

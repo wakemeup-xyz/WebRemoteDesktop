@@ -34,6 +34,7 @@
       <button id="toggleControlsBtn" class="control-btn" type="button" data-core-control>隐藏控件</button>
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
       <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
+      <button id="mobileTextInputBtn" class="control-btn status-action-secondary" type="button" hidden aria-pressed="false">移动键盘</button>
       <button id="refreshBtn" class="control-btn" data-core-control>刷新画面</button>
       <button id="diagBtn" class="control-btn status-action-secondary" type="button" disabled aria-busy="true" title="诊断组件加载中…">诊断日志</button>
     </div>
@@ -292,6 +293,10 @@
     </div>
   </div>
 
+  <div id="mobileInputDock" hidden>
+    <textarea id="mobileTextInput" maxlength="4096" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="远程文本输入"></textarea>
+  </div>
+
   <div id="viewerSupersededOverlay" class="viewer-superseded-overlay hidden" hidden role="dialog" aria-modal="true" aria-labelledby="viewerSupersededTitle">
     <div class="viewer-superseded-card">
       <h2 id="viewerSupersededTitle">桌面已在其他窗口打开，本页已断开。</h2>
@@ -320,6 +325,7 @@
   <script src="js/keyboard-transport.js"></script>
   <script src="js/remote-keyboard-controller.js"></script>
   <script src="js/touch-input-adapter.js"></script>
+  <script src="js/mobile-text-input.js"></script>
   <script src="js/input.js"></script>
   <script src="js/chrome-layout.js"></script>
   <script src="js/ui.js"></script>

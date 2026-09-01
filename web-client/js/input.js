@@ -6,6 +6,7 @@ const Input = {
   keyboardMode: null,
   keyboardTransport: null,
   keyboardController: null,
+  mobileTextInputAdapter: null,
   activeControlLease: null,
   lastKeyboardResetReason: null,
   modifierMask: 0,
@@ -205,6 +206,19 @@ const Input = {
     };
     display.textContent = labels[raw] || `键盘：${raw}`;
     display.dataset.state = raw;
+    this.updateMobileTextInputButton();
+  },
+
+  supportsMobileTextInput() {
+    return Number((typeof navigator !== 'undefined' && navigator.maxTouchPoints) || 0) > 0
+      || (typeof window !== 'undefined' && 'ontouchstart' in window);
+  },
+
+  updateMobileTextInputButton() {
+    const button = document.getElementById('mobileTextInputBtn');
+    if (!button) return;
+    button.hidden = !this.supportsMobileTextInput();
+    button.disabled = !this.isActive;
   },
 
   setActive(active, meta = {}) {
@@ -232,11 +246,21 @@ const Input = {
 
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
+    this.mobileTextInputAdapter?.reset(reason);
+    const dock = document.getElementById('mobileInputDock');
+    if (dock) dock.hidden = true;
+    document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
+    this.updateMobileTextInputButton();
     return this.keyboardController?.reset(reason) || false;
   },
 
   parkKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
+    this.mobileTextInputAdapter?.reset(reason);
+    const dock = document.getElementById('mobileInputDock');
+    if (dock) dock.hidden = true;
+    document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
+    this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
       this.keyboardController.park(reason);
       this.updateKeyboardUI();
@@ -506,6 +530,9 @@ const Input = {
     const input = document.getElementById('remoteTextInput');
     const submit = document.getElementById('textInputSubmitBtn');
     const cancel = document.getElementById('textInputCancelBtn');
+    const mobileButton = document.getElementById('mobileTextInputBtn');
+    const mobileDock = document.getElementById('mobileInputDock');
+    const mobileInput = document.getElementById('mobileTextInput');
     let returnFocus = null;
     const close = () => {
       modal?.classList?.add('hidden');
@@ -535,6 +562,30 @@ const Input = {
         close();
       }
     }, true);
+
+    if (!this.mobileTextInputAdapter && mobileInput && typeof MobileTextInput !== 'undefined') {
+      this.mobileTextInputAdapter = MobileTextInput.create({
+        element: mobileInput,
+        sendText: (text) => this.keyboardController?.sendText(text),
+        sendKey: (key) => this.keyboardController?.sendChord({ code: key }),
+        isEnabled: () => this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
+      });
+      this.mobileTextInputAdapter.attach();
+    }
+    mobileButton?.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (!this.isActive) return;
+      if (this.mobileTextInputAdapter?.getSnapshot().shown) {
+        if (mobileDock) mobileDock.hidden = true;
+        mobileButton.setAttribute?.('aria-pressed', 'false');
+        this.mobileTextInputAdapter.hide();
+        return;
+      }
+      if (mobileDock) mobileDock.hidden = false;
+      mobileButton.setAttribute?.('aria-pressed', 'true');
+      this.mobileTextInputAdapter?.show();
+    });
+    this.updateMobileTextInputButton();
   },
 };
 
