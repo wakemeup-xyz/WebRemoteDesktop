@@ -93,10 +93,10 @@ test('mobile viewport geometry consumes the single keyboard bottom variable', ()
 });
 
 test('mobile media geometry reserves dock and keyboard occupancy outside the remote surface', () => {
-  assert.match(css, /--mobile-dock-reserve\s*:/);
+  assert.match(css, /--mobile-dock-height/);
   assert.match(css, /--mobile-text-dock-reserve\s*:/);
   const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
-  assert.match(mobileViewer, /var\(--mobile-dock-reserve\)/);
+  assert.match(mobileViewer, /var\(--mobile-dock-height(?:,\s*0px)?\)/);
   assert.match(mobileViewer, /var\(--mobile-keyboard-bottom/);
   const mobileDocks = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.chrome-docks\s*\{([^}]*)\}/)?.[1] || '';
   assert.match(mobileDocks, /var\(--mobile-text-dock-reserve\)/);

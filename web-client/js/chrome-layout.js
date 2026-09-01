@@ -21,17 +21,20 @@ const ChromeLayout = {
   _wasStreamConnected: false,
   _wasControlsHidden: false,
   _mobileViewportCleanup: null,
+  _mobileDockCleanup: null,
   _mobileViewportSnapshot: null,
   init() {
     const statusEl = typeof document !== 'undefined' ? document.getElementById('statusBar') : null;
     const unobserve = this.observeStatusBar(statusEl);
     const unobserveViewport = this.observeMobileViewport();
+    const unobserveDocks = this.observeMobileDocks();
     const unbindMore = this.bindMoreMenu();
     const unbindIdle = this.bindIdle();
     this.syncToggleControlsLabel();
     return () => {
       unobserve();
       unobserveViewport();
+      unobserveDocks();
       unbindMore();
       unbindIdle();
     };
@@ -256,10 +259,27 @@ const ChromeLayout = {
     }
     return keyboardBottom;
   },
+  syncMobileDockHeight(docksEl, rootEl) {
+    const { root } = this._viewportContext(rootEl);
+    const docks = docksEl || root?.getElementById?.('chromeDocks') || root?.querySelector?.('#chromeDocks');
+    const rectHeight = Number(docks?.getBoundingClientRect?.().height);
+    const offsetHeight = Number(docks?.offsetHeight);
+    const measuredHeight = Number.isFinite(rectHeight) ? rectHeight : offsetHeight;
+    const dockHeight = Math.max(0, Math.ceil(Number.isFinite(measuredHeight) ? measuredHeight : 0));
+    const documentElement = root?.documentElement || root;
+    const cssValue = `${dockHeight}px`;
+    if (typeof documentElement?.style?.setProperty === 'function') {
+      documentElement.style.setProperty('--mobile-dock-height', cssValue);
+    } else if (documentElement?.style) {
+      documentElement.style['--mobile-dock-height'] = cssValue;
+    }
+    return dockHeight;
+  },
   recalculate(rootEl) {
     const { root } = this._viewportContext(rootEl);
     const status = root?.getElementById?.('statusBar') || root?.querySelector?.('#statusBar');
     this.syncChromeTop(status?.offsetHeight || 56, root);
+    this.syncMobileDockHeight(null, root);
     const snapshot = this.getMobileCapabilitySnapshot(this._mobileViewportSnapshot || {}, root);
     this._mobileViewportSnapshot = snapshot;
     this.setMobileKeyboardBottom(snapshot.keyboardBottom, root);
@@ -293,6 +313,22 @@ const ChromeLayout = {
       if (this._mobileViewportCleanup === cleanup) this._mobileViewportCleanup = null;
     };
     this._mobileViewportCleanup = cleanup;
+    return cleanup;
+  },
+  observeMobileDocks(rootEl) {
+    const { root } = this._viewportContext(rootEl);
+    this._mobileDockCleanup?.();
+    const docks = root?.getElementById?.('chromeDocks') || root?.querySelector?.('#chromeDocks');
+    const update = () => this.syncMobileDockHeight(docks, root);
+    update();
+    const observer = docks && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(update) : null;
+    observer?.observe(docks);
+    const cleanup = () => {
+      observer?.disconnect();
+      if (this._mobileDockCleanup === cleanup) this._mobileDockCleanup = null;
+    };
+    this._mobileDockCleanup = cleanup;
     return cleanup;
   },
   getCapabilities(snapshot = {}) {

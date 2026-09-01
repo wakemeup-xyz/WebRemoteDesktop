@@ -396,6 +396,41 @@ test('mobile viewport observer feature-detects APIs, resets on hide, and tears d
   assert.equal(keyboard.listeners.get('geometrychange').size, 0);
 });
 
+test('mobile Dock measurement reserves the rendered height after controls wrap', () => {
+  const previous = global.ResizeObserver;
+  const observers = [];
+  let dockHeight = 268;
+  const docks = {
+    getBoundingClientRect() { return { height: dockHeight }; },
+  };
+  const root = {
+    documentElement: { style: { setProperty(name, value) { this[name] = value; } } },
+    getElementById(id) { return id === 'chromeDocks' ? docks : null; },
+    querySelector() { return null; },
+  };
+  global.ResizeObserver = class ResizeObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  };
+
+  try {
+    const unbind = ChromeLayout.observeMobileDocks(root);
+    assert.equal(root.documentElement.style['--mobile-dock-height'], '268px');
+
+    dockHeight = 312;
+    observers[0].callback();
+    assert.equal(root.documentElement.style['--mobile-dock-height'], '312px');
+
+    unbind();
+    assert.equal(observers[0].disconnected, true);
+  } finally {
+    ChromeLayout._mobileDockCleanup?.();
+    if (previous) global.ResizeObserver = previous;
+    else delete global.ResizeObserver;
+  }
+});
+
 test('viewport refresh preserves the frozen WebRTC capability derivative', () => {
   const windowTarget = makeEventTarget();
   windowTarget.innerHeight = 800;
