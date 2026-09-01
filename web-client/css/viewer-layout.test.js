@@ -103,6 +103,14 @@ test('mobile media geometry reserves dock and keyboard occupancy outside the rem
   assert.match(mobileDocks, /var\(--mobile-keyboard-bottom/);
 });
 
+test('mobile media reserves the fixed Dock coordinate envelope', () => {
+  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
+  const completeDockEnvelope = /var\(--mobile-dock-height(?:,\s*0px)?\)\s*-\s*12px\s*-\s*env\(safe-area-inset-bottom,\s*0px\)\s*-\s*var\(--mobile-text-dock-reserve\)\s*-\s*var\(--mobile-keyboard-bottom,\s*0px\)/;
+  assert.match(mobileViewer, completeDockEnvelope, 'remote surface must reserve the Dock height and its fixed bottom offset');
+  assert.match(mobileViewer, /height\s*:\s*calc\(100vh/);
+  assert.match(mobileViewer, /height\s*:\s*calc\(100dvh/);
+});
+
 test('narrow action row remains one line with stable touch widths', () => {
   assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*flex-wrap:\s*nowrap/);
   assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*overflow-x:\s*auto/);

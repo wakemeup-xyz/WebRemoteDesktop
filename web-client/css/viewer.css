@@ -1464,8 +1464,8 @@ body.terminal-active .network-advisor.visible:not(.collapsed) {
     --mobile-text-dock-reserve: var(--touch-min);
   }
   .viewer-container {
-    height: calc(100vh - var(--chrome-top) - var(--mobile-dock-height, 0px) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
-    height: calc(100dvh - var(--chrome-top) - var(--mobile-dock-height, 0px) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
+    height: calc(100vh - var(--chrome-top) - var(--mobile-dock-height, 0px) - 12px - env(safe-area-inset-bottom, 0px) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
+    height: calc(100dvh - var(--chrome-top) - var(--mobile-dock-height, 0px) - 12px - env(safe-area-inset-bottom, 0px) - var(--mobile-text-dock-reserve) - var(--mobile-keyboard-bottom, 0px));
   }
   .chrome-docks {
     width: calc(100vw - 16px);
