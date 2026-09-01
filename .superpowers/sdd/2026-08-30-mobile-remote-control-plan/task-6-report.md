@@ -105,3 +105,42 @@ All Critical and Important findings from `task-6-review.md` were addressed. No s
 - Fix commit: recorded with this report in the Task 6 fix round 1 commit.
 - The known blur-fixture failure remains outside this task's findings and was not suppressed or changed.
 - Live-origin browser execution and all physical-device checks remain `NOT RUN`; the harness is stricter, but it is not a substitute for those acceptance gates.
+
+## Fix Round 2
+
+### Status
+
+Both remaining Important findings are fixed. No service, Host process, browser origin, or tunnel was started or used.
+
+### Root Cause And Boundary
+
+- The close-path regression test injected its reset ACK through the closed DataChannel callback instead of the Socket.IO listener which receives fallback ACKs.
+- Command v2 ACKs carried an applied sequence but had no type discriminator, so WebRTC delivered them to the keyboard transport. The v2 ACK contract now has a strict `inputType` discriminator: `keyboard`, `mouse`, or `command`. WebRTC routes only `keyboard` ACKs to `Input.acceptKeyboardAck()`; mouse correlation and latency observation remain independent.
+
+### RED And GREEN Evidence
+
+- RED: `node --test --test-name-pattern='command acknowledgement cannot|v2 command acknowledgement' web-client/js/webrtc.test.js signal-server/websocket/signaling.test.js` failed: the real keyboard reset barrier was cleared by a command ACK, and signal-server rejected the command ACK shape.
+- RED: `PYTHONPATH=. python3 -m pytest -q test_connection_diagnostics.py -k 'command_ack_keeps_its_type'` failed because Host omitted command ACK type metadata.
+- GREEN: the same Node command passed 3/3 after Host, signal-server, and Viewer type correlation were added; the same Python command passed 2/2.
+- The DataChannel-close test now calls the registered `setupSocketListeners()` `input-ack` handler, asserts one Socket.IO reset, blocks follow-up input before the matching ACK, then proves fallback input is allowed after that ACK. It does not invoke the closed channel's `onmessage`.
+- The command ACK regression uses real `Input` and `KeyboardTransport` state. It proves a command ACK with an applied sequence cannot drain keyboard pending state or unblock the reset barrier; only the corresponding keyboard ACK can do so.
+
+### Commands And Results
+
+| Command | Result |
+|---|---|
+| `node --test web-client/js/webrtc.test.js` | 187 pass, 0 fail. |
+| `cd signal-server && npm test` | 319 pass, 0 fail. |
+| `cd python-host && PYTHONPATH=. python3 -m pytest -q test_connection_diagnostics.py test_input_handler.py` | 41 pass, 0 fail. |
+| `node --test web-client/js/*.test.js web-client/css/*.test.js` | 546 pass, 1 known pre-existing blur-fixture failure at `input.test.js:360`; no new failure. |
+| `cd python-host && PYTHONPATH=. python3 -m pytest -q` | 194 pass, 1 existing `mss` deprecation warning. |
+
+### Files
+
+- `web-client/js/webrtc.js`
+- `web-client/js/webrtc.test.js`
+- `signal-server/websocket/signaling.js`
+- `signal-server/websocket/signaling.test.js`
+- `python-host/host.py`
+- `python-host/test_connection_diagnostics.py`
+- `.superpowers/sdd/2026-08-30-mobile-remote-control-plan/task-6-report.md`

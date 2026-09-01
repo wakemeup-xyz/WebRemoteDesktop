@@ -2770,7 +2770,8 @@ const WebRTC = {
       if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
         Input.acceptMouseAck(data);
       }
-      if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+      if (data?.inputType === 'keyboard'
+        && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
         Input.acceptKeyboardAck(data);
       }
       if (typeof LatencyMonitor !== 'undefined') {
@@ -3514,7 +3515,8 @@ const WebRTC = {
           if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
             Input.acceptMouseAck(data);
           }
-          if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+          if (data?.inputType === 'keyboard'
+            && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
             Input.acceptKeyboardAck(data);
           }
           if (typeof LatencyMonitor !== 'undefined') {

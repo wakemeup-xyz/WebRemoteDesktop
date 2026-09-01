@@ -977,22 +977,24 @@ function setupSignaling(io, options = {}) {
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
         const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
-        const mouseAck = data.inputType === 'mouse';
-        const validSeq = mouseAck || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0);
-        const validPressed = mouseAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0);
-        const validModifiers = mouseAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0);
-        if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers || (data.inputType && !mouseAck && data.inputType !== 'keyboard')) {
+        const inputType = data.inputType;
+        const independentAck = inputType === 'mouse';
+        const validInputType = ['keyboard', 'mouse', 'command'].includes(inputType);
+        const validSeq = independentAck || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0);
+        const validPressed = independentAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0);
+        const validModifiers = independentAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0);
+        if (!validEpoch || !validInputType || !validSeq || !validStatus || !validPressed || !validModifiers) {
           logger.warn?.('[INPUT] invalid v2 ack');
           return;
         }
         viewerSocket.emit('input-ack', {
           type: 'input_ack',
           schemaVersion: 2,
-          ...(mouseAck ? { inputType: 'mouse' } : {}),
+          inputType,
           leaseEpoch: data.leaseEpoch,
-          ...(mouseAck ? {} : { appliedSeq: data.appliedSeq }),
+          ...(independentAck ? {} : { appliedSeq: data.appliedSeq }),
           status: data.status,
-          ...(mouseAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
+          ...(independentAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
           hostExecuteMs,
           transport: 'socket',

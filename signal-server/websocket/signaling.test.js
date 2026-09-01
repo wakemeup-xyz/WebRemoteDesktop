@@ -436,6 +436,7 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
     viewerId: 'viewer-1',
     type: 'input_ack',
     schemaVersion: 2,
+    inputType: 'keyboard',
     leaseEpoch: 12,
     appliedSeq: 7,
     status: 'applied',
@@ -451,6 +452,7 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
   assert.deepEqual(ack, {
     type: 'input_ack',
     schemaVersion: 2,
+    inputType: 'keyboard',
     leaseEpoch: 12,
     appliedSeq: 7,
     status: 'applied',
@@ -472,6 +474,20 @@ test('v2 mouse input ack forwards without keyboard sequence or state fields', ()
   assert.equal(ack.inputType, 'mouse'); assert.equal(ack.inputIds[0], 'mouse-reset-1'); assert.equal('appliedSeq' in ack, false); assert.equal('pressedKeyCount' in ack, false);
 });
 
+test('v2 command acknowledgement preserves its non-keyboard correlation type', () => {
+  resetConnections(); const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-command-ack', 'host'); const viewer = new FakeSocket('viewer-command-ack', 'viewer'); io.connect(host); io.connect(viewer);
+  host.trigger('input-ack', {
+    viewerId: 'viewer-command-ack', type: 'input_ack', schemaVersion: 2, inputType: 'command',
+    leaseEpoch: 4, appliedSeq: 7, status: 'applied', pressedKeyCount: 0, modifierMask: 0,
+    inputIds: ['command-1'], hostExecuteMs: 2,
+  });
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.equal(ack.inputType, 'command');
+  assert.equal(ack.appliedSeq, 7);
+  assert.equal(ack.inputIds[0], 'command-1');
+});
+
 test('v2 host acknowledgement forwards every documented error status without raw input data', () => {
   resetConnections();
   const io = makeIo();
@@ -486,6 +502,7 @@ test('v2 host acknowledgement forwards every documented error status without raw
     host.trigger('input-ack', {
       viewerId: 'viewer-1',
       schemaVersion: 2,
+      inputType: 'keyboard',
       leaseEpoch: 12,
       appliedSeq: index,
       status,

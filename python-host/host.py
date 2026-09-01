@@ -1677,6 +1677,7 @@ class WebRemoteHost:
             ack = {
                 "type": "input_ack",
                 "schemaVersion": 2,
+                "inputType": data.get("type"),
                 "leaseEpoch": data.get("leaseEpoch"),
                 "appliedSeq": result.get("appliedSeq", data.get("seq")),
                 "status": status,

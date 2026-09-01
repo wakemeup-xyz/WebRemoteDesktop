@@ -308,8 +308,8 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, k
   WebRTC.createInputChannel();
   WebRTC.setupSocketListeners();
 
-  channels.get('input').onmessage({ data: JSON.stringify({ type: 'input_ack', inputIds: ['dc-1'] }) });
-  socketHandlers.get('input-ack')({ type: 'input_ack', inputIds: ['socket-1'] });
+  channels.get('input').onmessage({ data: JSON.stringify({ type: 'input_ack', inputType: 'keyboard', inputIds: ['dc-1'] }) });
+  socketHandlers.get('input-ack')({ type: 'input_ack', inputType: 'keyboard', inputIds: ['socket-1'] });
 
   assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
   assert.deepEqual(mouseAcks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
@@ -351,7 +351,7 @@ test('a single input acknowledgement clears real mouse and keyboard reset state 
   Input._pendingMouseResetId = 'mouse-reset-1';
 
   inputChannel.onmessage({ data: JSON.stringify({
-    type: 'input_ack', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
+    type: 'input_ack', inputType: 'keyboard', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
     inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
   }) });
 
@@ -363,9 +363,10 @@ test('a single input acknowledgement clears real mouse and keyboard reset state 
   clearTimeout(WebRTC._dcTimeout);
 });
 
-test('DataChannel close routes a held key through one Socket.IO reset barrier until its matching acknowledgement', () => {
+test('DataChannel close routes a held key through one Socket.IO reset barrier until its matching Socket.IO acknowledgement', () => {
   const channels = new Map();
   const socketEvents = [];
+  const socketHandlers = new Map();
   const { WebRTC, context } = loadWebRTC({
     realInput: true,
     LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
@@ -379,11 +380,16 @@ test('DataChannel close routes a held key through one Socket.IO reset barrier un
       return channel;
     },
   };
-  WebRTC.socket = { connected: true, emit(event, payload) { socketEvents.push({ event, payload }); } };
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit(event, payload) { socketEvents.push({ event, payload }); },
+  };
   WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
   Input.initKeyboardController();
   Input.setControlLease(WebRTC.controlState.lease);
   WebRTC.createInputChannel();
+  WebRTC.setupSocketListeners();
   const inputChannel = channels.get('input');
   inputChannel.readyState = 'open';
   inputChannel.onopen();
@@ -397,13 +403,72 @@ test('DataChannel close routes a held key through one Socket.IO reset barrier un
   assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), false);
   assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 1);
 
-  inputChannel.onmessage({ data: JSON.stringify({
-    type: 'input_ack', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'keyboard', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
     appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: reset.inputIds,
-  }) });
+  });
   assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), true);
   assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 2);
+  clearTimeout(WebRTC._dcTimeout);
+  clearTimeout(WebRTC._dcReconnectTimer);
+});
+
+test('a command acknowledgement cannot advance keyboard state or clear a keyboard reset barrier', () => {
+  const channels = new Map();
+  const socketEvents = [];
+  const socketHandlers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit(event, payload) { socketEvents.push({ event, payload }); },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.createInputChannel();
+  WebRTC.setupSocketListeners();
+  const inputChannel = channels.get('input');
+  inputChannel.readyState = 'open';
+  inputChannel.onopen();
+  assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
+
+  inputChannel.readyState = 'closed';
+  inputChannel.onclose();
+  const reset = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  const commandId = Input.sendInput('command', 'showDock', {});
+  assert.ok(commandId);
+  const command = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(command.type, 'command');
+
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'command', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: command.inputIds,
+  });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), false);
+
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'keyboard', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: reset.inputIds,
+  });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   clearTimeout(WebRTC._dcTimeout);
   clearTimeout(WebRTC._dcReconnectTimer);
 });
@@ -466,7 +531,7 @@ test('viewer waits for an active control lease before starting an offer and rout
 
   socketHandlers.get('control-grant')({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 4 });
   assert.equal(offers, 1);
-  socketHandlers.get('input-ack')({ schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
+  socketHandlers.get('input-ack')({ inputType: 'keyboard', schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
   assert.deepEqual(order, ['mouse', 'transport', 'latency']);
   WebRTC.stopControlHeartbeat();
 });

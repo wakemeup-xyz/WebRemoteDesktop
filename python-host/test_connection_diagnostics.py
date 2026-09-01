@@ -263,6 +263,7 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
     assert ack == {
         "type": "input_ack",
         "schemaVersion": 2,
+        "inputType": "keyboard",
         "leaseEpoch": 12,
         "appliedSeq": 7,
         "status": "applied",
@@ -285,6 +286,7 @@ async def test_host_v2_ack_normalizes_unknown_status_without_echoing_input():
 
     await host._send_input_ack({
         "schemaVersion": 2,
+        "type": "keyboard",
         "transport": "datachannel",
         "leaseEpoch": 12,
         "seq": 7,
@@ -324,6 +326,32 @@ async def test_host_v2_mouse_socket_ack_is_forwardable_without_keyboard_sequence
     await host._send_input_ack({"schemaVersion": 2, "type": "mouse", "transport": "socket", "leaseEpoch": 12, "viewerId": "viewer-1"}, {"inputIds": ["mouse-reset-2"], "status": "duplicate"}, 3.0)
     assert emitted[0][0] == "input-ack"
     assert emitted[0][1]["inputType"] == "mouse"
+
+
+@pytest.mark.asyncio
+async def test_host_v2_command_ack_keeps_its_type_with_applied_sequence():
+    sent = []
+    host = object.__new__(WebRemoteHost)
+    host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+
+    await host._send_input_ack({
+        "schemaVersion": 2,
+        "type": "command",
+        "transport": "datachannel",
+        "leaseEpoch": 12,
+        "seq": 7,
+    }, {
+        "inputIds": ["command-1"],
+        "appliedSeq": 7,
+        "status": "applied",
+        "pressedKeyCount": 0,
+        "modifierMask": 0,
+    }, 2.0)
+
+    ack = __import__("json").loads(sent[0])
+    assert ack["inputType"] == "command"
+    assert ack["appliedSeq"] == 7
 
 
 def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
