@@ -31,6 +31,7 @@ from quartz_keyboard_adapter import (
     mac_key_code_for_dom_code,
 )
 from remote_keyboard_state import LegacyInputAdapter, RemoteKeyboardState
+from remote_desktop_write_state import ReliableDesktopWriteState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class InputHandler:
         self._keyboard_adapter = keyboard_adapter or QuartzKeyboardAdapter(source=self.source)
         self._remote_keyboard = RemoteKeyboardState(self._keyboard_adapter)
         self._legacy_keyboard = LegacyInputAdapter(self._remote_keyboard)
+        self._desktop_writes = ReliableDesktopWriteState()
         self._keyboard_connection_generation = 0
         self._modifier_flags = 0
         self._pressed_modifier_key_codes = set()
@@ -146,6 +148,9 @@ class InputHandler:
             )
             return self._keyboard_result(result, input_ids=envelope.get("inputIds", []))
 
+    def transition_desktop_writes(self, *, lease_id, lease_epoch):
+        return self._desktop_writes.transition(lease_id=lease_id, lease_epoch=lease_epoch)
+
     async def reset_keyboard(self, reason="manual", lease_epoch=None):
         """Release keyboard state in the same queue as key execution."""
         async with self._keyboard_lock:
@@ -193,6 +198,19 @@ class InputHandler:
 
             if input_type == 'keyboard':
                 return await self.apply_keyboard(data, transport=data.get("transport"))
+
+            desktop = None
+            if data.get("schemaVersion") == 2 and input_type in {'mouse', 'command'}:
+                desktop = self._desktop_writes.apply({
+                    field: data[field] for field in (
+                        "schemaVersion", "type", "action", "leaseId", "leaseEpoch", "seq", "inputIds", "payload",
+                    ) if field in data
+                })
+                if desktop.status not in {"applied", "unordered"}:
+                    return {
+                        "inputIds": data.get("inputIds", []), "status": desktop.status,
+                        "appliedSeq": desktop.applied_seq, "receiveTime": i1, "executeTime": time.perf_counter(),
+                    }
 
             if input_type == 'mouse' and action == 'move' and (
                 self._input_lock.locked() or self._lock_waiters > 0
@@ -256,11 +274,14 @@ class InputHandler:
                     input_type, action, total_ms, lock_wait_ms, to_thread_ms
                 )
 
-            return {
+            result = {
                 "inputIds": data.get("inputIds", []),
                 "receiveTime": i1,
                 "executeTime": i2,
             }
+            if desktop is not None:
+                result.update(status=desktop.status, appliedSeq=desktop.applied_seq)
+            return result
 
         except Exception as e:
             logger.error("Error handling input: %s", type(e).__name__, exc_info=True)

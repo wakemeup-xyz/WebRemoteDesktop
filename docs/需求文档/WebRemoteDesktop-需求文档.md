@@ -132,10 +132,10 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
-- [x] **离线浏览器验收 harness**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 仅连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`，截图写入同目录的 `mobile-viewer-acceptance-screenshots/`。
+- [x] **离线浏览器验收 harness**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 仅连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
-**验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、bounding box、状态和无敏感原因；不得记录文本、按键、剪贴板、密码、token、URL 或事件坐标。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
+**验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、安全布局摘要、状态和无敏感原因；不得记录文本、按键、剪贴板、密码、token、URL、事件坐标或原始 bounding box。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
 
 ### 3.5 控制栏
 

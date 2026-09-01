@@ -12,6 +12,8 @@ const KEY_FIELDS = new Set(['phase', 'code', 'location', 'repeat', 'modifiers', 
 const MODIFIER_FIELDS = new Set(['altKey', 'ctrlKey', 'metaKey', 'shiftKey']);
 const LOCK_FIELDS = new Set(['capsLock']);
 const ACTIONS = new Set(['key', 'text', 'batch', 'reset']);
+const MOUSE_ACTIONS = new Set(['down', 'up', 'move', 'wheel', 'reset']);
+const COMMAND_ACTIONS = new Set(['showDock', 'switchInputMethod']);
 const RESET_REASONS = new Set([
   'window-blur', 'visibility-hidden', 'deactivated', 'keyboard-mode-change',
   'transport-change', 'control-revoked', 'controller-disconnect', 'lease-expired',
@@ -66,8 +68,68 @@ function accepted(data) {
   return inputIdError ? failed(inputIdError) : { ok: true, value: data };
 }
 
+function validateDesktopEnvelope(data) {
+  if (!isRecord(data)) return failed('INVALID_ENVELOPE');
+  if (!hasOnlyFields(data, ENVELOPE_FIELDS)) return failed('UNKNOWN_FIELD');
+  if (data.schemaVersion !== 2) return failed('INVALID_SCHEMA_VERSION');
+  if (!['mouse', 'command'].includes(data.type)) return failed('INVALID_TYPE');
+  if (typeof data.leaseId !== 'string' || data.leaseId.length < 16) return failed('INVALID_LEASE_ID');
+  if (!Number.isSafeInteger(data.leaseEpoch) || data.leaseEpoch < 1) return failed('INVALID_LEASE_EPOCH');
+  if (!isRecord(data.payload)) return failed('INVALID_PAYLOAD');
+  const inputIdError = validateInputIds(data.inputIds);
+  return inputIdError ? failed(inputIdError) : null;
+}
+
+function isPoint(value) {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function validateDesktopWrite(data) {
+  try {
+    const envelope = validateDesktopEnvelope(data);
+    if (envelope) return envelope;
+    const unorderedMove = data.type === 'mouse' && data.action === 'move';
+    if (unorderedMove ? data.seq !== undefined : !Number.isSafeInteger(data.seq) || data.seq < 1) {
+      return failed(unorderedMove ? 'UNEXPECTED_SEQ' : 'INVALID_SEQ');
+    }
+    if (data.type === 'command') {
+      if (!COMMAND_ACTIONS.has(data.action)) return failed('UNKNOWN_ACTION');
+      return Object.keys(data.payload).length === 0 ? { ok: true, value: data } : failed('UNKNOWN_FIELD');
+    }
+    if (!MOUSE_ACTIONS.has(data.action)) return failed('UNKNOWN_ACTION');
+    const payload = data.payload;
+    const allowed = data.action === 'reset' ? new Set(['reason'])
+      : data.action === 'wheel' ? new Set(['relX', 'relY', 'deltaX', 'deltaY'])
+        : data.action === 'move' ? new Set(['relX', 'relY', 'buttons'])
+          : new Set(['relX', 'relY', 'button', 'clickCount', 'buttons']);
+    if (!hasOnlyFields(payload, allowed)) {
+      return failed('INVALID_PAYLOAD');
+    }
+    if (data.action === 'reset') {
+      return typeof payload.reason === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(payload.reason)
+        ? { ok: true, value: data } : failed('INVALID_RESET_REASON');
+    }
+    if (!isPoint(payload.relX) || !isPoint(payload.relY)) return failed('INVALID_PAYLOAD');
+    if (data.action === 'wheel') {
+      return Number.isFinite(payload.deltaX) && Number.isFinite(payload.deltaY)
+        ? { ok: true, value: data } : failed('INVALID_PAYLOAD');
+    }
+    if (data.action === 'move') {
+      return Number.isInteger(payload.buttons) && payload.buttons >= 0 && payload.buttons <= 7
+        ? { ok: true, value: data } : failed('INVALID_PAYLOAD');
+    }
+    return ['left', 'middle', 'right'].includes(payload.button)
+      && Number.isInteger(payload.clickCount) && payload.clickCount >= 1 && payload.clickCount <= 3
+      && Number.isInteger(payload.buttons) && payload.buttons >= 0 && payload.buttons <= 7
+      ? { ok: true, value: data } : failed('INVALID_PAYLOAD');
+  } catch (_error) {
+    return failed('INVALID_ENVELOPE');
+  }
+}
+
 function validateRemoteInput(data) {
   try {
+    if (data?.type === 'mouse' || data?.type === 'command') return validateDesktopWrite(data);
     if (!isRecord(data)) return failed('INVALID_ENVELOPE');
     if (!hasOnlyFields(data, ENVELOPE_FIELDS)) return failed('UNKNOWN_FIELD');
     if (data.schemaVersion !== 2) return failed('INVALID_SCHEMA_VERSION');
@@ -133,6 +195,7 @@ function summarizeRemoteInput(data) {
 
 module.exports = {
   validateRemoteInput,
+  validateDesktopWrite,
   summarizeRemoteInput,
   MAX_TEXT_SCALARS,
   MAX_BATCH_STEPS,

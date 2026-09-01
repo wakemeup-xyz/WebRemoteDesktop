@@ -423,7 +423,7 @@ git commit -m "feat(viewer): adapt mobile keyboard viewport"
 
 **Interfaces:**
 - Consumes: final Viewer build, existing local origin, current password/config injection, existing diagnostic snapshots.
-- Produces: immutable JSON acceptance artifact with SHA-256, screenshots, and explicit unexecuted-device entries.
+- Produces: immutable privacy-safe JSON acceptance artifact with SHA-256 and explicit unexecuted-device entries; no screenshots.
 
 - [ ] **Step 1: Add cross-layer transport tests**
 
@@ -431,11 +431,11 @@ Assert touch click/scroll and mobile text both use the same v2 lease fields; Dat
 
 - [ ] **Step 2: Add browser acceptance scenarios**
 
-Implement `scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json`; each scenario runs in a fresh Playwright context and writes only action names, transport, ACK status/RTT, pressed counts and bounding boxes. Write the JSON atomically and create `artifacts/mobile-viewer-acceptance.json.sha256` with `hashlib.sha256` after the final rename. The scenario list is: active control click, double click, long press right-click, drag with pointercancel, two-finger wheel, text input, CJK composition, Emoji, modifier latch, visibility hide, transport fallback, control revoke and reconnect.
+Implement `scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json`; each scenario runs in a fresh Playwright context and writes only action names, transport, ACK status/RTT, pressed counts, safe layout summaries, and normalized status/reason. Write the JSON atomically and create `artifacts/mobile-viewer-acceptance.json.sha256` with `hashlib.sha256` after the final rename. The scenario list is: active control click, double click, long press right-click, drag with pointercancel, two-finger wheel, text input, CJK composition, Emoji, modifier latch, visibility hide, transport fallback, control revoke and reconnect.
 
 - [ ] **Step 3: Capture geometry and state evidence**
 
-For `375x812`, `768x1024`, `1024x1366`, and `1440x900`, record status bar, viewer surface, Dock, mobile keyboard and fullscreen bounding boxes; assert no overlap and `pressedKeyCount == 0`/mouse reset after teardown.
+For `375x812`, `768x1024`, `1024x1366`, and `1440x900`, check status bar, viewer surface, Dock, application text Dock, and fullscreen layout in memory; record only a safe layout summary. A system-keyboard-visible PASS additionally requires an observed positive `visualViewport` or layout-viewport contraction; unavailable evidence is `NOT RUN`. Assert no overlap and `pressedKeyCount == 0`/mouse reset after teardown.
 
 - [ ] **Step 4: Execute device matrix where hardware exists**
 

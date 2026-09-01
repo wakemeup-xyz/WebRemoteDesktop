@@ -1657,7 +1657,8 @@ class WebRemoteHost:
                 "schemaVersion": 2,
                 "inputType": "mouse",
                 "leaseEpoch": data.get("leaseEpoch"),
-                "status": result.get("status") or "applied",
+                **({"appliedSeq": result["appliedSeq"]} if result.get("appliedSeq") is not None else {}),
+                "status": "applied" if result.get("status") == "unordered" else (result.get("status") or "applied"),
                 "inputIds": list(input_ids),
                 "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
                 "transport": transport,
@@ -1977,10 +1978,13 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
+                desktop_result = self.input_handler.transition_desktop_writes(
+                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+                )
             except Exception:
                 await reject_transition()
                 return
-            if not isinstance(result, dict) or result.get("status") != "applied":
+            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
                 await reject_transition()
                 return
             self._active_input_binding = binding
@@ -2000,10 +2004,13 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
+                desktop_result = self.input_handler.transition_desktop_writes(
+                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+                )
             except Exception:
                 await reject_transition()
                 return
-            if not isinstance(result, dict) or result.get("status") != "applied":
+            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
                 await reject_transition()
                 return
             self._active_input_binding = binding

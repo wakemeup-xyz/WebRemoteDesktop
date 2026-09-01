@@ -54,6 +54,20 @@ test('movement beyond 8 CSS px starts one drag and releases it', () => {
   assert.deepEqual(h.mouse.map(({action}) => action), ['down', 'move', 'up']);
 });
 
+test('cumulative sub-threshold moves start a drag and cancel long press', () => {
+  const h = makeTouchHarness();
+  h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});
+  h.pointer('pointermove', {pointerId: 1, clientX: 14, clientY: 10, buttons: 1});
+  h.pointer('pointermove', {pointerId: 1, clientX: 18, clientY: 10, buttons: 1});
+  h.pointer('pointermove', {pointerId: 1, clientX: 22, clientY: 10, buttons: 1});
+  h.advance(550);
+  h.pointer('pointerup', {pointerId: 1, clientX: 22, clientY: 10, buttons: 0});
+
+  assert.deepEqual(h.mouse.map(({action, payload}) => [action, payload.button]), [
+    ['down', 'left'], ['move', undefined], ['up', 'left'],
+  ]);
+});
+
 test('550ms stationary touch emits right down/up', () => {
   const h = makeTouchHarness();
   h.pointer('pointerdown', {pointerId: 1, clientX: 10, clientY: 10, buttons: 1});

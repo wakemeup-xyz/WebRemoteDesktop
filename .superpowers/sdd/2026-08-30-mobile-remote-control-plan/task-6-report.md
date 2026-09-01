@@ -8,7 +8,7 @@ Complete for implementation and automated evidence. No live origin, tunnel/publi
 
 - `web-client/js/input.test.js`: acceptance CLI contract, touch/text v2 envelope, mouse-pending isolation, diagnostic privacy, and modifier-latch lifecycle coverage.
 - `web-client/js/webrtc.test.js`: one-ACK/three-consumer fan-out coverage.
-- `scripts/mobile_viewer_acceptance.py`: operator-supplied-origin Playwright harness, fresh context per scenario, screenshots, geometry assertion, atomic artifact write, post-rename SHA-256.
+- `scripts/mobile_viewer_acceptance.py`: operator-supplied-origin Playwright harness, fresh context per scenario, safe geometry assertion, atomic artifact write, post-rename SHA-256; no screenshots.
 - `docs/需求文档/WebRemoteDesktop-需求文档.md`: mobile control and evidence-boundary requirements.
 - `docs/superpowers/reports/2026-08-30-mobile-remote-control-acceptance.md`: acceptance matrix and evidence separation.
 
@@ -63,11 +63,11 @@ All Critical and Important findings from `task-6-review.md` were addressed. No s
 1. PASS now requires a recorded safe transport, an `applied` or `duplicate` ACK for every expected action, zero keyboard pending count, no mouse reset pending, no reset/reacquire barrier state, and zero pressed key/button state. Missing or unsuccessful ACK observations fail the scenario.
 2. Drag waits for the rAF-coalesced move's acknowledged observation before pointer cancel; two-finger scroll waits for its wheel observation before teardown. The teardown then waits for every emitted action to receive a safe ACK.
 3. The fallback scenario waits for one socket-routed keyboard `transport-change` reset and its ACK before sending the follow-up control action, then requires that follow-up socket action's ACK.
-4. Geometry opens the mobile input dock before capture. It records status bar, viewer surface, Dock, mobile keyboard, and fullscreen boxes; fullscreen containment in Dock is the only permitted overlap, all other pairs are disallowed.
-5. The harness no longer creates screenshots. JSON observer output contains only action category, transport, ACK status/RTT, counters, state summaries, and allowed bounding boxes.
+4. Geometry opens the application text Dock before capture. It checks status bar, viewer surface, Dock, application text Dock, and fullscreen layout in memory; fullscreen containment in Dock is the only permitted overlap, all other pairs are disallowed. System-keyboard PASS is separate and requires observed viewport contraction.
+5. The harness no longer creates screenshots. JSON observer output contains only action category, transport, ACK status/RTT, counters, safe layout summaries, and status/reason; it excludes raw bounding boxes and all coordinates.
 6. The ACK test now loads real `Input`, `KeyboardTransport`, and controller state. It proves one ACK clears a mouse reset, drains keyboard pending state, restores `READY`, and produces exactly one latency sample.
 7. The DataChannel close test holds real input state, triggers `inputChannel.onclose`, observes exactly one socket reset, verifies input is blocked until the matching ACK, then verifies socket fallback can send again.
-8. `Input.sendInput()` now adds a monotonic v2 sequence to mouse and command writes and resets that sequence when lease identity changes. Mouse remains outside the keyboard pending map. Signal Server and Host focused tests prove mouse/command accept and preserve the additional field without keyboard routing.
+8. `Input.sendInput()` now adds a monotonic v2 sequence to reliable mouse actions and command writes, while high-frequency mouse move remains unordered; the sequence resets when lease identity changes. Mouse remains outside the keyboard pending map. Signal Server and Host focused tests prove the typed desktop-write contract and ACK correlation without keyboard routing.
 
 ### RED And GREEN Evidence
 

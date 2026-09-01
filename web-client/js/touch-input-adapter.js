@@ -43,14 +43,15 @@
     function pointerdown(event) {
       if (event.pointerType !== 'touch' || !enabled() || resetSent || (event.isPrimary === false && pointers.size === 0)) return;
       event.preventDefault?.(); const point = mapped(event, false); if (!point || pointers.has(event.pointerId)) return;
-      pointers.set(event.pointerId, { point, startedAt: clock(), clientX: Number(event.clientX) || 0, clientY: Number(event.clientY) || 0 }); remember(point); element?.setPointerCapture?.(event.pointerId);
+      const clientX = Number(event.clientX) || 0, clientY = Number(event.clientY) || 0;
+      pointers.set(event.pointerId, { point, startedAt: clock(), startClientX: clientX, startClientY: clientY, clientX, clientY }); remember(point); element?.setPointerCapture?.(event.pointerId);
       if (pointers.size > 1) { clearPress(); if (activeButton) { emitReset('two-finger-scroll'); activeButton = null; } state = STATES.SCROLLING; centroid = currentCentroid(); return; }
       primaryId = event.pointerId; state = STATES.PRESSED;
       pressTimer = setTimer(() => { pressTimer = null; if (state !== STATES.PRESSED || primaryId !== event.pointerId) return; const p = pointers.get(event.pointerId)?.point; const id = p && emit('down', { ...p, button: 'right', clickCount: 1, buttons: 2 }, 'long-press-down-failed'); if (id) activeButton = 'right'; }, LONG_PRESS_MS);
     }
     function pointermove(event) {
       if (event.pointerType !== 'touch' || resetSent) return; const p = pointers.get(event.pointerId); if (!p) return; const point = mapped(event, true); if (!point) return;
-      const dx = (Number(event.clientX) || 0) - p.clientX, dy = (Number(event.clientY) || 0) - p.clientY;
+      const dx = (Number(event.clientX) || 0) - p.startClientX, dy = (Number(event.clientY) || 0) - p.startClientY;
       p.point = point; remember(point);
       p.clientX = Number(event.clientX) || 0; p.clientY = Number(event.clientY) || 0;
       if (state === STATES.SCROLLING) { const next = currentCentroid(); if (centroid && next) queueWheel(next.clientX - centroid.clientX, next.clientY - centroid.clientY, next.point); centroid = next; return; }

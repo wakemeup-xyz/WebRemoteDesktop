@@ -2,8 +2,8 @@
 """Run mobile Viewer acceptance against an operator-supplied existing origin.
 
 The artifact intentionally contains only scenario labels, status/reason, transport,
-ACK summary, pressed counts, and layout bounding boxes. Credentials, text input,
-keys, clipboard contents, URLs, and event coordinates never enter the artifact.
+ACK summary, pressed counts, and safe layout summaries. Credentials, text input,
+keys, clipboard contents, URLs, event coordinates, and raw layout boxes never enter it.
 """
 
 from __future__ import annotations
@@ -124,9 +124,9 @@ def contains(outer, inner):
 
 
 def validate_geometry(boxes):
-    required = ("statusBar", "viewerSurface", "dock", "mobileKeyboard", "fullscreen")
+    required = ("statusBar", "viewerSurface", "dock", "applicationTextDock", "fullscreen")
     if any(not boxes[name]["visible"] for name in required):
-        return "mobile-keyboard-not-visible" if not boxes["mobileKeyboard"]["visible"] else "layout-element-not-visible"
+        return "application-text-dock-not-visible" if not boxes["applicationTextDock"]["visible"] else "layout-element-not-visible"
     if not contains(boxes["dock"], boxes["fullscreen"]):
         return "fullscreen-not-in-dock"
     allowed_containment = {frozenset(("dock", "fullscreen"))}
@@ -137,6 +137,24 @@ def validate_geometry(boxes):
             if overlaps(boxes[left_name], boxes[right_name]):
                 return "layout-overlap"
     return None
+
+
+def viewport_geometry(page):
+    return page.evaluate(
+        """() => ({
+          innerHeight: Number(window.innerHeight || 0),
+          visualViewportHeight: Number(window.visualViewport?.height || 0),
+        })"""
+    )
+
+
+def system_keyboard_geometry_status(baseline, observed):
+    before_inner = float(baseline.get("innerHeight") or 0)
+    before_visual = float(baseline.get("visualViewportHeight") or 0)
+    after_inner = float(observed.get("innerHeight") or 0)
+    after_visual = float(observed.get("visualViewportHeight") or 0)
+    inset = max(0.0, before_inner - after_inner, before_visual - after_visual)
+    return ("PASS", None) if inset > 0 else ("NOT RUN", "system-keyboard-geometry-unavailable")
 
 
 def completion_ok(state, observations, expected):
@@ -438,28 +456,35 @@ def run_browser_acceptance(base_url, token, out_path):
                 try:
                     context, page = open_active_viewer(browser, base_url, token, (width, height))
                     install_observer(page)
+                    baseline_viewport = viewport_geometry(page)
                     page.locator("#mobileTextInputBtn").click(timeout=5000)
                     page.wait_for_function(
                         """() => Boolean(document.body.classList.contains('mobile-input-visible')
                           && !document.getElementById('mobileInputDock')?.hidden)""",
                         timeout=5000,
                     )
+                    observed_viewport = viewport_geometry(page)
                     boxes = {
                         "statusBar": box(page, "#statusBar"),
                         "viewerSurface": box(page, "#remoteVideo"),
                         "dock": box(page, "#chromeDocks"),
-                        "mobileKeyboard": box(page, "#mobileInputDock"),
+                        "applicationTextDock": box(page, "#mobileInputDock"),
                         "fullscreen": box(page, "#fullscreenBtn"),
                     }
                     geometry_error = validate_geometry(boxes)
                     if geometry_error:
                         raise AcceptanceError(geometry_error)
                     state = assert_teardown(page, ())
+                    keyboard_status, keyboard_reason = system_keyboard_geometry_status(
+                        baseline_viewport, observed_viewport,
+                    )
                     artifact["viewports"].append({
                         "scenario": f"geometry-{width}x{height}",
-                        "status": "PASS",
+                        "status": keyboard_status,
+                        **({"reason": keyboard_reason} if keyboard_reason else {}),
                         "actions": ["geometry-capture", "teardown-mouse-reset", "teardown-keyboard-reset"],
-                        "boundingBoxes": boxes,
+                        "applicationTextDock": {"visible": True},
+                        "systemKeyboardEvidence": "observed" if keyboard_status == "PASS" else "unavailable",
                         **{key: value for key, value in state.items() if key != "observations"},
                     })
                 except Exception as error:  # noqa: BLE001

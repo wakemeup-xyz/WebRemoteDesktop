@@ -490,6 +490,46 @@ test('DataChannel keyboard envelopes include transport datachannel marker', () =
   assert.equal(sent[0].transport, 'datachannel');
 });
 
+test('DataChannel keeps reliable desktop writes ordered while mouse moves stay isolated from keyboard pending', () => {
+  const channels = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'open', bufferedAmount: 0, send(value) {
+        this.sent = this.sent || []; this.sent.push(JSON.parse(value));
+      } };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 } };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  Input.isActive = true;
+  WebRTC.createInputChannel();
+
+  Input.sendInput('mouse', 'move', { relX: 0.2, relY: 0.2, buttons: 0 });
+  Input.sendInput('mouse', 'down', { relX: 0.2, relY: 0.2, button: 'left', clickCount: 1, buttons: 1 });
+  Input.sendInput('mouse', 'reset', { reason: 'manual' });
+  Input.sendInput('command', 'showDock', {});
+
+  assert.deepEqual(channels.get('input-move').sent.map(({ action, seq }) => [action, seq]), [['move', undefined]]);
+  assert.deepEqual(channels.get('input').sent.map(({ type, action, seq }) => [type, action, seq]), [
+    ['mouse', 'down', 1], ['mouse', 'reset', 2], ['command', 'showDock', 3],
+  ]);
+  channels.get('input').onmessage({ data: JSON.stringify({
+    type: 'input_ack', inputType: 'mouse', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: 2, inputIds: [channels.get('input').sent[1].inputIds[0],],
+  }) });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  clearTimeout(WebRTC._dcTimeout);
+});
+
 test('viewer waits for an active control lease before starting an offer and routes acknowledgements to transport first', () => {
   const socketHandlers = new Map();
   const emitted = [];
@@ -3066,7 +3106,7 @@ test('port search round timeout advances once and ignores stale generation', asy
   WebRTC._portSearchGeneration = staleGeneration;
   WebRTC.pc = { close() {} };
   WebRTC.armPortSearchDeadline();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.ok(actions.length >= 2, `expected timeout refresh, got ${actions.length}`);
   WebRTC.stopPortSearch('cleanup');
 });

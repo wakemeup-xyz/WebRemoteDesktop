@@ -347,15 +347,15 @@ const Input = {
       schemaVersion: 2,
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
-      seq: ++this._desktopWriteSequence,
     };
+    if (type !== 'mouse' || action !== 'move') data.seq = ++this._desktopWriteSequence;
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
       this.recordLatency(data);
       return data.inputIds[0];
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
-      socket.emit('input', { ...data, transport: 'socket' });
+      socket.emit('input', data);
       this.recordLatency(data);
       return data.inputIds[0];
     }

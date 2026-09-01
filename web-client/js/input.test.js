@@ -137,6 +137,7 @@ test('v2 mouse and command writes have a monotonic sequence that resets with a n
   const { Input, context, socketEvents } = loadInput();
   activate(Input, context);
 
+  Input.sendInput('mouse', 'move', { relX: 0.2, relY: 0.2, buttons: 0 });
   Input.sendInput('mouse', 'down', { button: 'left' });
   Input.sendInput('mouse', 'up', { button: 'left' });
   Input.sendInput('mouse', 'wheel', { deltaY: 1 });
@@ -144,8 +145,9 @@ test('v2 mouse and command writes have a monotonic sequence that resets with a n
   Input.sendInput('command', 'showDock', {});
 
   const beforeLeaseChange = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
-  assert.deepEqual(beforeLeaseChange.map(({ seq }) => seq), [1, 2, 3, 4, 5]);
-  assert.equal(beforeLeaseChange.every(({ schemaVersion, seq }) => schemaVersion === 2 && Number.isSafeInteger(seq)), true);
+  assert.deepEqual(beforeLeaseChange.map(({ seq }) => seq), [undefined, 1, 2, 3, 4, 5]);
+  assert.equal(beforeLeaseChange.every(({ schemaVersion, seq, action }) => schemaVersion === 2
+    && (action === 'move' ? seq === undefined : Number.isSafeInteger(seq))), true);
 
   Input.setControlLease({ leaseId: 'lease-000000000002', leaseEpoch: 4 });
   Input.sendInput('mouse', 'reset', { reason: 'lease-transition' });
@@ -362,8 +364,9 @@ test('blur resets keyboard state but leaves control ownership to WebRTC', () => 
   activate(Input, context);
   Input.setupEventListeners();
   windowListeners.get('blur')();
-  assert.equal(socketEvents.at(-1).payload.action, 'reset');
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').length, 0);
   assert.equal(Input.getDiagnosticState().keyboard.lastResetReason, 'window-blur');
+  assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
 });
 
 test('mobile input reset clears the reserved Dock state', () => {

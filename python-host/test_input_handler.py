@@ -64,6 +64,51 @@ def key_envelope(*, seq, phase, code="KeyA", epoch=1, lease_id=LEASE_ID):
     }
 
 
+def desktop_envelope(*, action, seq=None, input_id="desktop-1", payload=None):
+    envelope = {
+        "schemaVersion": 2,
+        "type": "command" if action == "showDock" else "mouse",
+        "action": action,
+        "leaseId": LEASE_ID,
+        "leaseEpoch": 1,
+        "inputIds": [input_id],
+        "payload": {} if payload is None else payload,
+    }
+    if seq is not None:
+        envelope["seq"] = seq
+    return envelope
+
+
+@pytest.mark.asyncio
+async def test_reliable_mouse_and_command_execute_once_while_unordered_move_does_not_create_a_gap():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+    calls = []
+    handler._handle_mouse = lambda action, _payload: calls.append(("mouse", action))
+    handler._handle_command = lambda action, _payload: calls.append(("command", action))
+
+    move = await handler.handle_input(desktop_envelope(
+        action="move", payload={"relX": 0.2, "relY": 0.3, "buttons": 0},
+    ))
+    down = await handler.handle_input(desktop_envelope(
+        action="down", seq=1, input_id="down-1",
+        payload={"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+    ))
+    duplicate = await handler.handle_input(desktop_envelope(
+        action="down", seq=1, input_id="down-duplicate",
+        payload={"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+    ))
+    gap = await handler.handle_input(desktop_envelope(action="showDock", seq=3, input_id="command-gap"))
+    reset = await handler.handle_input(desktop_envelope(action="reset", seq=2, input_id="reset-2", payload={"reason": "manual"}))
+
+    assert [move["status"], down["status"], duplicate["status"], gap["status"], reset["status"]] == [
+        "unordered", "applied", "duplicate", "sequence-gap", "applied",
+    ]
+    assert calls == [("mouse", "move"), ("mouse", "down"), ("mouse", "reset")]
+    assert reset["appliedSeq"] == 2
+
+
 @pytest.mark.asyncio
 async def test_disconnect_reset_is_serialized_after_inflight_keydown():
     async def run_case():
@@ -448,23 +493,14 @@ async def test_mouse_and_command_accept_v2_sequence_metadata_without_keyboard_ro
     handler._running = True
     handler._handle_mouse = lambda action, payload: calls.append(("mouse", action))
     handler._handle_command = lambda action, payload: calls.append(("command", action))
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
 
-    mouse_result = await handler.handle_input({
-        "schemaVersion": 2,
-        "type": "mouse",
-        "action": "reset",
-        "seq": 1,
-        "inputIds": ["mouse-v2"],
-        "payload": {},
-    })
-    command_result = await handler.handle_input({
-        "schemaVersion": 2,
-        "type": "command",
-        "action": "showDock",
-        "seq": 2,
-        "inputIds": ["command-v2"],
-        "payload": {},
-    })
+    mouse_result = await handler.handle_input(desktop_envelope(
+        action="reset", seq=1, input_id="mouse-v2", payload={"reason": "manual"},
+    ))
+    command_result = await handler.handle_input(desktop_envelope(
+        action="showDock", seq=2, input_id="command-v2",
+    ))
 
     assert calls == [("mouse", "reset"), ("command", "showDock")]
     assert mouse_result["inputIds"] == ["mouse-v2"]

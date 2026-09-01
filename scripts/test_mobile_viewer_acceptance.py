@@ -24,14 +24,23 @@ def test_completion_requires_ack_safe_transport_and_clear_input_state():
     assert HARNESS.completion_ok(clean_state, [{"type": "mouse", "action": "wheel", "transport": "socket", "ackStatus": "applied"}], expected)
 
 
-def test_geometry_requires_keyboard_visible_and_all_non_containment_pairs_disjoint():
+def test_geometry_checks_application_text_dock_without_claiming_system_keyboard():
     boxes = {
         "statusBar": {"left": 0, "top": 0, "right": 100, "bottom": 10, "visible": True},
         "viewerSurface": {"left": 0, "top": 10, "right": 100, "bottom": 60, "visible": True},
         "dock": {"left": 0, "top": 70, "right": 100, "bottom": 90, "visible": True},
-        "mobileKeyboard": {"left": 0, "top": 90, "right": 100, "bottom": 100, "visible": True},
+        "applicationTextDock": {"left": 0, "top": 90, "right": 100, "bottom": 100, "visible": True},
         "fullscreen": {"left": 10, "top": 72, "right": 20, "bottom": 82, "visible": True},
     }
     assert HARNESS.validate_geometry(boxes) is None
-    assert HARNESS.validate_geometry({**boxes, "mobileKeyboard": {**boxes["mobileKeyboard"], "visible": False}}) == "mobile-keyboard-not-visible"
+    assert HARNESS.validate_geometry({**boxes, "applicationTextDock": {**boxes["applicationTextDock"], "visible": False}}) == "application-text-dock-not-visible"
     assert HARNESS.validate_geometry({**boxes, "viewerSurface": {**boxes["viewerSurface"], "top": 5}}) == "layout-overlap"
+
+
+def test_system_keyboard_pass_requires_observed_viewport_contraction():
+    baseline = {"innerHeight": 812, "visualViewportHeight": 812}
+    unchanged = {"innerHeight": 812, "visualViewportHeight": 812}
+    contracted = {"innerHeight": 812, "visualViewportHeight": 520}
+
+    assert HARNESS.system_keyboard_geometry_status(baseline, unchanged) == ("NOT RUN", "system-keyboard-geometry-unavailable")
+    assert HARNESS.system_keyboard_geometry_status(baseline, contracted) == ("PASS", None)
