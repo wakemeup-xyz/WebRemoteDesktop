@@ -18,6 +18,7 @@ function makeTextHarness({enabled = true} = {}) {
   });
   adapter.attach();
   return {
+    adapter,
     input,
     sent,
     emit(type, overrides = {}) {
@@ -50,6 +51,27 @@ test('deletion beyond one bounded batch remains pending for retry', () => {
   assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 18);
 });
 
+test('middle replacement is rejected instead of sending a remote Backspace', () => {
+  const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.input.selectionStart = 1; h.input.selectionEnd = 2;
+  let prevented = false;
+  h.emit('beforeinput', { inputType: 'insertText', preventDefault() { prevented = true; } });
+  h.input.value = 'aXc\u200B'; h.emit('input');
+
+  assert.equal(prevented, true);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.input.value, 'abc\u200B');
+});
+
+test('a reliable left arrow permits the matching middle insertion', () => {
+  const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });
+  h.input.value = 'abXc\u200B'; h.emit('input');
+
+  assert.deepEqual(h.sent, [{kind: 'key', value: 'ArrowLeft'}, {kind: 'text', value: 'X'}]);
+  assert.equal(h.input.value, 'abXc\u200B');
+});
+
 test('surrogate-pair Emoji is not split into invalid text', () => {
   const h = makeTextHarness(); h.input.value = '🙂'; h.emit('input');
   assert.deepEqual(h.sent, [{kind: 'text', value: '🙂'}]);
@@ -63,4 +85,10 @@ test('beforeinput absence still works through input diff', () => {
 test('blocked lease preserves value and does not send text', () => {
   const h = makeTextHarness({enabled: false}); h.input.value = 'keep me'; h.emit('input');
   assert.deepEqual(h.sent, []); assert.equal(h.input.value, 'keep me');
+});
+
+test('reset retains only the invisible sentinel baseline', () => {
+  const h = makeTextHarness(); h.input.value = 'text'; h.emit('input');
+  h.adapter.reset('control-lost');
+  assert.equal(h.input.value, '\u200B');
 });

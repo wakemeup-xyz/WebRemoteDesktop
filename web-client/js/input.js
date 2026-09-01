@@ -138,8 +138,13 @@ const Input = {
       this.bindMouseEvents(relayImage);
       this.bindTouchAdapter(relayImage);
     }
-    document.addEventListener('keydown', (event) => this.keyboardController?.handleDomEvent(event));
-    document.addEventListener('keyup', (event) => this.keyboardController?.handleDomEvent(event));
+    const isMobileTextEvent = (event) => event?.target === document.getElementById('mobileTextInput');
+    document.addEventListener('keydown', (event) => {
+      if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
+    });
+    document.addEventListener('keyup', (event) => {
+      if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
+    });
     video.addEventListener('click', () => video.focus());
     relayImage?.addEventListener('click', () => relayImage.focus());
     video.addEventListener('playing', () => { if (this.isActive) video.focus(); });

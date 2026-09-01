@@ -119,6 +119,36 @@ test('mobile text adapter routes text and control keys through the keyboard cont
   assert.equal(keyboardPayloads[1].payload.steps.map(({ code }) => code).join(','), 'Enter,Enter');
 });
 
+test('mobile textarea stops control and hardware text events before document keyboard handling', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  const globalKeydown = documentListeners.get('keydown');
+  const globalKeyup = documentListeners.get('keyup');
+  Input.setupTextInput();
+  const input = elements.get('mobileTextInput');
+  const bubble = (type, overrides = {}) => {
+    const event = keyboard(type, {
+      target: input,
+      preventDefault() { this.defaultPrevented = true; },
+      stopPropagation() { this.propagationStopped = true; },
+      ...overrides,
+    });
+    input.listeners.get(type)?.(event);
+    if (!event.propagationStopped) (type === 'keydown' ? globalKeydown : globalKeyup)(event);
+  };
+
+  bubble('keydown', { code: 'Enter', key: 'Enter' });
+  bubble('keyup', { code: 'Enter', key: 'Enter' });
+  bubble('keydown', { code: 'KeyA', key: 'a' });
+  bubble('keyup', { code: 'KeyA', key: 'a' });
+  input.value = 'a';
+  input.listeners.get('input')({ target: input });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['batch', 'text']);
+});
+
 test('only one keyboard transport and controller are created for an input instance', () => {
   const { Input, context } = loadInput();
   const first = Input.initKeyboardController();
