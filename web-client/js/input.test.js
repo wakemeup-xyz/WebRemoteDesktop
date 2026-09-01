@@ -129,7 +129,27 @@ test('touch click, touch wheel, and mobile text retain the active v2 lease envel
     assert.equal(payload.schemaVersion, 2);
     assert.equal(payload.leaseId, 'lease-000000000001');
     assert.equal(payload.leaseEpoch, 3);
+    assert.equal(Number.isSafeInteger(payload.seq), true);
   }
+});
+
+test('v2 mouse and command writes have a monotonic sequence that resets with a new lease', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+
+  Input.sendInput('mouse', 'down', { button: 'left' });
+  Input.sendInput('mouse', 'up', { button: 'left' });
+  Input.sendInput('mouse', 'wheel', { deltaY: 1 });
+  Input.sendInput('mouse', 'reset', { reason: 'test-reset' });
+  Input.sendInput('command', 'showDock', {});
+
+  const beforeLeaseChange = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.deepEqual(beforeLeaseChange.map(({ seq }) => seq), [1, 2, 3, 4, 5]);
+  assert.equal(beforeLeaseChange.every(({ schemaVersion, seq }) => schemaVersion === 2 && Number.isSafeInteger(seq)), true);
+
+  Input.setControlLease({ leaseId: 'lease-000000000002', leaseEpoch: 4 });
+  Input.sendInput('mouse', 'reset', { reason: 'lease-transition' });
+  assert.equal(socketEvents.filter(({ event }) => event === 'input').at(-1).payload.seq, 1);
 });
 
 test('reset, park, lease revocation, and disconnect clear virtual modifier latches', () => {

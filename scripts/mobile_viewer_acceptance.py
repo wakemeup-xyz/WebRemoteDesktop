@@ -113,32 +113,165 @@ def overlaps(left, right):
     )
 
 
+def contains(outer, inner):
+    return (
+        outer["visible"] and inner["visible"]
+        and outer["left"] <= inner["left"]
+        and outer["top"] <= inner["top"]
+        and outer["right"] >= inner["right"]
+        and outer["bottom"] >= inner["bottom"]
+    )
+
+
+def validate_geometry(boxes):
+    required = ("statusBar", "viewerSurface", "dock", "mobileKeyboard", "fullscreen")
+    if any(not boxes[name]["visible"] for name in required):
+        return "mobile-keyboard-not-visible" if not boxes["mobileKeyboard"]["visible"] else "layout-element-not-visible"
+    if not contains(boxes["dock"], boxes["fullscreen"]):
+        return "fullscreen-not-in-dock"
+    allowed_containment = {frozenset(("dock", "fullscreen"))}
+    for index, left_name in enumerate(required):
+        for right_name in required[index + 1:]:
+            if frozenset((left_name, right_name)) in allowed_containment:
+                continue
+            if overlaps(boxes[left_name], boxes[right_name]):
+                return "layout-overlap"
+    return None
+
+
+def completion_ok(state, observations, expected):
+    if (
+        state.get("pressedKeyCount") != 0
+        or state.get("pressedMouseButtonCount") != 0
+        or state.get("pendingMouseReset")
+        or state.get("pendingKeyboard") != 0
+        or state.get("keyboardState") in {"RESET_REQUIRED", "BLOCKED", "reacquire-required"}
+    ):
+        return False
+    for input_type, action in expected:
+        if not any(
+            observation.get("type") == input_type
+            and observation.get("action") == action
+            and observation.get("transport") in {"datachannel", "socket"}
+            and observation.get("ackStatus") in {"applied", "duplicate"}
+            for observation in observations
+        ):
+            return False
+    return True
+
+
+def install_observer(page):
+    page.evaluate(
+        """() => {
+          if (window.__mobileAcceptanceObserver) return;
+          const observer = { sent: [], acknowledgements: new Map() };
+          const record = (payload, transport) => {
+            if (!payload || !Array.isArray(payload.inputIds)) return;
+            for (const inputId of payload.inputIds) {
+              if (typeof inputId !== 'string') continue;
+              observer.sent.push({ inputId, type: String(payload.type || 'unknown'), action: String(payload.action || 'unknown'), transport });
+            }
+          };
+          const acknowledge = (ack) => {
+            const status = String(ack?.status || 'unknown');
+            for (const inputId of Array.isArray(ack?.inputIds) ? ack.inputIds : []) {
+              if (typeof inputId === 'string') observer.acknowledgements.set(inputId, status);
+            }
+          };
+          const webRtcSend = window.WebRTC?.sendInput?.bind(window.WebRTC);
+          if (webRtcSend) {
+            window.WebRTC.sendInput = (payload) => {
+              const accepted = webRtcSend(payload);
+              if (accepted === true) record(payload, 'datachannel');
+              return accepted;
+            };
+          }
+          const socket = window.WebRTC?.socket;
+          const socketEmit = socket?.emit?.bind(socket);
+          if (socketEmit) {
+            socket.emit = (event, payload, ...rest) => {
+              if (event === 'input') record(payload, 'socket');
+              return socketEmit(event, payload, ...rest);
+            };
+          }
+          for (const method of ['acceptMouseAck', 'acceptKeyboardAck']) {
+            const original = window.Input?.[method]?.bind(window.Input);
+            if (!original) continue;
+            window.Input[method] = (ack) => { acknowledge(ack); return original(ack); };
+          }
+          window.__mobileAcceptanceObserver = observer;
+        }"""
+    )
+
+
 def safe_state(page):
     return page.evaluate(
         """() => {
           const input = window.Input?.getDiagnosticState?.() || {};
           const latency = window.LatencyMonitor?.getStats?.()?.inputRtt || {};
+          const observer = window.__mobileAcceptanceObserver || { sent: [], acknowledgements: new Map() };
           return {
             transport: input.keyboard?.adapter || null,
-            ackStatus: null,
             ackRttMs: Number.isFinite(Number(latency.last)) ? Number(latency.last) : null,
             pressedKeyCount: Number(input.keyboard?.pressedCount || 0),
             pressedMouseButtonCount: Number(input.pressedMouseButtonCount || 0),
+            pendingMouseReset: Boolean(input.pendingMouseReset),
+            pendingKeyboard: Number(input.keyboard?.pendingCount || 0),
+            keyboardState: String(input.keyboard?.leaseState || 'INACTIVE'),
+            observations: observer.sent.map((item) => ({
+              type: item.type,
+              action: item.action,
+              transport: item.transport,
+              ackStatus: observer.acknowledgements.get(item.inputId) || null,
+            })),
           };
         }"""
     )
 
 
-def assert_teardown(page):
+def wait_for_expected_ack(page, expected):
+    expected_data = [{"type": item[0], "action": item[1]} for item in expected]
+    page.wait_for_function(
+        """expected => {
+          const observer = window.__mobileAcceptanceObserver;
+          if (!observer) return false;
+          return expected.every((wanted) => observer.sent.some((item) => (
+            item.type === wanted.type
+            && item.action === wanted.action
+            && (item.transport === 'datachannel' || item.transport === 'socket')
+            && ['applied', 'duplicate'].includes(observer.acknowledgements.get(item.inputId))
+          )));
+        }""",
+        expected_data,
+        timeout=15000,
+    )
+
+
+def assert_teardown(page, expected):
     page.evaluate(
         """() => {
           window.Input?.releasePointer?.('acceptance-teardown');
           window.Input?.resetKeyboard?.('acceptance-teardown');
         }"""
     )
+    page.wait_for_function(
+        """() => {
+          const input = window.Input?.getDiagnosticState?.() || {};
+          const observer = window.__mobileAcceptanceObserver;
+          const allAcknowledged = observer && observer.sent.every((item) =>
+            ['applied', 'duplicate'].includes(observer.acknowledgements.get(item.inputId)));
+          return allAcknowledged
+            && !input.pendingMouseReset
+            && Number(input.keyboard?.pendingCount || 0) === 0
+            && Number(input.keyboard?.pressedCount || 0) === 0
+            && Number(input.pressedMouseButtonCount || 0) === 0
+            && !['RESET_REQUIRED', 'BLOCKED', 'reacquire-required'].includes(String(input.keyboard?.leaseState || 'INACTIVE'));
+        }""",
+        timeout=15000,
+    )
     state = safe_state(page)
-    if state["pressedKeyCount"] != 0 or state["pressedMouseButtonCount"] != 0:
-        raise AcceptanceError("teardown-pressed-input")
+    if not completion_ok(state, state["observations"], expected):
+        raise AcceptanceError("unacknowledged-or-unsafe-input")
     return state
 
 
@@ -181,27 +314,35 @@ def touch_event(page, event_type, pointer_id, x, y):
 
 def run_scenario(page, name):
     surface = page.locator("#remoteVideo")
+    expected = ()
     if name == "active-control-click":
         touch_event(page, "pointerdown", 1, 80, 80)
         touch_event(page, "pointerup", 1, 80, 80)
+        expected = (("mouse", "down"), ("mouse", "up"))
     elif name == "double-click":
         for _ in range(2):
             touch_event(page, "pointerdown", 1, 80, 80)
             touch_event(page, "pointerup", 1, 80, 80)
+        expected = (("mouse", "down"), ("mouse", "up"))
     elif name == "long-press-right-click":
         touch_event(page, "pointerdown", 1, 80, 80)
         page.wait_for_timeout(575)
         touch_event(page, "pointerup", 1, 80, 80)
+        expected = (("mouse", "down"), ("mouse", "up"))
     elif name == "drag-pointercancel":
         touch_event(page, "pointerdown", 1, 80, 80)
         touch_event(page, "pointermove", 1, 110, 80)
+        wait_for_expected_ack(page, (("mouse", "move"),))
         touch_event(page, "pointercancel", 1, 110, 80)
+        expected = (("mouse", "down"), ("mouse", "move"), ("mouse", "reset"))
     elif name == "two-finger-wheel":
         touch_event(page, "pointerdown", 1, 80, 80)
         touch_event(page, "pointerdown", 2, 120, 80)
         touch_event(page, "pointermove", 2, 120, 120)
+        wait_for_expected_ack(page, (("mouse", "wheel"),))
         touch_event(page, "pointerup", 2, 120, 120)
         touch_event(page, "pointerup", 1, 80, 80)
+        expected = (("mouse", "wheel"),)
     elif name in {"text-input", "cjk-composition", "emoji"}:
         page.locator("#mobileTextInputBtn").click(timeout=5000)
         if name == "cjk-composition":
@@ -216,9 +357,11 @@ def run_scenario(page, name):
             page.locator("#mobileTextInput").evaluate(
                 """input => { input.value = 'mobile-acceptance'; input.dispatchEvent(new Event('input', { bubbles: true })); }"""
             )
+        expected = (("keyboard", "text"),)
     elif name == "modifier-latch":
         page.locator('[data-mobile-action="shift"]').click(timeout=5000)
         page.locator('[data-mobile-action="shift"]').click(timeout=5000)
+        expected = (("keyboard", "key"),)
     elif name == "visibility-hide":
         page.evaluate(
             """() => {
@@ -226,10 +369,15 @@ def run_scenario(page, name):
               document.dispatchEvent(new Event('visibilitychange'));
             }"""
         )
+        expected = (("keyboard", "reset"),)
     elif name == "transport-fallback":
         page.evaluate("""() => window.WebRTC?.inputChannel?.close?.()""")
-        page.wait_for_timeout(100)
+        wait_for_expected_ack(page, (("keyboard", "reset"),))
+        fallback = safe_state(page)["observations"]
+        if not any(item["type"] == "keyboard" and item["action"] == "reset" and item["transport"] == "socket" and item["ackStatus"] in {"applied", "duplicate"} for item in fallback):
+            raise AcceptanceError("socket-reset-not-acknowledged")
         page.locator('[data-mobile-action="enter"]').click(timeout=5000)
+        expected = (("keyboard", "reset"), ("keyboard", "batch"))
     elif name == "control-revoke-reconnect":
         page.locator("#disconnectBtn").click(timeout=5000)
         page.locator("#startBtn").click(timeout=10000)
@@ -238,9 +386,13 @@ def run_scenario(page, name):
             """() => Boolean(window.WebRTC?.hasActiveControl?.() && window.Input?.isActive)""",
             timeout=20000,
         )
+        page.locator('[data-mobile-action="enter"]').click(timeout=5000)
+        expected = (("keyboard", "batch"),)
     else:  # pragma: no cover - static scenario list guards this.
         raise AcceptanceError("unknown-scenario")
     surface.wait_for(state="attached", timeout=1000)
+    wait_for_expected_ack(page, expected)
+    return expected
 
 
 def artifact_entry(name, status, reason=None, state=None, actions=()):
@@ -258,8 +410,6 @@ def run_browser_acceptance(base_url, token, out_path):
     except ImportError as error:
         raise AcceptanceError("playwright-unavailable") from error
 
-    screenshots = out_path.parent / "mobile-viewer-acceptance-screenshots"
-    screenshots.mkdir(parents=True, exist_ok=True)
     artifact = {"scenarios": [], "viewports": [], "devices": []}
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -268,12 +418,12 @@ def run_browser_acceptance(base_url, token, out_path):
                 context = None
                 try:
                     context, page = open_active_viewer(browser, base_url, token, VIEWPORTS[0])
-                    run_scenario(page, scenario)
-                    state = assert_teardown(page)
-                    page.screenshot(path=str(screenshots / f"{scenario}.png"), full_page=True)
+                    install_observer(page)
+                    expected = run_scenario(page, scenario)
+                    state = assert_teardown(page, expected)
                     artifact["scenarios"].append(artifact_entry(
-                        scenario, "PASS", state=state,
-                        actions=(scenario, "teardown-mouse-reset", "teardown-keyboard-reset"),
+                        scenario, "PASS", state={key: value for key, value in state.items() if key != "observations"},
+                        actions=(scenario,),
                     ))
                 except Exception as error:  # noqa: BLE001 - artifact keeps only safe reasons.
                     artifact["scenarios"].append(artifact_entry(
@@ -287,6 +437,13 @@ def run_browser_acceptance(base_url, token, out_path):
                 context = None
                 try:
                     context, page = open_active_viewer(browser, base_url, token, (width, height))
+                    install_observer(page)
+                    page.locator("#mobileTextInputBtn").click(timeout=5000)
+                    page.wait_for_function(
+                        """() => Boolean(document.body.classList.contains('mobile-input-visible')
+                          && !document.getElementById('mobileInputDock')?.hidden)""",
+                        timeout=5000,
+                    )
                     boxes = {
                         "statusBar": box(page, "#statusBar"),
                         "viewerSurface": box(page, "#remoteVideo"),
@@ -294,16 +451,16 @@ def run_browser_acceptance(base_url, token, out_path):
                         "mobileKeyboard": box(page, "#mobileInputDock"),
                         "fullscreen": box(page, "#fullscreenBtn"),
                     }
-                    if overlaps(boxes["viewerSurface"], boxes["dock"]) or overlaps(boxes["viewerSurface"], boxes["mobileKeyboard"]):
-                        raise AcceptanceError("layout-overlap")
-                    state = assert_teardown(page)
-                    page.screenshot(path=str(screenshots / f"geometry-{width}x{height}.png"), full_page=True)
+                    geometry_error = validate_geometry(boxes)
+                    if geometry_error:
+                        raise AcceptanceError(geometry_error)
+                    state = assert_teardown(page, ())
                     artifact["viewports"].append({
                         "scenario": f"geometry-{width}x{height}",
                         "status": "PASS",
                         "actions": ["geometry-capture", "teardown-mouse-reset", "teardown-keyboard-reset"],
                         "boundingBoxes": boxes,
-                        **state,
+                        **{key: value for key, value in state.items() if key != "observations"},
                     })
                 except Exception as error:  # noqa: BLE001
                     artifact["viewports"].append(artifact_entry(

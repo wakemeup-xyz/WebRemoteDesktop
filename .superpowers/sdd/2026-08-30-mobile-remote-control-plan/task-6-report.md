@@ -51,3 +51,57 @@ The final staged scope is limited to Task 6 tests, harness, product requirement,
 
 - The existing full input suite retains one unrelated blur fixture failure; no assertion suppression, force exit, or unrelated production change was used.
 - Real-device and public-path acceptance remain open until an operator runs the harness against an existing origin and records independent physical evidence.
+
+## Fix Round 1
+
+### Status
+
+All Critical and Important findings from `task-6-review.md` were addressed. No service, tunnel, browser origin, or physical device was started or used. Android Chrome, iPhone Safari, iPad Safari, Host Quartz, physical keyboard, and public-path evidence remain `NOT RUN`.
+
+### Finding-by-Finding Changes
+
+1. PASS now requires a recorded safe transport, an `applied` or `duplicate` ACK for every expected action, zero keyboard pending count, no mouse reset pending, no reset/reacquire barrier state, and zero pressed key/button state. Missing or unsuccessful ACK observations fail the scenario.
+2. Drag waits for the rAF-coalesced move's acknowledged observation before pointer cancel; two-finger scroll waits for its wheel observation before teardown. The teardown then waits for every emitted action to receive a safe ACK.
+3. The fallback scenario waits for one socket-routed keyboard `transport-change` reset and its ACK before sending the follow-up control action, then requires that follow-up socket action's ACK.
+4. Geometry opens the mobile input dock before capture. It records status bar, viewer surface, Dock, mobile keyboard, and fullscreen boxes; fullscreen containment in Dock is the only permitted overlap, all other pairs are disallowed.
+5. The harness no longer creates screenshots. JSON observer output contains only action category, transport, ACK status/RTT, counters, state summaries, and allowed bounding boxes.
+6. The ACK test now loads real `Input`, `KeyboardTransport`, and controller state. It proves one ACK clears a mouse reset, drains keyboard pending state, restores `READY`, and produces exactly one latency sample.
+7. The DataChannel close test holds real input state, triggers `inputChannel.onclose`, observes exactly one socket reset, verifies input is blocked until the matching ACK, then verifies socket fallback can send again.
+8. `Input.sendInput()` now adds a monotonic v2 sequence to mouse and command writes and resets that sequence when lease identity changes. Mouse remains outside the keyboard pending map. Signal Server and Host focused tests prove mouse/command accept and preserve the additional field without keyboard routing.
+
+### RED And GREEN Evidence
+
+- RED: `node --test --test-name-pattern='touch click|v2 mouse and command' web-client/js/input.test.js` failed because mouse/command envelopes had no sequence field.
+- GREEN: the same focused command passed after the sequence authority change.
+- RED: `node --test --test-name-pattern='DataChannel close routes' web-client/js/webrtc.test.js` failed because the test could not observe socket fallback transport from the reset path.
+- GREEN: the end-to-end close test now passes by observing the real socket sink, reset barrier, matching ACK, and post-ACK send.
+- RED: `PYTHONPATH=. python3 -m pytest -q scripts/test_mobile_viewer_acceptance.py` failed because completion and geometry validation did not exist.
+- GREEN: the focused harness tests pass, proving no-ACK or pending-reset state cannot complete and keyboard-visible geometry validates all disallowed overlaps.
+
+### Files
+
+- `web-client/js/input.js`
+- `web-client/js/input.test.js`
+- `web-client/js/webrtc.test.js`
+- `signal-server/websocket/signaling.test.js`
+- `python-host/test_input_handler.py`
+- `scripts/mobile_viewer_acceptance.py`
+- `scripts/test_mobile_viewer_acceptance.py`
+- `.superpowers/sdd/2026-08-30-mobile-remote-control-plan/task-6-report.md`
+
+### Commands And Results
+
+| Command | Result |
+|---|---|
+| `node --test web-client/js/*.test.js web-client/css/*.test.js` | Natural exit with one known pre-existing blur fixture failure; the strict protocol-shape regression introduced during this round was removed and its focused test passes. |
+| `cd signal-server && npm test` | 318 pass, 0 fail. |
+| `cd python-host && PYTHONPATH=. python3 -m pytest -q` | 193 passed; one existing `mss` deprecation warning. |
+| `PYTHONPATH=. python3 -m pytest -q scripts/test_mobile_viewer_acceptance.py` | 2 passed. |
+| `python3 -m py_compile scripts/mobile_viewer_acceptance.py` and `python3 scripts/mobile_viewer_acceptance.py --help` | Passed. |
+| Refused-local-origin dry run | Wrote only `NOT RUN` entries; final-byte SHA-256 matched the sidecar after atomic rename. It was not counted as browser acceptance. |
+
+### Commit And Concerns
+
+- Fix commit: recorded with this report in the Task 6 fix round 1 commit.
+- The known blur-fixture failure remains outside this task's findings and was not suppressed or changed.
+- Live-origin browser execution and all physical-device checks remain `NOT RUN`; the harness is stricter, but it is not a substitute for those acceptance gates.

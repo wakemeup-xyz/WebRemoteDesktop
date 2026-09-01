@@ -861,6 +861,7 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
     action: 'down',
     leaseId: granted.leaseId,
     leaseEpoch: granted.leaseEpoch,
+    seq: 1,
     inputIds: ['mouse-1'],
     transport: 'socket',
     payload: { relX: 0.5, relY: 0.4, button: 'left', clickCount: 1 },
@@ -871,6 +872,7 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
     action: 'showDock',
     leaseId: granted.leaseId,
     leaseEpoch: granted.leaseEpoch,
+    seq: 2,
     inputIds: ['cmd-1'],
     transport: 'socket',
     payload: {},
@@ -894,9 +896,11 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
   assert.equal(relayed.length, 2);
   assert.equal(relayed[0].data.type, 'mouse');
   assert.equal(relayed[0].data.action, 'down');
+  assert.equal(relayed[0].data.seq, 1);
   assert.equal(relayed[0].data.viewerId, 'viewer-mouse-v2');
   assert.equal(relayed[1].data.type, 'command');
   assert.equal(relayed[1].data.action, 'showDock');
+  assert.equal(relayed[1].data.seq, 2);
 });
 
 test('fresh v2 tunnel input matches the Host transition lease without leaking it to viewers or logs', () => {

@@ -442,6 +442,36 @@ async def test_mouse_move_is_dropped_when_input_lock_is_busy(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mouse_and_command_accept_v2_sequence_metadata_without_keyboard_routing():
+    calls = []
+    handler = InputHandler()
+    handler._running = True
+    handler._handle_mouse = lambda action, payload: calls.append(("mouse", action))
+    handler._handle_command = lambda action, payload: calls.append(("command", action))
+
+    mouse_result = await handler.handle_input({
+        "schemaVersion": 2,
+        "type": "mouse",
+        "action": "reset",
+        "seq": 1,
+        "inputIds": ["mouse-v2"],
+        "payload": {},
+    })
+    command_result = await handler.handle_input({
+        "schemaVersion": 2,
+        "type": "command",
+        "action": "showDock",
+        "seq": 2,
+        "inputIds": ["command-v2"],
+        "payload": {},
+    })
+
+    assert calls == [("mouse", "reset"), ("command", "showDock")]
+    assert mouse_result["inputIds"] == ["mouse-v2"]
+    assert command_result["inputIds"] == ["command-v2"]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_input_waiter_does_not_leave_stale_waiter_count(monkeypatch):
     handler = InputHandler()
     handler._running = True
