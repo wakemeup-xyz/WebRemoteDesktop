@@ -325,3 +325,73 @@ test('auto idle retreats docks after a connected idle period', () => {
   ChromeLayout.enterIdle(root);
   assert.equal(classes.has('chrome-idle'), true);
 });
+
+function makeEventTarget() {
+  const listeners = new Map();
+  return {
+    listeners,
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(handler);
+    },
+    removeEventListener(type, handler) {
+      listeners.get(type)?.delete(handler);
+    },
+    dispatch(type, event = {}) {
+      listeners.get(type)?.forEach((handler) => handler(event));
+    },
+  };
+}
+
+test('mobile capability snapshot detects touch and virtual keyboard support', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  windowTarget.ontouchstart = null;
+  const root = { defaultView: windowTarget, style: {}, documentElement: null };
+  const snapshot = ChromeLayout.getMobileCapabilitySnapshot({}, root);
+  assert.equal(snapshot.deviceClass, 'touch');
+  assert.equal(snapshot.touchSupported, true);
+  assert.equal(snapshot.virtualKeyboardSupported, false);
+  assert.equal(snapshot.viewportHeight, 800);
+  assert.equal(snapshot.keyboardBottom, 0);
+  assert.equal(snapshot.keyboardInset, 0);
+  assert.equal(Object.isFrozen(snapshot), true);
+});
+
+test('mobile capability snapshot calculates and clamps visual viewport keyboard inset', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  windowTarget.visualViewport = { height: 500, offsetTop: 0, addEventListener() {}, removeEventListener() {} };
+  const root = { defaultView: windowTarget, style: {} };
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 300);
+  windowTarget.visualViewport.height = 1200;
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 0);
+  windowTarget.visualViewport.height = -10;
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 800);
+});
+
+test('mobile viewport observer feature-detects APIs, resets on hide, and tears down exact listeners', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  const visualViewport = makeEventTarget();
+  visualViewport.height = 500;
+  visualViewport.offsetTop = 0;
+  windowTarget.visualViewport = visualViewport;
+  const keyboard = makeEventTarget();
+  keyboard.boundingRect = { height: 280 };
+  const root = { defaultView: windowTarget, navigator: { virtualKeyboard: keyboard }, style: {} };
+  const unbind = ChromeLayout.observeMobileViewport(root);
+  assert.equal(root.style['--mobile-keyboard-bottom'], '280px');
+  keyboard.boundingRect.height = 0;
+  keyboard.dispatch('geometrychange');
+  assert.equal(root.style['--mobile-keyboard-bottom'], '0px');
+  assert.equal(windowTarget.listeners.get('resize').size, 1);
+  assert.equal(visualViewport.listeners.get('resize').size, 1);
+  assert.equal(visualViewport.listeners.get('scroll').size, 1);
+  assert.equal(keyboard.listeners.get('geometrychange').size, 1);
+  unbind();
+  assert.equal(windowTarget.listeners.get('resize').size, 0);
+  assert.equal(visualViewport.listeners.get('resize').size, 0);
+  assert.equal(visualViewport.listeners.get('scroll').size, 0);
+  assert.equal(keyboard.listeners.get('geometrychange').size, 0);
+});

@@ -787,7 +787,7 @@ body.chrome-idle .chrome-docks {
 #mobileKeySurface {
   display: none;
   width: min(100%, calc(100vw - 16px));
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px));
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px), var(--mobile-keyboard-bottom, 0px));
 }
 
 .mobile-key-row {
@@ -824,7 +824,7 @@ body.chrome-idle .chrome-docks {
   position: fixed;
   left: 8px;
   right: 8px;
-  bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px));
+  bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px), var(--mobile-keyboard-bottom, 0px));
   z-index: 110;
 }
 
@@ -1469,6 +1469,17 @@ body.terminal-active .network-advisor.visible:not(.collapsed) {
   .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
   body.more-open .action-bar .action-btn:not(.action-more):not([data-pin="always"]) { display: none; }
   #mobileKeySurface { display: block; }
+  .chrome-docks .action-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+  .chrome-docks .action-bar::-webkit-scrollbar { display: none; }
+  .chrome-docks .action-bar .action-btn {
+    flex: 0 0 var(--touch-min);
+    min-width: var(--touch-min);
+  }
 }
 
 /* ========== Scrollbar (Webkit) ========== */

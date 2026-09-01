@@ -86,6 +86,18 @@ test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
   assert.match(css, /\.chrome-docks[^}]*flex-direction:\s*column/);
 });
 
+test('mobile viewport geometry consumes the single keyboard bottom variable', () => {
+  assert.match(css, /--mobile-keyboard-bottom/);
+  assert.match(css, /bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
+  assert.match(css, /padding-bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
+});
+
+test('narrow action row remains one line with stable touch widths', () => {
+  assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.action-bar\s+\.action-btn[^}]*min-width:\s*var\(--touch-min\)/);
+});
+
 test('mobile input reserves touch targets and keyboard safe area', () => {
   assert.match(html, /id="mobileTextInput"/);
   assert.match(html, /id="mobileTextInput"[^>]*inputmode="text"/);

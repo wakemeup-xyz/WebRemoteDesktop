@@ -3048,6 +3048,18 @@ test('UI init tolerates missing optional elements', () => {
   assert.doesNotThrow(() => vm.runInContext(source, context));
 });
 
+test('WebRTC fullscreen lifecycle asks ChromeLayout to recalculate geometry', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const calls = [];
+  context.ChromeLayout = { recalculate() { calls.push('recalculate'); } };
+  const listeners = new Map();
+  context.document.addEventListener = (type, handler) => listeners.set(type, handler);
+  WebRTC._fullscreenLifecycleBound = false;
+  WebRTC.bindFullscreenLifecycle();
+  listeners.get('fullscreenchange')();
+  assert.deepEqual(calls, ['recalculate']);
+});
+
 
 test('applyMediaActivity suspends input and suppresses health recovery', () => {
   const emitted = [];

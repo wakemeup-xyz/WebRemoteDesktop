@@ -37,6 +37,7 @@ const WebRTC = {
   _controlHeartbeatTimer: null,
   _controlRequestId: 0,
   _controlLifecycleBound: false,
+  _fullscreenLifecycleBound: false,
   remoteStream: null,
   statsTimer: null,
   _statsSampler: null,
@@ -1251,6 +1252,17 @@ const WebRTC = {
   syncChromeCapabilities() {
     if (typeof ChromeLayout === 'undefined' || typeof ChromeLayout.applyCapabilities !== 'function') return null;
     return ChromeLayout.applyCapabilities(this.getChromeSnapshot());
+  },
+
+  bindFullscreenLifecycle() {
+    if (this._fullscreenLifecycleBound || typeof document === 'undefined') return;
+    this._fullscreenLifecycleBound = true;
+    document.addEventListener('fullscreenchange', () => {
+      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.recalculate === 'function') {
+        ChromeLayout.recalculate();
+      }
+      this.syncChromeCapabilities();
+    });
   },
 
   clearPaintPendingCopyTimers() {
@@ -5110,6 +5122,7 @@ function bootViewerShell() {
   if (window.__WRD_VIEWER_BOOTED__) return;
   window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
+  WebRTC.bindFullscreenLifecycle();
   if (typeof StartupTelemetry !== 'undefined') {
     // Import ShellGuard marks with original performance timestamps only.
     const shellSnap = window.__WRD_SHELL__?.snapshot?.();

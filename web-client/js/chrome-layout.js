@@ -20,14 +20,18 @@ const ChromeLayout = {
   _idleTimer: null,
   _wasStreamConnected: false,
   _wasControlsHidden: false,
+  _mobileViewportCleanup: null,
+  _mobileViewportSnapshot: null,
   init() {
     const statusEl = typeof document !== 'undefined' ? document.getElementById('statusBar') : null;
     const unobserve = this.observeStatusBar(statusEl);
+    const unobserveViewport = this.observeMobileViewport();
     const unbindMore = this.bindMoreMenu();
     const unbindIdle = this.bindIdle();
     this.syncToggleControlsLabel();
     return () => {
       unobserve();
+      unobserveViewport();
       unbindMore();
       unbindIdle();
     };
@@ -192,6 +196,105 @@ const ChromeLayout = {
     const value = `${Math.round(height)}px`;
     if (typeof root?.style?.setProperty === 'function') root.style.setProperty('--chrome-top', value);
     else if (root?.style) root.style['--chrome-top'] = value;
+  },
+  _viewportContext(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const view = root?.defaultView || root?.ownerDocument?.defaultView
+      || (typeof window !== 'undefined' ? window : null);
+    const navigatorObject = root?.navigator || view?.navigator
+      || (typeof navigator !== 'undefined' ? navigator : null);
+    return { root, view, navigatorObject };
+  },
+  getMobileCapabilitySnapshot(snapshot = {}, rootEl) {
+    const { root, view, navigatorObject } = this._viewportContext(rootEl);
+    const maxTouchPoints = Number(navigatorObject?.maxTouchPoints) || 0;
+    const touchSupported = maxTouchPoints > 0 || 'ontouchstart' in (view || {});
+    const deviceClass = touchSupported
+      ? 'touch'
+      : (view?.PointerEvent ? 'pointer' : 'unknown');
+    const viewportHeight = Math.max(0, Number(view?.innerHeight)
+      || Number(root?.documentElement?.clientHeight) || 0);
+    const visualViewport = view?.visualViewport;
+    const visualHeight = Number(visualViewport?.height);
+    const offsetTop = Number(visualViewport?.offsetTop) || 0;
+    const keyboard = navigatorObject?.virtualKeyboard;
+    const virtualKeyboardSupported = !!keyboard;
+    const keyboardRectHeight = Number(keyboard?.boundingRect?.height);
+    const visualInset = viewportHeight - (Number.isFinite(visualHeight)
+      ? visualHeight : viewportHeight) - offsetTop;
+    const rawInset = virtualKeyboardSupported && Number.isFinite(keyboardRectHeight)
+      ? keyboardRectHeight : visualInset;
+    const keyboardBottom = Math.round(Math.max(0, Math.min(viewportHeight, rawInset)));
+    const result = {
+      deviceClass,
+      touchSupported,
+      virtualKeyboardSupported,
+      viewportHeight,
+      visualViewportHeight: Number.isFinite(visualHeight) && visualHeight > 0
+        ? visualHeight : viewportHeight,
+      keyboardBottom,
+      keyboardInset: keyboardBottom,
+      streamReady: snapshot.streamReady === true,
+      activeControl: snapshot.activeControl === true,
+      transportReady: snapshot.transportReady === true,
+      mobileInputMode: ['off', 'armed', 'visible', 'blocked'].includes(snapshot.mobileInputMode)
+        ? snapshot.mobileInputMode : 'off',
+    };
+    return Object.freeze(result);
+  },
+  setMobileKeyboardBottom(value, rootEl) {
+    const { root } = this._viewportContext(rootEl);
+    const viewportHeight = this.getMobileCapabilitySnapshot({}, root).viewportHeight;
+    const keyboardBottom = Math.round(Math.max(0, Math.min(viewportHeight, Number(value) || 0)));
+    const documentElement = root?.documentElement || root;
+    const cssValue = `${keyboardBottom}px`;
+    if (typeof documentElement?.style?.setProperty === 'function') {
+      documentElement.style.setProperty('--mobile-keyboard-bottom', cssValue);
+    } else if (documentElement?.style) {
+      documentElement.style['--mobile-keyboard-bottom'] = cssValue;
+    }
+    return keyboardBottom;
+  },
+  recalculate(rootEl) {
+    const { root } = this._viewportContext(rootEl);
+    const status = root?.getElementById?.('statusBar') || root?.querySelector?.('#statusBar');
+    this.syncChromeTop(status?.offsetHeight || 56, root);
+    const snapshot = this.getMobileCapabilitySnapshot({}, root);
+    this._mobileViewportSnapshot = snapshot;
+    this.setMobileKeyboardBottom(snapshot.keyboardBottom, root);
+    return snapshot;
+  },
+  observeMobileViewport(rootEl) {
+    const { root, view, navigatorObject } = this._viewportContext(rootEl);
+    this._mobileViewportCleanup?.();
+    const listeners = [];
+    const addListener = (target, type, handler) => {
+      if (!target?.addEventListener) return;
+      target.addEventListener(type, handler);
+      listeners.push([target, type, handler]);
+    };
+    const update = () => {
+      const snapshot = this.getMobileCapabilitySnapshot({}, root);
+      this._mobileViewportSnapshot = snapshot;
+      this.setMobileKeyboardBottom(snapshot.keyboardBottom, root);
+    };
+    const keyboard = navigatorObject?.virtualKeyboard;
+    if (keyboard) {
+      try { keyboard.overlaysContent = true; } catch (_) { /* optional API */ }
+      addListener(keyboard, 'geometrychange', update);
+    }
+    addListener(view?.visualViewport, 'resize', update);
+    addListener(view?.visualViewport, 'scroll', update);
+    addListener(view, 'resize', update);
+    update();
+    const cleanup = () => {
+      listeners.splice(0).forEach(([target, type, handler]) => {
+        target.removeEventListener?.(type, handler);
+      });
+      if (this._mobileViewportCleanup === cleanup) this._mobileViewportCleanup = null;
+    };
+    this._mobileViewportCleanup = cleanup;
+    return cleanup;
   },
   getCapabilities(snapshot = {}) {
     const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
