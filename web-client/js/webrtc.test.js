@@ -308,6 +308,34 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, k
   clearTimeout(WebRTC._dcTimeout);
 });
 
+test('a single input acknowledgement reaches mouse reset, keyboard state, and latency exactly once', () => {
+  const calls = [];
+  const channels = new Map();
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      acceptMouseAck(payload) { calls.push(['mouse', payload.status]); },
+      acceptKeyboardAck(payload) { calls.push(['keyboard', payload.status]); },
+    },
+    LatencyMonitor: { onInputAck(payload) { calls.push(['latency', payload.status]); } },
+  });
+  WebRTC.pc = {
+    connectionState: 'connecting', iceConnectionState: 'checking',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.createInputChannel();
+
+  channels.get('input').onmessage({ data: JSON.stringify({
+    type: 'input_ack', status: 'applied', schemaVersion: 2, leaseEpoch: 4, inputIds: ['ack-1'], appliedSeq: 1,
+  }) });
+
+  assert.deepEqual(calls, [['mouse', 'applied'], ['keyboard', 'applied'], ['latency', 'applied']]);
+  clearTimeout(WebRTC._dcTimeout);
+});
+
 test('DataChannel keyboard envelopes include transport datachannel marker', () => {
   const sent = [];
   const { WebRTC } = loadWebRTC();

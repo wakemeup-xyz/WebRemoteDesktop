@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -61,6 +62,11 @@ function loadInput() {
   return { Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents };
 }
 
+function loadTouchAdapter(context) {
+  const source = fs.readFileSync(path.join(__dirname, 'touch-input-adapter.js'), 'utf8');
+  vm.runInContext(source, context);
+}
+
 function keyboard(type, overrides = {}) {
   return {
     type, code: 'KeyA', key: 'a', location: 0, repeat: false,
@@ -76,6 +82,74 @@ function activate(Input, context) {
   Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 3 });
   Input.setActive(true);
 }
+
+test('mobile viewer acceptance CLI exposes the required operator-supplied arguments without reading a password', () => {
+  const result = childProcess.spawnSync('python3', [
+    path.join(__dirname, '../../scripts/mobile_viewer_acceptance.py'), '--help',
+  ], { encoding: 'utf8', env: {} });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /--base-url/);
+  assert.match(result.stdout, /--password-env/);
+  assert.match(result.stdout, /--out/);
+});
+
+test('touch click, touch wheel, and mobile text retain the active v2 lease envelope', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const touch = (type, pointerId, clientX, clientY) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId, isPrimary: pointerId === 1,
+    clientX, clientY, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10,
+  });
+
+  touch('pointerdown', 1, 40, 40);
+  touch('pointerup', 1, 40, 40);
+  touch('pointerdown', 1, 40, 40);
+  touch('pointerdown', 2, 60, 40);
+  touch('pointermove', 2, 60, 60);
+  touch('pointerup', 2, 60, 60);
+  touch('pointerup', 1, 40, 40);
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0, 'mouse input must not enter keyboard pending');
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'm';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+
+  const inputs = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.deepEqual(inputs.map(({ type, action }) => [type, action]), [
+    ['mouse', 'down'], ['mouse', 'up'], ['mouse', 'wheel'], ['keyboard', 'text'],
+  ]);
+  for (const payload of inputs) {
+    assert.equal(payload.schemaVersion, 2);
+    assert.equal(payload.leaseId, 'lease-000000000001');
+    assert.equal(payload.leaseEpoch, 3);
+  }
+});
+
+test('reset, park, lease revocation, and disconnect clear virtual modifier latches', () => {
+  const lifecycleCases = [
+    ['reset', (Input) => Input.resetKeyboard('acceptance-reset')],
+    ['park', (Input) => Input.parkKeyboard('visibility-hidden')],
+    ['lease-revocation', (Input) => Input.setControlLease(null)],
+    ['disconnect', (Input) => Input.setActive(false, { resetKeyboard: true, reason: 'disconnect' })],
+  ];
+
+  for (const [name, applyLifecycle] of lifecycleCases) {
+    const { Input, context } = loadInput();
+    activate(Input, context);
+    assert.equal(Input.keyboardController.setVirtualModifier('shift', true), true, name);
+    assert.equal(Array.from(Input.keyboardController.getSnapshot().virtualModifiers).join(','), 'shift', name);
+    applyLifecycle(Input);
+    assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0, name);
+    assert.equal(Array.from(Input.keyboardController.getSnapshot().virtualModifiers).length, 0, name);
+  }
+});
 
 test('tracked keyup from a text modal releases the controller key state', () => {
   const { Input, context, documentListeners, socketEvents } = loadInput();
@@ -324,6 +398,16 @@ test('keyboard diagnostics contain only state metadata', () => {
   const state = JSON.parse(JSON.stringify(Input.getDiagnosticState()));
   assert.deepEqual(Object.keys(state.keyboard).sort(), ['adapter', 'epoch', 'lastApplied', 'lastResetReason', 'lastSent', 'leaseState', 'modifierMask', 'pendingCount', 'pressedCount']);
   assert.doesNotMatch(JSON.stringify(state), /raw=|KeyA|keyCode/);
+});
+
+test('mobile text and mouse input never place content or coordinates in diagnostics', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input.sendInput('mouse', 'down', { relX: 0.25, relY: 0.75, button: 'left', buttons: 1 });
+  Input.keyboardController.sendText('private-mobile-text');
+
+  const diagnostic = JSON.stringify(Input.getDiagnosticState());
+  assert.doesNotMatch(diagnostic, /private-mobile-text|relX|relY|button|text/);
 });
 
 test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {
