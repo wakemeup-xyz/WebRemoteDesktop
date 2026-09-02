@@ -39,7 +39,7 @@ test('capability matrix gates actions by connection phase', () => {
   for (const [phase, values] of Object.entries(expected)) {
     assert.deepEqual(
       ChromeLayout.getCapabilities({ uiPhase: phase, streamReady: phase === 'connected', activeControl: false }),
-      { ...values, canOpenNetwork: phase !== 'idle' && phase !== 'disconnected', canOpenResolution: phase === 'connected' || phase === 'media-stalled', canOpenTerminal: phase !== 'idle' && phase !== 'disconnected' },
+      { ...values, canOpenNetwork: phase !== 'idle', canOpenResolution: phase === 'connected' || phase === 'media-stalled', canOpenTerminal: phase !== 'idle' && phase !== 'disconnected' },
     );
   }
 });
@@ -64,6 +64,14 @@ test('applyCapabilities updates capability-bound controls', () => {
   assert.equal(elements.get('refreshBtn').disabled, true);
   assert.equal(elements.get('refreshBtn').hidden, true);
   assert.equal(elements.get('networkModeBtn').hidden, true);
+});
+
+test('disconnected state keeps network mode recovery available', () => {
+  const network = { disabled: true, hidden: true };
+  const root = { getElementById: (id) => id === 'networkModeBtn' ? network : null, querySelectorAll: () => [] };
+  ChromeLayout.applyCapabilities({ uiPhase: 'disconnected', streamReady: false }, root);
+  assert.equal(network.disabled, false);
+  assert.equal(network.hidden, false);
 });
 
 test('applyCapabilities keeps request control available only when media is ready and lease is free', () => {

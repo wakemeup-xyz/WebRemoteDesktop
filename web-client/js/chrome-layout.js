@@ -344,7 +344,7 @@ const ChromeLayout = {
       canRefresh: canMediaActions,
       canPause: phase === 'connected' || phase === 'media-stalled',
       canDisconnect: canMediaActions,
-      canOpenNetwork: phase !== 'idle' && phase !== 'disconnected',
+      canOpenNetwork: phase !== 'idle',
       canOpenResolution: phase === 'connected' || phase === 'media-stalled',
       canOpenTerminal: phase !== 'idle' && phase !== 'disconnected',
     };
