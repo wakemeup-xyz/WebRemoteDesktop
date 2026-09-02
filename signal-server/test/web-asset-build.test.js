@@ -11,6 +11,16 @@ test('asset graph keeps desktop critical and Terminal optional sources separate'
   const graph = require('../scripts/web-asset-graph');
   assert.ok(graph.desktopScripts.includes('js/webrtc.js'));
   assert.ok(graph.desktopScripts.includes('js/chrome-layout.js'));
+  assert.ok(graph.desktopScripts.includes('js/touch-input-adapter.js'));
+  assert.ok(graph.desktopScripts.includes('js/mobile-text-input.js'));
+  assert.ok(
+    graph.desktopScripts.indexOf('js/touch-input-adapter.js') < graph.desktopScripts.indexOf('js/input.js'),
+    'touch-input-adapter.js must load before input.js',
+  );
+  assert.ok(
+    graph.desktopScripts.indexOf('js/mobile-text-input.js') < graph.desktopScripts.indexOf('js/input.js'),
+    'mobile-text-input.js must load before input.js',
+  );
   assert.ok(
     graph.desktopScripts.indexOf('js/chrome-layout.js') < graph.desktopScripts.indexOf('js/ui.js'),
     'chrome-layout.js must load before ui.js',
@@ -26,6 +36,16 @@ test('asset graph keeps desktop critical and Terminal optional sources separate'
   ]);
   assert.equal(new Set(graph.desktopScripts).size, graph.desktopScripts.length);
   assert.equal(new Set(graph.terminalScripts).size, graph.terminalScripts.length);
+});
+
+test('viewer boot is deferred until the classic bundle has initialized later globals', () => {
+  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  const source = fs.readFileSync(path.join(sourceDir, 'js/webrtc.js'), 'utf8');
+  assert.match(
+    source,
+    /window\.__WRD_ASSETS__\s*&&[\s\S]*queueMicrotask\(\(\)\s*=>\s*bootViewerShell\(\)\)/,
+    'bootViewerShell must not run synchronously before ChromeLayout and UI declarations',
+  );
 });
 
 test('build emits deterministic first-party critical assets and lazy Terminal assets', async () => {
@@ -59,6 +79,8 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   const desktopBundle = fs.readFileSync(path.join(outA, a.assets.desktopJs), 'utf8');
   const deferredBundle = fs.readFileSync(path.join(outA, a.assets.desktopDeferredJs), 'utf8');
   assert.match(desktopBundle, /createTerminalLoader/);
+  assert.match(desktopBundle, /TouchInputAdapter/);
+  assert.match(desktopBundle, /MobileTextInput/);
   assert.doesNotMatch(desktopBundle, /const TerminalPanel\s*=/);
   // Deferred tools implementations must not bloat the critical desktop path.
   // (webrtc may still reference optional globals via typeof guards.)

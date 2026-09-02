@@ -21,6 +21,8 @@ module.exports = Object.freeze({
     'js/input-geometry.js',
     'js/keyboard-transport.js',
     'js/remote-keyboard-controller.js',
+    'js/touch-input-adapter.js',
+    'js/mobile-text-input.js',
     'js/input.js',
     'js/chrome-layout.js',
     'js/ui.js',
