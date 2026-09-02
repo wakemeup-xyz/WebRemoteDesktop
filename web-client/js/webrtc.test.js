@@ -2087,6 +2087,28 @@ test('selecting relay without TURN keeps relay persisted and shows recommendatio
   assert.match(turnStatus, /link\.stockhub\.wiki/);
 });
 
+test('disconnected recovery mode switch cancels search and refreshes exactly once', () => {
+  const { WebRTC } = loadWebRTC();
+  preparePortSearch(WebRTC);
+  WebRTC.networkMode = 'auto';
+  WebRTC.uiPhase = 'disconnected';
+  WebRTC.serverConfig = {
+    turnConfigured: true,
+    turnStatus: 'configured',
+    turnUrls: ['turn:turn.example.com:3478'],
+    iceServers: [{ urls: ['turn:turn.example.com:3478'], username: 'u', credential: 'p' }],
+  };
+  let refreshes = 0;
+  WebRTC.refresh = () => { refreshes += 1; };
+  WebRTC.startPortSearch();
+  assert.equal(WebRTC.isPortSearchActive(), true);
+  refreshes = 0;
+  WebRTC.setNetworkMode('relay');
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(WebRTC.isPortSearchActive(), false);
+  assert.equal(refreshes, 1);
+});
+
 test('init with unavailable relay still starts signaling lifecycle for same-page recovery', async () => {
   let socketConfig = null;
   const socket = {
