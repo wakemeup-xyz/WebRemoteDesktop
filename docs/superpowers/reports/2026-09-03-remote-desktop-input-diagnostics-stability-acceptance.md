@@ -12,7 +12,7 @@ Date: 2026-09-03
 | Latency semantics and display | PASS | `node --test web-client/js/latency-monitor.test.js web-client/js/diagnostic.test.js`; 26 passed. |
 | Layout contract | PASS | `node --test web-client/css/viewer-layout.test.js`; 24 passed. |
 | Browser geometry over 375/768/1440 viewports | NOT RUN | No service was started and no operator-provided browser origin was supplied for this run. |
-| Full JavaScript/Signal suite | PASS | `node --test web-client/js/*.test.js web-client/css/*.test.js signal-server/test/*.test.js`; 736 passed, 0 failed. Existing auth/log output is test noise. |
+| Full JavaScript/Signal suite | PASS | `node --test web-client/js/*.test.js web-client/css/*.test.js signal-server/test/*.test.js`; 738 passed, 0 failed. Existing auth/log output is test noise. |
 | Host timing/input diagnostics | PASS | `pytest -q python-host/test_latency_timing.py python-host/test_connection_diagnostics.py python-host/test_input_handler.py`; 46 passed, 1 existing `mss.mss` deprecation warning. |
 
 ## Runtime Evidence
