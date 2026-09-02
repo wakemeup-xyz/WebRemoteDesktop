@@ -5422,5 +5422,16 @@ function bootViewerShell() {
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', bootViewerShell, { once: true });
 } else {
-  bootViewerShell();
+  // The production viewer joins several classic scripts into one bundle. Defer
+  // only that generated path until later declarations (ChromeLayout, UI) have
+  // left their temporal dead zones; source-mode tests keep their synchronous boot.
+  if (typeof window !== 'undefined' && window.__WRD_ASSETS__) {
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(() => bootViewerShell());
+    } else {
+      Promise.resolve().then(() => bootViewerShell());
+    }
+  } else {
+    bootViewerShell();
+  }
 }
