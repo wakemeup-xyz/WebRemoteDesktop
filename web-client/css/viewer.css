@@ -323,7 +323,16 @@ body.tunnel-relay-active #remoteVideo {
   letter-spacing: 0.02em;
   padding: 2px 8px;
   border-right: 1px solid rgba(148, 163, 184, 0.12);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  min-inline-size: 5.5em;
 }
+
+#resolutionDisplay { min-inline-size: 7em; }
+#fpsDisplay { min-inline-size: 6em; }
+#latencyDisplay { min-inline-size: 15em; }
+#candidateDisplay { min-inline-size: 13em; }
 
 .status-metric:last-child {
   border-right: 0;

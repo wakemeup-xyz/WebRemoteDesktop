@@ -6,6 +6,14 @@ const test = require('node:test');
 const css = fs.readFileSync(path.join(__dirname, 'viewer.css'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'viewer.html'), 'utf8');
 
+test('status metrics reserve stable non-wrapping numeric slots', () => {
+  assert.match(css, /\.status-metric[\s\S]*white-space:\s*nowrap/);
+  assert.match(css, /font-variant-numeric:\s*tabular-nums/);
+  for (const id of ['fpsDisplay', 'latencyDisplay', 'candidateDisplay']) {
+    assert.match(css, new RegExp(`#${id}\\s*\\{[\\s\\S]*min-inline-size:`));
+  }
+});
+
 function getBlock(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Anchor to a line-start rule so prefixed selectors like
