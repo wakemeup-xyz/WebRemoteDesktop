@@ -130,6 +130,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ### 3.4 移动端远程控制与验收
 
+**访问入口约定**：手机、Pad 与桌面 Viewer 共用正式公网入口 `https://link.stockhub.wiki`，不因移动端输入能力引入第二个域名、端口、认证入口或信令协议。本机调试使用 `http://127.0.0.1:8080`；`*.trycloudflare.com` safe quick tunnel 只用于临时排障和辅助验证，不作为长期访问地址。`/tmp/wrd-safe-current-url.txt` 仅记录当前临时 quick tunnel，不能替代固定域名。
+
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
 - [x] **离线浏览器验收 harness**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 仅连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。
@@ -400,6 +402,7 @@ WebRemoteDesktop/
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
 - **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
+- **移动端入口**：真实 Android Chrome、iPhone Safari 和 iPad Safari 验收默认使用 `https://link.stockhub.wiki`；只有明确的临时排障场景才使用 `/tmp/wrd-safe-current-url.txt` 中经过可达性校验的 quick tunnel 地址，且该地址不得写入长期材料
 - **系统睡眠与空闲锁屏**：Host 通过 `caffeinate -ims`（LaunchAgent `com.webremotedesktop.awake`）抑制空闲系统/磁盘睡眠（接通电源时含 `-s`），**不**强制禁止显示睡眠。推荐系统设置将「屏幕保护程序启动或显示器关闭后需要密码」设为**永不**，避免空闲进入密码锁屏导致远程键盘因 Secure Input 失效。本项目不支持远程解锁已锁会话；手动睡眠、断电、合盖仍可能强制中断。巡检：`scripts/check-host-lock-policy.sh`
 
 ---
@@ -435,3 +438,4 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-08-01 | 可靠性 review 修复：Host 仅在 applied 成功后推进 media generation；旧 attempt 负 ack 不再消耗当前恢复预算；新 attempt/控制权丢失后输入等待当前画面；tunnel PASS 强制 attempt 不变；双 Viewer 在缺少 Signal/Host 拒绝证据时只标 PARTIAL；runtime 报告增加不可覆盖的时间戳文件与 SHA-256 |
 | 2026-08-30 | Terminal 共享会话协议治理：snapshot 明确 processStatus/presence/presenter，canonical 事件集中适配并统计 legacy alias；Terminal UI 区分观察/控制、detach 与销毁；旧 `/input` relay 标记 deprecated 且启动断言保持未挂载 |
 | 2026-09-02 | 增加移动远程控制跨层回归与浏览器验收 harness：触控/软键盘复用 v2 lease 和 reset barrier，验收 artifact 原子写入并在最终 rename 后生成 SHA-256；真实 Android/iPhone/iPad、实体键盘与 tunnel/public-path 仍需独立实测 |
+| 2026-09-02 | 统一移动端公网入口口径：手机、Pad 与桌面均使用 `https://link.stockhub.wiki`；`trycloudflare.com` 和 `/tmp/wrd-safe-current-url.txt` 明确限定为临时排障链路，不作为长期访问地址 |

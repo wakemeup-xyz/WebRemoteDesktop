@@ -1,5 +1,9 @@
 # Mobile Remote-Control Acceptance
 
+## Entry Boundary
+
+The formal Viewer entry for desktop, phone, and iPad is `https://link.stockhub.wiki`. Local checks may use `http://127.0.0.1:8080`. A `*.trycloudflare.com` URL from `/tmp/wrd-safe-current-url.txt` is a temporary safe quick-tunnel diagnostic address only; it is not a substitute for the formal domain and is not used as evidence of a real-device public-path pass.
+
 ## Automated Coverage
 
 Implemented coverage verifies one v2 lease envelope for touch click, touch wheel, and mobile text; mouse move remains outside keyboard pending state; DataChannel loss delegates the existing Socket.IO reset barrier; ACK fan-out reaches mouse reset, keyboard transport, and `LatencyMonitor` once each; diagnostics remain metadata-only; and virtual modifier latches clear on reset, visibility park, lease revocation, and disconnect.

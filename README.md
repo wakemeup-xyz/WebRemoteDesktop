@@ -54,6 +54,16 @@
 - 外部用户应只记这一个固定域名
 - `trycloudflare` / safe quick tunnel 仅用于本地调试、临时排障和公网入口兜底验证，不应作为长期正式入口
 
+#### 手机和平板访问入口
+
+手机、Pad 与桌面浏览器使用同一个正式 Viewer 入口：`https://link.stockhub.wiki`。移动端不会因为触控或软键盘而切换到另一套域名、端口、认证或信令协议。
+
+- 正式对外访问：`https://link.stockhub.wiki`
+- 本机调试：`http://127.0.0.1:8080`
+- 临时排障：读取 `/tmp/wrd-safe-current-url.txt` 中的 `*.trycloudflare.com` 地址
+
+`trycloudflare.com` 是短生命周期 quick tunnel，地址可能过期或变化；它只用于临时调试、故障定位和固定域名不可用时的辅助验证。`/tmp/wrd-safe-current-url.txt` 只记录当前临时调试地址，不会覆盖或替代 `link.stockhub.wiki`。除非正在执行已授权的排障验证，否则不要把该地址发给手机用户，也不要把它写入书签、二维码或长期文档。
+
 ### Viewer 构建与缓存
 
 - `node server.js`（包括 `npm start` 和仓库 LaunchAgent/启动脚本）会先构建 `web-client/dist/`，构建失败时不监听 8080。
@@ -116,7 +126,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 # 查看当前安全链路状态
 ./scripts/status-safe-wrd.sh
 
-# 查看当前临时公网地址
+# 查看当前临时调试地址（不是正式用户入口）
 cat /tmp/wrd-safe-current-url.txt
 
 # 停止当前仓库安全链路
@@ -225,9 +235,10 @@ cat /tmp/wrd-fixed-edge-probe.json
 ### 启动成功后的访问方式
 
 - 本地访问：`http://127.0.0.1:8080`
-- 安全脚本临时公网访问：`cat /tmp/wrd-safe-current-url.txt`
-- 旧版普通 quick tunnel 地址：`cat /tmp/wrd-current-url.txt`
 - 固定域名正式访问：`https://link.stockhub.wiki`
+- 手机、Pad 和桌面用户均使用固定域名正式访问
+- 安全脚本临时调试地址：`cat /tmp/wrd-safe-current-url.txt`（仅排障，不是正式入口）
+- 旧版普通 quick tunnel 地址：`cat /tmp/wrd-current-url.txt`（历史兼容信息，不作为正式入口）
 - 固定域名开发访问（仅在显式配置且通过 Cloudflare Access 后可用）：`https://dev.link.stockhub.wiki`
 
 ### 启动后快速自检
@@ -286,9 +297,7 @@ curl http://127.0.0.1:8080/api/status
 http://127.0.0.1:8080
 ```
 
-公网访问使用 `/tmp/wrd-current-url.txt` 中的 Cloudflare 地址。
-
-如果使用的是安全脚本 `./scripts/start-safe-wrd.sh` 或 `./scripts/run-safe-quicktunnel.sh`，则应优先读取 `/tmp/wrd-safe-current-url.txt`。
+公网正式访问使用固定域名 `https://link.stockhub.wiki`。只有进行临时排障时，才读取安全脚本写入的 `/tmp/wrd-safe-current-url.txt`；该文件中的 trycloudflare 地址可能过期或变化。
 
 ### 前端启动说明
 

@@ -32,6 +32,7 @@ This file captures long-lived project knowledge migrated from Claude memory file
 
 ## Safe Quick Tunnel
 
+- **Public entry boundary**: The formal Viewer URL for desktop, phone, and iPad is `https://link.stockhub.wiki`; local-only checks use `http://127.0.0.1:8080`. A URL in `/tmp/wrd-safe-current-url.txt` is a temporary `trycloudflare.com` diagnostic address only and must not be presented as the long-lived public entry.
 - Prefer `scripts/start-safe-wrd.sh` for repo-scoped startup when both local services and a temporary public URL are needed without touching `/Users/macstudio1/AI/Claude/StockHub`.
 - Prefer `scripts/run-safe-quicktunnel.sh` when WebRemoteDesktop must expose a temporary public URL without affecting `/Users/macstudio1/AI/Claude/StockHub`.
 - Safe quick tunnel state is stored in `/tmp/wrd-safe-quicktunnel.pid`, `/tmp/wrd-safe-quicktunnel.log`, and `/tmp/wrd-safe-current-url.txt`.

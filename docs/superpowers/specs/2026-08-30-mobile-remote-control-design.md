@@ -8,6 +8,8 @@
 
 **核心决策：** 移动端是 Viewer 的输入适配层，不是第二套客户端、第二套信令协议或第二个控制权模型。
 
+**入口决策：** 手机、Pad 与桌面 Viewer 共用正式入口 `https://link.stockhub.wiki`，移动端不引入独立域名、端口、认证或信令入口。本机调试使用 `http://127.0.0.1:8080`；`*.trycloudflare.com` 只作为 safe quick tunnel 的临时排障地址，来源为 `/tmp/wrd-safe-current-url.txt`，不得作为长期分享地址或替代固定域名。
+
 ## 1. 背景与现状事实
 
 本仓库已有完整的桌面输入基础，不应重复实现：

@@ -20,6 +20,9 @@
 
 - 正式公网入口：`https://link.stockhub.wiki`
 - quick tunnel / `trycloudflare`：仅调试、临时排障、或 fixed-domain 不可用时的临时观察链路，不作为正式对外地址
+- 手机、Pad 和桌面 Viewer 都应访问 `https://link.stockhub.wiki`；移动端不使用单独的域名、端口或认证入口
+- 本机调试入口：`http://127.0.0.1:8080`
+- `/tmp/wrd-safe-current-url.txt` 只保存当前临时 quick tunnel 地址，不能覆盖固定域名这一正式入口
 - named tunnel：只允许 `~/.cloudflared/config.yml` 中的 `credentials-file`；不得用 `--token` 或 `TUNNEL_TOKEN` 启动正式入口
 - quick tunnel（trycloudflare）必须与 named tunnel 配置隔离：`scripts/run-safe-quicktunnel.sh` 使用 `--config /dev/null`，并清除 `TUNNEL_TOKEN` / credentials 相关环境变量，避免默认加载 `~/.cloudflared/config.yml` 导致边缘 404
 
@@ -103,13 +106,13 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 若当前 quick tunnel 进程仍在，但 safe URL 已经不可解析或 `curl -I -L` 失败，只能报告“当前公网入口失效/不可达”；不得自行调用会重建 tunnel 的脚本
 - 每次启动或重启本地服务后，都要从本机运行配置读取并回报两项密码：Viewer 网页登录密码 `VIEWER_ACCESS_PASSWORD`，Terminal admin 密码 `WRD_TERMINAL_ADMIN_PASSWORD`
 
-启动成功后，优先读取：
+启动成功后，如需做临时公网排障，读取：
 
 ```bash
 cat /tmp/wrd-safe-current-url.txt
 ```
 
-该地址是当前仓库自己的临时公网入口。
+该地址是当前仓库自己的临时调试入口，不是正式用户入口。正式用户（包括手机和 Pad）仍应打开 `https://link.stockhub.wiki`。
 
 但要注意：**地址文件里有 URL，不代表公网已经可用**。对外发送前，至少再做下面 3 步校验：
 
@@ -230,7 +233,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - `dev.link.stockhub.wiki` 必须单独受 Cloudflare Access 保护
 - `5173` 不是正式入口，也不是 startup-blocking 依赖
 
-启动成功后，固定正式入口默认为：`https://link.stockhub.wiki`
+启动成功后，固定正式入口默认为：`https://link.stockhub.wiki`。手机和 Pad 的访问也统一使用该地址。
 
 ### 4.1 开发子域影响边界
 
