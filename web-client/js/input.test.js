@@ -451,6 +451,17 @@ test('desktop mouse and command input require the active lease and carry the v2 
   }
 });
 
+test('mouse input with no open transport returns null and records no latency pending entry', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input.socket = { connected: false, emit() {} };
+  context.WebRTC.socket.connected = false;
+  Input.inputChannel = null;
+  const id = Input.sendInput('mouse', 'move', { relX: 0.25, relY: 0.5, buttons: 0 });
+  assert.equal(id, null);
+  assert.equal(Input.getDiagnosticState().mouse?.pendingCount || 0, 0);
+});
+
 test('toolbar command can send with lease even when media gate is inactive', () => {
   const { Input, context, socketEvents } = loadInput();
   Input.socket = context.WebRTC.socket;
