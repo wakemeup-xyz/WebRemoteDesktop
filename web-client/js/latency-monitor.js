@@ -14,6 +14,11 @@ const LatencyMonitor = {
   _lastJitterDelay: 0,
   _lastJitterEmitted: 0,
 
+  _monotonicNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now() : Date.now();
+  },
+
   // Statistics (5-second sliding window)
   _windowMs: 5000,
   _stats: {
@@ -74,30 +79,31 @@ const LatencyMonitor = {
   // ─── Frame Timing ───
 
   onFrameTiming(data) {
-    const now = Date.now();
+    const now = this._monotonicNow();
     const timings = data.timings || {};
 
     if (data.schemaVersion === 2) {
-      if (Number.isFinite(Number(timings.capturePrepareMs))) {
-        this._pushStat('capture', Number(timings.capturePrepareMs));
-      }
-      if (Number.isFinite(Number(timings.frameConvertMs))) {
-        this._pushStat('scale', Number(timings.frameConvertMs));
-      }
-      if (timings.encoderMs != null && Number.isFinite(Number(timings.encoderMs))) {
-        this._pushStat('encode', Number(timings.encoderMs));
-      }
+      const readDuration = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        const duration = Number(value);
+        return Number.isFinite(duration) && duration >= 0 ? duration : null;
+      };
+      const capture = readDuration(timings.capturePrepareMs);
+      const scale = readDuration(timings.frameConvertMs);
+      const encode = readDuration(timings.encoderMs);
+      if (capture !== null) this._pushStat('capture', capture);
+      if (scale !== null) this._pushStat('scale', scale);
+      if (encode !== null) this._pushStat('encode', encode);
     } else {
-      const hostToViewer = (hostSec) => hostSec * 1000 + this._offsetMs;
-      const t0v = hostToViewer(timings.captureStart);
-      const t1v = hostToViewer(timings.captureEnd);
-      const t2v = hostToViewer(timings.scaleEnd);
-      const t3v = hostToViewer(timings.encodeEnd);
-      const t4v = hostToViewer(timings.packetSend);
-      this._pushStat('capture', t1v - t0v);
-      this._pushStat('scale', t2v - t1v);
-      this._pushStat('encode', t3v - t2v);
-      this._pushStat('network', now - t4v);
+      const timestamps = ['captureStart', 'captureEnd', 'scaleEnd', 'encodeEnd']
+        .map((key) => Number(timings[key]));
+      if (timestamps.every(Number.isFinite)
+        && timestamps.every((value, index) => index === 0 || value >= timestamps[index - 1])) {
+        const [t0, t1, t2, t3] = timestamps;
+        this._pushStat('capture', (t1 - t0) * 1000);
+        this._pushStat('scale', (t2 - t1) * 1000);
+        this._pushStat('encode', (t3 - t2) * 1000);
+      }
     }
 
     // Process input timing data from host (receiveTime, executeTime)
@@ -132,7 +138,7 @@ const LatencyMonitor = {
   // ─── Input Tracking ───
 
   recordInputSend(inputId) {
-    const now = Date.now();
+    const now = this._monotonicNow();
     this._inputMap.set(inputId, { i0: now, ts: now });
     this._visualInputMap.set(inputId, { i0: now, ts: now });
     // Cleanup old entries every 10 calls instead of every call to avoid O(n) loop on hot path
@@ -150,7 +156,7 @@ const LatencyMonitor = {
   },
 
   onInputAck(data = {}) {
-    const now = Date.now();
+    const now = this._monotonicNow();
     const inputIds = Array.isArray(data.inputIds) ? data.inputIds : [];
     for (const inputId of inputIds) {
       const inputRecord = this._inputMap.get(inputId);

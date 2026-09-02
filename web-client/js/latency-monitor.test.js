@@ -62,6 +62,30 @@ test('shared media snapshot supplies interval playout without another stats quer
   assert.equal(monitor.getStats().playout.last, 18.5);
 });
 
+test('v2 zero duration is measured while invalid durations stay unavailable', () => {
+  const monitor = loadLatencyMonitor();
+  monitor.onFrameTiming({ schemaVersion: 2, timings: {
+    capturePrepareMs: 0, frameConvertMs: -1, encoderMs: NaN, rtpSendMs: 0,
+  } });
+  const stats = monitor.getStats();
+  assert.equal(stats.capture.last, 0);
+  assert.equal(stats.capture.available, true);
+  assert.equal(stats.scale.available, false);
+  assert.equal(stats.encode.available, false);
+  assert.equal(stats.network.available, false);
+});
+
+test('legacy out-of-order timestamps are discarded without synthetic network latency', () => {
+  const monitor = loadLatencyMonitor();
+  monitor.onFrameTiming({ schemaVersion: 1, timings: {
+    captureStart: 2, captureEnd: 1, scaleEnd: 3, encodeEnd: 4, packetSend: 5,
+  } });
+  const stats = monitor.getStats();
+  assert.equal(stats.capture.available, false);
+  assert.equal(stats.encode.available, false);
+  assert.equal(stats.network.available, false);
+});
+
 
 test('independent input ack measures browser RTT while frame timing measures visual feedback', () => {
   let now = 1000;

@@ -48,6 +48,9 @@ function createDiagnosticContext(overrides = {}) {
     'relayImage',
     'keyInputDisplay',
     'keyboardModeBtn',
+    'barEncode', 'valEncode', 'barCapture', 'valCapture', 'barExecute', 'valExecute',
+    'barNetwork', 'valNetwork', 'barPlayout', 'valPlayout', 'barInput', 'valInput',
+    'latencySync',
   ];
   ids.forEach((id) => elements.set(id, makeElement(id)));
 
@@ -119,6 +122,26 @@ test('diagnostic button opens modal without rendering raw keyboard debug output'
     elements.get('diagBtn').onclick();
   });
   assert.equal(elements.get('diagLogArea').value, 'log-1');
+});
+
+test('latency panel distinguishes unavailable values from a measured zero', () => {
+  const { context, elements } = createDiagnosticContext();
+  context.LatencyMonitor = {
+    getStats: () => ({
+      capture: { p50: 0, available: true },
+      encode: { p50: null, available: false },
+      executeTime: { p50: null, available: false },
+      network: { p50: null, available: false },
+      playout: { p50: null, available: false },
+      inputRtt: { p50: null, available: false },
+      sync: { state: 'idle', rtt: 0, offset: 0 },
+    }),
+  };
+  const updateLatencyPanel = loadScript('diagnostic.js', context, 'updateLatencyPanel');
+  updateLatencyPanel();
+  assert.equal(elements.get('valCapture').textContent, '0ms');
+  assert.equal(elements.get('valEncode').textContent, '未测量');
+  assert.equal(elements.get('barEncode').style.width, '0%');
 });
 
 

@@ -607,24 +607,26 @@ function updateLatencyPanel() {
   const stats = LatencyMonitor.getStats();
   const maxScale = 500; // ms, for bar width scaling
 
-  function setBar(id, value, warn, danger) {
+  function setBar(id, value, warn, danger, available = Number.isFinite(Number(value))) {
     const bar = document.getElementById('bar' + id);
     const val = document.getElementById('val' + id);
     if (!bar || !val) return;
-    const w = Math.min(100, (value / maxScale) * 100);
+    const w = available ? Math.min(100, (Number(value) / maxScale) * 100) : 0;
     bar.style.width = w + '%';
     bar.className = '';
-    if (value > danger) bar.classList.add('danger');
-    else if (value > warn) bar.classList.add('warning');
-    val.textContent = value > 0 ? value.toFixed(0) + 'ms' : '-';
+    if (available && value > danger) bar.classList.add('danger');
+    else if (available && value > warn) bar.classList.add('warning');
+    val.textContent = available ? `${Number(value).toFixed(0)}ms` : '未测量';
   }
 
-  setBar('Capture', stats.capture.p50, 50, 100);
-  setBar('Encode', stats.encode.p50, 100, 200);
-  setBar('Execute', stats.executeTime.p50, 20, 50);
-  setBar('Network', stats.network.p50, 100, 300);
-  setBar('Playout', stats.playout.p50, 200, 400);
-  setBar('Input', stats.inputRtt.p50, 300, 800);
+  const phase = (name) => stats[name] || { p50: null, available: false };
+  const render = (key, id, warn, danger) => { const item = phase(key); setBar(id, item.p50, warn, danger, item.available === true); };
+  render('capture', 'Capture', 50, 100);
+  render('encode', 'Encode', 100, 200);
+  render('executeTime', 'Execute', 20, 50);
+  render('network', 'Network', 100, 300);
+  render('playout', 'Playout', 200, 400);
+  render('inputRtt', 'Input', 300, 800);
 
   const syncEl = document.getElementById('latencySync');
   if (syncEl) {
