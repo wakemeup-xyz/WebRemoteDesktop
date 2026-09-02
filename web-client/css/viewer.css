@@ -307,7 +307,8 @@ body.tunnel-relay-active #remoteVideo {
 .status-metrics {
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
   gap: 6px;
   padding: 4px 6px;
   border-radius: var(--radius-md);
@@ -327,12 +328,15 @@ body.tunnel-relay-active #remoteVideo {
   font-variant-numeric: tabular-nums;
   display: inline-block;
   min-inline-size: 5.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
 }
 
 #resolutionDisplay { min-inline-size: 7em; }
 #fpsDisplay { min-inline-size: 6em; }
-#latencyDisplay { min-inline-size: 15em; }
-#candidateDisplay { min-inline-size: 13em; }
+#latencyDisplay { inline-size: 15em; max-inline-size: 15em; }
+#candidateDisplay { inline-size: 13em; max-inline-size: 13em; }
 
 .status-metric:last-child {
   border-right: 0;

@@ -9,9 +9,11 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'viewer.html'), 'utf8');
 test('status metrics reserve stable non-wrapping numeric slots', () => {
   assert.match(css, /\.status-metric[\s\S]*white-space:\s*nowrap/);
   assert.match(css, /font-variant-numeric:\s*tabular-nums/);
-  for (const id of ['fpsDisplay', 'latencyDisplay', 'candidateDisplay']) {
-    assert.match(css, new RegExp(`#${id}\\s*\\{[\\s\\S]*min-inline-size:`));
-  }
+  assert.match(css, /\.status-metrics[\s\S]*flex-wrap:\s*nowrap/);
+  assert.match(css, /overflow:\s*hidden/);
+  assert.match(css, /#fpsDisplay\s*\{[\s\S]*min-inline-size:/);
+  assert.match(css, /#latencyDisplay\s*\{[\s\S]*inline-size:/);
+  assert.match(css, /#candidateDisplay\s*\{[\s\S]*inline-size:/);
 });
 
 function getBlock(selector) {

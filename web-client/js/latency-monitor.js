@@ -110,9 +110,11 @@ const LatencyMonitor = {
     const inputs = data.inputs;
     if (inputs && inputs.length > 0) {
       for (const inp of inputs) {
-        if (inp.receiveTime != null && inp.executeTime != null) {
-          this._pushStat('executeTime', (inp.executeTime - inp.receiveTime) * 1000);
-        }
+        const receive = Number(inp.receiveTime);
+        const execute = Number(inp.executeTime);
+        const duration = (Number.isFinite(receive) && Number.isFinite(execute) && execute >= receive)
+          ? (execute - receive) * 1000 : null;
+        if (duration !== null && Number.isFinite(duration)) this._pushStat('executeTime', duration);
       }
     }
 

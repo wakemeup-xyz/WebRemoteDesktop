@@ -86,6 +86,18 @@ test('legacy out-of-order timestamps are discarded without synthetic network lat
   assert.equal(stats.network.available, false);
 });
 
+test('invalid host input timing is excluded from execute statistics', () => {
+  const monitor = loadLatencyMonitor();
+  monitor.onFrameTiming({ schemaVersion: 2, timings: {}, inputs: [
+    { receiveTime: 10, executeTime: 9 },
+    { receiveTime: NaN, executeTime: 1 },
+    { receiveTime: 2, executeTime: 2.005 },
+  ] });
+  const stats = monitor.getStats();
+  assert.equal(stats.executeTime.count, 1);
+  assert.ok(Math.abs(stats.executeTime.last - 5) < 0.001);
+});
+
 
 test('independent input ack measures browser RTT while frame timing measures visual feedback', () => {
   let now = 1000;
