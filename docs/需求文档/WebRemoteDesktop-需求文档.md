@@ -439,3 +439,4 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-08-30 | Terminal 共享会话协议治理：snapshot 明确 processStatus/presence/presenter，canonical 事件集中适配并统计 legacy alias；Terminal UI 区分观察/控制、detach 与销毁；旧 `/input` relay 标记 deprecated 且启动断言保持未挂载 |
 | 2026-09-02 | 增加移动远程控制跨层回归与浏览器验收 harness：触控/软键盘复用 v2 lease 和 reset barrier，验收 artifact 原子写入并在最终 rename 后生成 SHA-256；真实 Android/iPhone/iPad、实体键盘与 tunnel/public-path 仍需独立实测 |
 | 2026-09-02 | 统一移动端公网入口口径：手机、Pad 与桌面均使用 `https://link.stockhub.wiki`；`trycloudflare.com` 和 `/tmp/wrd-safe-current-url.txt` 明确限定为临时排障链路，不作为长期访问地址 |
+| 2026-09-03 | 修复生产 desktop bundle 未装配触控适配器、断连态网络模式入口被隐藏、延迟诊断 unavailable/0ms 混淆和状态栏指标宽度抖动；自动化验证与未执行的真实设备/公网验收见 `docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md` |
