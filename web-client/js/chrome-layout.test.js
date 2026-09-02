@@ -81,6 +81,21 @@ test('applyCapabilities keeps request control available only when media is ready
   assert.equal(elements.get('textInputBtn').disabled, false);
 });
 
+test('applyCapabilities gates mobile virtual keys through the desktop input capability', () => {
+  const mobileKey = { disabled: false, hidden: false };
+  const root = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll(selector) { return selector === '[data-mobile-action]' ? [mobileKey] : []; },
+  };
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: false }, root);
+  assert.equal(mobileKey.disabled, true);
+  assert.equal(mobileKey.hidden, true);
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true, controlTransition: false }, root);
+  assert.equal(mobileKey.disabled, false);
+  assert.equal(mobileKey.hidden, false);
+});
+
 test('more menu overflow buttons expose menuitem semantics', () => {
   const button = { dataset: {}, setAttribute(name, value) { this[name] = value; }, getAttribute() { return null; } };
   const bar = { querySelectorAll: () => [button] };
@@ -309,4 +324,142 @@ test('auto idle retreats docks after a connected idle period', () => {
   };
   ChromeLayout.enterIdle(root);
   assert.equal(classes.has('chrome-idle'), true);
+});
+
+function makeEventTarget() {
+  const listeners = new Map();
+  return {
+    listeners,
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(handler);
+    },
+    removeEventListener(type, handler) {
+      listeners.get(type)?.delete(handler);
+    },
+    dispatch(type, event = {}) {
+      listeners.get(type)?.forEach((handler) => handler(event));
+    },
+  };
+}
+
+test('mobile capability snapshot detects touch and virtual keyboard support', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  windowTarget.ontouchstart = null;
+  const root = { defaultView: windowTarget, style: {}, documentElement: null };
+  const snapshot = ChromeLayout.getMobileCapabilitySnapshot({}, root);
+  assert.equal(snapshot.deviceClass, 'touch');
+  assert.equal(snapshot.touchSupported, true);
+  assert.equal(snapshot.virtualKeyboardSupported, false);
+  assert.equal(snapshot.viewportHeight, 800);
+  assert.equal(snapshot.keyboardBottom, 0);
+  assert.equal(snapshot.keyboardInset, 0);
+  assert.equal(Object.isFrozen(snapshot), true);
+});
+
+test('mobile capability snapshot calculates and clamps visual viewport keyboard inset', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  windowTarget.visualViewport = { height: 500, offsetTop: 0, addEventListener() {}, removeEventListener() {} };
+  const root = { defaultView: windowTarget, style: {} };
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 300);
+  windowTarget.visualViewport.height = 1200;
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 0);
+  windowTarget.visualViewport.height = -10;
+  assert.equal(ChromeLayout.getMobileCapabilitySnapshot({}, root).keyboardBottom, 800);
+});
+
+test('mobile viewport observer feature-detects APIs, resets on hide, and tears down exact listeners', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  const visualViewport = makeEventTarget();
+  visualViewport.height = 500;
+  visualViewport.offsetTop = 0;
+  windowTarget.visualViewport = visualViewport;
+  const keyboard = makeEventTarget();
+  keyboard.boundingRect = { height: 280 };
+  const root = { defaultView: windowTarget, navigator: { virtualKeyboard: keyboard }, style: {} };
+  const unbind = ChromeLayout.observeMobileViewport(root);
+  assert.equal(root.style['--mobile-keyboard-bottom'], '280px');
+  keyboard.boundingRect.height = 0;
+  keyboard.dispatch('geometrychange');
+  assert.equal(root.style['--mobile-keyboard-bottom'], '0px');
+  assert.equal(windowTarget.listeners.get('resize').size, 1);
+  assert.equal(visualViewport.listeners.get('resize').size, 1);
+  assert.equal(visualViewport.listeners.get('scroll').size, 1);
+  assert.equal(keyboard.listeners.get('geometrychange').size, 1);
+  unbind();
+  assert.equal(windowTarget.listeners.get('resize').size, 0);
+  assert.equal(visualViewport.listeners.get('resize').size, 0);
+  assert.equal(visualViewport.listeners.get('scroll').size, 0);
+  assert.equal(keyboard.listeners.get('geometrychange').size, 0);
+});
+
+test('mobile Dock measurement reserves the rendered height after controls wrap', () => {
+  const previous = global.ResizeObserver;
+  const observers = [];
+  let dockHeight = 268;
+  const docks = {
+    getBoundingClientRect() { return { height: dockHeight }; },
+  };
+  const root = {
+    documentElement: { style: { setProperty(name, value) { this[name] = value; } } },
+    getElementById(id) { return id === 'chromeDocks' ? docks : null; },
+    querySelector() { return null; },
+  };
+  global.ResizeObserver = class ResizeObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  };
+
+  try {
+    const unbind = ChromeLayout.observeMobileDocks(root);
+    assert.equal(root.documentElement.style['--mobile-dock-height'], '268px');
+
+    dockHeight = 312;
+    observers[0].callback();
+    assert.equal(root.documentElement.style['--mobile-dock-height'], '312px');
+
+    unbind();
+    assert.equal(observers[0].disconnected, true);
+  } finally {
+    ChromeLayout._mobileDockCleanup?.();
+    if (previous) global.ResizeObserver = previous;
+    else delete global.ResizeObserver;
+  }
+});
+
+test('viewport refresh preserves the frozen WebRTC capability derivative', () => {
+  const windowTarget = makeEventTarget();
+  windowTarget.innerHeight = 800;
+  const visualViewport = makeEventTarget();
+  visualViewport.height = 500;
+  visualViewport.offsetTop = 0;
+  windowTarget.visualViewport = visualViewport;
+  const root = {
+    defaultView: windowTarget,
+    style: {},
+    documentElement: { style: { setProperty(name, value) { this[name] = value; } } },
+    getElementById() { return null; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+
+  ChromeLayout.applyCapabilities({
+    uiPhase: 'connected', streamReady: true, activeControl: true,
+    transportReady: true, mobileInputMode: 'armed',
+  }, root);
+  const before = ChromeLayout._mobileViewportSnapshot;
+  visualViewport.height = 620;
+  const after = ChromeLayout.recalculate(root);
+
+  assert.equal(Object.isFrozen(after), true);
+  assert.equal(after.streamReady, true);
+  assert.equal(after.activeControl, true);
+  assert.equal(after.transportReady, true);
+  assert.equal(after.mobileInputMode, 'armed');
+  assert.equal(after.keyboardBottom, 180);
+  assert.notEqual(after, before);
 });

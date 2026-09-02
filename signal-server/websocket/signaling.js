@@ -917,33 +917,12 @@ function setupSignaling(io, options = {}) {
         }
       }
       if (data?.schemaVersion === 2) {
-        // Keyboard uses the strict remote-input contract (seq + physical key fields).
-        // Mouse/command share lease authorize only — they are not keyboard envelopes
-        // and may carry transport/timestamp metadata for Host logging. Running mouse
-        // through validateRemoteInput rejects every socket fallback as UNKNOWN_FIELD
-        // / INVALID_TYPE once DataChannel is closed (control appears totally dead).
-        if (data.type === 'keyboard') {
-          const validation = validateRemoteInput(data);
-          if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
-            logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
-            return;
-          }
-          logger.log?.(`[INPUT] relay viewer=${socket.id} ${JSON.stringify(summarizeRemoteInput(data))}`);
-        } else if (data.type === 'mouse' || data.type === 'command') {
-          if (!authorizeViewer(socket, data, { legacy: false })) {
-            logger.warn?.(`[INPUT] rejected viewer=${socket.id} unauthorized`);
-            return;
-          }
-          if (typeof data.action !== 'string'
-            || data.action.length < 1
-            || data.action.length > 32
-            || !data.payload
-            || typeof data.payload !== 'object'
-            || Array.isArray(data.payload)) {
-            logger.warn?.(`[INPUT] rejected viewer=${socket.id} INVALID_DESKTOP_WRITE`);
-            return;
-          }
-        } else {
+        const validation = validateRemoteInput(data);
+        if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
+          logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
+          return;
+        }
+        if (!['keyboard', 'mouse', 'command'].includes(data.type)) {
           logger.warn?.(`[INPUT] rejected viewer=${socket.id} INVALID_TYPE`);
           return;
         }
@@ -958,6 +937,7 @@ function setupSignaling(io, options = {}) {
       if (connections.host) {
         connections.host.emit('input', {
           ...data,
+          transport: 'socket',
           viewerId: socket.id
         });
       } else {
@@ -976,22 +956,27 @@ function setupSignaling(io, options = {}) {
       const hostExecuteMs = Math.max(0, Number(data.hostExecuteMs || 0));
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
-        const validSeq = Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0;
         const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
-        const validPressed = Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0;
-        const validModifiers = Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0;
-        if (!validEpoch || !validSeq || !validStatus || !validPressed || !validModifiers) {
+        const inputType = data.inputType;
+        const independentAck = inputType === 'mouse';
+        const validInputType = ['keyboard', 'mouse', 'command'].includes(inputType);
+        const validSeq = independentAck
+          ? (data.appliedSeq === undefined || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0))
+          : (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0);
+        const validPressed = independentAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0);
+        const validModifiers = independentAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0);
+        if (!validEpoch || !validInputType || !validSeq || !validStatus || !validPressed || !validModifiers) {
           logger.warn?.('[INPUT] invalid v2 ack');
           return;
         }
         viewerSocket.emit('input-ack', {
           type: 'input_ack',
           schemaVersion: 2,
+          inputType,
           leaseEpoch: data.leaseEpoch,
-          appliedSeq: data.appliedSeq,
+          ...((independentAck && data.appliedSeq === undefined) ? {} : { appliedSeq: data.appliedSeq }),
           status: data.status,
-          pressedKeyCount: data.pressedKeyCount,
-          modifierMask: data.modifierMask,
+          ...(independentAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
           hostExecuteMs,
           transport: 'socket',

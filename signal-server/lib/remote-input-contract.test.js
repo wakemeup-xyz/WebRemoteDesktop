@@ -97,6 +97,32 @@ test('rejects malformed one-character physical code', () => {
   assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_PHYSICAL_CODE' });
 });
 
+test('validates reliable desktop writes while leaving high-frequency mouse moves unordered', () => {
+  const base = {
+    schemaVersion: 2, leaseId: 'lease-000000000001', leaseEpoch: 3,
+    inputIds: ['desktop-1'],
+  };
+  assert.equal(validateRemoteInput({
+    ...base, type: 'mouse', action: 'down', seq: 1,
+    payload: { relX: 0.25, relY: 0.5, button: 'left', clickCount: 1, buttons: 1 },
+  }).ok, true);
+  assert.equal(validateRemoteInput({
+    ...base, type: 'command', action: 'showDock', seq: 2, payload: {},
+  }).ok, true);
+  assert.equal(validateRemoteInput({
+    ...base, type: 'mouse', action: 'reset', seq: 3, payload: { reason: 'manual' },
+  }).ok, true);
+  assert.equal(validateRemoteInput({
+    ...base, type: 'mouse', action: 'move', payload: { relX: 0.5, relY: 0.25, buttons: 0 },
+  }).ok, true);
+  assert.deepEqual(validateRemoteInput({
+    ...base, type: 'mouse', action: 'reset', payload: { reason: 'manual' },
+  }), { ok: false, code: 'INVALID_SEQ' });
+  assert.deepEqual(validateRemoteInput({
+    ...base, type: 'mouse', action: 'move', seq: 3, payload: { relX: 0.5, relY: 0.25, buttons: 0 },
+  }), { ok: false, code: 'UNEXPECTED_SEQ' });
+});
+
 test('exports the protocol limits', () => {
   assert.equal(MAX_TEXT_SCALARS, 4096);
   assert.equal(MAX_BATCH_STEPS, 16);

@@ -4,6 +4,14 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
+const nativeClearTimeout = global.clearTimeout;
+const nativeClearInterval = global.clearInterval;
+const activeWebRtcFixtures = new Set();
+
+test.afterEach(() => {
+  [...activeWebRtcFixtures].forEach((cleanup) => cleanup());
+});
+
 function makeElement() {
   const classes = new Set();
   const listeners = new Map();
@@ -47,13 +55,35 @@ function makeElement() {
 
 function loadWebRTC(overrides = {}) {
   const elements = new Map();
+  const timers = { timeouts: new Set(), intervals: new Set() };
+  const trackTimeout = (...args) => {
+    const timer = global.setTimeout(...args);
+    timers.timeouts.add(timer);
+    return timer;
+  };
+  const clearTrackedTimeout = (timer) => {
+    timers.timeouts.delete(timer);
+    return global.clearTimeout(timer);
+  };
+  const trackInterval = (...args) => {
+    const timer = global.setInterval(...args);
+    timers.intervals.add(timer);
+    return timer;
+  };
+  const clearTrackedInterval = (timer) => {
+    timers.intervals.delete(timer);
+    return global.clearInterval(timer);
+  };
   const context = {
     console,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+    setTimeout: trackTimeout,
+    clearTimeout: clearTrackedTimeout,
+    setInterval: trackInterval,
+    clearInterval: clearTrackedInterval,
     performance: { now: () => 0 },
+    navigator: { platform: 'MacIntel', userAgent: 'node-test' },
+    requestAnimationFrame: (fn) => fn(),
+    getComputedStyle: () => ({ objectFit: 'contain' }),
     localStorage: {
       getItem: () => null,
       setItem: () => {},
@@ -124,8 +154,47 @@ function loadWebRTC(overrides = {}) {
   }
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
-  return { WebRTC: context.__WebRTC, context, elements };
+  if (overrides.realInput) {
+    for (const filename of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'input.js']) {
+      const inputSource = fs.readFileSync(path.join(__dirname, filename), 'utf8');
+      vm.runInContext(filename === 'input.js' ? `${inputSource}\nglobalThis.__Input = Input;` : inputSource, context);
+    }
+  }
+  const cleanup = () => {
+    const instance = context.__WebRTC;
+    instance?.stopControlHeartbeat?.();
+    instance?.stopDcKeepalive?.();
+    instance?.stopMediaTelemetry?.();
+    if (instance?._latencySyncInterval) {
+      clearTrackedInterval(instance._latencySyncInterval);
+      instance._latencySyncInterval = null;
+    }
+    timers.timeouts.forEach((timer) => nativeClearTimeout(timer));
+    timers.intervals.forEach((timer) => nativeClearInterval(timer));
+    timers.timeouts.clear();
+    timers.intervals.clear();
+    activeWebRtcFixtures.delete(cleanup);
+  };
+  activeWebRtcFixtures.add(cleanup);
+  return { WebRTC: context.__WebRTC, context, elements, cleanup };
 }
+
+test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
+  const { WebRTC, cleanup } = loadWebRTC();
+  let cleared = false;
+  WebRTC._controlHeartbeatTimer = setInterval(() => {}, 1000);
+  const original = global.clearInterval;
+  global.clearInterval = (timer) => {
+    if (timer === WebRTC._controlHeartbeatTimer) cleared = true;
+    return original(timer);
+  };
+  try {
+    cleanup();
+  } finally {
+    global.clearInterval = original;
+  }
+  assert.equal(cleared, true);
+});
 
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
@@ -210,11 +279,12 @@ test('WebRTC lazily owns media activity reasons and forwards changes to its medi
   ]);
 });
 
-test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyMonitor', () => {
-  const acks = [];
+test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, keyboard, and latency consumers', () => {
+  const acks = []; const mouseAcks = []; const keyboardAcks = [];
   const channels = new Map();
   const socketHandlers = new Map();
   const { WebRTC } = loadWebRTC({
+    Input: { acceptMouseAck(payload) { mouseAcks.push(payload); }, acceptKeyboardAck(payload) { keyboardAcks.push(payload); } },
     LatencyMonitor: { onInputAck(payload) { acks.push(payload); } },
   });
   WebRTC.pc = {
@@ -238,11 +308,169 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to LatencyM
   WebRTC.createInputChannel();
   WebRTC.setupSocketListeners();
 
-  channels.get('input').onmessage({ data: JSON.stringify({ type: 'input_ack', inputIds: ['dc-1'] }) });
-  socketHandlers.get('input-ack')({ type: 'input_ack', inputIds: ['socket-1'] });
+  channels.get('input').onmessage({ data: JSON.stringify({ type: 'input_ack', inputType: 'keyboard', inputIds: ['dc-1'] }) });
+  socketHandlers.get('input-ack')({ type: 'input_ack', inputType: 'keyboard', inputIds: ['socket-1'] });
 
   assert.deepEqual(acks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
+  assert.deepEqual(mouseAcks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
+  assert.deepEqual(keyboardAcks.map((payload) => payload.inputIds[0]), ['dc-1', 'socket-1']);
   clearTimeout(WebRTC._dcTimeout);
+});
+
+test('a single input acknowledgement clears real mouse and keyboard reset state with one latency sample', () => {
+  const latencyAcks = [];
+  const channels = new Map();
+  const socketEvents = [];
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: {
+      recordInputSend() {},
+      onInputAck(payload) { latencyAcks.push(payload); },
+    },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connecting', iceConnectionState: 'checking',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.socket = { connected: true, emit(event, payload) { socketEvents.push({ event, payload }); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.createInputChannel();
+  const inputChannel = channels.get('input');
+  inputChannel.readyState = 'open';
+  inputChannel.onopen();
+  assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'mouse-reset-1';
+
+  inputChannel.onmessage({ data: JSON.stringify({
+    type: 'input_ack', inputType: 'keyboard', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
+    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
+  }) });
+
+  assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
+  assert.equal(latencyAcks.length, 1);
+  assert.equal(socketEvents.length, 0);
+  clearTimeout(WebRTC._dcTimeout);
+});
+
+test('DataChannel close routes a held key through one Socket.IO reset barrier until its matching Socket.IO acknowledgement', () => {
+  const channels = new Map();
+  const socketEvents = [];
+  const socketHandlers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit(event, payload) { socketEvents.push({ event, payload }); },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.createInputChannel();
+  WebRTC.setupSocketListeners();
+  const inputChannel = channels.get('input');
+  inputChannel.readyState = 'open';
+  inputChannel.onopen();
+  assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
+
+  inputChannel.readyState = 'closed';
+  inputChannel.onclose();
+  const reset = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.deepEqual([reset.action, reset.payload.reason], ['reset', 'transport-change']);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), false);
+  assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 1);
+
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'keyboard', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: reset.inputIds,
+  });
+  assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
+  assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), true);
+  assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 2);
+  clearTimeout(WebRTC._dcTimeout);
+  clearTimeout(WebRTC._dcReconnectTimer);
+});
+
+test('a command acknowledgement cannot advance keyboard state or clear a keyboard reset barrier', () => {
+  const channels = new Map();
+  const socketEvents = [];
+  const socketHandlers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.socket = {
+    connected: true,
+    on(event, handler) { socketHandlers.set(event, handler); },
+    emit(event, payload) { socketEvents.push({ event, payload }); },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 }, hostOnline: true };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.createInputChannel();
+  WebRTC.setupSocketListeners();
+  const inputChannel = channels.get('input');
+  inputChannel.readyState = 'open';
+  inputChannel.onopen();
+  assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
+
+  inputChannel.readyState = 'closed';
+  inputChannel.onclose();
+  const reset = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  const commandId = Input.sendInput('command', 'showDock', {});
+  assert.ok(commandId);
+  const command = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(command.type, 'command');
+
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'command', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: command.inputIds,
+  });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  assert.equal(Input.keyboardController.sendChord({ code: 'Enter' }), false);
+
+  socketHandlers.get('input-ack')({
+    type: 'input_ack', inputType: 'keyboard', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: reset.seq, pressedKeyCount: 0, modifierMask: 0, inputIds: reset.inputIds,
+  });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
+  clearTimeout(WebRTC._dcTimeout);
+  clearTimeout(WebRTC._dcReconnectTimer);
 });
 
 test('DataChannel keyboard envelopes include transport datachannel marker', () => {
@@ -260,6 +488,46 @@ test('DataChannel keyboard envelopes include transport datachannel marker', () =
     inputIds: ['input-1'], payload: { reason: 'manual' },
   }), true);
   assert.equal(sent[0].transport, 'datachannel');
+});
+
+test('DataChannel keeps reliable desktop writes ordered while mouse moves stay isolated from keyboard pending', () => {
+  const channels = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    realInput: true,
+    LatencyMonitor: { recordInputSend() {}, onInputAck() {} },
+  });
+  const Input = context.__Input;
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'open', bufferedAmount: 0, send(value) {
+        this.sent = this.sent || []; this.sent.push(JSON.parse(value));
+      } };
+      channels.set(label, channel);
+      return channel;
+    },
+  };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 4 } };
+  Input.initKeyboardController();
+  Input.setControlLease(WebRTC.controlState.lease);
+  Input.isActive = true;
+  WebRTC.createInputChannel();
+
+  Input.sendInput('mouse', 'move', { relX: 0.2, relY: 0.2, buttons: 0 });
+  Input.sendInput('mouse', 'down', { relX: 0.2, relY: 0.2, button: 'left', clickCount: 1, buttons: 1 });
+  Input.sendInput('mouse', 'reset', { reason: 'manual' });
+  Input.sendInput('command', 'showDock', {});
+
+  assert.deepEqual(channels.get('input-move').sent.map(({ action, seq }) => [action, seq]), [['move', undefined]]);
+  assert.deepEqual(channels.get('input').sent.map(({ type, action, seq }) => [type, action, seq]), [
+    ['mouse', 'down', 1], ['mouse', 'reset', 2], ['command', 'showDock', 3],
+  ]);
+  channels.get('input').onmessage({ data: JSON.stringify({
+    type: 'input_ack', inputType: 'mouse', schemaVersion: 2, status: 'applied', leaseEpoch: 4,
+    appliedSeq: 2, inputIds: [channels.get('input').sent[1].inputIds[0],],
+  }) });
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  clearTimeout(WebRTC._dcTimeout);
 });
 
 test('viewer waits for an active control lease before starting an offer and routes acknowledgements to transport first', () => {
@@ -282,6 +550,7 @@ test('viewer waits for an active control lease before starting an offer and rout
       setActive() {},
       setControlLease() {},
       acceptKeyboardAck() { order.push('transport'); },
+      acceptMouseAck() { order.push('mouse'); },
     },
     LatencyMonitor: { onInputAck() { order.push('latency'); } },
   });
@@ -302,8 +571,8 @@ test('viewer waits for an active control lease before starting an offer and rout
 
   socketHandlers.get('control-grant')({ controller: true, leaseId: 'lease-000000000001', leaseEpoch: 4 });
   assert.equal(offers, 1);
-  socketHandlers.get('input-ack')({ schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
-  assert.deepEqual(order, ['transport', 'latency']);
+  socketHandlers.get('input-ack')({ inputType: 'keyboard', schemaVersion: 2, leaseEpoch: 4, appliedSeq: 1, status: 'applied' });
+  assert.deepEqual(order, ['mouse', 'transport', 'latency']);
   WebRTC.stopControlHeartbeat();
 });
 
@@ -1607,7 +1876,7 @@ test('createOffer emits connectionAttemptId bound to the current attempt', async
 });
 
 test('auto fallback handles relay frames while tunnel relay is active', () => {
-  const { WebRTC, elements } = loadWebRTC();
+  const { WebRTC, elements, context } = loadWebRTC();
   const relayImage = elements.get('relayImage') || makeElement();
   relayImage.classList.add('hidden');
   elements.set('relayImage', relayImage);
@@ -1623,9 +1892,10 @@ test('auto fallback handles relay frames while tunnel relay is active', () => {
     height: 540,
     timestamp: Date.now(),
   });
+  relayImage.onload();
 
   assert.equal(relayImage.classList.contains('hidden'), false);
-  assert.equal(elements.get('connectionStatus').textContent, '已连接');
+  assert.equal(context.document.getElementById('connectionStatus').textContent, '已连接');
 });
 
 test('base64 relay frames ack after the browser image loads', () => {
@@ -2836,7 +3106,7 @@ test('port search round timeout advances once and ignores stale generation', asy
   WebRTC._portSearchGeneration = staleGeneration;
   WebRTC.pc = { close() {} };
   WebRTC.armPortSearchDeadline();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.ok(actions.length >= 2, `expected timeout refresh, got ${actions.length}`);
   WebRTC.stopPortSearch('cleanup');
 });
@@ -3042,6 +3312,30 @@ test('UI init tolerates missing optional elements', () => {
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
   assert.doesNotThrow(() => vm.runInContext(source, context));
+});
+
+test('WebRTC fullscreen lifecycle refreshes chrome and input geometry then tears down its exact handler', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const calls = [];
+  context.ChromeLayout = { recalculate() { calls.push('recalculate'); } };
+  context.Input = { refreshGeometry() { calls.push('input-geometry'); } };
+  const listeners = new Map();
+  context.document.addEventListener = (type, handler) => listeners.set(type, handler);
+  context.document.removeEventListener = (type, handler) => {
+    if (listeners.get(type) === handler) listeners.delete(type);
+  };
+  WebRTC._fullscreenLifecycleBound = false;
+  const teardown = WebRTC.bindFullscreenLifecycle();
+  const handler = listeners.get('fullscreenchange');
+  WebRTC.bindFullscreenLifecycle();
+
+  handler();
+  teardown();
+
+  assert.deepEqual(calls, ['recalculate', 'input-geometry']);
+  assert.equal(WebRTC._fullscreenLifecycleHandler, null);
+  assert.equal(WebRTC._fullscreenLifecycleBound, false);
+  assert.equal(listeners.has('fullscreenchange'), false);
 });
 
 
@@ -3704,6 +3998,15 @@ test('control loss keeps frame readiness so regrant can enable input without a n
     state: 'ACTIVE', controller: true, hostOnline: true,
     lease: { leaseId: 'lease-000000000002', leaseEpoch: 2 },
   };
+  WebRTC.ensureDesktopSessionState().applyConnection({
+    attemptId: 'attempt-current', state: 'online',
+  });
+  WebRTC.ensureDesktopSessionState().applyControl({
+    attemptId: 'attempt-current', state: 'active',
+  });
+  WebRTC.ensureDesktopSessionState().applyMedia({
+    attemptId: 'attempt-current', event: 'fresh-frame', fresh: true,
+  });
   WebRTC.syncDesktopInputGate();
   assert.equal(WebRTC.canEnableDesktopInput(), true);
   assert.equal(context.Input.active, true);

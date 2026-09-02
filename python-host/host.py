@@ -1648,7 +1648,22 @@ class WebRemoteHost:
         if not input_ids:
             return False
         transport = str(data.get("transport") or "socket")
-        if data.get("schemaVersion") == 2:
+        if data.get("schemaVersion") == 2 and data.get("type") == "mouse":
+            # Mouse actions use the v2 envelope but intentionally do not share
+            # the ordered keyboard sequence/state contract. Keep their ACK
+            # independently correlatable by lease and input id.
+            ack = {
+                "type": "input_ack",
+                "schemaVersion": 2,
+                "inputType": "mouse",
+                "leaseEpoch": data.get("leaseEpoch"),
+                **({"appliedSeq": result["appliedSeq"]} if result.get("appliedSeq") is not None else {}),
+                "status": "applied" if result.get("status") == "unordered" else (result.get("status") or "applied"),
+                "inputIds": list(input_ids),
+                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "transport": transport,
+            }
+        elif data.get("schemaVersion") == 2:
             # v2 keyboard transport acknowledges the applied sequence and the
             # Host's post-execution state; never echo the input payload.
             pressed_key_count = result.get("pressedKeyCount")
@@ -1663,6 +1678,7 @@ class WebRemoteHost:
             ack = {
                 "type": "input_ack",
                 "schemaVersion": 2,
+                "inputType": data.get("type"),
                 "leaseEpoch": data.get("leaseEpoch"),
                 "appliedSeq": result.get("appliedSeq", data.get("seq")),
                 "status": status,
@@ -1962,10 +1978,13 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
+                desktop_result = self.input_handler.transition_desktop_writes(
+                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+                )
             except Exception:
                 await reject_transition()
                 return
-            if not isinstance(result, dict) or result.get("status") != "applied":
+            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
                 await reject_transition()
                 return
             self._active_input_binding = binding
@@ -1985,10 +2004,13 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
+                desktop_result = self.input_handler.transition_desktop_writes(
+                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+                )
             except Exception:
                 await reject_transition()
                 return
-            if not isinstance(result, dict) or result.get("status") != "applied":
+            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
                 await reject_transition()
                 return
             self._active_input_binding = binding

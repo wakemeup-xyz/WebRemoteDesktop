@@ -436,6 +436,7 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
     viewerId: 'viewer-1',
     type: 'input_ack',
     schemaVersion: 2,
+    inputType: 'keyboard',
     leaseEpoch: 12,
     appliedSeq: 7,
     status: 'applied',
@@ -451,6 +452,7 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
   assert.deepEqual(ack, {
     type: 'input_ack',
     schemaVersion: 2,
+    inputType: 'keyboard',
     leaseEpoch: 12,
     appliedSeq: 7,
     status: 'applied',
@@ -462,6 +464,41 @@ test('v2 host input ack preserves keyboard state fields and redacts raw input da
   });
   assert.equal('key' in ack, false);
   assert.equal('payload' in ack, false);
+});
+
+test('v2 mouse input ack forwards without keyboard sequence or state fields', () => {
+  resetConnections(); const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-mouse-ack', 'host'); const viewer = new FakeSocket('viewer-mouse-ack', 'viewer'); io.connect(host); io.connect(viewer);
+  host.trigger('input-ack', { viewerId: 'viewer-mouse-ack', type: 'input_ack', schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4, status: 'applied', inputIds: ['mouse-reset-1'], hostExecuteMs: 2 });
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.equal(ack.inputType, 'mouse'); assert.equal(ack.inputIds[0], 'mouse-reset-1'); assert.equal('appliedSeq' in ack, false); assert.equal('pressedKeyCount' in ack, false);
+});
+
+test('v2 reliable mouse acknowledgement preserves its applied sequence without keyboard state', () => {
+  resetConnections(); const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-mouse-seq-ack', 'host'); const viewer = new FakeSocket('viewer-mouse-seq-ack', 'viewer'); io.connect(host); io.connect(viewer);
+  host.trigger('input-ack', {
+    viewerId: 'viewer-mouse-seq-ack', type: 'input_ack', schemaVersion: 2, inputType: 'mouse',
+    leaseEpoch: 4, appliedSeq: 8, status: 'duplicate', inputIds: ['mouse-reset-8'], hostExecuteMs: 2,
+  });
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.equal(ack.appliedSeq, 8);
+  assert.equal('pressedKeyCount' in ack, false);
+  assert.equal('modifierMask' in ack, false);
+});
+
+test('v2 command acknowledgement preserves its non-keyboard correlation type', () => {
+  resetConnections(); const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-command-ack', 'host'); const viewer = new FakeSocket('viewer-command-ack', 'viewer'); io.connect(host); io.connect(viewer);
+  host.trigger('input-ack', {
+    viewerId: 'viewer-command-ack', type: 'input_ack', schemaVersion: 2, inputType: 'command',
+    leaseEpoch: 4, appliedSeq: 7, status: 'applied', pressedKeyCount: 0, modifierMask: 0,
+    inputIds: ['command-1'], hostExecuteMs: 2,
+  });
+  const ack = viewer.sent.find((message) => message.event === 'input-ack').data;
+  assert.equal(ack.inputType, 'command');
+  assert.equal(ack.appliedSeq, 7);
+  assert.equal(ack.inputIds[0], 'command-1');
 });
 
 test('v2 host acknowledgement forwards every documented error status without raw input data', () => {
@@ -478,6 +515,7 @@ test('v2 host acknowledgement forwards every documented error status without raw
     host.trigger('input-ack', {
       viewerId: 'viewer-1',
       schemaVersion: 2,
+      inputType: 'keyboard',
       leaseEpoch: 12,
       appliedSeq: index,
       status,
@@ -829,9 +867,7 @@ test('input is not relayed before control transition ack, then valid v2 input re
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
 });
 
-test('v2 mouse and command socket inputs relay after lease grant without keyboard contract', () => {
-  // Mouse/command are desktop writes under the same lease, but they are not keyboard
-  // envelopes. Socket fallback (DataChannel closed) must not run validateRemoteInput.
+test('v2 mouse and command socket inputs relay after lease grant through the desktop-write contract', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
@@ -853,9 +889,9 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
     action: 'down',
     leaseId: granted.leaseId,
     leaseEpoch: granted.leaseEpoch,
+    seq: 1,
     inputIds: ['mouse-1'],
-    transport: 'socket',
-    payload: { relX: 0.5, relY: 0.4, button: 'left', clickCount: 1 },
+    payload: { relX: 0.5, relY: 0.4, button: 'left', clickCount: 1, buttons: 1 },
   });
   viewer.trigger('input', {
     schemaVersion: 2,
@@ -863,8 +899,8 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
     action: 'showDock',
     leaseId: granted.leaseId,
     leaseEpoch: granted.leaseEpoch,
+    seq: 2,
     inputIds: ['cmd-1'],
-    transport: 'socket',
     payload: {},
   });
   // Keyboard contract still rejects unknown keyboard fields.
@@ -886,9 +922,36 @@ test('v2 mouse and command socket inputs relay after lease grant without keyboar
   assert.equal(relayed.length, 2);
   assert.equal(relayed[0].data.type, 'mouse');
   assert.equal(relayed[0].data.action, 'down');
+  assert.equal(relayed[0].data.seq, 1);
   assert.equal(relayed[0].data.viewerId, 'viewer-mouse-v2');
   assert.equal(relayed[1].data.type, 'command');
   assert.equal(relayed[1].data.action, 'showDock');
+  assert.equal(relayed[1].data.seq, 2);
+  assert.equal(relayed.every((entry) => entry.data.transport === 'socket'), true);
+});
+
+test('v2 Signal input rejects malformed reliable writes but accepts unordered mouse move', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-desktop-v2', 'host');
+  const viewer = new FakeSocket('viewer-desktop-v2', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'desktop-1' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const base = { schemaVersion: 2, type: 'mouse', leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch, inputIds: ['desktop-1'] };
+
+  viewer.trigger('input', { ...base, action: 'reset', payload: { reason: 'manual' } });
+  viewer.trigger('input', { ...base, action: 'move', seq: 1, payload: { relX: 0.5, relY: 0.5, buttons: 0 } });
+  viewer.trigger('input', { ...base, action: 'move', payload: { relX: 0.5, relY: 0.5, buttons: 0 } });
+
+  const relayed = host.sent.filter((entry) => entry.event === 'input');
+  assert.equal(relayed.length, 1);
+  assert.deepEqual([relayed[0].data.type, relayed[0].data.action, relayed[0].data.seq], ['mouse', 'move', undefined]);
 });
 
 test('fresh v2 tunnel input matches the Host transition lease without leaking it to viewers or logs', () => {

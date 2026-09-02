@@ -86,6 +86,74 @@ test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
   assert.match(css, /\.chrome-docks[^}]*flex-direction:\s*column/);
 });
 
+test('mobile viewport geometry consumes the single keyboard bottom variable', () => {
+  assert.match(css, /--mobile-keyboard-bottom/);
+  assert.match(css, /bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
+  assert.match(css, /padding-bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
+});
+
+test('mobile media geometry reserves dock and keyboard occupancy outside the remote surface', () => {
+  assert.match(css, /--mobile-dock-height/);
+  assert.match(css, /--mobile-text-dock-reserve\s*:/);
+  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(mobileViewer, /var\(--mobile-dock-height(?:,\s*0px)?\)/);
+  assert.match(mobileViewer, /var\(--mobile-keyboard-bottom/);
+  const mobileDocks = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.chrome-docks\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(mobileDocks, /var\(--mobile-text-dock-reserve\)/);
+  assert.match(mobileDocks, /var\(--mobile-keyboard-bottom/);
+});
+
+test('mobile media reserves the fixed Dock coordinate envelope', () => {
+  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
+  const completeDockEnvelope = /var\(--mobile-dock-height(?:,\s*0px)?\)\s*-\s*12px\s*-\s*env\(safe-area-inset-bottom,\s*0px\)\s*-\s*var\(--mobile-text-dock-reserve\)\s*-\s*var\(--mobile-keyboard-bottom,\s*0px\)/;
+  assert.match(mobileViewer, completeDockEnvelope, 'remote surface must reserve the Dock height and its fixed bottom offset');
+  assert.match(mobileViewer, /height\s*:\s*calc\(100vh/);
+  assert.match(mobileViewer, /height\s*:\s*calc\(100dvh/);
+});
+
+test('narrow action row remains one line with stable touch widths', () => {
+  assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(css, /@media\s*\(max-width:\s*899px\)[\s\S]*?\.action-bar[^{]*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.action-bar\s+\.action-btn[^}]*min-width:\s*var\(--touch-min\)/);
+});
+
+test('mobile input reserves touch targets and keyboard safe area', () => {
+  assert.match(html, /id="mobileTextInput"/);
+  assert.match(html, /id="mobileTextInput"[^>]*inputmode="text"/);
+  assert.match(html, /id="mobileInputDock"/);
+  const textInput = getBlock('#mobileTextInput');
+  const mobileDock = getBlock('#mobileInputDock');
+  const mobileControls = getBlock('#mobileInputDock .control-btn');
+  assert.match(textInput, /touch-action\s*:\s*none/);
+  assert.match(mobileDock, /env\(safe-area-inset-bottom/);
+  assert.match(mobileDock, /env\(keyboard-inset-height/);
+  assert.match(mobileControls, /min-height\s*:\s*var\(--touch-min\)/);
+});
+
+test('mobile virtual key surface exposes accessible navigation, modifiers, shortcuts, and right click', () => {
+  for (const action of ['escape', 'tab', 'backspace', 'enter', 'up', 'down', 'left', 'right', 'shift', 'ctrl', 'alt', 'meta', 'rightClick', 'copy', 'paste', 'cut', 'undo', 'selectAll', 'save', 'find', 'screenshot', 'switchInputMethod']) {
+    assert.match(html, new RegExp(`data-mobile-action="${action}"`), `missing mobile ${action} button`);
+  }
+  assert.match(html, /id="mobileKeySurface"[^>]*aria-label="移动远程控制按键"/);
+  assert.match(html, /data-mobile-action="shift"[^>]*aria-pressed="false"[^>]*aria-label="Shift"/);
+  assert.match(html, /data-mobile-action="rightClick"[^>]*aria-label="右键点击"/);
+
+  const keySurface = getBlock('#mobileKeySurface');
+  const keyRow = getBlock('.mobile-key-row');
+  const keyButtons = getBlock('#mobileKeySurface .mobile-key-btn');
+  assert.match(keySurface, /env\(safe-area-inset-bottom/);
+  assert.match(keySurface, /env\(keyboard-inset-height/);
+  assert.match(keyRow, /overflow-x\s*:\s*auto/);
+  assert.match(keyButtons, /min-width\s*:\s*var\(--touch-min\)/);
+  assert.match(keyButtons, /min-height\s*:\s*var\(--touch-min\)/);
+  assert.match(keyButtons, /touch-action\s*:\s*manipulation/);
+});
+
+test('media surfaces suppress browser touch gestures', () => {
+  const surfaces = getBlock('#remoteVideo,\n#relayImage');
+  assert.match(surfaces, /touch-action\s*:\s*none/);
+});
+
 test('docks share one fixed column wrapper', () => {
   assert.match(html, /id="chromeDocks"[\s\S]*class="action-bar"[\s\S]*class="control-bar"/);
   const docks = getBlock('.chrome-docks');

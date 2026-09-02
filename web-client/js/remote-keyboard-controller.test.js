@@ -451,3 +451,18 @@ test('park clears local keys without entering RESET_REQUIRED', () => {
   assert.equal(controller.getSnapshot().state, 'READY');
   assert.equal(controller.getSnapshot().pressedKeyCount, 0);
 });
+
+test('virtual modifier releases its latch before a Unicode text commit', () => {
+  const { controller, sent } = makeController();
+  assert.equal(typeof controller.setVirtualModifier, 'function');
+  assert.equal(controller.setVirtualModifier('shift', true), true);
+  assert.equal(controller.getSnapshot().pressedKeyCount, 1);
+  assert.equal(controller.sendText('\u4e2d\u6587'), true);
+
+  assert.deepEqual(sent.map((item) => [item.action, item.payload.phase, item.payload.code]), [
+    ['key', 'down', 'ShiftLeft'],
+    ['key', 'up', 'ShiftLeft'],
+    ['text', undefined, undefined],
+  ]);
+  assert.equal(controller.getSnapshot().pressedKeyCount, 0);
+});

@@ -219,6 +219,9 @@ async def test_newer_transition_freezes_prior_v2_lease_before_reset_completes():
         async def transition_keyboard(self, **_kwargs):
             return {"status": "applied"}
 
+        def transition_desktop_writes(self, **_kwargs):
+            return SimpleNamespace(status="applied")
+
         async def apply_keyboard(self, data):
             self.applied.append(data)
             return {"inputIds": []}
@@ -436,6 +439,9 @@ async def test_stale_control_transition_preserves_active_keyboard_binding_withou
             self.transition_calls.append(kwargs)
             return {"status": "applied"}
 
+        def transition_desktop_writes(self, **_kwargs):
+            return SimpleNamespace(status="applied")
+
         def release_all_mouse_buttons(self, **_kwargs):
             return None
 
@@ -528,6 +534,9 @@ async def test_grant_and_same_epoch_revoke_are_serialized_without_late_rebind():
         async def transition_keyboard(self, **kwargs):
             self.transition_calls.append(kwargs)
             return {"status": "applied"}
+
+        def transition_desktop_writes(self, **_kwargs):
+            return SimpleNamespace(status="applied")
 
         def release_all_mouse_buttons(self, **_kwargs):
             return None

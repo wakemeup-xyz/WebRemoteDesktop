@@ -37,6 +37,8 @@ const WebRTC = {
   _controlHeartbeatTimer: null,
   _controlRequestId: 0,
   _controlLifecycleBound: false,
+  _fullscreenLifecycleBound: false,
+  _fullscreenLifecycleHandler: null,
   remoteStream: null,
   statsTimer: null,
   _statsSampler: null,
@@ -1238,6 +1240,13 @@ const WebRTC = {
       this.hasPaintedFrame
       || (this.currentConnectionAttemptId && this._mediaReadyConnectionAttemptId === this.currentConnectionAttemptId),
     );
+    const transportReady = this.inputChannel?.readyState === 'open'
+      || this.socket?.connected === true;
+    const mobileInputSnapshot = typeof Input !== 'undefined'
+      ? Input.mobileTextInputAdapter?.getSnapshot?.() : null;
+    const mobileInputMode = mobileInputSnapshot?.shown
+      ? 'visible'
+      : (streamReady && this.hasActiveControl() && transportReady ? 'armed' : 'off');
     return {
       uiPhase: this.uiPhase,
       streamReady,
@@ -1245,12 +1254,38 @@ const WebRTC = {
       controlTransition: Boolean(transition),
       terminalAuthorized,
       modalOpen,
+      transportReady,
+      mobileInputMode,
     };
   },
 
   syncChromeCapabilities() {
     if (typeof ChromeLayout === 'undefined' || typeof ChromeLayout.applyCapabilities !== 'function') return null;
     return ChromeLayout.applyCapabilities(this.getChromeSnapshot());
+  },
+
+  bindFullscreenLifecycle() {
+    if (this._fullscreenLifecycleBound || typeof document === 'undefined') return this.unbindFullscreenLifecycle.bind(this);
+    this._fullscreenLifecycleBound = true;
+    this._fullscreenLifecycleHandler = () => {
+      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.recalculate === 'function') {
+        ChromeLayout.recalculate();
+      }
+      if (typeof Input !== 'undefined' && typeof Input.refreshGeometry === 'function') {
+        Input.refreshGeometry();
+      }
+      this.syncChromeCapabilities();
+    };
+    document.addEventListener('fullscreenchange', this._fullscreenLifecycleHandler);
+    return this.unbindFullscreenLifecycle.bind(this);
+  },
+
+  unbindFullscreenLifecycle() {
+    if (this._fullscreenLifecycleHandler && typeof document !== 'undefined') {
+      document.removeEventListener?.('fullscreenchange', this._fullscreenLifecycleHandler);
+    }
+    this._fullscreenLifecycleHandler = null;
+    this._fullscreenLifecycleBound = false;
   },
 
   clearPaintPendingCopyTimers() {
@@ -2732,7 +2767,11 @@ const WebRTC = {
     });
 
     this.socket.on('input-ack', (data) => {
-      if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+      if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
+        Input.acceptMouseAck(data);
+      }
+      if (data?.inputType === 'keyboard'
+        && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
         Input.acceptKeyboardAck(data);
       }
       if (typeof LatencyMonitor !== 'undefined') {
@@ -3473,7 +3512,11 @@ const WebRTC = {
           return;
         }
         if (data.type === 'input_ack') {
-          if (typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
+          if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
+            Input.acceptMouseAck(data);
+          }
+          if (data?.inputType === 'keyboard'
+            && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
             Input.acceptKeyboardAck(data);
           }
           if (typeof LatencyMonitor !== 'undefined') {
@@ -5104,6 +5147,7 @@ function bootViewerShell() {
   if (window.__WRD_VIEWER_BOOTED__) return;
   window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
+  WebRTC.bindFullscreenLifecycle();
   if (typeof StartupTelemetry !== 'undefined') {
     // Import ShellGuard marks with original performance timestamps only.
     const shellSnap = window.__WRD_SHELL__?.snapshot?.();

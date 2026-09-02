@@ -5,6 +5,12 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createRemoteKeyboardControllerApi() {
   const MODIFIER_ORDER = ['ctrl', 'shift', 'alt', 'meta'];
   const MODE_VALUES = new Set(['mac', 'windows']);
+  const VIRTUAL_MODIFIER_ALIASES = new Map([
+    ['ctrl', 'ctrl'], ['control', 'ctrl'],
+    ['shift', 'shift'],
+    ['alt', 'alt'],
+    ['meta', 'meta'], ['command', 'meta'], ['cmd', 'meta'],
+  ]);
 
   function create(options) {
     const config = options || {};
@@ -316,6 +322,69 @@
         || (name === 'meta' && (source.command || source.cmd))));
     }
 
+    function virtualModifierName(name) {
+      return VIRTUAL_MODIFIER_ALIASES.get(String(name || '').toLowerCase()) || null;
+    }
+
+    function virtualModifierKey(name) {
+      return `virtual:${name}`;
+    }
+
+    function releaseVirtualModifier(name) {
+      const key = virtualModifierKey(name);
+      const record = pressed.get(key);
+      if (!record) return true;
+      const modifiers = modifierFlagsFromCodes([...pressed.values()].map((item) => item.code));
+      const result = send('key', payload({ ...record, modifiers }, 'up', false));
+      pressed.delete(key);
+      if (!accepted(result)) beginReset('transport-change');
+      return accepted(result);
+    }
+
+    function setVirtualModifier(name, wantPressed) {
+      const normalizedName = virtualModifierName(name);
+      if (!normalizedName) return false;
+      reconcilePendingMode();
+      const key = virtualModifierKey(normalizedName);
+      const existing = pressed.get(key);
+      if (Boolean(wantPressed) === Boolean(existing)) return true;
+      if (!transportReady() || resetRequired) return false;
+      if (!wantPressed) {
+        const released = releaseVirtualModifier(normalizedName);
+        notify();
+        return released;
+      }
+      const record = {
+        code: chordModifierCode(normalizedName),
+        location: 0,
+        modifiers: modifierFlagsFromCodes([...pressed.values()].map((item) => item.code)),
+        locks: { capsLock: false },
+        downSeq: ++downSequence,
+        adapter: null,
+        virtualModifier: normalizedName,
+      };
+      const result = send('key', payload(record, 'down', false));
+      if (!accepted(result)) return false;
+      record.adapter = result && typeof result === 'object' ? result.adapter || null : null;
+      pressed.set(key, record);
+      notify();
+      return true;
+    }
+
+    function releaseVirtualModifiers() {
+      const names = [...pressed.values()]
+        .filter((record) => Boolean(record.virtualModifier))
+        .sort((left, right) => right.downSeq - left.downSeq)
+        .map((record) => record.virtualModifier);
+      for (const name of names) {
+        if (!releaseVirtualModifier(name)) {
+          notify();
+          return false;
+        }
+      }
+      return true;
+    }
+
     function sendChord(chord) {
       reconcilePendingMode();
       if (!chord || !stableCode(chord) || !transportReady() || resetRequired) return false;
@@ -358,7 +427,9 @@
 
     function sendText(text) {
       reconcilePendingMode();
-      if (typeof text !== 'string' || text.length === 0 || pressed.size > 0 || !transportReady() || resetRequired) return false;
+      if (typeof text !== 'string' || text.length === 0 || !transportReady() || resetRequired) return false;
+      if ([...pressed.values()].some((record) => !record.virtualModifier)) return false;
+      if (!releaseVirtualModifiers()) return false;
       const result = send('text', { text });
       notify();
       return accepted(result);
@@ -382,11 +453,14 @@
         state: state(),
         mode,
         pressedKeyCount: pressed.size,
+        virtualModifiers: [...pressed.values()]
+          .filter((record) => Boolean(record.virtualModifier))
+          .map((record) => record.virtualModifier),
         pendingMode: Boolean(pendingMode),
       };
     }
 
-    return { setLease, setMode, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
+    return { setLease, setMode, setVirtualModifier, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
   }
 
   return { create };
