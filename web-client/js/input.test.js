@@ -457,9 +457,11 @@ test('mouse input with no open transport returns null and records no latency pen
   Input.socket = { connected: false, emit() {} };
   context.WebRTC.socket.connected = false;
   Input.inputChannel = null;
+  let recordCalls = 0;
+  Input.recordLatency = () => { recordCalls += 1; };
   const id = Input.sendInput('mouse', 'move', { relX: 0.25, relY: 0.5, buttons: 0 });
   assert.equal(id, null);
-  assert.equal(Input.getDiagnosticState().mouse?.pendingCount || 0, 0);
+  assert.equal(recordCalls, 0);
 });
 
 test('toolbar command can send with lease even when media gate is inactive', () => {
