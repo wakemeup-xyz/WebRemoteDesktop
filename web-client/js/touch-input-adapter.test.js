@@ -7,7 +7,15 @@ function makeTouchHarness() {
   const element = {
     addEventListener(type, fn) { listeners.set(type, fn); },
     removeEventListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
-    dispatch(type, event = {}) { listeners.get(type)?.({...event, type, currentTarget: element}); },
+    dispatch(type, event = {}) {
+      const dispatched = { ...event, type, currentTarget: element };
+      for (const key of ['clientX', 'clientY']) {
+        if (Object.prototype.hasOwnProperty.call(event, key)) {
+          Object.defineProperty(dispatched, key, { value: event[key], enumerable: false });
+        }
+      }
+      listeners.get(type)?.(dispatched);
+    },
     setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return false; },
   };
   const adapter = TouchInputAdapter.create({

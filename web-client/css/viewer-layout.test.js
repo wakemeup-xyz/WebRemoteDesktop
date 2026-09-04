@@ -157,6 +157,8 @@ test('mobile virtual key surface exposes accessible navigation, modifiers, short
   assert.match(keyButtons, /min-width\s*:\s*var\(--touch-min\)/);
   assert.match(keyButtons, /min-height\s*:\s*var\(--touch-min\)/);
   assert.match(keyButtons, /touch-action\s*:\s*manipulation/);
+  assert.match(keySurface, /pointer-events\s*:\s*auto/);
+  assert.match(keyButtons, /pointer-events\s*:\s*auto/);
 });
 
 test('media surfaces suppress browser touch gestures', () => {

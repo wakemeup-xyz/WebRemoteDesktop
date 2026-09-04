@@ -76,6 +76,13 @@ function keyboard(type, overrides = {}) {
   };
 }
 
+function hiddenPointer(clientX, clientY) {
+  const event = { currentTarget: null, pointerType: 'touch', pointerId: 1, preventDefault() {} };
+  Object.defineProperty(event, 'clientX', { value: clientX, enumerable: false });
+  Object.defineProperty(event, 'clientY', { value: clientY, enumerable: false });
+  return event;
+}
+
 function activate(Input, context) {
   Input.videoElement = context.document.getElementById('remoteVideo');
   Input.initKeyboardController();
@@ -131,6 +138,30 @@ test('touch click, touch wheel, and mobile text retain the active v2 lease envel
     assert.equal(payload.leaseEpoch, 3);
     assert.equal(Number.isSafeInteger(payload.seq), true);
   }
+});
+
+test('touch mapPoint keeps PointerEvent prototype geometry', () => {
+  const { Input, context, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = context.document.getElementById('remoteVideo');
+  video.videoWidth = 200;
+  video.videoHeight = 100;
+  Input.refreshGeometry = () => ({ left: 0, top: 0, width: 200, height: 100 });
+  const adapter = Input.bindTouchAdapter(video);
+  const down = Object.assign(hiddenPointer(40, 25), {
+    currentTarget: video, isPrimary: true, buttons: 1, timeStamp: 10,
+  });
+  const up = Object.assign(hiddenPointer(40, 25), {
+    currentTarget: video, isPrimary: true, buttons: 0, timeStamp: 20,
+  });
+  video.listeners.get('pointerdown')(down);
+  video.listeners.get('pointerup')(up);
+  const inputs = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.equal(adapter.getSnapshot().state, 'IDLE');
+  assert.deepEqual(inputs.map(({ action }) => action), ['down', 'up']);
+  assert.equal(Number.isFinite(inputs[0].payload.relX), true);
+  assert.equal(Number.isFinite(inputs[0].payload.relY), true);
 });
 
 test('v2 mouse and command writes have a monotonic sequence that resets with a new lease', () => {

@@ -431,7 +431,16 @@ const Input = {
     adapter = TouchInputAdapter.create({
       element,
       mapPoint: (event, allowOutside) => {
-        const point = this.getRelativeCoords({ ...event, currentTarget: element }, allowOutside);
+        const point = this.getRelativeCoords({
+          currentTarget: element,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pointerId: event.pointerId,
+          timeStamp: event.timeStamp,
+          button: event.button,
+          buttons: event.buttons,
+          pointerType: event.pointerType,
+        }, allowOutside);
         if (point) this._lastTouchAdapter = adapter;
         return point;
       },
