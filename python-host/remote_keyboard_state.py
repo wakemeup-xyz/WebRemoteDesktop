@@ -224,7 +224,7 @@ class RemoteKeyboardState:
         self._last_applied_seq = 0
         return self._result("applied")
 
-    def apply(self, envelope: Any) -> ApplyResult:
+    def apply(self, envelope: Any, *, authoritative_modifiers: bool = True) -> ApplyResult:
         parsed = validate_remote_input(envelope)
         if not parsed.ok:
             return self._result("invalid-input")
@@ -240,11 +240,17 @@ class RemoteKeyboardState:
             if value["action"] == "reset":
                 self._release_all(value["payload"]["reason"])
             elif value["action"] == "key":
-                self._apply_key(value["payload"])
+                self._apply_key(
+                    value["payload"],
+                    authoritative_modifiers=authoritative_modifiers,
+                )
             elif value["action"] == "text":
                 self._adapter.post_text(value["payload"]["text"])
             else:
-                self._apply_batch(value["payload"]["steps"])
+                self._apply_batch(
+                    value["payload"]["steps"],
+                    authoritative_modifiers=authoritative_modifiers,
+                )
         except UnsupportedPhysicalCode:
             return self._result("unsupported-code")
         except Exception:
@@ -304,12 +310,13 @@ class RemoteKeyboardState:
             code_mask = _MODIFIER_MASK_BY_CODE.get(code, 0)
             if not code_mask or not (code_mask & lost_mask):
                 continue
-            # Remove the code before deriving flags for its keyup so the event
-            # reflects the remaining physical modifier state.
+            # Keep the code tracked until the adapter confirms the keyup.  If
+            # posting fails, the outer recovery (or a later input) can retry
+            # without claiming that the OS modifier has already been released.
+            self._adapter.post_key(code, False, self._modifier_mask(excluding=code))
             self._pressed_codes.remove(code)
-            self._adapter.post_key(code, False, self._modifier_mask())
 
-    def _apply_key(self, payload: dict) -> None:
+    def _apply_key(self, payload: dict, *, authoritative_modifiers: bool = True) -> None:
         code = payload["code"]
         phase = payload["phase"]
         if phase == "down":
@@ -318,7 +325,7 @@ class RemoteKeyboardState:
             if not payload["repeat"] and code in self._pressed_codes:
                 return
             modifier_mask = self._modifier_mask()
-            if code not in _MODIFIER_MASK_BY_CODE:
+            if authoritative_modifiers and code not in _MODIFIER_MASK_BY_CODE:
                 desired_mask = self._payload_modifier_mask(payload["modifiers"])
                 self._release_lost_modifiers(desired_mask)
                 modifier_mask = self._modifier_mask()
@@ -333,21 +340,21 @@ class RemoteKeyboardState:
         if desired_caps_lock is not None and hasattr(self._adapter, "set_caps_lock"):
             self._adapter.set_caps_lock(desired_caps_lock)
 
-    def _apply_batch(self, steps: list[dict]) -> None:
+    def _apply_batch(self, steps: list[dict], *, authoritative_modifiers: bool = True) -> None:
         try:
             for step in steps:
-                self._apply_key(step)
+                self._apply_key(step, authoritative_modifiers=authoritative_modifiers)
         except Exception:
             self._release_all("batch-failed")
             raise
 
     def _release_all(self, _reason: str) -> None:
         for code in sorted(self._pressed_codes):
-            self._pressed_codes.remove(code)
             try:
-                self._adapter.post_key(code, False, self._modifier_mask())
+                self._adapter.post_key(code, False, self._modifier_mask(excluding=code))
             except Exception:
-                pass
+                continue
+            self._pressed_codes.remove(code)
 
 
 class LegacyInputAdapter:
@@ -381,8 +388,17 @@ class LegacyInputAdapter:
             if result.status != "applied":
                 return result
         self._transport = transport
+        source = legacy if isinstance(legacy, dict) else {}
+        source_payload = source.get("payload")
+        authoritative_modifiers = (
+            isinstance(source_payload, dict)
+            and isinstance(source_payload.get("modifiers"), dict)
+        )
         action, payload = self._normalise(legacy)
-        result = self._state.apply(self._envelope(action, payload))
+        result = self._state.apply(
+            self._envelope(action, payload),
+            authoritative_modifiers=authoritative_modifiers,
+        )
         self._next_seq += 1
         return result
 

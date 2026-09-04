@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from remote_keyboard_state import (
+    CONTROL_MASK,
     SHIFT_MASK,
     LegacyInputAdapter,
     RemoteKeyboardState,
@@ -46,6 +47,20 @@ class FailingKeyboardAdapter(RecordingKeyboardAdapter):
     def post_key(self, code, is_down, modifier_mask):
         if code == self.fail_code and is_down:
             raise self.error(code)
+        super().post_key(code, is_down, modifier_mask)
+
+
+class OneShotKeyupFailingAdapter(RecordingKeyboardAdapter):
+    def __init__(self, fail_code):
+        super().__init__()
+        self.fail_code = fail_code
+        self.keyup_attempts = 0
+
+    def post_key(self, code, is_down, modifier_mask):
+        if code == self.fail_code and not is_down:
+            self.keyup_attempts += 1
+            if self.keyup_attempts == 1:
+                raise RuntimeError(code)
         super().post_key(code, is_down, modifier_mask)
 
 
@@ -201,6 +216,43 @@ def test_v2_ime_navigation_releases_phantom_modifier_before_arrow():
     assert state.apply(arrow).status == "applied"
     assert adapter.events[-2] == ("ControlLeft", False, 0)
     assert adapter.events[-1] == ("ArrowLeft", True, 0)
+
+
+def test_failed_modifier_release_retries_before_reporting_state_clear():
+    adapter = OneShotKeyupFailingAdapter("ControlLeft")
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="ControlLeft")).status == "applied"
+
+    letter = key_envelope(seq=2, phase="down", code="KeyA")
+    result = state.apply(letter)
+
+    assert result.status == "execution-failed"
+    assert adapter.keyup_attempts == 2
+    assert adapter.events[-1] == ("ControlLeft", False, 0)
+    assert result.pressed_key_count == 0
+    assert state.apply(letter).status == "applied"
+    assert adapter.events[-1] == ("KeyA", True, 0)
+
+
+def test_legacy_keydown_without_modifiers_preserves_control_chord():
+    adapter = RecordingKeyboardAdapter()
+    state = RemoteKeyboardState(adapter)
+    legacy = LegacyInputAdapter(state)
+    legacy.bind(connection_generation=1, lease_id=LEASE_ID, lease_epoch=1)
+
+    assert legacy.apply(
+        {"type": "keyboard", "action": "keydown", "payload": {"code": "ControlLeft"}},
+        transport="socket",
+    ).status == "applied"
+    assert legacy.apply(
+        {"type": "keyboard", "action": "keydown", "payload": {"code": "KeyA"}},
+        transport="socket",
+    ).status == "applied"
+
+    assert adapter.events == [
+        ("ControlLeft", True, 0),
+        ("KeyA", True, CONTROL_MASK),
+    ]
 
 
 def test_duplicate_gap_stale_stolen_token_and_future_epoch_do_not_execute():
