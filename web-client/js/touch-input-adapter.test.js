@@ -4,16 +4,24 @@ const { TouchInputAdapter } = require('./touch-input-adapter.js');
 
 function makeTouchHarness() {
   const listeners = new Map(); const mouse = []; let now = 0; let timer = null; let frame = null; let lastTap = -Infinity; let enabled = true;
+  const pointerGeometry = {
+    get clientX() { return this.__clientX; },
+    get clientY() { return this.__clientY; },
+  };
   const element = {
     addEventListener(type, fn) { listeners.set(type, fn); },
     removeEventListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
     dispatch(type, event = {}) {
-      const dispatched = { ...event, type, currentTarget: element };
-      for (const key of ['clientX', 'clientY']) {
-        if (Object.prototype.hasOwnProperty.call(event, key)) {
-          Object.defineProperty(dispatched, key, { value: event[key], enumerable: false });
-        }
+      const dispatched = Object.create(pointerGeometry);
+      for (const [key, value] of Object.entries(event)) {
+        if (key !== 'clientX' && key !== 'clientY') dispatched[key] = value;
       }
+      Object.defineProperties(dispatched, {
+        __clientX: { value: event.clientX, enumerable: false },
+        __clientY: { value: event.clientY, enumerable: false },
+      });
+      dispatched.type = type;
+      dispatched.currentTarget = element;
       listeners.get(type)?.(dispatched);
     },
     setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return false; },

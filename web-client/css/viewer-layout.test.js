@@ -26,6 +26,58 @@ function getBlock(selector) {
   return match[1];
 }
 
+function parseDeclarations(block) {
+  return Object.fromEntries(block.split(';').map((declaration) => {
+    const separator = declaration.indexOf(':');
+    if (separator < 0) return null;
+    return [declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()];
+  }).filter(Boolean));
+}
+
+function makeViewerHitTestDocument() {
+  const chromeDocks = { parent: null, depth: 0, rect: { left: 0, top: 580, width: 390, height: 100 } };
+  const mobileKeySurface = {
+    id: 'mobileKeySurface', parent: chromeDocks, depth: 1,
+    rect: { left: 8, top: 600, width: 374, height: 64 },
+  };
+  const mobileKeyButton = {
+    className: 'mobile-key-btn', parent: mobileKeySurface, depth: 2,
+    rect: { left: 14, top: 606, width: 48, height: 44 },
+  };
+  const remoteVideo = {
+    id: 'remoteVideo', parent: null, depth: 0,
+    rect: { left: 0, top: 56, width: 390, height: 644 },
+  };
+  const remoteVideoStyles = parseDeclarations(getBlock('#remoteVideo,\n#relayImage'));
+  const styles = new Map([
+    [chromeDocks, parseDeclarations(getBlock('.chrome-docks'))],
+    [mobileKeySurface, parseDeclarations(getBlock('#mobileKeySurface'))],
+    [mobileKeyButton, parseDeclarations(getBlock('#mobileKeySurface .mobile-key-btn'))],
+    [remoteVideo, remoteVideoStyles],
+  ]);
+  const pointerEvents = (element) => styles.get(element)['pointer-events']
+    || (element.parent ? pointerEvents(element.parent) : 'auto');
+  const stackingOrder = (element) => {
+    const declared = Number.parseInt(styles.get(element)['z-index'], 10);
+    if (Number.isFinite(declared)) return declared;
+    return element.parent ? stackingOrder(element.parent) : 0;
+  };
+  const containsPoint = (element, x, y) => x >= element.rect.left
+    && x <= element.rect.left + element.rect.width
+    && y >= element.rect.top
+    && y <= element.rect.top + element.rect.height;
+  const elements = [remoteVideo, chromeDocks, mobileKeySurface, mobileKeyButton];
+  return {
+    document: {
+      elementFromPoint(x, y) {
+        return elements.filter((element) => containsPoint(element, x, y) && pointerEvents(element) !== 'none')
+          .sort((left, right) => stackingOrder(right) - stackingOrder(left) || right.depth - left.depth)[0] || null;
+      },
+    },
+    chromeDocks,
+  };
+}
+
 test('terminal status sits in a named row above the workspace', () => {
   assert.match(css, /grid-template-areas/);
   assert.match(css, /terminal-workspace/);
@@ -159,6 +211,13 @@ test('mobile virtual key surface exposes accessible navigation, modifiers, short
   assert.match(keyButtons, /touch-action\s*:\s*manipulation/);
   assert.match(keySurface, /pointer-events\s*:\s*auto/);
   assert.match(keyButtons, /pointer-events\s*:\s*auto/);
+});
+
+test('mobile virtual key hit testing reaches the surface and button through pointer-disabled docks', () => {
+  const browser = makeViewerHitTestDocument();
+  assert.equal(parseDeclarations(getBlock('.chrome-docks'))['pointer-events'], 'none');
+  assert.equal(browser.document.elementFromPoint(320, 632)?.id, 'mobileKeySurface');
+  assert.equal(browser.document.elementFromPoint(32, 628)?.className, 'mobile-key-btn');
 });
 
 test('media surfaces suppress browser touch gestures', () => {
