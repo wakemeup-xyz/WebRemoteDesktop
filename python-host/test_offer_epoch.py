@@ -1052,6 +1052,116 @@ async def test_offer_rejects_binding_when_desktop_transition_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rejected_desktop_offer_cleans_up_keyboard_binding(monkeypatch):
+    transitions = []
+    resets = []
+
+    class FakeInputHandler:
+        def __init__(self):
+            self.keyboard_bound = False
+
+        async def transition_keyboard(self, **kwargs):
+            transitions.append(("keyboard", kwargs))
+            self.keyboard_bound = True
+            return {"status": "applied"}
+
+        def transition_desktop_writes(self, **kwargs):
+            transitions.append(("desktop", kwargs))
+            return SimpleNamespace(status="execution-failed")
+
+        async def reset_keyboard(self, **kwargs):
+            resets.append(kwargs)
+            self.keyboard_bound = False
+            return {"status": "applied"}
+
+        def release_all_mouse_buttons(self, **_kwargs):
+            return None
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = None
+    host._offer_epoch = 0
+    host.pc = None
+    host._offer_lock = asyncio.Lock()
+    host._active_input_binding = None
+    host._connection_generation = 0
+    host.input_handler = FakeInputHandler()
+
+    async def fake_close(**_kwargs):
+        return None
+
+    host._close_peer_connection = fake_close
+    monkeypatch.setattr(
+        host_module,
+        "RTCPeerConnection",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("must reject before pc setup")),
+    )
+
+    await host.on_offer({
+        "viewerId": "viewer-1",
+        "epoch": 1,
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionAttemptId": "attempt-1",
+        "offer": {"type": "offer", "sdp": "v=0"},
+    })
+
+    assert host.input_handler.keyboard_bound is False
+    assert host._active_input_binding is None
+    assert resets == [{"reason": "desktop-binding-rejected", "lease_epoch": 2}]
+
+
+@pytest.mark.asyncio
+async def test_successful_offer_transitions_desktop_writes_before_assigning_binding(monkeypatch):
+    transitions = []
+
+    class FakeInputHandler:
+        async def transition_keyboard(self, **kwargs):
+            transitions.append(("keyboard", kwargs))
+            return {"status": "applied"}
+
+        def transition_desktop_writes(self, **kwargs):
+            transitions.append(("desktop", kwargs))
+            return SimpleNamespace(status="applied")
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = None
+    host._offer_epoch = 0
+    host.pc = None
+    host._offer_lock = asyncio.Lock()
+    host._active_input_binding = None
+    host._connection_generation = 0
+    host.input_handler = FakeInputHandler()
+
+    async def fake_close(**_kwargs):
+        return None
+
+    host._close_peer_connection = fake_close
+    monkeypatch.setattr(
+        host_module,
+        "RTCPeerConnection",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("stop after binding")),
+    )
+
+    await host.on_offer({
+        "viewerId": "viewer-1",
+        "epoch": 1,
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionAttemptId": "attempt-1",
+        "offer": {"type": "offer", "sdp": "v=0"},
+    })
+
+    assert [name for name, _kwargs in transitions] == ["keyboard", "desktop"]
+    assert host._active_input_binding == {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionGeneration": 1,
+        "connectionAttemptId": "attempt-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_media_activity_rejects_old_connection_attempt_and_accepts_new_attempt_low_generation():
     host = object.__new__(WebRemoteHost)
     host._active_input_binding = {

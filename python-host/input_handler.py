@@ -152,6 +152,19 @@ class InputHandler:
     def transition_desktop_writes(self, *, lease_id, lease_epoch):
         return self._desktop_writes.transition(lease_id=lease_id, lease_epoch=lease_epoch)
 
+    async def transition_desktop_writes_async(self, *, lease_id, lease_epoch):
+        """Transition desktop-write authority after in-flight input drains."""
+        async with self._input_lock:
+            return self._desktop_writes.transition(
+                lease_id=lease_id,
+                lease_epoch=lease_epoch,
+            )
+
+    async def reset_desktop_writes(self, reason="manual"):
+        """Release mouse state after in-flight native input has completed."""
+        async with self._input_lock:
+            self.release_all_mouse_buttons(reason=reason)
+
     async def reset_keyboard(self, reason="manual", lease_epoch=None):
         """Release keyboard state in the same queue as key execution."""
         async with self._keyboard_lock:

@@ -161,6 +161,118 @@ async def test_mouse_without_monitor_does_not_ack_applied():
 
 
 @pytest.mark.asyncio
+async def test_failed_command_execute_does_not_commit_seq():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+
+    handler._handle_command = lambda _action, _payload: False
+
+    result = await handler.handle_input(desktop_envelope(
+        action="showDock",
+        seq=1,
+        input_id="command-failed",
+    ))
+
+    assert result["status"] == "execution-failed"
+    assert handler._desktop_writes.snapshot().last_applied_seq == 0
+
+
+@pytest.mark.asyncio
+async def test_successful_reliable_mouse_actions_commit_in_order():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+    actions = []
+    handler._handle_mouse = lambda action, _payload: actions.append(action) or True
+
+    payloads = {
+        "down": {"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+        "up": {"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 0},
+        "wheel": {"relX": 0.2, "relY": 0.3, "deltaX": 0, "deltaY": 120},
+        "reset": {"reason": "test"},
+    }
+    results = []
+    for seq, action in enumerate(("down", "up", "wheel", "reset"), start=1):
+        results.append(await handler.handle_input(desktop_envelope(
+            action=action,
+            seq=seq,
+            input_id=f"mouse-{action}",
+            payload=payloads[action],
+        )))
+
+    assert [result["status"] for result in results] == ["applied"] * 4
+    assert actions == ["down", "up", "wheel", "reset"]
+    assert handler._desktop_writes.snapshot().last_applied_seq == 4
+
+
+@pytest.mark.asyncio
+async def test_desktop_reset_and_transition_wait_for_inflight_write_before_reusing_lease():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+
+    started = threading.Event()
+    allow = threading.Event()
+    events = []
+
+    def blocked_mouse(_action, _payload):
+        events.append("execute-start")
+        started.set()
+        while not allow.wait(0.001):
+            pass
+        events.append("execute-done")
+
+    handler._handle_mouse = blocked_mouse
+    handler.release_all_mouse_buttons = lambda **_kwargs: events.append("release")
+
+    old_write = asyncio.create_task(handler.handle_input(desktop_envelope(
+        action="down",
+        seq=1,
+        input_id="old-down",
+        payload={
+            "relX": 0.2,
+            "relY": 0.3,
+            "button": "left",
+            "clickCount": 1,
+            "buttons": 1,
+        },
+    )))
+    assert await asyncio.to_thread(started.wait, 1)
+
+    reset = asyncio.create_task(handler.reset_desktop_writes(reason="control-transition"))
+    transition = asyncio.create_task(handler.transition_desktop_writes_async(
+        lease_id=LEASE_ID,
+        lease_epoch=1,
+    ))
+    await asyncio.sleep(0)
+    assert not reset.done()
+    assert not transition.done()
+
+    allow.set()
+    await old_write
+    await reset
+    assert (await transition).status == "applied"
+    assert events == ["execute-start", "execute-done", "release"]
+    assert handler._desktop_writes.snapshot().last_applied_seq == 0
+
+    handler._handle_mouse = lambda _action, _payload: True
+    next_write = await handler.handle_input(desktop_envelope(
+        action="down",
+        seq=1,
+        input_id="new-down",
+        payload={
+            "relX": 0.2,
+            "relY": 0.3,
+            "button": "left",
+            "clickCount": 1,
+            "buttons": 1,
+        },
+    ))
+    assert next_write["status"] == "applied"
+
+
+@pytest.mark.asyncio
 async def test_disconnect_reset_is_serialized_after_inflight_keydown():
     async def run_case():
         adapter = BlockingAdapter()
