@@ -164,6 +164,37 @@ test('touch mapPoint keeps PointerEvent prototype geometry', () => {
   assert.equal(Number.isFinite(inputs[0].payload.relY), true);
 });
 
+test('failed touch reset is rearmed by a new lease and allows a real touch click', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  const touch = (type, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown');
+  touch('pointermove', { clientX: 60 });
+  assert.equal(Input._lastTouchAdapter.getSnapshot().state, 'DRAGGING');
+  context.WebRTC.socket.connected = false;
+  touch('pointercancel');
+  assert.equal(Input._pendingMouseReset, true);
+  assert.equal(Input._pendingMouseResetId, null);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().pendingReset, true);
+
+  Input.setControlLease({ leaseId: 'lease-000000000099', leaseEpoch: 9 });
+  context.WebRTC.socket.connected = true;
+  touch('pointerdown', { pointerId: 2, clientX: 40, clientY: 40 });
+  touch('pointerup', { pointerId: 2, clientX: 40, clientY: 40 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'move', 'down', 'up']);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().pendingReset, false);
+});
+
 test('v2 mouse and command writes have a monotonic sequence that resets with a new lease', () => {
   const { Input, context, socketEvents } = loadInput();
   activate(Input, context);
@@ -204,6 +235,40 @@ test('failed reliable mouse write does not consume desktop seq', () => {
   assert.equal(Input._desktopWriteSequence, 1);
 });
 
+test('failed desktop execution ACK reconciles the next mouse and command sequence', () => {
+  for (const [failedType, nextType] of [['mouse', 'command'], ['command', 'mouse']]) {
+    const { Input, context, socketEvents } = loadInput();
+    activate(Input, context);
+    const failedId = failedType === 'mouse'
+      ? Input.sendInput('mouse', 'down', {
+        relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+      })
+      : Input.sendInput('command', 'showDock', {});
+    assert.ok(failedId);
+    const failed = socketEvents.at(-1).payload;
+    assert.equal(failed.seq, 1);
+
+    const ack = Input.acceptMouseAck({
+      inputType: failedType,
+      schemaVersion: 2,
+      leaseEpoch: 3,
+      status: 'execution-failed',
+      appliedSeq: 0,
+      inputIds: [failedId],
+    });
+    assert.equal(ack.status, 'execution-failed');
+    assert.equal(ack.recovery, 'reconciled');
+
+    const nextId = nextType === 'mouse'
+      ? Input.sendInput('mouse', 'up', {
+        relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 0,
+      })
+      : Input.sendInput('command', 'showDock', {});
+    assert.ok(nextId);
+    assert.equal(socketEvents.at(-1).payload.seq, 1);
+  }
+});
+
 test('keyboard acknowledgement does not clear pending mouse reset', () => {
   const { Input } = loadInput();
   Input._pendingMouseReset = true;
@@ -212,6 +277,18 @@ test('keyboard acknowledgement does not clear pending mouse reset', () => {
     inputType: 'keyboard', status: 'applied', inputIds: ['inp_reset'],
   }).status, 'stale');
   assert.equal(Input._pendingMouseReset, true);
+});
+
+test('explicit falsy inputType cannot clear a mouse reset barrier', () => {
+  for (const inputType of ['', false, 0]) {
+    const { Input } = loadInput();
+    Input._pendingMouseReset = true;
+    Input._pendingMouseResetId = 'reset-falsy-type';
+    assert.equal(Input.acceptMouseAck({
+      inputType, status: 'applied', inputIds: ['reset-falsy-type'],
+    }).status, 'stale');
+    assert.equal(Input._pendingMouseReset, true);
+  }
 });
 
 test('new active lease clears a failed mouse reset barrier', () => {
