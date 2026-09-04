@@ -41,6 +41,15 @@ _MODIFIER_MASK_BY_CODE = {
     "MetaLeft": META_MASK,
     "MetaRight": META_MASK,
 }
+_MODIFIER_MASK_BY_PAYLOAD = {
+    "ctrlKey": CONTROL_MASK,
+    "shiftKey": SHIFT_MASK,
+    "altKey": ALT_MASK,
+    "metaKey": META_MASK,
+}
+_IME_NAV_CODES = frozenset({
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Escape",
+})
 
 
 class UnsupportedPhysicalCode(Exception):
@@ -277,6 +286,29 @@ class RemoteKeyboardState:
             mask |= _MODIFIER_MASK_BY_CODE.get(code, 0)
         return mask
 
+    @staticmethod
+    def _payload_modifier_mask(modifiers: dict) -> int:
+        return sum(
+            mask for field, mask in _MODIFIER_MASK_BY_PAYLOAD.items()
+            if modifiers.get(field) is True
+        )
+
+    def _release_lost_modifiers(self, desired_mask: int) -> None:
+        """Release physical modifier codes absent from browser state."""
+        current_mask = self._modifier_mask()
+        lost_mask = current_mask & ~desired_mask
+        if not lost_mask:
+            return
+
+        for code in sorted(self._pressed_codes):
+            code_mask = _MODIFIER_MASK_BY_CODE.get(code, 0)
+            if not code_mask or not (code_mask & lost_mask):
+                continue
+            # Remove the code before deriving flags for its keyup so the event
+            # reflects the remaining physical modifier state.
+            self._pressed_codes.remove(code)
+            self._adapter.post_key(code, False, self._modifier_mask())
+
     def _apply_key(self, payload: dict) -> None:
         code = payload["code"]
         phase = payload["phase"]
@@ -285,7 +317,14 @@ class RemoteKeyboardState:
                 return
             if not payload["repeat"] and code in self._pressed_codes:
                 return
-            self._adapter.post_key(code, True, self._modifier_mask())
+            modifier_mask = self._modifier_mask()
+            if code not in _MODIFIER_MASK_BY_CODE:
+                desired_mask = self._payload_modifier_mask(payload["modifiers"])
+                self._release_lost_modifiers(desired_mask)
+                modifier_mask = self._modifier_mask()
+                if code in _IME_NAV_CODES:
+                    modifier_mask &= desired_mask
+            self._adapter.post_key(code, True, modifier_mask)
             self._pressed_codes.add(code)
         elif code in self._pressed_codes:
             self._adapter.post_key(code, False, self._modifier_mask(excluding=code))

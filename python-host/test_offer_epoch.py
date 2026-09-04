@@ -417,6 +417,53 @@ async def test_input_move_close_does_not_reset_bound_keyboard_but_input_close_do
 
 
 @pytest.mark.asyncio
+async def test_input_close_uses_live_binding_after_grant_without_pc_rebuild():
+    old_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 1,
+        "connectionGeneration": 4,
+    }
+    live_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000002",
+        "leaseEpoch": 2,
+        "connectionGeneration": 5,
+    }
+
+    class FakeChannel:
+        label = "input"
+
+    class FakeInputHandler:
+        def __init__(self):
+            self.reset_calls = []
+            self.release_calls = []
+
+        async def reset_keyboard(self, **kwargs):
+            self.reset_calls.append(kwargs)
+            return {"status": "applied"}
+
+        def release_all_mouse_buttons(self, **kwargs):
+            self.release_calls.append(kwargs)
+
+    host = object.__new__(WebRemoteHost)
+    host._active_input_binding = live_binding
+    host._input_lifecycle_tasks = set()
+    host.input_handler = FakeInputHandler()
+    channel = FakeChannel()
+    host._input_datachannel = channel
+
+    host._handle_datachannel_close(channel, old_binding)
+    await asyncio.gather(*host._input_lifecycle_tasks)
+
+    assert host.input_handler.reset_calls == [{
+        "reason": "datachannel-closed",
+        "lease_epoch": 2,
+    }]
+    assert host.input_handler.release_calls == [{"reason": "datachannel-closed"}]
+
+
+@pytest.mark.asyncio
 async def test_stale_control_transition_preserves_active_keyboard_binding_without_ack():
     binding = {
         "viewerId": "viewer-1",

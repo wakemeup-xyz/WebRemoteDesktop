@@ -1891,7 +1891,7 @@ class WebRemoteHost:
             return await result
         return result
 
-    def _handle_datachannel_close(self, channel, binding):
+    def _handle_datachannel_close(self, channel, _captured_binding=None):
         """Only the active reliable input channel can end a keyboard lease."""
         if getattr(channel, "label", None) == "input-move":
             if channel is getattr(self, "_input_move_datachannel", None):
@@ -1902,13 +1902,22 @@ class WebRemoteHost:
         if channel is not getattr(self, "_input_datachannel", None):
             return
         self._input_datachannel = None
-        if self._binding_matches(binding, getattr(self, "_active_input_binding", None)):
-            self._schedule_input_lifecycle(
-                self._reset_keyboard_lifecycle(
-                    "datachannel-closed",
-                    lease_epoch=binding["leaseEpoch"],
-                )
+        # The channel callback captures the binding that existed at open time,
+        # but a control grant can update the live lease without rebuilding the
+        # peer connection.  Always reset using the current active binding while
+        # this channel is still the live input channel; never gate cleanup on
+        # the stale callback snapshot.
+        active_binding = getattr(self, "_active_input_binding", None)
+        active_epoch = (
+            active_binding.get("leaseEpoch")
+            if isinstance(active_binding, dict) else None
+        )
+        self._schedule_input_lifecycle(
+            self._reset_keyboard_lifecycle(
+                "datachannel-closed",
+                lease_epoch=active_epoch,
             )
+        )
 
     async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
         handler = getattr(self, "input_handler", None)
@@ -2256,7 +2265,7 @@ class WebRemoteHost:
                         ice_state = self.pc.iceConnectionState if self.pc else 'no-pc'
                         logger.warning("DataChannel CLOSED: label=%s pc=%s ice=%s",
                                        channel.label, pc_state, ice_state)
-                        self._handle_datachannel_close(channel, binding)
+                        self._handle_datachannel_close(channel)
 
                     @channel.on("message")
                     def on_message(message):

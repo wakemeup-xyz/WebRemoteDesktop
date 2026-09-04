@@ -162,7 +162,9 @@ def test_modifier_event_masks_follow_action_before_semantics():
     adapter = RecordingKeyboardAdapter()
     state = active_state(adapter)
     state.apply(key_envelope(seq=1, phase="down", code="ShiftLeft"))
-    state.apply(key_envelope(seq=2, phase="down", code="KeyA"))
+    letter = key_envelope(seq=2, phase="down", code="KeyA")
+    letter["payload"]["modifiers"]["shiftKey"] = True
+    state.apply(letter)
     state.apply(key_envelope(seq=3, phase="up", code="ShiftLeft"))
 
     assert [(code, is_down, mask) for code, is_down, mask in adapter.events] == [
@@ -170,6 +172,35 @@ def test_modifier_event_masks_follow_action_before_semantics():
         ("KeyA", True, SHIFT_MASK),
         ("ShiftLeft", False, 0),
     ]
+
+
+def test_v2_plain_key_releases_lost_control_before_letter():
+    adapter = RecordingKeyboardAdapter()
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="ControlLeft")).status == "applied"
+
+    letter = key_envelope(seq=2, phase="down", code="KeyA")
+    letter["payload"]["modifiers"] = {
+        "altKey": False,
+        "ctrlKey": False,
+        "metaKey": False,
+        "shiftKey": False,
+    }
+
+    assert state.apply(letter).status == "applied"
+    assert adapter.events[-2][:2] == ("ControlLeft", False)
+    assert adapter.events[-1][:2] == ("KeyA", True)
+
+
+def test_v2_ime_navigation_releases_phantom_modifier_before_arrow():
+    adapter = RecordingKeyboardAdapter()
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="ControlLeft")).status == "applied"
+
+    arrow = key_envelope(seq=2, phase="down", code="ArrowLeft")
+    assert state.apply(arrow).status == "applied"
+    assert adapter.events[-2] == ("ControlLeft", False, 0)
+    assert adapter.events[-1] == ("ArrowLeft", True, 0)
 
 
 def test_duplicate_gap_stale_stolen_token_and_future_epoch_do_not_execute():
@@ -224,12 +255,14 @@ def test_batch_applies_in_order_without_releasing_previously_pressed_key():
     adapter = RecordingKeyboardAdapter()
     state = active_state(adapter)
     state.apply(key_envelope(seq=1, phase="down", code="MetaLeft"))
+    key_down = key_payload("down", "KeyC")
+    key_down["modifiers"]["metaKey"] = True
     batch = envelope(
         "batch",
         seq=2,
         payload={
             "steps": [
-                key_payload("down", "KeyC"),
+                key_down,
                 key_payload("up", "KeyC"),
             ]
         },
