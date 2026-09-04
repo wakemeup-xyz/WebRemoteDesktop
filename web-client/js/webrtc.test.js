@@ -196,6 +196,26 @@ test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   assert.equal(cleared, true);
 });
 
+test('refresh attempt compares paint growth against a zero inbound baseline', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._lastInboundFramesDecoded = 400;
+  WebRTC.hasPaintedFrame = true;
+
+  WebRTC.beginConnectionAttempt('refresh');
+
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._paintDecodedBaseline, 0);
+  assert.equal(WebRTC._lastInboundFramesDecoded, 0);
+
+  WebRTC.notePaintStats({
+    videoWidth: 1280,
+    framesDecoded: 2,
+    framesReceived: 2,
+    fps: 20,
+  });
+  assert.equal(WebRTC.hasPaintedFrame, true);
+});
+
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
     WebRTC.stopPortSearch('test-reset');
@@ -4926,6 +4946,67 @@ test('refresh keeps _refreshing true until settled', async () => {
   assert.equal(WebRTC._refreshing, true);
   WebRTC.markRefreshSettled('test');
   assert.equal(WebRTC._refreshing, false);
+});
+
+test('stale pc-connected dc-wait timer cannot clear a newer refresh', async () => {
+  const timers = [];
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) {
+      const timer = { callback, ms, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) timer.cleared = true;
+    },
+  });
+  WebRTC.startStats = () => {};
+  WebRTC.startVideoFrameTracking = () => {};
+  WebRTC.syncMediaProfile = () => {};
+  WebRTC.clearFailureRecommendation = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.ensureMediaActiveIfVisible = () => {};
+  WebRTC.syncDesktopInputGate = () => {};
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.captureLastFrameHold = () => false;
+  WebRTC.replayMediaActivityIntent = () => {};
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = () => {};
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'stun';
+  WebRTC.pc = { close() {} };
+  WebRTC._refreshing = true;
+  WebRTC.inputChannel = { readyState: 'connecting' };
+
+  WebRTC.onPeerConnected();
+  const waitTimer = timers.find((timer) => timer.ms === 2000);
+  assert.ok(waitTimer);
+
+  await WebRTC.refresh({ reason: 'manual' });
+  assert.equal(WebRTC._refreshing, true);
+
+  // Simulate the stale callback firing despite timer cancellation.
+  waitTimer.callback();
+  assert.equal(WebRTC._refreshing, true);
+});
+
+test('non-forced refresh is ignored while _refreshing', async () => {
+  const { WebRTC } = loadWebRTC();
+  let closed = 0;
+  WebRTC._refreshing = true;
+  WebRTC._lastRefreshAt = 0;
+  WebRTC.pc = { close() { closed += 1; } };
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'stun';
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.captureLastFrameHold = () => false;
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = () => {};
+
+  await WebRTC.refresh({ reason: 'media-request-failed' });
+
+  assert.equal(closed, 0);
+  assert.equal(WebRTC._refreshing, true);
 });
 
 test('scheduleReconnect is a no-op while _refreshing', () => {

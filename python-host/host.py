@@ -1424,7 +1424,7 @@ class WebRemoteHost:
         self._offer_epoch = 0
         self._reconnecting = False
         self._last_diag_network = None
-        self._stall_decoder_refresh_armed = True
+        self._stall_decoder_refresh_armed = False
         self._stall_decoder_refresh_at = 0.0
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
         # User-owned presentation size (resolution-change / adaptive size). Quality Lock
@@ -2811,7 +2811,7 @@ class WebRemoteHost:
             return False
         if received <= 0:
             return False
-        if not getattr(self, "_stall_decoder_refresh_armed", True):
+        if not getattr(self, "_stall_decoder_refresh_armed", False):
             return False
         if last and (now - last) < 12.0:
             return False

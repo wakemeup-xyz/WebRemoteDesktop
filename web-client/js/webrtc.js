@@ -52,6 +52,7 @@ const WebRTC = {
   manualDisconnect: false,
   _superseded: false,
   _refreshing: false,
+  _refreshDcWaitTimer: null,
   _refreshReason: null,
   inputChannel: null,
   inputMoveChannel: null,
@@ -814,6 +815,7 @@ const WebRTC = {
   },
 
   beginConnectionAttempt(trigger = 'viewer-open') {
+    this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
@@ -826,7 +828,9 @@ const WebRTC = {
     this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
     this.hasPaintedFrame = false;
-    this._paintDecodedBaseline = Number(this._lastInboundFramesDecoded) || 0;
+    this._lastInboundFramesDecoded = 0;
+    this._lastInboundFramesDecodedAt = 0;
+    this._paintDecodedBaseline = 0;
     this._stallSince = null;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
@@ -3208,9 +3212,13 @@ const WebRTC = {
       if (this.inputChannel?.readyState === 'open') {
         this.markRefreshSettled('pc-connected');
       } else {
+        this.clearRefreshDcWaitTimer();
         const waitTimer = setTimeout(() => {
+          if (this._refreshDcWaitTimer !== waitTimer) return;
+          this._refreshDcWaitTimer = null;
           this.markRefreshSettled('pc-connected-dc-wait');
         }, 2000);
+        this._refreshDcWaitTimer = waitTimer;
         waitTimer.unref?.();
       }
     }
@@ -3276,6 +3284,7 @@ const WebRTC = {
   },
 
   createPeerConnection() {
+    this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
       return;
     }
@@ -4661,6 +4670,12 @@ if (this.tunnelLastObjectUrl) {
   },
 
   RECOVERY_REFRESH_COOLDOWN_MS: 3000,
+  clearRefreshDcWaitTimer() {
+    if (this._refreshDcWaitTimer != null) {
+      clearTimeout(this._refreshDcWaitTimer);
+      this._refreshDcWaitTimer = null;
+    }
+  },
   isForcedRefreshReason(reason) {
     return reason == null
       || reason === 'manual'
@@ -4668,6 +4683,10 @@ if (this.tunnelLastObjectUrl) {
       || reason === 'manual-turn-switch';
   },
   canBeginRefresh(reason) {
+    if (this._refreshing && !this.isForcedRefreshReason(reason)) {
+      console.warn('[RECOVERY] Suppressing refresh while another refresh is in progress reason=%s', reason);
+      return false;
+    }
     if (this.isForcedRefreshReason(reason)) return true;
     if (Date.now() - (this._lastRefreshAt || 0) < this.RECOVERY_REFRESH_COOLDOWN_MS) {
       console.warn('[RECOVERY] Suppressing refresh reason=%s', reason);
@@ -4677,6 +4696,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   markRefreshSettled(_reason) {
+    this.clearRefreshDcWaitTimer();
     if (this._refreshSettleTimer) {
       clearTimeout(this._refreshSettleTimer);
       this._refreshSettleTimer = null;
@@ -4695,6 +4715,14 @@ if (this.tunnelLastObjectUrl) {
     if (!this.canBeginRefresh(reason)) return;
     if (this._superseded) {
       return;
+    }
+    this.clearRefreshDcWaitTimer();
+    if (this.isForcedRefreshReason(reason)) {
+      if (this._refreshSettleTimer) {
+        clearTimeout(this._refreshSettleTimer);
+        this._refreshSettleTimer = null;
+      }
+      this._rebuildingDc = false;
     }
     this._refreshReason = reason || null;
     if (this._refreshReason === 'fresh-frame-timeout' && this.networkMode === 'relay') {
@@ -5054,6 +5082,7 @@ if (this.tunnelLastObjectUrl) {
     this.manualDisconnect = true;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.clearRefreshDcWaitTimer();
 
     try {
       if (this.socket?.io && typeof this.socket.io.reconnection === 'function') {
