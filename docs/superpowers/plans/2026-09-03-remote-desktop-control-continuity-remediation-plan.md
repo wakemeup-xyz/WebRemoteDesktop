@@ -540,7 +540,7 @@ test('non-forced refresh is ignored while _refreshing', () => {
 
 - [x] **Step 1: 把已合入设计的状态从「待实施」改为「已实施；真机 NOT RUN」**（见 spec 2.9 表）
 - [x] **Step 2: 需求文档 §5 正式入口改为 `https://link.stockhub.wiki`，trycloudflare 仅排障**
-- [x] **Step 3: 跑全量自动化并写入 acceptance 表；几何/真机/公网标 NOT RUN**
+- [x] **Step 3: 跑全量自动化并写入 acceptance 表；几何/真机/公网标 NOT RUN**（Viewer 572/572、Host 212/212；计划原始 Signal `npm test` 因隔离 worktree 缺少 `esbuild` 被环境阻断，改用现有依赖并 `--test-concurrency=1` 后 323/323，通过 workaround 记录而非声称原命令成功）
 
 ```bash
 node --test web-client/js/*.test.js web-client/css/*.test.js

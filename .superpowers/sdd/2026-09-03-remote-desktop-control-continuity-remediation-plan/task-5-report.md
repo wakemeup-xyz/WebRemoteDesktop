@@ -29,3 +29,11 @@ The automation matrix covers all 15 control-continuity regressions. Real Android
 ## Commit
 
 `docs: sync control-continuity status and record acceptance`
+
+## Review round 1/5
+
+- Fixed the formal-entry wording in README and the safe-startup runbook: users use `https://link.stockhub.wiki`; `/tmp/wrd-safe-current-url.txt` is diagnostic-only for temporary quick-tunnel troubleshooting.
+- Updated `docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md` to record the abandoned 80ms experiment, current relay pin `0ms`, and the active SLA of ≤2s chase / ≥2s UI stall / ≥3s failure. No code or jitter behavior changed.
+- Annotated the remediation plan Task 5 Step 3 with the exact Signal environment workaround: prescribed `npm test` was blocked by isolated-worktree `esbuild`; serialized reuse of the existing dependency tree passed 323/323.
+
+Review-round verification: `git diff --check` and the scoped staged-file check passed; physical/public acceptance remains **NOT RUN**. Commit message for this review round remains docs-only.

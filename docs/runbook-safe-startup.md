@@ -524,4 +524,4 @@ echo exit=$?
 
 - 若 Viewer 显示「Host 输入复位未确认，控制已安全锁定」：表示 reset barrier 仍在 `REVOKING/reset-blocked`。不要反复点请求控制；优先检查 Host 是否在线并完成 reset，或按既有流程重启本地 Host（不重建 tunnel）。
 - 暂停桌面媒体不会断开 Terminal；恢复后需等待首帧渲染再写入输入。
-- 公网入口仍以 `/tmp/wrd-safe-current-url.txt` 为准；本闭环不授权重建 tunnel。
+- 正式用户入口仍是 `https://link.stockhub.wiki`；`/tmp/wrd-safe-current-url.txt` 仅记录临时 quick tunnel 的排障地址，不是正式入口；本闭环不授权重建 tunnel。

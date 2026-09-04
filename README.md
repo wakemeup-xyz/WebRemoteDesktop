@@ -158,7 +158,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 健康检查：`http://127.0.0.1:8080/health`
 - Host 状态：`http://127.0.0.1:8080/api/status`
 - 若 `signal-server` 还没准备好，或 `HOST_SHARED_SECRET` 还不能通过 `/api/auth/login/host` 校验，LaunchAgent 只会让 wrapper 常驻等待，不会反复拉起 `host.py` 和浮窗
-- 若只重启本地 `signal-server` 或 Host，默认保持当前 tunnel 不动；当前有效公网地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
+- 若只重启本地 `signal-server` 或 Host，默认保持当前 tunnel 不动；正式用户入口始终是 `https://link.stockhub.wiki`，`/tmp/wrd-safe-current-url.txt` 仅记录临时 quick tunnel 的排障地址，不是一般正式入口
 
 ### 方式三：固定域名启动
 
