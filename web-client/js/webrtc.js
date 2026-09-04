@@ -1907,6 +1907,21 @@ const WebRTC = {
     };
   },
 
+  quiesceDisconnectedSocket() {
+    const socket = this.socket;
+    if (!socket || socket.connected) return false;
+    // Invalidate the old listener closures before disconnecting. Socket.IO may
+    // already have a reconnect callback queued; those callbacks must not
+    // create a PeerConnection while init() is waiting for fresh config.
+    this.socket = null;
+    try {
+      socket.disconnect?.();
+    } catch (error) {
+      console.warn('[NETWORK] Failed to quiesce disconnected signaling socket:', error);
+    }
+    return true;
+  },
+
   createSignalingSocket(forceRecreate = false) {
     if (this._superseded) {
       return null;
@@ -2677,7 +2692,16 @@ const WebRTC = {
   },
   
   setupSocketListeners() {
-    this.socket.on('connect', async () => {
+    const socket = this.socket;
+    if (!socket || typeof socket.on !== 'function') return;
+    const onCurrentSocket = (event, handler) => {
+      socket.on(event, (...args) => {
+        if (this.socket !== socket) return undefined;
+        return handler(...args);
+      });
+    };
+
+    onCurrentSocket('connect', async () => {
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'online',
@@ -2694,6 +2718,7 @@ const WebRTC = {
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
       }
+      if (this.socket !== socket) return;
       // Reset offerInProgress on reconnect to prevent stuck state
       if (this.offerInProgress) {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
@@ -2710,7 +2735,7 @@ const WebRTC = {
       this.replayMediaActivityIntent('socket-connect');
     });
 
-    this.socket.on('connected', (data) => {
+    onCurrentSocket('connected', (data) => {
       console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
@@ -2724,7 +2749,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('host-status', (data) => {
+    onCurrentSocket('host-status', (data) => {
       console.log('[OFFER-DBG] host-status event: online=%s offerInProgress=%s pc=%s',
         data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
@@ -2758,11 +2783,11 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('host-capabilities', (data) => {
+    onCurrentSocket('host-capabilities', (data) => {
       this.applyHostCapabilities(data);
     });
 
-    this.socket.on('answer', async (data) => {
+    onCurrentSocket('answer', async (data) => {
       console.log('Received answer');
       if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
         console.warn('[NETWORK] Ignoring stale answer: pc=%s, signalingState=%s',
@@ -2776,7 +2801,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('ice-candidate', async (data) => {
+    onCurrentSocket('ice-candidate', async (data) => {
       if (!this.pc || this.pc.signalingState === 'closed') {
         console.warn('[NETWORK] Ignoring ICE candidate: no active PC');
         return;
@@ -2790,7 +2815,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('input-ack', (data) => {
+    onCurrentSocket('input-ack', (data) => {
       if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
         Input.acceptMouseAck(data);
       }
@@ -2803,11 +2828,11 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('viewer-superseded', (data) => {
+    onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
     });
 
-    this.socket.on('disconnect', (reason) => {
+    onCurrentSocket('disconnect', (reason) => {
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'offline',
@@ -2834,21 +2859,21 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('relay-frame', (data) => {
+    onCurrentSocket('relay-frame', (data) => {
       this.handleRelayFrame(data);
     });
-    this.socket.on('control-state', (data) => this.handleControlState(data));
-    this.socket.on('control-grant', (data) => this.handleControlGrant(data));
-    this.socket.on('control-acquire-result', (data) => this.handleControlAcquireResult(data));
-    this.socket.on('control-revoked', () => this.freezeControl('control-revoked'));
-    this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
-    this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
-    this.socket.on('media-activity-ack', (data) => this.handleMediaActivityAck(data));
-    this.socket.on('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
-    this.socket.on('relay-stream-control-rejected', (data) => {
+    onCurrentSocket('control-state', (data) => this.handleControlState(data));
+    onCurrentSocket('control-grant', (data) => this.handleControlGrant(data));
+    onCurrentSocket('control-acquire-result', (data) => this.handleControlAcquireResult(data));
+    onCurrentSocket('control-revoked', () => this.freezeControl('control-revoked'));
+    onCurrentSocket('control-transition-failed', () => this.freezeControl('control-transition-failed'));
+    onCurrentSocket('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
+    onCurrentSocket('media-activity-ack', (data) => this.handleMediaActivityAck(data));
+    onCurrentSocket('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
+    onCurrentSocket('relay-stream-control-rejected', (data) => {
       this.handleMediaRequestFailure(data?.reason || 'relay-stream-control-rejected');
     });
-    this.socket.on('media-activity-rejected', (data) => {
+    onCurrentSocket('media-activity-rejected', (data) => {
       this.handleMediaRequestFailure(data?.reason || 'media-activity-rejected');
     });
   },
@@ -4150,6 +4175,7 @@ if (this.tunnelLastObjectUrl) {
     } else {
       // A dead socket cannot carry a refresh request. Re-enter the normal init
       // path so it recreates signaling and continues through the connect flow.
+      this.quiesceDisconnectedSocket();
       this.init({ trigger: 'manual-mode-switch' });
     }
     this.renderPortSearchStatus();

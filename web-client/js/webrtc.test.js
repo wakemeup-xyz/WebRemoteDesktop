@@ -2133,6 +2133,60 @@ test('disconnected mode switch reconnects when socket is down', () => {
   assert.equal(inits, 1);
 });
 
+test('dead-socket mode switch ignores an old socket reconnect during config load', async () => {
+  const oldHandlers = new Map();
+  const oldSocket = {
+    connected: false,
+    on(event, handler) { oldHandlers.set(event, handler); },
+    emit() {},
+    disconnect() { this.disconnectCalled = true; },
+  };
+  const replacementSocket = {
+    connected: false,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  let resolveConfig;
+  const created = [];
+  const { WebRTC } = loadWebRTC({ io: () => replacementSocket });
+
+  WebRTC.uiPhase = 'disconnected';
+  WebRTC.socket = oldSocket;
+  WebRTC.serverConfig = { turnConfigured: true, turnStatus: 'configured', iceServers: [] };
+  WebRTC.enforceSupportedNetworkMode = (mode) => {
+    WebRTC.networkMode = mode;
+    return { effectiveMode: mode, changed: false, unavailable: false, reason: '' };
+  };
+  WebRTC.loadServerConfig = () => new Promise((resolve) => { resolveConfig = resolve; });
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.createPeerConnection = function createPeerConnectionForTest() {
+    const pc = { connectionState: 'new', close() { this.closed = true; } };
+    created.push(pc);
+    this.pc = pc;
+    return pc;
+  };
+  WebRTC.setupSocketListeners();
+
+  WebRTC.setNetworkMode('relay');
+  assert.equal(typeof resolveConfig, 'function');
+
+  // Simulate a reconnect callback already queued on the old Socket while the
+  // new mode is still waiting for its server configuration.
+  oldSocket.connected = true;
+  await oldHandlers.get('connect')();
+  assert.equal(created.length, 0);
+
+  resolveConfig();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].closed, undefined);
+  assert.equal(oldSocket.disconnectCalled, true);
+  assert.equal(WebRTC.socket, replacementSocket);
+});
+
 test('init with unavailable relay still starts signaling lifecycle for same-page recovery', async () => {
   let socketConfig = null;
   const socket = {

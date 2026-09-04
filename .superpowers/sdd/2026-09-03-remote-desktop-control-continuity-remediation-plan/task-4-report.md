@@ -64,3 +64,41 @@ Verification is at the unit/layout level. Real browser WebRTC/DataChannel
 timing, macOS input behavior, physical-device acceptance, and tunnel/public-path
 health remain **NOT RUN**. Existing VM tests may still print their pre-existing
 `fetch is not defined` fixture warnings; the suites completed with zero failures.
+
+## Fix round 1/5: dead-socket recovery race
+
+### Root cause
+
+The disconnected mode-switch path called `init()` while leaving the old
+reconnect-enabled Socket in `WebRTC.socket`. `init()` awaited
+`loadServerConfig()`. If the old Socket emitted `connect` during that await,
+its handler created a PeerConnection; after configuration loaded, `init()`
+created another one without closing the first.
+
+### TDD red evidence
+
+Added `dead-socket mode switch ignores an old socket reconnect during config
+load` to `web-client/js/webrtc.test.js`. On the pre-fix implementation, the
+deterministic old-Socket reconnect fired while configuration was pending and
+the test failed because one PeerConnection had already been created before
+the replacement init path completed (`1 !== 0`).
+
+### Fix
+
+- `quiesceDisconnectedSocket()` invalidates the old Socket before its
+  asynchronous config wait, disconnects it, and leaves `WebRTC.socket` empty
+  until the normal `init()` path creates the replacement.
+- `setupSocketListeners()` binds handlers to their Socket identity and ignores
+  stale events. The async connect handler also rechecks identity after
+  diagnostic replay before it can create a PeerConnection.
+- Connected Socket mode switches still use the existing manual `refresh()`
+  path unchanged.
+
+### Fix-round verification
+
+- `node --test --test-name-pattern='dead-socket mode switch ignores an old socket reconnect during config load' web-client/js/webrtc.test.js` — **1 passed, 0 failed**.
+- `node --test web-client/js/webrtc.test.js web-client/js/chrome-layout.test.js web-client/css/viewer-layout.test.js` — **242 passed, 0 failed**.
+- Full viewer CSS/JS suite — **568 passed, 0 failed**.
+- Syntax and diff checks passed.
+
+The fix-round commit is reported in the parent task handoff.
