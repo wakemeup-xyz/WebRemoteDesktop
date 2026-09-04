@@ -2115,6 +2115,24 @@ test('disconnected recovery mode switch cancels search and refreshes exactly onc
   assert.equal(refreshes, 1);
 });
 
+test('disconnected mode switch reconnects when socket is down', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.uiPhase = 'disconnected';
+  WebRTC.socket = { connected: false };
+  WebRTC.enforceSupportedNetworkMode = (mode) => {
+    WebRTC.networkMode = mode;
+    return { effectiveMode: mode, changed: false, unavailable: false, reason: '' };
+  };
+  let inits = 0;
+  WebRTC.refresh = () => { throw new Error('must not refresh'); };
+  WebRTC.init = () => { inits += 1; };
+
+  WebRTC.setNetworkMode('relay');
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(inits, 1);
+});
+
 test('init with unavailable relay still starts signaling lifecycle for same-page recovery', async () => {
   let socketConfig = null;
   const socket = {
@@ -3412,6 +3430,18 @@ test('applyMediaActivity suspends input and suppresses health recovery', () => {
   assert.equal(WebRTC.scheduleReconnect('media-stalled') === undefined, true);
 });
 
+test('media suspend does not open a keyboard reset barrier', () => {
+  const { WebRTC, context } = loadWebRTC({ realInput: true });
+  const calls = [];
+  context.__Input.resetKeyboard = (reason) => { calls.push(['reset', reason]); };
+  context.__Input.setActive = () => {};
+  context.__Input.releasePointer = () => { calls.push(['release-pointer']); };
+  context.__Input.parkKeyboard = () => { calls.push(['park']); };
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['page-hidden'] });
+  assert.equal(calls.some(([kind]) => kind === 'reset'), false);
+  assert.equal(calls.some(([kind]) => kind === 'release-pointer'), true);
+});
+
 test('media resume enables input only after active ack and rendered frame', () => {
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -4000,6 +4030,9 @@ test('control loss keeps frame readiness so regrant can enable input without a n
   const { WebRTC, context } = loadWebRTC();
   WebRTC.currentConnectionAttemptId = 'attempt-current';
   WebRTC._mediaReadyConnectionAttemptId = 'attempt-current';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.uiPhase = 'connected';
+  WebRTC.socket = { connected: true };
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
@@ -5559,6 +5592,47 @@ test('media-stalled lasting 3s auto-sends media-stalled', () => {
   timers.get(3000)();
   assert.deepEqual(sent, ['media-stalled']);
   assert.equal(WebRTC.uiPhase, 'media-stalled');
+});
+
+test('connected without a painted frame remains pending in the session snapshot', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.desktopSessionState = context.createDesktopSessionState();
+  WebRTC.currentConnectionAttemptId = 'attempt-pending';
+  WebRTC.desktopSessionState.beginAttempt('attempt-pending', { socket: 'online' });
+  WebRTC.hasPaintedFrame = false;
+
+  WebRTC.setUiPhase('connected', { reason: 'pc-connected' });
+
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.notEqual(WebRTC.getDesktopSessionSnapshot().media, 'live');
+});
+
+test('desktop input gate follows uiPhase during transient stalled media', () => {
+  const calls = [];
+  const { WebRTC, context } = loadWebRTC();
+  context.Input = { setActive(value) { calls.push(value); } };
+  WebRTC.desktopSessionState = context.createDesktopSessionState();
+  WebRTC.currentConnectionAttemptId = 'attempt-live';
+  WebRTC._mediaReadyConnectionAttemptId = 'attempt-live';
+  WebRTC.socket = { connected: true };
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-live', leaseEpoch: 1 },
+  };
+  WebRTC.desktopSessionState.beginAttempt('attempt-live', { socket: 'online' });
+  WebRTC.desktopSessionState.applyConnection({ attemptId: 'attempt-live', state: 'connected' });
+  WebRTC.desktopSessionState.applyControl({ attemptId: 'attempt-live', state: 'active' });
+  WebRTC.desktopSessionState.applyMedia({ attemptId: 'attempt-live', event: 'fresh-frame', fresh: true });
+  WebRTC.desktopSessionState.applyMedia({ attemptId: 'attempt-live', state: 'stalled' });
+  WebRTC.uiPhase = 'connected';
+
+  WebRTC.syncDesktopInputGate();
+  assert.equal(calls.at(-1), true);
+
+  WebRTC.uiPhase = 'media-stalled';
+  WebRTC.syncDesktopInputGate();
+  assert.equal(calls.at(-1), false);
 });
 
 test('classic bundle exposes WebRTC on globalThis for deferred diagnostic.js', () => {

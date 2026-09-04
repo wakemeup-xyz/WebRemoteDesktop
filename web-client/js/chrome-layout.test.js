@@ -74,6 +74,36 @@ test('disconnected state keeps network mode recovery available', () => {
   assert.equal(network.hidden, false);
 });
 
+test('loading overlay only captures video input while signaling', () => {
+  const classes = new Set();
+  const loading = {
+    style: {},
+    classList: {
+      toggle(name, force) {
+        if (force) classes.add(name);
+        else classes.delete(name);
+      },
+      contains(name) { return classes.has(name); },
+    },
+  };
+  const root = {
+    getElementById(id) {
+      return id === 'loading' ? loading : null;
+    },
+    querySelectorAll: () => [],
+  };
+
+  ChromeLayout.applyCapabilities({ uiPhase: 'signaling', streamReady: false }, root);
+  assert.equal(loading.style.pointerEvents, 'auto');
+  assert.equal(loading.classList.contains('is-connecting'), true);
+
+  for (const uiPhase of ['idle', 'media-pending', 'connected', 'media-stalled', 'disconnected']) {
+    ChromeLayout.applyCapabilities({ uiPhase, streamReady: false }, root);
+    assert.equal(loading.style.pointerEvents, 'none', `${uiPhase} overlay must not eat video input`);
+    assert.equal(loading.classList.contains('is-connecting'), false);
+  }
+});
+
 test('applyCapabilities keeps request control available only when media is ready and lease is free', () => {
   const make = (id) => ({ id, disabled: false, hidden: false, classList: { toggle() {} } });
   const elements = new Map(['startBtn', 'requestControlBtn', 'textInputBtn', 'keyboardModeBtn', 'moreActionsBtn', 'scaleBtn', 'fullscreenBtn'].map((id) => [id, make(id)]));

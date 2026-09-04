@@ -392,7 +392,8 @@ const ChromeLayout = {
       node.hidden = !capabilities.canSendDesktopInput;
     });
     const loading = root.getElementById?.('loading') || root.querySelector?.('#loading');
-    if (loading?.classList?.toggle) loading.classList.toggle('is-connecting', snapshot.uiPhase === 'signaling');
+    if (loading?.classList?.toggle) loading.classList.toggle('is-connecting', phase === 'signaling');
+    if (loading?.style) loading.style.pointerEvents = phase === 'signaling' ? 'auto' : 'none';
     return capabilities;
   },
   observeStatusBar(statusEl, rootEl) {

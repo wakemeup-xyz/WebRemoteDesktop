@@ -355,7 +355,13 @@ const WebRTC = {
         // Keep lease; only release pointer + keys. Do not open a keyboard reset
         // barrier that blocks typing after a brief hide/resume cycle.
         Input.setActive(false, { resetKeyboard: false, reason: 'media-suspended' });
-        Input.resetKeyboard?.('media-suspended');
+        Input.releasePointer?.('media-suspended');
+        const keyboardSnapshot = Input.keyboardController?.getSnapshot?.() || {};
+        const keyboardNeedsParking = Number(keyboardSnapshot.pressedKeyCount) > 0
+          || keyboardSnapshot.state === 'RESET_REQUIRED';
+        if (this.inputChannel?.readyState !== 'open' && keyboardNeedsParking) {
+          Input.parkKeyboard?.('media-suspended');
+        }
       }
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
       this.noMediaTicks = 0;
@@ -757,8 +763,14 @@ const WebRTC = {
 
   syncDesktopInputGate() {
     if (typeof Input === 'undefined') return;
-    const snapshot = this.getDesktopSessionSnapshot();
-    const enable = snapshot.canInput === true && this.canEnableDesktopInput();
+    // The session records an instantaneous media state for diagnostics. A short
+    // TURN zero-FPS sample can mark that state stalled while the UI remains in
+    // `connected` during its chase window, so use the UI phase as the input
+    // gate and fail closed for every non-connected phase.
+    const phaseAllowsInput = this.uiPhase === 'connected' && this.hasPaintedFrame === true;
+    const controlReady = this.hasActiveControl();
+    const socketReady = this.socket?.connected === true;
+    const enable = phaseAllowsInput && controlReady && socketReady && this.canEnableDesktopInput();
     Input.setActive(enable);
   },
 
@@ -1173,6 +1185,9 @@ const WebRTC = {
   },
 
   setUiPhase(phase, { reason, attemptId } = {}) {
+    if (phase === 'connected' && this.hasPaintedFrame !== true) {
+      phase = 'media-pending';
+    }
     const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
     if (!allowed.includes(phase)) return this.uiPhase;
     if (attemptId && this.currentConnectionAttemptId && attemptId !== this.currentConnectionAttemptId) {
@@ -1187,11 +1202,20 @@ const WebRTC = {
     if (session) {
       if (phase === 'media-pending') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'pending' });
       else if (phase === 'media-stalled') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'stalled' });
-      else if (phase === 'connected') session.applyMedia({
-        attemptId: this.currentConnectionAttemptId,
-        event: 'fresh-frame',
-        fresh: this.hasPaintedFrame === true,
-      });
+      else if (phase === 'connected') {
+        if (this.hasPaintedFrame === true) {
+          session.applyMedia({
+            attemptId: this.currentConnectionAttemptId,
+            event: 'fresh-frame',
+            fresh: true,
+          });
+        } else {
+          session.applyMedia({
+            attemptId: this.currentConnectionAttemptId,
+            state: 'pending',
+          });
+        }
+      }
       else if (phase === 'disconnected') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'disconnected', socket: 'offline' });
       else if (phase === 'signaling') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'signaling' });
     }
@@ -4123,6 +4147,10 @@ if (this.tunnelLastObjectUrl) {
     }
     if (this.socket && this.socket.connected) {
       this.refresh({ reason: 'manual-mode-switch' });
+    } else {
+      // A dead socket cannot carry a refresh request. Re-enter the normal init
+      // path so it recreates signaling and continues through the connect flow.
+      this.init({ trigger: 'manual-mode-switch' });
     }
     this.renderPortSearchStatus();
   },
