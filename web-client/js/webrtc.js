@@ -4400,13 +4400,21 @@ if (this.tunnelLastObjectUrl) {
     this.stopVideoFrameTracking();
     const video = document.getElementById('remoteVideo');
     if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    const attemptId = this.currentConnectionAttemptId || null;
+    const trackedPc = this.pc || null;
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
-      if (this._videoFrameElement !== video) return;
+      if (this._videoFrameElement !== video
+          || this.currentConnectionAttemptId !== attemptId
+          || this.pc !== trackedPc) return;
+      if (Number(video.videoWidth || 0) > 0) {
+        this.hasPaintedFrame = true;
+        this._stallSince = null;
+      }
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
-      this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
+      this.markMediaAttemptReady(attemptId);
       this.ensureDesktopSessionState()?.applyMedia({
-        attemptId: this.currentConnectionAttemptId,
+        attemptId,
         event: 'fresh-frame',
         fresh: true,
       });
@@ -4417,8 +4425,8 @@ if (this.tunnelLastObjectUrl) {
         this.observeFreshResumeFrame({
           source: 'video-callback',
           frameSeq: this._videoFrameSeq,
-          connectionAttemptId: this.currentConnectionAttemptId || null,
-          pc: this.pc || null,
+          connectionAttemptId: attemptId,
+          pc: trackedPc,
         });
       }
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);

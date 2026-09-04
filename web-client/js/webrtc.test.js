@@ -1693,6 +1693,39 @@ test('video frame callback is cancelled and never accumulates on restart', () =>
   assert.equal(cancelled.length, 2);
 });
 
+test('video frame callback paints only the current refresh attempt', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.requestVideoFrameCallback = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  video.cancelVideoFrameCallback = () => {};
+
+  WebRTC.currentConnectionAttemptId = 'attempt-old';
+  WebRTC.pc = { id: 'pc-old' };
+  WebRTC.startVideoFrameTracking();
+  const staleCallback = callbacks[0];
+
+  WebRTC.createConnectionAttemptId = () => 'attempt-new';
+  WebRTC.beginConnectionAttempt('refresh');
+  WebRTC.pc = { id: 'pc-new' };
+  WebRTC.startVideoFrameTracking();
+  const freshCallback = callbacks[1];
+
+  staleCallback(1, { width: 1280, height: 720 });
+  assert.equal(WebRTC._videoFrameSeq, 0);
+  assert.equal(WebRTC.hasPaintedFrame, false);
+
+  freshCallback(2, { width: 1280, height: 720 });
+  assert.equal(WebRTC._videoFrameSeq, 1);
+  assert.equal(WebRTC.hasPaintedFrame, true);
+  assert.equal(WebRTC.uiPhase, 'connected');
+});
+
 test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {
   let created = 0;
   let stopped = 0;

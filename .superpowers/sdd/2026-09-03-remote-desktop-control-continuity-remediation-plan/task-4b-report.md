@@ -57,3 +57,46 @@ codec SPS behavior, physical-device acceptance, and tunnel/public-path health
 remain **NOT RUN**. The Viewer VM fixtures still emit their pre-existing
 `fetch is not defined` fallback warnings; the tests completed with zero
 failures.
+
+## Fix round 1/5: stale VFC paint gate after refresh
+
+### Root cause
+
+`startVideoFrameTracking()` only called `markMediaAttemptReady()` from its
+`requestVideoFrameCallback` handler. A real rendered frame therefore updated
+session readiness but never set `hasPaintedFrame`, so a refreshed attempt could
+remain `media-pending` even after the browser displayed video. The callback also
+only checked the shared video element, allowing an old callback closure to run
+after a new attempt reused that same element.
+
+### TDD red evidence
+
+Before the implementation:
+
+- `node --test --test-name-pattern='video frame callback paints only the current refresh attempt' web-client/js/webrtc.test.js`
+  - 1 failed as intended: the stale callback incremented `_videoFrameSeq`
+    (`actual 1`, `expected 0`) after the refresh replaced its attempt/PC.
+
+### Implementation
+
+The VFC handler now captures the connection attempt id and PeerConnection at
+arming time, rejects callbacks whose element, attempt, or PC is no longer
+current, and only for a current callback with `video.videoWidth > 0` sets
+`hasPaintedFrame` and clears the paint stall. It then uses the existing
+`markMediaAttemptReady(attemptId)` seam, which transitions the UI to
+`connected` and records the matching session fresh-frame event.
+
+### Verification
+
+- Focused VFC regression after the fix: `1 passed, 0 failed`.
+- Related Viewer refresh/paint regressions: `6 passed, 0 failed`.
+- `node --test web-client/js/webrtc.test.js`: `198 passed, 0 failed`.
+- `node --test web-client/js/*.test.js web-client/css/*.test.js`: `572 passed, 0 failed`.
+- `PYTHONPATH=. python3 -m pytest -q` from `python-host/`: `212 passed, 0 failed`; one existing `mss.mss` deprecation warning.
+- No Host, tunnel, TURN, jitter, or service files changed in this fix round.
+
+### P1 concern
+
+Real browser VFC scheduling and hardware WebRTC rendering remain **NOT RUN**;
+the regression uses a deterministic video element and callback queue. Physical
+device and public/tunnel acceptance remain **NOT RUN**.
