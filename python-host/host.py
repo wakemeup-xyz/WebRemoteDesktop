@@ -1553,7 +1553,7 @@ class WebRemoteHost:
                         )
                         try:
                             input_adapter = getattr(self, "input_adapter", None) or self.input_handler
-                            await input_adapter.handle_input(data)
+                            input_adapter.release_all_mouse_buttons(reason="stale-lease-safety")
                         except Exception:
                             logger.exception("Mouse safety release failed")
                         return
@@ -2106,6 +2106,13 @@ class WebRemoteHost:
                     )
                     if result.get("status") != "applied":
                         logger.warning("Ignoring offer with rejected keyboard binding")
+                        return
+                    desktop_result = self.input_handler.transition_desktop_writes(
+                        lease_id=binding["leaseId"],
+                        lease_epoch=binding["leaseEpoch"],
+                    )
+                    if getattr(desktop_result, "status", None) != "applied":
+                        logger.warning("Ignoring offer with rejected desktop write binding")
                         return
                     self._active_input_binding = binding
                     # New offer/attempt invalidates prior media activity progress.

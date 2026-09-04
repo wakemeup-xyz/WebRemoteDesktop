@@ -110,6 +110,57 @@ async def test_reliable_mouse_and_command_execute_once_while_unordered_move_does
 
 
 @pytest.mark.asyncio
+async def test_failed_mouse_execute_does_not_commit_seq():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+
+    def boom(_action, _payload):
+        raise RuntimeError("quartz")
+
+    handler._handle_mouse = boom
+
+    result = await handler.handle_input(desktop_envelope(
+        action="down",
+        seq=1,
+        input_id="down-1",
+        payload={
+            "relX": 0.2,
+            "relY": 0.3,
+            "button": "left",
+            "clickCount": 1,
+            "buttons": 1,
+        },
+    ))
+
+    assert result["status"] == "execution-failed"
+    assert handler._desktop_writes.snapshot().last_applied_seq == 0
+
+
+@pytest.mark.asyncio
+async def test_mouse_without_monitor_does_not_ack_applied():
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    assert handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1).status == "applied"
+
+    result = await handler.handle_input(desktop_envelope(
+        action="down",
+        seq=1,
+        input_id="down-no-monitor",
+        payload={
+            "relX": 0.2,
+            "relY": 0.3,
+            "button": "left",
+            "clickCount": 1,
+            "buttons": 1,
+        },
+    ))
+
+    assert result["status"] == "execution-failed"
+    assert handler._desktop_writes.snapshot().last_applied_seq == 0
+
+
+@pytest.mark.asyncio
 async def test_disconnect_reset_is_serialized_after_inflight_keydown():
     async def run_case():
         adapter = BlockingAdapter()

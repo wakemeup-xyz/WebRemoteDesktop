@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import asyncio
+import host as host_module
 
 import pytest
 
@@ -947,6 +948,107 @@ async def test_input_from_stale_viewer_is_ignored():
     })
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_stale_v2_mouse_reset_releases_buttons_without_reentering_write_state():
+    calls = []
+
+    class FakeInputHandler:
+        async def handle_input(self, _data):
+            calls.append("handle_input")
+
+        def release_all_mouse_buttons(self, **kwargs):
+            calls.append(("release_all_mouse_buttons", kwargs))
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionGeneration": 1,
+    }
+    host.input_handler = FakeInputHandler()
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host.sio = None
+
+    await host.on_input({
+        "schemaVersion": 2,
+        "type": "mouse",
+        "action": "reset",
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000000",
+        "leaseEpoch": 1,
+        "inputIds": ["reset-stale"],
+        "payload": {"reason": "lost-up"},
+    })
+
+    assert calls == [("release_all_mouse_buttons", {"reason": "stale-lease-safety"})]
+
+
+@pytest.mark.asyncio
+async def test_offer_rejects_binding_when_desktop_transition_fails(monkeypatch):
+    transitions = []
+
+    class FakeInputHandler:
+        async def transition_keyboard(self, **kwargs):
+            transitions.append(("keyboard", kwargs))
+            return {"status": "applied"}
+
+        def transition_desktop_writes(self, **kwargs):
+            transitions.append(("desktop", kwargs))
+            return SimpleNamespace(status="execution-failed")
+
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = None
+    host._offer_epoch = 0
+    host.pc = None
+    host._offer_lock = asyncio.Lock()
+    host._active_input_binding = None
+    host._connection_generation = 0
+    host.input_handler = FakeInputHandler()
+
+    async def fake_close(**_kwargs):
+        return None
+
+    host._close_peer_connection = fake_close
+    # The pre-fix path continues into WebRTC setup after keyboard binding. Keep
+    # this test focused on the binding gate and avoid constructing a real PC.
+    monkeypatch.setattr(
+        host_module,
+        "RTCPeerConnection",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("stop after binding")),
+    )
+
+    await host.on_offer({
+        "viewerId": "viewer-1",
+        "epoch": 1,
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 2,
+        "connectionAttemptId": "attempt-1",
+        "offer": {"type": "offer", "sdp": "v=0"},
+    })
+
+    assert transitions == [
+        (
+            "keyboard",
+            {
+                "connection_generation": 1,
+                "lease_id": "lease-000000000001",
+                "lease_epoch": 2,
+            },
+        ),
+        (
+            "desktop",
+            {
+                "lease_id": "lease-000000000001",
+                "lease_epoch": 2,
+            },
+        ),
+    ]
+    assert host._active_input_binding is None
 
 
 @pytest.mark.asyncio
