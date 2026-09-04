@@ -185,6 +185,44 @@ test('v2 mouse and command writes have a monotonic sequence that resets with a n
   assert.equal(socketEvents.filter(({ event }) => event === 'input').at(-1).payload.seq, 1);
 });
 
+test('failed reliable mouse write does not consume desktop seq', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input.socket = { connected: false, emit() {} };
+  context.WebRTC.socket.connected = false;
+  context.WebRTC.sendInput = () => false;
+  assert.equal(Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+  }), null);
+  assert.equal(Input._desktopWriteSequence, 0);
+  context.WebRTC.socket.connected = true;
+  Input.socket = context.WebRTC.socket;
+  const id = Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+  });
+  assert.ok(id);
+  assert.equal(Input._desktopWriteSequence, 1);
+});
+
+test('keyboard acknowledgement does not clear pending mouse reset', () => {
+  const { Input } = loadInput();
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'inp_reset';
+  assert.equal(Input.acceptMouseAck({
+    inputType: 'keyboard', status: 'applied', inputIds: ['inp_reset'],
+  }).status, 'stale');
+  assert.equal(Input._pendingMouseReset, true);
+});
+
+test('new active lease clears a failed mouse reset barrier', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = null;
+  Input.setControlLease({ leaseId: 'lease-000000000099', leaseEpoch: 9 });
+  assert.equal(Input._pendingMouseReset, false);
+});
+
 test('reset, park, lease revocation, and disconnect clear virtual modifier latches', () => {
   const lifecycleCases = [
     ['reset', (Input) => Input.resetKeyboard('acceptance-reset')],

@@ -101,8 +101,14 @@ const Input = {
       ? { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch }
       : null;
     const previousLease = this.activeControlLease;
-    if (previousLease?.leaseId !== nextLease?.leaseId || previousLease?.leaseEpoch !== nextLease?.leaseEpoch) {
+    const leaseChanged = previousLease?.leaseId !== nextLease?.leaseId
+      || previousLease?.leaseEpoch !== nextLease?.leaseEpoch;
+    if (leaseChanged) {
       this._desktopWriteSequence = 0;
+      if (nextLease) {
+        this._pendingMouseReset = false;
+        this._pendingMouseResetId = null;
+      }
     }
     this.activeControlLease = nextLease;
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
@@ -118,6 +124,7 @@ const Input = {
   },
 
   acceptMouseAck(ack) {
+    if (ack?.inputType && ack.inputType !== 'mouse') return { status: 'stale' };
     if (!this._pendingMouseReset) return { status: 'stale' };
     const inputIds = Array.isArray(ack?.inputIds) ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
     if (!this._pendingMouseResetId || !inputIds.includes(this._pendingMouseResetId)) return { status: 'stale' };
@@ -348,14 +355,21 @@ const Input = {
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
     };
-    if (type !== 'mouse' || action !== 'move') data.seq = ++this._desktopWriteSequence;
+    const reliableWrite = type !== 'mouse' || action !== 'move';
+    const nextSequence = reliableWrite ? this._desktopWriteSequence + 1 : null;
+    if (reliableWrite) data.seq = nextSequence;
+    const commitSequence = () => {
+      if (reliableWrite) this._desktopWriteSequence = nextSequence;
+    };
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
+      commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
       socket.emit('input', data);
+      commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }

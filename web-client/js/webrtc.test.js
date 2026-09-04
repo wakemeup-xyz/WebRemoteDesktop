@@ -317,7 +317,7 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, k
   clearTimeout(WebRTC._dcTimeout);
 });
 
-test('a single input acknowledgement clears real mouse and keyboard reset state with one latency sample', () => {
+test('keyboard acknowledgement clears keyboard pending without clearing mouse reset state', () => {
   const latencyAcks = [];
   const channels = new Map();
   const socketEvents = [];
@@ -355,11 +355,17 @@ test('a single input acknowledgement clears real mouse and keyboard reset state 
     inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
   }) });
 
-  assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
+  assert.equal(Input.getDiagnosticState().pendingMouseReset, true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
   assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   assert.equal(latencyAcks.length, 1);
   assert.equal(socketEvents.length, 0);
+
+  inputChannel.onmessage({ data: JSON.stringify({
+    type: 'input_ack', inputType: 'mouse', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
+    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
+  }) });
+  assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
   clearTimeout(WebRTC._dcTimeout);
 });
 
