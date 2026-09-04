@@ -1,7 +1,7 @@
 # Tab 恢复重连环设计
 
 **日期**：2026-08-14  
-**状态**：待实施  
+**状态**：已实施；真机 tab-resume NOT RUN
 **关联复盘**：`docs/superpowers/reports/2026-08-13-reconnect-storm-keyboard-reset-postmortem.md`  
 **日志依据**：`back-debug.log.1` 2026-08-14 15:31–16:51
 

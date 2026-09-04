@@ -457,7 +457,7 @@ WebRemoteDesktop/
 
 1. 先看 `WRD_SESSION_PRESENTATION` 是否 1280x720（relay 默认 cap）。若仍是 `1728x1080` / 进程旧 1080p，说明本次会话 size 未绑定。
 2. 再看 `WRD_KEYFRAME emitted=`。`emitted=true` 才表示编码器产出了 IDR；`emitted=false` / `pending` 表示关键帧没真正发出，不要把 `requested=true` 当成已恢复。
-3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。出画后又连续 ≥1s 0 FPS 应为「画面卡顿」。
+3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。Relay 出画后 ≤2s 的 0 FPS 追帧属于允许窗口；连续 ≥2s 0 FPS 才显示「画面卡顿」，连续 ≥3s 进入失败诊断线。Host 同尺寸 SPS refresh 仍受健康 8–25 FPS 样本门槛与 12s cooldown 约束。
 4. 不要重建 tunnel；Host 用 `./scripts/restart-host.sh`。
 
 设计：`docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`
