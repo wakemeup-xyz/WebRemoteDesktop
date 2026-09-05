@@ -62,6 +62,11 @@ Base `b75a284`; clarification commit `5ffdab8`.
 
 ### Review-round concerns and not-run evidence
 
-- Parent-owned offline Chromium focus-check rerun against the fix commit remains pending; Android/iPhone/iPad, system IME, Quartz/native Host behavior, public URL, tunnel, and watcher acceptance remain **NOT RUN**.
+- Primary-owned offline Chromium focus check against `b527ba6` passed: `python3 .superpowers/sdd/2026-09-06-mobile-input-interaction-remediation-plan/task-4-native-focus-check.py --ref b527ba6`, exit 0, focus retained before/after the actual mouse click. The identical immutable `b75a284` baseline failed. Composition is synthetic, not system IME evidence; Android/iPhone/iPad, system IME, Quartz/native Host behavior, public URL, tunnel, and watcher acceptance remain **NOT RUN**.
 - WebRTC VM tests retain the existing offline `fetch is not defined` configuration fallback warnings; no service, browser session, public tunnel, or device was started by this fix round.
 - The fix commit SHA is reported in the handoff; this report remains metadata-only and contains no user text, key, coordinate, clipboard, password, token, or payload content.
+
+### Primary verification and scoped re-review
+
+- Independent probes on `b527ba6` passed: reverse successful surface ACKs settle; document physical keydown during surface pending emits no new write; unchanged composition rejects public navigation. Each uses the real Input/controller/transport fixture, not a controller stub.
+- Luna/max scoped re-review approved all six fixes with no open Critical/Important findings. The virtual-modifier test's direct invocation of a disabled button handler proves handler logic only; native release-button reachability through capability rendering remains a Task5/7 browser check, not a claimed PASS here.
