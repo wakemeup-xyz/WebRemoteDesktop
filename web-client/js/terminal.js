@@ -1490,6 +1490,7 @@ const TerminalPanel = {
       persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null,
       liveSessionIds.has(payload.defaultSessionId) ? payload.defaultSessionId : null,
       liveSessionIds.has(this.state.activeSessionId()) ? this.state.activeSessionId() : null,
+      sessions.find((session) => session?.sessionId && session.sessionId !== this.userDetachedSessionId)?.sessionId || null,
     ].find((sessionId) => sessionId && sessionId !== this.userDetachedSessionId) || null;
     if (preferredSessionId) {
       this.state.setActive(preferredSessionId);
