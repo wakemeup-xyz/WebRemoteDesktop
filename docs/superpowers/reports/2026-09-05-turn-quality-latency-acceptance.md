@@ -107,7 +107,7 @@ seconds per capture cadence. It opened MSS only: it did not start Host, a
 browser, a relay/tunnel, or an encoder. Environment: macOS 13.7.6, Python
 3.11.15, OpenCV 4.12.0, and PyAV 16.1.0.
 
-| Capture multiplier | Capture FPS | Target availability | Cost per target frame | grab p50/p95 | resize p50/p95 | BGRA frame p50/p95 | BGRA→YUV420 p50/p95 |
+| Capture multiplier | Capture FPS | Target availability | Cost per target frame | grab p50/p95 | resize p50/p95 | BGRA frame p50/p95 | Downstream BGRA→YUV420 proxy p50/p95 (excluded) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | legacy 2.0x | 40 | 1.000 | 63.313ms | 25.157 / 28.344ms | 1.773 / 2.573ms | 1.365 / 3.571ms | 2.410 / 3.355ms |
 | 1.0x | 20 | 1.000 | 29.175ms | 23.566 / 25.318ms | 1.855 / 2.668ms | 1.342 / 1.525ms | 2.326 / 3.263ms |
@@ -121,7 +121,7 @@ FPS. This is a capture-stage decision only. Browser paint FPS is `NOT RUN`, and
 the result makes no statement about periodic-IDR quality or any relay runtime
 acceptance gate.
 
-| Resize interpolation | resize p50/p95 | BGRA→YUV420 p50/p95 | Round-trip PSNR | Edge retention | Decision |
+| Resize interpolation | resize p50/p95 | Downstream BGRA→YUV420 proxy p50/p95 (excluded) | Round-trip PSNR | Edge retention | Decision |
 |---|---:|---:|---:|---:|---|
 | INTER_LINEAR | 1.622 / 2.311ms | 2.339 / 3.403ms | 45.504dB | 0.56853 | retained |
 | INTER_AREA | 4.079 / 4.612ms | 2.316 / 3.259ms | 45.018dB | 0.52629 | rejected |
@@ -208,3 +208,19 @@ Both assert producer and consumer conservation equations plus producer/consumer
 inter-arrival sample counts. The full local matrix reported every exploratory
 proxy row as `includedInProductionCost=false` and retained
 `runtimePaintGate=PENDING` for legacy 2.0x and all candidates.
+
+### Task 7 review correction, round 4: make YUV proxy schema-exclusive (2026-09-06)
+
+The scenario-level `consumerBgraToYuv420` and interpolation-level
+`bgraToYuv420` fields are now emitted only beneath their respective
+`downstreamExploratoryProxy` objects. Each proxy and every scenario proxy-path
+row carries `includedInProductionCost=false`. Production `pathCosts` and
+`costModel` remain limited to MSS grab, from-buffer, resize, reuse copy, blank
+allocation, and BGRA `VideoFrame.from_ndarray`; neither production selection
+consumes the exploratory envelope.
+
+Fresh offline evidence was generated at `/tmp/wrd-turn-capture-round4.json`.
+It has no scenario-level `consumerBgraToYuv420` or interpolation-level
+`bgraToYuv420`; their retained measurements are nested in the labelled proxies.
+The fresh output preserves `selection.captureMultiplier={applied:false,
+value:2.0}` and `runtimePaintGate=PENDING`.

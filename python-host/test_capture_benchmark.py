@@ -82,6 +82,14 @@ def test_consumer_cost_model_counts_reuse_copy_and_every_recv_conversion():
     assert "reformatCalls" not in result["costModel"]
     assert result["downstreamExploratoryProxy"]["includedInProductionCost"] is False
     assert result["downstreamExploratoryProxy"]["reformatCalls"] == result["consumerTicks"]
+    assert "consumerBgraToYuv420" not in result
+    assert result["downstreamExploratoryProxy"]["consumerBgraToYuv420"]["count"] == result[
+        "consumerTicks"
+    ]
+    assert all(
+        path["includedInProductionCost"] is False
+        for path in result["downstreamExploratoryProxy"]["paths"].values()
+    )
     assert result["reused"] >= 1
     assert result["produced"] == (
         result["consumed"] + result["overwrittenDropped"] + result["unconsumedAtStop"]
@@ -95,6 +103,16 @@ def test_scheduler_matrix_varies_consumer_phase_jitter_and_delay_independently()
     assert any("consumer_jitter_seconds" in row for row in scenarios)
     assert any(row["producer_jitter_seconds"] != (0.0,) for row in scenarios)
     assert any(row["slow_grab_seconds"] > 0 for row in scenarios)
+
+
+def test_interpolation_yuv_metric_is_exploratory_only():
+    source = np.zeros((48, 64, 4), dtype=np.uint8)
+
+    result = benchmark.run_interpolation_candidate(source, (32, 24), "INTER_LINEAR")
+
+    assert "bgraToYuv420" not in result
+    assert result["downstreamExploratoryProxy"]["includedInProductionCost"] is False
+    assert result["downstreamExploratoryProxy"]["bgraToYuv420"]["count"] == 40
 
 
 def test_executed_dual_scheduler_fixtures_cover_blank_drop_and_reuse():

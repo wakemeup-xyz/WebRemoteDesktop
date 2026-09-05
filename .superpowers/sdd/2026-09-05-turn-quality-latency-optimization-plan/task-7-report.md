@@ -199,3 +199,27 @@ not candidate evidence.
 pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 16 passed
 scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, all YUV proxies excluded from production cost
 ```
+
+## Review correction, round 4/5 (2026-09-06)
+
+The round-3 envelope still left two unlabelled, top-level copies of the YUV
+timing: scenario `consumerBgraToYuv420` and interpolation `bgraToYuv420`.
+Both are now schema-exclusive to `downstreamExploratoryProxy`. The scenario
+proxy owns the aggregate timing and its path rows; the proxy and every path row
+set `includedInProductionCost:false`. The interpolation proxy likewise carries
+that flag beside its YUV timing. Tests now reject either old top-level field and
+assert the exclusion flag for every scenario-path and interpolation proxy.
+
+`pathCosts`, `costModel`, and both selection objects remain restricted to the
+real production work: grab, from-buffer, resize, reuse copy, blank allocation,
+and `VideoFrame.from_ndarray`. The proxy can therefore be retained for a later
+downstream study without becoming multiplier or interpolation selection input.
+
+### Round-4 verification
+
+```text
+pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 17 passed (one existing MSS deprecation warning)
+python -m py_compile scripts/benchmark-turn-capture.py python-host/host.py python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> exit 0
+scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture-round4.json -> top-level YUV fields absent; all retained YUV paths/proxies includedInProductionCost=false; selection remains applied:false, capture value 2.0
+git diff --check -> exit 0
+```

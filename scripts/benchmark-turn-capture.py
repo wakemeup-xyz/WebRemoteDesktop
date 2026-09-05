@@ -243,8 +243,14 @@ def run_capture_candidate(
         "includedInProductionCost": False,
         "name": "BGRA-to-YUV420 reformat exploratory proxy",
         "reformatCalls": reformat_calls,
+        "consumerBgraToYuv420": timing_summary(
+            [value for path in path_values.values() for value in path["reformat"]]
+        ),
         "paths": {
-            path: timing_summary(stages["reformat"])
+            path: {
+                "includedInProductionCost": False,
+                "reformat": timing_summary(stages["reformat"]),
+            }
             for path, stages in path_values.items()
         },
     }
@@ -273,9 +279,6 @@ def run_capture_candidate(
         "consumerResize": timing_summary(path_values["fresh"]["resize"]),
         "consumerFrameConversion": timing_summary(
             [value for path in path_values.values() for value in path["fromNdarray"]]
-        ),
-        "consumerBgraToYuv420": timing_summary(
-            [value for path in path_values.values() for value in path["reformat"]]
         ),
         "producerInterArrival": inter_arrival_summary(producer_times),
         "consumerInterArrival": inter_arrival_summary(consumer_timestamps),
@@ -323,7 +326,11 @@ def run_interpolation_candidate(source: np.ndarray, size: tuple[int, int], name:
         "interpolation": name,
         "resize": timing_summary(resize_values),
         "frameConversion": timing_summary(frame_values),
-        "bgraToYuv420": timing_summary(yuv_values),
+        "downstreamExploratoryProxy": {
+            "includedInProductionCost": False,
+            "name": "BGRA-to-YUV420 reformat exploratory proxy",
+            "bgraToYuv420": timing_summary(yuv_values),
+        },
         "qualityProxy": quality_proxy(source, resized),
         "offlineEligibility": "LOCAL_PROXY_ONLY",
         "runtimePaintGate": "PENDING",
