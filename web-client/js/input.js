@@ -150,6 +150,7 @@ const Input = {
     if (leaseChanged) {
       // Clear the mobile draft before the controller changes the transport
       // identity. The old generation must never cross a lease boundary.
+      this.clearMobileTextInputDock();
       this.mobileTextInputAdapter?.reset('lease-changed');
       this._desktopWriteSequence = 0;
       this._desktopWritePending.clear();
@@ -393,20 +394,30 @@ const Input = {
       blocked: '暂不可输入',
       uncertain: '输入位置或连接已变化，请核对远端后放弃本地草稿',
     };
-    const showStatus = Boolean(state.hasPending);
+    const hasDraft = Boolean(state.hasPending);
+    const hasRecovery = Boolean(state.deliveryUncertain);
+    const showStatus = hasDraft || hasRecovery;
     if (status) {
       const label = labels[state.status] || '';
       status.hidden = !showStatus || !label;
       status.textContent = label;
     }
     if (retry) {
-      retry.hidden = !state.hasPending;
+      retry.hidden = !hasDraft;
       retry.disabled = !state.retryable;
     }
     if (discard) {
-      discard.hidden = !state.hasPending;
-      discard.disabled = !state.hasPending;
+      discard.hidden = !(hasDraft || hasRecovery);
+      discard.disabled = !(hasDraft || hasRecovery);
     }
+  },
+
+  clearMobileTextInputDock() {
+    this._mobileTextReturnFocus = null;
+    const dock = document.getElementById('mobileInputDock');
+    if (dock) dock.hidden = true;
+    document.body?.classList?.remove?.('mobile-input-visible');
+    document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
   },
 
   focusDesktopSurface(element, reason) {
@@ -447,24 +458,16 @@ const Input = {
 
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
-    this._mobileTextReturnFocus = null;
+    this.clearMobileTextInputDock();
     this.mobileTextInputAdapter?.reset(reason);
-    const dock = document.getElementById('mobileInputDock');
-    if (dock) dock.hidden = true;
-    document.body?.classList?.remove?.('mobile-input-visible');
-    document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
     this.updateMobileTextInputButton();
     return this.keyboardController?.reset(reason) || false;
   },
 
   parkKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
-    this._mobileTextReturnFocus = null;
+    this.clearMobileTextInputDock();
     this.mobileTextInputAdapter?.reset(reason);
-    const dock = document.getElementById('mobileInputDock');
-    if (dock) dock.hidden = true;
-    document.body?.classList?.remove?.('mobile-input-visible');
-    document.getElementById('mobileTextInputBtn')?.setAttribute?.('aria-pressed', 'false');
     this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
       this.keyboardController.park(reason);

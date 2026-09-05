@@ -38,7 +38,6 @@
     let pendingGeneration = null;
     let drainActive = false;
     let drainTimer = null;
-    let rejectNextInput = false;
     const listeners = [];
 
     function accepted(result) {
@@ -114,7 +113,7 @@
     function valueAfterDeletes(diff, sentCount) {
       return withSentinel([
         ...diff.prefix,
-        ...diff.deleted.slice(sentCount),
+        ...diff.deleted.slice(0, diff.deleted.length - sentCount),
         ...diff.suffix,
       ]);
     }
@@ -221,6 +220,14 @@
       notifyState();
     }
 
+    function stopDiffAt(diff, sentDeletes, { uncertain = false } = {}) {
+      acceptedValue = valueAfterDeletes(diff, sentDeletes);
+      remoteCursor = diff.prefix.length + diff.deleted.length - sentDeletes;
+      cancelDrain();
+      markPending({ uncertain });
+      return false;
+    }
+
     function scheduleDrain() {
       if (drainTimer !== null || !drainActive) return;
       const scheduledGeneration = generation;
@@ -233,7 +240,12 @@
 
     function processDiff({ force = false, fromDrain = false } = {}) {
       if (composing) {
-        notifyState();
+        if (fromDrain || drainActive) {
+          cancelDrain();
+          markPending();
+        } else {
+          notifyState();
+        }
         return false;
       }
       if (!fromDrain && drainActive) return false;
@@ -248,7 +260,13 @@
         notifyState();
         return false;
       }
+      if (!contextValid || deliveryUncertain) {
+        if (fromDrain || drainActive) cancelDrain();
+        markPending({ uncertain: true });
+        return false;
+      }
       if (!isEnabled() || transportState !== 'ready') {
+        if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
       }
@@ -260,7 +278,12 @@
       if (expectedCursor !== remoteCursor) {
         // Only edits against the accepted history are fail-closed. A rejected
         // draft remains editable and is never replaced by the accepted buffer.
-        if (!retryRequired && !drainActive) {
+        if (fromDrain || drainActive) {
+          cancelDrain();
+          markPending({ uncertain: !contextValid || deliveryUncertain });
+          return false;
+        }
+        if (!retryRequired) {
           draftValue = acceptedValue;
           restoreAcceptedBuffer();
         }
@@ -272,6 +295,12 @@
       let sentDeletes = 0;
       const deleteLimit = Math.min(MAX_BACKSPACE_STEPS, diff.deleted.length);
       for (; sentDeletes < deleteLimit; sentDeletes += 1) {
+        const beforeStepGeneration = generation;
+        const stepReady = contextValid && !deliveryUncertain
+          && transportState === 'ready' && Boolean(isEnabled());
+        if (beforeStepGeneration !== generation || !stepReady) {
+          return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
+        }
         const stepGeneration = generation;
         const result = sendKey('Backspace');
         if (stepGeneration !== generation) {
@@ -279,11 +308,12 @@
           return false;
         }
         if (!accepted(result)) {
-          acceptedValue = valueAfterDeletes(diff, sentDeletes);
-          remoteCursor = diff.prefix.length + diff.deleted.length - sentDeletes;
-          drainActive = false;
-          markPending();
-          return false;
+          return stopDiffAt(diff, sentDeletes);
+        }
+        const afterKeyReady = contextValid && !deliveryUncertain
+          && transportState === 'ready' && Boolean(isEnabled());
+        if (!afterKeyReady) {
+          return stopDiffAt(diff, sentDeletes + 1, { uncertain: !contextValid || deliveryUncertain });
         }
       }
 
@@ -299,11 +329,17 @@
 
       const inserted = diff.inserted.join('');
       if (inserted && hasUnpairedSurrogate(inserted)) {
-        drainActive = false;
+        cancelDrain();
         markPending();
         return false;
       }
       if (inserted) {
+        const beforeInsertGeneration = generation;
+        const insertReady = contextValid && !deliveryUncertain
+          && transportState === 'ready' && Boolean(isEnabled());
+        if (beforeInsertGeneration !== generation || !insertReady) {
+          return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
+        }
         const stepGeneration = generation;
         const result = sendText(inserted);
         if (stepGeneration !== generation) {
@@ -313,8 +349,15 @@
         if (!accepted(result)) {
           // The accepted delete prefix is kept, while the editable draft is
           // deliberately retained for a later explicit retry.
-          drainActive = false;
+          cancelDrain();
           markPending();
+          return false;
+        }
+        const afterTextReady = contextValid && !deliveryUncertain
+          && transportState === 'ready' && Boolean(isEnabled());
+        if (!afterTextReady) {
+          cancelDrain();
+          markPending({ uncertain: !contextValid || deliveryUncertain });
           return false;
         }
       }
@@ -344,6 +387,10 @@
     }
 
     function onCompositionStart() {
+      if (drainActive) {
+        cancelDrain();
+        markPending();
+      }
       composing = true;
       compositionBaseValue = acceptedValue;
       observedValue = getValue();
@@ -365,7 +412,6 @@
       if (hasPending()) return;
       if (!hasCursorSelection()) {
         event.preventDefault?.();
-        rejectNextInput = true;
         restoreAcceptedBuffer();
         notifyState();
         return;
@@ -388,13 +434,6 @@
     function onInput() {
       const hadDrainTimer = drainTimer !== null;
       captureObservedValue();
-      if (rejectNextInput) {
-        rejectNextInput = false;
-        draftValue = acceptedValue;
-        restoreAcceptedBuffer();
-        notifyState();
-        return;
-      }
       if (composing) {
         notifyState();
         return;
@@ -495,7 +534,14 @@
       const next = String(state || '').toLowerCase();
       if (!TRANSPORT_STATES.has(next)) return;
       transportState = next;
+      if (next === 'blocked' && drainActive) {
+        cancelDrain();
+        markPending();
+        return;
+      }
       if (next === 'reacquire-required' || next === 'revoked') {
+        cancelDrain();
+        generation += 1;
         contextValid = false;
         deliveryUncertain = true;
         if (hasPending()) {
@@ -578,7 +624,6 @@
       remoteCursor = 0;
       retryRequired = false;
       pendingGeneration = null;
-      rejectNextInput = false;
       contextValid = true;
       deliveryUncertain = false;
       if (element) element.value = SENTINEL;

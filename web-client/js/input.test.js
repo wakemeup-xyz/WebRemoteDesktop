@@ -121,6 +121,23 @@ function activate(Input, context) {
   Input.setActive(true);
 }
 
+function withFakeTimers(run) {
+  const nativeSetTimeout = global.setTimeout;
+  const nativeClearTimeout = global.clearTimeout;
+  const callbacks = [];
+  global.setTimeout = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  global.clearTimeout = (id) => { callbacks[id - 1] = null; };
+  try {
+    return run(callbacks);
+  } finally {
+    global.setTimeout = nativeSetTimeout;
+    global.clearTimeout = nativeClearTimeout;
+  }
+}
+
 test('repeated active gate preserves the mobile textarea focus', () => {
   const { Input, context, elements } = loadInput();
   activate(Input, context);
@@ -778,6 +795,24 @@ test('mobile text adapter routes text and control keys through the keyboard cont
   assert.equal(keyboardPayloads[1].payload.steps.map(({ code }) => code).join(','), 'Enter,Enter');
 });
 
+test('ordinary ACK-pending typing remains continuous instead of serializing each character', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const textPayloads = socketEvents
+    .filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textPayloads, ['a', 'b']);
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 2);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+});
+
 test('mobile draft retry waits for the keyboard ACK and only resends unsent text', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
@@ -881,6 +916,129 @@ test('mobile draft status and retry/discard controls stay metadata-only and boun
   assert.equal(status.hidden, true);
   assert.equal(retry.hidden, true);
   assert.equal(discard.hidden, true);
+});
+
+test('lease replacement clears the mobile dock DOM before controller lease mutation', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileDock = elements.get('mobileInputDock');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const aria = new Map();
+  mobileButton.setAttribute = (name, value) => aria.set(name, String(value));
+  mobileButton.getAttribute = (name) => aria.get(name) || null;
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  mobileDock.hidden = false;
+  context.document.body.classList.add('mobile-input-visible');
+  mobileButton.setAttribute('aria-pressed', 'true');
+  Input._mobileTextReturnFocus = elements.get('remoteVideo');
+
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(mobileDock.hidden, true);
+  assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
+  assert.equal(mobileButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(Input._mobileTextReturnFocus, null);
+  assert.equal(mobileInput.value, '\u200b');
+});
+
+test('lease epoch change and revoke/regrant cannot resume an old scheduled draft drain', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const mobileInput = elements.get('mobileTextInput');
+    const mobileDock = elements.get('mobileInputDock');
+    const mobileButton = elements.get('mobileTextInputBtn');
+    const aria = new Map();
+    mobileButton.setAttribute = (name, value) => aria.set(name, String(value));
+    mobileButton.getAttribute = (name) => aria.get(name) || null;
+    mobileInput.value = 'abcdefghijklmnopqr';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    mobileDock.hidden = false;
+    context.document.body.classList.add('mobile-input-visible');
+    mobileButton.setAttribute('aria-pressed', 'true');
+    mobileInput.value = '\u200b';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    const oldCallback = callbacks[0];
+    assert.equal(typeof oldCallback, 'function');
+    const sentBeforeLeaseChange = socketEvents.length;
+
+    Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 4 });
+    assert.equal(mobileDock.hidden, true);
+    assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
+    assert.equal(mobileButton.getAttribute('aria-pressed'), 'false');
+    oldCallback?.();
+    assert.equal(socketEvents.length, sentBeforeLeaseChange);
+
+    Input.setControlLease(null);
+    Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 5 });
+    oldCallback?.();
+    assert.equal(socketEvents.length, sentBeforeLeaseChange);
+    assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+  });
+});
+
+test('context uncertainty cancels retries, blocks reacquire sends, and exposes discard recovery UI', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const status = elements.get('mobileInputStatus');
+  const retry = elements.get('mobileInputRetryBtn');
+  const discard = elements.get('mobileInputDiscardBtn');
+
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const first = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload;
+  Input.acceptKeyboardAck({ schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: first.seq, inputIds: first.inputIds });
+  const beforeBlocked = socketEvents.length;
+  Input.mobileTextInputAdapter.onTransportState('blocked');
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeBlocked, 'blocked context retains the local draft');
+  let snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.deliveryUncertain, false);
+
+  Input.mobileTextInputAdapter.onTransportState('ready');
+  assert.equal(socketEvents.length, beforeBlocked, 'ready does not implicitly retry a rejected draft');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.equal(socketEvents.length, beforeBlocked + 1, 'explicit retry resumes the blocked draft');
+
+  const second = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload;
+  Input.acceptKeyboardAck({ schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: second.seq, inputIds: second.inputIds });
+  const beforeUncertain = socketEvents.length;
+  Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+  Input.mobileTextInputAdapter.onTransportState('ready');
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(snapshot.deliveryUncertain, true);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /连接/);
+  assert.equal(retry.hidden, true);
+  assert.equal(discard.hidden, false);
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeUncertain);
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.deliveryUncertain, true);
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /连接/);
+  assert.equal(retry.hidden, false);
+  assert.equal(retry.disabled, true);
+  assert.equal(discard.hidden, false);
+
+  discard.listeners.get('click')({ preventDefault() {} });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.deliveryUncertain, false);
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(status.hidden, true);
 });
 
 test('mobile textarea stops control and hardware text events before document keyboard handling', () => {

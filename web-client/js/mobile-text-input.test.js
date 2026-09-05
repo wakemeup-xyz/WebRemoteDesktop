@@ -4,6 +4,7 @@ const { MobileTextInput } = require('./mobile-text-input.js');
 
 function makeTextHarness({enabled = true, refreshViewport = () => {}, sendTextResult = true, sendKeyResult = true, isDeliverySettled = true} = {}) {
   const listeners = new Map(); const sent = []; const failedAttempts = [];
+  let enabledState = enabled;
   let sendAccepted = sendTextResult;
   let keyAccepted = sendKeyResult;
   let deliverySettled = isDeliverySettled;
@@ -32,7 +33,7 @@ function makeTextHarness({enabled = true, refreshViewport = () => {}, sendTextRe
       sent.push({kind: 'key', value});
       return `key-${sent.length}`;
     },
-    isEnabled: () => enabled,
+    isEnabled: () => enabledState,
     isDeliverySettled: () => deliverySettled,
     refreshViewport,
   });
@@ -44,11 +45,29 @@ function makeTextHarness({enabled = true, refreshViewport = () => {}, sendTextRe
     failedAttempts,
     setSendAccepted(value) { sendAccepted = Boolean(value); },
     setSendKeyAccepted(value) { keyAccepted = value; },
+    setEnabled(value) { enabledState = Boolean(value); },
     setDeliverySettled(value) { deliverySettled = Boolean(value); },
     emit(type, overrides = {}) {
       listeners.get(type)?.({type, target: input, inputType: null, ...overrides});
     },
   };
+}
+
+function withFakeTimers(run) {
+  const nativeSetTimeout = global.setTimeout;
+  const nativeClearTimeout = global.clearTimeout;
+  const callbacks = [];
+  global.setTimeout = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  global.clearTimeout = (id) => { callbacks[id - 1] = null; };
+  try {
+    return run(callbacks);
+  } finally {
+    global.setTimeout = nativeSetTimeout;
+    global.clearTimeout = nativeClearTimeout;
+  }
 }
 
 test('rejected draft survives the next edit and retries only unsent text', () => {
@@ -76,6 +95,71 @@ test('pending draft keeps local selection and Backspace editing available', () =
   h.emit('keydown', {key: 'Backspace', preventDefault() { prevented = true; }});
   assert.equal(prevented, false);
   assert.deepEqual(h.sent.filter((item) => item.kind === 'key'), []);
+});
+
+test('partial deletion retains the accepted prefix before a later edit', () => {
+  withFakeTimers((callbacks) => {
+    const h = makeTextHarness();
+    h.input.value = 'abcdefghijklmnopqr'; h.emit('input'); h.sent.length = 0;
+    h.input.value = '\u200b'; h.emit('input');
+    assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 16);
+    assert.equal(callbacks.length, 1);
+    h.input.value = 'abz\u200b'; h.emit('input');
+    assert.deepEqual(h.sent.slice(16), [{kind: 'text', value: 'z'}]);
+  });
+});
+
+test('a rejected deletion stops immediately and does not schedule another batch', () => {
+  const h = makeTextHarness();
+  h.input.value = 'abcdefghijklmnopqr'; h.emit('input'); h.sent.length = 0;
+  let keyCalls = 0;
+  h.setSendKeyAccepted(() => {
+    keyCalls += 1;
+    return keyCalls !== 3;
+  });
+  h.input.value = '\u200b'; h.emit('input');
+  assert.equal(keyCalls, 3);
+  assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 2);
+  assert.equal(h.failedAttempts.filter((item) => item.value === 'Backspace').length, 1);
+  assert.equal(h.adapter.getSnapshot().hasPending, true);
+});
+
+test('a synchronous transport gate change stops the current delete batch before the next send', () => {
+  const h = makeTextHarness();
+  h.input.value = 'abcdefghijklmnopqr'; h.emit('input'); h.sent.length = 0;
+  let keyCalls = 0;
+  h.setSendKeyAccepted(() => {
+    keyCalls += 1;
+    if (keyCalls === 1) h.adapter.onTransportState('blocked');
+    return true;
+  });
+  h.input.value = '\u200b'; h.emit('input');
+  assert.equal(keyCalls, 1);
+  assert.deepEqual(h.sent.filter((item) => item.value === 'Backspace'), [
+    {kind: 'key', value: 'Backspace'},
+  ]);
+  assert.equal(h.adapter.getSnapshot().status, 'blocked');
+  assert.equal(h.adapter.getSnapshot().hasPending, true);
+});
+
+test('composition or gate changes cancel a scheduled drain for explicit retry', () => {
+  for (const interrupt of ['composition', 'gate']) {
+    withFakeTimers((callbacks) => {
+      const h = makeTextHarness();
+      h.input.value = 'abcdefghijklmnopqr'; h.emit('input'); h.sent.length = 0;
+      h.input.value = '\u200b'; h.emit('input');
+      assert.equal(callbacks.length, 1, interrupt);
+      if (interrupt === 'composition') h.emit('compositionstart');
+      else h.setEnabled(false);
+      callbacks[0]?.();
+      assert.equal(h.adapter.getSnapshot().hasPending, true, interrupt);
+      assert.equal(h.adapter.getSnapshot().retryable, false, interrupt);
+      if (interrupt === 'composition') h.emit('compositionend');
+      else h.setEnabled(true);
+      assert.equal(h.adapter.retryPending(), true, interrupt);
+      assert.equal(h.sent.filter((item) => item.value === 'Backspace').length, 18, interrupt);
+    });
+  }
 });
 
 test('ordinary hide preserves the same-context pending draft', () => {
@@ -153,6 +237,16 @@ test('transport uncertainty is metadata-only and does not expose draft text', ()
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot, 'value'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot, 'selectionStart'), false);
   assert.equal(snapshots.at(-1).status, 'uncertain');
+});
+
+test('an invalid beforeinput without a native input does not swallow the next valid edit', () => {
+  const h = makeTextHarness();
+  h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.input.selectionStart = 1; h.input.selectionEnd = 2;
+  h.emit('beforeinput', {inputType: 'insertText', preventDefault() {}});
+  h.input.value = 'abcd\u200b'; h.emit('input');
+  assert.deepEqual(h.sent, [{kind: 'text', value: 'd'}]);
+  assert.equal(h.input.value, 'abcd\u200b');
 });
 
 test('plain input diff sends inserted Unicode as one text action', () => {
