@@ -98,3 +98,35 @@ fixed.
 
 The Viewer buffer/decode-continuity, Host event-loop/input-ack, and finite-loss
 recovery gates remain `NOT RUN` pending the Task 9 real selected-relay path.
+
+## Task 7 capture-cost probe (2026-09-06)
+
+`scripts/benchmark-turn-capture.py` was run on the local 1792x1120 desktop,
+scaled to the relay-default 1152x720 output, with a 20 FPS target and four
+seconds per capture cadence. It opened MSS only: it did not start Host, a
+browser, a relay/tunnel, or an encoder. Environment: macOS 13.7.6, Python
+3.11.15, OpenCV 4.12.0, and PyAV 16.1.0.
+
+| Capture multiplier | Capture FPS | Target availability | Cost per target frame | grab p50/p95 | resize p50/p95 | BGRA frame p50/p95 | BGRA→YUV420 p50/p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| legacy 2.0x | 40 | 1.000 | 63.313ms | 25.157 / 28.344ms | 1.773 / 2.573ms | 1.365 / 3.571ms | 2.410 / 3.355ms |
+| 1.0x | 20 | 1.000 | 29.175ms | 23.566 / 25.318ms | 1.855 / 2.668ms | 1.342 / 1.525ms | 2.326 / 3.263ms |
+| 1.25x | 25 | 1.000 | 36.861ms | 23.632 / 26.386ms | 1.850 / 2.790ms | 1.332 / 1.479ms | 2.309 / 3.282ms |
+| 1.5x | 30 | 1.000 | 45.301ms | 24.166 / 26.053ms | 1.905 / 2.945ms | 1.344 / 1.546ms | 2.331 / 3.276ms |
+
+All three candidates supplied the requested 80 capture frames. 1.0x is the
+lowest such cadence and lowers the measured capture-stage cost from 63.313ms to
+29.175ms per target frame, so `ScreenCaptureTrack` now captures at the target
+FPS. This is a capture-stage decision only. Browser paint FPS is `NOT RUN`, and
+the result makes no statement about periodic-IDR quality or any relay runtime
+acceptance gate.
+
+| Resize interpolation | resize p50/p95 | BGRA→YUV420 p50/p95 | Round-trip PSNR | Edge retention | Decision |
+|---|---:|---:|---:|---:|---|
+| INTER_LINEAR | 1.622 / 2.311ms | 2.339 / 3.403ms | 45.504dB | 0.56853 | retained |
+| INTER_AREA | 4.079 / 4.612ms | 2.316 / 3.259ms | 45.018dB | 0.52629 | rejected |
+
+`INTER_AREA` was inside the 25ms resize budget but reduced both local quality
+proxies, so the existing `INTER_LINEAR` setting remains. The BGRA→YUV420 timing
+is a PyAV `VideoFrame` reformat measurement; no buffer-reuse, capture-Adapter,
+codec, GOP, bitrate, VBV, or Quality Lock change was made.

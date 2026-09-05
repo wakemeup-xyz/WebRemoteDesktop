@@ -1356,8 +1356,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     @staticmethod
     def capture_fps_for_target(target_fps):
+        """Capture at the measured media-frame target without legacy polling surplus."""
         target_fps = max(1, int(target_fps))
-        return min(60, max(target_fps * 2, target_fps + 5))
+        return min(60, target_fps)
 
     def apply_media_profile(self, profile):
         prev_w = getattr(self, "_max_width", None)

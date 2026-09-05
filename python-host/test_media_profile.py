@@ -276,9 +276,10 @@ def test_profile_rejects_viewer_mismatch_before_mutation():
     assert host._user_resolution == {"width": 1280, "height": 720}
 
 
-def test_capture_fps_tracks_current_media_target_with_a_60_fps_cap():
-    assert ScreenCaptureTrack.capture_fps_for_target(20) == 40
-    assert ScreenCaptureTrack.capture_fps_for_target(15) == 30
-    assert ScreenCaptureTrack.capture_fps_for_target(12) == 24
-    assert ScreenCaptureTrack.capture_fps_for_target(8) == 16
-    assert ScreenCaptureTrack.capture_fps_for_target(30) == 60
+def test_capture_fps_uses_the_measured_one_times_target_policy():
+    """A 20 FPS media target no longer pays for the legacy 2x polling surplus."""
+    assert ScreenCaptureTrack.capture_fps_for_target(20) == 20
+    assert ScreenCaptureTrack.capture_fps_for_target(15) == 15
+    assert ScreenCaptureTrack.capture_fps_for_target(12) == 12
+    assert ScreenCaptureTrack.capture_fps_for_target(8) == 8
+    assert ScreenCaptureTrack.capture_fps_for_target(30) == 30
