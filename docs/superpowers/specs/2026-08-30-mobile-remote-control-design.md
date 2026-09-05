@@ -1,8 +1,10 @@
 # 移动端远程桌面操控设计
 
-**状态：** 已实施；真机验收 NOT RUN
+**状态：** 基础实现已合入；2026-09-05 复审发现交互缺陷未修复；真机验收 NOT RUN
 
 **日期：** 2026-08-30
+
+**最新实现复核：** 2026-09-05，基线 `000547f`。当前逻辑、7 项可定位发现及离线复现见 [手机 / iPad 触控与软键盘复审](../reports/2026-09-05-mobile-touch-keyboard-logic-review.md)。本文的目标/验收要求不等于当前已达到；旧审查结论以该复审为准。
 
 **范围：** 在普通手机和平板浏览器中完成远程屏幕点击、拖动、滚动、右键和文本/虚拟键盘输入。
 
@@ -88,8 +90,11 @@ Virtual keys / shortcuts
  RemoteKeyboardController.sendChord()/handleDomEvent()
         |
         v
- KeyboardTransport -> DataChannel or Socket.IO -> Signal lease -> Host Quartz
+ KeyboardTransport -> DataChannel -> Host lease/binding validation -> Quartz
+                   -> Socket.IO -> Signal lease validation -> Host -> Quartz
 ```
+
+鼠标经 `Input.sendInput()` 使用单独的可靠写入序号/reset 状态，键盘经 `KeyboardTransport` 使用键盘序号/reset 状态；共享控制租约和 v2 envelope，不共用一条鼠标/键盘混合 pending 队列。
 
 ### 4.1 `TouchInputAdapter`
 
@@ -102,7 +107,7 @@ const adapter = TouchInputAdapter.create({
   element,
   mapPoint: (event, allowOutside) => Input.getRelativeCoords(event, allowOutside),
   sendMouse: (action, payload) => Input.sendInput('mouse', action, payload),
-  isEnabled: () => Input.isActive,
+  isEnabled: () => Input.isActive && !Input._pendingMouseReset,
   getClickCount: (event) => Input.getPointerClickCount({
     // Touch PointerEvent.up commonly exposes button=-1; normalize it to the
     // primary button used by the existing desktop double-click policy.
@@ -149,7 +154,7 @@ const adapter = MobileTextInput.create({
   element: textarea,
   sendText: (text) => Input.keyboardController.sendText(text),
   sendKey: (code) => Input.keyboardController.sendChord({ code }),
-  isEnabled: () => Input.isActive && WebRTC.hasActiveControl(),
+  isEnabled: () => Input.isActive && Input.keyboardController.getSnapshot().state === 'READY',
 });
 
 adapter.attach();
@@ -160,7 +165,7 @@ adapter.detach();
 adapter.getSnapshot();
 ```
 
-适配器内部保存 `lastValue`、composition 状态、光标位置和最近一次提交结果；外部只看到文本提交、Backspace 和状态摘要。
+适配器内部保存已接受的 `lastValue`、待处理的 `observedValue`、composition 状态和本地 `remoteCursor`；外部只看到文本/控制键提交与简要状态。该游标没有远端光标回读，不是远端文档镜像。当前工具栏导航绕过适配器，存在基线脱节问题（复审 F3）。
 
 ### 4.3 UI seam
 
@@ -189,6 +194,7 @@ PRESSED/DRAGGING + 第二个触点
 
 - `pointerdown`：只接受 `pointerType === 'touch'` 的 primary pointer；记录 `pointerId`、起点、最近坐标、时间和映射后的坐标；调用 pointer capture。此时不立即发送远程 down，等待长按/拖动判定。
 - 移动距离超过 **8 CSS px**：取消 tap/长按计时，发送一次 left `down`，进入 `DRAGGING`；后续 move 使用现有 rAF 合并和 `input-move` DataChannel。
+  当前 down 使用越过阈值时的坐标，而非初始触点，可能错过小目标；这是待修复缺陷，不能视为拖拽命中已完成（复审 F4）。
 - `pointerup` 且未拖动：发送 left `down` + `up`，复用现有 500ms/6px 双击判定和 `clickCount`；随后退出到 `IDLE`。
 - `pointerup` 且已拖动：发送 left `up`，释放 capture。
 - `pointercancel`、`lostpointercapture`、窗口 blur、document hidden、连接/控制失效：发送幂等 `mouse/reset`，本地状态归零。
@@ -207,7 +213,7 @@ PRESSED/DRAGGING + 第二个触点
 - 第二个 touch pointer 出现时，如果正在 `PRESSED` 或 `DRAGGING`，先发送一次 `mouse/reset`，不让远程留下左键或右键。
 - 进入 `SCROLLING` 后只跟踪两指质心，按每帧质心位移发送 wheel；不发送 mouse move/down/up。
 - 滚动事件沿用当前 Host 的 `deltaX/deltaY` 单位和归一化：浏览器正 `deltaY` 表示向下，Host 转换为 Quartz 负 axis1。
-- 两指结束后回到 `IDLE`；第三指不改变状态，也不触发远程按钮。
+- 所有跟踪触点结束后回到 `IDLE`；留下一指时继续保持 `SCROLLING`。当前第三指也会进入 pointers map，质心取前两项，先进入的触点离开后第三指可能被纳入质心；尚未实现“严格忽略第三指”的原设计目标。
 
 ### 5.5 非触摸指针兼容
 
@@ -229,29 +235,30 @@ Viewer 页面增加专用 textarea，要求：
   aria-label="远程文本输入"></textarea>
 ```
 
-它可以视觉隐藏但不能使用 `display:none`，否则 iOS/Android 不会弹出键盘。默认采用 1px、透明、无边框的可聚焦样式；打开移动输入模式时显示清晰的焦点/输入状态，并用底部面板承载可提交文本。
+当前实现是可见的底部 textarea：父 `#mobileInputDock` 默认 `hidden`，点击“移动键盘”时先显示父元素，再同步 `focus()`；不是 1px 透明输入框。textarea 使用 `maxlength="4096"`，维护末尾 U+200B 哨兵，非组合输入即时提交，没有独立的移动“发送”按钮。普通“文本输入”modal 是另一入口：可点发送，且 `compositionend` 会自动提交并关闭。
 
 ### 6.2 事件处理
 
 1. `compositionstart`：设置 `composing=true`，保存 `compositionBaseValue=lastValue`，不发送临时组合字符串。
 2. `compositionupdate`：只更新 `observedValue`，不调用 Host；组合期间的 `input` 同样只更新 `observedValue`。
 3. `compositionend`：读取稳定 value，执行一次 `flushDiff(value)`，清除 composing 状态，并把 `lastValue` 更新为该 value。
-4. `beforeinput`：在 `insertText`、`insertCompositionText`、`deleteContentBackward` 等类型可取消时记录意图，但不把它当作唯一来源。
+4. `beforeinput`：非组合态检查当前 value/选区是否与内部游标一致；不一致时阻止事件并还原 buffer。只有哨兵时的 `deleteContentBackward` 直接发送一次远端 Backspace；其余变化主要由 `input` diff 处理。该还原分支会误清未发送草稿，见复审 F5。
 5. 非组合态 `input`：执行 `flushDiff(value)`；若浏览器在 `compositionend` 后重复派发同值 `input`，因 `lastValue` 已更新而成为 no-op，不能重复发送。
 6. `keydown/keyup`：若来自专用 textarea，只处理明确的非文本控制键（Escape、Enter、Backspace、Arrow）；不把 `keyCode` 转成 Quartz code。
 
-`flushDiff()` 使用 `lastValue` 与当前 value 的最长公共前缀/后缀计算一次插入或删除；删除按 UTF-16 安全的 code point 数量拆成最多
-`MAX_BATCH_STEPS=16` 个 Backspace，插入按 Unicode scalar 发送。这样即使浏览器省略
+`flushDiff()` 使用 `lastValue` 与当前 value 的最长公共前缀/后缀计算一次插入或删除；删除按 code point 数量拆成每轮最多
+`MAX_BACKSPACE_STEPS=16` 个独立 Backspace chord（不是一个含 16 次删除的 batch）；超额部分等待后续事件再次 flush。插入按 Unicode scalar 发送。这样即使浏览器省略
 `beforeinput`，仍能提交一次；组合事件和后续 `input` 共享同一基线，不会重复提交。
 
-文本提交必须满足：持有 ACTIVE lease、没有 keyboard reset barrier、没有物理 pressed key、长度不超过现有 4096 Unicode scalar 限制。失败时保留输入框内容并显示可重试状态，不静默清空。
+文本提交必须满足：持有 ACTIVE lease、没有 keyboard reset barrier、没有物理 pressed key；Host 单次上限为 4096 Unicode scalar。DOM 的 `maxlength=4096` 按 UTF-16 长度限制且包括缓存哨兵，并不等价。失败后完整保留草稿并显示可重试状态仍是要求，当前未实现闭环：失败时暂存的 value 会被下一次 beforeinput 还原丢失，且没有明确失败草稿 UI（复审 F5）。
 
 ### 6.3 软键盘布局
 
 - 优先使用 `navigator.virtualKeyboard.overlaysContent = true` 和 `geometrychange`；不支持时使用 `visualViewport.height/offsetTop` 与 `resize`。
 - CSS 使用 `env(safe-area-inset-bottom)` 和 `env(keyboard-inset-height, 0px)`；JS 只写一个 `--mobile-keyboard-bottom` 变量。
-- 软键盘可见时，虚拟按键栏和提交控件必须位于键盘上方；远程画面允许缩小但不能被控制栏覆盖。
-- 关闭移动输入模式时恢复原焦点；控制权撤销、连接断开和页面隐藏时隐藏 textarea 并 reset。
+- 软键盘可见时，虚拟按键栏和文本控件必须位于键盘上方；远程画面允许缩小但不能被控制栏覆盖。当前键盘 inset 被重复计入，宽于 899px 时移动专用键栏隐藏、底栏不避让；该要求尚未满足（复审 F2/F6）。
+- 当前关闭移动输入只 blur，不恢复此前焦点；控制权撤销、连接断开和页面隐藏经 reset/park 隐藏并清理 textarea。连续视频帧的门禁同步还会抢走文本焦点（复审 F1）。
+- 全屏当前只包含 `.viewer-container`，移动按钮、虚拟按键和文本 Dock 均位于容器外；完整移动操控不能视为已支持（复审 F7）。
 
 ## 7. 虚拟按键与修饰键
 
@@ -260,6 +267,8 @@ Viewer 页面增加专用 textarea，要求：
 1. 导航：Esc、Tab、Enter、Backspace、上/下/左/右。
 2. 修饰：Shift、Control、Alt、Command，采用 latch 状态；首次点击发送并保持真实 down，再次点击发送 up 释放。
 3. 快捷操作：复制、粘贴、剪切、撤销、全选、查找、右键。
+
+实际移动行还包含保存、截屏和切换输入法。复制/粘贴针对远端 Mac 剪贴板；“输入法”发送远端切换组合键，不切换手机输入法。虚拟 Cmd latch 后通过软键盘输入普通字母会先释放 latch 再发 Unicode，不能作为 Cmd+字母快捷键；应使用显式快捷按钮。
 
 每个快捷键调用现有 `sendChord()`，作为一个 `keyboard/batch` 原子消息；不在 UI 中连续调用多个 `sendInput()`。修饰键 latch 通过新增的
 `RemoteKeyboardController.setVirtualModifier(name, pressed)` 进入同一 pressed map、transport 和 reset barrier，不允许 UI 直接调用 transport。每个按钮最小触控尺寸为 44px，带 `aria-label`、`aria-pressed` 和可见 disabled 状态。
@@ -292,6 +301,8 @@ transport 均返回 `false`，UI 不改变 `aria-pressed`。
 }
 ```
 
+当前这只是部分接线：`mobileInputMode` 无有效输入时默认 `off`；移动按钮另按触控能力和 `Input.isActive` 更新，实际文本提交再检查 controller READY。不能依据字段存在宣称 blocked/retry/焦点状态机已经完成。
+
 - 未连接、媒体未 ready、只读、GRANTING/REVOKING、reset-blocked 时，触控和虚拟键盘控件 disabled 或 hidden。
 - DataChannel 不可用时沿用 Socket.IO fallback；可靠事件没有可用 transport 时不进入 pending map。
 - `input_ack` 返回 `stale-lease`、`sequence-gap`、`execution-failed` 时，现有 controller 进入 reset/reacquire 语义；移动 adapter 只清本地手势和 latch。
@@ -309,12 +320,14 @@ transport 均返回 `false`，UI 不改变 `aria-pressed`。
 - Signal 继续先做 Viewer 身份、控制租约和输入结构校验；Host 继续做协议、序列和 Quartz 映射校验。
 - 不记录原始文本、按键 code、剪贴板、坐标或完整 envelope；诊断只记录设备类别、动作类别、transport、seq、payload bytes 和耗时。
 - touch move 每帧最多发送一个最新点，超过 `input-move` 4 KiB buffer 时丢弃中间点；点击、释放、wheel、键盘和 reset 不得因背压静默丢失。
-- 文本提交一次最多 4096 scalar；单次 DOM diff 和 Backspace batch 不超过现有 `MAX_BATCH_STEPS=16`。
+- Host 单次 text 最多 4096 scalar；DOM diff 本身不是 16 字符上限，只有每次 flush 的删除发送限制为 `MAX_BACKSPACE_STEPS=16`。其余待处理删除需要后续事件驱动。
 - 适配器不保留页面生命周期之外的输入内容；`reset()` 必须清空 value、composition、pointer、latch 和 pending intent。
 
 ## 10. 测试与验收
 
 ### 10.1 自动化
+
+下列列表包含原设计要求，不能全部视为现有测试已经证明。2026-09-05 检查发现现有 DOM mock 不测真实焦点、CSS 测试主要检查规则/人工命中夹具，缺少连续帧、工具栏与 textarea 交叉操作和系统键盘占高下的实际布局覆盖；本轮离线复现另见报告。
 
 - `web-client/js/touch-input-adapter.test.js`：tap、double tap、drag threshold、long press right-click、two-finger wheel、pointercancel、lost capture、reset 幂等、多指隔离。
 - `web-client/js/mobile-text-input.test.js`：英文、中文 composition、Emoji surrogate pair、删除、纠错替换、beforeinput 缺失、textarea 重置不丢键盘焦点、lease/transport blocked。
@@ -346,6 +359,8 @@ transport 均返回 `false`，UI 不改变 `aria-pressed`。
 
 ## 11. 设计审查结论
 
+> 以下是原设计审查背景。2026-09-05 当前代码复审确认 F1–F7，已超出单纯“缺设备验收”的范围；应使用[本轮报告](../reports/2026-09-05-mobile-touch-keyboard-logic-review.md)判断现阶段可用性。
+
 ### 主流设计符合性
 
 符合 Pointer Events、`touch-action`、pointer capture、IME composition、Virtual Keyboard progressive enhancement 和 noVNC/Guacamole 的输入隔离原则。没有依赖已废弃的 `keyCode`，没有把手机软键盘伪装为物理键盘，也没有用固定延时掩盖事件顺序问题。
@@ -356,12 +371,12 @@ transport 均返回 `false`，UI 不改变 `aria-pressed`。
 
 本轮审查额外确认了三个深模块约束：组合输入的重复 `input` 由 adapter 内部基线消解；modifier latch 由
 `RemoteKeyboardController.setVirtualModifier()` 持有，而不是由按钮维护第二份 pressed truth；显式右键通过
-`TouchInputAdapter.clickButton()` 复用释放/失败屏障，而不是由 UI 拼装 envelope。鼠标 ACK 只进入
-`LatencyMonitor`，不会污染 keyboard pending map。
+`TouchInputAdapter.clickButton()` 复用释放/失败屏障，而不是由 UI 拼装 envelope。鼠标 ACK 进入
+`Input.acceptMouseAck()` 的可靠写入/reset 状态和 `LatencyMonitor`，不会污染 keyboard pending map。
 
 ### 交互合理性
 
-短 tap、拖动、双指滚动和显式右键符合远程桌面用户预期；长按右键提供手机上最容易发现的上下文菜单入口，同时保留显式按钮作为可访问性和可学习性兜底。虚拟按键只保留高频控制键，避免在小屏堆叠完整桌面工具栏；软键盘使用真实系统 IME，保证中文和 Emoji 输入质量。
+短 tap、拖动、双指滚动和显式右键的产品意图合理，但当前 down 起点、焦点维护、文本游标同步及小屏控件密度均有已确认问题。采用系统 IME 能利用本机输入法，不等于中文/Emoji 的真实输入质量已经保证。
 
 ### 已知风险与控制措施
 
@@ -370,7 +385,7 @@ transport 均返回 `false`，UI 不改变 `aria-pressed`。
 - 长按与双击存在时间竞争：状态机只在 550ms/8px 明确阈值下提交一次语义，并在第二触点或 cancel 时 reset。
 - tunnel RTT 可能放大 wheel/keyboard 反馈：控制事件使用可靠有序传输，move 单独使用无序通道，避免高频事件阻塞控制事件。
 
-审查结论：移动端实现已合入并通过自动化契约测试；真实 Android/iOS 浏览器、Host Quartz 和公网路径验收仍为 NOT RUN，不能据此宣称真机或公网链路已通过。
+当前审查结论：基础实现已合入，既有自动化契约通过；2026-09-05 新增隔离复现确认交互缺陷，必须修复并补跨模块测试。真实 Android/iOS 浏览器、Host Quartz 和公网路径仍为 NOT RUN。
 
 ## 12. 参考资料
 

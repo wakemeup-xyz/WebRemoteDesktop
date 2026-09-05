@@ -1,0 +1,29 @@
+{
+  "reviewFinalized": "2026-09-06",
+  "codeCommit": "000547ff37dc1a05c3b5b953954af81e9ed7d43a",
+  "scope": "Offline synthetic fixtures only; no live Viewer, Host, system keyboard, or public network session",
+  "existingFocusedNodeSuite": { "tests": 151, "pass": 151, "fail": 0 },
+  "nodeReproduction": { "exitCode": 0, "confirmedFindings": ["F1", "F3", "F4", "F5"] },
+  "chromiumReproduction": {
+    "exitCode": 0,
+    "networkRequests": "all aborted",
+    "animations": "disabled for stable measurement",
+    "fonts": "document.fonts.ready awaited",
+    "focus": { "before": "mobileTextInput", "after": "remoteVideo" },
+    "fullscreenTargetContainsMobileDock": false,
+    "fullscreenTargetContainsMobileKeys": false,
+    "syntheticLayouts": [
+      { "width": 375, "height": 812, "keyboardInset": 0, "viewerHeight": 199, "dockHeight": 344, "dockTop": 456, "mobileKeysDisplay": "block" },
+      { "width": 375, "height": 812, "keyboardInset": 300, "viewerHeight": 32, "dockHeight": 644, "dockTop": -188, "mobileKeysDisplay": "block" },
+      { "width": 768, "height": 1024, "keyboardInset": 300, "viewerHeight": 32, "dockHeight": 544, "dockTop": 124, "mobileKeysDisplay": "block" },
+      { "width": 1024, "height": 1366, "keyboardInset": 300, "viewerHeight": 1243, "dockTop": 1120, "dockBottom": 1342, "keyboardTop": 1066, "mobileKeysDisplay": "none" }
+    ]
+  },
+  "physicalDevice": "NOT RUN",
+  "systemKeyboard": "NOT RUN",
+  "quartz": "NOT RUN",
+  "liveViewerSession": "NOT RUN",
+  "publicPath": "NOT RUN",
+  "liveWatcher": "NOT RUN",
+  "productionFixesApplied": false
+}

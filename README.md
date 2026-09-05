@@ -58,6 +58,8 @@
 
 手机、Pad 与桌面浏览器使用同一个正式 Viewer 入口：`https://link.stockhub.wiki`。移动端不会因为触控或软键盘而切换到另一套域名、端口、认证或信令协议。
 
+基本操作：单指点按/拖拽、550ms 长按右键、双指滚动；点击“移动键盘”使用本机输入法提交远端文本。虚拟复制/粘贴操作使用远端 Mac 的剪贴板。当前实现还有焦点、键盘避让及文本草稿同步缺陷，不能视为手机/iPad 完整验收通过；详见 [当前逻辑与 2026-09-05 复审](docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)。
+
 - 正式对外访问：`https://link.stockhub.wiki`
 - 本机调试：`http://127.0.0.1:8080`
 - 临时排障：读取 `/tmp/wrd-safe-current-url.txt` 中的 `*.trycloudflare.com` 地址

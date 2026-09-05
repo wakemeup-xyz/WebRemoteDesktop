@@ -1,5 +1,11 @@
 # Mobile Remote-Control Acceptance
 
+## 2026-09-05 Current-Code Review Addendum
+
+The original evidence below is historical. Review of `main` at `000547f` found seven open interaction defects: repeated video-focus stealing, duplicate keyboard-inset layout accounting, toolbar/text cursor divergence, displaced drag-down coordinates, loss of unsent drafts, missing wide-iPad keyboard avoidance, and input controls outside the fullscreen target. See [current logic and review](2026-09-05-mobile-touch-keyboard-logic-review.md) for locations and reproductions.
+
+The seven focused Node suites passed 151/151. Four isolated code reproductions confirmed defects; offline Chromium rendered the real HTML/CSS with connected capabilities and a synthetic keyboard inset, and confirmed real DOM focus stealing. These results are **not** a real Viewer-session, physical-device, system-keyboard, Quartz, or public-path PASS. The earlier automated success does not close the newly identified defects. No production fix or service operation was performed in this review.
+
 ## Entry Boundary
 
 The formal Viewer entry for desktop, phone, and iPad is `https://link.stockhub.wiki`. Local checks may use `http://127.0.0.1:8080`. A `*.trycloudflare.com` URL from `/tmp/wrd-safe-current-url.txt` is a temporary safe quick-tunnel diagnostic address only; it is not a substitute for the formal domain and is not used as evidence of a real-device public-path pass.

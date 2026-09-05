@@ -138,6 +138,35 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **离线浏览器验收 harness**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 仅连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
+#### 3.4.1 当前操作与实现边界（2026-09-05）
+
+| 用户操作 | 当前行为 |
+|---|---|
+| 单指点 / 双点 | 抬手发左键 down/up；500ms、6px 范围内计算双击 |
+| 拖动 / 长按 | 位移超过 8 CSS px 后左键拖拽；550ms 长按触发右键，抬手释放 |
+| 双指滚动 | 使用触点质心位移发送远端滚轮；不提供双指缩放；留下一指时仍保持滚动态 |
+| 移动键盘 | 在有触控能力的浏览器中显示入口；点击打开底部文本框并聚焦系统键盘，非组合输入即时发送，IME 在组合结束后提交 |
+| 虚拟修饰键 | Shift/Ctrl/Alt/Cmd 点击保持、再次点击释放；文本提交前自动释放；快捷操作应使用显式复制/粘贴等按钮 |
+| 剪贴板与输入法 | 复制/粘贴使用远端 Mac 剪贴板；“输入法”按钮切换远端输入法，不切换手机系统输入法 |
+| 软键盘以外的文本入口 | 普通“文本输入”modal 可点发送，compositionend 也会自动提交并关闭；不是移动持续输入框 |
+| 失焦 / 隐藏 / 断连 | 立即清理指针；按 DC 状态 reset 或 park 键盘及移动文本框；页面后台持续 5 分钟才停止媒体采集 |
+
+触控最终转换为鼠标输入；软键盘最终发送 Unicode 文本；虚拟键/实体键发送物理键 code 或组合 batch。它们共享控制租约，鼠标与键盘各有自己的 seq、ACK 和 reset 状态。移动文本框的缓存不是远端文档或光标镜像。
+
+#### 3.4.2 当前复审未闭环项
+
+2026-09-05 基于 `000547f` 复核：相关自动化 **151/151** 通过，但隔离代码复现及离线 Chromium 已确认以下缺陷，不能仅标为“待真机验收”：
+
+- [ ] 连续出画同步 `Input.setActive(true)` 会把焦点从文本框抢回视频（P1）。
+- [ ] 键盘 inset 重复计入窄屏布局，挤压画面并把工具栏推出可视区（P1）。
+- [ ] 发送拒绝后的未发送草稿可被下一次 beforeinput 还原丢失，缺少明确重试状态（P1）。
+- [ ] 虚拟方向/退格等工具栏动作绕过移动文本的游标基线，造成后续文本不一致（P2）。
+- [ ] 拖动首次 down 使用越过阈值时的位置，可能错过原始小目标（P2）。
+- [ ] 宽于 899px 的 iPad 布局隐藏移动专用键栏、底栏未避让系统键盘（P2）。
+- [ ] 元素全屏只包含画面，移动键盘入口与输入 Dock 不在全屏容器内（P2）。
+
+完整逻辑、定位、建议和证据见 [手机 / iPad 触控与软键盘复审](../superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)。离线浏览器使用人工键盘 inset，没有连接真实 Viewer/Host，不计入真实设备、Quartz 或公网 PASS。
+
 **验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、安全布局摘要、状态和无敏感原因；不得记录文本、按键、剪贴板、密码、token、URL、事件坐标或原始 bounding box。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
 
 ### 3.5 控制栏
