@@ -10,6 +10,7 @@ from h264_videotoolbox_encoder import (
     set_session_gop_size,
     get_session_gop_size,
     libx264_zerolatency_options,
+    periodic_idr_due,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
 )
@@ -65,6 +66,11 @@ def test_set_session_gop_clamps():
     assert get_session_gop_size() == 20
     assert set_session_gop_size(1) == 10
     set_session_gop_size(40)
+
+
+def test_on_demand_policy_schedules_no_application_periodic_idr_in_a_sixty_second_window():
+    assert not any(periodic_idr_due(frame_index, 0) for frame_index in range(1, 1_201))
+    assert periodic_idr_due(40, 40) is True
 
 
 def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields(caplog):

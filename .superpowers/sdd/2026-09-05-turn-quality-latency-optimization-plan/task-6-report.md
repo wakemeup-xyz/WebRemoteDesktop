@@ -70,3 +70,54 @@ The offline matrix is intentionally insufficient for the Viewer buffer/decode,
 Host event-loop/input-ack, and finite-loss recovery gates. They remain `NOT RUN`
 until Task 9 records a real selected relay path. The first candidate's failure
 also means this task does not claim to have fixed periodic relay image quality.
+
+## Fix round 1/5: independent matrix and on-demand model
+
+The earlier stop-after-first-failure implementation was replaced. Each candidate
+now carries a complete declared baseline and a single declared changed variable,
+then runs independently even if an earlier candidate failed. The regenerated
+matrix has seven evaluated rows, each with both 1152x720 and 1728x1080 results:
+
+| Candidate | Parameters | 720p gates | 1080p gates |
+|---|---|---|---|
+| `gop-2s-current-bitrate-vbv100` | 40 frames, 1.8/2.5Mbps, 100ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `gop-2s-current-bitrate-vbv150` | 40 frames, 1.8/2.5Mbps, 150ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `gop-2s-cap-bitrate-vbv150` | 40 frames, 3.2/5Mbps, 150ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `gop-2s-cap-bitrate-vbv200` | 40 frames, 3.2/5Mbps, 200ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `gop-4s-cap-bitrate-vbv200` | 80 frames, 3.2/5Mbps, 200ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `gop-10s-cap-bitrate-vbv200` | 200 frames, 3.2/5Mbps, 200ms | pulse/encode PASS; periodic-quality/on-demand-PSNR FAIL | same |
+| `on-demand-cap-bitrate-vbv200` | no periodic IDR, 3.2/5Mbps, 200ms | logical no-periodic/encode PASS; forced-IDR PSNR FAIL | same |
+
+For on-demand-only, `periodic_idr_due()` deterministically returns false for all
+1,200 frames in the 60-second health window. The encoder itself treats a zero
+periodic GOP as on-demand-only and uses a 1,201-frame x264 keyint safety value;
+the actual sample is intentionally only 65 frames per resolution and contains
+one direct force at frame 5. It measures forced-IDR PSNR, encode time, IDR byte
+average/max, P-frame byte average/max, and IDR-to-P average burst ratio. It does
+not simulate loss or treat byte size as playback buffering.
+
+Selection now has three explicit states: `no-offline-winner`,
+`runtime-validation-candidate`, and `validated`. This matrix is
+`no-offline-winner`, so no v2 constants were installed. A later offline winner
+would remain `runtime-validation-candidate` with the legacy default until all
+real relay gates pass; only then may it become `validated` and promote v2.
+
+The updated evidence is
+`docs/superpowers/reports/evidence/2026-09-05-turn-quality/relay-balanced-v2-matrix.json`.
+The Task 9 Viewer-buffer, Host event-loop/input-ack, and finite-loss gates remain
+`NOT RUN`/`PENDING` as appropriate.
+
+### Fix-round verification
+
+- RED: selection-state assertions first failed because the evaluator emitted no
+  `state`; matrix assertions then failed because rows were skipped and there was
+  no `frameBytes` summary.
+- GREEN: `/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 -m
+  pytest -q python-host/test_h264_encoder_policy.py python-host/test_h264_idr.py`
+  — 43 passed; `/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3
+  -m unittest scripts/test-turn-media-timeline.py -q` — 3 passed; the exact
+  matrix command and `git diff --check` were also rerun before commit.
+
+### Fix-round commit
+
+`fix(media): evaluate independent relay encoder candidates` (this commit)

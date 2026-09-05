@@ -14,22 +14,36 @@ PROBE_PATH = ROOT / "docs/superpowers/reports/evidence/2026-09-05-turn-quality/e
 
 
 def select_relay_candidate(candidates: list[dict]) -> dict:
-    """Select the first offline winner without treating it as runtime acceptance."""
+    """Separate offline choice from the runtime evidence that can change defaults."""
     for candidate in candidates:
         offline = candidate.get("offline", {})
         runtime = candidate.get("runtime", {})
-        if offline.get("status") == "PASS" and runtime.get("status") == "NOT RUN":
+        if offline.get("status") != "PASS":
+            continue
+        runtime_gates = runtime.get("gates", {})
+        runtime_passed = (
+            runtime.get("status") == "PASS"
+            and set(RUNTIME_GATES) <= set(runtime_gates)
+            and all(runtime_gates[gate] == "PASS" for gate in RUNTIME_GATES)
+        )
+        if runtime_passed:
             return {
-                "status": "candidate-selected-for-runtime-validation",
+                "state": "validated",
                 "candidateId": candidate["id"],
-                "defaultPolicy": "relay-legacy-v1",
-                "runtimeGateStatus": "NOT RUN",
+                "defaultPolicy": "relay-balanced-v2",
+                "runtimeGateStatus": "PASS",
             }
+        return {
+            "state": "runtime-validation-candidate",
+            "candidateId": candidate["id"],
+            "defaultPolicy": "relay-legacy-v1",
+            "runtimeGateStatus": "PENDING",
+        }
     return {
-        "status": "stopped-at-legacy",
+        "state": "no-offline-winner",
         "candidateId": None,
         "defaultPolicy": "relay-legacy-v1",
-        "runtimeGateStatus": "NOT RUN",
+        "runtimeGateStatus": "PENDING",
     }
 
 
@@ -50,6 +64,7 @@ def _candidate(
     vbv_buffer_ms: int,
     bitrates_bps: dict[str, int],
     changed_variable: str,
+    baseline: dict,
 ) -> dict:
     return {
         "id": candidate_id,
@@ -63,6 +78,7 @@ def _candidate(
             "vbvBufferMs": vbv_buffer_ms,
             "bitrateBpsByResolution": bitrates_bps,
             "changedVariable": changed_variable,
+            "baseline": baseline,
         },
         "offline": {"status": "NOT RUN"},
         "runtime": {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)},
@@ -70,7 +86,49 @@ def _candidate(
 
 
 def relay_matrix_candidates() -> list[dict]:
-    """Return the fixed conservative path; later rows never inherit a failed row."""
+    """Return independently constructed rows for the fixed conservative path."""
+    legacy_baseline = {
+        "id": "relay-legacy-v1",
+        "periodicIdrFrames": 20,
+        "vbvBufferMs": 100,
+        "bitrateBpsByResolution": dict(CURRENT_BITRATES_BPS),
+    }
+    two_second_100 = {
+        "id": "two-second-current-bitrate-vbv100",
+        "periodicIdrFrames": 40,
+        "vbvBufferMs": 100,
+        "bitrateBpsByResolution": dict(CURRENT_BITRATES_BPS),
+    }
+    two_second_150 = {
+        "id": "two-second-current-bitrate-vbv150",
+        "periodicIdrFrames": 40,
+        "vbvBufferMs": 150,
+        "bitrateBpsByResolution": dict(CURRENT_BITRATES_BPS),
+    }
+    two_second_cap_150 = {
+        "id": "two-second-cap-bitrate-vbv150",
+        "periodicIdrFrames": 40,
+        "vbvBufferMs": 150,
+        "bitrateBpsByResolution": dict(CAP_BITRATES_BPS),
+    }
+    two_second_cap_200 = {
+        "id": "two-second-cap-bitrate-vbv200",
+        "periodicIdrFrames": 40,
+        "vbvBufferMs": 200,
+        "bitrateBpsByResolution": dict(CAP_BITRATES_BPS),
+    }
+    four_second_cap_200 = {
+        "id": "four-second-cap-bitrate-vbv200",
+        "periodicIdrFrames": 80,
+        "vbvBufferMs": 200,
+        "bitrateBpsByResolution": dict(CAP_BITRATES_BPS),
+    }
+    ten_second_cap_200 = {
+        "id": "ten-second-cap-bitrate-vbv200",
+        "periodicIdrFrames": 200,
+        "vbvBufferMs": 200,
+        "bitrateBpsByResolution": dict(CAP_BITRATES_BPS),
+    }
     return [
         _candidate(
             "gop-2s-current-bitrate-vbv100",
@@ -78,6 +136,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=100,
             bitrates_bps=dict(CURRENT_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
+            baseline=legacy_baseline,
         ),
         _candidate(
             "gop-2s-current-bitrate-vbv150",
@@ -85,6 +144,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=150,
             bitrates_bps=dict(CURRENT_BITRATES_BPS),
             changed_variable="vbvBufferMs",
+            baseline=two_second_100,
         ),
         _candidate(
             "gop-2s-cap-bitrate-vbv150",
@@ -92,6 +152,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=150,
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="targetBitrateBps",
+            baseline=two_second_150,
         ),
         _candidate(
             "gop-2s-cap-bitrate-vbv200",
@@ -99,6 +160,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=200,
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="vbvBufferMs",
+            baseline=two_second_cap_150,
         ),
         _candidate(
             "gop-4s-cap-bitrate-vbv200",
@@ -106,6 +168,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=200,
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
+            baseline=two_second_cap_200,
         ),
         _candidate(
             "gop-10s-cap-bitrate-vbv200",
@@ -113,6 +176,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=200,
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
+            baseline=four_second_cap_200,
         ),
         _candidate(
             "on-demand-cap-bitrate-vbv200",
@@ -120,6 +184,7 @@ def relay_matrix_candidates() -> list[dict]:
             vbv_buffer_ms=200,
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
+            baseline=ten_second_cap_200,
         ),
     ]
 
@@ -138,7 +203,7 @@ def _frame_count_for(periodic_idr_frames: int) -> int:
     return max(65, periodic_idr_frames + 25)
 
 
-def _evaluate_resolution_gates(run: dict) -> dict:
+def _evaluate_resolution_gates(run: dict, *, on_demand_only: bool) -> dict:
     frames = run["frames"]
     periodic_idrs = [
         frame for frame in frames if frame.get("idrKind") == "periodic"
@@ -155,18 +220,12 @@ def _evaluate_resolution_gates(run: dict) -> dict:
         if frame.get("idrKind") == "on-demand-probe"
     ]
     encode_budget_ms = 25.0 if tuple(run["resolution"]) == (1152, 720) else 45.0
-    return {
+    gates = {
         "qualityPulse": _gate(
             not pulse_indices,
             observed={"periodicIdrFrames": [frame["index"] for frame in periodic_idrs], "pulseIndices": pulse_indices},
             threshold="no periodic IDR at 0.8-1.5 seconds (frames 16-30 at 20FPS)",
             note="Static synthetic frames only; this is not a Viewer paint observation.",
-        ),
-        "periodicIdrQuality": _gate(
-            bool(periodic_change_mae) and max(periodic_change_mae) <= 3.0,
-            observed=periodic_change_mae,
-            threshold="every periodic IDR changeMAE <= 3.0",
-            note="The run includes a periodic IDR after the initial frame.",
         ),
         "onDemandIdrPsnr": _gate(
             len(on_demand_psnr) == 1 and on_demand_psnr[0] >= 28.0,
@@ -181,11 +240,27 @@ def _evaluate_resolution_gates(run: dict) -> dict:
             note="Machine-local encoding time; Host event-loop and input-ack remain runtime gates.",
         ),
     }
+    if on_demand_only:
+        gates["periodicIdrQuality"] = _gate(
+            not periodic_change_mae,
+            observed=periodic_change_mae,
+            threshold="no periodic application IDR in the encoded on-demand sample",
+            note="The 60-second logical scheduling window is reported separately.",
+        )
+    else:
+        gates["periodicIdrQuality"] = _gate(
+            bool(periodic_change_mae) and max(periodic_change_mae) <= 3.0,
+            observed=periodic_change_mae,
+            threshold="every periodic IDR changeMAE <= 3.0",
+            note="The run includes a periodic IDR after the initial frame.",
+        )
+    return gates
 
 
 def _evaluate_offline_candidate(probe, candidate: dict) -> dict:
     parameters = candidate["parameters"]
-    periodic_idr_frames = int(parameters["periodicIdrFrames"])
+    on_demand_only = parameters["periodicIdrFrames"] is None
+    periodic_idr_frames = 0 if on_demand_only else int(parameters["periodicIdrFrames"])
     font, font_metadata = probe.load_probe_font()
     runs = []
     resolution_gates = {}
@@ -199,17 +274,34 @@ def _evaluate_offline_candidate(probe, candidate: dict) -> dict:
             periodic_idr_frames=periodic_idr_frames,
             vbv_buffer_ms=int(parameters["vbvBufferMs"]),
             target_bitrate_bps=int(parameters["bitrateBpsByResolution"][resolution_key]),
-            frame_count=_frame_count_for(periodic_idr_frames),
+            frame_count=(65 if on_demand_only else _frame_count_for(periodic_idr_frames)),
             on_demand_idr_frame=5,
         )
         runs.append(run)
-        resolution_gates[resolution_key] = _evaluate_resolution_gates(run)
+        resolution_gates[resolution_key] = _evaluate_resolution_gates(
+            run, on_demand_only=on_demand_only
+        )
     all_passed = all(
         gate["status"] == "PASS"
         for gates in resolution_gates.values()
         for gate in gates.values()
     )
-    return {
+    logical_health_window = None
+    if on_demand_only:
+        application_periodic_idrs = [
+            frame_index
+            for frame_index in range(1, 1_201)
+            if probe.periodic_idr_due(frame_index, periodic_idr_frames)
+        ]
+        logical_health_window = {
+            "seconds": 60,
+            "framesAt20Fps": 1_200,
+            "applicationPeriodicIdrFrames": application_periodic_idrs,
+            "status": "PASS" if not application_periodic_idrs else "FAIL",
+            "note": "Deterministic scheduler check; the encoder sample remains 65 frames to measure forced-IDR quality and bytes.",
+        }
+        all_passed = all_passed and logical_health_window["status"] == "PASS"
+    result = {
         "status": "PASS" if all_passed else "FAIL",
         "scope": "offline synthetic static text; no desktop capture, Host startup, or network connection",
         "input": {
@@ -228,26 +320,21 @@ def _evaluate_offline_candidate(probe, candidate: dict) -> dict:
         },
         "resolutionGates": resolution_gates,
         "runs": runs,
+        "encodedSample": {
+            "frameCount": len(runs[0]["frames"]),
+            "purpose": "measure direct forced-IDR quality, encode time, and encoded-byte burst size",
+        },
     }
+    if logical_health_window is not None:
+        result["logicalHealthWindow"] = logical_health_window
+    return result
 
 
 def evaluate_relay_matrix(probe) -> dict:
-    """Evaluate the fixed path and stop before a failed setting can be compounded."""
+    """Evaluate every explicit row without allowing a failed row to alter another."""
     candidates = relay_matrix_candidates()
-    stop_reason = None
     for candidate in candidates:
-        if stop_reason is not None:
-            candidate["offline"] = {"status": "NOT RUN", "stopReason": stop_reason}
-            continue
-        if candidate["parameters"]["periodicIdrFrames"] is None:
-            stop_reason = "on-demand IDR requires controlled finite-loss recovery, which offline evaluation cannot provide"
-            candidate["offline"] = {"status": "NOT RUN", "stopReason": stop_reason}
-            continue
         candidate["offline"] = _evaluate_offline_candidate(probe, candidate)
-        if candidate["offline"]["status"] == "FAIL":
-            stop_reason = f"{candidate['id']} failed an offline quality or encode gate; later parameter changes were not compounded"
-        else:
-            stop_reason = f"{candidate['id']} is the first offline winner; later parameters were not explored"
 
     return {
         "kind": "relay-encoder-quality-matrix",

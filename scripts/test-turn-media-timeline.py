@@ -29,34 +29,65 @@ def _load_evaluator_module():
 
 
 class TurnEncoderQualityEvidenceTest(unittest.TestCase):
-    def test_relay_selection_keeps_legacy_default_until_runtime_gates_run(self) -> None:
-        """An offline winner is a runtime-validation candidate, never a default flip."""
+    def test_relay_selection_has_explicit_offline_runtime_and_validated_states(self) -> None:
+        """Only real runtime gates may promote an offline winner to the default."""
         evaluator = _load_evaluator_module()
 
-        selected = evaluator.select_relay_candidate(
+        no_winner = evaluator.select_relay_candidate(
             [
                 {
                     "id": "fails-quality",
                     "offline": {"status": "FAIL"},
-                    "runtime": {"status": "NOT RUN"},
+                    "runtime": {"status": "NOT RUN", "gates": {}},
+                }
+            ]
+        )
+        runtime_candidate = evaluator.select_relay_candidate(
+            [
+                {
+                    "id": "fails-quality",
+                    "offline": {"status": "FAIL"},
+                    "runtime": {"status": "NOT RUN", "gates": {}},
                 },
                 {
                     "id": "first-offline-winner",
                     "offline": {"status": "PASS"},
-                    "runtime": {"status": "NOT RUN"},
+                    "runtime": {"status": "NOT RUN", "gates": {}},
                 },
                 {
                     "id": "later-offline-winner",
                     "offline": {"status": "PASS"},
-                    "runtime": {"status": "NOT RUN"},
+                    "runtime": {"status": "NOT RUN", "gates": {}},
                 },
             ]
         )
+        validated = evaluator.select_relay_candidate(
+            [
+                {
+                    "id": "runtime-validated-winner",
+                    "offline": {"status": "PASS"},
+                    "runtime": {
+                        "status": "PASS",
+                        "gates": {
+                            "viewerBufferAndDecodeContinuity": "PASS",
+                            "hostEventLoopAndInputAck": "PASS",
+                            "finiteLossRecovery": "PASS",
+                        },
+                    },
+                }
+            ]
+        )
 
-        self.assertEqual(selected["status"], "candidate-selected-for-runtime-validation")
-        self.assertEqual(selected["candidateId"], "first-offline-winner")
-        self.assertEqual(selected["defaultPolicy"], "relay-legacy-v1")
-        self.assertEqual(selected["runtimeGateStatus"], "NOT RUN")
+        self.assertEqual(no_winner["state"], "no-offline-winner")
+        self.assertEqual(no_winner["candidateId"], None)
+        self.assertEqual(no_winner["defaultPolicy"], "relay-legacy-v1")
+        self.assertEqual(runtime_candidate["state"], "runtime-validation-candidate")
+        self.assertEqual(runtime_candidate["candidateId"], "first-offline-winner")
+        self.assertEqual(runtime_candidate["defaultPolicy"], "relay-legacy-v1")
+        self.assertEqual(runtime_candidate["runtimeGateStatus"], "PENDING")
+        self.assertEqual(validated["state"], "validated")
+        self.assertEqual(validated["candidateId"], "runtime-validated-winner")
+        self.assertEqual(validated["defaultPolicy"], "relay-balanced-v2")
 
     def test_relay_matrix_records_two_resolution_offline_gates_without_faking_runtime_proof(self) -> None:
         """Matrix evidence must preserve the boundary between offline and relay proof."""
@@ -82,9 +113,9 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
         self.assertEqual(evidence["kind"], "relay-encoder-quality-matrix")
         self.assertEqual(evidence["defaultPolicy"], "relay-legacy-v1")
         self.assertGreaterEqual(len(evidence["candidates"]), 1)
-        self.assertIn(evidence["selection"]["status"], {
-            "candidate-selected-for-runtime-validation",
-            "stopped-at-legacy",
+        self.assertIn(evidence["selection"]["state"], {
+            "no-offline-winner",
+            "runtime-validation-candidate",
         })
 
         for candidate in evidence["candidates"]:
@@ -98,9 +129,7 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
                     "finiteLossRecovery": "NOT RUN",
                 },
             )
-            if candidate["offline"]["status"] == "NOT RUN":
-                self.assertIn("stopReason", candidate["offline"])
-                continue
+            self.assertIn(candidate["offline"]["status"], {"PASS", "FAIL"})
             resolution_gates = candidate["offline"]["resolutionGates"]
             self.assertEqual(set(resolution_gates), {"1152x720", "1728x1080"})
             for gates in resolution_gates.values():
@@ -113,6 +142,22 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
                     }
                     <= gates.keys()
                 )
+                self.assertTrue(
+                    {"p", "idr", "idrToPAvgBurstRatio"}
+                    <= candidate["offline"]["runs"][0]["summary"]["frameBytes"].keys()
+                )
+
+        on_demand = next(
+            candidate
+            for candidate in evidence["candidates"]
+            if candidate["parameters"]["periodicIdrFrames"] is None
+        )
+        self.assertEqual(on_demand["offline"]["logicalHealthWindow"]["seconds"], 60)
+        self.assertEqual(
+            on_demand["offline"]["logicalHealthWindow"]["applicationPeriodicIdrFrames"],
+            [],
+        )
+        self.assertEqual(on_demand["offline"]["encodedSample"]["frameCount"], 65)
 
     def test_legacy_policy_reports_reproducible_idr_quality_pulse_evidence(self) -> None:
         """A policy/encoder change should fail this contract if baseline evidence drifts."""

@@ -65,21 +65,31 @@ It used only the deterministic synthetic text encoder probe; it did not start a
 Host, open a browser, allocate TURN, inject packet loss, or generate an input
 ack. The JSON therefore records every real relay/runtime gate as `NOT RUN`.
 
-The first conservative row changed only the periodic-IDR cadence from the legacy
-20 frames to 40 frames (two seconds), while retaining the current per-resolution
-bitrates and 100ms VBV:
+All seven rows ran independently from a declared parameter baseline. A failed
+row did not suppress, mutate, or implicitly provide the next row's input.
 
-| Resolution | 0.8-1.5s pulse | Periodic IDR `changeMAE <= 3.0` | On-demand IDR PSNR >=28dB | Encode p95 budget |
-|---|---|---|---|---|
-| 1152x720 | PASS (IDR at frame 40) | FAIL (17.372) | FAIL (17.540dB) | PASS (6.794ms / <=25ms) |
-| 1728x1080 | PASS (IDR at frame 40) | FAIL (11.496) | FAIL (19.298dB) | PASS (13.666ms / <=45ms) |
+| Candidate | Declared change | 1152x720 / 1728x1080 result |
+|---|---|---|
+| `gop-2s-current-bitrate-vbv100` | GOP 20 to 40 frames | FAIL / FAIL |
+| `gop-2s-current-bitrate-vbv150` | VBV 100 to 150ms | FAIL / FAIL |
+| `gop-2s-cap-bitrate-vbv150` | bitrate 1.8/2.5 to 3.2/5Mbps | FAIL / FAIL |
+| `gop-2s-cap-bitrate-vbv200` | VBV 150 to 200ms | FAIL / FAIL |
+| `gop-4s-cap-bitrate-vbv200` | GOP 40 to 80 frames | FAIL / FAIL |
+| `gop-10s-cap-bitrate-vbv200` | GOP 80 to 200 frames | FAIL / FAIL |
+| `on-demand-cap-bitrate-vbv200` | periodic GOP to on-demand only | FAIL / FAIL |
 
-Because that row failed the two image-quality gates, the matrix stops there.
-The 150/200ms VBV, cap-bitrate, 4/10-second GOP, and on-demand-only rows are
-recorded with their exact parameters and `NOT RUN` stop reasons; no failed value
-was compounded into another candidate. `relay-balanced-v2` has no selected
-parameter set, and `relay-legacy-v1` remains the default. This is a stop result,
-not a claim that the periodic quality issue is fixed.
+Every periodic row removed the 0.8-1.5-second pulse and met its local encoding
+budget, but failed periodic-IDR `changeMAE` and forced-IDR PSNR at both
+resolutions. The on-demand row passed its 60-second scheduler check with no
+application periodic IDR and passed its local encoding budget, but its forced-IDR
+PSNR remained below 28dB at both resolutions. The JSON records per-resolution
+IDR and P-frame encoded-byte averages/maxima plus `idrToPAvgBurstRatio`; these
+are local byte summaries only and do not substitute for the Viewer buffer gate.
+
+There is therefore no offline winner. Selection is `no-offline-winner`,
+`relay-balanced-v2` has no selected constants, and `relay-legacy-v1` remains the
+default. This is a stop result, not a claim that the periodic quality issue is
+fixed.
 
 The Viewer buffer/decode-continuity, Host event-loop/input-ack, and finite-loss
 recovery gates remain `NOT RUN` pending the Task 9 real selected-relay path.

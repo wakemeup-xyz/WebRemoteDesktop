@@ -28,6 +28,7 @@ PACKET_MAX = 1300
 # VideoToolbox buffers 4–6 frames; force_keyframe must wait for that IDR
 # instead of reopening the codec (which discards the in-flight IDR).
 IDR_WAIT_FRAMES = 8
+ON_DEMAND_ONLY_KEYINT_FRAMES = 1_201
 
 NAL_TYPE_IDR = 5
 NAL_TYPE_FU_A = 28
@@ -46,12 +47,23 @@ def get_session_gop_size() -> int:
     return _session_gop_size
 
 
+def periodic_idr_due(encoded_frame_count: int, periodic_idr_frames: int) -> bool:
+    """Return whether policy, rather than an explicit request, schedules this IDR."""
+    return (
+        int(periodic_idr_frames) > 0
+        and int(encoded_frame_count) > 0
+        and int(encoded_frame_count) % int(periodic_idr_frames) == 0
+    )
+
+
 def libx264_zerolatency_options(bitrate_bps: int, gop: int, vbv_buffer_ms: int = 100) -> dict:
     kbps = max(1, int(bitrate_bps) // 1000)
     # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
     # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
     bufsize = max(120, int(bitrate_bps) * max(1, int(vbv_buffer_ms)) // 1_000_000)
-    gop_s = str(max(1, int(gop or 20)))
+    gop_s = str(
+        int(gop) if int(gop) > 0 else ON_DEMAND_ONLY_KEYINT_FRAMES
+    )
     return {
         "preset": "ultrafast",
         "tune": "zerolatency",
@@ -516,8 +528,7 @@ class H264VideoToolboxEncoder(Encoder):
         # Cadence is encode-count. Bitstream IDR scans can false-positive on
         # P-slice payload and must not skip the 1s relay keyframe.
         due = (not waiting) and (
-            bool(force_keyframe)
-            or (self._frames_encoded > 0 and self._frames_encoded % max(1, gop) == 0)
+            bool(force_keyframe) or periodic_idr_due(self._frames_encoded, gop)
         )
         # A request owns a token only after this call actually submits its I
         # frame. A force signal received during VideoToolbox's IDR wait still

@@ -36,6 +36,7 @@ from h264_videotoolbox_encoder import (  # noqa: E402
     H264VideoToolboxEncoder,
     bitstream_contains_idr,
     libx264_zerolatency_options,
+    periodic_idr_due,
 )
 from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy  # noqa: E402
 
@@ -95,6 +96,30 @@ def legacy_encoder_settings(bitrate_bps: int, policy) -> dict[str, Any]:
 
 def percentile_95(values: list[float]) -> float:
     return sorted(values)[math.ceil(len(values) * 0.95) - 1]
+
+
+def frame_byte_summary(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe local encoded-frame burst size without inferring Viewer buffering."""
+    def summarize(values: list[int]) -> dict[str, float | int]:
+        return {
+            "count": len(values),
+            "avg": round(sum(values) / len(values), 3) if values else 0.0,
+            "max": max(values) if values else 0,
+        }
+
+    idr = [int(frame["bytes"]) for frame in frames if frame["idr"]]
+    p = [int(frame["bytes"]) for frame in frames if not frame["idr"]]
+    idr_summary = summarize(idr)
+    p_summary = summarize(p)
+    p_average = float(p_summary["avg"])
+    return {
+        "p": p_summary,
+        "idr": idr_summary,
+        "idrToPAvgBurstRatio": (
+            round(float(idr_summary["avg"]) / p_average, 3) if p_average else None
+        ),
+        "note": "Encoded bytes are not a Viewer playback-buffer measurement.",
+    }
 
 
 def evaluate_resolution(
@@ -185,6 +210,7 @@ def evaluate_resolution(
             "onDemandIdrPsnr": [
                 frame["psnr"] for frame in frames if frame["idrKind"] == "on-demand-probe"
             ],
+            "frameBytes": frame_byte_summary(frames),
         },
     }
 
