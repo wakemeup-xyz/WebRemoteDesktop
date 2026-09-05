@@ -112,3 +112,53 @@ selected-relay browser paint A/B. Task 9 is the required path for that A/B.
 pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 13 passed
 scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, runtimePaintGate PENDING
 ```
+
+## Review correction, round 2/5 (2026-09-06)
+
+Round 1 still undercounted consumer work: production calls `last_img.copy()` for
+reuse and calls `VideoFrame.from_ndarray` for every `recv()` return, including
+reuse and initial blanks. The benchmark now measures path-local copy,
+from-buffer, resize, blank allocation, `from_ndarray`, and BGRA→YUV420
+`reformat` p50/p95/max for `fresh`, `reused`, and `initialBlank` separately.
+Its total is the sum of actual calls, not a producer-cadence multiplier.
+
+Consumer phase/jitter/delay is now independent of producer phase/jitter/slow
+grab. The default benchmark crosses three producer conditions with two consumer
+conditions, yielding six four-second scenarios for each multiplier. It reports
+and tests both conservation identities:
+
+```text
+produced == freshConsumed + overwrittenDropped + unconsumedAtStop
+consumerTicks == freshConsumed + reused + initialBlank
+```
+
+The deterministic test fixtures prove all relevant boundary observations:
+
+- producer faster than the consumer produces an overwrite/drop and initial blank;
+- a stalled producer produces reuse and initial blank;
+- `reuse.copy` calls equal reuse count;
+- every consumer tick has one `fromNdarray` and one `reformat` call;
+- producer/consumer inter-arrival sample counts are `events - 1`.
+
+Raw run summary (20 FPS consumer, 1152x720, default four-second scenarios):
+
+| 1.0x scenario | fresh | reuse | initial blank | overwritten/drop | `reuse.copy` calls | frame/reformat calls |
+|---|---:|---:|---:|---:|---:|---:|
+| producer stable + consumer aligned | 79 | 0 | 1 | 0 | 0 | 80 / 80 |
+| producer stable + consumer phase/jitter/delay | 77 | 2 | 0 | 3 | 2 | 79 / 79 |
+| producer jitter + consumer aligned | 78 | 1 | 1 | 0 | 1 | 80 / 80 |
+| producer jitter + consumer phase/jitter/delay | 76 | 2 | 1 | 3 | 2 | 79 / 79 |
+| producer slow-grab + consumer aligned | 77 | 2 | 1 | 2 | 2 | 80 / 80 |
+| producer slow-grab + consumer phase/jitter/delay | 71 | 7 | 1 | 8 | 7 | 79 / 79 |
+
+This is local scheduling evidence only. All capture multiplier rows retain
+`LOCAL_CAPTURE_ONLY` / `runtimePaintGate=PENDING`; the output and production
+selection remain `applied:false, value:2.0`. Only Task 9's selected-relay
+browser paint A/B may reconsider that value.
+
+### Round-2 verification
+
+```text
+pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 15 passed
+scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, all runtime paint gates PENDING
+```

@@ -160,3 +160,32 @@ processing results cannot establish that browser paint FPS does not regress.
 Task 9 must perform the selected-relay browser A/B before any cadence change is
 considered. `INTER_LINEAR` remains unchanged; its local proxy is likewise
 `runtimePaintGate=PENDING`.
+
+### Task 7 review correction, round 2: account for every consumer path (2026-09-06)
+
+The producer/consumer probe now mirrors all three `recv()` input paths. Fresh
+frames record from-buffer and resize work; reused frames record `last_img.copy()`;
+initial blanks record BGRA allocation. Every consumer tick, including reuse and
+blank ticks, records `VideoFrame.from_ndarray` and BGRA→YUV420 `reformat`.
+`costModel` totals the calls actually made in each path and does not multiply
+resize, copy, or conversion by producer cadence.
+
+Consumer phase, fixed jitter, and controlled delay are crossed with independent
+producer stable/jitter/slow-grab controls (six scenarios per multiplier). The
+JSON records the following conservation laws for every scenario:
+`produced = freshConsumed + overwrittenDropped + unconsumedAtStop`, and
+`consumerTicks = freshConsumed + reused + initialBlank`. It also records
+producer and consumer inter-arrival p50/p95/max.
+
+At 20 FPS / 1152x720, the 1.0x candidate produced reuse under the newly covered
+consumer conditions: stable producer plus phase/jitter/delay had 77 fresh and 2
+reused frames; producer jitter plus aligned consumer had 78 fresh and 1 reused;
+slow-grab plus phase/jitter/delay had 71 fresh and 7 reused frames. The matching
+`reuse.copy` call counts were 2, 1, and 7. In every row, `fromNdarray` and
+`reformat` call counts equalled the 79 or 80 consumer ticks actually run.
+
+This makes the local probe more faithful, but does not create a cadence winner:
+legacy 2.0x and all 1.0x/1.25x/1.5x rows retain
+`offlineEligibility=LOCAL_CAPTURE_ONLY` and `runtimePaintGate=PENDING`. The
+production selection remains `{applied:false, value:2.0}` pending Task 9's
+selected-relay browser paint A/B.

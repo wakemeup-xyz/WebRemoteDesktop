@@ -47,9 +47,48 @@ def test_consumer_processes_only_fresh_latest_frames_and_reports_overwrites():
         slow_grab_seconds=0.0,
     )
 
-    assert result["produced"] >= result["freshConsumed"]
+    assert result["freshConsumed"] >= 1
     assert result["initialBlank"] >= 1
-    assert result["overwrittenDropped"] >= 0
+    assert result["overwrittenDropped"] >= 1
+    assert result["produced"] == (
+        result["consumed"] + result["overwrittenDropped"] + result["unconsumedAtStop"]
+    )
+    assert result["consumerTicks"] == (
+        result["freshConsumed"] + result["reused"] + result["initialBlank"]
+    )
     assert result["consumerProcessingCalls"] == result["freshConsumed"]
-    assert "producerInterArrival" in result
-    assert "consumerInterArrival" in result
+    assert result["producerInterArrival"]["count"] == result["produced"] - 1
+    assert result["consumerInterArrival"]["count"] == result["consumerTicks"] - 1
+
+
+def test_consumer_cost_model_counts_reuse_copy_and_every_recv_conversion():
+    result = benchmark.run_capture_candidate(
+        FakeMSS(),
+        {"left": 0, "top": 0, "width": 64, "height": 48},
+        target_fps=20,
+        multiplier=1.0,
+        duration_seconds=0.16,
+        size=(32, 24),
+        producer_phase_seconds=0.01,
+        producer_jitter_seconds=(0.0, 0.04),
+        slow_grab_seconds=0.03,
+    )
+
+    assert "pathCosts" in result
+    assert result["pathCosts"]["fresh"]["fromNdarray"]["count"] == result["freshConsumed"]
+    assert result["pathCosts"]["reused"]["copy"]["count"] == result["reused"]
+    assert result["pathCosts"]["initialBlank"]["fromNdarray"]["count"] == result["initialBlank"]
+    assert result["costModel"]["frameConversionCalls"] == result["consumerTicks"]
+    assert result["reused"] >= 1
+    assert result["produced"] == (
+        result["consumed"] + result["overwrittenDropped"] + result["unconsumedAtStop"]
+    )
+
+
+def test_scheduler_matrix_varies_consumer_phase_jitter_and_delay_independently():
+    scenarios = benchmark.scheduler_scenarios(40)
+
+    assert any("consumer_delay_seconds" in row for row in scenarios)
+    assert any("consumer_jitter_seconds" in row for row in scenarios)
+    assert any(row["producer_jitter_seconds"] != (0.0,) for row in scenarios)
+    assert any(row["slow_grab_seconds"] > 0 for row in scenarios)
