@@ -103,6 +103,10 @@ sendMouse返回inputId只是传输接受，不能证明目标已切换。Input�
 
 Input新增getMobileSurfaceContextSnapshot()只返回state/generation，不输出inputId/坐标；isDeliverySettled额外要求surface settled。新写入门禁与retry读取该状态，但安全keyup/up/reset始终放行。目标确认成功只刷新UI，不自动发送期间积累的草稿，必须显式retry。正常键盘连续输入本身不按每条ACK串行节流；只有已存在待重试草稿或surface pending时才保留追加编辑，避免把每次打字变成手动重试。
 
+确认超时以已发送但未确认的可靠down/up为对象，各自最多等待3000ms，不是整个手势的最长时长。down已确认而用户仍拖动时维持pending、暂停无待确认边的计时；发送up后重新等待其确认。ACK乱序与既有_desktopWritePending累计清理不能丢失当前gesture的down/up关联；只保留该gesture的id/seq/lease/generation和确认元数据，不建立第二条发送或重试队列。旧代/旧lease及uncertain后的迟到ACK仍不得解锁。
+
+门禁同样覆盖document层新增实体keydown；不能因外接键盘走controller直达路径而绕过未确认目标。既有实体keyup与已锁定虚拟modifier的关闭仍走原controller释放路径；虚拟pressed真相读取controller snapshot，不从aria反推，不手工清pressed或合成新modifier down。关闭所需的原有keyup报文不是新增协议。public sendControlKey在composition刚开始、draft尚未变化时也必须拒绝；surface-user焦点预检见§3，拒绝的pointer/click默认行为同样不能先blur文本框。
+
 ### 5.2 普通文本弹窗（R11）
 
 setupTextInput的普通文本modal也属于外部写入：打开前检查移动composition/pending/uncertain及surface确认门禁，不通过则不打开/抢焦点，显示既有状态提示；打开本身和取消不清移动已接受历史。点击提交、compositionend自动提交共用同一个runMobileEditingAction('context-change',()=>controller.sendText(text))，只有接受后才清移动历史再关闭modal；false时保留两个入口各自草稿、不关闭。新布局不支持时也不能绕过门禁。测试移动abc→modal X→移动left/Y，不沿用旧abc cursor；以及pending拒绝打开、取消不清历史、失败提交保留、compositionend与click去重。

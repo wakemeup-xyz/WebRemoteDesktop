@@ -58,3 +58,9 @@
 - **输入连续性裁定：** ready状态下仅有普通ACK在途不阻断正常连续输入；只有已有被拒绝草稿才等待确认后显式重试。blocked是复位/恢复屏障，不是普通ACK等待，必须失效上下文。此前实现审查把二者混同的建议未采纳，另加连续输入回归保护。
 
 这些是实施中的契约细化与审查纠偏，不改变以上规划阶段历史记录。代码及浏览器最终验收另记Task7报告；实机、系统键盘、Quartz、公网与live watcher尚未验证。
+
+### Task4实现审查后的边界细化
+
+针对实现b75a284，主线程复现ACK乱序仍pending、document实体keydown绕过surface等待、composition起始导航被接受、surface click抢焦点四项；Luna/max复核同意，并确认虚拟modifier关闭被误阻和长拖拽误超时。结论为Needs fixes，不覆盖前述规划历史结论。
+
+主线程裁定3000ms是可靠输入确认超时，不是手势时长上限；同一gesture保留最少确认元数据以抵抗累计pending清理，不新增发送/重试队列。虚拟modifier关闭必须沿用controller原有释放和keyup，review中“不要发新modifier报文”不能被理解为只清本地pressed。spec§5.1及Task4增加具体回归；这些裁定仍须实现和测试证明。
