@@ -274,6 +274,7 @@ const TerminalPanel = {
   bootstrapAuthToken: null,
   bootstrapAttemptToken: null,
   bootstrapPromisesByToken: new Map(),
+  bootstrapConnectionPromisesByToken: new Map(),
   transportLatency: new Map(),
   aliasedEvents: new Map(),
   aliasHitCounters: new Map(),
@@ -533,9 +534,26 @@ const TerminalPanel = {
     if (!token || typeof io === 'undefined') return;
     const canConnectWithoutBootstrap = this.bootstrapAttemptToken === token;
     if (typeof fetch === 'function' && this.bootstrapAuthToken !== token && !canConnectWithoutBootstrap) {
-      return this.ensureTerminalBootstrap(token).then(() => {
+      const existingConnection = this.bootstrapConnectionPromisesByToken.get(token);
+      if (existingConnection) return existingConnection;
+
+      const connectionPromise = this.ensureTerminalBootstrap(token).then(() => {
         if (this.getAdminToken() === token) this.connectSocket();
       });
+      this.bootstrapConnectionPromisesByToken.set(token, connectionPromise);
+      connectionPromise.then(
+        () => {
+          if (this.bootstrapConnectionPromisesByToken.get(token) === connectionPromise) {
+            this.bootstrapConnectionPromisesByToken.delete(token);
+          }
+        },
+        () => {
+          if (this.bootstrapConnectionPromisesByToken.get(token) === connectionPromise) {
+            this.bootstrapConnectionPromisesByToken.delete(token);
+          }
+        },
+      );
+      return connectionPromise;
     }
     if (canConnectWithoutBootstrap) {
       this.bootstrapAttemptToken = null;
