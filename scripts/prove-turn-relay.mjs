@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +48,7 @@ export function buildFailedProofResult(base = {}, error = null) {
   const message = error instanceof Error ? error.message : String(error || 'proof failed');
   return { ...base, ok: false, proofComplete: false, error: { message } };
 }
+export function createProofRunId() { return `proof-${randomUUID()}`; }
 export function writeResultAtomically(result, output, operations = fs) {
   if (!output) return;
   const temporary = path.join(path.dirname(output), `.${path.basename(output)}.${process.pid}.${Date.now()}.tmp`);
@@ -84,8 +86,47 @@ export function cleanupIsolatedOutput(backup, operations = fs) {
     if (error?.code !== 'ENOENT') throw error;
   }
 }
+export function overwriteOutputInPlace(result, output, operations = fs) {
+  if (!output) return;
+  let fd = null;
+  try {
+    // Explicit fd truncation makes the stale success untrustworthy before the
+    // structured failure is written.
+    fd = operations.openSync(output, 'r+');
+    operations.ftruncateSync(fd, 0);
+    operations.writeFileSync(fd, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+    operations.fsyncSync(fd);
+    operations.closeSync(fd);
+    fd = null;
+  } finally {
+    if (fd !== null) try { operations.closeSync(fd); } catch (_closeError) { /* best effort */ }
+  }
+}
+export function outputUntrustedMarker(runId, output) {
+  return `OUTPUT_UNTRUSTED runId=${runId} path=${output}`;
+}
+export function secureOutputTarget(output, baseResult = {}, operations = fs) {
+  if (!output) return { state: 'none', backup: null };
+  try {
+    return { state: 'isolated', backup: isolateOutputTarget(output, operations) };
+  } catch (isolationError) {
+    const result = {
+      ...buildFailedProofResult(baseResult, isolationError),
+      stage: 'output-isolation',
+    };
+    try {
+      overwriteOutputInPlace(result, output, operations);
+      return { state: 'overwritten', backup: null, result, error: isolationError };
+    } catch (overwriteError) {
+      return { state: 'untrusted', backup: null, result, error: overwriteError };
+    }
+  }
+}
 
-function printUsage() { console.log('Usage: node scripts/prove-turn-relay.mjs [--duration-seconds 1..600] [--output path]'); }
+function printUsage() {
+  console.log('Usage: node scripts/prove-turn-relay.mjs [--duration-seconds 1..600] [--output path]');
+  console.log('Trust --output only when this runId matches and ok=true and proofComplete=true.');
+}
 function outputFromArgv(argv = []) {
   const index = argv.indexOf('--output');
   return index >= 0 ? String(argv[index + 1] || '').trim() || null : null;
@@ -106,7 +147,7 @@ function short(value) { return String(value || '').slice(0, 12); }
 
 async function runProof(options) {
   const baseUrl = String(process.env.WRD_BASE_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
-  const result = { baseUrl, durationSeconds: options.durationSeconds, login: false, activeViewer: null, admission: null, webrtcConfig: null, serverSelfTest: null, browser: null };
+  const result = { runId: options.runId, baseUrl, durationSeconds: options.durationSeconds, login: false, activeViewer: null, admission: null, webrtcConfig: null, serverSelfTest: null, browser: null };
   let browser = null;
   try {
     const password = loadViewerPassword();
@@ -159,41 +200,57 @@ async function main(options) { return runProof(options); }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedPath === fileURLToPath(import.meta.url)) {
-  let options = { durationSeconds: null, output: outputFromArgv(process.argv.slice(2)) };
+  const runId = createProofRunId();
+  let options = { durationSeconds: null, output: outputFromArgv(process.argv.slice(2)), runId };
   let result;
   let isolatedOutput = null;
-  let isolationAttempted = false;
+  let outputState = 'none';
   try {
     options = parseProofArgs(process.argv.slice(2));
+    options.runId = runId;
     if (options.help) printUsage();
     else {
-      isolatedOutput = isolateOutputTarget(options.output);
-      isolationAttempted = true;
+      const secured = secureOutputTarget(options.output, { runId });
+      outputState = secured.state;
+      isolatedOutput = secured.backup;
+      if (secured.state === 'overwritten' || secured.state === 'untrusted') result = secured.result;
+      else {
+        outputState = 'proof';
+        // Proof work starts only after the requested result path is isolated.
+        // An output-isolation failure above never reaches this call.
       result = await main(options);
-    }
-  } catch (error) {
-    if (!isolationAttempted && options.output) {
-      try {
-        isolatedOutput = isolateOutputTarget(options.output);
-        isolationAttempted = true;
-      } catch (isolationError) {
-        error = isolationError;
       }
     }
-    result = buildFailedProofResult({ durationSeconds: options.durationSeconds }, error);
+  } catch (error) {
+    const secured = secureOutputTarget(options.output, { runId });
+    outputState = secured.state;
+    isolatedOutput = secured.backup;
+    if (secured.state === 'overwritten' || secured.state === 'untrusted') {
+      result = secured.result;
+    } else {
+      result = buildFailedProofResult({ durationSeconds: options.durationSeconds, runId }, error);
+    }
   }
   if (result) {
     let outputWritten = true;
-    try {
-      if (!isolationAttempted) isolatedOutput = isolateOutputTarget(options.output);
-      writeResultAtomically(result, options.output);
-      cleanupIsolatedOutput(isolatedOutput);
-      isolatedOutput = null;
+    if (outputState === 'untrusted') {
+      console.error(outputUntrustedMarker(runId, options.output));
+      outputWritten = false;
+      process.exitCode = 1;
+    } else if (outputState === 'overwritten') {
+      console.error(`OUTPUT_ISOLATION_FAILED runId=${runId} path=${options.output}; failure record written in place`);
+    } else {
+      try {
+        writeResultAtomically(result, options.output);
+        cleanupIsolatedOutput(isolatedOutput);
+        isolatedOutput = null;
+      } catch (error) { console.error(`proof result write failed runId=${runId}: ${error instanceof Error ? error.message : error}`); outputWritten = false; process.exitCode = 1; }
     }
-    catch (error) { console.error(`proof result write failed: ${error instanceof Error ? error.message : error}`); outputWritten = false; process.exitCode = 1; }
     if (outputWritten) {
       console.log(JSON.stringify(result, null, 2));
-      if (result.ok) console.log('PROOF_RELAY_MEDIA_OK'); else process.exitCode = 1;
+      if (result.ok) console.log(`PROOF_RELAY_MEDIA_OK runId=${runId}`); else process.exitCode = 1;
+    } else {
+      console.log(`PROOF_OUTPUT_UNTRUSTED runId=${runId}`);
     }
   }
 }

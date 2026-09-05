@@ -145,3 +145,40 @@ result output.
 This round is committed as `fix(observability): expire relay proof admissions`.
 No service, tunnel, browser, or real TURN path was started; live proof remains
 `NOT RUN`.
+
+## Review-fix round 3
+
+### Red phase
+
+An injected non-ENOENT failure from output isolation previously stopped proof
+work but could still leave the old successful JSON at the requested pathname.
+
+### Fail-closed output isolation
+
+Each CLI invocation creates a run ID before it touches the output or begins
+proof work. If the stale-target rename fails, the runner does not call the
+network/browser proof path. It immediately opens the original target through a
+file descriptor, truncates it, writes and fsyncs a structured failure record
+with `ok:false`, `proofComplete:false`, `stage:"output-isolation"`, and that
+run ID. stderr and stdout both include the same run ID.
+
+If the filesystem rejects both isolation and the in-place failure write, the
+runner exits non-zero, writes `OUTPUT_UNTRUSTED runId=<id> path=<path>` to
+stderr, emits only a matching non-success stdout marker, and never emits a
+success marker. CLI help now states that consumers may trust `--output` only
+when its run ID matches the invocation and both `ok` and `proofComplete` are
+true.
+
+### Verification
+
+- RED: helper fixtures first failed because no in-place fallback, untrusted
+  marker, or run ID existed.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs` — 7 passed, including
+  stale success plus injected isolation failure with overwrite and untrusted
+  filesystem branches.
+
+### Commit and concerns
+
+This round is committed as `fix(observability): fail closed on output isolation`.
+No service, tunnel, browser, or real TURN path was started; live proof remains
+`NOT RUN`.

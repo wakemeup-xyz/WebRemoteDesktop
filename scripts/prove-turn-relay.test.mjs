@@ -7,7 +7,8 @@ import path from 'node:path';
 import {
   assertNoActiveViewer, buildFailedProofResult, parseProofArgs, proofSnapshotPasses,
   redactSelectedPair, selectedPairIsRelay, writeResultAtomically,
-  isolateOutputTarget, cleanupIsolatedOutput,
+  isolateOutputTarget, cleanupIsolatedOutput, secureOutputTarget,
+  outputUntrustedMarker,
 } from './prove-turn-relay.mjs';
 
 test('proof parameters accept bounded duration and an output path', () => {
@@ -82,5 +83,26 @@ test('proof failure result is incomplete and atomic output never leaves a partia
   cleanupIsolatedOutput(backup);
   assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
   assert.equal(fs.existsSync(backup), false);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('isolation failure overwrites stale success or marks the output untrusted', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-proof-isolation-'));
+  const output = path.join(directory, 'proof.json');
+  const staleSuccess = { ok: true, proofComplete: true, runId: 'old-run' };
+  fs.writeFileSync(output, JSON.stringify(staleSuccess), 'utf8');
+  const renameFailure = { ...fs, renameSync() { throw new Error('isolation rename failed'); } };
+  const recovered = secureOutputTarget(output, { runId: 'run-recovered' }, renameFailure);
+  assert.equal(recovered.state, 'overwritten');
+  assert.equal(recovered.result.stage, 'output-isolation');
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), recovered.result);
+  fs.writeFileSync(output, JSON.stringify(staleSuccess), 'utf8');
+  const untrusted = secureOutputTarget(output, { runId: 'run-untrusted' }, {
+    ...renameFailure,
+    openSync() { throw new Error('in-place overwrite denied'); },
+  });
+  assert.equal(untrusted.state, 'untrusted');
+  assert.match(outputUntrustedMarker('run-untrusted', output), /OUTPUT_UNTRUSTED runId=run-untrusted/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), staleSuccess);
   fs.rmSync(directory, { recursive: true, force: true });
 });
