@@ -5,6 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-fixed-domain.sh
 source "$SCRIPT_DIR/lib-fixed-domain.sh"
 
+if ! token_connectors="$(wrd_fixed_count_token_connectors)"; then
+  echo "refusing restart: unable to inspect cloudflared processes; no managed connector submit" >&2
+  exit 2
+fi
+if [ "$token_connectors" -gt 0 ]; then
+  echo "refusing restart: existing cloudflared --token connector(s) detected ($token_connectors); no managed connector submit" >&2
+  exit 2
+fi
+
 wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
 wrd_fixed_unset_tunnel_token
 

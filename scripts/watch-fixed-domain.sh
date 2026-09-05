@@ -15,7 +15,15 @@ WRD_FIXED_WATCH_WINDOW_SEC="${WRD_FIXED_WATCH_WINDOW_SEC:-3600}"
 WRD_FIXED_WATCH_STATE="${WRD_FIXED_WATCH_STATE:-/tmp/wrd-fixed-watch-state.json}"
 WRD_FIXED_WATCH_LOG="${WRD_FIXED_WATCH_LOG:-/tmp/wrd-fixed-watch.log}"
 WRD_FIXED_WATCH_LOCK="${WRD_FIXED_WATCH_LOCK:-/tmp/wrd-fixed-watch.lock}"
+WRD_FIXED_WATCH_PID_FILE="${WRD_FIXED_WATCH_PID_FILE:-$WRD_FIXED_WATCH_LOCK/pid}"
+WRD_FIXED_WATCH_START_FILE="${WRD_FIXED_WATCH_START_FILE:-$WRD_FIXED_WATCH_LOCK/start}"
+WRD_FIXED_WATCH_SIGNATURE_FILE="${WRD_FIXED_WATCH_SIGNATURE_FILE:-$WRD_FIXED_WATCH_LOCK/signature}"
+WRD_FIXED_WATCH_INIT_MARKER="${WRD_FIXED_WATCH_INIT_MARKER:-$WRD_FIXED_WATCH_LOCK/initializing}"
 WRD_FIXED_WATCH_ONCE="${WRD_FIXED_WATCH_ONCE:-0}"
+
+WRD_FIXED_WATCH_LOCK_HELD=0
+WRD_FIXED_WATCH_OWNER_START=""
+WRD_FIXED_WATCH_OWNER_SIGNATURE=""
 
 RESTART_SCRIPT="$SCRIPT_DIR/restart-fixed-domain-tunnel.sh"
 
@@ -222,6 +230,48 @@ wrd_fixed_watch_tick() {
       wrd_fixed_notify "WRD formal tunnel" "status=$status (no restart)"
       ;;
     restart)
+      # A token-based connector is not managed by this watcher. Refuse before
+      # invoking the credentials-file restart helper to avoid a second submit.
+      local token_connectors
+      if ! token_connectors="$(wrd_fixed_count_token_connectors)"; then
+        wrd_fixed_watch_log "tick status=$status action=skip reason=token-inspection-failed"
+        wrd_fixed_notify "WRD formal tunnel" "skip restart: unable to inspect cloudflared processes"
+        STATE_PATH="$WRD_FIXED_WATCH_STATE" python3 - <<'PY' || true
+import json, os
+path = os.environ["STATE_PATH"]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+except (OSError, json.JSONDecodeError):
+    state = {}
+state["lastAction"] = "skip"
+state["lastStatus"] = "formal-down"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
+    f.write("\n")
+PY
+        return 0
+      fi
+      if [ "$token_connectors" -gt 0 ]; then
+        wrd_fixed_watch_log "tick status=$status action=skip reason=token-connector count=$token_connectors"
+        wrd_fixed_notify "WRD formal tunnel" "skip restart: token connector detected ($token_connectors)"
+        STATE_PATH="$WRD_FIXED_WATCH_STATE" python3 - <<'PY' || true
+import json, os
+path = os.environ["STATE_PATH"]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+except (OSError, json.JSONDecodeError):
+    state = {}
+state["lastAction"] = "skip"
+state["lastStatus"] = "formal-down"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
+    f.write("\n")
+PY
+        return 0
+      fi
+
       # Safety: multiple formal owners → notify/skip, never restart
       local owners
       owners="$(wrd_fixed_count_formal_owners || true)"
@@ -262,12 +312,203 @@ PY
   esac
 }
 
+wrd_fixed_watch_pid_is_live() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+wrd_fixed_watch_process_start() {
+  local pid="$1" start=""
+  start="$(ps -p "$pid" -o lstart= 2>/dev/null || true)"
+  start="$(printf '%s' "$start" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [ -n "$start" ] || return 1
+  printf '%s\n' "$start"
+}
+
+wrd_fixed_watch_process_signature() {
+  local pid="$1" signature=""
+  signature="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  signature="$(printf '%s' "$signature" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [ -n "$signature" ] || return 1
+  printf '%s\n' "$signature"
+}
+
+wrd_fixed_watch_lock_owner_pid() {
+  local pid=""
+  [ -r "$WRD_FIXED_WATCH_PID_FILE" ] || return 1
+  pid="$(tr -d '[:space:]' < "$WRD_FIXED_WATCH_PID_FILE" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+wrd_fixed_watch_lock_metadata_matches() {
+  local owner_pid="$1" owner_start="$2" owner_signature="$3"
+  local recorded_start="" recorded_signature=""
+  [ "$owner_pid" = "$$" ] || return 1
+  [ -n "$owner_start" ] && [ -n "$owner_signature" ] || return 1
+  [ -r "$WRD_FIXED_WATCH_START_FILE" ] || return 1
+  [ -r "$WRD_FIXED_WATCH_SIGNATURE_FILE" ] || return 1
+  recorded_start="$(cat "$WRD_FIXED_WATCH_START_FILE" 2>/dev/null || true)"
+  recorded_signature="$(cat "$WRD_FIXED_WATCH_SIGNATURE_FILE" 2>/dev/null || true)"
+  [ "$recorded_start" = "$owner_start" ] && [ "$recorded_signature" = "$owner_signature" ]
+}
+
+wrd_fixed_watch_lock_is_initializing() {
+  [ -e "$WRD_FIXED_WATCH_INIT_MARKER" ]
+}
+
+wrd_fixed_watch_write_atomic() {
+  local target="$1" content="$2" temporary="${1}.tmp.$$"
+  if ! printf '%s' "$content" > "$temporary"; then
+    rm -f "$temporary" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv "$temporary" "$target" 2>/dev/null; then
+    rm -f "$temporary" 2>/dev/null || true
+    return 1
+  fi
+}
+
+wrd_fixed_watch_remove_metadata() {
+  local metadata_file
+  for metadata_file in \
+    "$WRD_FIXED_WATCH_PID_FILE" \
+    "$WRD_FIXED_WATCH_START_FILE" \
+    "$WRD_FIXED_WATCH_SIGNATURE_FILE" \
+    "$WRD_FIXED_WATCH_INIT_MARKER"; do
+    rm -f "$metadata_file" "${metadata_file}.tmp.$$" 2>/dev/null || true
+  done
+}
+
+wrd_fixed_watch_reclaim_stale_lock() {
+  local owner_pid="${1:-}"
+  if [ -n "$owner_pid" ] && wrd_fixed_watch_pid_is_live "$owner_pid"; then
+    # Any live owner is treated as held, including a foreign process. This
+    # prevents PID reuse or an unrelated process from being disrupted.
+    return 1
+  fi
+
+  # Remove only our known metadata, then require the lock directory to be
+  # empty. Never recursively delete a lock path that may contain foreign data.
+  wrd_fixed_watch_remove_metadata
+  rmdir "$WRD_FIXED_WATCH_LOCK" 2>/dev/null
+}
+
+wrd_fixed_watch_install_traps() {
+  trap 'wrd_fixed_watch_release_lock' EXIT
+  trap 'wrd_fixed_watch_handle_signal TERM' TERM
+  trap 'wrd_fixed_watch_handle_signal INT' INT
+}
+
+wrd_fixed_watch_release_lock() {
+  local owner_pid=""
+  [ "$WRD_FIXED_WATCH_LOCK_HELD" = "1" ] || return 0
+  owner_pid="$(wrd_fixed_watch_lock_owner_pid || true)"
+  if [ -n "$owner_pid" ]; then
+    wrd_fixed_watch_lock_metadata_matches \
+      "$owner_pid" "$WRD_FIXED_WATCH_OWNER_START" "$WRD_FIXED_WATCH_OWNER_SIGNATURE" || return 0
+  elif [ ! -e "$WRD_FIXED_WATCH_INIT_MARKER" ]; then
+    # No complete owner metadata and no marker: do not remove an unknown path.
+    return 0
+  else
+    local marker_pid="" marker_start=""
+    marker_pid="$(sed -n '1p' "$WRD_FIXED_WATCH_INIT_MARKER" 2>/dev/null || true)"
+    marker_start="$(sed -n '2p' "$WRD_FIXED_WATCH_INIT_MARKER" 2>/dev/null || true)"
+    [ "$marker_pid" = "$$" ] && [ "$marker_start" = "$WRD_FIXED_WATCH_OWNER_START" ] || return 0
+  fi
+
+  wrd_fixed_watch_remove_metadata
+  rmdir "$WRD_FIXED_WATCH_LOCK" 2>/dev/null || true
+  WRD_FIXED_WATCH_LOCK_HELD=0
+}
+
+wrd_fixed_watch_handle_signal() {
+  local signal="$1"
+  wrd_fixed_watch_release_lock
+  if [ "$signal" = "TERM" ]; then
+    exit 143
+  fi
+  exit 130
+}
+
+wrd_fixed_watch_initialize_lock() {
+  local owner_start="$1" owner_signature="$2"
+  WRD_FIXED_WATCH_OWNER_START="$owner_start"
+  WRD_FIXED_WATCH_OWNER_SIGNATURE="$owner_signature"
+  WRD_FIXED_WATCH_LOCK_HELD=1
+  wrd_fixed_watch_install_traps
+
+  if ! wrd_fixed_watch_write_atomic \
+    "$WRD_FIXED_WATCH_INIT_MARKER" "$(printf '%s\n%s\n' "$$" "$owner_start")"; then
+    wrd_fixed_watch_release_lock
+    return 1
+  fi
+  if ! wrd_fixed_watch_write_atomic "$WRD_FIXED_WATCH_PID_FILE" "$(printf '%s\n' "$$")" \
+    || ! wrd_fixed_watch_write_atomic "$WRD_FIXED_WATCH_START_FILE" "$(printf '%s\n' "$owner_start")" \
+    || ! wrd_fixed_watch_write_atomic "$WRD_FIXED_WATCH_SIGNATURE_FILE" "$(printf '%s\n' "$owner_signature")"; then
+    wrd_fixed_watch_release_lock
+    return 1
+  fi
+  rm -f "$WRD_FIXED_WATCH_INIT_MARKER" 2>/dev/null || {
+    wrd_fixed_watch_release_lock
+    return 1
+  }
+}
+
 wrd_fixed_watch_acquire_lock() {
+  local owner_start="" owner_signature=""
+  owner_start="$(wrd_fixed_watch_process_start "$$" || true)"
+  owner_signature="$(wrd_fixed_watch_process_signature "$$" || true)"
+  if [ -z "$owner_start" ] || [ -z "$owner_signature" ]; then
+    wrd_fixed_watch_log "cannot establish watcher process identity; refusing lock acquisition"
+    return 1
+  fi
+
   if mkdir "$WRD_FIXED_WATCH_LOCK" 2>/dev/null; then
-    # shellcheck disable=SC2064
-    trap 'rmdir "$WRD_FIXED_WATCH_LOCK" 2>/dev/null || true' EXIT
+    if ! wrd_fixed_watch_initialize_lock "$owner_start" "$owner_signature"; then
+      return 1
+    fi
     return 0
   fi
+
+  local owner_pid=""
+  owner_pid="$(wrd_fixed_watch_lock_owner_pid || true)"
+  if [ -z "$owner_pid" ]; then
+    if wrd_fixed_watch_lock_is_initializing; then
+      wrd_fixed_watch_log "another watcher is initializing $WRD_FIXED_WATCH_LOCK; exiting"
+    else
+      wrd_fixed_watch_log "another watcher owns unknown lock $WRD_FIXED_WATCH_LOCK; exiting"
+    fi
+    return 1
+  fi
+  if wrd_fixed_watch_pid_is_live "$owner_pid"; then
+    local owner_start_recorded="" owner_signature_recorded=""
+    owner_start_recorded="$(cat "$WRD_FIXED_WATCH_START_FILE" 2>/dev/null || true)"
+    owner_signature_recorded="$(cat "$WRD_FIXED_WATCH_SIGNATURE_FILE" 2>/dev/null || true)"
+    if [ -z "$owner_start_recorded" ] || [ -z "$owner_signature_recorded" ]; then
+      wrd_fixed_watch_log "another watcher holds $WRD_FIXED_WATCH_LOCK (pid=$owner_pid; identity-incomplete); exiting"
+    elif [ "$owner_start_recorded" = "$(wrd_fixed_watch_process_start "$owner_pid" || true)" ] \
+      && [ "$owner_signature_recorded" = "$(wrd_fixed_watch_process_signature "$owner_pid" || true)" ]; then
+      wrd_fixed_watch_log "another watcher holds $WRD_FIXED_WATCH_LOCK (pid=$owner_pid); exiting"
+    else
+      # A live PID with an identity mismatch may be PID reuse or a foreign
+      # process. Preserve the lock; never reclaim or signal it.
+      wrd_fixed_watch_log "live foreign or reused pid=$owner_pid owns $WRD_FIXED_WATCH_LOCK; exiting"
+    fi
+    return 1
+  fi
+
+  if wrd_fixed_watch_reclaim_stale_lock "$owner_pid"; then
+    if mkdir "$WRD_FIXED_WATCH_LOCK" 2>/dev/null; then
+      if ! wrd_fixed_watch_initialize_lock "$owner_start" "$owner_signature"; then
+        return 1
+      fi
+      wrd_fixed_watch_log "reclaimed stale lock $WRD_FIXED_WATCH_LOCK"
+      return 0
+    fi
+  fi
+
   wrd_fixed_watch_log "another watcher holds $WRD_FIXED_WATCH_LOCK; exiting"
   return 1
 }
@@ -296,4 +537,6 @@ main() {
   done
 }
 
-main "$@"
+if [ "${WRD_FIXED_WATCH_SOURCE_ONLY:-0}" != "1" ]; then
+  main "$@"
+fi

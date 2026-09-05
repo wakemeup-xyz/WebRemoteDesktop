@@ -20,7 +20,8 @@ test('restart formal tunnel sources lib and never targets local app or quick tun
   assert.doesNotMatch(all, /pkill\s+-f\s+'?node server\.js/);
   assert.doesNotMatch(all, /pkill\s+-f\s+'?python.*host\.py/);
   assert.doesNotMatch(all, /run-safe-quicktunnel|wrd-safe-quicktunnel|restart-safe-tunnel/);
-  assert.doesNotMatch(all, /--token/);
+  assert.match(all, /wrd_fixed_count_token_connectors/);
+  assert.match(restart, /refusing restart:[^\n]*token/i);
 });
 
 test('lib exposes stop/start/wait helpers without token argv', () => {
