@@ -46,7 +46,7 @@ retryPending(): boolean
 discardPending(): void
 sendControlKey(code: string, modifiers?: {shiftKey:boolean,ctrlKey:boolean,altKey:boolean,metaKey:boolean}): boolean
 runExternalAction(kind: 'navigation' | 'context-change', send: () => boolean): boolean
-onTransportState(state: 'ready' | 'blocked' | 'revoked' | 'reacquire-required'): void
+onTransportState(state: 'ready' | 'blocked' | 'revoked' | 'reacquire-required', options?: {resetAcknowledged?: boolean}): void
 refreshDeliveryState(): void
 ```
 
@@ -75,6 +75,8 @@ Input是唯一新增桥接所有者：直接订阅KeyboardTransport小写state�
 - `Input.setControlLease()` 比较leaseId和leaseEpoch；任何身份变化（包括非空直接替换、撤销、重新授予）必须在controller.setLease之前调用adapter.reset('lease-changed')，递增generation、清草稿与drain并隐藏Dock。相同lease幂等调用不清草稿。不能靠transport的ready通知判断上下文连续；新lease只能由下一次用户明确show/input建立文本上下文。
 - UI 同一 Dock 加 status 区和“重试 / 放弃”按钮，失败不能只在 console 里出现。按钮不是 Host ACK 确认器。
 
+主动复位的生命周期例外：`Input.resetKeyboard()` 入口立即清旧草稿/Dock，使用现有 controller/transport 发起复位屏障。只有 Input 确认本次 owned reset 的 applied/duplicate ACK 已让现有 transport 返回 ready，才调用 `onTransportState('ready', {resetAcknowledged:true})` 建立清空后的新输入上下文；普通 ready、旧/失败 ACK、无关 blocked/reacquire 不得走此入口。该通知不发送、不再次reset，不清掉 reset 后 ACK 前新编辑的草稿；新草稿只通过显式重试发送。lease变更、park及无关上下文失效须取消旧 owned-reset 关联；park仍只清本地状态，不新增复位报文。Task4的surface不确定状态具有独立否决权，键盘owned-reset ACK不能解除鼠标目标不确定性。此关联只复用现有 ACK 处理，不新增可靠队列或wire字段。
+
 ### 4.3 Unicode 与缓存范围
 
 DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增 pending 缓冲不得超过 4096 Unicode scalar，计数使用 `Array.from`；原 DOM maxlength 仍生效，不能因新缓冲放大到无限内存。缓存不持久化，已接受历史仍以现有哨兵模式保存。复杂 grapheme 的远端 Backspace 单位与本地 code point 不一定相同，回归覆盖 ZWJ/组合附加符的保留与发送，精确远端删除效果保持设备验收项；不承诺远端文档镜像。
@@ -90,6 +92,8 @@ DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增
 - 允许的动作仅执行 send 一次；true 后清理已接受历史为哨兵、cursor=0，建立新 generation。false 不推进历史，不偷删草稿；随后 transport 状态若异常按 §4.2 处理。
 - 新touch option `beforeGesture: () => boolean` 只做首个pointerdown的只读预检，不清历史。另加`commitGesture: (send:()=>boolean)=>boolean`，默认直接调用send；adapter把每个真实首down（tap/drag/long-press）的sendMouse封在此callback中，Input用runExternalAction('context-change',send)重新核对草稿并只在down接受后提交基线失效化。接受后同一手势move/up不重复门禁；若等待long-press期间出现composition/pending，拒绝down并结束该手势。mouse/pen的实际down也用同一事务包装，up/reset始终原释放流程。two-finger从未发down的纯滚动不虚构context提交；上下文真正改变的down才清历史。
 - 导航/重试按钮 pointerdown 对移动文本焦点使用 preventDefault，click 处理后如同一 textarea 仍 shown、控制有效、无 modal，再在用户手势内恢复该 textarea；composition 时禁止通过按钮强制 blur。
+
+虚拟modifier判定接口（R12）：Input向MobileTextInput额外注入只读 `hasVirtualModifiers():boolean`，默认false，读取既有controller snapshot的`virtualModifiers.length > 0`。`sendControlKey`以事件四flags或该查询为true判定context-change，不仅依据DOM事件；toolbar也传入click事件的物理flags。查询只用于决定本地历史是否失效，不合成modifier down/up，不替代controller pressed truth，不修改sendKey的boolean返回。测试virtual Shift锁定→textarea ArrowLeft四flags全false：远端仍是带Shift且无多余modifier步骤的chord，移动历史失效而不是cursor--，virtual Shift保持原pressed状态直到既有显式释放。
 
 ### 5.1 远端目标确认门禁（R10）
 

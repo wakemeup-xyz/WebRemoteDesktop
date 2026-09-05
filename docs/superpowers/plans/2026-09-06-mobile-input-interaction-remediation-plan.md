@@ -165,7 +165,8 @@ function applyInsertion(inserted, nextAcceptedValue) {
 
 - [ ] **Step 4:** 为部分删除实现串行事务：每轮≤16个Backspace；全成功仍有剩余才setTimeout0继续，任一拒绝立即停止；保存原target与下一步游标。reset/detach/generation变化取消定时器。加入18次删除、第3次拒绝、继续编辑、reset后旧回调不能发送的fake-timer测试。
 - [ ] **Step 5:** 实现retryPending/discardPending/onTransportState/refreshDeliveryState。Input注入isDeliverySettled为keyboardTransport.getSnapshot的state=ready且pendingCount=0；acceptKeyboardAck处理后调用refreshDeliveryState，因为普通ACK不总触发subscribeState。Input仅新增一个直接transport订阅，原样转小写ready/blocked/reacquire-required；controller大写READY只用于isEnabled，原controller订阅与UI通知不重复通知adapter。持有unsubscribe，重建/拆除时调用，adapter晚创建时立即同步snapshot。两类通知均不自动发送。blocked/reacquire禁重试；reset/park清空。Input.setControlLease比较id/epoch，改变时先adapter.reset('lease-changed')、generation++/清drain草稿/隐藏，再controller.setLease；null后传revoked。同lease幂等不清草稿。测试初始同步/重复init/ACK/blocked/reacquire/reset；真实Transport的a接受未ACK→b被拒→重试禁→a合法ACK→仅解锁→显式retry只发b。另测非空lease直接替换、epoch变更、撤销再授予、相同lease，旧callback/显式retry均不得跨lease发送。
-- [ ] **Step 6:** 添加 `mobileInputStatus`（role=status，文本枚举）、`mobileInputRetryBtn`、`mobileInputDiscardBtn` 到原mobileInputDock，绑定一次；无待发时隐藏。pending→“有未发送内容”；blocked→“暂不可输入”；uncertain→“输入位置或连接已变化，请核对远端后放弃本地草稿”。禁止把内容写日志或snapshot。
+- [ ] **Step 5a（实施接口回填）:** `onTransportState(state, options?:{resetAcknowledged?:boolean})` 的确认参数仅由Input在匹配本次owned keyboard reset的applied/duplicate ACK、既有transport解除屏障回ready后设置。旧草稿在reset入口清空；ACK不再次reset、不自动发送，期间新草稿保留并显式retry。普通ready/旧或失败ACK/无关blocked不得重建上下文；lease与park取消旧关联，park不得发reset。保留实际Input+Controller+Transport的成功/失败/旧ACK、ACK前新草稿、park no-wire回归。
+- [ ] **Step 6:** 添加 `mobileInputStatus`（role=status，文本枚举）、`mobileInputRetryBtn`、`mobileInputDiscardBtn` 到原mobileInputDock，绑定一次；无待发且无投递不确定性时隐藏，空diff但uncertain仍显示状态和放弃入口。pending→“有未发送内容”；blocked→“暂不可输入”；uncertain→“输入位置或连接已变化，请核对远端后放弃本地草稿”。禁止把内容写日志或snapshot。
 - [ ] **Step 7:** 字符边界：测试Emoji、不完整surrogate拒绝/保留、ZWJ完整发送、4096scalar限制与DOM maxlength区别；已接受历史与pending总内存有界。调用方仍使用既有sendText布尔接口。
 - [ ] **Step 8:** Run `node --test web-client/js/mobile-text-input.test.js web-client/js/input.test.js web-client/js/remote-keyboard-controller.test.js web-client/js/keyboard-transport.test.js`；检查旧composition重复input仍只提交一次。
 - [ ] **Step 9:** 暂存本任务路径并check，提交 `fix(viewer): preserve unsent mobile drafts and bound retries`。
@@ -175,6 +176,8 @@ function applyInsertion(inserted, nextAcceptedValue) {
 **Files:** Modify `web-client/js/mobile-text-input.js`, `web-client/js/input.js`; Test `web-client/js/mobile-text-input.test.js`, `web-client/js/input.test.js`。
 
 **Interfaces:** ConsumesTask2 beforeGesture/commitGesture、Task3草稿状态；Produces `MobileTextInput.sendControlKey(code,modifiers?):boolean`、`runExternalAction(kind,send):boolean`和`Input.runMobileEditingAction(action,send):boolean`。modifiers为四个shiftKey/ctrlKey/altKey/metaKey布尔flags，config.sendKey同样扩展；缺省均false。
+
+新增只读config `hasVirtualModifiers():boolean`，默认false，Input读取既有controller snapshot.virtualModifiers.length>0；只判定本地context-change，不改变controller pressed状态或产生modifier报文。保留Task3的owned-reset确认参数；surface不确定性不能被键盘reset确认绕过。
 
 - [ ] **Step 1:** 以生产setupActionButtons创建“左”按钮，使用loadInput真实controller/transport，输入abc→按钮左→输入X；断言本地value为abXc，传输只发abc/ArrowLeft/X。另测shift+left走context-change而非cursor--；未发送草稿时按钮不发事件。
 
@@ -206,8 +209,10 @@ function runExternalAction(kind, send) {
 
 `resetAcceptedHistory()` 在本任务定义为取消当前drain、generation++、acceptedValue/draftValue=哨兵、cursor=0、contextValid=true；只能在无pending且允许的外部动作成功后调用。
 
+- [ ] **Step 3a（R12）:** sendControlKey以四flags或hasVirtualModifiers()为true判断带修饰导航；toolbar也传click事件的物理flags。加真实controller测试virtual Shift锁定→textarea ArrowLeft四flags全false：chord保持Shift且无多余modifier down/up，移动历史失效而非cursor--，virtual pressed truth不变；既有释放仍可用。
 - [ ] **Step 4:** 原action-bar和mobile-key-row使用同一编排。touch beforeGesture只读取草稿门禁；commitGesture接runExternalAction('context-change',send)，实际down接受才清历史。非touch实际down同样包装。up/reset永远流通，已接受手势的move/up不重复门禁。测试触点开始历史不变、成功down历史归零、failed down历史保留、long-press等待期间出现pending则不发送并consume；不以虚拟send()=>true代替真实sendMouse返回值。
 - [ ] **Step 4a (R10):** 按spec§5.1在Input集中增加surface settled/pending/uncertain+generation门禁，复用已有_desktopWritePending/acceptMouseAck。getMobileSurfaceContextSnapshot()仅state/generation；首down接受设pending，手势结束且down/up可靠ACK成功才settled。匹配失败ACK或3000ms超时设uncertain并adapter.onTransportState('reacquire-required')，不改lease；迟到ACK不解锁。isDeliverySettled叠加surface settled，文本等待时只存草稿，成功只刷UI、显式retry；安全up/reset/keyup永不阻断。reset/lease/park取消timer；discard清本地等待并提示核对，绝不补发。覆盖touch/mouse/pen/rightClick，测试down-ACK先于up、up后ACK、失败ACK、超时/迟到/旧leaseACK、控制安全释放、等待期间输入与确认后显式重试。确认正常连续文本不会仅因普通键盘ACK在途被迫每字手动retry。
+- [ ] **Step 4a补充:** 目标down的历史失效和surface pending作为同一次本地事务提交，不能被刚关闭的isEnabled门禁反向拒绝。surface进入uncertain时取消无关owned keyboard reset的重建许可，或保留独立surface否决；加鼠标失败/timeout后到达键盘reset成功ACK仍不允许文本/自动重试的交叉ACK回归。
 - [ ] **Step 4b (R11):** 普通文本modal打开先过移动草稿/composition/uncertain/surface门禁；开/取消不清历史。submit和compositionend共用runMobileEditingAction('context-change',()=>controller.sendText(text))；接受才清移动历史并关modal，false保留草稿且不关闭。测试移动abc→modal X→移动left/Y不沿用旧cursor、pending禁开、取消/失败保留、compositionend与click不重复、unsupported禁发。
 - [ ] **Step 5:** 对按钮pointerdown保留文本焦点；composition时显式拒绝导航并提示，不blur触发隐式提交。把移动编辑snapshot传给ChromeLayout idle/capability，明确visible/composing/pending/blocked状态与按钮enabled对应关系。
 - [ ] **Step 6:** Run `node --test web-client/js/mobile-text-input.test.js web-client/js/input.test.js web-client/js/touch-input-adapter.test.js web-client/js/chrome-layout.test.js`；补tap重新选目标、paste/selectAll、失败callback不清基线、modifier保留、安全释放不受阻、重复init不重复listener的断言。

@@ -50,3 +50,11 @@
 | R11 | P2 | 普通modal送X但mobile仍留abc基线，后续left/Y导致游标不一致 | spec§5.2 / Task4：modal开/提交接统一门禁，接受后失效历史，取消/失败保留 |
 
 追加发现已写成具体接口、状态、超时与测试要求，尚须通过实施证据闭环；不再给仅文档修改标新的最终PASS。该复现只证明现有模块行为与计划遗漏，不是实机/Quartz/公网验证。
+
+## 实施阶段接口细化（主线程）
+
+- **R12 / P2：虚拟modifier的本地判定缺少接线。** 现有controller.sendChord会合并pressed中的虚拟modifier，但textarea事件四flags可能全false，单靠事件会误按无修饰导航推进本地cursor。spec§5/Task4补只读hasVirtualModifiers查询及virtual Shift+Arrow回归；查询不创建modifier状态或报文，不改变boolean发送接口。此项在Task4前补入，不把它计作已实现。
+- **主动reset确认接口回填：** Task3实现审查发现“reset清空后，自己的blocked屏障再次失效新基线”的交互。已审查实现使用Input所拥有复位的成功ACK，明确调用onTransportState('ready',{resetAcknowledged:true})；普通ready不得恢复不确定上下文，ACK期间的新草稿不得被清空或自动发送。spec§4.2/Task3回填接口与测试，Task4增加鼠标uncertain不能被键盘reset ACK解除的约束。
+- **输入连续性裁定：** ready状态下仅有普通ACK在途不阻断正常连续输入；只有已有被拒绝草稿才等待确认后显式重试。blocked是复位/恢复屏障，不是普通ACK等待，必须失效上下文。此前实现审查把二者混同的建议未采纳，另加连续输入回归保护。
+
+这些是实施中的契约细化与审查纠偏，不改变以上规划阶段历史记录。代码及浏览器最终验收另记Task7报告；实机、系统键盘、Quartz、公网与live watcher尚未验证。
