@@ -558,11 +558,34 @@ def test_application_keyframe_request_tracks_reason_and_generation_until_an_idr_
         lambda self, frame, codec_name: codec,
     )
 
-    enc.note_keyframe_request("decoder-stalled", "attempt-7", 7)
+    enc.note_keyframe_request("decoder-stalled", "attempt-7", 7, 11)
     assert enc.last_requested_keyframe_emitted is False
     list(enc._encode_frame(_fake_frame(), force_keyframe=True))
     assert enc.last_requested_keyframe_emitted is False
     list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-    assert enc.last_requested_keyframe_emitted is True
+    assert enc.last_keyframe_request_ack == ("attempt-7", 7, 11)
     assert enc.keyframe_reason_counts["decoder-stalled"] == 1
     assert enc.last_keyframe_request_generation == ("attempt-7", 7)
+
+
+def test_periodic_or_old_force_idr_cannot_ack_a_newer_application_request(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([idr, p_slice, p_slice, idr, idr])
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", lambda self, frame, codec_name: codec)
+
+    enc.note_keyframe_request("decoder-stalled", "attempt-1", 1, 1)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_keyframe_request_ack is None
+
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    enc.note_keyframe_request("decoder-stalled", "attempt-2", 2, 2)
+    # The second force arrives while VideoToolbox still awaits attempt-1's
+    # IDR. It must not transfer attempt-2's token to that old submission.
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_keyframe_request_ack is None
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_keyframe_request_ack == ("attempt-1", 1, 1)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_keyframe_request_ack == ("attempt-2", 2, 2)

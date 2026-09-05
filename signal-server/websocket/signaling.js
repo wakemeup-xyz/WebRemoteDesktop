@@ -504,6 +504,27 @@ function setupSignaling(io, options = {}) {
       : null;
   }
 
+  function resolveViewerRecoveryKey(viewerId, data = {}) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior
+      || !isValidConnectionAttemptId(prior.connectionAttemptId)
+      || !isValidConnectionAttemptSequence(prior.connectionAttemptSequence)) {
+      return null;
+    }
+    if (data.connectionAttemptId !== undefined && data.connectionAttemptId !== prior.connectionAttemptId) {
+      return null;
+    }
+    if (data.connectionAttemptSequence !== undefined
+      && data.connectionAttemptSequence !== prior.connectionAttemptSequence) {
+      return null;
+    }
+    return {
+      connectionAttemptId: prior.connectionAttemptId,
+      connectionAttemptSequence: prior.connectionAttemptSequence,
+      generation: prior.connectionAttemptSequence,
+    };
+  }
+
   function resolveProfileWrite(viewerId, data, sanitized) {
     const prior = mediaActivityProgress.get(viewerId);
     if (!prior || !isValidConnectionAttemptId(prior.connectionAttemptId)) {
@@ -1079,7 +1100,7 @@ function setupSignaling(io, options = {}) {
       }
     });
 
-    socket.on('viewer-stats', (data) => {
+    socket.on('viewer-stats', (data = {}) => {
       if (role !== 'viewer') {
         console.warn(`Viewer stats rejected: role=${role} from ${socket.id}`);
         return;
@@ -1088,10 +1109,13 @@ function setupSignaling(io, options = {}) {
         console.warn(`Viewer stats rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
+      if (!recoveryKey) return;
       if (connections.host) {
         connections.host.emit('viewer-stats', {
           ...data,
-          viewerId: socket.id
+          ...recoveryKey,
+          viewerId: socket.id,
         });
       }
     });
@@ -1152,6 +1176,9 @@ function setupSignaling(io, options = {}) {
       } else if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) {
         return;
       }
+      const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
+      if (!recoveryKey) return;
+      if (!Number.isSafeInteger(data.requestSequence) || data.requestSequence < 1) return;
       if (!connections.host) return;
       connections.host.emit('request-keyframe', {
         viewerId: socket.id,
@@ -1159,6 +1186,8 @@ function setupSignaling(io, options = {}) {
         schemaVersion: data.schemaVersion === 2 ? 2 : undefined,
         leaseId: typeof data.leaseId === 'string' ? data.leaseId : undefined,
         leaseEpoch: Number.isSafeInteger(data.leaseEpoch) ? data.leaseEpoch : undefined,
+        ...recoveryKey,
+        requestSequence: data.requestSequence,
       });
     });
 

@@ -74,6 +74,7 @@ const LinkQualityController = {
       startupGraceSamplesRemaining: 0,
       lastPacketsLost: null,
       lastFramesDecoded: null,
+      lastFramesReceived: null,
       lastDecodedDelta: 0,
       lastReceivedDelta: 0,
       iceRestartAttempted: false,
@@ -111,6 +112,7 @@ const LinkQualityController = {
         this.goodCount = 0;
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
+        this.lastFramesReceived = null;
         this.lastDecodedDelta = 0;
         this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
@@ -133,6 +135,7 @@ const LinkQualityController = {
         this.goodCount = 0;
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
+        this.lastFramesReceived = null;
         this.lastDecodedDelta = 0;
         this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
@@ -191,10 +194,13 @@ const LinkQualityController = {
           ? Math.max(0, Number(stats.receivedDelta) || 0)
           : stats.interval === true
           ? Math.max(0, framesReceived)
-          : Math.max(0, framesReceived);
+          : this.lastFramesReceived == null
+          ? framesReceived
+          : Math.max(0, framesReceived - this.lastFramesReceived);
 
         this.lastPacketsLost = packetsLost;
         this.lastFramesDecoded = framesDecoded;
+        this.lastFramesReceived = framesReceived;
         this.lastDecodedDelta = decodedDelta;
         this.lastReceivedDelta = receivedDelta;
 

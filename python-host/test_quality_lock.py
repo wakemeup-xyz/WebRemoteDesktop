@@ -211,26 +211,27 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
             self.codec = object()
             self.last_force_emitted_idr = False
 
-        def note_keyframe_request(self, *_args, **_kwargs):
-            self.last_force_emitted_idr = True
+        def note_keyframe_request(self, _reason, attempt, generation, request_sequence):
+            self.last_keyframe_request_ack = (attempt, generation, request_sequence)
 
         def request_decoder_refresh(self):
             self.calls += 1
             self.codec = None
             return True
 
-    host = object.__new__(WebRemoteHost)
+    host = _make_host(attempt="attempt-quality")
     host._last_diag_network = {"networkMode": "relay"}
     host._stall_sample_count = 0
     host._last_keyframe_request_at = 0.0
     host._keyframe_recovery_state = {}
-    host.media_sender = MagicMock()
-    host.media_sender.request_keyframe.return_value = True
     encoder = FakeEncoder()
     host.video_sender = type("Sender", (), {"_encoder": encoder})()
     loop = asyncio.get_event_loop()
     freeze = {
         "viewerId": "viewer-1",
+        "connectionAttemptId": "attempt-quality",
+        "connectionAttemptSequence": 1,
+        "generation": 1,
         "derivedFps": 0,
         "receivedDelta": 19,
         "decodedDelta": 0,
@@ -274,13 +275,21 @@ def test_keyframe_rejects_stale_generation_and_resets_cooldown_for_new_generatio
     )
     assert host.media_sender.request_keyframe.call_count == 2
 
+
+def test_keyframe_request_without_exact_recovery_identity_fails_closed():
+    host = _make_host(attempt="attempt-current")
+    host.on_request_keyframe({"viewerId": "viewer-1", "reason": "decoder-stalled"})
+    assert host.media_sender.request_keyframe.call_count == 0
+
     host.on_request_keyframe({
         "viewerId": "viewer-1",
         "reason": "decoder-stalled",
         "connectionAttemptId": "attempt-old",
         "connectionAttemptSequence": 1,
+        "generation": 1,
+        "requestSequence": 1,
     })
-    assert host.media_sender.request_keyframe.call_count == 2
+    assert host.media_sender.request_keyframe.call_count == 0
 
 
 def test_keyframe_handler_invokes_request_path():
@@ -294,6 +303,10 @@ def test_keyframe_handler_invokes_request_path():
         host.on_request_keyframe({
             "viewerId": "viewer-1",
             "reason": "media-stalled",
+            "connectionAttemptId": "attempt-quality",
+            "connectionAttemptSequence": 1,
+            "generation": 1,
+            "requestSequence": 1,
         })
     finally:
         logger.removeHandler(handler)

@@ -433,26 +433,81 @@ test('non-viewer media-profile-change is ignored', () => {
   assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
 });
 
-test('viewer request-keyframe is sanitized and forwarded to host', () => {
+test('viewer request-keyframe derives the active recovery identity before forwarding', () => {
   resetConnections();
   const io = makeIo();
-  setupSignaling(io);
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
 
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
-
-  viewer.trigger('request-keyframe', {
-    reason: 'media-stalled',
-    secret: 'drop-me',
+  const grant = grantActiveLease(io, host, viewer, 'keyframe-binding');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-keyframe',
+    connectionAttemptSequence: 4,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
   });
 
-  const message = host.sent.find((entry) => entry.event === 'request-keyframe');
+  viewer.trigger('request-keyframe', {
+    schemaVersion: 2,
+    reason: 'media-stalled',
+    secret: 'drop-me',
+    connectionAttemptId: 'attempt-keyframe',
+    connectionAttemptSequence: 4,
+    requestSequence: 9,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  const message = host.sent.filter((entry) => entry.event === 'request-keyframe').at(-1);
   assert.equal(Boolean(message), true);
   assert.equal(message.data.viewerId, 'viewer-1');
   assert.equal(message.data.reason, 'media-stalled');
+  assert.equal(message.data.connectionAttemptId, 'attempt-keyframe');
+  assert.equal(message.data.connectionAttemptSequence, 4);
+  assert.equal(message.data.generation, 4);
+  assert.equal(message.data.requestSequence, 9);
   assert.equal(message.data.secret, undefined);
+});
+
+test('old keyframe and stats after a new binding cannot mutate the new episode', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'keyframe-rebind');
+  for (const [connectionAttemptId, connectionAttemptSequence] of [['attempt-A', 1], ['attempt-B', 2]]) {
+    viewer.trigger('connection-attempt-bind', {
+      schemaVersion: 1,
+      connectionAttemptId,
+      connectionAttemptSequence,
+      leaseId: grant.leaseId,
+      leaseEpoch: grant.leaseEpoch,
+    });
+  }
+  const keyframesBefore = host.sent.filter((entry) => entry.event === 'request-keyframe').length;
+  const statsBefore = host.sent.filter((entry) => entry.event === 'viewer-stats').length;
+  const oldIdentity = {
+    schemaVersion: 2,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  };
+  viewer.trigger('request-keyframe', { ...oldIdentity, requestSequence: 1, reason: 'decoder-stalled' });
+  viewer.trigger('viewer-stats', { ...oldIdentity, decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
+  assert.equal(host.sent.filter((entry) => entry.event === 'request-keyframe').length, keyframesBefore);
+  assert.equal(host.sent.filter((entry) => entry.event === 'viewer-stats').length, statsBefore);
 });
 
 test('non-viewer request-keyframe is ignored', () => {

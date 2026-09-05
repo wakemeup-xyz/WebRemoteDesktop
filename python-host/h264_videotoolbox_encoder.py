@@ -217,16 +217,18 @@ class H264VideoToolboxEncoder(Encoder):
         self._frames_encoded = 0
         self.last_requested_keyframe_emitted = False
         self.last_keyframe_request_generation = None
+        self.last_keyframe_request_ack = None
         self.keyframe_reason_counts = {}
-        self._pending_keyframe_generation = None
+        self._queued_force_tokens = []
+        self._active_force_token = None
 
-    def note_keyframe_request(self, reason: str, connection_attempt_id: str, generation: int) -> None:
-        """Record one admitted application request until its IDR is observable."""
+    def note_keyframe_request(self, reason: str, connection_attempt_id: str, generation: int, request_sequence: int) -> None:
+        """Queue one causal token for its matching force-keyframe submission."""
         reason_s = str(reason or "rtcp-or-unknown")[:80]
         key = (str(connection_attempt_id or ""), int(generation or 0))
         self.keyframe_reason_counts[reason_s] = self.keyframe_reason_counts.get(reason_s, 0) + 1
         self.last_keyframe_request_generation = key
-        self._pending_keyframe_generation = key
+        self._queued_force_tokens.append((key[0], key[1], int(request_sequence)))
         self.last_requested_keyframe_emitted = False
 
     @staticmethod
@@ -258,6 +260,8 @@ class H264VideoToolboxEncoder(Encoder):
             self._idr_wait_remaining = 0
             self._frames_since_idr = 0
             self._frames_encoded = 0
+        self._queued_force_tokens.clear()
+        self._active_force_token = None
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -413,6 +417,12 @@ class H264VideoToolboxEncoder(Encoder):
             bool(force_keyframe)
             or (self._frames_encoded > 0 and self._frames_encoded % max(1, gop) == 0)
         )
+        # A request owns a token only after this call actually submits its I
+        # frame. A force signal received during VideoToolbox's IDR wait still
+        # belongs to a later submission; the old asynchronous IDR must not
+        # acknowledge it.
+        if force_keyframe and due and self._queued_force_tokens:
+            self._active_force_token = self._queued_force_tokens.pop(0)
         # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
         # the delayed IDR instead of stuffing I-frames every follow-up tick.
         if due:
@@ -461,9 +471,10 @@ class H264VideoToolboxEncoder(Encoder):
             if waiting or want_idr:
                 self.last_force_emitted_idr = True
                 self.last_idr_recreated = False
-            if self._pending_keyframe_generation is not None:
+            if self._active_force_token is not None:
                 self.last_requested_keyframe_emitted = True
-                self._pending_keyframe_generation = None
+                self.last_keyframe_request_ack = self._active_force_token
+                self._active_force_token = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s encoded=%s",
                     True,

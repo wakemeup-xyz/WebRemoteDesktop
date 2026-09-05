@@ -113,6 +113,7 @@ const WebRTC = {
   _keyframeRequested: false,
   _keyframeEmitted: false,
   _keyframeRequestGeneration: '',
+  _keyframeRequestSequence: 0,
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -836,6 +837,7 @@ const WebRTC = {
     this._paintDecodedBaseline = 0;
     this._stallSince = null;
     this._keyframeRequestGeneration = '';
+    this._keyframeRequestSequence = 0;
     this._lastKeyframeRequestAt = 0;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
@@ -1543,7 +1545,9 @@ const WebRTC = {
       reason: String(reason || 'media-stalled').slice(0, 80),
       connectionAttemptId: this.currentConnectionAttemptId || '',
       connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
+      requestSequence: (Number(this._keyframeRequestSequence) || 0) + 1,
     });
+    this._keyframeRequestSequence += 1;
     console.warn(`[MEDIA] request-keyframe reason=${reason}`);
     return true;
   },
@@ -3476,11 +3480,8 @@ const WebRTC = {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
       });
 
-      // Ask Host for an IDR ASAP so formal cold first-frame is not stuck on an inter-frame.
-      if (event.track?.kind === 'video') {
-        this.requestKeyframe('ontrack-first-video');
-        setTimeout(() => this.requestKeyframe('ontrack-first-video-retry'), 700);
-      }
+      // First-frame warmup is admission-controlled by the canonical stats path;
+      // do not schedule an extra request before that path has a health sample.
 
       // Last-resort fallback: stay media-pending unless a decoded frame actually landed.
       setTimeout(() => {
@@ -4677,6 +4678,9 @@ if (this.tunnelLastObjectUrl) {
           freezeDelta: freezeCount,
           warmup: canonical.warmup,
           mediaHealthSuppressed: this.isMediaHealthSuppressed(),
+          connectionAttemptId: this.currentConnectionAttemptId || '',
+          connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
+          generation: Number(this.connectionAttemptSequence) || 0,
           codec,
           selectedCandidateType,
           // Host log parsing still expects the pre-canonical keys. Keep aliases
