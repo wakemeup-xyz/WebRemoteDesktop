@@ -3,10 +3,10 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NODE_BIN="${NODE_BIN:-node}"
-SAFE_URL_FILE="/tmp/wrd-safe-current-url.txt"
-SAFE_TUNNEL_SUPERVISOR_PID="/tmp/wrd-safe-tunnel-supervisor.pid"
-SIGNAL_PID_FILE="/tmp/wrd-safe-signal.pid"
-HOST_PID_FILE="/tmp/wrd-safe-host.pid"
+SAFE_URL_FILE="${SAFE_URL_FILE:-/tmp/wrd-safe-current-url.txt}"
+SAFE_TUNNEL_SUPERVISOR_PID="${SAFE_TUNNEL_SUPERVISOR_PID:-/tmp/wrd-safe-tunnel-supervisor.pid}"
+SIGNAL_PID_FILE="${SIGNAL_PID_FILE:-/tmp/wrd-safe-signal.pid}"
+HOST_PID_FILE="${HOST_PID_FILE:-/tmp/wrd-safe-host.pid}"
 
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 source "$PROJECT_DIR/scripts/lib-host-launchctl.sh"

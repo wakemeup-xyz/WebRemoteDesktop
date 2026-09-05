@@ -60,6 +60,7 @@ curl -fsS "http://127.0.0.1:8080/health" >/dev/null
 
 PID=""
 URL=""
+TERMINAL_STATE=""
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -107,10 +108,16 @@ if [ -z "$URL" ]; then
         break
       fi
       printf '%s %s\n' "$(date -u +%FT%TZ)" "$(wrd_safe_quick_tunnel_observe unreachable "$URL")" >> "$LOG_FILE"
+      TERMINAL_STATE=unreachable
       URL=""
       break
     fi
     if ! kill -0 "$PID" 2>/dev/null; then
+      if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
+        TERMINAL_STATE=unauthorized
+      else
+        TERMINAL_STATE=connector-exit
+      fi
       break
     fi
     sleep "$URL_POLL_INTERVAL_SECONDS"
@@ -118,7 +125,16 @@ if [ -z "$URL" ]; then
 fi
 
 if [ -z "$URL" ]; then
-  wrd_safe_quick_tunnel_observe missing-url >&2
+  # Reap a connector already proven dead before classifying its final log.
+  if [ -z "$TERMINAL_STATE" ] && ! kill -0 "$PID" 2>/dev/null; then
+    wait "$PID" 2>/dev/null || true
+    if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
+      TERMINAL_STATE=unauthorized
+    else
+      TERMINAL_STATE=connector-exit
+    fi
+  fi
+  wrd_safe_quick_tunnel_observe "${TERMINAL_STATE:-missing-url}" >&2
   tail -n 40 "$LOG_FILE" || true
   exit 1
 fi

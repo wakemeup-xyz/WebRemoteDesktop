@@ -15,9 +15,11 @@ LaunchAgent, service, Host, Cloudflare connector, or tunnel.
 ## Implementation
 
 - `start-safe-wrd.sh` runs a migration before local services. When
-  `launchctl print` proves the legacy job is loaded, the migration issues only
-  `launchctl disable` and `launchctl bootout`; an unloaded job produces no
-  mutation. URL files are not read-modified or deleted by this path.
+  `launchctl print` proves a job is loaded, the migration inspects the
+  installed plist and issues only `launchctl disable` and `launchctl bootout`
+  when both legacy autostart flags are explicitly true. A current
+  `false/false` plist, missing plist, or failed inspection is preserved
+  fail-safe. URL files are not read-modified or deleted by this path.
 - `launchd/com.webremotedesktop.tunnel.plist` remains non-autoloading. The
   explicit `restart-safe-tunnel.sh` path retains the separate
   `bootstrap`/`enable`/`kickstart` lifecycle and URL rotation behavior.
@@ -68,15 +70,40 @@ git diff --check
 → exit 0; no whitespace output
 ```
 
-The fixtures use a temporary fake `launchctl`, shell function markers, and
-temporary URL files. They do not execute the shell scripts against real
-processes or invoke any real launchctl/service/tunnel operation.
+The round2 fixtures execute the production shell scripts as subprocesses with
+fake PATH commands, temporary plist/PID/URL state, and shell marker hooks.
+They do not execute the shell scripts against real processes or invoke any
+real launchctl/service/tunnel operation.
+
+## Round2 executable-boundary evidence
+
+```text
+node --test scripts/tunnel-safety-fixture.test.js
+→ 5 passed, 0 failed
+
+node --test scripts/tunnel-safety-fixture.test.js scripts/run-safe-quicktunnel.test.js \
+  scripts/start-safe-wrd.test.js scripts/tunnel-launchctl.test.js
+→ 27 passed, 0 failed
+
+node --test scripts/*.test.js
+→ 104 passed, 0 failed
+```
+
+The subprocess fixture records that a loaded current `false/false` plist is
+left alone, a loaded legacy `true/true` plist receives only `print/disable/
+bootout`, and a failed `plutil` inspection receives only `print`. It executes
+the run-safe script against fake Unauthorized, unreachable, and connector-exit
+connectors and asserts no `kill`, URL-file deletion, or replacement spawn;
+the explicit restart script separately records its authorized launchctl
+bootstrap/enable/kickstart lifecycle.
 
 ## Acceptance boundary
 
-- **PASS:** loaded legacy auto job is disabled and booted out without
+- **PASS:** positively identified loaded legacy auto job is disabled and
+  booted out without
   `bootstrap`, `kickstart`, `remove`, URL deletion, or replacement.
-- **PASS:** unloaded legacy job is left untouched.
+- **PASS:** loaded current `false/false` and unknown/failed-inspection jobs are
+  left untouched.
 - **PASS:** explicit tunnel restart remains available only through its
   separate lifecycle helper.
 - **PASS:** Unauthorized, unreachable, and connector-exit observations are
