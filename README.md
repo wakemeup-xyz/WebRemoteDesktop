@@ -89,17 +89,19 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 4. 在 `scripts/run-host-launchctl.sh` 内先等待 `/health` 成功，再预检 `/api/auth/login/host` 认证成功，最后才真正启动 `host.py`
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
 6. 只检查并复用已有 safe quick tunnel；不可达、失效或缺失时只报告，不自动启动或替换 tunnel
+7. 如果检测到仍在加载的旧版 quick-tunnel LaunchAgent，只禁用并 bootout 该旧自动任务；不会启动、重启或重建 tunnel，也不会删除 URL 文件
 
 补充约定：
 
 1. `./scripts/start-safe-wrd.sh` 只会**复用和检查**现有 safe quick tunnel，不会自动启动、重启或替换
-2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
-3. 只有在用户明确要求重建/停止 tunnel、或切换网络入口模式时，地址才允许变化
-4. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
-5. 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
-6. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
-7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端仍会按当前模式先尝试直连 / STUN；若后续失败，再按页面恢复逻辑决定是否切到 `隧道中继`
-8. 如果当前 safe URL 已经不可解析或不可访问，agent 只能报告“公网入口不可达”，不得自行调用会重建 tunnel 的脚本
+2. 启动前如果发现旧版 quick-tunnel LaunchAgent 仍以 `RunAtLoad` / `KeepAlive` 加载，只执行禁用和 bootout 迁移；该迁移不触碰当前 URL 文件
+3. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
+4. 只有在用户明确要求重建/停止 tunnel、或切换网络入口模式时，地址才允许变化
+5. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
+6. 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
+7. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
+8. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端仍会按当前模式先尝试直连 / STUN；若后续失败，再按页面恢复逻辑决定是否切到 `隧道中继`
+9. 如果当前 safe URL 已经不可解析或不可访问，agent 只能报告“公网入口不可达”，不得自行调用会重建 tunnel 的脚本
 
 注意：脚本打印出 URL 只表示 `cloudflared` 已返回一个 trycloudflare 地址，**不等于该地址已经对外可访问**。对外提供前还需要额外确认：
 

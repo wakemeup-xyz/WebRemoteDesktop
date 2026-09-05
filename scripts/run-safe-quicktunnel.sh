@@ -72,7 +72,7 @@ if [ -f "$PID_FILE" ]; then
       URL="$(extract_trycloudflare_url "$LOG_FILE" || true)"
     fi
     if [ -n "$URL" ] && ! wrd_safe_url_is_reachable "$URL"; then
-      echo "safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically" >&2
+      wrd_safe_quick_tunnel_observe unreachable "$URL" >&2
     fi
     echo "safe quick tunnel already running (pid=$OLD_PID)"
     if [ -n "$URL" ]; then
@@ -106,7 +106,7 @@ if [ -z "$URL" ]; then
         echo "$URL"
         break
       fi
-      echo "$(date -u +%FT%TZ) safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically: $URL" >> "$LOG_FILE"
+      printf '%s %s\n' "$(date -u +%FT%TZ)" "$(wrd_safe_quick_tunnel_observe unreachable "$URL")" >> "$LOG_FILE"
       URL=""
       break
     fi
@@ -118,7 +118,7 @@ if [ -z "$URL" ]; then
 fi
 
 if [ -z "$URL" ]; then
-  echo "failed to obtain a reachable quick tunnel URL; diagnosing only, not restarting automatically" >&2
+  wrd_safe_quick_tunnel_observe missing-url >&2
   tail -n 40 "$LOG_FILE" || true
   exit 1
 fi
@@ -128,7 +128,7 @@ UNREACHABLE_REPORTED=0
 while kill -0 "$PID" 2>/dev/null; do
   if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
     if [ "$UNAUTHORIZED_REPORTED" -eq 0 ]; then
-      echo "$(date -u +%FT%TZ) safe quick tunnel reported Unauthorized: Tunnel not found; diagnosing only, not restarting automatically" >> "$LOG_FILE"
+      printf '%s %s\n' "$(date -u +%FT%TZ)" "$(wrd_safe_quick_tunnel_observe unauthorized)" >> "$LOG_FILE"
       UNAUTHORIZED_REPORTED=1
     fi
   fi
@@ -137,7 +137,7 @@ while kill -0 "$PID" 2>/dev/null; do
     CURRENT_URL=$(cat "$URL_FILE" 2>/dev/null || true)
     if [ -n "$CURRENT_URL" ] && ! wrd_safe_url_is_reachable "$CURRENT_URL"; then
       if [ "$UNREACHABLE_REPORTED" -eq 0 ]; then
-        echo "$(date -u +%FT%TZ) safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically: $CURRENT_URL" >> "$LOG_FILE"
+        printf '%s %s\n' "$(date -u +%FT%TZ)" "$(wrd_safe_quick_tunnel_observe unreachable "$CURRENT_URL")" >> "$LOG_FILE"
         UNREACHABLE_REPORTED=1
       fi
     else
@@ -148,5 +148,5 @@ while kill -0 "$PID" 2>/dev/null; do
 done
 
 wait "$PID" 2>/dev/null || true
-echo "safe quick tunnel exited; diagnosing only, not restarting automatically" >&2
+wrd_safe_quick_tunnel_observe connector-exit >&2
 exit 1

@@ -10,25 +10,15 @@ HOST_PID_FILE="/tmp/wrd-safe-host.pid"
 
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 source "$PROJECT_DIR/scripts/lib-host-launchctl.sh"
-
-stop_pid_file() {
-  local pid_file="$1"
-  local label="$2"
-
-  if [ ! -f "$pid_file" ]; then
-    return 0
-  fi
-
-  local pid
-  pid=$(cat "$pid_file" 2>/dev/null || true)
-  if [ -n "$pid" ] && wrd_safe_pid_is_running "$pid"; then
-    kill "$pid" 2>/dev/null || true
-  fi
-  rm -f "$pid_file"
-  echo "stopped $label"
-}
+source "$PROJECT_DIR/scripts/lib-tunnel-launchctl.sh"
+source "$PROJECT_DIR/scripts/lib-safe-startup.sh"
 
 cd "$PROJECT_DIR"
+
+# Migrate a loaded legacy quick-tunnel LaunchAgent before local services start.
+# This only disables/boots out that old auto job; explicit tunnel rebuild is
+# owned by the explicit restart command.
+wrd_tunnel_launchctl_migrate_legacy_autostart
 
 start_signal() {
   local existing_pid=""
@@ -98,23 +88,7 @@ wait_host() {
 }
 
 start_safe_tunnel() {
-  local supervisor_pid=""
-  supervisor_pid=$(wrd_safe_reconcile_pid_file "$SAFE_TUNNEL_SUPERVISOR_PID" tunnel-supervisor "$PROJECT_DIR" || true)
-  local safe_url=""
-  safe_url=$(cat "$SAFE_URL_FILE" 2>/dev/null || true)
-
-  if wrd_safe_pid_is_running "$supervisor_pid"; then
-    if [ -n "$safe_url" ] && wrd_safe_url_is_reachable "$safe_url"; then
-      echo "safe tunnel supervisor already running (pid=$supervisor_pid)"
-      return 0
-    fi
-
-    echo "current safe URL is unreachable; diagnosing only, not restarting automatically"
-    return 0
-  fi
-
-  echo "safe quick tunnel supervisor is not running; diagnosing only, no automatic replacement"
-  echo "automatic replacement is disabled; explicit rebuild requires a user request"
+  wrd_safe_startup_tunnel "$SAFE_TUNNEL_SUPERVISOR_PID" "$SAFE_URL_FILE" "$PROJECT_DIR"
 }
 
 wait_safe_url() {

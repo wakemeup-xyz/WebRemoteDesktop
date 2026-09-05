@@ -11,6 +11,7 @@ Task5 closes the documentation and acceptance-boundary contract for the Terminal
 
 - The same prohibition sentence is present in `README.md`, `docs/runbook-safe-startup.md`, and `docs/需求文档/WebRemoteDesktop-需求文档.md`: an inaccessible quick tunnel or `Unauthorized: Tunnel not found` is diagnostic only; ordinary startup/recovery cannot kill, stop, restart, or rebuild it; rebuild requires an explicit user request.
 - `start-safe-wrd.sh` only starts/reuses local Signal and Host and checks an existing quick tunnel. It reports a missing or inaccessible quick tunnel without invoking a tunnel lifecycle helper.
+- Ordinary startup now detects a loaded legacy quick-tunnel LaunchAgent and only issues `disable` plus `bootout`; the migration leaves `/tmp/wrd-safe-current-url.txt` untouched and never calls explicit start/restart/rotate actions.
 - `run-safe-quicktunnel.sh` performs one explicit connector start (when directly invoked by the explicit lifecycle path), verifies before publishing, then only observes the connector. It does not kill the process, delete the current URL, or loop into replacement on an inaccessible URL, `Unauthorized`, or connector exit.
 - The safe-tunnel LaunchAgent is not `RunAtLoad`/`KeepAlive`; the explicit `restart-safe-tunnel.sh` path still owns rotate/cleanup/start semantics.
 - `WRD_TERMINAL_PTY_KILL_WAIT_MS=200` is included in `signal-server/.env.example` and remains the bounded default for asynchronous node-pty `onExit` confirmation.
@@ -25,11 +26,12 @@ The formal public entry remains `https://link.stockhub.wiki`; the existing Core 
 |---|---|---|
 | Terminal Viewer contracts | PASS | `node --test web-client/js/terminal*.test.js` — 122 passed, 0 failed |
 | Terminal Signal Server contracts | PASS | `node --test signal-server/test/terminal*.test.js signal-server/lib/terminal/*.test.js signal-server/websocket/terminal.test.js` — 164 passed, 0 failed |
-| Formal watch, tunnel, and runtime scripts | PASS | `node --test scripts/*.test.js` — 101 passed, 0 failed |
-| Shell syntax | PASS | `bash -n scripts/run-safe-quicktunnel.sh scripts/start-safe-wrd.sh scripts/restart-safe-tunnel.sh scripts/lib-tunnel-launchctl.sh` — exit 0 |
+| Formal watch, tunnel, and runtime scripts | PASS | `node --test scripts/*.test.js` — 104 passed, 0 failed |
+| Safe tunnel fixture behavior | PASS | `node --test scripts/tunnel-safety-fixture.test.js` — 5 passed, 0 failed; fake LaunchAgent records loaded-job `print/disable/bootout`, explicit `bootstrap/enable/kickstart`, and diagnostic-only run-safe states with URL preservation |
+| Shell syntax | PASS | `bash -n scripts/run-safe-quicktunnel.sh scripts/start-safe-wrd.sh scripts/restart-safe-tunnel.sh scripts/lib-safe-wrd.sh scripts/lib-safe-startup.sh scripts/lib-tunnel-launchctl.sh` — exit 0 |
 | Patch whitespace | PASS | `git diff --check` — no output |
 
-The script suite includes explicit assertions that inaccessible/Unauthorized quick tunnels are not replaced, that safe startup does not invoke tunnel start/rotate helpers, that the LaunchAgent cannot auto-run, and that the three active documents contain the same prohibition sentence. The Signal suite includes the 200ms default/config coverage and asynchronous PTY exit cleanup. Tests use fixtures or in-process harnesses; no live service, Host, Cloudflare connector, or tunnel was operated.
+The script suite includes executable fixtures proving that inaccessible/Unauthorized/exited quick tunnels remain diagnostic-only, ordinary startup migrates a loaded legacy auto job without starting or deleting URL state, safe startup does not invoke tunnel start/rotate helpers, the LaunchAgent cannot auto-run, and the three active documents contain the same prohibition sentence. The Signal suite includes the 200ms default/config coverage and asynchronous PTY exit cleanup. Tests use fake command fixtures or in-process harnesses; no live service, Host, Cloudflare connector, LaunchAgent, or tunnel was operated.
 
 ## Runtime acceptance boundary
 
@@ -44,4 +46,4 @@ The following remain `NOT RUN` because this task had no operator-supplied live o
 
 Automated tests do not substitute for the browser, physical-device, formal watcher, or public-path gates above. No service, Host, Signal Server, Cloudflare connector, quick tunnel, or LaunchAgent was started, stopped, restarted, rebuilt, or rotated for this acceptance.
 
-**Commit message:** `fix(tunnel): require explicit quick-tunnel rebuild`
+**Commit message:** `fix(tunnel): safely migrate legacy quick-tunnel job`

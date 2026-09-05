@@ -282,7 +282,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 1. 启动防睡眠服务：`scripts/install-awake-keeper.sh`（一次性安装）或 `scripts/run-awake-keeper.sh`
 2. 启动 Signal Server：`node server.js`
-3. 检查已有 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）；普通启动不自动启动、恢复或替换 quick tunnel
+3. 检查已有 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）；普通启动不自动启动、恢复或替换 quick tunnel；若旧版 quick-tunnel LaunchAgent 仍处于加载状态，只禁用并 bootout 该旧自动任务，不删除 URL 文件
 4. 启动 Python Host：`python host.py`（使用 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
 5. 浏览器访问页面，输入 Viewer 密码登录
 6. 每次本地服务启动或重启后，运维侧必须从运行配置回报 `VIEWER_ACCESS_PASSWORD` 和 `WRD_TERMINAL_ADMIN_PASSWORD`

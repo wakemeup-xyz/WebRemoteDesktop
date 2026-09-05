@@ -21,6 +21,68 @@ wrd_safe_write_pid_file() {
   fi
 }
 
+# Return the only allowed action for an observation from the safe quick tunnel.
+# The quick-tunnel runner is intentionally observation-only after one explicit
+# connector invocation; recovery belongs to restart-safe-tunnel.sh.
+wrd_safe_quick_tunnel_action_for_state() {
+  local state="${1:-unknown}"
+  case "$state" in
+    running|reachable|ready)
+      printf '%s\n' observe
+      ;;
+    unauthorized|unreachable|connector-exit|missing-url)
+      printf '%s\n' diagnostic
+      ;;
+    *)
+      printf '%s\n' diagnostic
+      ;;
+  esac
+}
+
+wrd_safe_quick_tunnel_observe() {
+  local state="${1:-unknown}"
+  local detail="${2:-}"
+  local action=""
+  action=$(wrd_safe_quick_tunnel_action_for_state "$state")
+  [ "$action" = diagnostic ] || return 0
+
+  case "$state" in
+    unauthorized)
+      printf 'safe quick tunnel reported Unauthorized: Tunnel not found; diagnosing only, not restarting automatically%s\n' \
+        "${detail:+: $detail}"
+      ;;
+    unreachable)
+      printf 'safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically%s\n' \
+        "${detail:+: $detail}"
+      ;;
+    connector-exit)
+      printf 'safe quick tunnel exited; diagnosing only, not restarting automatically%s\n' \
+        "${detail:+: $detail}"
+      ;;
+    missing-url)
+      printf 'safe quick tunnel URL unavailable; diagnosing only, no automatic replacement%s\n' \
+        "${detail:+: $detail}"
+      ;;
+    *)
+      printf 'safe quick tunnel state is unknown; diagnosing only, not restarting automatically%s\n' \
+        "${detail:+: $detail}"
+      ;;
+  esac
+}
+
+# Ordinary startup may reuse a known healthy supervisor, but never starts or
+# restarts a missing/unreachable quick tunnel. This pure decision seam is used
+# by lib-safe-startup.sh and is executable in fixture tests without processes.
+wrd_safe_startup_tunnel_action() {
+  local supervisor_state="${1:-absent}"
+  local url_state="${2:-missing}"
+  if [ "$supervisor_state" = running ] && [ "$url_state" = reachable ]; then
+    printf '%s\n' reuse
+  else
+    printf '%s\n' diagnostic
+  fi
+}
+
 wrd_safe_process_cwd() {
   local pid="$1"
   lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1

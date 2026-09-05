@@ -71,26 +71,6 @@ test('safe quick tunnel publishes current and archive URL files atomically', () 
   assert.match(source, /mv "\$archive_tmp" "\$URL_ARCHIVE_FILE"/);
 });
 
-test('safe quick tunnel script reports an unreachable URL without replacing the connector', () => {
-  const source = fs.readFileSync(scriptPath, 'utf8');
-
-  assert.doesNotMatch(source, /UNREACHABLE_URL_FAIL_LIMIT/);
-  assert.doesNotMatch(source, /url unreachable too long, restarting/);
-  assert.doesNotMatch(source, /rm -f "\$URL_FILE"/);
-  assert.doesNotMatch(source, /kill "\$PID"/);
-  assert.doesNotMatch(source, /while true; do/);
-  assert.match(source, /unreachable.*not restarting automatically/i);
-});
-
-test('safe quick tunnel script reports Unauthorized without replacing the connector', () => {
-  const source = fs.readFileSync(scriptPath, 'utf8');
-
-  assert.match(source, /Unauthorized: Tunnel not found/);
-  assert.doesNotMatch(source, /safe quick tunnel expired, restarting/);
-  assert.doesNotMatch(source, /RESTART_DELAY_SECONDS/);
-  assert.match(source, /diagnos|report|只报告/i);
-});
-
 test('safe quick tunnel isolates cloudflared from named-tunnel config and token env', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 

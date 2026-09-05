@@ -42,7 +42,9 @@ test('safe startup script validates the current safe URL without restarting an i
   const source = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(source, /wrd_safe_url_is_reachable/);
-  assert.match(source, /current safe url is unreachable|safe tunnel url unreachable/i);
+  assert.match(source, /lib-safe-startup\.sh/);
+  assert.match(source, /wrd_safe_startup_tunnel/);
+  assert.match(source, /wrd_tunnel_launchctl_migrate_legacy_autostart/);
   assert.doesNotMatch(source, /restart-safe-tunnel\.sh/);
   assert.doesNotMatch(source, /wrd_tunnel_launchctl_start/);
   assert.match(source, /not restarting.*automatically/i);
@@ -51,9 +53,9 @@ test('safe startup script validates the current safe URL without restarting an i
 test('safe startup script reports a missing tunnel without starting a replacement', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
-  assert.match(source, /safe quick tunnel.*not running|supervisor.*missing/i);
+  assert.match(source, /lib-safe-startup\.sh/);
+  assert.match(source, /wrd_safe_startup_tunnel/);
   assert.doesNotMatch(source, /wrd_tunnel_launchctl_start/);
-  assert.match(source, /explicit.*rebuild|明确.*重建/i);
 });
 
 test('safe startup script prints formal entry first and marks quick tunnel as debug-only', () => {

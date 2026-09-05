@@ -94,6 +94,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
 6. 检查并复用已有 `scripts/run-safe-quicktunnel.sh`
 7. 只有已有 URL 的 `/health` 返回 2xx 且 JSON `status=ok` 时才将其作为当前可交付地址；不可达、失效或缺失只报告，不自动启动或替换 tunnel
+8. 若旧版 quick-tunnel LaunchAgent 仍以 `RunAtLoad` / `KeepAlive` 加载，普通启动只禁用并 bootout 该旧任务；不会启动、重启、重建 tunnel 或删除 URL 文件
 
 重启约定：
 
