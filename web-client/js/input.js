@@ -717,26 +717,41 @@ const Input = {
     let returnFocus = null;
     const isVisibleFocusable = (target) => {
       if (!target || target.isConnected === false || target.hidden || target.disabled) return false;
-      const style = target.style || {};
-      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      for (let node = target; node; node = node.parentElement || node.parentNode) {
+        const style = node.style || {};
+        const ariaHidden = node.getAttribute?.('aria-hidden') === 'true';
+        const inert = node.inert === true || node.hasAttribute?.('inert');
+        if (node.hidden || node.disabled || node.classList?.contains?.('hidden') || ariaHidden || inert
+          || style.display === 'none' || style.visibility === 'hidden') {
+          return false;
+        }
+      }
       return typeof target.focus === 'function';
     };
+    const isTextModalFlowFocus = (target) => target === modal || target === input
+      || target === submit || target === cancel
+      || Boolean(modal?.contains?.(target))
+      || target?.closest?.('.modal') === modal;
     const isMobileFlowFocus = (target) => target === mobileInput || target === mobileButton
       || Boolean(mobileDock?.contains?.(target));
-    const restoreMobileReturnFocus = (wasInMobileFlow = isMobileFlowFocus(document.activeElement)) => {
-      const target = this._mobileTextReturnFocus;
-      this._mobileTextReturnFocus = null;
-      if (!wasInMobileFlow || !isVisibleFocusable(target)) return false;
+    const restoreReturnFocus = (target, wasInFlow) => {
+      if (!wasInFlow || !isVisibleFocusable(target)) return false;
       target.focus();
       return document.activeElement === target;
     };
+    const restoreMobileReturnFocus = (wasInMobileFlow = isMobileFlowFocus(document.activeElement)) => {
+      const target = this._mobileTextReturnFocus;
+      this._mobileTextReturnFocus = null;
+      return restoreReturnFocus(target, wasInMobileFlow);
+    };
     const close = () => {
+      const wasInTextModalFlow = isTextModalFlowFocus(document.activeElement);
       modal?.classList?.add('hidden');
       if (modal) modal.hidden = true;
       if (input) input.value = '';
       const target = returnFocus;
       returnFocus = null;
-      target?.focus?.();
+      restoreReturnFocus(target, wasInTextModalFlow);
     };
     const commit = () => {
       const text = Array.from(input?.value || '').slice(0, 4096).join('');

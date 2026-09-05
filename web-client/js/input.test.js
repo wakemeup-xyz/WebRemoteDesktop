@@ -43,11 +43,23 @@ function loadInput() {
           add(name) { bodyClasses.add(name); },
           remove(name) { bodyClasses.delete(name); },
           contains(name) { return bodyClasses.has(name); },
+          toggle(name, force) {
+            const next = force === undefined ? !bodyClasses.has(name) : Boolean(force);
+            if (next) bodyClasses.add(name);
+            else bodyClasses.delete(name);
+            return next;
+          },
         },
       },
       activeElement: null,
+      fullscreenElement: null,
       addEventListener(type, handler) { documentListeners.set(type, handler); },
       querySelectorAll: () => [],
+      querySelector(selector) {
+        if (selector !== '.viewer-container') return null;
+        if (!elements.has('__viewerContainer')) elements.set('__viewerContainer', makeElement());
+        return elements.get('__viewerContainer');
+      },
       getElementById(id) {
         if (!elements.has(id)) {
           elements.set(id, makeElement((element, blurred) => {
@@ -73,6 +85,12 @@ function loadInput() {
     vm.runInContext(filename === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, context);
   }
   return { Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents };
+}
+
+function loadUi(context) {
+  const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+  vm.runInContext(`${source}\nglobalThis.__UI = UI;`, context);
+  return context.__UI;
 }
 
 function loadTouchAdapter(context) {
@@ -146,6 +164,28 @@ test('surface interactions dispatch focus through the guarded helper', () => {
     currentTarget: video, preventDefault() {},
   });
   assert.deepEqual(calls, [[video, 'surface-user'], [video, 'surface-user']]);
+});
+
+test('fullscreenchange preserves mobile text focus while updating fullscreen state', () => {
+  const { Input, context, elements, documentListeners } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  field.focus();
+
+  const UI = loadUi(context);
+  UI.setupControlButtons();
+  const viewerContainer = context.document.querySelector('.viewer-container');
+  context.document.fullscreenElement = viewerContainer;
+  documentListeners.get('fullscreenchange')();
+
+  assert.equal(context.document.activeElement, field);
+  assert.equal(context.document.body.classList.contains('fullscreen-active'), true);
 });
 
 test('initial-ready focus does not steal modal or visible terminal focus', () => {
@@ -232,6 +272,34 @@ test('mobile input does not restore a disconnected or newly focused opener', () 
   context.document.activeElement = anotherTarget;
   mobileButton.listeners.get('click')({ preventDefault() {} });
   assert.equal(openerFocuses, 0, 'a new user focus must not be overridden');
+});
+
+test('ordinary text modal does not restore an opener hidden by an ancestor', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = context.document.getElementById('desktopOpener');
+  const hiddenPanel = context.document.getElementById('desktopPanel');
+  hiddenPanel.hidden = true;
+  hiddenPanel.classList = { add() {}, remove() {}, contains: (name) => name === 'hidden' };
+  opener.parentElement = hiddenPanel;
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+
+  context.document.activeElement = opener;
+  elements.get('textInputBtn').listeners.get('click')({ preventDefault() {} });
+  elements.get('textInputCancelBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0);
+
+  hiddenPanel.hidden = false;
+  hiddenPanel.classList.contains = () => false;
+  context.document.activeElement = opener;
+  elements.get('textInputBtn').listeners.get('click')({ preventDefault() {} });
+  elements.get('textInputCancelBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 1, 'visible opener remains eligible for ordinary modal restore');
 });
 
 test('mobile viewer acceptance CLI exposes the required operator-supplied arguments without reading a password', () => {
