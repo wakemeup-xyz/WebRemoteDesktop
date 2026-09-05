@@ -93,6 +93,7 @@ class InputHandler:
             CGEventSetFlags(event, flags)
             CGEventPost(kCGHIDEventTap, event)
         logger.info("Requested input method switch with Control+Space")
+        return True
 
     def stop(self):
         """Stop the input handler"""
@@ -151,6 +152,19 @@ class InputHandler:
     def transition_desktop_writes(self, *, lease_id, lease_epoch):
         return self._desktop_writes.transition(lease_id=lease_id, lease_epoch=lease_epoch)
 
+    async def transition_desktop_writes_async(self, *, lease_id, lease_epoch):
+        """Transition desktop-write authority after in-flight input drains."""
+        async with self._input_lock:
+            return self._desktop_writes.transition(
+                lease_id=lease_id,
+                lease_epoch=lease_epoch,
+            )
+
+    async def reset_desktop_writes(self, reason="manual"):
+        """Release mouse state after in-flight native input has completed."""
+        async with self._input_lock:
+            self.release_all_mouse_buttons(reason=reason)
+
     async def reset_keyboard(self, reason="manual", lease_epoch=None):
         """Release keyboard state in the same queue as key execution."""
         async with self._keyboard_lock:
@@ -200,17 +214,13 @@ class InputHandler:
                 return await self.apply_keyboard(data, transport=data.get("transport"))
 
             desktop = None
+            desktop_data = None
             if data.get("schemaVersion") == 2 and input_type in {'mouse', 'command'}:
-                desktop = self._desktop_writes.apply({
+                desktop_data = {
                     field: data[field] for field in (
                         "schemaVersion", "type", "action", "leaseId", "leaseEpoch", "seq", "inputIds", "payload",
                     ) if field in data
-                })
-                if desktop.status not in {"applied", "unordered"}:
-                    return {
-                        "inputIds": data.get("inputIds", []), "status": desktop.status,
-                        "appliedSeq": desktop.applied_seq, "receiveTime": i1, "executeTime": time.perf_counter(),
-                    }
+                }
 
             if input_type == 'mouse' and action == 'move' and (
                 self._input_lock.locked() or self._lock_waiters > 0
@@ -248,18 +258,58 @@ class InputHandler:
                 elif lock_wait_ms < 10:
                     self._lock_contention_logged = False
 
-                if input_type == 'mouse':
-                    to_thread_start = time.perf_counter()
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(self._input_thread_pool, self._handle_mouse, action, payload)
-                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
-                elif input_type == 'command':
-                    to_thread_start = time.perf_counter()
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(self._input_thread_pool, self._handle_command, action, payload)
-                    to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
-                else:
-                    to_thread_ms = 0
+                # Validate reliable writes while the execution lock is held,
+                # then commit their sequence only after native execution has
+                # returned successfully. This keeps concurrent writes ordered
+                # without reserving a sequence for a failed operation.
+                if desktop_data is not None:
+                    desktop = self._desktop_writes.validate(desktop_data)
+                    if desktop.status not in {"applied", "unordered"}:
+                        return {
+                            "inputIds": data.get("inputIds", []), "status": desktop.status,
+                            "appliedSeq": desktop.applied_seq, "receiveTime": i1, "executeTime": time.perf_counter(),
+                        }
+
+                to_thread_start = time.perf_counter()
+                loop = asyncio.get_running_loop()
+                execution_result = None
+                try:
+                    if input_type == 'mouse':
+                        execution_result = await loop.run_in_executor(
+                            self._input_thread_pool, self._handle_mouse, action, payload
+                        )
+                    elif input_type == 'command':
+                        execution_result = await loop.run_in_executor(
+                            self._input_thread_pool, self._handle_command, action, payload
+                        )
+                except Exception:
+                    logger.error(
+                        "Error executing input: type=%s action=%s",
+                        input_type,
+                        action,
+                        exc_info=True,
+                    )
+                    execution_result = False
+                to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
+
+                if execution_result is False:
+                    i2 = time.perf_counter()
+                    result = {
+                        "inputIds": data.get("inputIds", []),
+                        "status": "execution-failed",
+                        "receiveTime": i1,
+                        "executeTime": i2,
+                    }
+                    if desktop is not None:
+                        result["appliedSeq"] = self._desktop_writes.snapshot().last_applied_seq
+                    return result
+
+                if desktop is not None and desktop.status == "applied":
+                    desktop = self._desktop_writes.commit(
+                        data["seq"],
+                        lease_id=data.get("leaseId"),
+                        lease_epoch=data.get("leaseEpoch"),
+                    )
             finally:
                 if lock_acquired_flag:
                     self._input_lock.release()
@@ -289,9 +339,10 @@ class InputHandler:
     def _handle_command(self, action, payload):
         """Handle special command actions."""
         if action == 'showDock':
-            self._show_dock()
+            return self._show_dock()
         elif action == 'switchInputMethod':
-            self._switch_input_method()
+            return self._switch_input_method()
+        return False
 
     def _show_dock(self):
         """Open Launchpad (启动台). The toolbar label is 显示程序坞; operators
@@ -311,18 +362,23 @@ class InputHandler:
                     result.returncode,
                     (result.stderr or "").strip(),
                 )
-                return
+                return False
             logger.info("Show dock: opened Launchpad")
+            return True
         except Exception as e:
             logger.error("Show dock failed: %s", e, exc_info=True)
+            return False
 
     def _handle_mouse(self, action, payload):
         """Handle mouse events using Quartz"""
+        if not self.monitor:
+            if action == 'reset':
+                self.release_all_mouse_buttons(reason=payload.get('reason', 'remote-reset'))
+            logger.warning("Ignoring mouse action without a monitor: action=%s", action)
+            return False
         if action == 'reset':
             self.release_all_mouse_buttons(reason=payload.get('reason', 'remote-reset'))
-            return
-        if not self.monitor:
-            return
+            return True
 
         # Get screen coordinates (macOS uses top-left as origin)
         rel_x = payload.get('relX', 0)
@@ -457,6 +513,8 @@ class InputHandler:
                 scroll_x,
             )
             CGEventPost(kCGHIDEventTap, event)
+
+        return True
 
     def release_all_mouse_buttons(self, reason="remote-reset"):
         buttons = set(self._pressed_mouse_buttons)

@@ -391,14 +391,14 @@ WebRemoteDesktop/
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 并**手动**选择外网中继才能稳定投屏
-- **当前部署策略**：正式入口仍是 `link.stockhub.wiki`。公网媒体默认 Strict STUN；自动恢复有界耗尽后明确失败。用户可手动：① 外网中继（TURN，须 Viewer+Host 双边配置）② JPEG tunnel fallback ③ `auto`/`stun` 下「搜索端口」最多 500 轮。固定域名与媒体是否直连/是否走 TURN 无关。TURN 全链路设计见 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
+- **当前部署策略**：正式公网入口为 `https://link.stockhub.wiki`。公网媒体默认 Strict STUN；自动恢复有界耗尽后明确失败。用户可手动：① 外网中继（TURN，须 Viewer+Host 双边配置）② JPEG tunnel fallback ③ `auto`/`stun` 下「搜索端口」最多 500 轮。固定域名与媒体是否直连/是否走 TURN 无关。TURN 全链路设计见 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
 - **系统分配端口**：浏览器没有选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0` 由 OS 分配。手动端口搜索不保证唯一端口，也不能替代可控的 Host UDP 端口范围与路由器转发方案
-- **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
+- **Cloudflare Tunnel**：trycloudflare 临时域名会过期；`/tmp/wrd-safe-current-url.txt`（旧脚本的 `/tmp/wrd-current-url.txt`）仅用于临时排障时读取当前 quick tunnel 地址，不是正式入口，也不得写入长期材料；正式访问使用命名隧道固定域名 `https://link.stockhub.wiki`
 - **开发子域**：`dev.link.stockhub.wiki` 只作为可选开发入口；其边缘访问由 Cloudflare Access 单独保护，但默认仍通过 proxy 复用 `8080` 后端能力
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
 - **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
 - **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化
-- **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准，只有用户明确要求或 tunnel 已失效时才重建
+- **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前临时 quick tunnel 的排障地址以 `/tmp/wrd-safe-current-url.txt` 为准，正式用户仍使用 `https://link.stockhub.wiki`，只有用户明确要求或 tunnel 已失效时才重建
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
 - **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道

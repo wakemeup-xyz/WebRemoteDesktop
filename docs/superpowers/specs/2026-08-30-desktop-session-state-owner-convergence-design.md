@@ -1,6 +1,6 @@
 # Viewer Desktop Session State Owner Convergence Design
 
-**状态：** 已确认，待实施
+**状态：** 已实施；双写残留由本 spec 收敛（真实浏览器/物理输入/公网验收 NOT RUN）
 **范围：** Viewer 内部连接、媒体、控制状态的单一 owner 收敛
 **明确排除：** 网络模式产品抽象、WebRTC/Socket/Terminal 外部协议、Host adapters、UI 文案重写、真实公网链路运维
 

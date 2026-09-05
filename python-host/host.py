@@ -16,6 +16,7 @@ import re
 import subprocess
 import io
 import os
+import inspect
 import resource
 from mss import mss as MSS
 import numpy as np
@@ -1423,7 +1424,7 @@ class WebRemoteHost:
         self._offer_epoch = 0
         self._reconnecting = False
         self._last_diag_network = None
-        self._stall_decoder_refresh_armed = True
+        self._stall_decoder_refresh_armed = False
         self._stall_decoder_refresh_at = 0.0
         self.media_profile = dict(MEDIA_PROFILE_DEFAULT)
         # User-owned presentation size (resolution-change / adaptive size). Quality Lock
@@ -1553,7 +1554,11 @@ class WebRemoteHost:
                         )
                         try:
                             input_adapter = getattr(self, "input_adapter", None) or self.input_handler
-                            await input_adapter.handle_input(data)
+                            reset_desktop = getattr(input_adapter, "reset_desktop_writes", None)
+                            if callable(reset_desktop):
+                                await reset_desktop(reason="stale-lease-safety")
+                            else:
+                                input_adapter.release_all_mouse_buttons(reason="stale-lease-safety")
                         except Exception:
                             logger.exception("Mouse safety release failed")
                         return
@@ -1870,7 +1875,23 @@ class WebRemoteHost:
         task.add_done_callback(tasks.discard)
         return task
 
-    def _handle_datachannel_close(self, channel, binding):
+    async def _transition_desktop_writes(self, *, lease_id, lease_epoch):
+        """Use the serialized desktop transition when the handler provides it."""
+        transition_async = getattr(self.input_handler, "transition_desktop_writes_async", None)
+        if callable(transition_async):
+            return await transition_async(
+                lease_id=lease_id,
+                lease_epoch=lease_epoch,
+            )
+        result = self.input_handler.transition_desktop_writes(
+            lease_id=lease_id,
+            lease_epoch=lease_epoch,
+        )
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def _handle_datachannel_close(self, channel, _captured_binding=None):
         """Only the active reliable input channel can end a keyboard lease."""
         if getattr(channel, "label", None) == "input-move":
             if channel is getattr(self, "_input_move_datachannel", None):
@@ -1881,20 +1902,33 @@ class WebRemoteHost:
         if channel is not getattr(self, "_input_datachannel", None):
             return
         self._input_datachannel = None
-        if self._binding_matches(binding, getattr(self, "_active_input_binding", None)):
-            self._schedule_input_lifecycle(
-                self._reset_keyboard_lifecycle(
-                    "datachannel-closed",
-                    lease_epoch=binding["leaseEpoch"],
-                )
+        # The channel callback captures the binding that existed at open time,
+        # but a control grant can update the live lease without rebuilding the
+        # peer connection.  Always reset using the current active binding while
+        # this channel is still the live input channel; never gate cleanup on
+        # the stale callback snapshot.
+        active_binding = getattr(self, "_active_input_binding", None)
+        active_epoch = (
+            active_binding.get("leaseEpoch")
+            if isinstance(active_binding, dict) else None
+        )
+        self._schedule_input_lifecycle(
+            self._reset_keyboard_lifecycle(
+                "datachannel-closed",
+                lease_epoch=active_epoch,
             )
+        )
 
     async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
         handler = getattr(self, "input_handler", None)
         if handler is None:
             return None
         result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
-        handler.release_all_mouse_buttons(reason=reason)
+        reset_desktop = getattr(handler, "reset_desktop_writes", None)
+        if callable(reset_desktop):
+            await reset_desktop(reason=reason)
+        else:
+            handler.release_all_mouse_buttons(reason=reason)
         return result
 
     async def _emit_control_transition_ack(self, lease_epoch, status, reason=None):
@@ -1978,7 +2012,7 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
-                desktop_result = self.input_handler.transition_desktop_writes(
+                desktop_result = await self._transition_desktop_writes(
                     lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
                 )
             except Exception:
@@ -2004,7 +2038,7 @@ class WebRemoteHost:
                     lease_id=binding["leaseId"],
                     lease_epoch=binding["leaseEpoch"],
                 )
-                desktop_result = self.input_handler.transition_desktop_writes(
+                desktop_result = await self._transition_desktop_writes(
                     lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
                 )
             except Exception:
@@ -2106,6 +2140,25 @@ class WebRemoteHost:
                     )
                     if result.get("status") != "applied":
                         logger.warning("Ignoring offer with rejected keyboard binding")
+                        return
+                    try:
+                        desktop_result = await self._transition_desktop_writes(
+                            lease_id=binding["leaseId"],
+                            lease_epoch=binding["leaseEpoch"],
+                        )
+                    except Exception:
+                        logger.exception("Rejecting offer with failed desktop write binding")
+                        desktop_result = None
+                    if getattr(desktop_result, "status", None) != "applied":
+                        logger.warning("Ignoring offer with rejected desktop write binding")
+                        self._active_input_binding = None
+                        try:
+                            await self._reset_keyboard_lifecycle(
+                                "desktop-binding-rejected",
+                                lease_epoch=binding["leaseEpoch"],
+                            )
+                        except Exception:
+                            logger.exception("Failed to clean up rejected offer binding")
                         return
                     self._active_input_binding = binding
                     # New offer/attempt invalidates prior media activity progress.
@@ -2212,7 +2265,7 @@ class WebRemoteHost:
                         ice_state = self.pc.iceConnectionState if self.pc else 'no-pc'
                         logger.warning("DataChannel CLOSED: label=%s pc=%s ice=%s",
                                        channel.label, pc_state, ice_state)
-                        self._handle_datachannel_close(channel, binding)
+                        self._handle_datachannel_close(channel)
 
                     @channel.on("message")
                     def on_message(message):
@@ -2758,7 +2811,7 @@ class WebRemoteHost:
             return False
         if received <= 0:
             return False
-        if not getattr(self, "_stall_decoder_refresh_armed", True):
+        if not getattr(self, "_stall_decoder_refresh_armed", False):
             return False
         if last and (now - last) < 12.0:
             return False

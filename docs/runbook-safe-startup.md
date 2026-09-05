@@ -395,7 +395,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 
 1. 先看 `WRD_SESSION_PRESENTATION` 是否 1280x720（relay 默认 cap）。若仍是 `1728x1080` / 进程旧 1080p，说明本次会话 size 未绑定。
 2. 再看 `WRD_KEYFRAME emitted=`。`emitted=true` 才表示编码器产出了 IDR；`emitted=false` / `pending` 表示关键帧没真正发出，不要把 `requested=true` 当成已恢复。
-3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。出画后又连续 ≥1s 0 FPS 应为「画面卡顿」。
+3. Viewer 状态应是「正在出画」直到第一帧真正画出；未出画不得显示「已连接」。Relay 出画后 ≤2s 的 0 FPS 追帧属于允许窗口；连续 ≥2s 0 FPS 才显示「画面卡顿」，连续 ≥3s 进入失败诊断线。Host 同尺寸 SPS refresh 仍受健康 8–25 FPS 样本门槛与 12s cooldown 约束。
 4. 不要重建 tunnel；Host 用 `./scripts/restart-host.sh`。
 
 设计：`docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`
@@ -524,4 +524,4 @@ echo exit=$?
 
 - 若 Viewer 显示「Host 输入复位未确认，控制已安全锁定」：表示 reset barrier 仍在 `REVOKING/reset-blocked`。不要反复点请求控制；优先检查 Host 是否在线并完成 reset，或按既有流程重启本地 Host（不重建 tunnel）。
 - 暂停桌面媒体不会断开 Terminal；恢复后需等待首帧渲染再写入输入。
-- 公网入口仍以 `/tmp/wrd-safe-current-url.txt` 为准；本闭环不授权重建 tunnel。
+- 正式用户入口仍是 `https://link.stockhub.wiki`；`/tmp/wrd-safe-current-url.txt` 仅记录临时 quick tunnel 的排障地址，不是正式入口；本闭环不授权重建 tunnel。

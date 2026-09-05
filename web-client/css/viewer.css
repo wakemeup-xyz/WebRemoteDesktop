@@ -186,6 +186,18 @@ body.tunnel-relay-active #remoteVideo {
   pointer-events: none;
 }
 
+/* Only the signaling state owns the video surface while connecting. Error,
+   pending, and idle copy must leave the media surface available; their CTA
+   buttons remain explicit pointer targets. */
+.stream-placeholder:not(.is-connecting) {
+  pointer-events: none;
+}
+
+.stream-placeholder .start-btn,
+.stream-placeholder #coreRetryBtn {
+  pointer-events: auto;
+}
+
 .stream-placeholder:not(.is-connecting) .spinner {
   display: none;
 }
@@ -801,6 +813,7 @@ body.chrome-idle .chrome-docks {
   display: none;
   width: min(100%, calc(100vw - 16px));
   padding-bottom: max(env(safe-area-inset-bottom, 0px), env(keyboard-inset-height, 0px), var(--mobile-keyboard-bottom, 0px));
+  pointer-events: auto;
 }
 
 .mobile-key-row {
@@ -826,6 +839,7 @@ body.chrome-idle .chrome-docks {
   background: var(--bg-surface);
   color: var(--text-primary);
   touch-action: manipulation;
+  pointer-events: auto;
 }
 
 #mobileKeySurface .mobile-key-btn[aria-pressed="true"] {

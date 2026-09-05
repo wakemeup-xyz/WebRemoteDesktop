@@ -74,10 +74,14 @@
     }
     function bind() { if (bound || !element?.addEventListener) return; frameScheduler = typeof root?.requestAnimationFrame === 'function' ? root.requestAnimationFrame.bind(root) : null; bound = true; Object.assign(handlers, { pointerdown, pointermove, pointerup, pointercancel: () => reset('pointer-cancel'), lostpointercapture: (event) => { if (event?.pointerType !== 'touch' || !pointers.has(event.pointerId)) return; reset('lost-pointer-capture'); } }); Object.entries(handlers).forEach(([t, h]) => element.addEventListener(t, h)); }
     function unbind() { if (!bound) return; Object.entries(handlers).forEach(([t, h]) => element.removeEventListener?.(t, h)); bound = false; reset('unbind'); }
+    // Input owns the authoritative mouse reset barrier. A failed reset send can
+    // leave this private latch set even after Input receives a fresh lease, so
+    // expose the one state transition needed to re-arm touch delivery.
+    function rearm() { resetSent = false; return true; }
     function clickButton(button, coords) { if (!enabled()) return null; const p = coords && Number.isFinite(Number(coords.relX)) ? { relX: Number(coords.relX), relY: Number(coords.relY) } : lastPoint; if (!p) return null; const b = button === 'right' || button === 2 ? 'right' : button === 'middle' || button === 1 ? 'middle' : 'left'; const id = emit('down', { ...p, button: b, clickCount: 1, buttons: b === 'right' ? 2 : 1 }, 'button-down-failed'); if (!id) return null; activeButton = b; const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed'); activeButton = null; return up || id; }
     function flushPending() { if (pendingWheel && wheelFrame === null) wheelFrame = requestFrame(flushWheel); }
     function getSnapshot() { return { state, bound, pointerCount: pointers.size, primaryActive: primaryId !== null, activeButton, pendingReset: resetSent, wheelPending: Boolean(pendingWheel) }; }
-    return { bind, unbind, reset, clickButton, flushPending, getSnapshot };
+    return { bind, unbind, reset, rearm, clickButton, flushPending, getSnapshot };
   }
   return { STATES, create };
 }));

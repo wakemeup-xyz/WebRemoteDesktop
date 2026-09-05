@@ -52,6 +52,7 @@ const WebRTC = {
   manualDisconnect: false,
   _superseded: false,
   _refreshing: false,
+  _refreshDcWaitTimer: null,
   _refreshReason: null,
   inputChannel: null,
   inputMoveChannel: null,
@@ -355,7 +356,13 @@ const WebRTC = {
         // Keep lease; only release pointer + keys. Do not open a keyboard reset
         // barrier that blocks typing after a brief hide/resume cycle.
         Input.setActive(false, { resetKeyboard: false, reason: 'media-suspended' });
-        Input.resetKeyboard?.('media-suspended');
+        Input.releasePointer?.('media-suspended');
+        const keyboardSnapshot = Input.keyboardController?.getSnapshot?.() || {};
+        const keyboardNeedsParking = Number(keyboardSnapshot.pressedKeyCount) > 0
+          || keyboardSnapshot.state === 'RESET_REQUIRED';
+        if (this.inputChannel?.readyState !== 'open' && keyboardNeedsParking) {
+          Input.parkKeyboard?.('media-suspended');
+        }
       }
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
       this.noMediaTicks = 0;
@@ -757,8 +764,14 @@ const WebRTC = {
 
   syncDesktopInputGate() {
     if (typeof Input === 'undefined') return;
-    const snapshot = this.getDesktopSessionSnapshot();
-    const enable = snapshot.canInput === true && this.canEnableDesktopInput();
+    // The session records an instantaneous media state for diagnostics. A short
+    // TURN zero-FPS sample can mark that state stalled while the UI remains in
+    // `connected` during its chase window, so use the UI phase as the input
+    // gate and fail closed for every non-connected phase.
+    const phaseAllowsInput = this.uiPhase === 'connected' && this.hasPaintedFrame === true;
+    const controlReady = this.hasActiveControl();
+    const socketReady = this.socket?.connected === true;
+    const enable = phaseAllowsInput && controlReady && socketReady && this.canEnableDesktopInput();
     Input.setActive(enable);
   },
 
@@ -802,6 +815,7 @@ const WebRTC = {
   },
 
   beginConnectionAttempt(trigger = 'viewer-open') {
+    this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
@@ -814,7 +828,9 @@ const WebRTC = {
     this._mediaResumeArmPending = false;
     this.clearMediaResumeFallback();
     this.hasPaintedFrame = false;
-    this._paintDecodedBaseline = Number(this._lastInboundFramesDecoded) || 0;
+    this._lastInboundFramesDecoded = 0;
+    this._lastInboundFramesDecodedAt = 0;
+    this._paintDecodedBaseline = 0;
     this._stallSince = null;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
@@ -1173,6 +1189,9 @@ const WebRTC = {
   },
 
   setUiPhase(phase, { reason, attemptId } = {}) {
+    if (phase === 'connected' && this.hasPaintedFrame !== true) {
+      phase = 'media-pending';
+    }
     const allowed = ['signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
     if (!allowed.includes(phase)) return this.uiPhase;
     if (attemptId && this.currentConnectionAttemptId && attemptId !== this.currentConnectionAttemptId) {
@@ -1187,11 +1206,20 @@ const WebRTC = {
     if (session) {
       if (phase === 'media-pending') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'pending' });
       else if (phase === 'media-stalled') session.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'stalled' });
-      else if (phase === 'connected') session.applyMedia({
-        attemptId: this.currentConnectionAttemptId,
-        event: 'fresh-frame',
-        fresh: this.hasPaintedFrame === true,
-      });
+      else if (phase === 'connected') {
+        if (this.hasPaintedFrame === true) {
+          session.applyMedia({
+            attemptId: this.currentConnectionAttemptId,
+            event: 'fresh-frame',
+            fresh: true,
+          });
+        } else {
+          session.applyMedia({
+            attemptId: this.currentConnectionAttemptId,
+            state: 'pending',
+          });
+        }
+      }
       else if (phase === 'disconnected') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'disconnected', socket: 'offline' });
       else if (phase === 'signaling') session.applyConnection({ attemptId: this.currentConnectionAttemptId, state: 'signaling' });
     }
@@ -1881,6 +1909,21 @@ const WebRTC = {
       inflightStart = self.startViewer(controller).finally(() => { inflightStart = null; });
       return inflightStart;
     };
+  },
+
+  quiesceDisconnectedSocket() {
+    const socket = this.socket;
+    if (!socket || socket.connected) return false;
+    // Invalidate the old listener closures before disconnecting. Socket.IO may
+    // already have a reconnect callback queued; those callbacks must not
+    // create a PeerConnection while init() is waiting for fresh config.
+    this.socket = null;
+    try {
+      socket.disconnect?.();
+    } catch (error) {
+      console.warn('[NETWORK] Failed to quiesce disconnected signaling socket:', error);
+    }
+    return true;
   },
 
   createSignalingSocket(forceRecreate = false) {
@@ -2653,7 +2696,16 @@ const WebRTC = {
   },
   
   setupSocketListeners() {
-    this.socket.on('connect', async () => {
+    const socket = this.socket;
+    if (!socket || typeof socket.on !== 'function') return;
+    const onCurrentSocket = (event, handler) => {
+      socket.on(event, (...args) => {
+        if (this.socket !== socket) return undefined;
+        return handler(...args);
+      });
+    };
+
+    onCurrentSocket('connect', async () => {
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'online',
@@ -2670,6 +2722,7 @@ const WebRTC = {
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
       }
+      if (this.socket !== socket) return;
       // Reset offerInProgress on reconnect to prevent stuck state
       if (this.offerInProgress) {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
@@ -2686,7 +2739,7 @@ const WebRTC = {
       this.replayMediaActivityIntent('socket-connect');
     });
 
-    this.socket.on('connected', (data) => {
+    onCurrentSocket('connected', (data) => {
       console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
@@ -2700,7 +2753,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('host-status', (data) => {
+    onCurrentSocket('host-status', (data) => {
       console.log('[OFFER-DBG] host-status event: online=%s offerInProgress=%s pc=%s',
         data.online, this.offerInProgress, !!this.pc);
       if (data.online) {
@@ -2734,11 +2787,11 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('host-capabilities', (data) => {
+    onCurrentSocket('host-capabilities', (data) => {
       this.applyHostCapabilities(data);
     });
 
-    this.socket.on('answer', async (data) => {
+    onCurrentSocket('answer', async (data) => {
       console.log('Received answer');
       if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
         console.warn('[NETWORK] Ignoring stale answer: pc=%s, signalingState=%s',
@@ -2752,7 +2805,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('ice-candidate', async (data) => {
+    onCurrentSocket('ice-candidate', async (data) => {
       if (!this.pc || this.pc.signalingState === 'closed') {
         console.warn('[NETWORK] Ignoring ICE candidate: no active PC');
         return;
@@ -2766,7 +2819,7 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('input-ack', (data) => {
+    onCurrentSocket('input-ack', (data) => {
       if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
         Input.acceptMouseAck(data);
       }
@@ -2779,11 +2832,11 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('viewer-superseded', (data) => {
+    onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
     });
 
-    this.socket.on('disconnect', (reason) => {
+    onCurrentSocket('disconnect', (reason) => {
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'offline',
@@ -2810,21 +2863,21 @@ const WebRTC = {
       }
     });
 
-    this.socket.on('relay-frame', (data) => {
+    onCurrentSocket('relay-frame', (data) => {
       this.handleRelayFrame(data);
     });
-    this.socket.on('control-state', (data) => this.handleControlState(data));
-    this.socket.on('control-grant', (data) => this.handleControlGrant(data));
-    this.socket.on('control-acquire-result', (data) => this.handleControlAcquireResult(data));
-    this.socket.on('control-revoked', () => this.freezeControl('control-revoked'));
-    this.socket.on('control-transition-failed', () => this.freezeControl('control-transition-failed'));
-    this.socket.on('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
-    this.socket.on('media-activity-ack', (data) => this.handleMediaActivityAck(data));
-    this.socket.on('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
-    this.socket.on('relay-stream-control-rejected', (data) => {
+    onCurrentSocket('control-state', (data) => this.handleControlState(data));
+    onCurrentSocket('control-grant', (data) => this.handleControlGrant(data));
+    onCurrentSocket('control-acquire-result', (data) => this.handleControlAcquireResult(data));
+    onCurrentSocket('control-revoked', () => this.freezeControl('control-revoked'));
+    onCurrentSocket('control-transition-failed', () => this.freezeControl('control-transition-failed'));
+    onCurrentSocket('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
+    onCurrentSocket('media-activity-ack', (data) => this.handleMediaActivityAck(data));
+    onCurrentSocket('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
+    onCurrentSocket('relay-stream-control-rejected', (data) => {
       this.handleMediaRequestFailure(data?.reason || 'relay-stream-control-rejected');
     });
-    this.socket.on('media-activity-rejected', (data) => {
+    onCurrentSocket('media-activity-rejected', (data) => {
       this.handleMediaRequestFailure(data?.reason || 'media-activity-rejected');
     });
   },
@@ -3159,9 +3212,13 @@ const WebRTC = {
       if (this.inputChannel?.readyState === 'open') {
         this.markRefreshSettled('pc-connected');
       } else {
+        this.clearRefreshDcWaitTimer();
         const waitTimer = setTimeout(() => {
+          if (this._refreshDcWaitTimer !== waitTimer) return;
+          this._refreshDcWaitTimer = null;
           this.markRefreshSettled('pc-connected-dc-wait');
         }, 2000);
+        this._refreshDcWaitTimer = waitTimer;
         waitTimer.unref?.();
       }
     }
@@ -3227,6 +3284,7 @@ const WebRTC = {
   },
 
   createPeerConnection() {
+    this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
       return;
     }
@@ -4123,6 +4181,11 @@ if (this.tunnelLastObjectUrl) {
     }
     if (this.socket && this.socket.connected) {
       this.refresh({ reason: 'manual-mode-switch' });
+    } else {
+      // A dead socket cannot carry a refresh request. Re-enter the normal init
+      // path so it recreates signaling and continues through the connect flow.
+      this.quiesceDisconnectedSocket();
+      this.init({ trigger: 'manual-mode-switch' });
     }
     this.renderPortSearchStatus();
   },
@@ -4337,13 +4400,21 @@ if (this.tunnelLastObjectUrl) {
     this.stopVideoFrameTracking();
     const video = document.getElementById('remoteVideo');
     if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    const attemptId = this.currentConnectionAttemptId || null;
+    const trackedPc = this.pc || null;
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
-      if (this._videoFrameElement !== video) return;
+      if (this._videoFrameElement !== video
+          || this.currentConnectionAttemptId !== attemptId
+          || this.pc !== trackedPc) return;
+      if (Number(video.videoWidth || 0) > 0) {
+        this.hasPaintedFrame = true;
+        this._stallSince = null;
+      }
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
-      this.markMediaAttemptReady(this.currentConnectionAttemptId || null);
+      this.markMediaAttemptReady(attemptId);
       this.ensureDesktopSessionState()?.applyMedia({
-        attemptId: this.currentConnectionAttemptId,
+        attemptId,
         event: 'fresh-frame',
         fresh: true,
       });
@@ -4354,8 +4425,8 @@ if (this.tunnelLastObjectUrl) {
         this.observeFreshResumeFrame({
           source: 'video-callback',
           frameSeq: this._videoFrameSeq,
-          connectionAttemptId: this.currentConnectionAttemptId || null,
-          pc: this.pc || null,
+          connectionAttemptId: attemptId,
+          pc: trackedPc,
         });
       }
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
@@ -4607,6 +4678,12 @@ if (this.tunnelLastObjectUrl) {
   },
 
   RECOVERY_REFRESH_COOLDOWN_MS: 3000,
+  clearRefreshDcWaitTimer() {
+    if (this._refreshDcWaitTimer != null) {
+      clearTimeout(this._refreshDcWaitTimer);
+      this._refreshDcWaitTimer = null;
+    }
+  },
   isForcedRefreshReason(reason) {
     return reason == null
       || reason === 'manual'
@@ -4614,6 +4691,10 @@ if (this.tunnelLastObjectUrl) {
       || reason === 'manual-turn-switch';
   },
   canBeginRefresh(reason) {
+    if (this._refreshing && !this.isForcedRefreshReason(reason)) {
+      console.warn('[RECOVERY] Suppressing refresh while another refresh is in progress reason=%s', reason);
+      return false;
+    }
     if (this.isForcedRefreshReason(reason)) return true;
     if (Date.now() - (this._lastRefreshAt || 0) < this.RECOVERY_REFRESH_COOLDOWN_MS) {
       console.warn('[RECOVERY] Suppressing refresh reason=%s', reason);
@@ -4623,6 +4704,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   markRefreshSettled(_reason) {
+    this.clearRefreshDcWaitTimer();
     if (this._refreshSettleTimer) {
       clearTimeout(this._refreshSettleTimer);
       this._refreshSettleTimer = null;
@@ -4641,6 +4723,14 @@ if (this.tunnelLastObjectUrl) {
     if (!this.canBeginRefresh(reason)) return;
     if (this._superseded) {
       return;
+    }
+    this.clearRefreshDcWaitTimer();
+    if (this.isForcedRefreshReason(reason)) {
+      if (this._refreshSettleTimer) {
+        clearTimeout(this._refreshSettleTimer);
+        this._refreshSettleTimer = null;
+      }
+      this._rebuildingDc = false;
     }
     this._refreshReason = reason || null;
     if (this._refreshReason === 'fresh-frame-timeout' && this.networkMode === 'relay') {
@@ -5000,6 +5090,7 @@ if (this.tunnelLastObjectUrl) {
     this.manualDisconnect = true;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.clearRefreshDcWaitTimer();
 
     try {
       if (this.socket?.io && typeof this.socket.io.reconnection === 'function') {

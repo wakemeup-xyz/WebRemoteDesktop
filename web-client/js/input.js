@@ -7,6 +7,8 @@ const Input = {
   keyboardTransport: null,
   keyboardController: null,
   _desktopWriteSequence: 0,
+  _desktopWritePending: new Map(),
+  _desktopWriteRecovery: null,
   mobileTextInputAdapter: null,
   _lastSurfaceGeometry: null,
   activeControlLease: null,
@@ -101,8 +103,17 @@ const Input = {
       ? { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch }
       : null;
     const previousLease = this.activeControlLease;
-    if (previousLease?.leaseId !== nextLease?.leaseId || previousLease?.leaseEpoch !== nextLease?.leaseEpoch) {
+    const leaseChanged = previousLease?.leaseId !== nextLease?.leaseId
+      || previousLease?.leaseEpoch !== nextLease?.leaseEpoch;
+    if (leaseChanged) {
       this._desktopWriteSequence = 0;
+      this._desktopWritePending.clear();
+      this._desktopWriteRecovery = null;
+      if (nextLease) {
+        this._pendingMouseReset = false;
+        this._pendingMouseResetId = null;
+        this._touchAdapters.forEach((adapter) => adapter.rearm?.());
+      }
     }
     this.activeControlLease = nextLease;
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
@@ -117,13 +128,78 @@ const Input = {
     return result;
   },
 
+  _acceptDesktopWriteAck(ack, inputIds) {
+    const records = inputIds
+      .map((inputId) => this._desktopWritePending.get(inputId))
+      .filter(Boolean);
+    if (!records.length) return null;
+    if (Number.isInteger(ack?.leaseEpoch)
+      && this.activeControlLease
+      && ack.leaseEpoch !== this.activeControlLease.leaseEpoch) {
+      return { status: 'stale' };
+    }
+
+    const status = ack?.status;
+    if (status === 'applied' || status === 'duplicate') {
+      records.forEach(({ inputId }) => this._desktopWritePending.delete(inputId));
+      const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
+      if (appliedSeq !== null) {
+        this._desktopWritePending.forEach((record, inputId) => {
+          if (record.seq <= appliedSeq) this._desktopWritePending.delete(inputId);
+        });
+      }
+      return { status, ...(appliedSeq === null ? {} : { appliedSeq }) };
+    }
+
+    const recoverable = status === 'execution-failed' || status === 'sequence-gap';
+    const terminal = recoverable || status === 'stale-lease'
+      || status === 'invalid-input' || status === 'unsupported-code' || status === 'resync-required';
+    if (!terminal) return { status: 'stale' };
+
+    const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
+    if (!recoverable || appliedSeq === null || appliedSeq > this._desktopWriteSequence) {
+      // Without an authoritative applied sequence, continuing would guess about
+      // native state. Require a new lease to reset Host and local ordering.
+      this._desktopWritePending.clear();
+      this._desktopWriteRecovery = { state: 'reacquire-required', status };
+      return { status: 'reacquire-required', failedStatus: status };
+    }
+
+    // Host deliberately did not commit the failed write. Rewind only to its
+    // reported applied prefix; the failure remains visible to the caller and
+    // is never converted into an applied result.
+    this._desktopWriteSequence = appliedSeq;
+    this._desktopWritePending.forEach((record, inputId) => {
+      if (record.seq > appliedSeq) this._desktopWritePending.delete(inputId);
+    });
+    this._desktopWriteRecovery = { state: 'reconciled', status, appliedSeq };
+    return { status, recovery: 'reconciled', appliedSeq };
+  },
+
   acceptMouseAck(ack) {
-    if (!this._pendingMouseReset) return { status: 'stale' };
     const inputIds = Array.isArray(ack?.inputIds) ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    const hasInputType = Boolean(ack && Object.prototype.hasOwnProperty.call(ack, 'inputType'));
+    const inputType = ack?.inputType;
+    if (hasInputType && inputType !== 'mouse' && inputType !== 'command') return { status: 'stale' };
+    const desktopResult = (inputType === 'mouse' || inputType === 'command')
+      ? this._acceptDesktopWriteAck(ack, inputIds)
+      : null;
+    if (desktopResult && inputType === 'command') return desktopResult;
+    if (desktopResult && desktopResult.status !== 'stale'
+      && desktopResult.status !== 'reacquire-required') {
+      if (desktopResult.status !== 'applied' && desktopResult.status !== 'duplicate') return desktopResult;
+      if (!this._pendingMouseReset) return desktopResult;
+    } else if (desktopResult && desktopResult.status === 'reacquire-required') {
+      return desktopResult;
+    } else if (hasInputType && inputType === 'mouse' && !this._pendingMouseReset) {
+      return { status: 'stale' };
+    }
+    if (!this._pendingMouseReset) return desktopResult || { status: 'stale' };
     if (!this._pendingMouseResetId || !inputIds.includes(this._pendingMouseResetId)) return { status: 'stale' };
     if (ack?.status !== 'applied' && ack?.status !== 'duplicate') return { status: 'stale' };
     this._pendingMouseReset = false;
     this._pendingMouseResetId = null;
+    this._touchAdapters.forEach((adapter) => adapter.rearm?.());
     this._touchAdapters.forEach((adapter) => adapter.flushPending?.());
     if (this._pendingWheel) {
       const wheel = this._pendingWheel;
@@ -324,6 +400,9 @@ const Input = {
       },
       pressedMouseButtonCount: this._pressedMouseButtons.size,
       pendingMouseReset: this._pendingMouseReset,
+      desktopWriteRecovery: this._desktopWriteRecovery
+        ? { ...this._desktopWriteRecovery }
+        : null,
     };
   },
 
@@ -348,14 +427,29 @@ const Input = {
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
     };
-    if (type !== 'mouse' || action !== 'move') data.seq = ++this._desktopWriteSequence;
+    const reliableWrite = type !== 'mouse' || action !== 'move';
+    if (reliableWrite && this._desktopWriteRecovery?.state === 'reacquire-required') return null;
+    const nextSequence = reliableWrite ? this._desktopWriteSequence + 1 : null;
+    if (reliableWrite) data.seq = nextSequence;
+    const commitSequence = () => {
+      if (!reliableWrite) return;
+      this._desktopWriteSequence = nextSequence;
+      this._desktopWritePending.set(data.inputIds[0], {
+        inputId: data.inputIds[0],
+        seq: nextSequence,
+        type,
+        action,
+      });
+    };
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
+      commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
       socket.emit('input', data);
+      commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
@@ -431,7 +525,16 @@ const Input = {
     adapter = TouchInputAdapter.create({
       element,
       mapPoint: (event, allowOutside) => {
-        const point = this.getRelativeCoords({ ...event, currentTarget: element }, allowOutside);
+        const point = this.getRelativeCoords({
+          currentTarget: element,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pointerId: event.pointerId,
+          timeStamp: event.timeStamp,
+          button: event.button,
+          buttons: event.buttons,
+          pointerType: event.pointerType,
+        }, allowOutside);
         if (point) this._lastTouchAdapter = adapter;
         return point;
       },

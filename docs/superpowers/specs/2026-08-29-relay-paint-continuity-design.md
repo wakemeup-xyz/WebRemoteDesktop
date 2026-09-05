@@ -1,7 +1,7 @@
 # Relay 出画连续性设计（已连接黑屏）
 
 日期：2026-08-29  
-状态：Architecture A close-out（控制面 + 默认 720p + 诚实卡顿；TURN 1s 硬线降为 SLA 目标）  
+状态：Architecture A close-out（控制面 + 默认 720p + 诚实卡顿；80ms jitter 试验废止，relay pin 0ms；SLA 为 ≤2s 追帧 / ≥2s UI 卡顿 / ≥3s 失败）
 关联：
 
 - Quality Lock：`docs/superpowers/specs/2026-08-02-quality-lock-low-latency-design.md`
@@ -21,7 +21,7 @@
 
 让手动 **外网中继（`networkMode=relay`）** 在真实 TURN 路径上：
 
-1. 默认 **稳态可看**：relay 允许多次 ≤2s 追帧（Chrome TURN 大约每 12–15s 丢掉已组帧，需新 SPS）；连续 ≥3s 0-FPS 才算失败。瞬时掉帧 &lt;300ms 可接受。60s 无 ≥1s 0-FPS 仍是隧道中继 SLA，不是 TURN 硬门。
+1. 默认 **稳态可看**：relay 允许多次 ≤2s 追帧（Chrome TURN 大约每 12–15s 丢掉已组帧，需新 SPS）；UI 连续 ≥2s 0-FPS 才显示「画面卡顿」，连续 ≥3s 0-FPS 才算失败。瞬时掉帧 &lt;300ms 可接受；60s 内无 ≥3s 黑屏是本设计的观察窗口。
 2. **状态诚实**：未真正出画不得显示「已连接」
 3. **失败可行动、可复盘**：UI 提示具体下一步；Host/Viewer 日志用同一 `connectionAttemptId` 能回答「编了多大、GOP、IDR 有没有发出、Viewer 卡在哪一态」
 
@@ -32,7 +32,7 @@
 ## 2. Product decisions（已确认）
 
 1. **路径上限，不是 survival 糊化。** 直连仍可 1080p；relay/TURN **默认上限 720p**。用户本会话可手选 1080p（显式 override）。系统仍禁止自动掉到 540p/360p。
-2. **验收线：稳态可看。** relay 默认 720p 下，60s 内无 ≥3s 黑屏。≤2s 追帧记次数但不判挂。60s 无 ≥1s 0-FPS 是隧道 SLA。
+2. **验收线：稳态可看。** relay 默认 720p 下，60s 内无 ≥3s 黑屏。≤2s 追帧记次数但不判挂；连续 ≥2s 才进入 UI「画面卡顿」，连续 ≥3s 才进入失败诊断线。隧道模式的独立 SLA 不改变本 TURN 口径。
 3. **不自动切隧道 / TURN。** 持续 stall 只提示手动切「隧道中继」或改 720p。
 4. **Quality Lock 保留。** 不因 `fps=0` / structural RTT / jitter 自动改 size。路径 cap 只在进 relay、切模式、新 `connectionAttempt` 时计算一次。
 5. **演进现有模块。** 不新造第二套 ContinuityController / 媒体状态机。
@@ -53,7 +53,7 @@
 |---|---|---|
 | Quality Lock | 禁止 stall→survival size / 编码器 thrash | Host lock 把 **进程旧 1080p** 当成用户意愿，否决本次 720p |
 | TURN reconnect stability | resume 死循环、半中继、DC 误杀 PC | 不覆盖「ICE 已 connected、RTP 仍到、解码周期性 0」 |
-| Relay input B1 | `jitterBufferTarget=80ms` | 已生效；1080p IDR 仍把 jitter 打到 300–900ms |
+| Relay input B1 | 历史 `jitterBufferTarget=80ms` 方案（已废止；当前 relay pin `0ms`） | 由出画门闩、同尺寸 SPS 追帧和 12s cooldown 处理黑屏与卡顿 |
 | Keyframe 限频 | `WRD_KEYFRAME ok=True` | `ok` 只表示调到 `_send_keyframe`；VideoToolbox 常不产 IDR |
 
 本次修的是 **预算错误 + IDR 不可验证 + 假已连接**，不是再加一层恢复。
@@ -85,7 +85,7 @@ Encoder
 Viewer paint gate
         signaling → media-pending → connected
         connected only if hasPaintedFrame
-        stall ≥1s → media-stalled (honest UI, no PC teardown)
+        relay stall ≥2s → media-stalled (honest UI, no PC teardown)
         │
         ▼
 Diagnostics (same connectionAttemptId)
@@ -229,7 +229,7 @@ tunnel：JPEG `frameSeq` 相对基线增长等价。
 
 ### 8.3 stall 不拆链路
 
-`media-stalled` 只请求关键帧 + 重申 `jitterBufferTarget`/`playoutDelayHint` + 提示。  
+`media-stalled` 只请求关键帧 + 重申 relay `jitterBufferTarget=0`（直连 `1ms`）/`playoutDelayHint=0` + 提示。
 GOP IDR 救不了 Chrome TURN 解码；Host 可在冻结秒做 **同尺寸** codec 重开以发新 SPS（不改 width/height，不算 Quality Lock size 阶梯）。  
 不得 `scheduleReconnect` / `refresh()`，除非同时满足既有「TURN channel dead」条件（relay + ICE completed + `bytesReceived=0` 连续 20s）。
 
@@ -324,7 +324,7 @@ Viewer：
 
 - `ontrack` + `paused=false` + `readyState=0` → `uiPhase=media-pending`，不是 connected
 - `framesDecoded` 相对基线 +1 → connected，loading hidden
-- stall 1s `fps=0 received>0` → `media-stalled`，不 `scheduleReconnect`
+- relay stall ≥2s `fps=0 received>0` → `media-stalled`，不 `scheduleReconnect`
 - relay pathCap：pref 1080p 未 override → session 720p
 - 显式点 1080p → session 1080p + 警告标志
 - 新 attempt 清除 override

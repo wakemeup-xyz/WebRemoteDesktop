@@ -196,6 +196,26 @@ test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   assert.equal(cleared, true);
 });
 
+test('refresh attempt compares paint growth against a zero inbound baseline', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC._lastInboundFramesDecoded = 400;
+  WebRTC.hasPaintedFrame = true;
+
+  WebRTC.beginConnectionAttempt('refresh');
+
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._paintDecodedBaseline, 0);
+  assert.equal(WebRTC._lastInboundFramesDecoded, 0);
+
+  WebRTC.notePaintStats({
+    videoWidth: 1280,
+    framesDecoded: 2,
+    framesReceived: 2,
+    fps: 20,
+  });
+  assert.equal(WebRTC.hasPaintedFrame, true);
+});
+
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
     WebRTC.stopPortSearch('test-reset');
@@ -317,7 +337,7 @@ test('WebRTC routes independent DataChannel and Socket.IO input acks to mouse, k
   clearTimeout(WebRTC._dcTimeout);
 });
 
-test('a single input acknowledgement clears real mouse and keyboard reset state with one latency sample', () => {
+test('keyboard acknowledgement clears keyboard pending without clearing mouse reset state', () => {
   const latencyAcks = [];
   const channels = new Map();
   const socketEvents = [];
@@ -355,11 +375,17 @@ test('a single input acknowledgement clears real mouse and keyboard reset state 
     inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
   }) });
 
-  assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
+  assert.equal(Input.getDiagnosticState().pendingMouseReset, true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
   assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   assert.equal(latencyAcks.length, 1);
   assert.equal(socketEvents.length, 0);
+
+  inputChannel.onmessage({ data: JSON.stringify({
+    type: 'input_ack', inputType: 'mouse', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
+    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
+  }) });
+  assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
   clearTimeout(WebRTC._dcTimeout);
 });
 
@@ -1667,6 +1693,39 @@ test('video frame callback is cancelled and never accumulates on restart', () =>
   assert.equal(cancelled.length, 2);
 });
 
+test('video frame callback paints only the current refresh attempt', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.requestVideoFrameCallback = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  video.cancelVideoFrameCallback = () => {};
+
+  WebRTC.currentConnectionAttemptId = 'attempt-old';
+  WebRTC.pc = { id: 'pc-old' };
+  WebRTC.startVideoFrameTracking();
+  const staleCallback = callbacks[0];
+
+  WebRTC.createConnectionAttemptId = () => 'attempt-new';
+  WebRTC.beginConnectionAttempt('refresh');
+  WebRTC.pc = { id: 'pc-new' };
+  WebRTC.startVideoFrameTracking();
+  const freshCallback = callbacks[1];
+
+  staleCallback(1, { width: 1280, height: 720 });
+  assert.equal(WebRTC._videoFrameSeq, 0);
+  assert.equal(WebRTC.hasPaintedFrame, false);
+
+  freshCallback(2, { width: 1280, height: 720 });
+  assert.equal(WebRTC._videoFrameSeq, 1);
+  assert.equal(WebRTC.hasPaintedFrame, true);
+  assert.equal(WebRTC.uiPhase, 'connected');
+});
+
 test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {
   let created = 0;
   let stopped = 0;
@@ -2107,6 +2166,78 @@ test('disconnected recovery mode switch cancels search and refreshes exactly onc
   assert.equal(WebRTC.networkMode, 'relay');
   assert.equal(WebRTC.isPortSearchActive(), false);
   assert.equal(refreshes, 1);
+});
+
+test('disconnected mode switch reconnects when socket is down', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.uiPhase = 'disconnected';
+  WebRTC.socket = { connected: false };
+  WebRTC.enforceSupportedNetworkMode = (mode) => {
+    WebRTC.networkMode = mode;
+    return { effectiveMode: mode, changed: false, unavailable: false, reason: '' };
+  };
+  let inits = 0;
+  WebRTC.refresh = () => { throw new Error('must not refresh'); };
+  WebRTC.init = () => { inits += 1; };
+
+  WebRTC.setNetworkMode('relay');
+
+  assert.equal(WebRTC.networkMode, 'relay');
+  assert.equal(inits, 1);
+});
+
+test('dead-socket mode switch ignores an old socket reconnect during config load', async () => {
+  const oldHandlers = new Map();
+  const oldSocket = {
+    connected: false,
+    on(event, handler) { oldHandlers.set(event, handler); },
+    emit() {},
+    disconnect() { this.disconnectCalled = true; },
+  };
+  const replacementSocket = {
+    connected: false,
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  let resolveConfig;
+  const created = [];
+  const { WebRTC } = loadWebRTC({ io: () => replacementSocket });
+
+  WebRTC.uiPhase = 'disconnected';
+  WebRTC.socket = oldSocket;
+  WebRTC.serverConfig = { turnConfigured: true, turnStatus: 'configured', iceServers: [] };
+  WebRTC.enforceSupportedNetworkMode = (mode) => {
+    WebRTC.networkMode = mode;
+    return { effectiveMode: mode, changed: false, unavailable: false, reason: '' };
+  };
+  WebRTC.loadServerConfig = () => new Promise((resolve) => { resolveConfig = resolve; });
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.createPeerConnection = function createPeerConnectionForTest() {
+    const pc = { connectionState: 'new', close() { this.closed = true; } };
+    created.push(pc);
+    this.pc = pc;
+    return pc;
+  };
+  WebRTC.setupSocketListeners();
+
+  WebRTC.setNetworkMode('relay');
+  assert.equal(typeof resolveConfig, 'function');
+
+  // Simulate a reconnect callback already queued on the old Socket while the
+  // new mode is still waiting for its server configuration.
+  oldSocket.connected = true;
+  await oldHandlers.get('connect')();
+  assert.equal(created.length, 0);
+
+  resolveConfig();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].closed, undefined);
+  assert.equal(oldSocket.disconnectCalled, true);
+  assert.equal(WebRTC.socket, replacementSocket);
 });
 
 test('init with unavailable relay still starts signaling lifecycle for same-page recovery', async () => {
@@ -3406,6 +3537,18 @@ test('applyMediaActivity suspends input and suppresses health recovery', () => {
   assert.equal(WebRTC.scheduleReconnect('media-stalled') === undefined, true);
 });
 
+test('media suspend does not open a keyboard reset barrier', () => {
+  const { WebRTC, context } = loadWebRTC({ realInput: true });
+  const calls = [];
+  context.__Input.resetKeyboard = (reason) => { calls.push(['reset', reason]); };
+  context.__Input.setActive = () => {};
+  context.__Input.releasePointer = () => { calls.push(['release-pointer']); };
+  context.__Input.parkKeyboard = () => { calls.push(['park']); };
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['page-hidden'] });
+  assert.equal(calls.some(([kind]) => kind === 'reset'), false);
+  assert.equal(calls.some(([kind]) => kind === 'release-pointer'), true);
+});
+
 test('media resume enables input only after active ack and rendered frame', () => {
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -3994,6 +4137,9 @@ test('control loss keeps frame readiness so regrant can enable input without a n
   const { WebRTC, context } = loadWebRTC();
   WebRTC.currentConnectionAttemptId = 'attempt-current';
   WebRTC._mediaReadyConnectionAttemptId = 'attempt-current';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.uiPhase = 'connected';
+  WebRTC.socket = { connected: true };
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
@@ -4835,6 +4981,67 @@ test('refresh keeps _refreshing true until settled', async () => {
   assert.equal(WebRTC._refreshing, false);
 });
 
+test('stale pc-connected dc-wait timer cannot clear a newer refresh', async () => {
+  const timers = [];
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) {
+      const timer = { callback, ms, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) timer.cleared = true;
+    },
+  });
+  WebRTC.startStats = () => {};
+  WebRTC.startVideoFrameTracking = () => {};
+  WebRTC.syncMediaProfile = () => {};
+  WebRTC.clearFailureRecommendation = () => {};
+  WebRTC.updateNetworkUI = () => {};
+  WebRTC.ensureMediaActiveIfVisible = () => {};
+  WebRTC.syncDesktopInputGate = () => {};
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.captureLastFrameHold = () => false;
+  WebRTC.replayMediaActivityIntent = () => {};
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = () => {};
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'stun';
+  WebRTC.pc = { close() {} };
+  WebRTC._refreshing = true;
+  WebRTC.inputChannel = { readyState: 'connecting' };
+
+  WebRTC.onPeerConnected();
+  const waitTimer = timers.find((timer) => timer.ms === 2000);
+  assert.ok(waitTimer);
+
+  await WebRTC.refresh({ reason: 'manual' });
+  assert.equal(WebRTC._refreshing, true);
+
+  // Simulate the stale callback firing despite timer cancellation.
+  waitTimer.callback();
+  assert.equal(WebRTC._refreshing, true);
+});
+
+test('non-forced refresh is ignored while _refreshing', async () => {
+  const { WebRTC } = loadWebRTC();
+  let closed = 0;
+  WebRTC._refreshing = true;
+  WebRTC._lastRefreshAt = 0;
+  WebRTC.pc = { close() { closed += 1; } };
+  WebRTC.socket = { connected: true };
+  WebRTC.networkMode = 'stun';
+  WebRTC.stopTunnelRelay = () => {};
+  WebRTC.captureLastFrameHold = () => false;
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = () => {};
+
+  await WebRTC.refresh({ reason: 'media-request-failed' });
+
+  assert.equal(closed, 0);
+  assert.equal(WebRTC._refreshing, true);
+});
+
 test('scheduleReconnect is a no-op while _refreshing', () => {
   const { WebRTC } = loadWebRTC();
   let refreshes = 0;
@@ -5553,6 +5760,47 @@ test('media-stalled lasting 3s auto-sends media-stalled', () => {
   timers.get(3000)();
   assert.deepEqual(sent, ['media-stalled']);
   assert.equal(WebRTC.uiPhase, 'media-stalled');
+});
+
+test('connected without a painted frame remains pending in the session snapshot', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC.desktopSessionState = context.createDesktopSessionState();
+  WebRTC.currentConnectionAttemptId = 'attempt-pending';
+  WebRTC.desktopSessionState.beginAttempt('attempt-pending', { socket: 'online' });
+  WebRTC.hasPaintedFrame = false;
+
+  WebRTC.setUiPhase('connected', { reason: 'pc-connected' });
+
+  assert.equal(WebRTC.uiPhase, 'media-pending');
+  assert.notEqual(WebRTC.getDesktopSessionSnapshot().media, 'live');
+});
+
+test('desktop input gate follows uiPhase during transient stalled media', () => {
+  const calls = [];
+  const { WebRTC, context } = loadWebRTC();
+  context.Input = { setActive(value) { calls.push(value); } };
+  WebRTC.desktopSessionState = context.createDesktopSessionState();
+  WebRTC.currentConnectionAttemptId = 'attempt-live';
+  WebRTC._mediaReadyConnectionAttemptId = 'attempt-live';
+  WebRTC.socket = { connected: true };
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-live', leaseEpoch: 1 },
+  };
+  WebRTC.desktopSessionState.beginAttempt('attempt-live', { socket: 'online' });
+  WebRTC.desktopSessionState.applyConnection({ attemptId: 'attempt-live', state: 'connected' });
+  WebRTC.desktopSessionState.applyControl({ attemptId: 'attempt-live', state: 'active' });
+  WebRTC.desktopSessionState.applyMedia({ attemptId: 'attempt-live', event: 'fresh-frame', fresh: true });
+  WebRTC.desktopSessionState.applyMedia({ attemptId: 'attempt-live', state: 'stalled' });
+  WebRTC.uiPhase = 'connected';
+
+  WebRTC.syncDesktopInputGate();
+  assert.equal(calls.at(-1), true);
+
+  WebRTC.uiPhase = 'media-stalled';
+  WebRTC.syncDesktopInputGate();
+  assert.equal(calls.at(-1), false);
 });
 
 test('classic bundle exposes WebRTC on globalThis for deferred diagnostic.js', () => {

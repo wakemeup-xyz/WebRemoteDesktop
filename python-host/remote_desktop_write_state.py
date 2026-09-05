@@ -75,7 +75,14 @@ class ReliableDesktopWriteState:
         self._lease_id, self._lease_epoch, self._last_applied_seq = lease_id, lease_epoch, 0
         return self._result("applied")
 
-    def apply(self, data: Any) -> DesktopWriteResult:
+    def validate(self, data: Any) -> DesktopWriteResult:
+        """Validate a write without advancing the applied sequence.
+
+        Reliable desktop writes are committed by ``InputHandler`` only after
+        the corresponding Quartz operation has completed successfully.
+        Keeping validation separate prevents a failed native operation from
+        creating a sequence hole that would reject every later write.
+        """
         if not validate_desktop_write(data):
             return self._result("invalid-input")
         if data["leaseId"] != self._lease_id or data["leaseEpoch"] != self._lease_epoch:
@@ -87,8 +94,33 @@ class ReliableDesktopWriteState:
             return self._result("duplicate")
         if sequence != self._last_applied_seq + 1:
             return self._result("sequence-gap")
+        return self._result("applied")
+
+    def commit(self, sequence: int, *, lease_id: Optional[str] = None, lease_epoch: Optional[int] = None) -> DesktopWriteResult:
+        """Commit one previously validated reliable write after execution."""
+        if lease_id is not None and lease_id != self._lease_id:
+            return self._result("stale-lease")
+        if lease_epoch is not None and lease_epoch != self._lease_epoch:
+            return self._result("stale-lease")
+        if type(sequence) is not int or not 1 <= sequence <= _SAFE_INTEGER_MAX:
+            return self._result("invalid-input")
+        if sequence <= self._last_applied_seq:
+            return self._result("duplicate")
+        if sequence != self._last_applied_seq + 1:
+            return self._result("sequence-gap")
         self._last_applied_seq = sequence
         return self._result("applied")
+
+    def apply(self, data: Any) -> DesktopWriteResult:
+        """Validate and commit atomically for callers without execution."""
+        result = self.validate(data)
+        if result.status == "applied" and is_reliable_desktop_write(data):
+            return self.commit(
+                data["seq"],
+                lease_id=data.get("leaseId"),
+                lease_epoch=data.get("leaseEpoch"),
+            )
+        return result
 
     def snapshot(self) -> DesktopWriteSnapshot:
         return DesktopWriteSnapshot(self._lease_epoch, self._last_applied_seq)

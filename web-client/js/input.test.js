@@ -76,6 +76,13 @@ function keyboard(type, overrides = {}) {
   };
 }
 
+function hiddenPointer(clientX, clientY) {
+  const event = { currentTarget: null, pointerType: 'touch', pointerId: 1, preventDefault() {} };
+  Object.defineProperty(event, 'clientX', { value: clientX, enumerable: false });
+  Object.defineProperty(event, 'clientY', { value: clientY, enumerable: false });
+  return event;
+}
+
 function activate(Input, context) {
   Input.videoElement = context.document.getElementById('remoteVideo');
   Input.initKeyboardController();
@@ -133,6 +140,61 @@ test('touch click, touch wheel, and mobile text retain the active v2 lease envel
   }
 });
 
+test('touch mapPoint keeps PointerEvent prototype geometry', () => {
+  const { Input, context, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = context.document.getElementById('remoteVideo');
+  video.videoWidth = 200;
+  video.videoHeight = 100;
+  Input.refreshGeometry = () => ({ left: 0, top: 0, width: 200, height: 100 });
+  const adapter = Input.bindTouchAdapter(video);
+  const down = Object.assign(hiddenPointer(40, 25), {
+    currentTarget: video, isPrimary: true, buttons: 1, timeStamp: 10,
+  });
+  const up = Object.assign(hiddenPointer(40, 25), {
+    currentTarget: video, isPrimary: true, buttons: 0, timeStamp: 20,
+  });
+  video.listeners.get('pointerdown')(down);
+  video.listeners.get('pointerup')(up);
+  const inputs = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.equal(adapter.getSnapshot().state, 'IDLE');
+  assert.deepEqual(inputs.map(({ action }) => action), ['down', 'up']);
+  assert.equal(Number.isFinite(inputs[0].payload.relX), true);
+  assert.equal(Number.isFinite(inputs[0].payload.relY), true);
+});
+
+test('failed touch reset is rearmed by a new lease and allows a real touch click', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  const touch = (type, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown');
+  touch('pointermove', { clientX: 60 });
+  assert.equal(Input._lastTouchAdapter.getSnapshot().state, 'DRAGGING');
+  context.WebRTC.socket.connected = false;
+  touch('pointercancel');
+  assert.equal(Input._pendingMouseReset, true);
+  assert.equal(Input._pendingMouseResetId, null);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().pendingReset, true);
+
+  Input.setControlLease({ leaseId: 'lease-000000000099', leaseEpoch: 9 });
+  context.WebRTC.socket.connected = true;
+  touch('pointerdown', { pointerId: 2, clientX: 40, clientY: 40 });
+  touch('pointerup', { pointerId: 2, clientX: 40, clientY: 40 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'move', 'down', 'up']);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().pendingReset, false);
+});
+
 test('v2 mouse and command writes have a monotonic sequence that resets with a new lease', () => {
   const { Input, context, socketEvents } = loadInput();
   activate(Input, context);
@@ -152,6 +214,90 @@ test('v2 mouse and command writes have a monotonic sequence that resets with a n
   Input.setControlLease({ leaseId: 'lease-000000000002', leaseEpoch: 4 });
   Input.sendInput('mouse', 'reset', { reason: 'lease-transition' });
   assert.equal(socketEvents.filter(({ event }) => event === 'input').at(-1).payload.seq, 1);
+});
+
+test('failed reliable mouse write does not consume desktop seq', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input.socket = { connected: false, emit() {} };
+  context.WebRTC.socket.connected = false;
+  context.WebRTC.sendInput = () => false;
+  assert.equal(Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+  }), null);
+  assert.equal(Input._desktopWriteSequence, 0);
+  context.WebRTC.socket.connected = true;
+  Input.socket = context.WebRTC.socket;
+  const id = Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+  });
+  assert.ok(id);
+  assert.equal(Input._desktopWriteSequence, 1);
+});
+
+test('failed desktop execution ACK reconciles the next mouse and command sequence', () => {
+  for (const [failedType, nextType] of [['mouse', 'command'], ['command', 'mouse']]) {
+    const { Input, context, socketEvents } = loadInput();
+    activate(Input, context);
+    const failedId = failedType === 'mouse'
+      ? Input.sendInput('mouse', 'down', {
+        relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+      })
+      : Input.sendInput('command', 'showDock', {});
+    assert.ok(failedId);
+    const failed = socketEvents.at(-1).payload;
+    assert.equal(failed.seq, 1);
+
+    const ack = Input.acceptMouseAck({
+      inputType: failedType,
+      schemaVersion: 2,
+      leaseEpoch: 3,
+      status: 'execution-failed',
+      appliedSeq: 0,
+      inputIds: [failedId],
+    });
+    assert.equal(ack.status, 'execution-failed');
+    assert.equal(ack.recovery, 'reconciled');
+
+    const nextId = nextType === 'mouse'
+      ? Input.sendInput('mouse', 'up', {
+        relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 0,
+      })
+      : Input.sendInput('command', 'showDock', {});
+    assert.ok(nextId);
+    assert.equal(socketEvents.at(-1).payload.seq, 1);
+  }
+});
+
+test('keyboard acknowledgement does not clear pending mouse reset', () => {
+  const { Input } = loadInput();
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = 'inp_reset';
+  assert.equal(Input.acceptMouseAck({
+    inputType: 'keyboard', status: 'applied', inputIds: ['inp_reset'],
+  }).status, 'stale');
+  assert.equal(Input._pendingMouseReset, true);
+});
+
+test('explicit falsy inputType cannot clear a mouse reset barrier', () => {
+  for (const inputType of ['', false, 0]) {
+    const { Input } = loadInput();
+    Input._pendingMouseReset = true;
+    Input._pendingMouseResetId = 'reset-falsy-type';
+    assert.equal(Input.acceptMouseAck({
+      inputType, status: 'applied', inputIds: ['reset-falsy-type'],
+    }).status, 'stale');
+    assert.equal(Input._pendingMouseReset, true);
+  }
+});
+
+test('new active lease clears a failed mouse reset barrier', () => {
+  const { Input, context } = loadInput();
+  activate(Input, context);
+  Input._pendingMouseReset = true;
+  Input._pendingMouseResetId = null;
+  Input.setControlLease({ leaseId: 'lease-000000000099', leaseEpoch: 9 });
+  assert.equal(Input._pendingMouseReset, false);
 });
 
 test('reset, park, lease revocation, and disconnect clear virtual modifier latches', () => {

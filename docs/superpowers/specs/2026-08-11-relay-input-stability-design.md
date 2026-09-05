@@ -1,7 +1,7 @@
 # Relay 输入稳定性优化设计
 
 **日期**：2026-08-11  
-**状态**：草稿待审  
+**状态**：已实施；B1 终态为 pin 0ms（废止 80ms），SLA 见 `docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md`
 **关联症状**：黑屏/卡顿、重连风暴、多打 Ctrl、IME 丢失、表情弹出
 
 ---
@@ -23,10 +23,12 @@ relay RTT 抖动
     ├─ keyup 事件丢失 → host _modifier_flags |= 只增不减 → 幽灵 Ctrl/Cmd
     │    └─ Ctrl+Space / Ctrl+Cmd+Space → 切输入法 / 弹表情面板
     └─ _dcReconnectTimer(3s) 到期 → noteDataChannelFault
-         → isInboundVideoHealthy() = false（jitterBufferTarget=1ms 过激 → fps=0）
+         → 旧版 jitterBufferTarget=1ms 判定过激 → fps=0
               → scheduleReconnect → refresh() → 拆掉健康视频 relay
                    → 每 3s 一轮重连风暴
 ```
+
+上述链路是本设计记录的历史故障路径。B1 的 80ms/0.08s 缓冲试验已废止；当前终态固定 relay `jitterBufferTarget=0ms`、非 relay `1ms`，`playoutDelayHint=0`，出画与卡顿口径以 2026-08-29 出画连续性 SLA 为准。
 
 ---
 
@@ -34,7 +36,7 @@ relay RTT 抖动
 
 | ID | 优先级 | 改动简述 | 消除症状 |
 |----|--------|----------|---------|
-| B1 | P0 | relay 路径 `jitterBufferTarget=80ms`，`playoutDelayHint=0.08s` | 黑屏、卡顿、fps=0 假死，使健康判定稳定 |
+| B1 | P0 | relay 路径固定 `jitterBufferTarget=0ms`，`playoutDelayHint=0s`（80ms 方案已废止） | 以出画门闩和同尺寸 SPS 追帧处理黑屏、卡顿与 fps=0 |
 | A1 | P0 | DC 故障 relay 模式只重建 DataChannel，不 full refresh | 重连风暴、掉线 |
 | C1 | P1 | host 修饰键 reconcile，以浏览器 payload 为权威清幽灵位 | 幽灵 Ctrl/Cmd，IME 丢失，表情弹出 |
 | B2 | P2 | 视 B1 效果决定是否微调 `playoutDelayHint` 下限 | 辅助改善卡顿 |
@@ -45,12 +47,12 @@ B1 先行，解决健康判定误报，让 A1 的 DC 重建路径能正确判断
 
 ## 3. 详细设计
 
-### 3.1 B1 — jitterBufferTarget relay 感知
+### 3.1 B1 — jitterBufferTarget relay 感知（80ms 方案已废止）
 
 **文件**：`web-client/js/webrtc.js`  
 **方法**：`configureVideoReceiver(receiver)`（L1103-L1123）
 
-**根因**：`jitterBufferTarget = 1`（1ms）对本地直连可接受，但 relay 路径天然有 30-40ms RTT + 抖动，1ms 缓冲无法吸收乱序包 → 帧凑不齐 → 解码器停摆 → fps=0 → 健康判定触发重连。
+**历史根因**：旧实现把 `jitterBufferTarget = 1`（1ms）用于 relay，曾导致健康判定误报。80ms/0.08s 缓冲试验随后被废止；当前实现由 2026-08-29 出画连续性设计收敛为 relay pin `0ms`、非 relay `1ms`，并配合同尺寸 refresh 与 12s SPS cooldown。
 
 **改动**：
 
@@ -60,21 +62,21 @@ configureVideoReceiver(receiver) {
   const isRelay = this.networkMode === 'relay'
     || this.lastCandidateType === 'relay';
 
-  // jitterBufferTarget: relay 路径给 80ms 吸收抖动，直连保持 1ms 低延迟
+  // 80ms relay 试验已废止；当前终态 pin relay=0ms，直连保持 1ms 低延迟
   if (typeof receiver.jitterBufferTarget !== 'undefined') {
     try {
-      receiver.jitterBufferTarget = isRelay ? 80 : 1;
-      console.log(`[LATENCY] jitterBufferTarget=${isRelay ? 80 : 1}ms (${isRelay ? 'relay' : 'direct'})`);
+      receiver.jitterBufferTarget = isRelay ? 0 : 1;
+      console.log(`[LATENCY] jitterBufferTarget=${isRelay ? 0 : 1}ms (${isRelay ? 'relay' : 'direct'})`);
     } catch (error) {
       console.warn('[LATENCY] Unable to set jitterBufferTarget:', error?.message || error);
     }
   }
 
-  // playoutDelayHint: relay 下给 0.08s 下限，直连保持 0
+  // playoutDelayHint: 当前终态固定为 0
   if (typeof receiver.playoutDelayHint !== 'undefined') {
     try {
-      receiver.playoutDelayHint = isRelay ? 0.08 : 0;
-      console.log(`[LATENCY] playoutDelayHint=${isRelay ? 0.08 : 0}s`);
+      receiver.playoutDelayHint = 0;
+      console.log('[LATENCY] playoutDelayHint=0s');
     } catch (error) {
       console.warn('[LATENCY] Unable to set playoutDelayHint:', error?.message || error);
     }
@@ -84,7 +86,7 @@ configureVideoReceiver(receiver) {
 
 **调用时机**：不变——`ontrack`、`requestKeyframe`、ICE `completed` 后均调用，relay 建连后自然生效。`lastCandidateType` 在 `processStatsSnapshot` 里实时更新，切换路径后下次 `configureVideoReceiver` 调用会自动适配。
 
-**预期效果**：`jitter_buffer` 从 500-1300ms 暴增变为平稳 50-120ms；`fps=0` 黑屏消失；`isInboundVideoHealthy` 稳定返回 true。
+**当前契约**：不以固定 80ms 缓冲承诺 relay 稳态；relay 允许 ≤2s 追帧，连续 ≥2s 才进入 UI「画面卡顿」，连续 ≥3s 进入失败诊断线。具体出画与同尺寸 SPS 追帧口径见 2026-08-29 设计。
 
 ---
 
@@ -232,8 +234,8 @@ def _release_lost_modifier_flags(self, lost_flags: int, reason: str = "reconcile
 ICE completed / ontrack
   → configureVideoReceiver(receiver)
     → 检查 networkMode / lastCandidateType
-    → 设置 jitterBufferTarget (relay:80ms / direct:1ms)
-    → 设置 playoutDelayHint  (relay:0.08s / direct:0s)
+    → 设置 jitterBufferTarget (relay:0ms / direct:1ms)
+    → 设置 playoutDelayHint  (relay:0s / direct:0s)
 ```
 
 失败路径：`jitterBufferTarget` / `playoutDelayHint` 赋值可能在部分浏览器抛异常，已有 try/catch，降级为无 hint（现有行为）。
@@ -273,7 +275,7 @@ keyboard keydown (非修饰键)
 ### 5.1 B1 测试
 
 - **现有测试**：`web-client/js/webrtc-stats.test.js`——不涉及 `configureVideoReceiver`，无需修改。
-- **手动验证**：relay 模式连接后，浏览器 DevTools → WebRTC Internals → `inbound-rtp jitterBufferTargetDelay` 应显示 ~80ms；持续观察 5 分钟不出现 fps=0 黑屏。
+- **自动化 / 手动边界**：当前实现与 2026-08-29 出画连续性 SLA 已由自动化覆盖；真实 relay DevTools、真机和公网路径观察为 **NOT RUN**，不得以 80ms 作为验收目标。
 
 ### 5.2 A1 测试
 
@@ -296,5 +298,5 @@ keyboard keydown (非修饰键)
 
 - Host 机器 CPU 负载（`systemLoad1` 过高）——用户明确排除。
 - `_autoFailCount` 计数器在重建成功后的重置策略——可后续迭代。
-- B2（`playoutDelayHint` 精细调整）——B1 上线后观察效果再决定。
+- B2（`playoutDelayHint` 精细调整）——80ms 方案已废止，当前终态固定为 `0`，不单独推进。
 - TURN allocation 600s 过期续期——目前 aioice 已自动 refresh，不存在实际过期问题（`TURN allocation refreshed` 日志证实）。
