@@ -189,3 +189,22 @@ legacy 2.0x and all 1.0x/1.25x/1.5x rows retain
 `offlineEligibility=LOCAL_CAPTURE_ONLY` and `runtimePaintGate=PENDING`. The
 production selection remains `{applied:false, value:2.0}` pending Task 9's
 selected-relay browser paint A/B.
+
+### Task 7 review correction, round 3: separate downstream YUV proxy (2026-09-06)
+
+Production `ScreenCaptureTrack.recv()` creates a BGRA `VideoFrame`; it does not
+call `frame.reformat("yuv420p")`. The probe now excludes reformat from
+`pathCosts` and `costModel`: production cost contains only actual MSS grab,
+fresh from-buffer/resize, reuse copy, blank allocation, and every-tick
+`VideoFrame.from_ndarray`. BGRA→YUV420 remains in a separate
+`downstreamExploratoryProxy` with `includedInProductionCost=false`, so it cannot
+participate in multiplier comparison or selection.
+
+The test suite now executes, rather than merely enumerates, deterministic
+producer/consumer fixtures where both schedulers carry independent nonzero
+phase, jitter, and consumer delay. A fast producer fixture proves initial blank
+and overwrite/drop; a stalled producer fixture proves initial blank and reuse.
+Both assert producer and consumer conservation equations plus producer/consumer
+inter-arrival sample counts. The full local matrix reported every exploratory
+proxy row as `includedInProductionCost=false` and retained
+`runtimePaintGate=PENDING` for legacy 2.0x and all candidates.

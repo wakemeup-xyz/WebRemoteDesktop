@@ -78,7 +78,10 @@ def test_consumer_cost_model_counts_reuse_copy_and_every_recv_conversion():
     assert result["pathCosts"]["fresh"]["fromNdarray"]["count"] == result["freshConsumed"]
     assert result["pathCosts"]["reused"]["copy"]["count"] == result["reused"]
     assert result["pathCosts"]["initialBlank"]["fromNdarray"]["count"] == result["initialBlank"]
-    assert result["costModel"]["frameConversionCalls"] == result["consumerTicks"]
+    assert result["costModel"]["productionFrameConversionCalls"] == result["consumerTicks"]
+    assert "reformatCalls" not in result["costModel"]
+    assert result["downstreamExploratoryProxy"]["includedInProductionCost"] is False
+    assert result["downstreamExploratoryProxy"]["reformatCalls"] == result["consumerTicks"]
     assert result["reused"] >= 1
     assert result["produced"] == (
         result["consumed"] + result["overwrittenDropped"] + result["unconsumedAtStop"]
@@ -92,3 +95,46 @@ def test_scheduler_matrix_varies_consumer_phase_jitter_and_delay_independently()
     assert any("consumer_jitter_seconds" in row for row in scenarios)
     assert any(row["producer_jitter_seconds"] != (0.0,) for row in scenarios)
     assert any(row["slow_grab_seconds"] > 0 for row in scenarios)
+
+
+def test_executed_dual_scheduler_fixtures_cover_blank_drop_and_reuse():
+    common = {
+        "target_fps": 20,
+        "duration_seconds": 0.18,
+        "size": (32, 24),
+        "producer_phase_seconds": 0.01,
+        "producer_jitter_seconds": (0.0, 0.002),
+        "consumer_phase_seconds": 0.005,
+        "consumer_jitter_seconds": (0.0, 0.003, -0.001),
+        "consumer_delay_seconds": 0.004,
+    }
+    fast_producer = benchmark.run_capture_candidate(
+        FakeMSS(),
+        {"left": 0, "top": 0, "width": 64, "height": 48},
+        multiplier=2.0,
+        slow_grab_seconds=0.0,
+        **common,
+    )
+    stalled_producer = benchmark.run_capture_candidate(
+        FakeMSS(),
+        {"left": 0, "top": 0, "width": 64, "height": 48},
+        multiplier=1.0,
+        slow_grab_seconds=0.03,
+        **{**common, "producer_jitter_seconds": (0.0, 0.05)},
+    )
+
+    assert fast_producer["initialBlank"] >= 1
+    assert fast_producer["overwrittenDropped"] >= 1
+    assert stalled_producer["initialBlank"] >= 1
+    assert stalled_producer["reused"] >= 1
+    for result in (fast_producer, stalled_producer):
+        assert result["produced"] == (
+            result["freshConsumed"]
+            + result["overwrittenDropped"]
+            + result["unconsumedAtStop"]
+        )
+        assert result["consumerTicks"] == (
+            result["freshConsumed"] + result["reused"] + result["initialBlank"]
+        )
+        assert result["producerInterArrival"]["count"] == result["produced"] - 1
+        assert result["consumerInterArrival"]["count"] == result["consumerTicks"] - 1

@@ -162,3 +162,40 @@ browser paint A/B may reconsider that value.
 pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 15 passed
 scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, all runtime paint gates PENDING
 ```
+
+## Review correction, round 3/5 (2026-09-06)
+
+The previous probe still treated BGRA→YUV420 `reformat` as a production
+consumer cost. That is false for `ScreenCaptureTrack.recv()`: it constructs a
+BGRA `VideoFrame` and returns it; reformat is a downstream encoder-path
+question. The benchmark now labels per-path reformat measurements as
+`downstreamExploratoryProxy`, sets `includedInProductionCost:false`, and removes
+them from both `pathCosts` and all `costModel` totals. Production cost now covers
+only observed MSS grab, fresh from-buffer/resize, reuse copy, blank allocation,
+and every-tick `VideoFrame.from_ndarray`.
+
+The scheduler test now executes two controlled dual-scheduler fixtures. Both
+have independent producer and consumer phase/jitter/delay controls. The fast
+producer fixture proves `initialBlank >= 1` and `overwrittenDropped >= 1`; the
+stalled producer fixture proves `initialBlank >= 1` and `reused >= 1`. Both
+assert:
+
+```text
+produced == freshConsumed + overwrittenDropped + unconsumedAtStop
+consumerTicks == freshConsumed + reused + initialBlank
+producerInterArrival.count == produced - 1
+consumerInterArrival.count == consumerTicks - 1
+```
+
+The full matrix wrote `includedInProductionCost=false` on all exploratory YUV
+rows. Its production selection remains `applied:false, value:2.0`, and every
+legacy/candidate row remains `runtimePaintGate=PENDING`. The local reformat
+measurements are retained only for a possible later downstream study; they are
+not candidate evidence.
+
+### Round-3 verification
+
+```text
+pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 16 passed
+scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, all YUV proxies excluded from production cost
+```

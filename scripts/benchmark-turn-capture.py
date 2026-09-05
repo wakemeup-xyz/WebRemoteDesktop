@@ -30,6 +30,7 @@ MULTIPLIERS = (1.0, 1.25, 1.5)
 LEGACY_MULTIPLIER = 2.0
 INTERPOLATIONS = {"INTER_LINEAR": cv2.INTER_LINEAR, "INTER_AREA": cv2.INTER_AREA}
 PATH_STAGES = ("copy", "fromBuffer", "resize", "blankAllocate", "fromNdarray", "reformat")
+PRODUCTION_STAGES = ("copy", "fromBuffer", "resize", "blankAllocate", "fromNdarray")
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -229,14 +230,24 @@ def run_capture_candidate(
         producer_times = list(producer_timestamps)
         producer_grab = list(producer_grab_ms)
     path_costs = {
-        path: {stage: timing_summary(values) for stage, values in stages.items()}
+        path: {stage: timing_summary(stages[stage]) for stage in PRODUCTION_STAGES}
         for path, stages in path_values.items()
     }
     path_totals = {
-        path: sum(sum(values) for values in stages.values())
+        path: sum(sum(stages[stage]) for stage in PRODUCTION_STAGES)
         for path, stages in path_values.items()
     }
     frame_conversion_calls = sum(len(path_values[path]["fromNdarray"]) for path in path_values)
+    reformat_calls = sum(len(path_values[path]["reformat"]) for path in path_values)
+    downstream_proxy = {
+        "includedInProductionCost": False,
+        "name": "BGRA-to-YUV420 reformat exploratory proxy",
+        "reformatCalls": reformat_calls,
+        "paths": {
+            path: timing_summary(stages["reformat"])
+            for path, stages in path_values.items()
+        },
+    }
     pending_at_stop = buffer.pending_count()
     return {
         "multiplier": multiplier,
@@ -258,6 +269,7 @@ def run_capture_candidate(
         "unconsumedAtStop": pending_at_stop,
         "producerGrab": timing_summary(producer_grab),
         "pathCosts": path_costs,
+        "downstreamExploratoryProxy": downstream_proxy,
         "consumerResize": timing_summary(path_values["fresh"]["resize"]),
         "consumerFrameConversion": timing_summary(
             [value for path in path_values.values() for value in path["fromNdarray"]]
@@ -276,9 +288,8 @@ def run_capture_candidate(
             "producerCalls": len(producer_grab),
             "freshProcessingCalls": fresh_consumed,
             "reuseCopyCalls": len(path_values["reused"]["copy"]),
-            "frameConversionCalls": frame_conversion_calls,
-            "reformatCalls": frame_conversion_calls,
-            "note": "totals use actual path calls; producer cadence never multiplies consumer processing",
+            "productionFrameConversionCalls": frame_conversion_calls,
+            "note": "production total uses actual grab/copy/resize/VideoFrame calls; reformat is downstream exploratory only",
         },
     }
 
