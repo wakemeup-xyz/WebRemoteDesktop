@@ -321,6 +321,14 @@ test('a reliable left arrow permits the matching middle insertion', () => {
   assert.equal(h.input.value, 'abXc\u200B');
 });
 
+test('public navigation rejects a composition before the DOM value changes', () => {
+  const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.emit('compositionstart');
+
+  assert.equal(h.adapter.sendControlKey('ArrowLeft'), false);
+  assert.deepEqual(h.sent, []);
+});
+
 test('cursor-aware diff accepts a duplicate insertion after repeated left navigation', () => {
   const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
   h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });

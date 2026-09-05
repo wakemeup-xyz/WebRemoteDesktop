@@ -1,3 +1,5 @@
+const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
+
 const Input = {
   socket: null,
   videoElement: null,
@@ -229,6 +231,35 @@ const Input = {
     this._mobileSurfaceTimer = null;
   },
 
+  _scheduleMobileSurfaceTimer() {
+    this._clearMobileSurfaceTimer();
+    const gesture = this._mobileSurfaceGesture;
+    if (!gesture || this._mobileSurfaceState !== 'pending') return;
+    const deadlines = [];
+    if (!gesture.downAck && gesture.downId && Number.isFinite(gesture.downDeadline)) {
+      deadlines.push({ edge: 'down', id: gesture.downId, deadline: gesture.downDeadline });
+    }
+    if (!gesture.upAck && gesture.upId && Number.isFinite(gesture.upDeadline)) {
+      deadlines.push({ edge: 'up', id: gesture.upId, deadline: gesture.upDeadline });
+    }
+    if (!deadlines.length) return;
+    deadlines.sort((left, right) => left.deadline - right.deadline);
+    const { edge, id, deadline } = deadlines[0];
+    const generation = gesture.generation;
+    this._mobileSurfaceTimer = setTimeout(() => {
+      this._mobileSurfaceTimer = null;
+      const current = this._mobileSurfaceGesture;
+      if (!current || this._mobileSurfaceState !== 'pending' || current.generation !== generation) return;
+      if (edge === 'down' && current.downId === id && !current.downAck) {
+        this._markMobileSurfaceUncertain('down-ack-timeout');
+      } else if (edge === 'up' && current.upId === id && !current.upAck) {
+        this._markMobileSurfaceUncertain('up-ack-timeout');
+      } else {
+        this._scheduleMobileSurfaceTimer();
+      }
+    }, Math.max(0, deadline - Date.now()));
+  },
+
   _resetMobileSurfaceContext({ preserveUncertainty = false } = {}) {
     const previousState = this._mobileSurfaceState;
     const keepUncertain = preserveUncertainty
@@ -259,25 +290,23 @@ const Input = {
     const generation = this._mobileSurfaceGeneration + 1;
     this._mobileSurfaceGeneration = generation;
     this._mobileSurfaceState = 'pending';
+    const record = this._desktopWritePending.get(inputId);
     this._mobileSurfaceGesture = {
       generation,
       leaseId: this.activeControlLease.leaseId,
       leaseEpoch: this.activeControlLease.leaseEpoch,
       downId: inputId,
+      downSeq: Number.isSafeInteger(record?.seq) ? record.seq : null,
+      downDeadline: Date.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS,
       downAck: false,
       upId: null,
+      upSeq: null,
+      upDeadline: null,
       upAck: false,
       ended: false,
     };
-    const record = this._desktopWritePending.get(inputId);
     if (record) record.surfaceGeneration = generation;
-    this._mobileSurfaceTimer = setTimeout(() => {
-      this._mobileSurfaceTimer = null;
-      const gesture = this._mobileSurfaceGesture;
-      if (this._mobileSurfaceState === 'pending' && gesture?.generation === generation) {
-        this._markMobileSurfaceUncertain('ack-timeout');
-      }
-    }, 3000);
+    this._scheduleMobileSurfaceTimer();
     this.mobileTextInputAdapter?.refreshDeliveryState();
     return true;
   },
@@ -286,9 +315,12 @@ const Input = {
     const gesture = this._mobileSurfaceGesture;
     if (!gesture || this._mobileSurfaceState !== 'pending' || !inputId) return false;
     gesture.upId = inputId;
-    gesture.ended = true;
     const record = this._desktopWritePending.get(inputId);
+    gesture.upSeq = Number.isSafeInteger(record?.seq) ? record.seq : null;
+    gesture.upDeadline = Date.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS;
+    gesture.ended = true;
     if (record) record.surfaceGeneration = gesture.generation;
+    this._scheduleMobileSurfaceTimer();
     this._settleMobileSurfaceGestureIfReady();
     return true;
   },
@@ -304,24 +336,40 @@ const Input = {
     return true;
   },
 
-  _handleMobileSurfaceAck(ack, records) {
-    if (!records?.length || !this._mobileSurfaceGesture) return;
+  _handleMobileSurfaceAck(ack) {
+    if (!this._mobileSurfaceGesture) return;
     const gesture = this._mobileSurfaceGesture;
     if (ack?.leaseEpoch !== gesture.leaseEpoch
+      || (ack?.leaseId !== undefined && ack.leaseId !== gesture.leaseId)
       || this.activeControlLease?.leaseId !== gesture.leaseId
-      || this.activeControlLease?.leaseEpoch !== gesture.leaseEpoch
-      || records.some((record) => record.surfaceGeneration !== gesture.generation)) return;
+      || this.activeControlLease?.leaseEpoch !== gesture.leaseEpoch) return;
+    const ackInputIds = Array.isArray(ack?.inputIds)
+      ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    const matchesDown = ackInputIds.includes(gesture.downId);
+    const matchesUp = gesture.upId !== null && ackInputIds.includes(gesture.upId);
+    if (!matchesDown && !matchesUp) return;
+    const now = Date.now();
+    const downExpired = !gesture.downAck && Number.isFinite(gesture.downDeadline)
+      && now > gesture.downDeadline;
+    const upExpired = !gesture.upAck && gesture.upId !== null
+      && Number.isFinite(gesture.upDeadline) && now > gesture.upDeadline;
+    if (downExpired || upExpired) {
+      this._markMobileSurfaceUncertain('late-ack');
+      return;
+    }
     const status = ack?.status;
     if (status !== 'applied' && status !== 'duplicate') {
       this._markMobileSurfaceUncertain(`ack-${String(status || 'unknown')}`);
       return;
     }
-    const ackInputIds = Array.isArray(ack?.inputIds)
-      ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
-    for (const record of records) {
-      if (record.action === 'down' && ackInputIds.includes(record.inputId)) gesture.downAck = true;
-      if (record.action === 'up' && ackInputIds.includes(record.inputId)) gesture.upAck = true;
+    const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
+    if (matchesDown && (appliedSeq === null || gesture.downSeq === null || appliedSeq >= gesture.downSeq)) {
+      gesture.downAck = true;
     }
+    if (matchesUp && (appliedSeq === null || gesture.upSeq === null || appliedSeq >= gesture.upSeq)) {
+      gesture.upAck = true;
+    }
+    this._scheduleMobileSurfaceTimer();
     this._settleMobileSurfaceGestureIfReady();
   },
 
@@ -426,13 +474,10 @@ const Input = {
     const hasInputType = Boolean(ack && Object.prototype.hasOwnProperty.call(ack, 'inputType'));
     const inputType = ack?.inputType;
     if (hasInputType && inputType !== 'mouse' && inputType !== 'command') return { status: 'stale' };
-    const surfaceRecords = inputIds
-      .map((inputId) => this._desktopWritePending.get(inputId))
-      .filter((record) => record?.surfaceGeneration !== undefined);
     const desktopResult = (inputType === 'mouse' || inputType === 'command')
       ? this._acceptDesktopWriteAck(ack, inputIds)
       : null;
-    this._handleMobileSurfaceAck(ack, surfaceRecords);
+    this._handleMobileSurfaceAck(ack);
     if (desktopResult && inputType === 'command') return desktopResult;
     if (desktopResult && desktopResult.status !== 'stale'
       && desktopResult.status !== 'reacquire-required') {
@@ -473,13 +518,19 @@ const Input = {
     }
     const isMobileTextEvent = (event) => event?.target === document.getElementById('mobileTextInput');
     document.addEventListener('keydown', (event) => {
-      if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
+      if (!isMobileTextEvent(event) && this._isMobileEditingActionAllowed()) {
+        this.keyboardController?.handleDomEvent(event);
+      }
     });
     document.addEventListener('keyup', (event) => {
       if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
     });
-    video.addEventListener('click', () => this.focusDesktopSurface(video, 'surface-user'));
-    relayImage?.addEventListener('click', () => this.focusDesktopSurface(relayImage, 'surface-user'));
+    video.addEventListener('click', (event) => {
+      if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
+    });
+    relayImage?.addEventListener('click', (event) => {
+      if (!this.focusDesktopSurface(relayImage, 'surface-user')) event.preventDefault?.();
+    });
     // A transient <video> pause must not override the media/control input gate.
     // While media is applied-active and lease is live, desktop input stays enabled.
     video.addEventListener('pause', () => {
@@ -623,6 +674,7 @@ const Input = {
   focusDesktopSurface(element, reason) {
     if (!['surface-user', 'initial-ready', 'restore'].includes(reason)) return false;
     if (typeof document === 'undefined' || !this.isActive || !element?.isConnected) return false;
+    if (reason === 'surface-user' && !this._isMobileEditingActionAllowed()) return false;
     const active = document.activeElement;
     const terminal = document.getElementById('terminalPanel');
     const editing = active?.matches?.('input,textarea,select,[contenteditable="true"]')
@@ -994,7 +1046,14 @@ const Input = {
     });
     element.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'touch') return;
-      if (!this.isActive || this._pendingMouseReset) return;
+      if (!this._isMobileEditingActionAllowed()) {
+        event.preventDefault?.();
+        return;
+      }
+      if (!this.isActive || this._pendingMouseReset) {
+        event.preventDefault?.();
+        return;
+      }
       this._pointerLifecycleGeneration += 1;
       this._geometryAbortedPointerId = null;
       event.preventDefault();
@@ -1110,16 +1169,18 @@ const Input = {
       });
       button.addEventListener('click', (event) => {
         event.preventDefault();
-        if (button.disabled) return;
         const action = button.dataset.action || button.dataset.mobileAction;
         if (virtualModifiers.has(action)) {
-          if (!this._isMobileEditingActionAllowed()) return;
-          const pressed = button.getAttribute?.('aria-pressed') === 'true';
-          if (this.keyboardController?.setVirtualModifier(action, !pressed)) {
+          const modifierName = action === 'control' ? 'ctrl' : action === 'command' ? 'meta' : action;
+          const activeModifiers = this.keyboardController?.getSnapshot?.().virtualModifiers || [];
+          const pressed = activeModifiers.includes(modifierName);
+          if (!pressed && (button.disabled || !this.isActive || !this._isMobileEditingActionAllowed())) return;
+          if (this.keyboardController?.setVirtualModifier(modifierName, !pressed)) {
             button.setAttribute?.('aria-pressed', String(!pressed));
           }
           return;
         }
+        if (button.disabled) return;
         if (action === 'rightClick') {
           const adapter = this._lastTouchAdapter
             || this._touchAdapters.get(this.videoElement)

@@ -30,6 +30,17 @@ function loadInput() {
   const windowListeners = new Map();
   const socketEvents = [];
   const bodyClasses = new Set();
+  const addDocumentListener = (type, handler) => {
+    let dispatcher = documentListeners.get(type);
+    if (!dispatcher) {
+      dispatcher = (event) => {
+        for (const listener of [...dispatcher.listeners]) listener(event);
+      };
+      dispatcher.listeners = [];
+      documentListeners.set(type, dispatcher);
+    }
+    dispatcher.listeners.push(handler);
+  };
   const context = {
     console, setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
@@ -53,7 +64,7 @@ function loadInput() {
       },
       activeElement: null,
       fullscreenElement: null,
-      addEventListener(type, handler) { documentListeners.set(type, handler); },
+      addEventListener: addDocumentListener,
       querySelectorAll: () => [],
       querySelector(selector) {
         if (selector !== '.viewer-container') return null;
@@ -1002,6 +1013,226 @@ test('surface confirmation stays pending until the ended gesture has matching do
   assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
 });
 
+test('surface confirmation correlates a late down ACK after cumulative up cleanup', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  const id = adapter.clickButton('left', { relX: 0.4, relY: 0.4 });
+  assert.ok(id);
+  const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+  const down = writes.find(({ payload }) => payload.action === 'down').payload;
+  const up = writes.find(({ payload }) => payload.action === 'up').payload;
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: up.seq, inputIds: up.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: up.seq, inputIds: down.inputIds,
+  });
+
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+});
+
+test('surface confirmation ignores stale generation and lease acknowledgements', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+  const firstWrites = socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  const oldDown = firstWrites.find(({ payload }) => payload.action === 'down').payload;
+  const oldUp = firstWrites.find(({ payload }) => payload.action === 'up').payload;
+  Input._resetMobileSurfaceContext();
+  assert.ok(adapter.clickButton('left', { relX: 0.5, relY: 0.5 }));
+  const currentWrites = socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  const currentDown = currentWrites.at(-2).payload;
+  const currentUp = currentWrites.at(-1).payload;
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 2, status: 'applied',
+    appliedSeq: oldUp.seq, inputIds: oldUp.inputIds,
+  });
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: oldUp.seq, inputIds: oldDown.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: currentDown.seq, inputIds: currentDown.inputIds,
+  });
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: currentUp.seq, inputIds: currentUp.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+});
+
+test('document physical keydown uses the pending mobile surface gate', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+  const before = socketEvents.length;
+
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'KeyA', key: 'a',
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+
+  assert.equal(socketEvents.slice(before).some(({ event, payload }) => event === 'input'
+    && (payload.action === 'key' || payload.action === 'batch')), false);
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
+test('document tracked keyup remains a safety release while the surface is pending', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  assert.ok(Input.bindTouchAdapter(video).clickButton('left', { relX: 0.4, relY: 0.4 }));
+
+  documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift',
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard' && payload.action === 'key')
+    .map(({ payload }) => payload.payload.phase), ['down', 'up']);
+});
+
+test('surface-user focus preflight preserves composing mobile text and prevents click default', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const mobileInput = elements.get('mobileTextInput');
+  surface.focus = () => { context.document.activeElement = surface; };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  Input.mobileTextInputAdapter.show();
+  mobileInput.listeners.get('compositionstart')({ target: mobileInput });
+
+  let clickPrevented = false;
+  surface.listeners.get('click')({ preventDefault() { clickPrevented = true; } });
+  assert.equal(clickPrevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+
+  let pointerPrevented = false;
+  surface.listeners.get('pointerdown')({
+    pointerType: 'mouse', pointerId: 1, clientX: 40, clientY: 40, button: 0, buttons: 1,
+    currentTarget: surface, preventDefault() { pointerPrevented = true; },
+  });
+  assert.equal(pointerPrevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+});
+
+test('touch surface preflight prevents default before a composing gesture is consumed', () => {
+  const { Input, context, elements } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const mobileInput = elements.get('mobileTextInput');
+  Input.mobileTextInputAdapter.show();
+  mobileInput.listeners.get('compositionstart')({ target: mobileInput });
+
+  let prevented = false;
+  surface.listeners.get('pointerdown')({
+    pointerType: 'touch', pointerId: 1, isPrimary: true, clientX: 40, clientY: 40,
+    buttons: 1, preventDefault() { prevented = true; },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+});
+
+test('virtual modifier off uses controller truth through pending and disabled gates', () => {
+  for (const gate of ['pending', 'composing', 'uncertain']) {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const button = makeElement();
+    button.dataset.mobileAction = 'shift';
+    button.disabled = true;
+    const aria = new Map([['aria-pressed', 'false']]);
+    button.setAttribute = (name, value) => aria.set(name, String(value));
+    button.getAttribute = (name) => aria.get(name) || null;
+    context.document.querySelectorAll = () => [button];
+    Input.setupActionButtons();
+    assert.equal(Input.keyboardController.setVirtualModifier('shift', true), true, gate);
+    if (gate === 'pending') Input._mobileSurfaceState = 'pending';
+    if (gate === 'composing') elements.get('mobileTextInput').listeners.get('compositionstart')({
+      target: elements.get('mobileTextInput'),
+    });
+    if (gate === 'uncertain') Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+
+    button.listeners.get('click')({ preventDefault() {} });
+
+    assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0, gate);
+    assert.equal(socketEvents.filter(({ event, payload }) => event === 'input'
+      && payload.type === 'keyboard' && payload.action === 'key'
+      && payload.payload.phase === 'up').length, 1, gate);
+  }
+});
+
+test('new virtual modifier remains denied while the surface is pending', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const button = makeElement();
+  button.dataset.mobileAction = 'shift';
+  context.document.querySelectorAll = () => [button];
+  Input.setupActionButtons();
+  Input._mobileSurfaceState = 'pending';
+  button.listeners.get('click')({ preventDefault() {} });
+
+  assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0);
+  assert.equal(socketEvents.some(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard'), false);
+});
+
+test('new virtual modifier remains denied when the desktop capability is inactive', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const button = makeElement();
+  button.dataset.mobileAction = 'shift';
+  context.document.querySelectorAll = () => [button];
+  Input.setupActionButtons();
+  Input.setActive(false, { resetKeyboard: false });
+  button.listeners.get('click')({ preventDefault() {} });
+
+  assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0);
+  assert.equal(socketEvents.some(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard'), false);
+});
+
 test('surface failure blocks text and keeps a keyboard reset ACK from clearing the veto', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   loadTouchAdapter(context);
@@ -1051,6 +1282,54 @@ test('surface ACK timeout remains uncertain after a late matching ACK', () => {
     assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
     Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: down.seq, inputIds: down.inputIds });
     Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: up.seq, inputIds: up.inputIds });
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+  });
+});
+
+test('surface confirmation does not timeout a long drag after down ACK', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    activate(Input, context);
+    Input.setupTextInput();
+    const surface = elements.get('remoteVideo');
+    Input.bindMouseEvents(surface);
+    surface.listeners.get('pointerdown')({
+      pointerType: 'mouse', pointerId: 9, clientX: 40, clientY: 40, button: 0, buttons: 1,
+      currentTarget: surface, preventDefault() {}, timeStamp: 1,
+    });
+    const down = socketEvents.filter(({ event, payload }) => event === 'input'
+      && payload.type === 'mouse' && payload.action === 'down').at(-1).payload;
+    Input.acceptMouseAck({
+      inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+      appliedSeq: down.seq, inputIds: down.inputIds,
+    });
+
+    callbacks[0]?.();
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  });
+});
+
+test('surface confirmation starts a fresh up timeout after down ACK', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    loadTouchAdapter(context);
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+    assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+    const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+    const down = writes.find(({ payload }) => payload.action === 'down').payload;
+
+    Input.acceptMouseAck({
+      inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+      appliedSeq: down.seq, inputIds: down.inputIds,
+    });
+    assert.equal(callbacks[0], null);
+    assert.equal(callbacks[1], null);
+    assert.equal(typeof callbacks.at(-1), 'function');
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+    callbacks.at(-1)?.();
     assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
   });
 });

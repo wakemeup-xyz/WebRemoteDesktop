@@ -596,7 +596,8 @@
     }
 
     function sendControlKey(key, modifiers = {}) {
-      if (!CONTROL_KEYS.has(key) || hasPending() || deliveryUncertain || !contextValid || !surfaceSettled()) return false;
+      if (!CONTROL_KEYS.has(key) || composing || hasPending()
+        || deliveryUncertain || !contextValid || !surfaceSettled()) return false;
       const flags = {
         shiftKey: Boolean(modifiers.shiftKey),
         ctrlKey: Boolean(modifiers.ctrlKey),

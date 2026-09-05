@@ -94,9 +94,17 @@
     };
     const queueWheel = (dx, dy, point) => { if (!pendingWheel) pendingWheel = { relX: point.relX, relY: point.relY, deltaX: 0, deltaY: 0 }; pendingWheel.relX = point.relX; pendingWheel.relY = point.relY; pendingWheel.deltaX += Number(dx) || 0; pendingWheel.deltaY += Number(dy) || 0; if (wheelFrame !== null) return; wheelFrame = requestFrame(flushWheel); };
     function pointerdown(event) {
-      if (event.pointerType !== 'touch' || !enabled() || resetSent || (event.isPrimary === false && pointers.size === 0)) return;
+      if (event.pointerType !== 'touch') return;
+      if (!enabled() || resetSent || (event.isPrimary === false && pointers.size === 0)) {
+        event.preventDefault?.();
+        return;
+      }
       const entryGeneration = generation;
-      if (pointers.size === 0 && !beforeGesture()) { clearGesture('before-gesture-rejected'); return; }
+      if (pointers.size === 0 && !beforeGesture()) {
+        event.preventDefault?.();
+        clearGesture('before-gesture-rejected');
+        return;
+      }
       if (pointers.size === 0 && generation !== entryGeneration) return;
       event.preventDefault?.();
       const point = mapped(event, false);
