@@ -1,4 +1,8 @@
-"""Contract test for the deterministic offline TURN encoder evidence probe."""
+"""Contract test for offline TURN encoder-quality evidence, not RTP timeline.
+
+The filename is retained as the Task 0 plan entry point. RTP timeline assertions
+belong to Task 1, when the timeline implementation exists.
+"""
 
 from __future__ import annotations
 
@@ -36,25 +40,85 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             evidence = json.loads(output.read_text())
 
+        self.assertTrue(
+            {
+                "policy",
+                "scope",
+                "input",
+                "versions",
+                "machine",
+                "runs",
+            }
+            <= evidence.keys()
+        )
         self.assertEqual(evidence["policy"], "relay-legacy-v1")
+        self.assertTrue(
+            {"randomSeed", "frameCount", "frameRate", "timeBase", "content", "font"}
+            <= evidence["input"].keys()
+        )
         self.assertEqual(evidence["input"]["randomSeed"], 20260905)
-        self.assertIn("font", evidence["input"])
-        self.assertIn("machine", evidence)
-        self.assertIn("pyav", evidence["versions"])
-        self.assertIn("aiortc", evidence["versions"])
+        self.assertEqual(evidence["input"]["frameCount"], 65)
+        self.assertEqual(evidence["input"]["frameRate"], 20)
+        self.assertEqual(evidence["input"]["timeBase"], "1/90000")
+        self.assertTrue({"requested", "resolved", "fallback"} <= evidence["input"]["font"].keys())
+        self.assertTrue({"pyav", "aiortc"} <= evidence["versions"].keys())
+        self.assertTrue({"platform", "machine", "python", "cpuCount"} <= evidence["machine"].keys())
 
         runs = evidence["runs"]
         self.assertEqual({tuple(run["resolution"]) for run in runs}, {(1152, 720), (1728, 1080)})
         for run in runs:
-            self.assertEqual(run["encoder"]["gopFrames"], 20)
-            self.assertEqual(run["encoder"]["vbvMs"], 100)
+            self.assertTrue({"resolution", "encoder", "frames", "summary"} <= run.keys())
+            self.assertEqual(len(run["resolution"]), 2)
+            self.assertTrue(all(isinstance(value, int) and value > 0 for value in run["resolution"]))
+
+            encoder = run["encoder"]
+            self.assertTrue(
+                {"codec", "bitrateBps", "gopFrames", "vbvKbits", "vbvMs", "x264Params"}
+                <= encoder.keys()
+            )
+            self.assertEqual(encoder["codec"], "libx264")
+            self.assertEqual(encoder["gopFrames"], 20)
+            self.assertEqual(encoder["vbvMs"], 100)
+            self.assertIsInstance(encoder["bitrateBps"], int)
+            self.assertGreater(encoder["bitrateBps"], 0)
+            self.assertIsInstance(encoder["vbvKbits"], int)
+            self.assertGreater(encoder["vbvKbits"], 0)
+            self.assertIn("vbv-bufsize=", encoder["x264Params"])
+
             self.assertEqual(len(run["frames"]), 65)
-            self.assertTrue(all({"index", "bytes", "idr", "psnr", "changeMAE", "encodeMs"} <= frame.keys() for frame in run["frames"]))
+            for index, frame in enumerate(run["frames"]):
+                self.assertTrue(
+                    {"index", "bytes", "idr", "psnr", "changeMAE", "encodeMs"}
+                    <= frame.keys()
+                )
+                self.assertEqual(frame["index"], index)
+                self.assertIsInstance(frame["bytes"], int)
+                self.assertGreater(frame["bytes"], 0)
+                self.assertIsInstance(frame["idr"], bool)
+                self.assertIsInstance(frame["psnr"], (int, float))
+                self.assertGreater(frame["psnr"], 0)
+                self.assertIsInstance(frame["changeMAE"], (int, float))
+                self.assertGreaterEqual(frame["changeMAE"], 0)
+                self.assertIsInstance(frame["encodeMs"], (int, float))
+                self.assertGreater(frame["encodeMs"], 0)
 
             periodic_idr_frames = [frame for frame in run["frames"] if frame["idr"] and frame["index"] > 0]
             self.assertEqual([frame["index"] for frame in periodic_idr_frames], [20, 40, 60])
             self.assertTrue(all(frame["changeMAE"] > 3.0 for frame in periodic_idr_frames))
             self.assertTrue(all(frame["psnr"] < 28.0 for frame in periodic_idr_frames))
+
+            summary = run["summary"]
+            self.assertTrue(
+                {"encodeMsMedian", "encodeMsP95", "idrFrames", "idrChangeMAE", "idrPsnr"}
+                <= summary.keys()
+            )
+            self.assertIsInstance(summary["encodeMsMedian"], (int, float))
+            self.assertIsInstance(summary["encodeMsP95"], (int, float))
+            self.assertGreater(summary["encodeMsMedian"], 0)
+            self.assertGreaterEqual(summary["encodeMsP95"], summary["encodeMsMedian"])
+            self.assertEqual(summary["idrFrames"], [0, 20, 40, 60])
+            self.assertEqual(len(summary["idrChangeMAE"]), len(summary["idrFrames"]))
+            self.assertEqual(len(summary["idrPsnr"]), len(summary["idrFrames"]))
 
 
 if __name__ == "__main__":
