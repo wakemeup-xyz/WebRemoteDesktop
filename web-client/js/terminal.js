@@ -237,6 +237,7 @@ const TerminalPanel = {
   attachedSessionIds: new Set(),
   pendingAttachSessionIds: new Map(),
   pendingCloseSessionIds: new Map(),
+  userDetachedSessionId: null,
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
@@ -272,7 +273,9 @@ const TerminalPanel = {
   poolCapacity: null,
   allowPolling: false,
   bootstrapAuthToken: null,
+  bootstrapAttemptToken: null,
   bootstrapPromisesByToken: new Map(),
+  bootstrapConnectionPromisesByToken: new Map(),
   transportLatency: new Map(),
   aliasedEvents: new Map(),
   aliasHitCounters: new Map(),
@@ -530,10 +533,31 @@ const TerminalPanel = {
   connectSocket() {
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
-    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token) {
-      return this.ensureTerminalBootstrap(token).then(() => {
+    const canConnectWithoutBootstrap = this.bootstrapAttemptToken === token;
+    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token && !canConnectWithoutBootstrap) {
+      const existingConnection = this.bootstrapConnectionPromisesByToken.get(token);
+      if (existingConnection) return existingConnection;
+
+      const connectionPromise = this.ensureTerminalBootstrap(token).then(() => {
         if (this.getAdminToken() === token) this.connectSocket();
       });
+      this.bootstrapConnectionPromisesByToken.set(token, connectionPromise);
+      connectionPromise.then(
+        () => {
+          if (this.bootstrapConnectionPromisesByToken.get(token) === connectionPromise) {
+            this.bootstrapConnectionPromisesByToken.delete(token);
+          }
+        },
+        () => {
+          if (this.bootstrapConnectionPromisesByToken.get(token) === connectionPromise) {
+            this.bootstrapConnectionPromisesByToken.delete(token);
+          }
+        },
+      );
+      return connectionPromise;
+    }
+    if (canConnectWithoutBootstrap) {
+      this.bootstrapAttemptToken = null;
     }
     const canReuseSocket = this.socket
       && this.socket.connected
@@ -1249,8 +1273,9 @@ const TerminalPanel = {
         // F-08: only cache successful bootstrap for this token.
         this.bootstrapAuthToken = token;
       } catch (err) {
-        // Apply websocket-only for this attempt, but do not cache success.
+        // Apply websocket-only for this connection, but do not cache success.
         this.applyBootstrap({ allowPolling: false });
+        this.bootstrapAttemptToken = token;
       } finally {
         this.bootstrapPromisesByToken.delete(token);
       }
@@ -1461,9 +1486,12 @@ const TerminalPanel = {
       }
     });
     const persistedLastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    const preferredSessionId = (persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null)
-      || payload.defaultSessionId
-      || this.state.activeSessionId();
+    const preferredSessionId = [
+      persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null,
+      liveSessionIds.has(payload.defaultSessionId) ? payload.defaultSessionId : null,
+      liveSessionIds.has(this.state.activeSessionId()) ? this.state.activeSessionId() : null,
+      sessions.find((session) => session?.sessionId && session.sessionId !== this.userDetachedSessionId)?.sessionId || null,
+    ].find((sessionId) => sessionId && sessionId !== this.userDetachedSessionId) || null;
     if (preferredSessionId) {
       this.state.setActive(preferredSessionId);
       this.persistActiveSessionId(preferredSessionId);
@@ -1560,6 +1588,10 @@ const TerminalPanel = {
     if (!session.sessionId) return;
     this.attachedSessionIds.delete(session.sessionId);
     this.pendingAttachSessionIds.delete(session.sessionId);
+    if (localStorage.getItem(LAST_ACTIVE_SESSION_KEY) === session.sessionId) {
+      this.persistActiveSessionId('');
+    }
+    this.userDetachedSessionId = session.sessionId;
     this.state.updateSession(session.sessionId, {
       ...session,
       presence: 'detached',
@@ -1733,6 +1765,9 @@ const TerminalPanel = {
   activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
     const activeSessionId = this.state.activeSessionId();
+    if (activeSessionId === sessionId && this.userDetachedSessionId === sessionId) {
+      this.userDetachedSessionId = null;
+    }
     this.persistActiveSessionId(activeSessionId || '');
     if (activeSessionId) {
       const alreadyAttached = this.attachedSessionIds.has(activeSessionId);

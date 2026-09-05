@@ -19,8 +19,9 @@ const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
 const CLEANUP_RETRY_DELAY_MS = 1000;
 const MAX_CLEANUP_RETRY_DELAY_MS = 60 * 1000;
-// Default 0 keeps unit tests fast; production may raise via terminalPtyKillWaitMs.
-const DEFAULT_PTY_KILL_WAIT_MS = 0;
+// node-pty reports process death asynchronously; leave enough budget for onExit
+// before treating a successful kill signal as an unconfirmed cleanup.
+const DEFAULT_PTY_KILL_WAIT_MS = 200;
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -356,6 +357,7 @@ function createTerminalSessionManager(options = {}) {
     if (Object.prototype.hasOwnProperty.call(exitInfo, 'signal')) {
       session.signal = exitInfo.signal;
     }
+    settleExitWaiters(session, true);
     if (typeof session.resolveExit === 'function') {
       session.resolveExit({
         exitCode: session.exitCode,
@@ -363,6 +365,13 @@ function createTerminalSessionManager(options = {}) {
       });
     }
     return true;
+  }
+
+  function settleExitWaiters(session, exited) {
+    if (!session.exitWaiters?.size) return;
+    for (const waiter of Array.from(session.exitWaiters)) {
+      waiter(exited);
+    }
   }
 
   function isPtyAlive(session) {
@@ -385,6 +394,12 @@ function createTerminalSessionManager(options = {}) {
     session.exitPromise = new Promise((resolve) => {
       session.resolveExit = resolve;
     });
+    // Keep one latch reaction per session. Individual waiters live in a
+    // removable Set so timed-out retries do not accumulate Promise reactions.
+    session.exitPromise.then(
+      () => settleExitWaiters(session, true),
+      () => settleExitWaiters(session, false),
+    );
     if (session.exitObserved && typeof session.resolveExit === 'function') {
       session.resolveExit({
         exitCode: session.exitCode,
@@ -401,7 +416,7 @@ function createTerminalSessionManager(options = {}) {
     }
     if (!session.pty || typeof session.pty.kill !== 'function') {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return { attempted: false, killed: true, attemptCount: session.killAttemptCount };
     }
 
@@ -428,7 +443,7 @@ function createTerminalSessionManager(options = {}) {
   async function runCleanupPtyEscalation(session) {
     if (session.killState === 'confirmed' || session.exitObserved || !isPtyAlive(session)) {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return {
         attempted: false,
         killed: true,
@@ -445,12 +460,41 @@ function createTerminalSessionManager(options = {}) {
       steps,
       waitMs: ptyKillWaitMs,
       isAlive: () => isPtyAlive(session),
-      waitForExit: async () => {
+      // `cleanupPtyWithEscalation` owns signal ordering. The exit budget is
+      // implemented here so the real onExit latch, rather than a single
+      // microtask, decides whether cleanup is confirmed.
+      delay: () => undefined,
+      waitForExit: (step = {}) => {
         if (session.exitObserved) {
           return true;
         }
-        await Promise.resolve();
-        return Boolean(session.exitObserved);
+        const waitMs = Math.max(0, Number(step.waitMs ?? ptyKillWaitMs) || 0);
+        if (waitMs <= 0) {
+          return false;
+        }
+        ensureExitLatch(session);
+        return new Promise((resolve) => {
+          let settled = false;
+          let timeout = null;
+          const settle = (exited) => {
+            if (settled) return;
+            settled = true;
+            session.exitWaiters.delete(settle);
+            if (timeout !== null) {
+              cancelTimeout(timeout);
+              timeout = null;
+            }
+            resolve(Boolean(exited));
+          };
+          session.exitWaiters.add(settle);
+          timeout = scheduleTimeout(() => settle(false), waitMs);
+          // A deterministic test timer may invoke its callback synchronously.
+          // Cancel the handle after assignment so that path cannot leak it.
+          if (settled && timeout !== null) {
+            cancelTimeout(timeout);
+            timeout = null;
+          }
+        });
       },
     });
 
@@ -480,7 +524,7 @@ function createTerminalSessionManager(options = {}) {
 
     if (result.killed || result.confirmed || session.exitObserved || !isPtyAlive(session)) {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return {
         attempted: Boolean(result.attempted),
         killed: true,
@@ -800,6 +844,7 @@ function createTerminalSessionManager(options = {}) {
       exitObserved: false,
       exitPromise: null,
       resolveExit: null,
+      exitWaiters: new Set(),
       cleanupPromise: null,
       killState: 'idle',
       killAttemptCount: 0,

@@ -21,7 +21,6 @@ test('safe quick tunnel script keeps supervising an existing tunnel pid instead 
 
   assert.match(source, /safe quick tunnel already running/);
   assert.doesNotMatch(source, /safe quick tunnel already running[\s\S]*exit 0/);
-  assert.match(source, /while true; do/);
   assert.match(source, /while kill -0 "\$PID" 2>\/dev\/null; do/);
   assert.match(source, /wait "\$PID" 2>\/dev\/null \|\| true/);
 });
@@ -32,7 +31,7 @@ test('safe quick tunnel script exposes poll intervals for supervision without ha
   assert.match(source, /URL_POLL_ATTEMPTS="\$\{URL_POLL_ATTEMPTS:-45\}"/);
   assert.match(source, /URL_POLL_INTERVAL_SECONDS="\$\{URL_POLL_INTERVAL_SECONDS:-1\}"/);
   assert.match(source, /WATCH_INTERVAL_SECONDS="\$\{WATCH_INTERVAL_SECONDS:-15\}"/);
-  assert.match(source, /RESTART_DELAY_SECONDS="\$\{RESTART_DELAY_SECONDS:-2\}"/);
+  assert.doesNotMatch(source, /RESTART_DELAY_SECONDS/);
 });
 
 test('safe quick tunnel script restores the safe URL file from an existing live tunnel before failing', () => {
@@ -72,14 +71,6 @@ test('safe quick tunnel publishes current and archive URL files atomically', () 
   assert.match(source, /mv "\$archive_tmp" "\$URL_ARCHIVE_FILE"/);
 });
 
-test('safe quick tunnel script restarts when the published URL stays unreachable for too long', () => {
-  const source = fs.readFileSync(scriptPath, 'utf8');
-
-  assert.match(source, /UNREACHABLE_URL_FAIL_LIMIT/);
-  assert.match(source, /url unreachable too long, restarting/);
-  assert.match(source, /rm -f "\$URL_FILE"/);
-});
-
 test('safe quick tunnel isolates cloudflared from named-tunnel config and token env', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
@@ -97,4 +88,21 @@ test('safe quick tunnel isolates cloudflared from named-tunnel config and token 
   // Named-tunnel `tunnel run` / credentials-file path must stay out of this script.
   assert.doesNotMatch(source, /tunnel run\b/);
   assert.doesNotMatch(source, /credentials-file/);
+});
+
+test('startup documentation shares one quick-tunnel prohibition sentence', () => {
+  const root = path.join(__dirname, '..');
+  const sentence =
+    '如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。';
+  for (const file of [
+    'README.md',
+    'docs/runbook-safe-startup.md',
+    'docs/需求文档/WebRemoteDesktop-需求文档.md',
+  ]) {
+    assert.equal(
+      fs.readFileSync(path.join(root, file), 'utf8').includes(sentence),
+      true,
+      `${file} should contain the canonical sentence`,
+    );
+  }
 });

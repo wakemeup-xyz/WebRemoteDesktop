@@ -11,8 +11,6 @@ test('safe startup script stays repo-scoped and avoids global cleanup', () => {
 
   assert.match(source, /cd \"\$PROJECT_DIR\/signal-server\"/);
   assert.match(source, /nohup \"\$NODE_BIN\" server\.js/);
-  assert.match(source, /lib-tunnel-launchctl\.sh/);
-  assert.match(source, /wrd_tunnel_launchctl_start/);
   assert.match(source, /wrd-safe-current-url\.txt/);
   assert.doesNotMatch(source, /pkill\b/);
   assert.match(source, /127\.0\.0\.1:8080\/health/);
@@ -40,13 +38,24 @@ test('safe startup script prints explicit 8080 entrypoint guidance', () => {
   assert.match(source, /safe url:/);
 });
 
-test('safe startup script validates the current safe URL before reusing a running tunnel', () => {
+test('safe startup script validates the current safe URL without restarting an inaccessible tunnel', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(source, /wrd_safe_url_is_reachable/);
-  assert.match(source, /current safe url is unreachable|safe tunnel url unreachable/i);
-  assert.match(source, /restart-safe-tunnel\.sh/);
-  assert.match(source, /SAFE_TUNNEL_PID="\/tmp\/wrd-safe-quicktunnel\.pid"/);
+  assert.match(source, /lib-safe-startup\.sh/);
+  assert.match(source, /wrd_safe_startup_tunnel/);
+  assert.match(source, /wrd_tunnel_launchctl_migrate_legacy_autostart/);
+  assert.doesNotMatch(source, /restart-safe-tunnel\.sh/);
+  assert.doesNotMatch(source, /wrd_tunnel_launchctl_start/);
+  assert.match(source, /not restarting.*automatically/i);
+});
+
+test('safe startup script reports a missing tunnel without starting a replacement', () => {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+
+  assert.match(source, /lib-safe-startup\.sh/);
+  assert.match(source, /wrd_safe_startup_tunnel/);
+  assert.doesNotMatch(source, /wrd_tunnel_launchctl_start/);
 });
 
 test('safe startup script prints formal entry first and marks quick tunnel as debug-only', () => {

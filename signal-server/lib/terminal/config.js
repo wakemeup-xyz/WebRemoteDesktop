@@ -8,6 +8,7 @@ const LIMITS = Object.freeze({
   replayBufferBytes: [1024, 8 * 1024 * 1024],
   idleTimeoutMs: [0, 24 * 60 * 60 * 1000],
   startupTimeoutMs: [1000, 120000],
+  ptyKillWaitMs: [0, 120000],
   inputBytesPerSecond: [1024, 1024 * 1024],
   inputBurstBytes: [1024, 2 * 1024 * 1024],
   maxObserverQueueBytes: [64 * 1024, 8 * 1024 * 1024],
@@ -112,6 +113,12 @@ function parseTerminalConfig(env = process.env) {
       env.WRD_TERMINAL_STARTUP_TIMEOUT_MS,
       LIMITS.startupTimeoutMs,
       10000,
+    ),
+    ptyKillWaitMs: boundedInt(
+      'WRD_TERMINAL_PTY_KILL_WAIT_MS',
+      env.WRD_TERMINAL_PTY_KILL_WAIT_MS,
+      LIMITS.ptyKillWaitMs,
+      200,
     ),
     inputRate: {
       bytesPerSecond: boundedInt(

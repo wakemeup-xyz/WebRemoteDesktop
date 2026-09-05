@@ -47,7 +47,31 @@ wrd_fixed_formal_health_ok() {
 }
 
 wrd_fixed_count_formal_owners() {
-  ps -axo pid=,command= | awk '/[c]loudflared/ && /tunnel/ && /--config/ && / run / {count++} END {print count+0}'
+  local process_list=""
+  if ! process_list="$(ps -axo pid=,command= 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s\n' "$process_list" | awk '/[c]loudflared/ && /tunnel/ && /--config/ && / run / {count++} END {print count+0}'
+}
+
+# Token-authenticated cloudflared processes are outside the managed
+# credentials-file lifecycle. Keep them identifiable without printing argv
+# (which may contain the secret), so callers can fail closed before submit.
+wrd_fixed_count_token_connectors() {
+  local process_list=""
+  if ! process_list="$(ps -axo pid=,command= 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s\n' "$process_list" | awk '
+    /[c]loudflared/ &&
+    /(^|[[:space:]])tunnel([[:space:]]|$)/ &&
+    /(^|[[:space:]])--token([=[:space:]]|$)/ { count++ }
+    END { print count + 0 }
+  '
+}
+
+wrd_fixed_has_token_connector() {
+  [ "$(wrd_fixed_count_token_connectors)" -gt 0 ]
 }
 
 wrd_fixed_stop_connector() {

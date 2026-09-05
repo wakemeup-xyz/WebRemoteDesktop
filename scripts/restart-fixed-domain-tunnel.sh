@@ -5,14 +5,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-fixed-domain.sh
 source "$SCRIPT_DIR/lib-fixed-domain.sh"
 
-wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
-wrd_fixed_unset_tunnel_token
+if ! token_connectors="$(wrd_fixed_count_token_connectors)"; then
+  echo "refusing restart: unable to inspect cloudflared processes; no managed connector submit" >&2
+  exit 2
+fi
+if [ "$token_connectors" -gt 0 ]; then
+  echo "refusing restart: existing cloudflared --token connector(s) detected ($token_connectors); no managed connector submit" >&2
+  exit 2
+fi
 
-owners="$(wrd_fixed_count_formal_owners || true)"
+if ! owners="$(wrd_fixed_count_formal_owners)"; then
+  echo "refusing restart: unable to inspect formal cloudflared owners; no managed connector submit" >&2
+  exit 2
+fi
+if ! [[ "$owners" =~ ^[0-9]+$ ]]; then
+  echo "refusing restart: formal owner inspection returned invalid data; no managed connector submit" >&2
+  exit 2
+fi
 if [ "${owners:-0}" -gt 1 ]; then
   echo "refusing restart: multiple formal owners ($owners); run fixed-tunnel-preflight.sh" >&2
   exit 2
 fi
+
+wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
+wrd_fixed_unset_tunnel_token
 
 echo "=== restarting formal connector $WRD_FIXED_TUNNEL_NAME ==="
 wrd_fixed_stop_connector

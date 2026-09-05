@@ -1445,6 +1445,136 @@ test('TerminalPanel distinguishes observer role and makes detach non-destructive
   assert.equal(TerminalPanel.state.getSession('term-shared').presence, 'detached');
 });
 
+test('TerminalPanel keeps an explicitly detached session out of pool snapshot reattach until tab selection', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.ensureSession({
+    sessionId: 'term-user-detached',
+    title: 'User detached shell',
+    status: 'attached',
+    presence: 'attached',
+    processStatus: 'running',
+  }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term-user-detached');
+  TerminalPanel.activateSession('term-user-detached', { announce: false });
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-user-detached');
+
+  assert.equal(TerminalPanel.detachSession('term-user-detached'), true);
+  socketHandlers.get('terminal:session_detached')({
+    sessionId: 'term-user-detached',
+    presence: 'detached',
+  });
+
+  const attachCountAfterDetach = emitted.filter((entry) => entry.event === 'terminal:attach_session').length;
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term-user-detached',
+    sessions: [{
+      sessionId: 'term-user-detached',
+      title: 'User detached shell',
+      status: 'detached',
+      presence: 'detached',
+      processStatus: 'running',
+    }],
+  });
+
+  assert.equal(TerminalPanel.userDetachedSessionId, 'term-user-detached');
+  assert.equal(localStorageMap.has('wrd_terminal_last_active_session_id'), false);
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session').length,
+    attachCountAfterDetach,
+  );
+
+  TerminalPanel.activateSession('term-user-detached', { announce: false });
+
+  assert.equal(TerminalPanel.userDetachedSessionId, null);
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-user-detached');
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session').length,
+    attachCountAfterDetach + 1,
+  );
+});
+
+test('TerminalPanel selects another live session when the detached session remains the snapshot default', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.ensureSession({
+    sessionId: 'term-detached-default',
+    title: 'Detached default shell',
+    status: 'attached',
+    presence: 'attached',
+    processStatus: 'running',
+  }, { activate: true });
+  TerminalPanel.ensureSession({
+    sessionId: 'term-live-alternative',
+    title: 'Live alternative shell',
+    status: 'detached',
+    presence: 'detached',
+    processStatus: 'running',
+  });
+  TerminalPanel.attachedSessionIds.add('term-detached-default');
+  TerminalPanel.activateSession('term-detached-default', { announce: false });
+
+  assert.equal(TerminalPanel.detachSession('term-detached-default'), true);
+  socketHandlers.get('terminal:session_detached')({
+    sessionId: 'term-detached-default',
+    presence: 'detached',
+  });
+  assert.equal(localStorageMap.has('wrd_terminal_last_active_session_id'), false);
+
+  const attachCountBeforeSnapshot = emitted.filter((entry) => entry.event === 'terminal:attach_session').length;
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term-detached-default',
+    sessions: [
+      {
+        sessionId: 'term-detached-default',
+        title: 'Detached default shell',
+        status: 'detached',
+        presence: 'detached',
+        processStatus: 'running',
+      },
+      {
+        sessionId: 'term-live-alternative',
+        title: 'Live alternative shell',
+        status: 'detached',
+        presence: 'detached',
+        processStatus: 'running',
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    emitted.slice(attachCountBeforeSnapshot).filter((entry) => entry.event === 'terminal:attach_session')
+      .map((entry) => entry.payload.sessionId),
+    ['term-live-alternative'],
+  );
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-live-alternative');
+});
+
+test('TerminalPanel preserves a nonmatching persisted active session when another session detaches', () => {
+  const { TerminalPanel, localStorageMap } = loadTerminal();
+  TerminalPanel.cacheElements();
+  TerminalPanel.ensureSession({ sessionId: 'term-detached', title: 'Detached shell' }, { activate: true });
+  localStorageMap.set('wrd_terminal_last_active_session_id', 'term-kept');
+
+  TerminalPanel.handleSessionDetached({
+    sessionId: 'term-detached',
+    presence: 'detached',
+  });
+
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-kept');
+  assert.equal(TerminalPanel.userDetachedSessionId, 'term-detached');
+});
+
 test('TerminalPanel auto-attaches the default shared session from a fresh pool snapshot', () => {
   const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');
@@ -3098,6 +3228,49 @@ test('TerminalPanel does not cache bootstrapAuthToken on failed bootstrap and re
   assert.equal(bootstrapCalls, 2);
   assert.equal(TerminalPanel.bootstrapAuthToken, 'tok-a');
   assert.equal(TerminalPanel.allowPolling, true);
+});
+
+test('TerminalPanel deduplicates concurrent websocket-only fallback after bootstrap HTTP 500', async () => {
+  let bootstrapCalls = 0;
+  const ioCalls = [];
+  let markSocketCreated;
+  const socketCreated = new Promise((resolve) => {
+    markSocketCreated = resolve;
+  });
+  const { TerminalPanel, sessionStorageMap, tokenKey } = loadTerminal({
+    fetch: async (url) => {
+      if (!String(url).endsWith('/api/terminal/bootstrap')) {
+        return { ok: true, json: async () => ({}) };
+      }
+      bootstrapCalls += 1;
+      if (bootstrapCalls === 1) {
+        return { ok: false, status: 500, json: async () => ({ error: 'unavailable' }) };
+      }
+      return new Promise(() => {});
+    },
+    io: (url, options) => {
+      ioCalls.push({ url, options });
+      markSocketCreated();
+      return createSocketDouble();
+    },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+
+  const connectPromises = [
+    TerminalPanel.connectSocket(),
+    TerminalPanel.connectSocket(),
+    TerminalPanel.connectSocket(),
+  ];
+  await socketCreated;
+
+  assert.ok(bootstrapCalls > 0, 'bootstrap endpoint should be attempted');
+  assert.equal(bootstrapCalls, 1);
+  assert.equal(ioCalls.length, 1);
+  assert.ok(bootstrapCalls <= 2, `expected <=2 bootstrap calls, got ${bootstrapCalls}`);
+  assert.equal(connectPromises[0], connectPromises[1]);
+  assert.equal(connectPromises[1], connectPromises[2]);
+  assert.deepEqual(Array.from(ioCalls[0].options.transports), ['websocket']);
+  assert.equal(ioCalls[0].options.auth.token, 'admin-token');
 });
 
 test('TerminalPanel does not reuse in-flight bootstrap promise across different tokens', async () => {
