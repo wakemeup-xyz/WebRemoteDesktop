@@ -16,6 +16,7 @@ import re
 import statistics
 import sys
 import time
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -96,24 +97,50 @@ def percentile_95(values: list[float]) -> float:
     return sorted(values)[math.ceil(len(values) * 0.95) - 1]
 
 
-def evaluate_resolution(width: int, height: int, font: ImageFont.ImageFont) -> dict[str, Any]:
-    """Encode and decode a fixed frame sequence with the active legacy policy."""
+def evaluate_resolution(
+    width: int,
+    height: int,
+    font: ImageFont.ImageFont,
+    *,
+    policy_id: str = "relay-legacy-v1",
+    periodic_idr_frames: int | None = None,
+    vbv_buffer_ms: int | None = None,
+    target_bitrate_bps: int | None = None,
+    frame_count: int = FRAME_COUNT,
+    on_demand_idr_frame: int | None = None,
+) -> dict[str, Any]:
+    """Encode deterministic candidate parameters without any desktop or network path."""
     source = make_static_text_frame(width, height, font)
     policy = resolve_h264_policy(
         MediaSessionIntent("offline-probe", 1, "relay", width, height, FRAME_RATE, 0),
-        "relay-legacy-v1",
+        policy_id,
+    )
+    policy = replace(
+        policy,
+        periodic_idr_frames=(
+            policy.periodic_idr_frames
+            if periodic_idr_frames is None
+            else int(periodic_idr_frames)
+        ),
+        vbv_buffer_ms=(policy.vbv_buffer_ms if vbv_buffer_ms is None else int(vbv_buffer_ms)),
+        target_bitrate_bps=(
+            policy.target_bitrate_bps
+            if target_bitrate_bps is None
+            else int(target_bitrate_bps)
+        ),
     )
     encoder = H264VideoToolboxEncoder(policy=policy)
     decoder = av.CodecContext.create("h264", "r")
     previous: np.ndarray | None = None
     frames: list[dict[str, Any]] = []
 
-    for index in range(FRAME_COUNT):
+    for index in range(int(frame_count)):
         frame = av.VideoFrame.from_ndarray(source, format="rgb24")
         frame.pts = index * (90_000 // FRAME_RATE)
         frame.time_base = Fraction(1, 90_000)
         started = time.perf_counter()
-        nals = list(encoder._encode_frame(frame, False))
+        forced_by_probe = on_demand_idr_frame is not None and index == on_demand_idr_frame
+        nals = list(encoder._encode_frame(frame, forced_by_probe))
         encode_ms = (time.perf_counter() - started) * 1000
         bitstream = b"".join(b"\x00\x00\x00\x01" + nal for nal in nals)
         decoded = decoder.decode(av.Packet(bitstream))
@@ -130,6 +157,15 @@ def evaluate_resolution(width: int, height: int, font: ImageFont.ImageFont) -> d
                 "psnr": round(10 * math.log10(255**2 / max(mse, 1e-9)), 3),
                 "changeMAE": round(change_mae, 3),
                 "encodeMs": round(encode_ms, 3),
+                "idrKind": (
+                    "on-demand-probe"
+                    if forced_by_probe and bitstream_contains_idr(bitstream)
+                    else "initial"
+                    if index == 0 and bitstream_contains_idr(bitstream)
+                    else "periodic"
+                    if bitstream_contains_idr(bitstream)
+                    else None
+                ),
             }
         )
         previous = output
@@ -146,6 +182,9 @@ def evaluate_resolution(width: int, height: int, font: ImageFont.ImageFont) -> d
             "idrFrames": [frame["index"] for frame in frames if frame["idr"]],
             "idrChangeMAE": [frame["changeMAE"] for frame in frames if frame["idr"]],
             "idrPsnr": [frame["psnr"] for frame in frames if frame["idr"]],
+            "onDemandIdrPsnr": [
+                frame["psnr"] for frame in frames if frame["idrKind"] == "on-demand-probe"
+            ],
         },
     }
 

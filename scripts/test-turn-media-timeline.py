@@ -7,6 +7,7 @@ belong to Task 1, when the timeline implementation exists.
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -18,7 +19,101 @@ ROOT = Path(__file__).resolve().parents[1]
 EVALUATOR = ROOT / "scripts" / "eval-turn-encoder-quality.py"
 
 
+def _load_evaluator_module():
+    spec = importlib.util.spec_from_file_location("turn_encoder_evaluator", EVALUATOR)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load evaluator from {EVALUATOR}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TurnEncoderQualityEvidenceTest(unittest.TestCase):
+    def test_relay_selection_keeps_legacy_default_until_runtime_gates_run(self) -> None:
+        """An offline winner is a runtime-validation candidate, never a default flip."""
+        evaluator = _load_evaluator_module()
+
+        selected = evaluator.select_relay_candidate(
+            [
+                {
+                    "id": "fails-quality",
+                    "offline": {"status": "FAIL"},
+                    "runtime": {"status": "NOT RUN"},
+                },
+                {
+                    "id": "first-offline-winner",
+                    "offline": {"status": "PASS"},
+                    "runtime": {"status": "NOT RUN"},
+                },
+                {
+                    "id": "later-offline-winner",
+                    "offline": {"status": "PASS"},
+                    "runtime": {"status": "NOT RUN"},
+                },
+            ]
+        )
+
+        self.assertEqual(selected["status"], "candidate-selected-for-runtime-validation")
+        self.assertEqual(selected["candidateId"], "first-offline-winner")
+        self.assertEqual(selected["defaultPolicy"], "relay-legacy-v1")
+        self.assertEqual(selected["runtimeGateStatus"], "NOT RUN")
+
+    def test_relay_matrix_records_two_resolution_offline_gates_without_faking_runtime_proof(self) -> None:
+        """Matrix evidence must preserve the boundary between offline and relay proof."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "relay-matrix.json"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(EVALUATOR),
+                    "--matrix",
+                    "relay",
+                    "--output",
+                    str(output),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            evidence = json.loads(output.read_text())
+
+        self.assertEqual(evidence["kind"], "relay-encoder-quality-matrix")
+        self.assertEqual(evidence["defaultPolicy"], "relay-legacy-v1")
+        self.assertGreaterEqual(len(evidence["candidates"]), 1)
+        self.assertIn(evidence["selection"]["status"], {
+            "candidate-selected-for-runtime-validation",
+            "stopped-at-legacy",
+        })
+
+        for candidate in evidence["candidates"]:
+            self.assertTrue({"id", "parameters", "offline", "runtime"} <= candidate.keys())
+            self.assertEqual(candidate["runtime"]["status"], "NOT RUN")
+            self.assertEqual(
+                candidate["runtime"]["gates"],
+                {
+                    "viewerBufferAndDecodeContinuity": "NOT RUN",
+                    "hostEventLoopAndInputAck": "NOT RUN",
+                    "finiteLossRecovery": "NOT RUN",
+                },
+            )
+            if candidate["offline"]["status"] == "NOT RUN":
+                self.assertIn("stopReason", candidate["offline"])
+                continue
+            resolution_gates = candidate["offline"]["resolutionGates"]
+            self.assertEqual(set(resolution_gates), {"1152x720", "1728x1080"})
+            for gates in resolution_gates.values():
+                self.assertTrue(
+                    {
+                        "qualityPulse",
+                        "periodicIdrQuality",
+                        "onDemandIdrPsnr",
+                        "encodeBudget",
+                    }
+                    <= gates.keys()
+                )
+
     def test_legacy_policy_reports_reproducible_idr_quality_pulse_evidence(self) -> None:
         """A policy/encoder change should fail this contract if baseline evidence drifts."""
         with tempfile.TemporaryDirectory() as temporary_directory:

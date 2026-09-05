@@ -56,3 +56,30 @@ not be inferred from local health checks or an offline probe.
 | Full automated regression | Python and Node suites, including canonical FPS and merged keyframe-request behavior, pass | PENDING |
 | Local relay browser acceptance | `http://127.0.0.1:8080` session manually selects external relay and proves selected candidate pair is relay | NOT RUN |
 | Public and physical-device acceptance | Formal public entry plus real device/browser media, paint, input, and recovery observations | NOT RUN |
+
+## Task 6 offline relay matrix (2026-09-06)
+
+The reproducible matrix is stored in
+`docs/superpowers/reports/evidence/2026-09-05-turn-quality/relay-balanced-v2-matrix.json`.
+It used only the deterministic synthetic text encoder probe; it did not start a
+Host, open a browser, allocate TURN, inject packet loss, or generate an input
+ack. The JSON therefore records every real relay/runtime gate as `NOT RUN`.
+
+The first conservative row changed only the periodic-IDR cadence from the legacy
+20 frames to 40 frames (two seconds), while retaining the current per-resolution
+bitrates and 100ms VBV:
+
+| Resolution | 0.8-1.5s pulse | Periodic IDR `changeMAE <= 3.0` | On-demand IDR PSNR >=28dB | Encode p95 budget |
+|---|---|---|---|---|
+| 1152x720 | PASS (IDR at frame 40) | FAIL (17.372) | FAIL (17.540dB) | PASS (6.794ms / <=25ms) |
+| 1728x1080 | PASS (IDR at frame 40) | FAIL (11.496) | FAIL (19.298dB) | PASS (13.666ms / <=45ms) |
+
+Because that row failed the two image-quality gates, the matrix stops there.
+The 150/200ms VBV, cap-bitrate, 4/10-second GOP, and on-demand-only rows are
+recorded with their exact parameters and `NOT RUN` stop reasons; no failed value
+was compounded into another candidate. `relay-balanced-v2` has no selected
+parameter set, and `relay-legacy-v1` remains the default. This is a stop result,
+not a claim that the periodic quality issue is fixed.
+
+The Viewer buffer/decode-continuity, Host event-loop/input-ack, and finite-loss
+recovery gates remain `NOT RUN` pending the Task 9 real selected-relay path.
