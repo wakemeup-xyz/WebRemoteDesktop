@@ -14,14 +14,21 @@ if [ "$token_connectors" -gt 0 ]; then
   exit 2
 fi
 
-wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
-wrd_fixed_unset_tunnel_token
-
-owners="$(wrd_fixed_count_formal_owners || true)"
+if ! owners="$(wrd_fixed_count_formal_owners)"; then
+  echo "refusing restart: unable to inspect formal cloudflared owners; no managed connector submit" >&2
+  exit 2
+fi
+if ! [[ "$owners" =~ ^[0-9]+$ ]]; then
+  echo "refusing restart: formal owner inspection returned invalid data; no managed connector submit" >&2
+  exit 2
+fi
 if [ "${owners:-0}" -gt 1 ]; then
   echo "refusing restart: multiple formal owners ($owners); run fixed-tunnel-preflight.sh" >&2
   exit 2
 fi
+
+wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
+wrd_fixed_unset_tunnel_token
 
 echo "=== restarting formal connector $WRD_FIXED_TUNNEL_NAME ==="
 wrd_fixed_stop_connector

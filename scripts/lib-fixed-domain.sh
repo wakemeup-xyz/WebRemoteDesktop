@@ -47,7 +47,11 @@ wrd_fixed_formal_health_ok() {
 }
 
 wrd_fixed_count_formal_owners() {
-  ps -axo pid=,command= | awk '/[c]loudflared/ && /tunnel/ && /--config/ && / run / {count++} END {print count+0}'
+  local process_list=""
+  if ! process_list="$(ps -axo pid=,command= 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s\n' "$process_list" | awk '/[c]loudflared/ && /tunnel/ && /--config/ && / run / {count++} END {print count+0}'
 }
 
 # Token-authenticated cloudflared processes are outside the managed

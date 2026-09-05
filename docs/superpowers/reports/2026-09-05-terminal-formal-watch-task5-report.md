@@ -113,3 +113,43 @@ bootstrap/enable/kickstart lifecycle.
   service/tunnel endurance.
 
 No runtime or public-path conclusion is inferred from these fixture tests.
+
+## Final integrated safety wave
+
+The final review closed four boundary gaps without operating any real service
+or tunnel:
+
+- A live safe quick-tunnel PID now prefers its newest log URL over stale or
+  missing current/archive files, and republishes it only after the existing
+  health gate and atomic file publication. It does not stop, kill, spawn, or
+  rotate that connector.
+- Formal-watch lock acquisition distinguishes active initialization from an
+  abandoned mkdir-before-PID crash. Empty locks are reclaimable after a
+  process check, incomplete markers expire after a bounded grace period, and
+  only the current owner removes its metadata.
+- `kill -0` probes are tri-state (`live`, `dead`, `unknown`); `EPERM` and other
+  unclassifiable failures preserve the lock and prevent a second watcher.
+- Formal-owner `ps` failures propagate through both watcher and managed
+  restart paths, which record/return a non-secret skip instead of submitting a
+  second connector.
+- Legacy LaunchAgent migration now reports `disable`/`bootout` failures and
+  stops safe startup before local service or tunnel actions; it never claims
+  `safe wrd ready` after an incomplete migration.
+
+Fresh verification:
+
+```text
+node --test scripts/*.test.js
+→ 111 passed, 0 failed
+
+node --test signal-server/test/terminal-*.test.js signal-server/lib/terminal/*.test.js signal-server/websocket/terminal.test.js web-client/js/terminal*.test.js web-client/js/shell-guard.test.js
+→ 292 passed, 0 failed
+
+bash -n scripts/watch-fixed-domain.sh scripts/lib-fixed-domain.sh scripts/run-safe-quicktunnel.sh scripts/lib-tunnel-launchctl.sh scripts/start-safe-wrd.sh scripts/restart-fixed-domain-tunnel.sh
+git diff --check
+→ exit 0; no whitespace output
+```
+
+The live, physical, public-domain, LaunchAgent, and endurance acceptance rows
+remain **NOT RUN**. The executable tests use fake PATH commands and temporary
+state files only.

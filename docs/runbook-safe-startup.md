@@ -41,6 +41,7 @@ Tunnel 操作语义：
 - `重启服务` 不得被解释为重建 quick tunnel；在 tunnel 仍存活时，重启本地服务不应改变 `/tmp/wrd-safe-current-url.txt`
 - 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 - `status-safe-wrd.sh` 发现 cloudflared argv 含 `--token` 时只输出固定安全告警；不得打印 token、停止进程或执行 `launchctl remove`
+- 普通启动发现旧版 quick-tunnel LaunchAgent 时，`disable` 或 `bootout` 任一迁移操作失败都会明确报错并停止后续本地服务启动；不得输出 `safe wrd ready`，也不得把迁移失败当作 tunnel 已恢复。
 
 ## 目标
 

@@ -53,8 +53,19 @@ wrd_tunnel_launchctl_migrate_legacy_autostart() {
   fi
 
   echo "disabling loaded legacy quick-tunnel LaunchAgent: $service"
-  launchctl disable "$service" 2>/dev/null || true
-  launchctl bootout "$WRD_TUNNEL_DOMAIN" "$WRD_LEGACY_TUNNEL_PLIST_DST" 2>/dev/null || true
+  local migration_failed=0
+  if ! launchctl disable "$service" 2>/dev/null; then
+    echo "legacy quick-tunnel migration disable failed: $service" >&2
+    migration_failed=1
+  fi
+  if ! launchctl bootout "$WRD_TUNNEL_DOMAIN" "$WRD_LEGACY_TUNNEL_PLIST_DST" 2>/dev/null; then
+    echo "legacy quick-tunnel migration bootout failed: $service" >&2
+    migration_failed=1
+  fi
+  if [ "$migration_failed" -ne 0 ]; then
+    echo "legacy quick-tunnel migration incomplete; preserving tunnel state" >&2
+    return 2
+  fi
 }
 
 wrd_tunnel_launchctl_install() {

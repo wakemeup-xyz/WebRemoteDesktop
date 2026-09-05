@@ -18,7 +18,10 @@ cd "$PROJECT_DIR"
 # Migrate a loaded legacy quick-tunnel LaunchAgent before local services start.
 # This only disables/boots out that old auto job; explicit tunnel rebuild is
 # owned by the explicit restart command.
-wrd_tunnel_launchctl_migrate_legacy_autostart
+if ! wrd_tunnel_launchctl_migrate_legacy_autostart; then
+  echo 'legacy quick-tunnel migration failed; no local service or tunnel action was started' >&2
+  exit 2
+fi
 
 start_signal() {
   local existing_pid=""

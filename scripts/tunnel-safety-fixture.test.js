@@ -26,6 +26,12 @@ printf '%s\\n' "$*" >> "$WRD_LAUNCHCTL_LOG"
 if [ "$1" = "print" ] && [ "\${WRD_FAKE_LAUNCHCTL_PRINT:-}" != "loaded" ]; then
   exit 1
 fi
+if [ "$1" = "disable" ] && [ "\${WRD_FAKE_LAUNCHCTL_DISABLE_FAIL:-}" = "1" ]; then
+  exit 1
+fi
+if [ "$1" = "bootout" ] && [ "\${WRD_FAKE_LAUNCHCTL_BOOTOUT_FAIL:-}" = "1" ]; then
+  exit 1
+fi
 exit 0
 `,
   );
@@ -89,6 +95,16 @@ exit 1
       if [ -n "\${WRD_KILL_STATE_FILE:-}" ] && [ ! -e "\${WRD_KILL_STATE_FILE}" ]; then
         : > "\${WRD_KILL_STATE_FILE}"
       fi
+      return 0
+    fi
+    if [ "\${WRD_FAKE_KILL_ZERO:-}" = "live-then-dead" ]; then
+      count=0
+      if [ -n "\${WRD_KILL_CHECK_COUNT_FILE:-}" ] && [ -f "\${WRD_KILL_CHECK_COUNT_FILE}" ]; then
+        count=$(cat "\${WRD_KILL_CHECK_COUNT_FILE}")
+      fi
+      count=$((count + 1))
+      if [ -n "\${WRD_KILL_CHECK_COUNT_FILE:-}" ]; then printf '%s' "$count" > "\${WRD_KILL_CHECK_COUNT_FILE}"; fi
+      if [ "$count" -gt 2 ]; then return 1; fi
       return 0
     fi
     if [ "\${WRD_FAKE_KILL_ZERO:-}" = "false" ]; then return 1; fi
@@ -219,6 +235,33 @@ test('executable safe startup disables and boots out a loaded legacy true/true j
   }
 });
 
+test('executable safe startup flags a failed legacy migration and does not claim ready', () => {
+  for (const failure of ['disable', 'bootout']) {
+    const fixture = makeFixture();
+    const plistPath = installTunnelPlist(fixture, true, true);
+    try {
+      const result = runExecutable(startSafePath, fixture, {
+        ...startSafeEnv(fixture),
+        [`WRD_FAKE_LAUNCHCTL_${failure.toUpperCase()}_FAIL`]: '1',
+      });
+      const output = combinedOutput(result);
+      assert.equal(result.status, 2, `${failure}: ${output}`);
+      assert.match(output, new RegExp(`migration ${failure} failed`));
+      assert.match(output, /migration failed; no local service or tunnel action was started/);
+      assert.doesNotMatch(output, /safe wrd ready/);
+      assert.deepEqual(readLines(fixture.launchctlLog), [
+        `print gui/${process.getuid()}/com.webremotedesktop.tunnel`,
+        `disable gui/${process.getuid()}/com.webremotedesktop.tunnel`,
+        `bootout gui/${process.getuid()} ${plistPath}`,
+      ]);
+      assert.deepEqual(readLines(fixture.mutationLog), []);
+      assert.deepEqual(readLines(fixture.spawnLog), []);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('executable safe startup preserves a loaded job when plist inspection fails', () => {
   const fixture = makeFixture();
   prepareExistingLocalState(fixture);
@@ -289,6 +332,48 @@ exit 1
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
+  }
+});
+
+test('executable live tunnel republishes the newest log URL without replacing the connector', () => {
+  const fixture = makeFixture();
+  const staleUrl = 'https://stale.trycloudflare.com\n';
+  const freshUrl = 'https://fresh.trycloudflare.com\n';
+  const logFile = path.join(fixture.root, 'quicktunnel.log');
+  const pidFile = path.join(fixture.root, 'quicktunnel.pid');
+  const stateFile = path.join(fixture.root, 'kill-state');
+  fs.writeFileSync(fixture.urlFile, staleUrl);
+  fs.writeFileSync(fixture.archiveFile, staleUrl);
+  fs.writeFileSync(
+    logFile,
+    'INFO previous\nYour quick Tunnel has been created! https://old.trycloudflare.com\nINFO reconnect\nhttps://fresh.trycloudflare.com\n',
+  );
+  fs.writeFileSync(pidFile, 'existing\n');
+
+  try {
+    const result = runExecutable(runSafePath, fixture, {
+      LOG_FILE: logFile,
+      URL_FILE: fixture.urlFile,
+      URL_ARCHIVE_FILE: fixture.archiveFile,
+      PID_FILE: pidFile,
+      URL_POLL_ATTEMPTS: '1',
+      URL_POLL_INTERVAL_SECONDS: '0',
+      URL_READY_TIMEOUT_SECONDS: '1',
+      WRD_FAKE_KILL_ZERO: 'live-then-dead',
+      WRD_KILL_CHECK_COUNT_FILE: stateFile,
+      WRD_EXISTING_PID: 'not-existing',
+      WRD_FIXTURE_HEALTH_STATE: 'deliverable',
+    });
+    const output = combinedOutput(result);
+    assert.equal(result.status, 1, output);
+    assert.match(output, /diagnos|tunnel exited/i);
+    assert.equal(fs.readFileSync(fixture.urlFile, 'utf8'), freshUrl);
+    assert.equal(fs.readFileSync(fixture.archiveFile, 'utf8'), freshUrl);
+    assert.deepEqual(readLines(fixture.processLog), []);
+    assert.deepEqual(readLines(fixture.spawnLog), []);
+    assert.doesNotMatch(output, /launchctl|pkill|replac/i);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 

@@ -133,13 +133,68 @@ test('watch preserves an initializing lock directory with no pid file', () => {
   assert.equal(fs.existsSync(path.join(lockPath, 'initializing')), true);
 });
 
+test('watch reclaims a malformed initialization marker after its grace period', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-init-expired-'));
+  const lockPath = path.join(dir, 'watch.lock');
+  const markerPath = path.join(lockPath, 'initializing');
+  fs.mkdirSync(lockPath);
+  fs.writeFileSync(markerPath, 'owner is still publishing metadata\n');
+  const expired = new Date(Date.now() - 60_000);
+  fs.utimesSync(markerPath, expired, expired);
+
+  const result = sourceWatch(
+    'if wrd_fixed_watch_acquire_lock; then printf "acquired\\n"; else exit 1; fi',
+    {
+      WRD_FIXED_WATCH_LOCK: lockPath,
+      WRD_FIXED_WATCH_PID_FILE: path.join(lockPath, 'pid'),
+      WRD_FIXED_WATCH_START_FILE: path.join(lockPath, 'start'),
+      WRD_FIXED_WATCH_SIGNATURE_FILE: path.join(lockPath, 'signature'),
+      WRD_FIXED_WATCH_INIT_MARKER: markerPath,
+      WRD_FIXED_WATCH_INIT_MAX_SEC: '30',
+      WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /acquired/);
+  assert.equal(fs.existsSync(lockPath), false, 'expired incomplete lock should be reclaimed');
+});
+
 test('watch never reclaims an empty lock while an owner is initializing', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-empty-'));
   const lockPath = path.join(dir, 'watch.lock');
   fs.mkdirSync(lockPath);
+  const holder = spawn('sleep', ['30']);
+  fs.writeFileSync(path.join(lockPath, 'initializing'), `${holder.pid}\ninitializing\n`);
+
+  try {
+    const result = sourceWatch(
+      'if wrd_fixed_watch_acquire_lock; then exit 0; else exit 1; fi',
+      {
+        WRD_FIXED_WATCH_LOCK: lockPath,
+        WRD_FIXED_WATCH_PID_FILE: path.join(lockPath, 'pid'),
+        WRD_FIXED_WATCH_START_FILE: path.join(lockPath, 'start'),
+        WRD_FIXED_WATCH_SIGNATURE_FILE: path.join(lockPath, 'signature'),
+        WRD_FIXED_WATCH_INIT_MARKER: path.join(lockPath, 'initializing'),
+        WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+      },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(fs.existsSync(lockPath), true, 'active initializer must retain the lock');
+  } finally {
+    holder.kill('SIGTERM');
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+});
+
+test('watch reclaims a lock abandoned immediately after mkdir before pid publication', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-mkdir-crash-'));
+  const lockPath = path.join(dir, 'watch.lock');
+  fs.mkdirSync(lockPath);
 
   const result = sourceWatch(
-    'if wrd_fixed_watch_acquire_lock; then exit 0; else exit 1; fi',
+    'if wrd_fixed_watch_acquire_lock; then printf "acquired\\n"; else exit 1; fi',
     {
       WRD_FIXED_WATCH_LOCK: lockPath,
       WRD_FIXED_WATCH_PID_FILE: path.join(lockPath, 'pid'),
@@ -150,8 +205,39 @@ test('watch never reclaims an empty lock while an owner is initializing', () => 
     },
   );
 
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /acquired/);
+  assert.equal(fs.existsSync(lockPath), false, 'reclaimed lock should be released by EXIT trap');
+});
+
+test('watch treats kill -0 EPERM as unknown and preserves the existing lock', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-eperm-'));
+  const lockPath = path.join(dir, 'watch.lock');
+  const bashEnv = path.join(dir, 'bash-env.sh');
+  fs.mkdirSync(lockPath);
+  fs.writeFileSync(path.join(lockPath, 'pid'), '999\n');
+  fs.writeFileSync(
+    bashEnv,
+    `kill() {\n  if [ "\${1:-}" = "-0" ] && [ "\${2:-}" = "999" ]; then\n    echo 'kill: Operation not permitted' >&2\n    return 1\n  fi\n  command kill "$@"\n}\n`,
+  );
+
+  const result = sourceWatch(
+    'if wrd_fixed_watch_acquire_lock; then exit 0; else exit 1; fi',
+    {
+      BASH_ENV: bashEnv,
+      WRD_FIXED_WATCH_LOCK: lockPath,
+      WRD_FIXED_WATCH_PID_FILE: path.join(lockPath, 'pid'),
+      WRD_FIXED_WATCH_START_FILE: path.join(lockPath, 'start'),
+      WRD_FIXED_WATCH_SIGNATURE_FILE: path.join(lockPath, 'signature'),
+      WRD_FIXED_WATCH_INIT_MARKER: path.join(lockPath, 'initializing'),
+      WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+    },
+  );
+
   assert.equal(result.status, 1, result.stderr);
-  assert.equal(fs.existsSync(lockPath), true, 'empty lock must remain until owner publishes metadata');
+  assert.equal(fs.existsSync(lockPath), true, 'EPERM must never reclaim the lock');
+  assert.equal(fs.readFileSync(path.join(lockPath, 'pid'), 'utf8'), '999\n');
+  assert.match(result.stderr, /unknown|permission|holds/i);
 });
 
 test('watch records process start and signature metadata with the pid', () => {
@@ -335,6 +421,54 @@ test('watch ps failure returns before restart script or launchctl submit', () =>
   assert.equal(fs.existsSync(launchctlMarker), false);
 });
 
+test('watch formal-owner ps failure returns before restart script or launchctl submit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-formal-owner-ps-failure-'));
+  const statePath = path.join(dir, 'state.json');
+  const bin = path.join(dir, 'bin');
+  const callCount = path.join(dir, 'ps-count');
+  const restartMarker = path.join(dir, 'restart-invoked');
+  const launchctlMarker = path.join(dir, 'launchctl-invoked');
+  const restartSentinel = path.join(bin, 'restart-sentinel');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(statePath, JSON.stringify({ failStartedAt: 100, lastRestartAt: null, restarts: [] }));
+  fs.writeFileSync(
+    path.join(bin, 'ps'),
+    `#!/bin/sh\ncount=0\n[ -f '${callCount}' ] && count=$(cat '${callCount}')\ncount=$((count + 1))\nprintf '%s' "$count" > '${callCount}'\nif [ "$count" -eq 1 ]; then exit 0; fi\nexit 1\n`,
+  );
+  fs.writeFileSync(restartSentinel, '#!/bin/sh\nprintf invoked > "$RESTART_MARKER"\nexit 99\n');
+  fs.writeFileSync(path.join(bin, 'launchctl'), '#!/bin/sh\nprintf invoked > "$LAUNCHCTL_MARKER"\nexit 99\n');
+  for (const name of ['ps', 'restart-sentinel', 'launchctl']) fs.chmodSync(path.join(bin, name), 0o755);
+
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'source "$WATCH_PATH"; RESTART_SCRIPT="$RESTART_SENTINEL"; wrd_fixed_origin_health_ok(){ return 0; }; wrd_fixed_formal_health_ok(){ return 1; }; NOW_EPOCH=400 wrd_fixed_watch_tick 0',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WATCH_PATH: watchPath,
+        RESTART_SENTINEL: restartSentinel,
+        RESTART_MARKER: restartMarker,
+        LAUNCHCTL_MARKER: launchctlMarker,
+        WRD_FIXED_WATCH_SOURCE_ONLY: '1',
+        PATH: `${bin}:${process.env.PATH}`,
+        WRD_FIXED_WATCH_STATE: statePath,
+        WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+      },
+    },
+  );
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(state.lastAction, 'skip');
+  assert.equal(state.lastStatus, 'formal-down');
+  assert.match(result.stderr, /formal-owner-inspection-failed/);
+  assert.equal(fs.existsSync(restartMarker), false);
+  assert.equal(fs.existsSync(launchctlMarker), false);
+});
+
 test('watch releases its lock on SIGTERM', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-term-'));
   const lockPath = path.join(dir, 'watch.lock');
@@ -467,4 +601,35 @@ test('managed formal restart refuses closed inspection before submit', () => {
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /refusing restart[\s\S]*(inspect|process)/i);
   assert.equal(fs.existsSync(launchctlLog), false, 'inspection failure must not submit a connector');
+});
+
+test('managed formal restart propagates formal-owner ps failure before submit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-formal-owner-ps-failure-'));
+  const bin = path.join(dir, 'bin');
+  const callCount = path.join(dir, 'ps-count');
+  const launchctlLog = path.join(dir, 'launchctl.log');
+  const configPath = path.join(dir, 'config.yml');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(configPath, 'tunnel: fixture\ncredentials-file: /tmp/fixture.json\n');
+  fs.writeFileSync(
+    path.join(bin, 'ps'),
+    `#!/bin/sh\ncount=0\n[ -f '${callCount}' ] && count=$(cat '${callCount}')\ncount=$((count + 1))\nprintf '%s' "$count" > '${callCount}'\nif [ "$count" -eq 1 ]; then exit 0; fi\nexit 1\n`,
+  );
+  fs.writeFileSync(path.join(bin, 'launchctl'), `#!/bin/sh\nprintf invoked > '${launchctlLog}'\nexit 99\n`);
+  fs.chmodSync(path.join(bin, 'ps'), 0o755);
+  fs.chmodSync(path.join(bin, 'launchctl'), 0o755);
+
+  const result = spawnSync('bash', [restartPath], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: dir,
+      CLOUDFLARED_CONFIG: configPath,
+    },
+  });
+
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /refusing restart[\s\S]*(formal|inspect|process)/i);
+  assert.equal(fs.existsSync(launchctlLog), false, 'formal inspection failure must not submit a connector');
 });

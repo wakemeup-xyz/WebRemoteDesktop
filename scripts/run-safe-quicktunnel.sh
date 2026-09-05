@@ -55,6 +55,27 @@ wait_for_public_url() {
   return 1
 }
 
+# A live supervisor is allowed to republish a URL that its connector has just
+# emitted. This repairs a missing/stale URL file without stopping, spawning, or
+# rotating the connector. The health gate remains mandatory before publication.
+wrd_safe_republish_live_connector_url() {
+  local pid="$1"
+  local candidate=""
+  WRD_SAFE_REPUBLISHED_URL=""
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  candidate="$(extract_trycloudflare_url "$LOG_FILE" || true)"
+  [ -n "$candidate" ] || return 1
+  if ! wait_for_public_url "$candidate"; then
+    return 1
+  fi
+  if ! publish_safe_url "$candidate"; then
+    return 1
+  fi
+  WRD_SAFE_REPUBLISHED_URL="$candidate"
+  return 0
+}
+
 cd "$PROJECT_DIR"
 curl -fsS "http://127.0.0.1:8080/health" >/dev/null
 
@@ -69,8 +90,11 @@ if [ -f "$PID_FILE" ]; then
     if [ -z "$URL" ]; then
       URL="$(cat "$URL_ARCHIVE_FILE" 2>/dev/null || true)"
     fi
-    if [ -z "$URL" ]; then
-      URL="$(extract_trycloudflare_url "$LOG_FILE" || true)"
+    # Prefer the newest candidate from a live connector over stale current or
+    # archive state. Publication is atomic and health-gated; failure leaves the
+    # existing URL untouched for diagnosis.
+    if wrd_safe_republish_live_connector_url "$PID"; then
+      URL="$WRD_SAFE_REPUBLISHED_URL"
     fi
     if [ -n "$URL" ] && ! wrd_safe_url_is_reachable "$URL"; then
       wrd_safe_quick_tunnel_observe unreachable "$URL" >&2
