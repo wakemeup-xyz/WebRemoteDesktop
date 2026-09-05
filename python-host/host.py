@@ -2566,6 +2566,13 @@ class WebRemoteHost:
             decoded = int(data.get("decodedDelta", data.get("framesDecoded")) or 0)
             warmup = data.get("warmup") is True
             suppressed = data.get("mediaHealthSuppressed") is True
+            recovery_admitted = self._has_exact_recovery_identity(data)
+            # A live media session has a policy intent. Do not allow a
+            # legacy/unbound telemetry envelope to advance its stall counter
+            # or recovery state: Signal cannot safely distinguish delayed A
+            # telemetry from B after a rebind without this correlation.
+            if getattr(self, "_h264_policy_provider", None) is not None and not recovery_admitted:
+                return
             if not warmup and not suppressed and decoded == 0 and received > 0:
                 count = int(getattr(self, "_stall_sample_count", 0) or 0) + 1
                 self._stall_sample_count = count
@@ -2585,7 +2592,7 @@ class WebRemoteHost:
                     )
             else:
                 self._stall_sample_count = 0
-            if not warmup and not suppressed and self._has_exact_recovery_identity(data):
+            if not warmup and not suppressed and recovery_admitted:
                 self._observe_decoder_stall(data, received=received, decoded=decoded)
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")

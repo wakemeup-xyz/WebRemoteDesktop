@@ -1545,6 +1545,7 @@ const WebRTC = {
       reason: String(reason || 'media-stalled').slice(0, 80),
       connectionAttemptId: this.currentConnectionAttemptId || '',
       connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
+      generation: Number(this.connectionAttemptSequence) || 0,
       requestSequence: (Number(this._keyframeRequestSequence) || 0) + 1,
     });
     this._keyframeRequestSequence += 1;

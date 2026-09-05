@@ -511,11 +511,17 @@ function setupSignaling(io, options = {}) {
       || !isValidConnectionAttemptSequence(prior.connectionAttemptSequence)) {
       return null;
     }
-    if (data.connectionAttemptId !== undefined && data.connectionAttemptId !== prior.connectionAttemptId) {
+    // Recovery telemetry is an epoch-scoped envelope. Never infer a missing
+    // correlation from the socket's latest binding: a delayed legacy event
+    // from A could otherwise be relabeled as the current B episode.
+    if (!isValidConnectionAttemptId(data.connectionAttemptId)
+      || !isValidConnectionAttemptSequence(data.connectionAttemptSequence)
+      || !isValidConnectionAttemptSequence(data.generation)) {
       return null;
     }
-    if (data.connectionAttemptSequence !== undefined
-      && data.connectionAttemptSequence !== prior.connectionAttemptSequence) {
+    if (data.connectionAttemptId !== prior.connectionAttemptId
+      || data.connectionAttemptSequence !== prior.connectionAttemptSequence
+      || data.generation !== prior.connectionAttemptSequence) {
       return null;
     }
     return {

@@ -1357,6 +1357,7 @@ test('relay decoder stall requests one generation-bound keyframe while packets s
   assert.equal(keyframes[0][1].reason, 'decoder-stalled');
   assert.equal(keyframes[0][1].connectionAttemptId, 'attempt-decoder-stall');
   assert.equal(keyframes[0][1].connectionAttemptSequence, 7);
+  assert.equal(keyframes[0][1].generation, 7);
 });
 
 test('relay stats re-apply skip-wait jitter so Chrome cannot grow it', () => {
@@ -5529,6 +5530,8 @@ test('viewer stats emits canonical deltas with derived legacy aliases for Host c
   WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
   WebRTC.handlePortSearchMedia = () => {};
   WebRTC.handleReceiverStats = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-viewer-stats';
+  WebRTC.connectionAttemptSequence = 6;
 
   WebRTC.processStatsSnapshot({
     derivedFps: 19,
@@ -5549,6 +5552,9 @@ test('viewer stats emits canonical deltas with derived legacy aliases for Host c
   assert.equal(report.fps, 19);
   assert.equal(report.framesDecoded, 19);
   assert.equal(report.framesReceived, 20);
+  assert.equal(report.connectionAttemptId, 'attempt-viewer-stats');
+  assert.equal(report.connectionAttemptSequence, 6);
+  assert.equal(report.generation, 6);
 });
 
 test('updateConnectionStatus exposes paint-gate labels', () => {

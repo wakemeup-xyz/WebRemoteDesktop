@@ -244,6 +244,15 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
         "selectedCandidateType": "relay",
     }
     healthy = dict(freeze, derivedFps=19, decodedDelta=19)
+    uncorrelated = dict(freeze)
+    uncorrelated.pop("connectionAttemptId")
+    uncorrelated.pop("connectionAttemptSequence")
+    uncorrelated.pop("generation")
+    loop.run_until_complete(host.on_viewer_stats(uncorrelated))
+    assert encoder.calls == 0
+    assert host.media_sender.request_keyframe.call_count == 0
+    assert host._stall_sample_count == 0
+    assert host._keyframe_recovery_state == {}
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 0
     assert host.media_sender.request_keyframe.call_count == 1

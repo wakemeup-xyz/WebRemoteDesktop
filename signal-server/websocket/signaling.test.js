@@ -459,6 +459,7 @@ test('viewer request-keyframe derives the active recovery identity before forwar
     secret: 'drop-me',
     connectionAttemptId: 'attempt-keyframe',
     connectionAttemptSequence: 4,
+    generation: 4,
     requestSequence: 9,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
@@ -475,7 +476,7 @@ test('viewer request-keyframe derives the active recovery identity before forwar
   assert.equal(message.data.secret, undefined);
 });
 
-test('old keyframe and stats after a new binding cannot mutate the new episode', () => {
+test('only current fully correlated recovery envelopes cross an A to B rebind', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
@@ -501,13 +502,35 @@ test('old keyframe and stats after a new binding cannot mutate the new episode',
     schemaVersion: 2,
     connectionAttemptId: 'attempt-A',
     connectionAttemptSequence: 1,
+    generation: 1,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
   };
+  // A late legacy Viewer has no current recovery key. Signal must not assign
+  // B's key merely because this socket is now bound to B.
+  viewer.trigger('request-keyframe', {
+    schemaVersion: 2,
+    requestSequence: 1,
+    reason: 'decoder-stalled',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('viewer-stats', { decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
   viewer.trigger('request-keyframe', { ...oldIdentity, requestSequence: 1, reason: 'decoder-stalled' });
   viewer.trigger('viewer-stats', { ...oldIdentity, decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
   assert.equal(host.sent.filter((entry) => entry.event === 'request-keyframe').length, keyframesBefore);
   assert.equal(host.sent.filter((entry) => entry.event === 'viewer-stats').length, statsBefore);
+
+  const currentIdentity = {
+    ...oldIdentity,
+    connectionAttemptId: 'attempt-B',
+    connectionAttemptSequence: 2,
+    generation: 2,
+  };
+  viewer.trigger('request-keyframe', { ...currentIdentity, requestSequence: 2, reason: 'decoder-stalled' });
+  viewer.trigger('viewer-stats', { ...currentIdentity, decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
+  assert.equal(host.sent.filter((entry) => entry.event === 'request-keyframe').length, keyframesBefore + 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'viewer-stats').length, statsBefore + 1);
 });
 
 test('non-viewer request-keyframe is ignored', () => {
