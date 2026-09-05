@@ -94,6 +94,7 @@ function loadConfig() {
     terminalReplayBufferBytes: terminal.replayBufferBytes,
     terminalIdleTimeoutMs: terminal.idleTimeoutMs,
     terminalStartupTimeoutMs: terminal.startupTimeoutMs,
+    terminalPtyKillWaitMs: terminal.ptyKillWaitMs,
     terminalInputRate: terminal.inputRate,
     terminalInputBytesPerSecond: terminal.inputRate.bytesPerSecond,
     terminalInputBurstBytes: terminal.inputRate.burstBytes,

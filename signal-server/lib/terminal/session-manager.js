@@ -19,8 +19,9 @@ const MAX_PTY_CLEANUP_ATTEMPTS = 2;
 const MAX_AUDIT_KILL_ATTEMPTS = 9999;
 const CLEANUP_RETRY_DELAY_MS = 1000;
 const MAX_CLEANUP_RETRY_DELAY_MS = 60 * 1000;
-// Default 0 keeps unit tests fast; production may raise via terminalPtyKillWaitMs.
-const DEFAULT_PTY_KILL_WAIT_MS = 0;
+// node-pty reports process death asynchronously; leave enough budget for onExit
+// before treating a successful kill signal as an unconfirmed cleanup.
+const DEFAULT_PTY_KILL_WAIT_MS = 200;
 
 function defaultPtyFactory() {
   const pty = require('node-pty');
@@ -445,12 +446,37 @@ function createTerminalSessionManager(options = {}) {
       steps,
       waitMs: ptyKillWaitMs,
       isAlive: () => isPtyAlive(session),
-      waitForExit: async () => {
+      // `cleanupPtyWithEscalation` owns signal ordering. The exit budget is
+      // implemented here so the real onExit latch, rather than a single
+      // microtask, decides whether cleanup is confirmed.
+      delay: () => undefined,
+      waitForExit: (step = {}) => {
         if (session.exitObserved) {
           return true;
         }
-        await Promise.resolve();
-        return Boolean(session.exitObserved);
+        const waitMs = Math.max(0, Number(step.waitMs ?? ptyKillWaitMs) || 0);
+        if (waitMs <= 0) {
+          return false;
+        }
+        const exitPromise = ensureExitLatch(session);
+        return new Promise((resolve) => {
+          let settled = false;
+          let timeout = null;
+          const settle = (exited) => {
+            if (settled) return;
+            settled = true;
+            if (timeout !== null) {
+              cancelTimeout(timeout);
+              timeout = null;
+            }
+            resolve(Boolean(exited));
+          };
+          timeout = scheduleTimeout(() => settle(false), waitMs);
+          exitPromise.then(
+            () => settle(true),
+            () => settle(false),
+          );
+        });
       },
     });
 

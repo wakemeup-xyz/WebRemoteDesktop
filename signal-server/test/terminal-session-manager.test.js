@@ -41,6 +41,26 @@ function createFakePty() {
   };
 }
 
+function createAsyncExitPty(delayMs = 25) {
+  const pty = createFakePty();
+  let exitTimer = null;
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+    if (exitTimer !== null) return;
+    exitTimer = setTimeout(() => {
+      exitTimer = null;
+      this.emitExit({ exitCode: 0, signal });
+    }, delayMs);
+  };
+  pty.cancelExitTimer = () => {
+    if (exitTimer !== null) {
+      clearTimeout(exitTimer);
+      exitTimer = null;
+    }
+  };
+  return pty;
+}
+
 test('shared session manager enforces a hard session ceiling and reports bounded capacity', async () => {
   const ptys = [];
   const manager = createTerminalSessionManager({
@@ -687,6 +707,46 @@ test('PTY callback registration failure retries one failed kill before removing 
   assert.equal(killFailure.meta.attemptCount, 1);
   assert.equal(events.some((entry) => entry.event === 'terminal_pty_cleanup_failed'), false);
   assert.equal(JSON.stringify(events).includes('SECRET_VALUE'), false);
+});
+
+test('PTY registration cleanup quarantines when asynchronous onExit exceeds a zero wait budget', async (t) => {
+  const pty = createAsyncExitPty();
+  t.after(() => pty.cancelExitTimer());
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    ptyKillWaitMs: 0,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed');
+  assert.deepEqual(pty.killCalls, ['SIGHUP', 'SIGTERM', 'SIGKILL']);
+  assert.equal(manager._getCleanupPendingCount(), 1);
+});
+
+test('PTY registration cleanup awaits asynchronous onExit within the production default wait budget', async (t) => {
+  const pty = createAsyncExitPty();
+  t.after(() => pty.cancelExitTimer());
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed');
+  assert.deepEqual(pty.killCalls, ['SIGHUP']);
+  assert.equal(manager._getCleanupPendingCount(), 0);
+  assert.equal(manager.listSessions().length, 0);
 });
 
 test('PTY callback registration cleanup stops after two failed kill attempts and audits bounded failure', async () => {

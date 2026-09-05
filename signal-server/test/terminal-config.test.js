@@ -22,6 +22,7 @@ const TERMINAL_ENV_KEYS = [
   'WRD_TERMINAL_REPLAY_BUFFER_BYTES',
   'WRD_TERMINAL_IDLE_TIMEOUT_MS',
   'WRD_TERMINAL_STARTUP_TIMEOUT_MS',
+  'WRD_TERMINAL_PTY_KILL_WAIT_MS',
   'WRD_TERMINAL_INPUT_BYTES_PER_SECOND',
   'WRD_TERMINAL_INPUT_BURST_BYTES',
   'WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES',
@@ -69,6 +70,7 @@ test('loadConfig exposes terminal defaults', () => {
   delete process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES;
   delete process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS;
   delete process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS;
+  delete process.env.WRD_TERMINAL_PTY_KILL_WAIT_MS;
   delete process.env.WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS;
   delete process.env.WRD_TERMINAL_MAX_IN_FLIGHT_BYTES;
   delete process.env.WRD_TERMINAL_AUDIT_LOG;
@@ -85,6 +87,7 @@ test('loadConfig exposes terminal defaults', () => {
   assert.equal(config.terminalReplayBufferBytes, 256 * 1024);
   assert.equal(config.terminalIdleTimeoutMs, 0);
   assert.equal(config.terminalStartupTimeoutMs, 10000);
+  assert.equal(config.terminalPtyKillWaitMs, 200);
   assert.equal(config.terminalMaxInFlightChunks, 32);
   assert.equal(config.terminalMaxInFlightBytes, 65536);
   assert.equal(config.terminalAuditLog, '');
@@ -101,6 +104,7 @@ test('loadConfig parses terminal overrides', () => {
   process.env.WRD_TERMINAL_REPLAY_BUFFER_BYTES = '131072';
   process.env.WRD_TERMINAL_IDLE_TIMEOUT_MS = '2500';
   process.env.WRD_TERMINAL_STARTUP_TIMEOUT_MS = '15000';
+  process.env.WRD_TERMINAL_PTY_KILL_WAIT_MS = '0';
   process.env.WRD_TERMINAL_MAX_IN_FLIGHT_CHUNKS = '7';
   process.env.WRD_TERMINAL_MAX_IN_FLIGHT_BYTES = '4096';
   process.env.WRD_TERMINAL_AUDIT_LOG = '/var/log/terminal.log';
@@ -117,6 +121,7 @@ test('loadConfig parses terminal overrides', () => {
   assert.equal(config.terminalReplayBufferBytes, 131072);
   assert.equal(config.terminalIdleTimeoutMs, 2500);
   assert.equal(config.terminalStartupTimeoutMs, 15000);
+  assert.equal(config.terminalPtyKillWaitMs, 0);
   assert.equal(config.terminalMaxInFlightChunks, 7);
   assert.equal(config.terminalMaxInFlightBytes, 4096);
   assert.equal(config.terminalAuditLog, '/var/log/terminal.log');
@@ -137,6 +142,7 @@ test('parseTerminalConfig exposes normalized defaults', () => {
     replayBufferBytes: 262144,
     idleTimeoutMs: 0,
     startupTimeoutMs: 10000,
+    ptyKillWaitMs: 200,
     inputRate: {
       bytesPerSecond: 65536,
       burstBytes: 131072,
@@ -171,6 +177,7 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     WRD_TERMINAL_REPLAY_BUFFER_BYTES: '131072',
     WRD_TERMINAL_IDLE_TIMEOUT_MS: '2500',
     WRD_TERMINAL_STARTUP_TIMEOUT_MS: '15000',
+    WRD_TERMINAL_PTY_KILL_WAIT_MS: '0',
     WRD_TERMINAL_INPUT_BYTES_PER_SECOND: '32768',
     WRD_TERMINAL_INPUT_BURST_BYTES: '65536',
     WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES: '262144',
@@ -192,6 +199,7 @@ test('parseTerminalConfig normalizes overrides with distinct path entries', () =
     replayBufferBytes: 131072,
     idleTimeoutMs: 2500,
     startupTimeoutMs: 15000,
+    ptyKillWaitMs: 0,
     inputRate: {
       bytesPerSecond: 32768,
       burstBytes: 65536,
@@ -250,6 +258,7 @@ for (const { key, value } of [
   { key: 'WRD_TERMINAL_REPLAY_BUFFER_BYTES', value: String(8 * 1024 * 1024 + 1) },
   { key: 'WRD_TERMINAL_IDLE_TIMEOUT_MS', value: '-1' },
   { key: 'WRD_TERMINAL_STARTUP_TIMEOUT_MS', value: '999' },
+  { key: 'WRD_TERMINAL_PTY_KILL_WAIT_MS', value: '-1' },
   { key: 'WRD_TERMINAL_INPUT_BYTES_PER_SECOND', value: '1023' },
   { key: 'WRD_TERMINAL_INPUT_BURST_BYTES', value: String(2 * 1024 * 1024 + 1) },
   { key: 'WRD_TERMINAL_MAX_OBSERVER_QUEUE_BYTES', value: String(64 * 1024 - 1) },
