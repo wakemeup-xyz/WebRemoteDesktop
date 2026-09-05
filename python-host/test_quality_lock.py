@@ -2,7 +2,6 @@ import logging
 import time
 from unittest.mock import MagicMock
 
-from h264_videotoolbox_encoder import get_session_gop_size, set_session_gop_size
 from host import WebRemoteHost
 
 
@@ -340,9 +339,8 @@ def test_bind_session_presentation_resets_stale_user_resolution():
     assert host._user_resolution == {"width": 1280, "height": 720}
 
 
-def test_bind_session_presentation_sets_relay_gop_and_logs_it():
+def test_bind_session_presentation_publishes_relay_policy_and_logs_it():
     host = _make_host(1920, 1080)
-    set_session_gop_size(40)
     handler = ListHandler()
     logger = logging.getLogger("host")
     original_level = logger.level
@@ -356,27 +354,26 @@ def test_bind_session_presentation_sets_relay_gop_and_logs_it():
             "connectionAttemptId": "wrd-1",
             "viewerId": "v1",
         })
-        assert get_session_gop_size() == 20
+        policy = host._h264_policy_provider.current_policy()
+        assert policy.codec_name == "libx264"
+        assert policy.periodic_idr_frames == 20
         assert any(
-            "WRD_SESSION_PRESENTATION" in record.getMessage() and "gop=20" in record.getMessage()
+            "WRD_SESSION_PRESENTATION" in record.getMessage() and "codec=libx264" in record.getMessage()
             for record in handler.records
         )
     finally:
         logger.removeHandler(handler)
         logger.setLevel(original_level)
-        set_session_gop_size(40)
 
 
-def test_bind_session_presentation_sets_direct_gop_40():
+def test_bind_session_presentation_publishes_direct_policy():
     host = _make_host(1280, 720)
-    set_session_gop_size(20)
-    try:
-        host._bind_session_presentation({
-            "width": 1280,
-            "height": 720,
-            "networkMode": "direct",
-            "connectionAttemptId": "wrd-2",
-        })
-        assert get_session_gop_size() == 40
-    finally:
-        set_session_gop_size(40)
+    host._bind_session_presentation({
+        "width": 1280,
+        "height": 720,
+        "networkMode": "direct",
+        "connectionAttemptId": "wrd-2",
+    })
+    policy = host._h264_policy_provider.current_policy()
+    assert policy.codec_name == "h264_videotoolbox"
+    assert policy.periodic_idr_frames == 40

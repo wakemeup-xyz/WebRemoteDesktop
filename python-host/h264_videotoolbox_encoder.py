@@ -13,6 +13,7 @@ from av.video.codeccontext import VideoCodecContext
 
 from aiortc.codecs import Encoder
 from aiortc.mediastreams import VIDEO_TIME_BASE, convert_timebase
+from h264_encoder_policy import H264SessionPolicy, H264SessionPolicyProvider, MediaSessionIntent, resolve_h264_policy
 
 logger = logging.getLogger(__name__)
 
@@ -43,30 +44,11 @@ def get_session_gop_size() -> int:
     return _session_gop_size
 
 
-def codec_name_for_gop(gop: int) -> str:
-    """Relay GOP (~1s) uses libx264+VBV; VideoToolbox IDRs are too large for TURN."""
-    return "libx264" if int(gop or 0) <= 20 else "h264_videotoolbox"
-
-
-def min_bitrate_bps(gop: int, width: int, height: int) -> int:
-    width = int(width or 0)
-    height = int(height or 0)
-    pixels = max(1, width * height)
-    if int(gop or 0) <= 20:
-        # Capture may be 1152x720 under a 1280x720 session cap.
-        if height >= 1000 or pixels >= 1920 * 1080:
-            return 2_500_000
-        if height >= 700 or pixels >= 1152 * 720:
-            return 1_800_000
-        return 1_200_000
-    return MIN_BITRATE
-
-
-def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
+def libx264_zerolatency_options(bitrate_bps: int, gop: int, vbv_buffer_ms: int = 100) -> dict:
     kbps = max(1, int(bitrate_bps) // 1000)
     # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
     # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
-    bufsize = max(120, int(bitrate_bps) // 10000)
+    bufsize = max(120, int(bitrate_bps) * max(1, int(vbv_buffer_ms)) // 1_000_000)
     gop_s = str(max(1, int(gop or 20)))
     return {
         "preset": "ultrafast",
@@ -212,18 +194,65 @@ _preferred_h264_codec = "h264_videotoolbox"
 
 
 class H264VideoToolboxEncoder(Encoder):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        policy: H264SessionPolicy | None = None,
+        policy_provider: H264SessionPolicyProvider | None = None,
+    ) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
         self.codec: Optional[VideoCodecContext] = None
-        self.gop_size = get_session_gop_size()
-        self.codec_name = codec_name_for_gop(self.gop_size)
-        self.__target_bitrate = 0
+        self._policy_provider = policy_provider
+        self._policy = policy or resolve_h264_policy(
+            MediaSessionIntent("legacy-local", 0, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        )
+        self._policy_generation = None
+        self.gop_size = self._policy.periodic_idr_frames
+        self.codec_name = self._policy.codec_name
+        self.__target_bitrate = self._policy.target_bitrate_bps
         self.last_force_emitted_idr = False
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
         self._frames_since_idr = 0
         self._frames_encoded = 0
+
+    @staticmethod
+    def _clamp_bitrate(policy: H264SessionPolicy, requested_bitrate: int) -> int:
+        return max(
+            policy.min_bitrate_bps,
+            min(int(requested_bitrate), policy.max_bitrate_bps),
+        )
+
+    def _adopt_current_policy(self) -> None:
+        if self._policy_provider is None:
+            return
+        current = self._policy_provider.current()
+        if current is None or current.policy is None or current.intent is None:
+            return
+        identity = (
+            current.intent.connection_attempt_id,
+            current.intent.generation,
+            current.policy.policy_id,
+        )
+        if identity == self._policy_generation:
+            # Profile updates may refresh bitrate/FPS inside the same guarded
+            # generation. They do not implicitly reopen an already-open codec.
+            self._policy = current.policy
+            return
+        self._policy_generation = identity
+        self._policy = current.policy
+        self.gop_size = current.policy.periodic_idr_frames
+        self.codec_name = current.policy.codec_name
+        requested = int(current.intent.requested_bitrate_bps or current.policy.target_bitrate_bps)
+        self.__target_bitrate = self._clamp_bitrate(current.policy, requested)
+        if self.codec is not None:
+            self.codec = None
+            self.last_idr_recreated = False
+            self._idr_wait_remaining = 0
+            self._frames_since_idr = 0
+            self._frames_encoded = 0
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -355,6 +384,7 @@ class H264VideoToolboxEncoder(Encoder):
     def _encode_frame(
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
+        self._adopt_current_policy()
         if self.codec and (
             frame.width != self.codec.width
             or frame.height != self.codec.height
@@ -367,21 +397,7 @@ class H264VideoToolboxEncoder(Encoder):
             self._frames_since_idr = 0
             self._frames_encoded = 0
 
-        session_gop = get_session_gop_size()
-        wanted_codec = codec_name_for_gop(session_gop)
-        if self.gop_size in (20, 40) and (
-            self.gop_size != session_gop or self.codec_name != wanted_codec
-        ):
-            self.gop_size = session_gop
-            self.codec_name = wanted_codec
-            if self.codec is not None:
-                self.codec = None
-                self.last_idr_recreated = False
-                self._idr_wait_remaining = 0
-                self._frames_since_idr = 0
-                self._frames_encoded = 0
-
-        gop = int(getattr(self, "gop_size", None) or session_gop)
+        gop = int(self._policy.periodic_idr_frames)
         # libx264 already emits IDR without a wait-window; waiting would
         # block GOP cadence and then miss delayed type-5 NALs.
         use_wait = self.codec_name != "libx264"
@@ -522,24 +538,9 @@ class H264VideoToolboxEncoder(Encoder):
         return True
 
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
-        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
-        if codec_name_for_gop(gop) == "libx264":
-            codec_name = "libx264"
-            self.codec_name = "libx264"
-        floor = min_bitrate_bps(gop, frame.width, frame.height)
-        if self.__target_bitrate and self.__target_bitrate > 0:
-            bitrate = int(self.__target_bitrate)
-        elif gop <= 20:
-            bitrate = floor
-        elif frame.width * frame.height <= 1280 * 720:
-            bitrate = 2_500_000
-        elif frame.width * frame.height <= 1920 * 1080:
-            bitrate = 4_000_000
-        else:
-            bitrate = 6_000_000
-        if gop <= 20:
-            bitrate = min(bitrate, 2_500_000)
-        bitrate = max(floor, min(bitrate, MAX_BITRATE))
+        gop = int(self._policy.periodic_idr_frames)
+        codec_name = self._policy.codec_name
+        bitrate = self._clamp_bitrate(self._policy, self.__target_bitrate)
         self.__target_bitrate = bitrate
 
         logger.info(
@@ -556,13 +557,14 @@ class H264VideoToolboxEncoder(Encoder):
         codec.bit_rate = bitrate
         try:
             codec.rc_max_rate = bitrate
-            codec.rc_buffer_size = max(120_000, bitrate // 10)
+            codec.rc_buffer_size = max(120_000, bitrate * self._policy.vbv_buffer_ms // 1000)
         except Exception:
             pass
         codec.pix_fmt = "yuv420p"
-        codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
-        codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
-        codec.profile = "Baseline"
+        frame_rate = max(1, min(int(self._policy.target_fps), MAX_FRAME_RATE))
+        codec.framerate = fractions.Fraction(frame_rate, 1)
+        codec.time_base = fractions.Fraction(1, frame_rate)
+        codec.profile = self._policy.profile
         codec.gop_size = gop
         try:
             codec.max_b_frames = 0
@@ -578,7 +580,7 @@ class H264VideoToolboxEncoder(Encoder):
         except Exception:
             pass
         if codec_name == "libx264":
-            codec.options = libx264_zerolatency_options(bitrate, gop)
+            codec.options = libx264_zerolatency_options(bitrate, gop, self._policy.vbv_buffer_ms)
             logger.info(
                 "WRD_ENCODER_X264 params=%s",
                 (codec.options or {}).get("x264-params", "-"),
@@ -608,20 +610,52 @@ class H264VideoToolboxEncoder(Encoder):
 
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
-        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
-        width = getattr(self.codec, "width", 1280) if self.codec is not None else 1280
-        height = getattr(self.codec, "height", 720) if self.codec is not None else 720
-        bitrate = min(int(bitrate), MAX_BITRATE)
-        if gop <= 20:
-            bitrate = min(bitrate, 2_500_000)
-        bitrate = max(min_bitrate_bps(gop, width, height), bitrate)
-        self.__target_bitrate = bitrate
-        # Hot-update without reopening the codec when size is unchanged.
-        if self.codec is not None:
+        self.set_target_bitrate(bitrate)
+
+    def set_target_bitrate(self, bitrate: int) -> dict:
+        """Set bitrate only when the active codec can prove the update applied."""
+        requested = int(bitrate)
+        clamped = self._clamp_bitrate(self._policy, requested)
+        self.__target_bitrate = clamped
+        if self.codec is None:
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "deferred",
+                "reopenRequired": False,
+            }
+        elif self.codec_name == "libx264":
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": int(getattr(self.codec, "bit_rate", 0) or 0),
+                "applied": False,
+                "applyMode": "reopen-required",
+                "reopenRequired": True,
+            }
+        else:
             try:
-                self.codec.bit_rate = bitrate
+                self.codec.bit_rate = clamped
+                effective = int(getattr(self.codec, "bit_rate", 0) or 0)
+                applied = effective == clamped
             except Exception as exc:
                 logger.debug("hot bitrate update failed: %s", type(exc).__name__)
+                effective = int(getattr(self.codec, "bit_rate", 0) or 0)
+                applied = False
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": effective,
+                "applied": applied,
+                "applyMode": "hot" if applied else "reopen-required",
+                "reopenRequired": not applied,
+            }
+        logger.info("WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s", *(
+            result["requested"], result["clamped"], result["effective"], result["applied"], result["applyMode"], result["reopenRequired"],
+        ))
+        return result
 
 
 def h264_depayload(payload: bytes) -> bytes:

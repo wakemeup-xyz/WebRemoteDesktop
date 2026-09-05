@@ -4,8 +4,6 @@ from h264_videotoolbox_encoder import (
     bitstream_contains_idr,
     set_session_gop_size,
     get_session_gop_size,
-    codec_name_for_gop,
-    min_bitrate_bps,
     libx264_zerolatency_options,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
@@ -228,8 +226,16 @@ def test_force_keyframe_recreates_at_most_once(monkeypatch):
 
 
 def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     p_slice = bytes([0, 0, 0, 1, 0x41, 0])
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     calls = {"create": 0}
@@ -249,8 +255,16 @@ def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
 
 def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
     """Cadence is encode-count, not bitstream scan; false IDRs must not skip I."""
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     codec = FakeCodec([idr], repeat=True)
     monkeypatch.setattr(
@@ -267,8 +281,16 @@ def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
 
 
 def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     p_slice = bytes([0, 0, 0, 1, 0x41, 0, 0, 0, 5, 0x65, 0, 0, 0])
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     codec = FakeCodec([p_slice, p_slice, p_slice, idr])
@@ -285,13 +307,16 @@ def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
     assert enc.last_force_emitted_idr is True
 
 
-def test_relay_gop_uses_libx264_and_vbv_cap():
-    assert codec_name_for_gop(20) == "libx264"
-    assert codec_name_for_gop(40) == "h264_videotoolbox"
-    assert min_bitrate_bps(20, 1280, 720) == 1_800_000
-    assert min_bitrate_bps(20, 1152, 720) == 1_800_000
-    assert min_bitrate_bps(20, 1920, 1080) == 2_500_000
-    assert min_bitrate_bps(40, 1280, 720) == 500_000
+def test_relay_policy_uses_libx264_and_vbv_cap():
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    assert policy.codec_name == "libx264"
+    assert policy.min_bitrate_bps == 1_800_000
+    assert policy.max_bitrate_bps == 2_500_000
     opts = libx264_zerolatency_options(1_800_000, 20)
     assert opts["tune"] == "zerolatency"
     params = opts["x264-params"]
@@ -306,17 +331,59 @@ def test_relay_gop_uses_libx264_and_vbv_cap():
     assert "forced-idr=1" in params
     assert "open-gop=0" in params
     assert "intra-refresh=0" in params
-    set_session_gop_size(20)
+    enc = H264VideoToolboxEncoder(policy=policy)
+    assert enc.codec_name == "libx264"
+
+
+def test_encoder_does_not_change_codec_when_legacy_gop_changes():
+    """Codec comes from the session policy rather than the mutable GOP setting."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    set_session_gop_size(80)
     try:
-        enc = H264VideoToolboxEncoder()
         assert enc.codec_name == "libx264"
+        assert enc.gop_size == policy.periodic_idr_frames
     finally:
         set_session_gop_size(40)
 
 
-def test_encoder_adopts_relay_gop_from_session(monkeypatch):
-    set_session_gop_size(40)
-    enc = H264VideoToolboxEncoder()
+def test_open_libx264_bitrate_update_reports_reopen_required():
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    enc.codec = type("Codec", (), {"width": 1280, "height": 720})()
+
+    result = enc.set_target_bitrate(9_000_000)
+
+    assert result == {
+        "requested": 9_000_000,
+        "clamped": 2_500_000,
+        "effective": 0,
+        "applied": False,
+        "applyMode": "reopen-required",
+        "reopenRequired": True,
+    }
+
+
+def test_encoder_adopts_published_relay_policy(monkeypatch):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider = H264SessionPolicyProvider()
+    provider.bind_attempt("attempt-1")
+    provider.publish(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy_provider=provider)
     assert enc.codec_name == "h264_videotoolbox"
     created = []
 
@@ -325,58 +392,58 @@ def test_encoder_adopts_relay_gop_from_session(monkeypatch):
         return FakeCodec([bytes([0, 0, 0, 1, 0x65, 0])])
 
     monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-    set_session_gop_size(20)
-    try:
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        assert enc.gop_size == 20
-        assert enc.codec_name == "libx264"
-        assert created[-1] == "libx264"
-    finally:
-        set_session_gop_size(40)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.gop_size == 20
+    assert enc.codec_name == "libx264"
+    assert created[-1] == "libx264"
 
 
 def test_libx264_wait_does_not_recreate_codec(monkeypatch):
     """VT wait-window recreate is for delayed IDR; libx264 must keep one codec."""
-    set_session_gop_size(20)
-    try:
-        enc = H264VideoToolboxEncoder()
-        assert enc.codec_name == "libx264"
-        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-        calls = {"create": 0}
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
 
-        def fake_create(self, frame, codec_name):
-            calls["create"] += 1
-            return FakeCodec([p_slice], repeat=True)
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    assert enc.codec_name == "libx264"
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    calls = {"create": 0}
 
-        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        for _ in range(IDR_WAIT_FRAMES + 4):
-            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 1
-        assert enc.last_idr_recreated is False
-    finally:
-        set_session_gop_size(40)
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES + 4):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 1
+    assert enc.last_idr_recreated is False
 
 
 def test_request_decoder_refresh_reopens_same_size(monkeypatch):
-    set_session_gop_size(20)
-    try:
-        enc = H264VideoToolboxEncoder()
-        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-        calls = {"create": 0}
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
 
-        def fake_create(self, frame, codec_name):
-            calls["create"] += 1
-            return FakeCodec([p_slice], repeat=True)
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    calls = {"create": 0}
 
-        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        assert calls["create"] == 1
-        assert enc.request_decoder_refresh() is True
-        assert enc.codec is None
-        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 2
-        assert enc.request_decoder_refresh() is True
-        assert enc.request_decoder_refresh() is False
-    finally:
-        set_session_gop_size(40)
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 1
+    assert enc.request_decoder_refresh() is True
+    assert enc.codec is None
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 2
+    assert enc.request_decoder_refresh() is True
+    assert enc.request_decoder_refresh() is False

@@ -36,8 +36,11 @@ import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import (
     H264VideoToolboxEncoder,
-    get_session_gop_size,
-    set_session_gop_size,
+)
+from h264_encoder_policy import (
+    H264SessionPolicyProvider,
+    MediaSessionIntent,
+    policy_version_from_environment,
 )
 from media_timing import RtpFrameClock
 from observability import configure_host_logging, emit_host_event, summarize_input_event
@@ -65,6 +68,20 @@ V2_INPUT_ACK_STATUSES = frozenset({
     "execution-failed",
 })
 
+_h264_policy_provider_lock = threading.RLock()
+_current_h264_policy_provider = None
+
+
+def _set_current_h264_policy_provider(provider):
+    global _current_h264_policy_provider
+    with _h264_policy_provider_lock:
+        _current_h264_policy_provider = provider
+
+
+def _get_current_h264_policy_provider():
+    with _h264_policy_provider_lock:
+        return _current_h264_policy_provider
+
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
     import aiortc.codecs as _aiortc_codecs
@@ -74,7 +91,7 @@ try:
     def _patched_get_encoder(codec):
         if codec.mimeType.lower() == "video/h264":
             logger.info("Using custom H.264 encoder for negotiated codec: %s", codec)
-            return H264VideoToolboxEncoder()
+            return H264VideoToolboxEncoder(policy_provider=_get_current_h264_policy_provider())
         logger.info("Using aiortc default encoder for negotiated codec: %s", codec)
         return _original_get_encoder(codec)
 
@@ -1393,6 +1410,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
 class WebRemoteHost:
     def __init__(self):
+        # Resolve this Host-local enum at startup. Unknown values fail before a
+        # media session or PeerConnection is created.
+        self._h264_policy_version = policy_version_from_environment()
+        self._h264_policy_provider = H264SessionPolicyProvider()
+        _set_current_h264_policy_provider(self._h264_policy_provider)
         self.sio = None
         self.pc = None
         self.token = None
@@ -2175,11 +2197,7 @@ class WebRemoteHost:
                 except (TypeError, ValueError):
                     offer_width = 0
                     offer_height = 0
-                if offer_width > 0 and offer_height > 0:
-                    self._bind_session_presentation(data)
-                else:
-                    gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
-                    set_session_gop_size(gop)
+                self._bind_session_presentation(data)
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
@@ -2591,8 +2609,31 @@ class WebRemoteHost:
         height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
         prev = dict(getattr(self, "_user_resolution", None) or {})
         adopted = self._set_user_resolution(width, height)
-        gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
-        set_session_gop_size(gop)
+        attempt_id = data.get("connectionAttemptId")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("connectionAttemptId is required before binding H.264 session policy")
+        provider = getattr(self, "_h264_policy_provider", None)
+        if provider is None:
+            provider = H264SessionPolicyProvider()
+            self._h264_policy_provider = provider
+            _set_current_h264_policy_provider(provider)
+        provider.bind_attempt(attempt_id)
+        generation = int(getattr(self, "_connection_generation", 0) or 0)
+        policy_update = provider.publish(
+            MediaSessionIntent(
+                connection_attempt_id=attempt_id,
+                generation=generation,
+                path=data.get("networkMode") or data.get("iceMode") or "auto",
+                width=adopted[0],
+                height=adopted[1],
+                target_fps=int((getattr(self, "media_profile", None) or {}).get("target_fps") or 20),
+                requested_bitrate_bps=0,
+            ),
+            getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+        )
+        if not policy_update.accepted or policy_update.policy is None:
+            raise ValueError(f"failed to publish H.264 policy: {policy_update.reason}")
+        policy = policy_update.policy
         emit_host_event(
             logger,
             event="host_session_presentation",
@@ -2605,15 +2646,19 @@ class WebRemoteHost:
                 "previousUserResolution": prev,
                 "adopted": True,
                 "path": data.get("networkMode") or data.get("iceMode"),
+                "policyId": policy.policy_id,
+                "codec": policy.codec_name,
             },
         )
         logger.info(
-            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s gop=%s",
+            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s policy=%s codec=%s periodicIdrFrames=%s",
             adopted[0], adopted[1],
             data.get("networkMode") or "-",
             prev,
-            data.get("connectionAttemptId") or "-",
-            get_session_gop_size(),
+            attempt_id,
+            policy.policy_id,
+            policy.codec_name,
+            policy.periodic_idr_frames,
         )
         return adopted
 
@@ -2651,7 +2696,13 @@ class WebRemoteHost:
             reason_s,
             viewer_s,
             getattr(getattr(self, "media_sender", None), "codec_name", "-"),
-            get_session_gop_size(),
+            (
+                getattr(
+                    (getattr(self, "_h264_policy_provider", None) or H264SessionPolicyProvider()).current_policy(),
+                    "periodic_idr_frames",
+                    "-",
+                )
+            ),
             (self._user_resolution or {}).get("width"),
             (self._user_resolution or {}).get("height"),
         )
@@ -2688,6 +2739,21 @@ class WebRemoteHost:
         """Apply adaptive media profile requested by the active viewer."""
         try:
             payload = data if isinstance(data, dict) else {}
+            policy_provider = getattr(self, "_h264_policy_provider", None)
+            current_policy = policy_provider.current() if policy_provider is not None else None
+            if current_policy is not None and current_policy.intent is not None:
+                if (
+                    payload.get("connectionAttemptId") != current_policy.intent.connection_attempt_id
+                    or payload.get("generation") != current_policy.intent.generation
+                ):
+                    logger.info(
+                        "Ignoring stale media profile attempt=%s generation=%s currentAttempt=%s currentGeneration=%s",
+                        payload.get("connectionAttemptId"),
+                        payload.get("generation"),
+                        current_policy.intent.connection_attempt_id,
+                        current_policy.intent.generation,
+                    )
+                    return
             allowed_profiles = {"high", "medium", "low", "survival"}
             profile = payload.get("profile") if payload.get("profile") in allowed_profiles else "medium"
             # Quality Lock default: missing adaptiveResolution means false.
@@ -2731,6 +2797,22 @@ class WebRemoteHost:
                 "target_fps": clamp_int(payload.get("targetFps"), 5, 30, 15),
                 "video_bitrate_kbps": clamp_int(payload.get("videoBitrateKbps"), 250, 5000, 1400),
             }
+            if current_policy is not None and current_policy.intent is not None:
+                refreshed = policy_provider.refresh_profile(
+                    MediaSessionIntent(
+                        connection_attempt_id=current_policy.intent.connection_attempt_id,
+                        generation=current_policy.intent.generation,
+                        path=current_policy.intent.path,
+                        width=width,
+                        height=height,
+                        target_fps=next_profile["target_fps"],
+                        requested_bitrate_bps=next_profile["video_bitrate_kbps"] * 1000,
+                    ),
+                    getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+                )
+                if not refreshed.accepted:
+                    logger.info("Ignoring media profile rejected by H.264 policy: %s", refreshed.reason)
+                    return
             same = (
                 current.get("profile") == next_profile["profile"]
                 and int(current.get("width") or 0) == next_profile["width"]
@@ -2769,11 +2851,15 @@ class WebRemoteHost:
                 apply_result = {}
             bitrate_kbps = int(next_profile["video_bitrate_kbps"])
             encoder_reopen = bool(apply_result.get("sizeChanged"))
-            hot_ok = self._apply_encoder_bitrate_kbps(bitrate_kbps)
+            bitrate_result = self._apply_encoder_bitrate_kbps(bitrate_kbps)
             logger.info(
-                "WRD_ENCODER_RATE bitrate_kbps=%s hot=%s encoderReopen=%s size=%sx%s",
+                "WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s encoderReopen=%s size=%sx%s",
                 bitrate_kbps,
-                hot_ok,
+                bitrate_result["clamped"] // 1000,
+                bitrate_result["effective"],
+                bitrate_result["applied"],
+                bitrate_result["applyMode"],
+                bitrate_result["reopenRequired"],
                 encoder_reopen,
                 next_profile["width"],
                 next_profile["height"],
@@ -2829,25 +2915,42 @@ class WebRemoteHost:
         return False
 
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps):
-        """Hot-update encoder target bitrate when possible (no codec reopen)."""
+        """Return an honest bitrate-application result for the current encoder."""
         try:
             bitrate_bps = max(250_000, min(int(bitrate_kbps) * 1000, 8_000_000))
         except (TypeError, ValueError):
-            return False
+            return {
+                "requested": 0,
+                "clamped": 0,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "invalid",
+                "reopenRequired": False,
+            }
         encoder = self._video_encoder()
         if encoder is None:
-            return False
+            return {
+                "requested": bitrate_bps,
+                "clamped": bitrate_bps,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "no-encoder",
+                "reopenRequired": False,
+            }
         try:
-            if hasattr(encoder, "target_bitrate"):
-                encoder.target_bitrate = bitrate_bps
-                return True
-            codec = getattr(encoder, "codec", None)
-            if codec is not None and hasattr(codec, "bit_rate"):
-                codec.bit_rate = bitrate_bps
-                return True
+            setter = getattr(encoder, "set_target_bitrate", None)
+            if callable(setter):
+                return setter(bitrate_bps)
         except Exception as exc:
             logger.debug("encoder bitrate hot-update failed: %s", type(exc).__name__)
-        return False
+        return {
+            "requested": bitrate_bps,
+            "clamped": bitrate_bps,
+            "effective": int(getattr(getattr(encoder, "codec", None), "bit_rate", 0) or 0),
+            "applied": False,
+            "applyMode": "reopen-required",
+            "reopenRequired": True,
+        }
 
     def _validate_media_activity_request(self, data):
         """Pure validation for Signal-forwarded media-activity-change (no side effects)."""

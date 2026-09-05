@@ -35,8 +35,8 @@ from h264_videotoolbox_encoder import (  # noqa: E402
     H264VideoToolboxEncoder,
     bitstream_contains_idr,
     libx264_zerolatency_options,
-    set_session_gop_size,
 )
+from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy  # noqa: E402
 
 
 RANDOM_SEED = 20260905
@@ -73,15 +73,19 @@ def make_static_text_frame(width: int, height: int, font: ImageFont.ImageFont) -
     return np.array(image)
 
 
-def legacy_encoder_settings(bitrate_bps: int) -> dict[str, Any]:
+def legacy_encoder_settings(bitrate_bps: int, policy) -> dict[str, Any]:
     """Report the current code's x264 settings without changing them."""
-    x264_params = libx264_zerolatency_options(bitrate_bps, LEGACY_GOP_FRAMES)["x264-params"]
+    x264_params = libx264_zerolatency_options(
+        bitrate_bps,
+        policy.periodic_idr_frames,
+        policy.vbv_buffer_ms,
+    )["x264-params"]
     match = re.search(r"vbv-bufsize=(\d+)", x264_params)
     vbv_kbits = int(match.group(1)) if match else 0
     return {
-        "codec": "libx264",
+        "codec": policy.codec_name,
         "bitrateBps": bitrate_bps,
-        "gopFrames": LEGACY_GOP_FRAMES,
+        "gopFrames": policy.periodic_idr_frames,
         "vbvKbits": vbv_kbits,
         "vbvMs": round(vbv_kbits * 1000 / max(1, bitrate_bps // 1000), 3),
         "x264Params": x264_params,
@@ -95,7 +99,11 @@ def percentile_95(values: list[float]) -> float:
 def evaluate_resolution(width: int, height: int, font: ImageFont.ImageFont) -> dict[str, Any]:
     """Encode and decode a fixed frame sequence with the active legacy policy."""
     source = make_static_text_frame(width, height, font)
-    encoder = H264VideoToolboxEncoder()
+    policy = resolve_h264_policy(
+        MediaSessionIntent("offline-probe", 1, "relay", width, height, FRAME_RATE, 0),
+        "relay-legacy-v1",
+    )
+    encoder = H264VideoToolboxEncoder(policy=policy)
     decoder = av.CodecContext.create("h264", "r")
     previous: np.ndarray | None = None
     frames: list[dict[str, Any]] = []
@@ -127,7 +135,7 @@ def evaluate_resolution(width: int, height: int, font: ImageFont.ImageFont) -> d
         previous = output
 
     warm_frames = frames[5:]
-    encoder_settings = legacy_encoder_settings(encoder.target_bitrate)
+    encoder_settings = legacy_encoder_settings(encoder.target_bitrate, policy)
     return {
         "resolution": [width, height],
         "encoder": encoder_settings,
@@ -147,7 +155,6 @@ def evaluate_legacy_policy() -> dict[str, Any]:
     random.seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
     logging.disable(logging.CRITICAL)
-    set_session_gop_size(LEGACY_GOP_FRAMES)
     font, font_metadata = load_probe_font()
     return {
         "policy": "relay-legacy-v1",

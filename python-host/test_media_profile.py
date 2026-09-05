@@ -90,6 +90,47 @@ def test_invalid_media_profile_is_clamped():
     assert host.media_profile["video_bitrate_kbps"] == 5000
 
 
+def test_stale_profile_generation_cannot_override_current_h264_policy():
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    host = object.__new__(WebRemoteHost)
+    host.media_profile = {
+        "profile": "high",
+        "width": 1280,
+        "height": 720,
+        "target_fps": 20,
+        "video_bitrate_kbps": 2500,
+    }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host._last_keyframe_request_at = 0.0
+    host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
+    host._h264_policy_version = "relay-legacy-v1"
+    host._h264_policy_provider = H264SessionPolicyProvider()
+    host._h264_policy_provider.bind_attempt("attempt-current")
+    host._h264_policy_provider.publish(
+        MediaSessionIntent("attempt-current", 3, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+
+    host.on_media_profile_change({
+        "viewerId": "viewer-1",
+        "connectionAttemptId": "attempt-current",
+        "generation": 2,
+        "profile": "low",
+        "width": 854,
+        "height": 480,
+        "targetFps": 12,
+        "videoBitrateKbps": 900,
+        "reason": "stale",
+        "adaptiveResolution": True,
+    })
+
+    assert host.media_profile["profile"] == "high"
+    assert host.media_profile["video_bitrate_kbps"] == 2500
+
+
 def test_capture_fps_tracks_current_media_target_with_a_60_fps_cap():
     assert ScreenCaptureTrack.capture_fps_for_target(20) == 40
     assert ScreenCaptureTrack.capture_fps_for_target(15) == 30
