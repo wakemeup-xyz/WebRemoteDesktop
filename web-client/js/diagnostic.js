@@ -429,6 +429,9 @@
           : null,
         explicitOverride1080: session.explicitOverride1080 === true
           || (typeof WebRTC !== 'undefined' && WebRTC._explicitOverride1080 === true),
+        paintObservation: (typeof WebRTC !== 'undefined' && WebRTC._lastPaintObservation)
+          ? WebRTC._lastPaintObservation
+          : null,
         videoWidth: Number(lastStats.videoWidth || videoEl?.videoWidth || 0),
         videoHeight: Number(lastStats.videoHeight || videoEl?.videoHeight || 0),
         readyState: Number(videoEl?.readyState || 0),

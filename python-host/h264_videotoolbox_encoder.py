@@ -1,6 +1,8 @@
 import fractions
+import json
 import logging
 import math
+import time
 from collections.abc import Iterable, Iterator
 from itertools import tee
 from struct import pack, unpack_from
@@ -221,6 +223,83 @@ class H264VideoToolboxEncoder(Encoder):
         self.keyframe_reason_counts = {}
         self._queued_force_tokens = []
         self._active_force_token = None
+        self._last_encoded_keyframe_kind = None
+        self._last_encoded_size = {"width": 0, "height": 0}
+        self._encoder_sample_started_at = None
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+
+    @staticmethod
+    def _sample_percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = max(0, min(len(ordered) - 1, math.ceil(len(ordered) * percentile) - 1))
+        return round(float(ordered[index]), 3)
+
+    def _reset_encoder_sample(self, now: float) -> None:
+        self._encoder_sample_started_at = now
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+
+    def _record_encoder_sample(
+        self,
+        *,
+        elapsed_ms: float,
+        encoded_bytes: int,
+        idr_bytes: int,
+        keyframe_kind: str | None,
+        now: float | None = None,
+    ) -> None:
+        """Aggregate local encode measurements; never infer cross-machine latency."""
+        sample_now = time.monotonic() if now is None else float(now)
+        if self._encoder_sample_started_at is None:
+            self._reset_encoder_sample(sample_now)
+        elapsed = float(elapsed_ms)
+        if math.isfinite(elapsed) and elapsed >= 0:
+            self._encoder_sample_durations_ms.append(elapsed)
+        self._encoder_sample_total_bytes += max(0, int(encoded_bytes))
+        if int(idr_bytes) > 0:
+            self._encoder_sample_idr_bytes.append(int(idr_bytes))
+        if keyframe_kind in self._encoder_sample_keyframes:
+            self._encoder_sample_keyframes[keyframe_kind] += 1
+        if sample_now - self._encoder_sample_started_at < 5.0:
+            return
+
+        durations = self._encoder_sample_durations_ms
+        idr_sizes = self._encoder_sample_idr_bytes
+        codec = self.codec
+        sample = {
+            "connectionAttemptId": str(getattr(self._policy, "connection_attempt_id", "legacy-local")),
+            "generation": int(getattr(self._policy, "generation", 0) or 0),
+            "policyId": self._policy.policy_id,
+            "size": dict(self._last_encoded_size),
+            "codec": self.codec_name,
+            "bitrate": {
+                "target": int(self.target_bitrate),
+                "effective": int(getattr(codec, "bit_rate", 0) or 0),
+            },
+            "targetFps": int(self._policy.target_fps),
+            "encode": {
+                "count": len(durations),
+                "avgMs": round(sum(durations) / len(durations), 3) if durations else 0.0,
+                "p95Ms": self._sample_percentile(durations, 0.95),
+                "maxMs": round(max(durations), 3) if durations else 0.0,
+            },
+            "bytes": {
+                "total": self._encoder_sample_total_bytes,
+                "idrCount": len(idr_sizes),
+                "idrAvg": round(sum(idr_sizes) / len(idr_sizes), 3) if idr_sizes else 0.0,
+                "idrMax": max(idr_sizes) if idr_sizes else 0,
+            },
+            "keyframes": dict(self._encoder_sample_keyframes),
+        }
+        logger.info("WRD_ENCODER_SAMPLE %s", json.dumps(sample, separators=(",", ":"), sort_keys=True))
+        self._reset_encoder_sample(sample_now)
 
     def note_keyframe_request(self, reason: str, connection_attempt_id: str, generation: int, request_sequence: int) -> None:
         """Queue one causal token for its matching force-keyframe submission."""
@@ -394,6 +473,8 @@ class H264VideoToolboxEncoder(Encoder):
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
         self._adopt_pending_policy()
+        self._last_encoded_keyframe_kind = None
+        self._last_encoded_size = {"width": int(frame.width), "height": int(frame.height)}
         if self.codec and (
             frame.width != self.codec.width
             or frame.height != self.codec.height
@@ -466,6 +547,11 @@ class H264VideoToolboxEncoder(Encoder):
             _nal_is_idr(packet) for packet in encoded_packets
         )
         if has_idr:
+            self._last_encoded_keyframe_kind = (
+                "forced" if self._active_force_token is not None
+                else "pli" if force_keyframe
+                else "periodic"
+            )
             self._frames_since_idr = 0
             self._idr_wait_remaining = 0
             if waiting or want_idr:
@@ -610,9 +696,19 @@ class H264VideoToolboxEncoder(Encoder):
         self, frame: Frame, force_keyframe: bool = False
     ) -> tuple[list[bytes], int]:
         assert isinstance(frame, av.VideoFrame)
+        started_at = time.monotonic()
         packages = self._encode_frame(frame, force_keyframe)
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
-        return self._packetize(packages), timestamp
+        packetized = self._packetize(packages)
+        encoded_bytes = sum(len(packet) for packet in packetized)
+        idr_bytes = encoded_bytes if self._last_encoded_keyframe_kind is not None else 0
+        self._record_encoder_sample(
+            elapsed_ms=(time.monotonic() - started_at) * 1000,
+            encoded_bytes=encoded_bytes,
+            idr_bytes=idr_bytes,
+            keyframe_kind=self._last_encoded_keyframe_kind,
+        )
+        return packetized, timestamp
 
     def pack(self, packet: Packet) -> tuple[list[bytes], int]:
         assert isinstance(packet, av.Packet)

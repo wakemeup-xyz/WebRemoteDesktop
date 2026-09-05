@@ -197,6 +197,22 @@ test('sendLogs includes paint continuity fields from the live WebRTC session', (
   assert.equal(emitted[0].payload.logs.length, 1);
 });
 
+test('connection diagnostics include only the aggregated paint observation', () => {
+  const { context } = createDiagnosticContext();
+  context.WebRTC._lastPaintObservation = {
+    intervalMs: { p50: 16, p95: 34, max: 40 },
+    maxGapMs: 40,
+    presentedFramesDelta: 5,
+    video: { width: 1280, height: 720 },
+    geometry: { x: 0, y: 0, width: 960, height: 540, changes: 0 },
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual' });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.traceSummary.paintObservation)), context.WebRTC._lastPaintObservation);
+  assert.equal(JSON.stringify(payload).includes('presentedFrames: 1'), false);
+});
+
 test('keyboard diagnostics expose lease metadata only and never raw key labels', () => {
   const { context } = createDiagnosticContext();
   const Input = loadScript('input.js', context, 'Input');

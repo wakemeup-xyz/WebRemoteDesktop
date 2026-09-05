@@ -1761,6 +1761,35 @@ test('video frame callback paints only the current refresh attempt', () => {
   assert.equal(WebRTC.uiPhase, 'connected');
 });
 
+test('video frame tracking aggregates paint intervals and geometry every five seconds', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.getBoundingClientRect = () => ({ x: 12, y: 24, width: 960, height: 540 });
+  video.requestVideoFrameCallback = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  video.cancelVideoFrameCallback = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-paint';
+  WebRTC.pc = { id: 'pc-paint' };
+
+  WebRTC.startVideoFrameTracking();
+  callbacks[0](0, { presentedFrames: 10 });
+  callbacks[1](20, { presentedFrames: 11 });
+  callbacks[2](5020, { presentedFrames: 14 });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC._lastPaintObservation)), {
+    intervalMs: { p50: 20, p95: 5000, max: 5000 },
+    maxGapMs: 5000,
+    presentedFramesDelta: 4,
+    video: { width: 1280, height: 720 },
+    geometry: { x: 12, y: 24, width: 960, height: 540, changes: 0 },
+  });
+});
+
 test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {
   let created = 0;
   let stopped = 0;

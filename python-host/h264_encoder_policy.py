@@ -39,6 +39,8 @@ class H264SessionPolicy:
     vbv_buffer_ms: int
     preset: str
     profile: str
+    connection_attempt_id: str = "legacy-local"
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,8 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
             vbv_buffer_ms=vbv_buffer_ms,
             preset="ultrafast",
             profile="Baseline",
+            connection_attempt_id=intent.connection_attempt_id,
+            generation=intent.generation,
         )
 
     minimum, target, maximum = _direct_bitrate_range(intent)
@@ -147,6 +151,8 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
         vbv_buffer_ms=100,
         preset="default",
         profile="Baseline",
+        connection_attempt_id=intent.connection_attempt_id,
+        generation=intent.generation,
     )
 
 

@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 from unittest.mock import MagicMock
 
 import host as host_module
@@ -63,6 +65,49 @@ def test_set_session_gop_clamps():
     assert get_session_gop_size() == 20
     assert set_session_gop_size(1) == 10
     set_session_gop_size(40)
+
+
+def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields(caplog):
+    """Encoder observability is bounded and only reports locally measured work."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-observe", 7, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    with caplog.at_level(logging.INFO, logger="h264_videotoolbox_encoder"):
+        enc._record_encoder_sample(
+            elapsed_ms=12.5,
+            encoded_bytes=400,
+            idr_bytes=400,
+            keyframe_kind="forced",
+            now=100.0,
+        )
+        enc._record_encoder_sample(
+            elapsed_ms=7.5,
+            encoded_bytes=200,
+            idr_bytes=0,
+            keyframe_kind=None,
+            now=104.9,
+        )
+        enc._record_encoder_sample(
+            elapsed_ms=10.0,
+            encoded_bytes=300,
+            idr_bytes=0,
+            keyframe_kind="periodic",
+            now=105.0,
+        )
+
+    samples = [record.message for record in caplog.records if record.message.startswith("WRD_ENCODER_SAMPLE ")]
+    assert len(samples) == 1
+    sample = json.loads(samples[0].removeprefix("WRD_ENCODER_SAMPLE "))
+    assert sample["connectionAttemptId"] == "attempt-observe"
+    assert sample["generation"] == 7
+    assert sample["policyId"] == "relay-legacy-v1"
+    assert sample["encode"] == {"count": 3, "avgMs": 10.0, "p95Ms": 12.5, "maxMs": 12.5}
+    assert sample["bytes"] == {"total": 900, "idrCount": 1, "idrAvg": 400.0, "idrMax": 400}
+    assert sample["keyframes"] == {"forced": 1, "periodic": 1, "pli": 0}
 
 
 class FakePacket:

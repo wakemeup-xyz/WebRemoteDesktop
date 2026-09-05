@@ -110,6 +110,8 @@ const WebRTC = {
   _paintStalled6sTimer: null,
   _paintIssueKind: null,
   _lastPaintStats: null,
+  _paintObservationWindow: null,
+  _lastPaintObservation: null,
   _keyframeRequested: false,
   _keyframeEmitted: false,
   _keyframeRequestGeneration: '',
@@ -4452,6 +4454,7 @@ if (this.tunnelLastObjectUrl) {
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
+      this.observePaintFrame(now, metadata, video);
       if (this._mediaResumeFramePending) {
         this.observeFreshResumeFrame({
           source: 'video-callback',
@@ -4463,6 +4466,79 @@ if (this.tunnelLastObjectUrl) {
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
     };
     this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
+  },
+
+  observePaintFrame(now, metadata = {}, video) {
+    const paintAt = Number(now);
+    if (!Number.isFinite(paintAt)) return null;
+    const rect = typeof video?.getBoundingClientRect === 'function'
+      ? video.getBoundingClientRect()
+      : {};
+    const geometry = {
+      x: Number(rect?.x ?? rect?.left ?? 0),
+      y: Number(rect?.y ?? rect?.top ?? 0),
+      width: Number(rect?.width ?? 0),
+      height: Number(rect?.height ?? 0),
+    };
+    let window = this._paintObservationWindow;
+    if (!window) {
+      window = {
+        startedAt: paintAt,
+        lastPaintAt: paintAt,
+        intervals: [],
+        maxGapMs: 0,
+        firstPresentedFrames: Number(metadata.presentedFrames),
+        lastPresentedFrames: Number(metadata.presentedFrames),
+        video: { width: Number(video?.videoWidth || 0), height: Number(video?.videoHeight || 0) },
+        geometry,
+        geometryChanges: 0,
+      };
+      this._paintObservationWindow = window;
+      return null;
+    }
+    const gap = Math.max(0, paintAt - window.lastPaintAt);
+    window.intervals.push(gap);
+    window.maxGapMs = Math.max(window.maxGapMs, gap);
+    window.lastPaintAt = paintAt;
+    const presentedFrames = Number(metadata.presentedFrames);
+    if (Number.isFinite(presentedFrames)) window.lastPresentedFrames = presentedFrames;
+    window.video = { width: Number(video?.videoWidth || 0), height: Number(video?.videoHeight || 0) };
+    if (["x", "y", "width", "height"].some((key) => geometry[key] !== window.geometry[key])) {
+      window.geometry = geometry;
+      window.geometryChanges += 1;
+    }
+    if (paintAt - window.startedAt < 5000) return null;
+    const intervals = window.intervals.slice().sort((a, b) => a - b);
+    const percentile = (fraction) => intervals.length
+      ? intervals[Math.max(0, Math.min(intervals.length - 1, Math.ceil(intervals.length * fraction) - 1))]
+      : 0;
+    const firstPresented = Number(window.firstPresentedFrames);
+    const lastPresented = Number(window.lastPresentedFrames);
+    this._lastPaintObservation = {
+      intervalMs: {
+        p50: percentile(0.5),
+        p95: percentile(0.95),
+        max: intervals.length ? intervals.at(-1) : 0,
+      },
+      maxGapMs: window.maxGapMs,
+      presentedFramesDelta: Number.isFinite(firstPresented) && Number.isFinite(lastPresented)
+        ? Math.max(0, lastPresented - firstPresented) : 0,
+      video: window.video,
+      geometry: { ...window.geometry, changes: window.geometryChanges },
+    };
+    console.info('[WRD_PAINT_SAMPLE]', this._lastPaintObservation);
+    this._paintObservationWindow = {
+      startedAt: paintAt,
+      lastPaintAt: paintAt,
+      intervals: [],
+      maxGapMs: 0,
+      firstPresentedFrames: lastPresented,
+      lastPresentedFrames: lastPresented,
+      video: window.video,
+      geometry: window.geometry,
+      geometryChanges: 0,
+    };
+    return this._lastPaintObservation;
   },
 
   stopMediaTelemetry() {
