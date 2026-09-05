@@ -41,7 +41,7 @@ repeatable evidence. `NOT RUN` needs an actual relay/browser/device path and mus
 not be inferred from local health checks or an offline probe.
 
 | Gate | Required evidence | Initial status |
-|---|---|---|
+|---|---|---|---|
 | Legacy offline evidence format | Valid JSON with policy, resolution, bitrate, VBV, GOP, per-frame bytes/IDR/PSNR/changeMAE/encode time, versions, and machine metadata | PENDING |
 | Legacy one-second quality pulse | Fixed synthetic static text reproduces the periodic forced-IDR pulse near the current 20-frame cadence | PENDING |
 | RTP timeline | 20FPS adjacent frames advance 4,500 90kHz ticks; monotonic/pause/new-track cases pass | PENDING |
@@ -65,18 +65,21 @@ It used only the deterministic synthetic text encoder probe; it did not start a
 Host, open a browser, allocate TURN, inject packet loss, or generate an input
 ack. The JSON therefore records every real relay/runtime gate as `NOT RUN`.
 
-All seven rows ran independently from a declared parameter baseline. A failed
-row did not suppress, mutate, or implicitly provide the next row's input.
+The matrix now first runs seven single-variable controls from the legacy
+baseline: 2/4/10-second GOP, on-demand-only GOP removal, 150/200ms VBV, and
+the per-resolution bitrate cap. Each subsequent §6.5 combination still runs as
+an independent measurement, but is eligible for selection only when its own
+offline gates and every listed control dependency pass.
 
-| Candidate | Declared change | 1152x720 / 1728x1080 result |
+| Candidate | Dependencies | 1152x720 / 1728x1080 result | Eligible |
 |---|---|---|
-| `gop-2s-current-bitrate-vbv100` | GOP 20 to 40 frames | FAIL / FAIL |
-| `gop-2s-current-bitrate-vbv150` | VBV 100 to 150ms | FAIL / FAIL |
-| `gop-2s-cap-bitrate-vbv150` | bitrate 1.8/2.5 to 3.2/5Mbps | FAIL / FAIL |
-| `gop-2s-cap-bitrate-vbv200` | VBV 150 to 200ms | FAIL / FAIL |
-| `gop-4s-cap-bitrate-vbv200` | GOP 40 to 80 frames | FAIL / FAIL |
-| `gop-10s-cap-bitrate-vbv200` | GOP 80 to 200 frames | FAIL / FAIL |
-| `on-demand-cap-bitrate-vbv200` | periodic GOP to on-demand only | FAIL / FAIL |
+| `gop-2s-current-bitrate-vbv100` | GOP-2s | FAIL / FAIL | no |
+| `gop-2s-current-bitrate-vbv150` | GOP-2s, VBV-150 | FAIL / FAIL | no |
+| `gop-2s-cap-bitrate-vbv150` | GOP-2s, VBV-150, bitrate-cap | FAIL / FAIL | no |
+| `gop-2s-cap-bitrate-vbv200` | GOP-2s, VBV-200, bitrate-cap | FAIL / FAIL | no |
+| `gop-4s-cap-bitrate-vbv200` | GOP-4s, VBV-200, bitrate-cap | FAIL / FAIL | no |
+| `gop-10s-cap-bitrate-vbv200` | GOP-10s, VBV-200, bitrate-cap | FAIL / FAIL | no |
+| `on-demand-cap-bitrate-vbv200` | GOP removal, VBV-200, bitrate-cap | FAIL / FAIL | no |
 
 Every periodic row removed the 0.8-1.5-second pulse and met its local encoding
 budget, but failed periodic-IDR `changeMAE` and forced-IDR PSNR at both
@@ -86,7 +89,9 @@ PSNR remained below 28dB at both resolutions. The JSON records per-resolution
 IDR and P-frame encoded-byte averages/maxima plus `idrToPAvgBurstRatio`; these
 are local byte summaries only and do not substitute for the Viewer buffer gate.
 
-There is therefore no offline winner. Selection is `no-offline-winner`,
+Every single-variable control failed its own offline gates, so no combination
+can become eligible even if a future combination's aggregate metric happens to
+pass. There is therefore no offline winner. Selection is `no-offline-winner`,
 `relay-balanced-v2` has no selected constants, and `relay-legacy-v1` remains the
 default. This is a stop result, not a claim that the periodic quality issue is
 fixed.

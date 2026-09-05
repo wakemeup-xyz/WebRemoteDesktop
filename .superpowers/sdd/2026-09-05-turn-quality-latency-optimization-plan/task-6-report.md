@@ -121,3 +121,38 @@ The Task 9 Viewer-buffer, Host event-loop/input-ack, and finite-loss gates remai
 ### Fix-round commit
 
 `fix(media): evaluate independent relay encoder candidates` (this commit)
+
+## Fix round 2/5: dependency-aware selection graph
+
+The seven §6.5 combinations continue to run and retain complete two-resolution
+evidence. Selection no longer treats them as an unconditional linear search.
+The evaluator first runs legacy-relative primitive controls for GOP 2/4/10s,
+on-demand GOP removal, VBV 150/200ms, and the bitrate cap. Each combination now
+records `dependencies`, `eligible`, and `ineligibleReason`; it is selectable
+only if it passes its own offline gates and all primitive controls pass.
+
+All seven controls failed their offline gates in this run. All seven measured
+combinations also failed their own offline gates, and each records the matching
+failed control IDs in `ineligibleReason`. The selection stays
+`no-offline-winner`; the legacy default remains unchanged and no v2 constants
+were installed. This means a coincidental aggregate pass could not promote a
+combination that relies on a rejected GOP, VBV, or bitrate primitive.
+
+The on-demand combination depends on the independently measured on-demand GOP
+removal, VBV-200, and bitrate-cap controls. Its 60-second no-periodic-IDR
+scheduler window remains a deterministic policy check; its 65-frame actual
+samples measure direct forced-IDR quality, encode time, and bytes only. No loss,
+Viewer buffer, selected relay pair, event-loop, or input-ack evidence was
+created.
+
+### Fix-round verification
+
+- RED: a passing combination with `eligible=false` was selected before the
+  selection test was updated; the matrix schema also had no `controls` or
+  dependency fields.
+- GREEN: the exact full matrix regenerated the versioned JSON; focused pytest,
+  evaluator/timeline unittest, and `git diff --check` were rerun before commit.
+
+### Fix-round commit
+
+`fix(media): gate relay combinations on primitive controls` (this commit)

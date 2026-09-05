@@ -18,7 +18,7 @@ def select_relay_candidate(candidates: list[dict]) -> dict:
     for candidate in candidates:
         offline = candidate.get("offline", {})
         runtime = candidate.get("runtime", {})
-        if offline.get("status") != "PASS":
+        if offline.get("status") != "PASS" or not candidate.get("eligible", True):
             continue
         runtime_gates = runtime.get("gates", {})
         runtime_passed = (
@@ -65,6 +65,7 @@ def _candidate(
     bitrates_bps: dict[str, int],
     changed_variable: str,
     baseline: dict,
+    dependencies: tuple[str, ...] = (),
 ) -> dict:
     return {
         "id": candidate_id,
@@ -82,7 +83,78 @@ def _candidate(
         },
         "offline": {"status": "NOT RUN"},
         "runtime": {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)},
+        "dependencies": list(dependencies),
+        "eligible": False,
+        "ineligibleReason": [],
     }
+
+
+def relay_matrix_controls() -> list[dict]:
+    """Measure each primitive change from the legacy baseline before combinations."""
+    legacy_baseline = {
+        "id": "relay-legacy-v1",
+        "periodicIdrFrames": 20,
+        "vbvBufferMs": 100,
+        "bitrateBpsByResolution": dict(CURRENT_BITRATES_BPS),
+    }
+    return [
+        _candidate(
+            "control-gop-2s",
+            periodic_idr_frames=40,
+            vbv_buffer_ms=100,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="periodicIdrFrames",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-gop-4s",
+            periodic_idr_frames=80,
+            vbv_buffer_ms=100,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="periodicIdrFrames",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-gop-10s",
+            periodic_idr_frames=200,
+            vbv_buffer_ms=100,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="periodicIdrFrames",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-gop-on-demand",
+            periodic_idr_frames=None,
+            vbv_buffer_ms=100,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="periodicIdrFrames",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-vbv-150",
+            periodic_idr_frames=20,
+            vbv_buffer_ms=150,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="vbvBufferMs",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-vbv-200",
+            periodic_idr_frames=20,
+            vbv_buffer_ms=200,
+            bitrates_bps=dict(CURRENT_BITRATES_BPS),
+            changed_variable="vbvBufferMs",
+            baseline=legacy_baseline,
+        ),
+        _candidate(
+            "control-bitrate-cap",
+            periodic_idr_frames=20,
+            vbv_buffer_ms=100,
+            bitrates_bps=dict(CAP_BITRATES_BPS),
+            changed_variable="targetBitrateBps",
+            baseline=legacy_baseline,
+        ),
+    ]
 
 
 def relay_matrix_candidates() -> list[dict]:
@@ -137,6 +209,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CURRENT_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
             baseline=legacy_baseline,
+            dependencies=("control-gop-2s",),
         ),
         _candidate(
             "gop-2s-current-bitrate-vbv150",
@@ -145,6 +218,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CURRENT_BITRATES_BPS),
             changed_variable="vbvBufferMs",
             baseline=two_second_100,
+            dependencies=("control-gop-2s", "control-vbv-150"),
         ),
         _candidate(
             "gop-2s-cap-bitrate-vbv150",
@@ -153,6 +227,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="targetBitrateBps",
             baseline=two_second_150,
+            dependencies=("control-gop-2s", "control-vbv-150", "control-bitrate-cap"),
         ),
         _candidate(
             "gop-2s-cap-bitrate-vbv200",
@@ -161,6 +236,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="vbvBufferMs",
             baseline=two_second_cap_150,
+            dependencies=("control-gop-2s", "control-vbv-200", "control-bitrate-cap"),
         ),
         _candidate(
             "gop-4s-cap-bitrate-vbv200",
@@ -169,6 +245,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
             baseline=two_second_cap_200,
+            dependencies=("control-gop-4s", "control-vbv-200", "control-bitrate-cap"),
         ),
         _candidate(
             "gop-10s-cap-bitrate-vbv200",
@@ -177,6 +254,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
             baseline=four_second_cap_200,
+            dependencies=("control-gop-10s", "control-vbv-200", "control-bitrate-cap"),
         ),
         _candidate(
             "on-demand-cap-bitrate-vbv200",
@@ -185,6 +263,7 @@ def relay_matrix_candidates() -> list[dict]:
             bitrates_bps=dict(CAP_BITRATES_BPS),
             changed_variable="periodicIdrFrames",
             baseline=ten_second_cap_200,
+            dependencies=("control-gop-on-demand", "control-vbv-200", "control-bitrate-cap"),
         ),
     ]
 
@@ -331,15 +410,37 @@ def _evaluate_offline_candidate(probe, candidate: dict) -> dict:
 
 
 def evaluate_relay_matrix(probe) -> dict:
-    """Evaluate every explicit row without allowing a failed row to alter another."""
+    """Measure all rows while making selection depend only on passed primitives."""
+    controls = relay_matrix_controls()
+    for control in controls:
+        control["offline"] = _evaluate_offline_candidate(probe, control)
+        control["eligible"] = control["offline"]["status"] == "PASS"
+        if not control["eligible"]:
+            control["ineligibleReason"] = ["control failed offline gates"]
+
+    control_by_id = {control["id"]: control for control in controls}
     candidates = relay_matrix_candidates()
     for candidate in candidates:
         candidate["offline"] = _evaluate_offline_candidate(probe, candidate)
+        failed_dependencies = [
+            dependency
+            for dependency in candidate["dependencies"]
+            if not control_by_id[dependency]["eligible"]
+        ]
+        reasons = []
+        if candidate["offline"]["status"] != "PASS":
+            reasons.append("candidate failed offline gates")
+        reasons.extend(
+            f"{dependency} failed offline gates" for dependency in failed_dependencies
+        )
+        candidate["eligible"] = not reasons
+        candidate["ineligibleReason"] = reasons
 
     return {
         "kind": "relay-encoder-quality-matrix",
         "scope": "offline synthetic encoder matrix only; it cannot prove TURN, packet loss, Viewer buffer, Host event-loop, or input acknowledgement gates",
         "defaultPolicy": "relay-legacy-v1",
+        "controls": controls,
         "candidates": candidates,
         "selection": select_relay_candidate(candidates),
     }

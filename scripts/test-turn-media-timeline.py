@@ -50,14 +50,20 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
                     "runtime": {"status": "NOT RUN", "gates": {}},
                 },
                 {
-                    "id": "first-offline-winner",
+                    "id": "blocked-offline-winner",
                     "offline": {"status": "PASS"},
                     "runtime": {"status": "NOT RUN", "gates": {}},
+                    "eligible": False,
+                    "dependencies": ["control-gop-2s"],
+                    "ineligibleReason": ["control-gop-2s failed offline gates"],
                 },
                 {
-                    "id": "later-offline-winner",
+                    "id": "eligible-offline-winner",
                     "offline": {"status": "PASS"},
                     "runtime": {"status": "NOT RUN", "gates": {}},
+                    "eligible": True,
+                    "dependencies": ["control-vbv-150"],
+                    "ineligibleReason": [],
                 },
             ]
         )
@@ -66,6 +72,9 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
                 {
                     "id": "runtime-validated-winner",
                     "offline": {"status": "PASS"},
+                    "eligible": True,
+                    "dependencies": [],
+                    "ineligibleReason": [],
                     "runtime": {
                         "status": "PASS",
                         "gates": {
@@ -82,7 +91,7 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
         self.assertEqual(no_winner["candidateId"], None)
         self.assertEqual(no_winner["defaultPolicy"], "relay-legacy-v1")
         self.assertEqual(runtime_candidate["state"], "runtime-validation-candidate")
-        self.assertEqual(runtime_candidate["candidateId"], "first-offline-winner")
+        self.assertEqual(runtime_candidate["candidateId"], "eligible-offline-winner")
         self.assertEqual(runtime_candidate["defaultPolicy"], "relay-legacy-v1")
         self.assertEqual(runtime_candidate["runtimeGateStatus"], "PENDING")
         self.assertEqual(validated["state"], "validated")
@@ -112,6 +121,7 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
 
         self.assertEqual(evidence["kind"], "relay-encoder-quality-matrix")
         self.assertEqual(evidence["defaultPolicy"], "relay-legacy-v1")
+        self.assertTrue(evidence["controls"])
         self.assertGreaterEqual(len(evidence["candidates"]), 1)
         self.assertIn(evidence["selection"]["state"], {
             "no-offline-winner",
@@ -119,7 +129,18 @@ class TurnEncoderQualityEvidenceTest(unittest.TestCase):
         })
 
         for candidate in evidence["candidates"]:
-            self.assertTrue({"id", "parameters", "offline", "runtime"} <= candidate.keys())
+            self.assertTrue(
+                {
+                    "id",
+                    "parameters",
+                    "offline",
+                    "runtime",
+                    "eligible",
+                    "dependencies",
+                    "ineligibleReason",
+                }
+                <= candidate.keys()
+            )
             self.assertEqual(candidate["runtime"]["status"], "NOT RUN")
             self.assertEqual(
                 candidate["runtime"]["gates"],
