@@ -112,6 +112,7 @@ const WebRTC = {
   _lastPaintStats: null,
   _keyframeRequested: false,
   _keyframeEmitted: false,
+  _keyframeRequestGeneration: '',
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -834,6 +835,8 @@ const WebRTC = {
     this._lastInboundFramesDecodedAt = 0;
     this._paintDecodedBaseline = 0;
     this._stallSince = null;
+    this._keyframeRequestGeneration = '';
+    this._lastKeyframeRequestAt = 0;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
 
@@ -1519,7 +1522,13 @@ const WebRTC = {
   },
 
   requestKeyframe(reason = 'media-stalled') {
+    if (this.isMediaHealthSuppressed()) return false;
     const now = Date.now();
+    const generation = `${this.currentConnectionAttemptId || ''}|${Number(this.connectionAttemptSequence) || 0}`;
+    if (this._keyframeRequestGeneration !== generation) {
+      this._keyframeRequestGeneration = generation;
+      this._lastKeyframeRequestAt = 0;
+    }
     if (this._lastKeyframeRequestAt && now - this._lastKeyframeRequestAt < 1000) {
       return false;
     }
@@ -1532,6 +1541,8 @@ const WebRTC = {
       ...lease,
       schemaVersion: 2,
       reason: String(reason || 'media-stalled').slice(0, 80),
+      connectionAttemptId: this.currentConnectionAttemptId || '',
+      connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
     });
     console.warn(`[MEDIA] request-keyframe reason=${reason}`);
     return true;
@@ -1560,15 +1571,19 @@ const WebRTC = {
       ...canonical,
       selectedCandidatePair: this.selectedCandidatePair,
     });
-    if (!result || result.action === 'hold') return;
+    if (!result) return;
 
-    if (result.shouldRequestKeyframe || result.action === 'recover') {
-      const inboundStillFlowing = canonical.receivedDelta > 0
-        && canonical.derivedFps === 0;
-      if (!(this.networkMode === 'relay' && inboundStillFlowing)) {
-        this.requestKeyframe(result.reason || 'media-stalled');
-      }
+    const feedbackRequested = canonical.pliCountDelta > 0 || canonical.firCountDelta > 0;
+    const applicationReason = (result.shouldRequestKeyframe || result.action === 'recover')
+      ? result.reason || 'media-stalled'
+      : '';
+    if (applicationReason || feedbackRequested) {
+      // Browser PLI/FIR counters have no stable causal attribution in aiortc;
+      // retain an application reason when one is pending, otherwise record unknown.
+      this.requestKeyframe(applicationReason || 'rtcp-or-unknown');
     }
+
+    if (result.action === 'hold') return;
 
     if (result.profileConfig) {
       this.applyMediaProfile(result.profileConfig, result.reason);
@@ -4661,6 +4676,7 @@ if (this.tunnelLastObjectUrl) {
           firCountDelta: firCount,
           freezeDelta: freezeCount,
           warmup: canonical.warmup,
+          mediaHealthSuppressed: this.isMediaHealthSuppressed(),
           codec,
           selectedCandidateType,
           // Host log parsing still expects the pre-canonical keys. Keep aliases

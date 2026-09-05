@@ -75,6 +75,7 @@ const LinkQualityController = {
       lastPacketsLost: null,
       lastFramesDecoded: null,
       lastDecodedDelta: 0,
+      lastReceivedDelta: 0,
       iceRestartAttempted: false,
       profileChanges: [],
       lastProfileChangeAt: 0,
@@ -111,6 +112,7 @@ const LinkQualityController = {
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
         this.lastDecodedDelta = 0;
+        this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
         return { changed: true, path: this.path, profile: this.currentProfile };
       },
@@ -132,6 +134,7 @@ const LinkQualityController = {
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
         this.lastDecodedDelta = 0;
+        this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
       },
 
@@ -150,6 +153,7 @@ const LinkQualityController = {
           shouldRestartIce: Boolean(extra.shouldRestartIce),
           shouldRequestKeyframe: Boolean(extra.shouldRequestKeyframe),
           decodedDelta: this.lastDecodedDelta,
+          receivedDelta: this.lastReceivedDelta,
           changed: false,
         };
       },
@@ -165,8 +169,10 @@ const LinkQualityController = {
       observe(stats = {}) {
         const packetsLost = Number(stats.packetsLost || 0);
         const framesDecoded = Number(stats.framesDecoded || 0);
+        const framesReceived = Number(stats.framesReceived || 0);
         const hasCanonicalPacketsLostDelta = stats.packetsLostDelta != null;
         const hasCanonicalDecodedDelta = stats.decodedDelta != null;
+        const hasCanonicalReceivedDelta = stats.receivedDelta != null;
         const packetsLostDelta = hasCanonicalPacketsLostDelta
           ? Math.max(0, Number(stats.packetsLostDelta) || 0)
           : stats.interval === true
@@ -181,10 +187,16 @@ const LinkQualityController = {
           : this.lastFramesDecoded == null
           ? framesDecoded
           : Math.max(0, framesDecoded - this.lastFramesDecoded);
+        const receivedDelta = hasCanonicalReceivedDelta
+          ? Math.max(0, Number(stats.receivedDelta) || 0)
+          : stats.interval === true
+          ? Math.max(0, framesReceived)
+          : Math.max(0, framesReceived);
 
         this.lastPacketsLost = packetsLost;
         this.lastFramesDecoded = framesDecoded;
         this.lastDecodedDelta = decodedDelta;
+        this.lastReceivedDelta = receivedDelta;
 
         const qualityLock = this.qualityLock === true;
         const hasSelectedPair = Boolean(stats.selectedCandidateType);
@@ -196,9 +208,12 @@ const LinkQualityController = {
         const veryHighRtt = rttMs >= this.veryHighRttMs;
         const highJitter = jitterBufferMs >= 150;
         const highLoss = packetsLostDelta >= 20;
-        const mediaStalled = hasSelectedPair && zeroFps;
+        const decoderStalled = hasSelectedPair && decodedDelta === 0 && receivedDelta > 0;
+        const mediaStalled = hasSelectedPair && zeroFps && !decoderStalled;
+        const stalled = decoderStalled || mediaStalled;
 
-        const reason = highLoss ? 'packet-loss'
+        const reason = decoderStalled ? 'decoder-stalled'
+          : highLoss ? 'packet-loss'
           : veryHighRtt || highRtt ? 'high-rtt'
           : highJitter ? 'jitter'
           : mediaStalled ? 'media-stalled'
@@ -211,7 +226,7 @@ const LinkQualityController = {
           return this._holdResult('no-selected-pair');
         }
 
-        if (mediaStalled && this.startupGraceSamplesRemaining > 0) {
+        if (stalled && this.startupGraceSamplesRemaining > 0) {
           this.startupGraceSamplesRemaining -= 1;
           this.degradedCount = 0;
           this.criticalCount = 0;
@@ -223,7 +238,7 @@ const LinkQualityController = {
         }
 
         // Structural high RTT on relay must not alone enter critical/ICE restart.
-        const criticalSignal = mediaStalled
+        const criticalSignal = stalled
           || (veryHighRtt && this.iceRestartOnVeryHighRtt);
         if (criticalSignal) {
           this.criticalCount += 1;
@@ -282,15 +297,15 @@ const LinkQualityController = {
         if (this.criticalCount >= 2) {
           // Relay: brief 0-FPS gaps are normal at ~400ms RTT; require sustained
           // stall before survival thrash (each profile apply reopens the encoder).
-          const criticalNeeded = (mediaStalled && this.path === 'relay') ? 6 : 2;
+          const criticalNeeded = (stalled && this.path === 'relay') ? 6 : 2;
           if (this.criticalCount < criticalNeeded) {
-            if (qualityLock && mediaStalled) {
+            if (qualityLock && stalled) {
               return this._recoverResult(reason || 'media-stalled');
             }
             return this._holdResult(reason);
           }
 
-          const shouldRestartIce = mediaStalled
+          const shouldRestartIce = stalled
             ? this.iceRestartOnStall && !this.iceRestartAttempted
             : this.iceRestartOnVeryHighRtt && !this.iceRestartAttempted;
 
@@ -310,7 +325,7 @@ const LinkQualityController = {
         }
 
         // Brief media stall under lock: recover before critical threshold.
-        if (qualityLock && mediaStalled) {
+        if (qualityLock && stalled) {
           return this._recoverResult(reason || 'media-stalled');
         }
 

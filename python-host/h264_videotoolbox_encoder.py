@@ -215,6 +215,19 @@ class H264VideoToolboxEncoder(Encoder):
         self._idr_wait_remaining = 0
         self._frames_since_idr = 0
         self._frames_encoded = 0
+        self.last_requested_keyframe_emitted = False
+        self.last_keyframe_request_generation = None
+        self.keyframe_reason_counts = {}
+        self._pending_keyframe_generation = None
+
+    def note_keyframe_request(self, reason: str, connection_attempt_id: str, generation: int) -> None:
+        """Record one admitted application request until its IDR is observable."""
+        reason_s = str(reason or "rtcp-or-unknown")[:80]
+        key = (str(connection_attempt_id or ""), int(generation or 0))
+        self.keyframe_reason_counts[reason_s] = self.keyframe_reason_counts.get(reason_s, 0) + 1
+        self.last_keyframe_request_generation = key
+        self._pending_keyframe_generation = key
+        self.last_requested_keyframe_emitted = False
 
     @staticmethod
     def _clamp_bitrate(policy: H264SessionPolicy, requested_bitrate: int) -> int:
@@ -448,6 +461,9 @@ class H264VideoToolboxEncoder(Encoder):
             if waiting or want_idr:
                 self.last_force_emitted_idr = True
                 self.last_idr_recreated = False
+            if self._pending_keyframe_generation is not None:
+                self.last_requested_keyframe_emitted = True
+                self._pending_keyframe_generation = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s encoded=%s",
                     True,

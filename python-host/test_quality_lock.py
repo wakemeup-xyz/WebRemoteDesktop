@@ -202,13 +202,17 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     assert "dropped=3" in stats[-1]
 
 
-def test_viewer_stats_refreshes_decoder_once_per_freeze():
+def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_samples():
     import asyncio
 
     class FakeEncoder:
         def __init__(self):
             self.calls = 0
             self.codec = object()
+            self.last_force_emitted_idr = False
+
+        def note_keyframe_request(self, *_args, **_kwargs):
+            self.last_force_emitted_idr = True
 
         def request_decoder_refresh(self):
             self.calls += 1
@@ -218,16 +222,19 @@ def test_viewer_stats_refreshes_decoder_once_per_freeze():
     host = object.__new__(WebRemoteHost)
     host._last_diag_network = {"networkMode": "relay"}
     host._stall_sample_count = 0
-    host._stall_decoder_refresh_armed = True
-    host._stall_decoder_refresh_at = 0.0
+    host._last_keyframe_request_at = 0.0
+    host._keyframe_recovery_state = {}
+    host.media_sender = MagicMock()
+    host.media_sender.request_keyframe.return_value = True
     encoder = FakeEncoder()
     host.video_sender = type("Sender", (), {"_encoder": encoder})()
     loop = asyncio.get_event_loop()
     freeze = {
         "viewerId": "viewer-1",
-        "fps": 0,
-        "framesReceived": 19,
-        "framesDecoded": 0,
+        "derivedFps": 0,
+        "receivedDelta": 19,
+        "decodedDelta": 0,
+        "warmup": False,
         "rttMs": 40,
         "jitterBufferMs": 0,
         "packetsLost": 0,
@@ -235,19 +242,45 @@ def test_viewer_stats_refreshes_decoder_once_per_freeze():
         "codec": "H264",
         "selectedCandidateType": "relay",
     }
-    spike = dict(freeze, fps=88, framesDecoded=10)
-    healthy = dict(freeze, fps=19, framesDecoded=19)
+    healthy = dict(freeze, derivedFps=19, decodedDelta=19)
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 0
+    assert host.media_sender.request_keyframe.call_count == 1
+    loop.run_until_complete(host.on_viewer_stats(freeze))
+    assert encoder.calls == 0
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
     loop.run_until_complete(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
-    loop.run_until_complete(host.on_viewer_stats(spike))
-    loop.run_until_complete(host.on_viewer_stats(freeze))
-    assert encoder.calls == 1
-    host._stall_decoder_refresh_at = 0.0
     loop.run_until_complete(host.on_viewer_stats(healthy))
     loop.run_until_complete(host.on_viewer_stats(freeze))
-    assert encoder.calls == 2
+    assert encoder.calls == 1
+
+
+def test_keyframe_rejects_stale_generation_and_resets_cooldown_for_new_generation():
+    host = _make_host(attempt="attempt-current")
+    host._keyframe_recovery_state = {}
+    host._request_keyframe(
+        reason="ontrack-first-video",
+        viewer_id="viewer-1",
+        connection_attempt_id="attempt-current",
+        generation=1,
+    )
+    host._request_keyframe(
+        reason="decoder-stalled",
+        viewer_id="viewer-1",
+        connection_attempt_id="attempt-current",
+        generation=2,
+    )
+    assert host.media_sender.request_keyframe.call_count == 2
+
+    host.on_request_keyframe({
+        "viewerId": "viewer-1",
+        "reason": "decoder-stalled",
+        "connectionAttemptId": "attempt-old",
+        "connectionAttemptSequence": 1,
+    })
+    assert host.media_sender.request_keyframe.call_count == 2
 
 
 def test_keyframe_handler_invokes_request_path():
@@ -281,7 +314,8 @@ def test_keyframe_rate_limited_to_one_per_second():
     assert host.media_sender.request_keyframe.call_count == 1
     assert host._request_keyframe(reason="media-stalled", viewer_id="v1") is False
     assert host.media_sender.request_keyframe.call_count == 1
-    host._last_keyframe_request_at = time.monotonic() - 1.1
+    _key, state = host._keyframe_state()
+    state["last_request_at"] = time.monotonic() - 1.1
     assert host._request_keyframe(reason="media-stalled", viewer_id="v1") is True
     assert host.media_sender.request_keyframe.call_count == 2
 

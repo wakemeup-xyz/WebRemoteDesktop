@@ -545,3 +545,24 @@ def test_request_decoder_refresh_reopens_same_size(monkeypatch):
     assert calls["create"] == 2
     assert enc.request_decoder_refresh() is True
     assert enc.request_decoder_refresh() is False
+
+
+def test_application_keyframe_request_tracks_reason_and_generation_until_an_idr_is_emitted(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([p_slice, idr])
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: codec,
+    )
+
+    enc.note_keyframe_request("decoder-stalled", "attempt-7", 7)
+    assert enc.last_requested_keyframe_emitted is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_requested_keyframe_emitted is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_requested_keyframe_emitted is True
+    assert enc.keyframe_reason_counts["decoder-stalled"] == 1
+    assert enc.last_keyframe_request_generation == ("attempt-7", 7)

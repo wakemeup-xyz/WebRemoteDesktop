@@ -1326,9 +1326,10 @@ test('WebRTC relay pins skip-wait playout delay', () => {
   assert.deepEqual(jitter, [0]);
 });
 
-test('relay does not request keyframe while packets still arrive at 0 fps', () => {
+test('relay decoder stall requests one generation-bound keyframe while packets still arrive', () => {
   const emitted = [];
-  const { WebRTC } = loadWebRTC();
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
   WebRTC.networkMode = 'relay';
   WebRTC.adaptiveMediaEnabled = true;
   WebRTC.controlState = {
@@ -1337,18 +1338,25 @@ test('relay does not request keyframe while packets still arrive at 0 fps', () =
   };
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
-  WebRTC.ensureLinkQualityController();
+  WebRTC.currentConnectionAttemptId = 'attempt-decoder-stall';
+  WebRTC.connectionAttemptSequence = 7;
+  WebRTC.ensureLinkQualityController().beginConnection(0);
   WebRTC.handleReceiverStats({
-    fps: 0,
+    derivedFps: 0,
     rttMs: 40,
     jitterBufferMs: 0,
-    packetsLost: 0,
-    framesDecoded: 0,
-    framesReceived: 19,
+    packetsLostDelta: 0,
+    decodedDelta: 0,
+    receivedDelta: 19,
     selectedCandidateType: 'relay',
     interval: true,
   });
-  assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), false);
+  WebRTC.requestKeyframe('ontrack-first-video');
+  const keyframes = emitted.filter((entry) => entry[0] === 'request-keyframe');
+  assert.equal(keyframes.length, 1);
+  assert.equal(keyframes[0][1].reason, 'decoder-stalled');
+  assert.equal(keyframes[0][1].connectionAttemptId, 'attempt-decoder-stall');
+  assert.equal(keyframes[0][1].connectionAttemptSequence, 7);
 });
 
 test('relay stats re-apply skip-wait jitter so Chrome cannot grow it', () => {

@@ -1460,6 +1460,7 @@ class WebRemoteHost:
             "height": MEDIA_PROFILE_DEFAULT["height"],
         }
         self._last_keyframe_request_at = 0.0
+        self._keyframe_recovery_state = {}
         self._stall_sample_count = 0
         self._input_event_count = 0
         self._last_input_at_monotonic = None
@@ -2560,10 +2561,12 @@ class WebRemoteHost:
                 (self._last_diag_network or {}).get("turnConfigured", False),
                 (self._last_diag_network or {}).get("turnStatus", "unknown"),
             )
-            fps = float(data.get("fps") or 0)
-            received = int(data.get("framesReceived") or 0)
-            decoded = int(data.get("framesDecoded") or 0)
-            if fps == 0 and received > 0:
+            fps = float(data.get("derivedFps", data.get("fps")) or 0)
+            received = int(data.get("receivedDelta", data.get("framesReceived")) or 0)
+            decoded = int(data.get("decodedDelta", data.get("framesDecoded")) or 0)
+            warmup = data.get("warmup") is True
+            suppressed = data.get("mediaHealthSuppressed") is True
+            if not warmup and not suppressed and decoded == 0 and received > 0:
                 count = int(getattr(self, "_stall_sample_count", 0) or 0) + 1
                 self._stall_sample_count = count
                 if count % 5 == 0:
@@ -2582,7 +2585,8 @@ class WebRemoteHost:
                     )
             else:
                 self._stall_sample_count = 0
-            self._refresh_decoder_on_stall(data)
+            if not warmup and not suppressed:
+                self._observe_decoder_stall(data, received=received, decoded=decoded)
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
 
@@ -2667,10 +2671,31 @@ class WebRemoteHost:
         )
         return adopted
 
-    def _request_keyframe(self, reason="media-stalled", viewer_id="-"):
-        """Request encoder keyframe with a 1/s host-wide rate limit."""
+    def _keyframe_recovery_key(self, connection_attempt_id=None, generation=None):
+        current = getattr(getattr(self, "_h264_policy_provider", None), "current", lambda: None)()
+        intent = getattr(current, "intent", None)
+        attempt = connection_attempt_id or getattr(intent, "connection_attempt_id", "") or "-"
+        resolved_generation = generation if isinstance(generation, int) and generation >= 0 else getattr(intent, "generation", 0)
+        return str(attempt), int(resolved_generation or 0)
+
+    def _keyframe_state(self, connection_attempt_id=None, generation=None):
+        key = self._keyframe_recovery_key(connection_attempt_id, generation)
+        states = getattr(self, "_keyframe_recovery_state", None)
+        if not isinstance(states, dict):
+            states = {}
+            self._keyframe_recovery_state = states
+        return key, states.setdefault(key, {
+            "last_request_at": 0.0,
+            "idr_requested": False,
+            "post_idr_stall_samples": 0,
+            "decoder_refresh_used": False,
+        })
+
+    def _request_keyframe(self, reason="media-stalled", viewer_id="-", connection_attempt_id=None, generation=None):
+        """Request one keyframe per current attempt/generation cooldown."""
         now = time.monotonic()
-        last = float(getattr(self, "_last_keyframe_request_at", 0.0) or 0.0)
+        key, state = self._keyframe_state(connection_attempt_id, generation)
+        last = float(state.get("last_request_at", 0.0) or 0.0)
         reason_s = str(reason or "media-stalled")[:80]
         viewer_s = str(viewer_id or "-")[:64]
         if now - last < 1.0:
@@ -2680,6 +2705,9 @@ class WebRemoteHost:
                 viewer_s,
             )
             return False
+        state["last_request_at"] = now
+        state["idr_requested"] = False
+        state["post_idr_stall_samples"] = 0
         self._last_keyframe_request_at = now
         ok = False
         media_sender = getattr(self, "media_sender", None)
@@ -2695,11 +2723,19 @@ class WebRemoteHost:
             except Exception as exc:
                 logger.debug("video_sender keyframe failed: %s", type(exc).__name__)
                 ok = False
+        if ok:
+            encoder = self._video_encoder()
+            note = getattr(encoder, "note_keyframe_request", None)
+            if callable(note):
+                note(reason_s, key[0], key[1])
+            state["idr_requested"] = True
         logger.info(
-            "WRD_KEYFRAME requested=true emitted=%s reason=%s viewer=%s codec=%s gop=%s size=%sx%s",
+            "WRD_KEYFRAME requested=true emitted=%s reason=%s viewer=%s attempt=%s generation=%s codec=%s gop=%s size=%sx%s",
             "pending" if ok else "false",
             reason_s,
             viewer_s,
+            key[0],
+            key[1],
             getattr(getattr(self, "media_sender", None), "codec_name", "-"),
             (
                 getattr(
@@ -2719,7 +2755,22 @@ class WebRemoteHost:
             payload = data if isinstance(data, dict) else {}
             reason = payload.get("reason", "media-stalled")
             viewer_id = payload.get("viewerId", "-")
-            self._request_keyframe(reason=reason, viewer_id=viewer_id)
+            current = getattr(getattr(self, "_h264_policy_provider", None), "current", lambda: None)()
+            intent = getattr(current, "intent", None)
+            attempt = payload.get("connectionAttemptId")
+            generation = payload.get("connectionAttemptSequence")
+            if intent is not None and (
+                (isinstance(attempt, str) and attempt and attempt != intent.connection_attempt_id)
+                or (isinstance(generation, int) and generation > 0 and generation != intent.generation)
+            ):
+                logger.info("Ignoring stale keyframe request attempt=%s generation=%s", attempt, generation)
+                return
+            self._request_keyframe(
+                reason=reason,
+                viewer_id=viewer_id,
+                connection_attempt_id=attempt or getattr(intent, "connection_attempt_id", None),
+                generation=generation if isinstance(generation, int) and generation > 0 else getattr(intent, "generation", None),
+            )
         except Exception as e:
             logger.error(f"Error handling request-keyframe: {e}")
 
@@ -2921,41 +2972,51 @@ class WebRemoteHost:
             encoder = getattr(sender, "_RTCRtpSender__encoder", None)
         return encoder
 
-    def _refresh_decoder_on_stall(self, data):
-        """Same-size SPS refresh on the freeze second. GOP IDRs do not unstick Chrome.
-
-        Re-arm only after 12s and a healthy 8-25 FPS sample. Recover spikes
-        (fps=50-160, jitter 400ms) used to re-arm immediately and cycle.
-        """
-        try:
-            fps = float(data.get("fps") or 0)
-            received = int(data.get("framesReceived") or 0)
-        except (TypeError, ValueError):
-            return False
-        now = time.monotonic()
-        last = float(getattr(self, "_stall_decoder_refresh_at", 0.0) or 0.0)
-        if 8.0 <= fps <= 25.0 and (now - last) >= 12.0:
-            self._stall_decoder_refresh_armed = True
-        if fps > 0:
+    def _observe_decoder_stall(self, data, *, received, decoded):
+        """Escalate an admitted decoder stall only after an IDR has been observed."""
+        if decoded > 0:
+            _key, state = self._keyframe_state(
+                data.get("connectionAttemptId"), data.get("connectionAttemptSequence"),
+            )
+            state["idr_requested"] = False
+            state["post_idr_stall_samples"] = 0
             return False
         if received <= 0:
             return False
-        if not getattr(self, "_stall_decoder_refresh_armed", False):
-            return False
-        if last and (now - last) < 12.0:
+        key, state = self._keyframe_state(
+            data.get("connectionAttemptId"), data.get("connectionAttemptSequence"),
+        )
+        if not state.get("idr_requested"):
+            self._request_keyframe(
+                reason="decoder-stalled",
+                viewer_id=data.get("viewerId", "-"),
+                connection_attempt_id=key[0],
+                generation=key[1],
+            )
             return False
         encoder = self._video_encoder()
-        refresh = getattr(encoder, "request_decoder_refresh", None)
-        if not callable(refresh):
+        idr_sent = bool(getattr(encoder, "last_requested_keyframe_emitted", getattr(encoder, "last_force_emitted_idr", False)))
+        if not idr_sent or state.get("decoder_refresh_used"):
             return False
-        try:
-            if refresh():
-                self._stall_decoder_refresh_armed = False
-                self._stall_decoder_refresh_at = now
-                return True
-        except Exception as exc:
-            logger.debug("decoder refresh failed: %s", type(exc).__name__)
+        state["post_idr_stall_samples"] = int(state.get("post_idr_stall_samples", 0) or 0) + 1
+        if state["post_idr_stall_samples"] < 2:
+            return False
+        refresh = getattr(encoder, "request_decoder_refresh", None)
+        if callable(refresh) and refresh():
+            state["decoder_refresh_used"] = True
+            return True
         return False
+
+    def _refresh_decoder_on_stall(self, data):
+        """Compatibility entrypoint for the IDR-gated decoder-stall state machine."""
+        try:
+            received = int(data.get("receivedDelta", data.get("framesReceived")) or 0)
+            decoded = int(data.get("decodedDelta", data.get("framesDecoded")) or 0)
+        except (TypeError, ValueError):
+            return False
+        if data.get("warmup") is True or data.get("mediaHealthSuppressed") is True:
+            return False
+        return self._observe_decoder_stall(data, received=received, decoded=decoded)
 
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
         """Return an honest bitrate-application result for the current encoder."""

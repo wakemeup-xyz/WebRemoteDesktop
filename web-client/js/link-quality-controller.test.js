@@ -75,6 +75,25 @@ test('canonical decoded delta remains progress when the next interval is smaller
   assert.equal(second.decodedDelta, 1);
 });
 
+test('canonical RTP progress without decoded output requests decoder-stalled recovery', () => {
+  const c = LinkQualityController.create({ path: 'relay', qualityLock: true });
+  c.beginConnection(0);
+
+  const result = c.observe({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 19,
+    packetsLostDelta: 0,
+    rttMs: 40,
+    jitterBufferMs: 0,
+    selectedCandidateType: 'relay',
+  });
+
+  assert.equal(result.action, 'recover');
+  assert.equal(result.reason, 'decoder-stalled');
+  assert.equal(result.shouldRequestKeyframe, true);
+});
+
 test('lock mode: brief zero fps requests recovery not survival size', () => {
   const c = LinkQualityController.create({
     path: 'relay',
