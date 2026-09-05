@@ -280,6 +280,61 @@ test('watch skips its own restart branch when token inspection fails', () => {
   assert.match(result.stderr, /token-inspection-failed/);
 });
 
+test('watch ps failure returns before restart script or launchctl submit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-ps-failure-guard-'));
+  const statePath = path.join(dir, 'state.json');
+  const bin = path.join(dir, 'bin');
+  const restartMarker = path.join(dir, 'restart-invoked');
+  const launchctlMarker = path.join(dir, 'launchctl-invoked');
+  const restartSentinel = path.join(bin, 'restart-sentinel');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({ failStartedAt: 100, lastRestartAt: null, restarts: [] }),
+  );
+  fs.writeFileSync(path.join(bin, 'ps'), '#!/bin/sh\nexit 1\n');
+  fs.writeFileSync(
+    restartSentinel,
+    '#!/bin/sh\nprintf invoked > "$RESTART_MARKER"\nexit 99\n',
+  );
+  fs.writeFileSync(
+    path.join(bin, 'launchctl'),
+    '#!/bin/sh\nprintf invoked > "$LAUNCHCTL_MARKER"\nexit 99\n',
+  );
+  fs.chmodSync(path.join(bin, 'ps'), 0o755);
+  fs.chmodSync(restartSentinel, 0o755);
+  fs.chmodSync(path.join(bin, 'launchctl'), 0o755);
+
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'source "$WATCH_PATH"; RESTART_SCRIPT="$RESTART_SENTINEL"; wrd_fixed_origin_health_ok(){ return 0; }; wrd_fixed_formal_health_ok(){ return 1; }; NOW_EPOCH=400 wrd_fixed_watch_tick 0',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WATCH_PATH: watchPath,
+        RESTART_SENTINEL: restartSentinel,
+        RESTART_MARKER: restartMarker,
+        LAUNCHCTL_MARKER: launchctlMarker,
+        WRD_FIXED_WATCH_SOURCE_ONLY: '1',
+        PATH: `${bin}:${process.env.PATH}`,
+        WRD_FIXED_WATCH_STATE: statePath,
+        WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+      },
+    },
+  );
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(state.lastAction, 'skip');
+  assert.equal(state.lastStatus, 'formal-down');
+  assert.match(result.stderr, /token-inspection-failed/);
+  assert.equal(fs.existsSync(restartMarker), false);
+  assert.equal(fs.existsSync(launchctlMarker), false);
+});
+
 test('watch releases its lock on SIGTERM', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-term-'));
   const lockPath = path.join(dir, 'watch.lock');
