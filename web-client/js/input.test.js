@@ -1003,12 +1003,20 @@ test('context uncertainty cancels retries, blocks reacquire sends, and exposes d
   assert.equal(socketEvents.length, beforeBlocked, 'blocked context retains the local draft');
   let snapshot = Input.mobileTextInputAdapter.getSnapshot();
   assert.equal(snapshot.hasPending, true);
-  assert.equal(snapshot.deliveryUncertain, false);
+  assert.equal(snapshot.deliveryUncertain, true);
 
   Input.mobileTextInputAdapter.onTransportState('ready');
   assert.equal(socketEvents.length, beforeBlocked, 'ready does not implicitly retry a rejected draft');
-  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
-  assert.equal(socketEvents.length, beforeBlocked + 1, 'explicit retry resumes the blocked draft');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+  assert.equal(socketEvents.length, beforeBlocked, 'ready does not restore a blocked context');
+
+  discard.listeners.get('click')({ preventDefault() {} });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(snapshot.deliveryUncertain, false);
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeBlocked + 1, 'discard permits a new explicit input');
 
   const second = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload;
   Input.acceptKeyboardAck({ schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: second.seq, inputIds: second.inputIds });

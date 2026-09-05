@@ -142,6 +142,33 @@ test('a synchronous transport gate change stops the current delete batch before 
   assert.equal(h.adapter.getSnapshot().hasPending, true);
 });
 
+test('blocked transport context stays invalid after ready until discard establishes a new draft', () => {
+  const h = makeTextHarness();
+  h.adapter.onTransportState('blocked');
+  let snapshot = h.adapter.getSnapshot();
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(snapshot.deliveryUncertain, true);
+
+  h.adapter.onTransportState('ready');
+  h.input.value = 'a'; h.emit('input');
+  assert.deepEqual(h.sent, []);
+  snapshot = h.adapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.retryable, false);
+  assert.equal(h.adapter.retryPending(), false);
+
+  h.adapter.discardPending();
+  h.input.value = 'fresh'; h.emit('input');
+  assert.deepEqual(h.sent, [{kind: 'text', value: 'fresh'}]);
+
+  h.adapter.onTransportState('blocked');
+  h.input.value = 'fresh-draft'; h.emit('input');
+  assert.deepEqual(h.sent, [{kind: 'text', value: 'fresh'}]);
+  h.adapter.onTransportState('ready');
+  assert.equal(h.adapter.retryPending(), false);
+  assert.equal(h.adapter.getSnapshot().hasPending, true);
+});
+
 test('composition or gate changes cancel a scheduled drain for explicit retry', () => {
   for (const interrupt of ['composition', 'gate']) {
     withFakeTimers((callbacks) => {

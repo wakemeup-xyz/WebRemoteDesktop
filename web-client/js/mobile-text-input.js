@@ -534,12 +534,7 @@
       const next = String(state || '').toLowerCase();
       if (!TRANSPORT_STATES.has(next)) return;
       transportState = next;
-      if (next === 'blocked' && drainActive) {
-        cancelDrain();
-        markPending();
-        return;
-      }
-      if (next === 'reacquire-required' || next === 'revoked') {
+      if (next === 'blocked' || next === 'reacquire-required' || next === 'revoked') {
         cancelDrain();
         generation += 1;
         contextValid = false;
