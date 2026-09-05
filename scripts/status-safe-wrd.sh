@@ -50,7 +50,7 @@ fi
 if [ -f "$SAFE_URL_FILE" ]; then
   SAFE_URL_VALUE=$(cat "$SAFE_URL_FILE" 2>/dev/null || echo 'empty')
   echo "safe url file: $SAFE_URL_VALUE"
-  echo "safe url source of truth: use $SAFE_URL_FILE as the current effective debug quick tunnel URL; trycloudflare may change only when the tunnel expires or is rebuilt"
+  echo "safe url source of truth: use $SAFE_URL_FILE as the current effective debug quick tunnel URL; trycloudflare may change only after an explicit user-authorized rebuild or stop"
   SAFE_URL_STATE=$(wrd_safe_url_reachability_state "$SAFE_URL_VALUE" || true)
   case "$SAFE_URL_STATE" in
     deliverable)

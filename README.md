@@ -9,7 +9,7 @@
 - ✅ H.264 WebRTC 低延迟视频链路
 - ✅ WebRTC DataChannel 输入链路
 - ✅ Host 捕获源回退：MSS 瞬时只返回 `0x0` monitor 时，自动回退到 `screeninfo`
-- ✅ macOS 防睡眠守护和 quick tunnel 自恢复
+- ✅ macOS 防睡眠守护和 safe quick tunnel 隔离/可达性诊断
 
 ## 系统架构
 
@@ -74,7 +74,7 @@
 
 ### 方式一：本地调试/排障启动（safe quick tunnel）
 
-当你需要同时拉起本地服务，并保留一个临时 quick tunnel 做调试或排障时，使用这一种。
+当你需要同时拉起本地服务，并检查一个已有的临时 quick tunnel 时，使用这一种。
 
 ```bash
 cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
@@ -88,15 +88,15 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 3. 通过 LaunchAgent 注册并启动 `python-host`
 4. 在 `scripts/run-host-launchctl.sh` 内先等待 `/health` 成功，再预检 `/api/auth/login/host` 认证成功，最后才真正启动 `host.py`
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
-6. 启动 safe quick tunnel，并通过 `scripts/wrd_entry_health.py` 校验 `<origin>/health` 返回 2xx 且 JSON `status=ok`，验证通过后才原子写入 `/tmp/wrd-safe-current-url.txt`
+6. 只检查并复用已有 safe quick tunnel；不可达、失效或缺失时只报告，不自动启动或替换 tunnel
 
 补充约定：
 
-1. `./scripts/start-safe-wrd.sh` 会优先**复用**现有 safe quick tunnel，而不是每次重建
+1. `./scripts/start-safe-wrd.sh` 只会**复用和检查**现有 safe quick tunnel，不会自动启动、重启或替换
 2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
 3. 只有在用户明确要求重建/停止 tunnel、或切换网络入口模式时，地址才允许变化
 4. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
-5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；即使现有 tunnel 已失效或日志出现 `Unauthorized: Tunnel not found`，也只能报告，不能自行重建。失效本身不是授权；只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建
+5. 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 6. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
 7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端仍会按当前模式先尝试直连 / STUN；若后续失败，再按页面恢复逻辑决定是否切到 `隧道中继`
 8. 如果当前 safe URL 已经不可解析或不可访问，agent 只能报告“公网入口不可达”，不得自行调用会重建 tunnel 的脚本
@@ -106,7 +106,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 1. `./scripts/status-safe-wrd.sh` 中 `safe quick tunnel` 仍为 `running`
 2. trycloudflare 子域名已经可以解析
 3. `python3 scripts/wrd_entry_health.py --url <safe-url>` 返回 `deliverable=true`
-4. 如果 `safe quick tunnel` 进程仍在，但入口检查已失败，说明旧 tunnel 地址可能已经失效；此时只能报告并等待用户明确授权是否重建 tunnel
+4. 如果 `safe quick tunnel` 进程仍在，但入口检查已失败，说明旧 tunnel 地址可能已经失效；遵循上面的 quick-tunnel 禁止自动替换约定，只报告并等待用户明确授权
 5. `scripts/run-safe-quicktunnel.sh` 是 safe URL 的唯一 publisher；它只在 `/health` 2xx 且 JSON `status=ok` 后原子写入当前文件和 archive
 6. 如果这台机器的系统 DNS 一时解析不到 `*.trycloudflare.com`，脚本会回退到公共 DNS 解析并用 `curl --resolve` 校验；避免把“本机 resolver 异常”误判成 tunnel 本身不可用
 
@@ -404,7 +404,7 @@ WebRemoteDesktop/
 2. 检查状态：`./scripts/status-safe-wrd.sh`
 3. 先确认自己打开的是 `8080`、`link.stockhub.wiki`，或已配置好的 `dev.link.stockhub.wiki`，而不是裸 `5173`
 4. 检查 tunnel 日志：`tail -100 /tmp/wrd-safe-quicktunnel.log` 或 `tail -100 /tmp/cloudflared-wrd.log`
-5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址可能已过期；这是诊断结果，不是重建授权。只能报告并等待用户明确要求重建，之后才可按授权执行重建并更新地址文件
+5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址可能已过期；遵循上面的 quick-tunnel 禁止自动替换约定
 6. 如果日志已打印 trycloudflare 地址，但域名仍无法解析或状态脚本显示 `safe quick tunnel: stale`，说明公网入口实际上尚未可用；常见原因是 DNS 传播延迟，或后台进程在短生命周期 shell 退出后被回收
 7. 生产环境应使用 Cloudflare 命名隧道和固定域名
 
@@ -424,12 +424,12 @@ WebRemoteDesktop/
 3. 查看当前安全地址：`cat /tmp/wrd-safe-current-url.txt`
 4. 查看独立日志：`tail -100 /tmp/wrd-safe-quicktunnel.log`
 5. 该脚本只使用本仓库独立的 PID / URL / LOG 文件，不会 `pkill` 其他项目进程
-6. 若日志出现 `Unauthorized: Tunnel not found`，只报告当前 quick tunnel 失效；不得自动拉起新的 quick tunnel 或刷新地址文件，除非用户明确要求重建
+6. 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 
 ### 一键安全启动（推荐）
 
 1. 启动本仓库完整链路：`./scripts/start-safe-wrd.sh`
-2. 它会只复用或启动本仓库的 `signal-server`、`python-host`、safe quick tunnel
+2. 它会只复用或启动本仓库的 `signal-server`、`python-host`，并检查已有 safe quick tunnel；不会自动启动或替换 quick tunnel
 3. 不会停止 `/Users/macstudio1/AI/Claude/StockHub` 的服务
 4. 若 safe quick tunnel 已在运行，重启本地服务时会继续复用它，因此公网地址默认保持不变
 5. 每次启动或重启本地服务后，都要从运行配置回报 `VIEWER_ACCESS_PASSWORD` 和 `WRD_TERMINAL_ADMIN_PASSWORD`

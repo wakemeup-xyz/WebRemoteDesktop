@@ -282,7 +282,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 1. 启动防睡眠服务：`scripts/install-awake-keeper.sh`（一次性安装）或 `scripts/run-awake-keeper.sh`
 2. 启动 Signal Server：`node server.js`
-3. 启动 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）
+3. 检查已有 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）；普通启动不自动启动、恢复或替换 quick tunnel
 4. 启动 Python Host：`python host.py`（使用 `HOST_SHARED_SECRET`，兼容回退到 `HOST_PASSWORD` / `ACCESS_PASSWORD`）
 5. 浏览器访问页面，输入 Viewer 密码登录
 6. 每次本地服务启动或重启后，运维侧必须从运行配置回报 `VIEWER_ACCESS_PASSWORD` 和 `WRD_TERMINAL_ADMIN_PASSWORD`
@@ -293,7 +293,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 ./scripts/start-safe-wrd.sh
 ```
 
-该脚本只会复用或启动当前仓库自己的 `signal-server`、Host LaunchAgent、safe quick tunnel。
+该脚本只会复用和检查当前仓库自己的 `signal-server`、Host LaunchAgent、safe quick tunnel；quick tunnel 缺失或失效时只报告，不自动启动、恢复或替换。
 
 入口口径需要明确区分：
 
@@ -328,7 +328,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 /tmp/wrd-safe-current-url.txt
 ```
 
-由于 trycloudflare quick tunnel 没有稳定性保证，检测到 `Unauthorized: Tunnel not found` 只表示当前临时入口可能已失效；这不是自动重建授权。除非用户明确要求重建 tunnel / 重新生成公网地址，否则不得重建 quick tunnel 或更新当前安全地址文件。
+如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 同时，`scripts/run-safe-quicktunnel.sh` 是 safe URL 的唯一 publisher：拿到 trycloudflare URL 后，必须先确认 `/health` 返回 2xx 且 JSON `status=ok`，才允许原子写入 `/tmp/wrd-safe-current-url.txt` 与 archive。3xx、404、429、5xx 或错误内容均不可交付。
 
 需要特别说明：地址文件中已经写出 trycloudflare URL，只能说明 `cloudflared` 已拿到一个临时地址，**不能直接视为公网可用**。对外提供前仍应检查：
@@ -338,7 +338,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 3. 该 URL 能返回 HTTP 响应
 4. 若 `curl -I -L` 返回 `Could not resolve host` 或 `HTTP 530`，都按“当前 quick tunnel 入口不可交付”处理，不应误判成 `signal-server` 或 Host 的本地故障
 
-若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；quick tunnel 过期时只报告失效，必须等用户明确授权后才可重建并刷新安全地址文件。
+若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；quick tunnel 过期时只报告失效，并遵循上面的 quick-tunnel 禁止自动替换约定。
 
 若在短生命周期自动化 shell 中执行 safe quick tunnel，后台子进程可能在父 shell 结束后被回收；此时应改为在用户自己的常驻终端中执行，或改用固定域名隧道。
 
@@ -404,7 +404,7 @@ WebRemoteDesktop/
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
 - **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
 - **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、用户明确授权后的 tunnel 重建或切换入口模式时才变化
-- **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准。tunnel 失效（包括 `Unauthorized: Tunnel not found`）只是诊断结果，不是授权；只有用户明确要求重建或重新生成公网地址时才可重建
+- **运维约束**：如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
 - **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
@@ -425,7 +425,7 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 |------|---------|
 | 2026-05-10 | 创建需求文档，汇总当前已实现功能 |
 | 2026-05-10 | 修复键盘 `is_modifier` NameError 导致大量按键失效；新增诊断日志对话框和刷新画面按钮；优化视频延迟（jitterBufferTarget=0、GOP 1s）；HOST_PASSWORD 支持默认值 fallback；更新 Cloudflare Tunnel URL |
-| 2026-05-11 | 项目网页名称更新为 CodeHarness学习助手；新增 Host 本机浮动提示、全屏按钮、Windows 键盘兼容、WebRTC 自动重连；输入链路改为 WebRTC DataChannel 优先（可靠 `input` + 不可靠 `input-move`），Socket.IO 兜底；新增 Viewer WebRTC stats 回传；新增防睡眠 LaunchAgent（当时为 `caffeinate -dims`）；新增 quick tunnel 自恢复并将当前访问地址写入 `/tmp/wrd-current-url.txt` |
+| 2026-05-11 | **历史实现**：项目网页名称更新为 CodeHarness学习助手；新增 Host 本机浮动提示、全屏按钮、Windows 键盘兼容、WebRTC 自动重连；输入链路改为 WebRTC DataChannel 优先（可靠 `input` + 不可靠 `input-move`），Socket.IO 兜底；新增 Viewer WebRTC stats 回传；新增防睡眠 LaunchAgent（当时为 `caffeinate -dims`）；曾新增 quick tunnel 自恢复并将当前访问地址写入 `/tmp/wrd-current-url.txt`。当前合同以禁止 quick-tunnel 自动替换约定为准 |
 | 2026-08-11 | Host 空闲策略调整为 `caffeinate -ims`（允许熄屏、抑制系统空闲睡），新增 `check-host-lock-policy.sh`；文档推荐「关闭显示器/屏保后需要密码=永不」，明确不支持远程解锁已锁会话 |
 | 2026-05-11 | 新增 WebRTC 网络模式选择和右下角网络建议浮窗；Signal Server 提供 `/api/webrtc-config`；Host 与 Viewer 均支持 `STUN_URLS` / `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`；自动模式可在 TURN 已配置时从直连降级到中继；外网中继模式仅在 TURN 配置完整时启用 |
 | 2026-06-02 | 补充公网启动约束：trycloudflare URL 写入文件不等于公网已可用；safe quick tunnel 交付前需验证进程存活、DNS 解析和 HTTP 可达性；短生命周期自动化 shell 中需避免把临时后台进程误判为常驻服务 |

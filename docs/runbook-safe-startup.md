@@ -13,7 +13,7 @@
 区别如下：
 
 - `start-fixed-domain.sh`：适合已经配置好 Cloudflare 命名隧道，需要长期固定域名；正式用户入口应始终使用 `https://link.stockhub.wiki`
-- `start-safe-wrd.sh`：适合需要本地服务 + trycloudflare 临时公网地址做调试或排障，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
+- `start-safe-wrd.sh`：适合需要本地服务并检查已有 trycloudflare 临时公网地址做调试或排障，且不想影响其他仓库进程；若 tunnel 已在运行，后续重启本地服务会复用它，地址默认不变
 - 手动本地启动：适合只做本机调试，不需要公网地址；但仍会通过 LaunchAgent 托管 Host
 
 入口口径：
@@ -39,7 +39,7 @@ Tunnel 操作语义：
 - 若只是重启本地 `signal-server` 或 `python-host`，必须优先复用现有 tunnel
 - 当前有效 debug quick tunnel 地址始终以 `/tmp/wrd-safe-current-url.txt` 为准
 - `重启服务` 不得被解释为重建 quick tunnel；在 tunnel 仍存活时，重启本地服务不应改变 `/tmp/wrd-safe-current-url.txt`
-- 只有在用户明确要求“重建 tunnel / 重建 Cloudflare / 重启 tunnel / 重新生成公网地址”时，才允许重建 quick tunnel；tunnel 失效本身（包括 `Unauthorized: Tunnel not found`）不是授权，只能报告并等待明确指令
+- 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 - `status-safe-wrd.sh` 发现 cloudflared argv 含 `--token` 时只输出固定安全告警；不得打印 token、停止进程或执行 `launchctl remove`
 
 ## 目标
@@ -92,8 +92,8 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 3. 通过 `launchctl` 复用或启动当前仓库的 `com.webremotedesktop.host`
 4. 在 `scripts/run-host-launchctl.sh` 内等待 `/health` 与 `/api/auth/login/host` 预检都通过
 5. 等待 `http://127.0.0.1:8080/api/status` 返回 `hostOnline: true`
-6. 复用或启动 `scripts/run-safe-quicktunnel.sh`
-7. 只有在该 URL 的 `/health` 返回 2xx 且 JSON `status=ok` 后，才原子写入 `/tmp/wrd-safe-current-url.txt` 与 archive 并输出
+6. 检查并复用已有 `scripts/run-safe-quicktunnel.sh`
+7. 只有已有 URL 的 `/health` 返回 2xx 且 JSON `status=ok` 时才将其作为当前可交付地址；不可达、失效或缺失只报告，不自动启动或替换 tunnel
 
 重启约定：
 
@@ -103,7 +103,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 若 signal-server 尚未就绪或 Host 凭据校验失败，Host LaunchAgent 会停留在 wrapper 等待阶段，而不是反复失败重启
 - 若当前 quick tunnel 仍存活，排障时不要为了“保险”主动重启它；先检查本地 `8080`、`/api/status` 和 URL 文件
 - 若当前访问入口是 trycloudflare / 其他公网域名，且 TURN 未配置，Viewer 仍会先按所选网络模式尝试直连 / STUN；是否进入 `隧道中继` 取决于后续连接结果，而不是入口 URL 本身
-- 若当前 quick tunnel 进程仍在，但 safe URL 已经不可解析或 `curl -I -L` 失败，只能报告“当前公网入口失效/不可达”；不得自行调用会重建 tunnel 的脚本
+- 如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 - 每次启动或重启本地服务后，都要从本机运行配置读取并回报两项密码：Viewer 网页登录密码 `VIEWER_ACCESS_PASSWORD`，Terminal admin 密码 `WRD_TERMINAL_ADMIN_PASSWORD`
 
 启动成功后，如需做临时公网排障，读取：
@@ -434,7 +434,7 @@ Quality Lock（默认）：
 
 ### 场景 2：Cloudflare 地址失效
 
-如果日志出现 `Unauthorized: Tunnel not found`，说明当前 quick tunnel 很可能已经在 Cloudflare 侧失效。Agent 只能报告该结论；除非用户明确要求重建 tunnel，否则不得自动重建或刷新：
+如果当前 quick tunnel 不可达，或日志出现 `Unauthorized: Tunnel not found`，这只是诊断结果，不是重建授权；普通启动/恢复不得 kill、停止、重启或重建 quick tunnel，只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建。
 
 - `/tmp/wrd-safe-current-url.txt`
 

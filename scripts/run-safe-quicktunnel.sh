@@ -14,9 +14,7 @@ PID_FILE="${PID_FILE:-/tmp/wrd-safe-quicktunnel.pid}"
 URL_POLL_ATTEMPTS="${URL_POLL_ATTEMPTS:-45}"
 URL_POLL_INTERVAL_SECONDS="${URL_POLL_INTERVAL_SECONDS:-1}"
 WATCH_INTERVAL_SECONDS="${WATCH_INTERVAL_SECONDS:-15}"
-RESTART_DELAY_SECONDS="${RESTART_DELAY_SECONDS:-2}"
 URL_READY_TIMEOUT_SECONDS="${URL_READY_TIMEOUT_SECONDS:-60}"
-UNREACHABLE_URL_FAIL_LIMIT="${UNREACHABLE_URL_FAIL_LIMIT:-4}"
 
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 
@@ -60,6 +58,8 @@ wait_for_public_url() {
 cd "$PROJECT_DIR"
 curl -fsS "http://127.0.0.1:8080/health" >/dev/null
 
+PID=""
+URL=""
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -70,13 +70,9 @@ if [ -f "$PID_FILE" ]; then
     fi
     if [ -z "$URL" ]; then
       URL="$(extract_trycloudflare_url "$LOG_FILE" || true)"
-      if [ -n "$URL" ]; then
-        if wait_for_public_url "$URL"; then
-          publish_safe_url "$URL"
-        else
-          URL=""
-        fi
-      fi
+    fi
+    if [ -n "$URL" ] && ! wrd_safe_url_is_reachable "$URL"; then
+      echo "safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically" >&2
     fi
     echo "safe quick tunnel already running (pid=$OLD_PID)"
     if [ -n "$URL" ]; then
@@ -84,101 +80,73 @@ if [ -f "$PID_FILE" ]; then
     else
       echo "url: pending"
     fi
-  else
-    PID=""
   fi
-else
-  PID=""
 fi
 
-while true; do
-  if [ -z "${PID:-}" ] || ! kill -0 "$PID" 2>/dev/null; then
-    : > "$LOG_FILE"
-    # Drop named-tunnel token/cred env so quick tunnel cannot attach to wrd-tunnel.
-    # --config isolates from ~/.cloudflared/config.yml named-tunnel injection.
-    nohup env -u TUNNEL_TOKEN -u TUNNEL_CRED_FILE -u TUNNEL_CREDENTIALS_FILE \
-      -u CLOUDFLARED_CREDENTIALS_FILE \
-      "$CLOUDFLARED" tunnel --config "$CLOUDFLARED_CONFIG" --protocol http2 --url "$ORIGIN" \
-      >> "$LOG_FILE" 2>&1 &
-    PID=$!
-    disown "$PID" 2>/dev/null || true
-    echo "$PID" > "$PID_FILE"
-  fi
+if [ -z "$PID" ]; then
+  : > "$LOG_FILE"
+  # Drop named-tunnel token/cred env so quick tunnel cannot attach to wrd-tunnel.
+  # --config isolates from ~/.cloudflared/config.yml named-tunnel injection.
+  nohup env -u TUNNEL_TOKEN -u TUNNEL_CRED_FILE -u TUNNEL_CREDENTIALS_FILE \
+    -u CLOUDFLARED_CREDENTIALS_FILE \
+    "$CLOUDFLARED" tunnel --config "$CLOUDFLARED_CONFIG" --protocol http2 --url "$ORIGIN" \
+    >> "$LOG_FILE" 2>&1 &
+  PID=$!
+  disown "$PID" 2>/dev/null || true
+  echo "$PID" > "$PID_FILE"
+fi
 
-  URL=""
+if [ -z "$URL" ]; then
   for _ in $(seq 1 "$URL_POLL_ATTEMPTS"); do
-    if [ -z "$URL" ] && [ -s "$URL_FILE" ]; then
-      URL=$(cat "$URL_FILE" 2>/dev/null || true)
-    fi
     LOG_URL=$(extract_trycloudflare_url "$LOG_FILE" || true)
     if [ -n "$LOG_URL" ]; then
       URL="$LOG_URL"
-    fi
-    if [ -n "$URL" ]; then
       if wait_for_public_url "$URL"; then
         publish_safe_url "$URL"
         echo "$URL"
         break
       fi
-      echo "$(date -u +%FT%TZ) safe quick tunnel url not reachable yet: $URL" >> "$LOG_FILE"
+      echo "$(date -u +%FT%TZ) safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically: $URL" >> "$LOG_FILE"
       URL=""
+      break
     fi
     if ! kill -0 "$PID" 2>/dev/null; then
       break
     fi
     sleep "$URL_POLL_INTERVAL_SECONDS"
   done
+fi
 
-  if [ -z "$URL" ]; then
-    if [ -s "$URL_FILE" ]; then
-      URL=$(cat "$URL_FILE" 2>/dev/null || true)
-    elif [ -s "$URL_ARCHIVE_FILE" ]; then
-      URL=$(cat "$URL_ARCHIVE_FILE" 2>/dev/null || true)
-    elif [ -s "$LOG_FILE" ]; then
-      URL=$(extract_trycloudflare_url "$LOG_FILE" || true)
-      if [ -n "$URL" ]; then
-        if wait_for_public_url "$URL"; then
-          publish_safe_url "$URL"
-        else
-          URL=""
-        fi
-      fi
-    fi
-    if [ -z "$URL" ]; then
-      echo "failed to obtain quick tunnel url"
-      tail -n 40 "$LOG_FILE" || true
-      exit 1
+if [ -z "$URL" ]; then
+  echo "failed to obtain a reachable quick tunnel URL; diagnosing only, not restarting automatically" >&2
+  tail -n 40 "$LOG_FILE" || true
+  exit 1
+fi
+
+UNAUTHORIZED_REPORTED=0
+UNREACHABLE_REPORTED=0
+while kill -0 "$PID" 2>/dev/null; do
+  if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
+    if [ "$UNAUTHORIZED_REPORTED" -eq 0 ]; then
+      echo "$(date -u +%FT%TZ) safe quick tunnel reported Unauthorized: Tunnel not found; diagnosing only, not restarting automatically" >> "$LOG_FILE"
+      UNAUTHORIZED_REPORTED=1
     fi
   fi
 
-  UNREACHABLE_URL_FAIL_COUNT=0
-  while kill -0 "$PID" 2>/dev/null; do
-    if grep -q 'Unauthorized: Tunnel not found' "$LOG_FILE"; then
-      echo "$(date -u +%FT%TZ) safe quick tunnel expired, restarting" >> "$LOG_FILE"
-      kill "$PID" 2>/dev/null || true
-      break
-    fi
-    if [ -s "$URL_FILE" ]; then
-      CURRENT_URL=$(cat "$URL_FILE" 2>/dev/null || true)
-      if [ -n "$CURRENT_URL" ]; then
-        if wrd_safe_url_is_reachable "$CURRENT_URL"; then
-          UNREACHABLE_URL_FAIL_COUNT=0
-        else
-          UNREACHABLE_URL_FAIL_COUNT=$((UNREACHABLE_URL_FAIL_COUNT + 1))
-          echo "$(date -u +%FT%TZ) safe quick tunnel url not reachable yet: $CURRENT_URL" >> "$LOG_FILE"
-          if [ "$UNREACHABLE_URL_FAIL_COUNT" -ge "$UNREACHABLE_URL_FAIL_LIMIT" ]; then
-            echo "$(date -u +%FT%TZ) safe quick tunnel url unreachable too long, restarting" >> "$LOG_FILE"
-            rm -f "$URL_FILE"
-            kill "$PID" 2>/dev/null || true
-            break
-          fi
-        fi
+  if [ -s "$URL_FILE" ]; then
+    CURRENT_URL=$(cat "$URL_FILE" 2>/dev/null || true)
+    if [ -n "$CURRENT_URL" ] && ! wrd_safe_url_is_reachable "$CURRENT_URL"; then
+      if [ "$UNREACHABLE_REPORTED" -eq 0 ]; then
+        echo "$(date -u +%FT%TZ) safe quick tunnel URL is unreachable; diagnosing only, not restarting automatically: $CURRENT_URL" >> "$LOG_FILE"
+        UNREACHABLE_REPORTED=1
       fi
+    else
+      UNREACHABLE_REPORTED=0
     fi
-    sleep "$WATCH_INTERVAL_SECONDS"
-  done
-
-  wait "$PID" 2>/dev/null || true
-  PID=""
-  sleep "$RESTART_DELAY_SECONDS"
+  fi
+  sleep "$WATCH_INTERVAL_SECONDS"
 done
+
+wait "$PID" 2>/dev/null || true
+echo "safe quick tunnel exited; diagnosing only, not restarting automatically" >&2
+exit 1

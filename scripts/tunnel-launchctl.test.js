@@ -16,8 +16,9 @@ test('tunnel launchagent plist exists and uses the repo tunnel label', () => {
 
   assert.match(source, /com\.webremotedesktop\.tunnel/);
   assert.match(source, /run-safe-quicktunnel\.sh/);
-  assert.match(source, /RunAtLoad/);
+  assert.match(source, /<key>RunAtLoad<\/key>\s*<false\/>/);
   assert.match(source, /KeepAlive/);
+  assert.match(source, /<key>KeepAlive<\/key>\s*<false\/>/);
   assert.match(source, /wrd-safe-tunnel-supervisor\.log/);
 });
 
@@ -45,13 +46,22 @@ test('tunnel rotate script exists and prints the published safe url', () => {
   assert.match(source, /wrd_tunnel_launchctl_rotate/);
 });
 
-test('safe startup script uses launchctl-backed tunnel lifecycle instead of nohup supervisor spawning', () => {
+test('safe startup script does not invoke the tunnel lifecycle', () => {
   const source = fs.readFileSync(startPath, 'utf8');
 
-  assert.match(source, /lib-tunnel-launchctl\.sh/);
-  assert.match(source, /wrd_tunnel_launchctl_start/);
-  assert.match(source, /restart-safe-tunnel\.sh/);
+  assert.doesNotMatch(source, /wrd_tunnel_launchctl_start/);
+  assert.doesNotMatch(source, /restart-safe-tunnel\.sh/);
   assert.doesNotMatch(source, /nohup "\$PROJECT_DIR\/scripts\/run-safe-quicktunnel\.sh"/);
+});
+
+test('safe tunnel rotation remains an explicit rebuild path', () => {
+  const restart = fs.readFileSync(rotatePath, 'utf8');
+  const helper = fs.readFileSync(helperPath, 'utf8');
+
+  assert.match(restart, /Restarting safe tunnel \(rotate url\)/);
+  assert.match(restart, /wrd_tunnel_launchctl_rotate/);
+  assert.match(helper, /wrd_tunnel_launchctl_rotate/);
+  assert.match(helper, /pkill -f 'run-safe-quicktunnel\\\.sh'/);
 });
 
 test('safe stop script stops the tunnel through the shared launchctl helper', () => {
