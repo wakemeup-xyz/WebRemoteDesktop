@@ -387,7 +387,16 @@ wrd_fixed_watch_initializing_lock_state() {
   if [ -e "$WRD_FIXED_WATCH_INIT_MARKER" ]; then
     marker_pid="$(sed -n '1p' "$WRD_FIXED_WATCH_INIT_MARKER" 2>/dev/null || true)"
     if [[ "$marker_pid" =~ ^[1-9][0-9]*$ ]]; then
-      wrd_fixed_watch_pid_state "$marker_pid"
+      local marker_state=""
+      marker_state="$(wrd_fixed_watch_pid_state "$marker_pid")"
+      case "$marker_state" in
+        dead)
+          printf '%s\n' abandoned
+          ;;
+        *)
+          printf '%s\n' "$marker_state"
+          ;;
+      esac
       return 0
     fi
     # A malformed marker cannot identify its owner while it is fresh. Bound

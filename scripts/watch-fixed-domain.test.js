@@ -133,6 +133,33 @@ test('watch preserves an initializing lock directory with no pid file', () => {
   assert.equal(fs.existsSync(path.join(lockPath, 'initializing')), true);
 });
 
+test('watch reclaims an initializing lock whose marker pid is dead', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-init-dead-'));
+  const lockPath = path.join(dir, 'watch.lock');
+  const markerPath = path.join(lockPath, 'initializing');
+  const stale = spawn('sleep', ['30']);
+  stale.kill('SIGTERM');
+  await new Promise((resolve) => stale.once('exit', resolve));
+  fs.mkdirSync(lockPath);
+  fs.writeFileSync(markerPath, `${stale.pid}\ninitializing\n`);
+
+  const result = sourceWatch(
+    'if wrd_fixed_watch_acquire_lock; then printf "acquired\\n"; else exit 1; fi',
+    {
+      WRD_FIXED_WATCH_LOCK: lockPath,
+      WRD_FIXED_WATCH_PID_FILE: path.join(lockPath, 'pid'),
+      WRD_FIXED_WATCH_START_FILE: path.join(lockPath, 'start'),
+      WRD_FIXED_WATCH_SIGNATURE_FILE: path.join(lockPath, 'signature'),
+      WRD_FIXED_WATCH_INIT_MARKER: markerPath,
+      WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log'),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /acquired/);
+  assert.equal(fs.existsSync(lockPath), false, 'dead initializing lock should be reclaimed');
+});
+
 test('watch reclaims a malformed initialization marker after its grace period', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-lock-init-expired-'));
   const lockPath = path.join(dir, 'watch.lock');
