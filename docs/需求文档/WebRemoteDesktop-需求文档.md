@@ -71,8 +71,9 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
 - [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
-- [x] **按需媒体暂停**：切换 Terminal、页面进入后台或用户手动暂停时，Host 停止屏幕 capture、编码和视频 payload；WebRTC 保留 PeerConnection、ICE 和 DataChannel，tunnel 保留控制连接，Terminal Socket、PTY 和 admin 授权不受影响
+- [x] **按需媒体暂停**：切换 Terminal 或用户手动暂停时立即停止屏幕 capture、编码和视频 payload；页面进入后台须持续 **5 分钟（300s）** 才停止采集。WebRTC 保留 PeerConnection、ICE 和 DataChannel，tunnel 保留控制连接，Terminal Socket、PTY 和 admin 授权不受影响
 - [x] **暂停期健康语义**：暂停和恢复中的预期 0 FPS 不触发质量降档、ICE restart 或自动重连；只有匹配当前 connection attempt（含 tunnel 的 connection-attempt-bind 权威）的恢复 ack 与一帧新渲染画面后才重新启用桌面输入。Terminal/page visibility 的自动 reason 不会覆盖 `manual-pause`
+- [x] **失焦输入安全语义**：窗口失焦或页面隐藏时，桌面输入 DataChannel 为 `open` 则发送 keyboard reset；DataChannel 已关闭或不可用则 park 本地输入状态。短暂失焦不释放控制租约，也不制造无法自动恢复的 reset barrier
 - [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。启动还要求当前 Viewer 持有 ACTIVE 控制租约；只读/切换中/reset-blocked/媒体暂停时严格无副作用。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
 - [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
@@ -184,6 +185,9 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [ ] **断网重连**：浏览器断网后自动重连到原来的 Terminal，会话和上下文保留
 - [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
 - [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
+- [x] **presenter/observer 控制语义**：presenter 断开时显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。已附着会话再次激活不得无条件抢 presenter
+- [x] **断线状态文案**：Terminal Socket 断线显示「正在重新附着」；在真实单/双浏览器验收完成前，不把自动恢复承诺为已交付能力
+- [x] **运行时状态归属**：`TerminalPanel` 是 session、presenter、attach 和生命周期状态的运行时 owner；`createTerminalSessionFsm` 仅为确定性测试 seam，不是生产状态真相
 - [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，可配置 idle timeout 回收超时且无人附着的会话
 - [x] **环境确定性**：PTY 使用 allowlist 环境和 no-rc interactive shell；PATH 固定包含 Homebrew Python 3.11 libexec，`WRD_TERMINAL_PATH_EXTRA` 仅允许已存在绝对目录，服务密钥和代理/API 凭据不继承
 - [x] **PTY 生命周期**：`starting/running/exited/failed/closed` 状态独立于 observer presence；非 running 状态禁止输入和成功 ack，spawn/timeout/exit/close 使用稳定错误码和一次性通知
@@ -260,6 +264,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | `WRD_TERMINAL_REPLAY_BUFFER_BYTES` | signal-server | 每个 session replay buffer 上限，默认 `262144`（256 KiB） |
 | `WRD_TERMINAL_IDLE_TIMEOUT_MS` | signal-server | 会话空闲超时，默认 `0` 表示不自动销毁 |
 | `WRD_TERMINAL_STARTUP_TIMEOUT_MS` | signal-server | PTY 启动超时 |
+| `WRD_TERMINAL_PTY_KILL_WAIT_MS` | signal-server | PTY 清理等待异步 `onExit` 的时间，默认 `200` ms；范围由配置校验限制 |
 | `WRD_TERMINAL_AUDIT_LOG` | signal-server | 可选 Terminal 独立审计 JSONL 文件路径；为空时仍进入统一运行日志 |
 | `WRD_TERMINAL_PATH_EXTRA` | signal-server | 冒号分隔的已存在绝对 PATH 目录；重复、空项和非法路径启动时拒绝 |
 | `WRD_TERMINAL_ALLOW_POLLING` | signal-server | 是否允许 Terminal Socket.IO polling fallback，默认 `0` |
@@ -323,7 +328,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 /tmp/wrd-safe-current-url.txt
 ```
 
-由于 trycloudflare quick tunnel 没有稳定性保证，`scripts/run-safe-quicktunnel.sh` 会在检测到 `Unauthorized: Tunnel not found` 时重建 quick tunnel 并更新当前安全地址文件。
+由于 trycloudflare quick tunnel 没有稳定性保证，检测到 `Unauthorized: Tunnel not found` 只表示当前临时入口可能已失效；这不是自动重建授权。除非用户明确要求重建 tunnel / 重新生成公网地址，否则不得重建 quick tunnel 或更新当前安全地址文件。
 同时，`scripts/run-safe-quicktunnel.sh` 是 safe URL 的唯一 publisher：拿到 trycloudflare URL 后，必须先确认 `/health` 返回 2xx 且 JSON `status=ok`，才允许原子写入 `/tmp/wrd-safe-current-url.txt` 与 archive。3xx、404、429、5xx 或错误内容均不可交付。
 
 需要特别说明：地址文件中已经写出 trycloudflare URL，只能说明 `cloudflared` 已拿到一个临时地址，**不能直接视为公网可用**。对外提供前仍应检查：
@@ -333,7 +338,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 3. 该 URL 能返回 HTTP 响应
 4. 若 `curl -I -L` 返回 `Could not resolve host` 或 `HTTP 530`，都按“当前 quick tunnel 入口不可交付”处理，不应误判成 `signal-server` 或 Host 的本地故障
 
-若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；当 quick tunnel 过期时，也会自动重建并刷新安全地址文件。
+若本机同时运行 `/Users/macstudio1/AI/Claude/StockHub`，推荐优先使用 `scripts/run-safe-quicktunnel.sh`。该脚本只写入 `/tmp/wrd-safe-quicktunnel.pid`、`/tmp/wrd-safe-quicktunnel.log`、`/tmp/wrd-safe-current-url.txt`，不会清理其他项目的进程；quick tunnel 过期时只报告失效，必须等用户明确授权后才可重建并刷新安全地址文件。
 
 若在短生命周期自动化 shell 中执行 safe quick tunnel，后台子进程可能在父 shell 结束后被回收；此时应改为在用户自己的常驻终端中执行，或改用固定域名隧道。
 
@@ -393,12 +398,13 @@ WebRemoteDesktop/
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 并**手动**选择外网中继才能稳定投屏
 - **当前部署策略**：正式入口仍是 `link.stockhub.wiki`。公网媒体默认 Strict STUN；自动恢复有界耗尽后明确失败。用户可手动：① 外网中继（TURN，须 Viewer+Host 双边配置）② JPEG tunnel fallback ③ `auto`/`stun` 下「搜索端口」最多 500 轮。固定域名与媒体是否直连/是否走 TURN 无关。TURN 全链路设计见 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
 - **系统分配端口**：浏览器没有选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0` 由 OS 分配。手动端口搜索不保证唯一端口，也不能替代可控的 Host UDP 端口范围与路由器转发方案
-- **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取最新地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产应切换命名隧道和固定域名
+- **Cloudflare Tunnel**：trycloudflare 临时域名会过期；safe 模式需读取 `/tmp/wrd-safe-current-url.txt` 获取当前诊断地址，旧脚本模式则读取 `/tmp/wrd-current-url.txt`；生产正式入口保持命名隧道固定域名 `https://link.stockhub.wiki`
+- **Formal watch**：`com.webremotedesktop.fixed-watch` 只监视并按预算重启 `wrd-tunnel` 命名隧道；不触碰 trycloudflare、`signal-server` 或 Host。正式 connector 的手动重启与升级也必须使用 formal-only 脚本
 - **开发子域**：`dev.link.stockhub.wiki` 只作为可选开发入口；其边缘访问由 Cloudflare Access 单独保护，但默认仍通过 proxy 复用 `8080` 后端能力
 - **Terminal 权限**：网页 Terminal 默认关闭；启用后必须使用独立 admin 密码，且同一浏览器会话内的多个 Terminal 共享授权
 - **Terminal 会话**：Terminal 是共享 shell session pool。多个浏览器可以同时附着到同一个会话并共享输入；关闭 Viewer 页面、桌面断开连接或切换网络模式都不会销毁 PTY，但服务重启会结束这些内存态共享会话
-- **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、tunnel 失效重建或切换入口模式时才变化
-- **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准，只有用户明确要求或 tunnel 已失效时才重建
+- **重启语义**：在 safe quick tunnel 仍存活时，单纯重启 `signal-server` / `python-host` 默认复用现有 tunnel，因此公网地址通常不变；只有显式停 tunnel、用户明确授权后的 tunnel 重建或切换入口模式时才变化
+- **运维约束**：默认不要主动重启 `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；当前有效公网地址以 `/tmp/wrd-safe-current-url.txt` 为准。tunnel 失效（包括 `Unauthorized: Tunnel not found`）只是诊断结果，不是授权；只有用户明确要求重建或重新生成公网地址时才可重建
 - **可达性校验**：trycloudflare 地址写入文件后，仍需额外校验进程存活、DNS 解析和 `/health` 2xx JSON 内容，不能仅凭“拿到 URL”或“任意 HTTP 响应”判断公网入口成功
 - **状态只读**：`status-safe-wrd.sh` 和 service helper 的 status 只检查，不恢复 URL、不调和 PID；URL 只能由 tunnel supervisor 验证后发布
 - **自动化环境**：在短生命周期自动化 shell 中启动 quick tunnel 时，后台子进程可能被父 shell 退出连带回收；需要常驻终端或固定域名隧道
@@ -424,7 +430,7 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-05-11 | 新增 WebRTC 网络模式选择和右下角网络建议浮窗；Signal Server 提供 `/api/webrtc-config`；Host 与 Viewer 均支持 `STUN_URLS` / `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`；自动模式可在 TURN 已配置时从直连降级到中继；外网中继模式仅在 TURN 配置完整时启用 |
 | 2026-06-02 | 补充公网启动约束：trycloudflare URL 写入文件不等于公网已可用；safe quick tunnel 交付前需验证进程存活、DNS 解析和 HTTP 可达性；短生命周期自动化 shell 中需避免把临时后台进程误判为常驻服务 |
 | 2026-06-06 | 同步开源前安全加固现状：Viewer 与 Host 分离认证、`/api/webrtc-config` 需要 Bearer token、TLS 默认校验开启、诊断日志默认不落仓库，仅在显式开启时写入系统临时目录 |
-| 2026-06-06 | 明确 safe quick tunnel 重启语义：仅重启本地服务时默认复用现有 quick tunnel，公网地址通常不变；停止 safe 链路或 tunnel 失效重建时地址才变化 |
+| 2026-06-06 | 明确 safe quick tunnel 重启语义：仅重启本地服务时默认复用现有 quick tunnel，公网地址通常不变；停止 safe 链路或用户明确授权重建时地址才变化，tunnel 失效本身不授权重建 |
 | 2026-06-14 | 明确 Host 由 `com.webremotedesktop.host` LaunchAgent 托管；`restart-host.sh` / `start-safe-wrd.sh` 会重新注册 LaunchAgent；`run-host-launchctl.sh` 新增 signal-server health 与 host auth 双重预检，避免 Host 在前置条件未满足时反复失败拉起 |
 | 2026-07-18 | 完成远程连接与延迟整改：入口健康真相、Pointer 输入契约、媒体 stats/timing v2、自适应恢复、独立桌面 input ack、Terminal 同钟 RTT 与密码安全 echo、session/replay/idle 资源保护、输入日志脱敏与 10 MiB/3 份轮转、named tunnel credentials-file 安全告警及 event-loop lag 上下文 |
 | 2026-07-19 | 完成真实普通浏览器验收；修复 Chromium 双击计数、首轮媒体预热/profile 同步、Terminal 关闭后迟到事件崩溃和 Signal 重启后的 Host 过期 token 重连；保留首帧 P50 与公网 Terminal RTT 未达目标的诚实结论 |

@@ -96,7 +96,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 2. 因此在 quick tunnel 进程仍然存活时，单纯重启 `signal-server` / `python-host`，公网地址通常**不会变化**
 3. 只有在用户明确要求重建/停止 tunnel、或切换网络入口模式时，地址才允许变化
 4. `./scripts/start-safe-wrd.sh` 会安装并启用 `com.webremotedesktop.host` LaunchAgent；这是当前仓库的预期产品行为，不是副作用
-5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；即使现有 tunnel 已失效，也只能报告，不能自行重建
+5. 默认**不要重启** `trycloudflare` / `scripts/run-safe-quicktunnel.sh` / 对应 `cloudflared` 进程；即使现有 tunnel 已失效或日志出现 `Unauthorized: Tunnel not found`，也只能报告，不能自行重建。失效本身不是授权；只有用户明确要求重建 tunnel / 重新生成公网地址时才可执行重建
 6. `重启服务` 只指重启本地 `signal-server` / Host；在 tunnel 仍存活时，这类操作不应改变 `/tmp/wrd-safe-current-url.txt` 中的当前地址
 7. 当 Viewer 是通过 trycloudflare / 其他公网域名进入，且服务端未配置 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` 时，前端仍会按当前模式先尝试直连 / STUN；若后续失败，再按页面恢复逻辑决定是否切到 `隧道中继`
 8. 如果当前 safe URL 已经不可解析或不可访问，agent 只能报告“公网入口不可达”，不得自行调用会重建 tunnel 的脚本
@@ -229,6 +229,7 @@ cat /tmp/wrd-fixed-edge-probe.json
 要点：
 
 - Watch 默认：formal 连续失败 **180s** 才可 restart；每小时最多 **2** 次；**origin-down 不 restart** formal。
+- Formal watcher 只允许作用于命名隧道 `wrd-tunnel`（`link.stockhub.wiki`）；不触碰 trycloudflare、`signal-server` 或 Host。
 - **`重启服务` ≠ formal tunnel restart**；除已安装的 formal watcher 外，不得把本地重启自动当成命名隧道重启。
 - 细节与语义表见 `docs/runbook-safe-startup.md` 的 **Formal tunnel hardening** 小节。
 
@@ -318,13 +319,17 @@ http://127.0.0.1:8080
 - 多个浏览器可同时附着到同一个共享会话；任一浏览器输入都会立即作用到同一个 shell
 - 关闭当前 Terminal 标签页或整个 Viewer 页面，只会让该浏览器断开附着，不会 kill 底层 PTY；会话会持续到显式关闭或服务重启
 - Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
-- 切换到 Terminal、页面进入后台或手动暂停会停止远程桌面 capture、编码和视频 payload；信令、ICE、DataChannel、Terminal Socket 和共享 PTY 保持连接
+- 切换到 Terminal 或手动暂停会立即停止远程桌面 capture、编码和视频 payload；页面进入后台必须持续 **5 分钟（300s）** 才停止采集。暂停时信令、ICE、DataChannel、Terminal Socket 和共享 PTY 保持连接
+- 窗口失焦或页面隐藏时，若桌面输入 DataChannel 为 `open` 则发送 keyboard reset；若 DataChannel 已关闭/不可用则 park 本地输入状态，避免把短暂失焦变成无法恢复的 reset barrier
+- presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。Socket 断线显示「正在重新附着」，不对未完成真实验收的自动恢复作承诺
+- 已附着的 Terminal session 被再次激活时不得无条件抢 presenter；运行时 session/presenter/attach/lifecycle 真相由 `TerminalPanel` 持有，`createTerminalSessionFsm` 仅作为确定性测试 seam，不是生产状态 owner
 - 返回桌面或页面重新可见时只清除对应自动原因；手动暂停会继续生效，直到用户再次点击恢复。暂停和恢复期间的预期 0 FPS 不触发质量降档、ICE restart 或自动重连
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
 - Terminal **默认**只走浏览器会话内的 Socket.IO / HTTPS 通道，不依赖 STUN / TURN / WebRTC 媒体链路；可选 `webrtc-turn`（DataChannel + 同一 TURN）见 TURN 接入设计 Phase 2，须显式选择且失败不得静默回退
 - Terminal 的 `socketRtt` 和 `inputAckRtt` 只使用浏览器本地 pending 时间；服务端 `serverProcessMs` 单独显示，不能跨机器相减 wall clock
 - password-safe echo 默认不可信：首批普通输入只作为隐藏 probe，只有远端 shell 确实回显后才对后续字符启用；Enter、控制键、alternate-screen、断线和重连都会清零，因此密码提示不会在浏览器显示输入字符
 - shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 默认 256 KiB，配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
+- PTY 清理等待 `WRD_TERMINAL_PTY_KILL_WAIT_MS` 默认 **200ms**，用于等待 node-pty 的异步 `onExit`；范围和配置校验由 Signal Server 执行
 - Terminal PTY 只继承 allowlist 环境，shell 使用 `/bin/zsh -f -i` 或 `/bin/bash --noprofile --norc -i`；`PATH` 由服务端固定注入 Homebrew Python 3.11 libexec 路径，不读取个人 shell rc。`WRD_TERMINAL_PATH_EXTRA` 只接受已存在的绝对目录，重复或空项会拒绝启动
 - Terminal 进程状态分为 `starting/running/exited/failed/closed`；starting、exited、failed 不接受输入，也不会发送成功 ack。输出按 observer 独立限流，慢 observer 会单独 detach，PTY 和其他 observer 继续运行并可通过 replay 恢复
 - `WRD_TERMINAL_RECORD_IO=1` 只记录 metadata（字节数、chunk 数、延迟和状态），不记录原始命令、密码或完整输出。管理员可读取 `GET /api/admin/terminal/metrics`，该接口只返回有界计数、p50/p95 摘要和 pool 容量
@@ -399,7 +404,7 @@ WebRemoteDesktop/
 2. 检查状态：`./scripts/status-safe-wrd.sh`
 3. 先确认自己打开的是 `8080`、`link.stockhub.wiki`，或已配置好的 `dev.link.stockhub.wiki`，而不是裸 `5173`
 4. 检查 tunnel 日志：`tail -100 /tmp/wrd-safe-quicktunnel.log` 或 `tail -100 /tmp/cloudflared-wrd.log`
-5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址过期，脚本会自动重启并更新地址文件
+5. 如果看到 `Unauthorized: Tunnel not found`，说明 trycloudflare 临时地址可能已过期；这是诊断结果，不是重建授权。只能报告并等待用户明确要求重建，之后才可按授权执行重建并更新地址文件
 6. 如果日志已打印 trycloudflare 地址，但域名仍无法解析或状态脚本显示 `safe quick tunnel: stale`，说明公网入口实际上尚未可用；常见原因是 DNS 传播延迟，或后台进程在短生命周期 shell 退出后被回收
 7. 生产环境应使用 Cloudflare 命名隧道和固定域名
 
@@ -419,7 +424,7 @@ WebRemoteDesktop/
 3. 查看当前安全地址：`cat /tmp/wrd-safe-current-url.txt`
 4. 查看独立日志：`tail -100 /tmp/wrd-safe-quicktunnel.log`
 5. 该脚本只使用本仓库独立的 PID / URL / LOG 文件，不会 `pkill` 其他项目进程
-6. 若日志出现 `Unauthorized: Tunnel not found`，脚本会自动拉起新的 safe quick tunnel 并刷新地址文件
+6. 若日志出现 `Unauthorized: Tunnel not found`，只报告当前 quick tunnel 失效；不得自动拉起新的 quick tunnel 或刷新地址文件，除非用户明确要求重建
 
 ### 一键安全启动（推荐）
 
@@ -596,7 +601,7 @@ TURN_CREDENTIAL=你的凭证
 
 1. **屏幕录制权限**: Python Host 需要屏幕录制权限，首次运行需要在系统设置中授权
 2. **辅助功能权限**: Python Host 需要辅助功能权限才能执行远程输入
-3. **临时 tunnel**: trycloudflare 地址在 quick tunnel 存活期间通常保持不变，但在进程退出、过期重建或显式停 tunnel 后会变化；safe 模式读取 `/tmp/wrd-safe-current-url.txt`
+3. **临时 tunnel**: trycloudflare 地址在 quick tunnel 存活期间通常保持不变，但在进程退出、用户明确授权重建或显式停 tunnel 后会变化；safe 模式读取 `/tmp/wrd-safe-current-url.txt`
 4. **系统睡眠 / 空闲锁屏**: 通过 `caffeinate -ims` 抑制空闲系统睡；显示可按系统策略熄灭。请将「关闭显示器/屏保后需要密码」设为永不，否则空闲后可能进入密码锁屏且远程键盘无效。手动睡眠、合盖、断电仍可能中断
 
 ## 下一步优化
