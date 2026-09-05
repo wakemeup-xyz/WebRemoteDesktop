@@ -437,6 +437,40 @@ test('touch geometry signature aborts contain-to-cover and source-size changes',
   assert.deepEqual(run(({ video }) => { video.videoWidth = 120; }), { actions: ['down', 'reset'], state: 'IDLE' });
 });
 
+test('touch wheel queued past the final pointerup is cancelled by a geometry change', async () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = elements.get('remoteVideo');
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  let frame = null;
+  video.getBoundingClientRect = () => ({ ...rect });
+  video.videoWidth = 100;
+  video.videoHeight = 100;
+  context.requestAnimationFrame = (callback) => { frame = callback; return 1; };
+  Input.setupEventListeners();
+  const touch = (type, pointerId, clientX, clientY, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId, isPrimary: pointerId === 1,
+    clientX, clientY, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown', 1, 20, 20);
+  touch('pointerdown', 2, 40, 40, { isPrimary: false });
+  touch('pointermove', 2, 40, 60, { isPrimary: false });
+  touch('pointerup', 1, 20, 20);
+  touch('pointerup', 2, 40, 60, { isPrimary: false });
+  assert.equal(Input._lastTouchAdapter.getSnapshot().wheelPending, true);
+  assert.equal(typeof frame, 'function');
+  rect = { ...rect, width: 120 };
+  frame?.();
+  await Promise.resolve();
+
+  const wheels = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'wheel');
+  assert.equal(wheels.length, 0);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().wheelPending, false);
+});
+
 test('mouse geometry changes abort before mapping the next point', () => {
   const { Input, context, socketEvents } = loadInput();
   activate(Input, context);
@@ -459,6 +493,35 @@ test('mouse geometry changes abort before mapping the next point', () => {
 
   const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
   assert.deepEqual(actions, ['down', 'reset']);
+});
+
+test('queued mouse and pen moves revalidate source geometry before rAF', () => {
+  const run = ({ pointerType = 'mouse', resize = false, press = false } = {}) => {
+    const { Input, context, socketEvents } = loadInput();
+    activate(Input, context);
+    const element = makeElement();
+    let rect = { left: 0, top: 0, width: 100, height: 100 };
+    let frame = null;
+    element.getBoundingClientRect = () => ({ ...rect });
+    element.videoWidth = 100;
+    element.videoHeight = 100;
+    context.requestAnimationFrame = (callback) => { frame = callback; return 1; };
+    Input.bindMouseEvents(element);
+
+    const pointer = (type, overrides = {}) => element.listeners.get(type)({
+      pointerType, pointerId: 8, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      clientX: 20, clientY: 20, currentTarget: element, preventDefault() {}, ...overrides,
+    });
+    if (press) pointer('pointerdown');
+    pointer('pointermove', { clientX: 40, buttons: press ? 1 : 0 });
+    if (resize) rect = { ...rect, width: 120 };
+    frame?.();
+    return socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  };
+
+  assert.deepEqual(run({ press: true }), ['down', 'move']);
+  assert.deepEqual(run({ press: true, resize: true }), ['down', 'reset']);
+  assert.deepEqual(run({ pointerType: 'pen', resize: true }), []);
 });
 
 test('failed touch reset is rearmed by a new lease and allows a real touch click', () => {

@@ -22,6 +22,7 @@ const Input = {
   _wheelScheduled: false,
   _activePointerId: null,
   _activePointerElement: null,
+  _pointerLifecycleGeneration: 0,
   _pressedMouseButtons: new Set(),
   _pendingMouseReset: false,
   _pendingMouseResetId: null,
@@ -112,6 +113,8 @@ const Input = {
       this._desktopWriteSequence = 0;
       this._desktopWritePending.clear();
       this._desktopWriteRecovery = null;
+      this._pointerLifecycleGeneration += 1;
+      this._pendingMouseMove = null;
       if (nextLease) {
         this._pendingMouseReset = false;
         this._pendingMouseResetId = null;
@@ -473,8 +476,14 @@ const Input = {
     return null;
   },
 
-  queueMouseMove(coords) {
-    this._pendingMouseMove = coords;
+  queueMouseMove(coords, surface = null) {
+    const sourceSurface = surface || this._activePointerElement || this.videoElement;
+    this._pendingMouseMove = {
+      payload: { ...coords },
+      surface: sourceSurface,
+      signature: this.getSurfaceGeometrySignature(sourceSurface),
+      generation: this._pointerLifecycleGeneration,
+    };
     if (this._mouseMoveScheduled) return;
     this._mouseMoveScheduled = true;
     requestAnimationFrame(() => {
@@ -482,12 +491,15 @@ const Input = {
       const pending = this._pendingMouseMove;
       this._pendingMouseMove = null;
       if (!pending) return;
+      if (pending.generation !== this._pointerLifecycleGeneration) return;
+      if (!this.validateQueuedMouseMoveGeometry(pending)) return;
       if (this._pendingMouseReset) return;
       // buttons===0 while we still track a local press: local desync — force reset.
-      if (Number(pending.buttons) === 0 && this._pressedMouseButtons.size > 0) {
+      if (Number(pending.payload.buttons) === 0 && this._pressedMouseButtons.size > 0) {
         this.releasePointer('move-buttons-clear');
+        return;
       }
-      if (this.isActive) this.sendInput('mouse', 'move', pending);
+      if (this.isActive) this.sendInput('mouse', 'move', pending.payload);
     });
   },
 
@@ -527,7 +539,25 @@ const Input = {
     if (this._activePointerElement === surface) return true;
     const adapter = this._touchAdapters.get(surface);
     const snapshot = adapter?.getSnapshot?.();
-    return Boolean(snapshot?.pointerCount || snapshot?.primaryActive || snapshot?.activeButton);
+    return Boolean(snapshot?.pointerCount || snapshot?.primaryActive || snapshot?.activeButton || snapshot?.wheelPending);
+  },
+
+  validateQueuedMouseMoveGeometry(pending) {
+    const surface = pending?.surface;
+    if (!surface?.getBoundingClientRect) return true;
+    const rect = surface.getBoundingClientRect();
+    const signature = this.getSurfaceGeometrySignature(surface, rect);
+    if (this.surfaceGeometryEqual(pending.signature, signature)) return true;
+    const remember = { element: surface, rect, signature };
+    this._surfaceGeometryByElement.set(surface, remember);
+    this._lastSurfaceGeometry = remember;
+    if (this.hasActiveSurfaceGesture(surface)) {
+      this._geometryAbortedPointerId = this._activePointerId;
+      this.releasePointer('geometry-changed');
+    } else {
+      this._pointerLifecycleGeneration += 1;
+    }
+    return false;
   },
 
   validateGeometry(element = null) {
@@ -585,6 +615,7 @@ const Input = {
   },
 
   releasePointer(reason = 'pointer-release') {
+    this._pointerLifecycleGeneration += 1;
     const wasPendingReset = this._pendingMouseReset;
     let adapterResetIssued = false;
     this._touchAdapters.forEach((adapter) => { if (adapter.reset?.(reason)) adapterResetIssued = true; });
@@ -644,20 +675,22 @@ const Input = {
       if (event.pointerType === 'touch') return;
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
       if (!this.validateGeometry(element)) return;
+      const pointerGeneration = this._pointerLifecycleGeneration;
       const coords = this.getRelativeCoords(event, this._activePointerId === event.pointerId);
-      if (coords) {
+      if (coords && pointerGeneration === this._pointerLifecycleGeneration) {
         this._lastPointerCoords = coords;
         this.queueMouseMove({
           ...coords,
           // Host uses buttons===0 on move to clear a stuck pressed button when the
           // matching up was lost (DC drop / gate flip mid-gesture).
           buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
-        });
+        }, element);
       }
     });
     element.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'touch') return;
       if (!this.isActive || this._pendingMouseReset) return;
+      this._pointerLifecycleGeneration += 1;
       this._geometryAbortedPointerId = null;
       event.preventDefault();
       this.focusDesktopSurface(element, 'surface-user');
@@ -693,6 +726,7 @@ const Input = {
         this._pendingMouseResetId = resetId || null;
       }
       if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
+      this._pointerLifecycleGeneration += 1;
     });
     element.addEventListener('pointercancel', (event) => {
       if (event.pointerType === 'touch') return;
