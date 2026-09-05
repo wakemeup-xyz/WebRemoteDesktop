@@ -38,7 +38,7 @@ test('nominated succeeded pair is the compatibility fallback', () => {
 });
 
 
-test('interval media stats derive deltas instead of session averages', () => {
+test('interval media stats derive canonical deltas instead of session averages', () => {
   const previous = {
     sampledAt: 1000,
     framesReceived: 100,
@@ -72,19 +72,69 @@ test('interval media stats derive deltas instead of session averages', () => {
 
   assert.deepEqual(WebRtcStats.deriveIntervalMediaStats(previous, current), {
     elapsedMs: 1000,
-    fps: 20,
-    framesReceived: 25,
-    framesDecoded: 20,
-    packetsLost: 2,
-    bytesReceived: 4000,
+    derivedFps: 20,
+    receivedDelta: 25,
+    decodedDelta: 20,
+    packetsLostDelta: 2,
+    bytesDelta: 4000,
     jitterBufferMs: 120,
-    framesDropped: 3,
-    packetsReceived: 60,
-    nackCount: 3,
-    pliCount: 1,
-    firCount: 0,
-    freezeCount: 2,
+    framesDroppedDelta: 3,
+    packetsReceivedDelta: 60,
+    nackCountDelta: 3,
+    pliCountDelta: 1,
+    firCountDelta: 0,
+    freezeDelta: 2,
   });
+});
+
+
+test('canonical derived FPS uses decoded delta instead of browser-reported FPS', () => {
+  const previous = {
+    sampledAt: 1000,
+    framesReceived: 100,
+    framesDecoded: 100,
+    packetsLost: 0,
+    bytesReceived: 1000,
+    jitterBufferDelay: 0,
+    jitterBufferEmittedCount: 0,
+    framesDropped: 0,
+    packetsReceived: 100,
+    nackCount: 0,
+    pliCount: 0,
+    firCount: 0,
+    freezeCount: 0,
+  };
+  const snapshot = WebRtcStats.normalizeStats(stats([{
+    id: 'inbound-video',
+    type: 'inbound-rtp',
+    kind: 'video',
+    framesReceived: 119,
+    framesDecoded: 119,
+    framesPerSecond: 90,
+    packetsLost: 0,
+    bytesReceived: 2000,
+    packetsReceived: 119,
+  }]), previous, 2000);
+
+  assert.equal(snapshot.derivedFps, 19);
+  assert.equal(snapshot.decodedDelta, 19);
+  assert.equal(snapshot.browserReportedFps, 90);
+});
+
+
+test('first stats sample is warmup and does not derive browser FPS as playback FPS', () => {
+  const snapshot = WebRtcStats.normalizeStats(stats([{
+    id: 'inbound-video',
+    type: 'inbound-rtp',
+    kind: 'video',
+    framesReceived: 100,
+    framesDecoded: 100,
+    framesPerSecond: 90,
+  }]), null, 1000);
+
+  assert.equal(snapshot.warmup, true);
+  assert.equal(snapshot.derivedFps, 0);
+  assert.equal(snapshot.browserReportedFps, 90);
 });
 
 

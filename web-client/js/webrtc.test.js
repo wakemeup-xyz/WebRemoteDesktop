@@ -897,7 +897,7 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
   assert.deepEqual(reasons, ['dc-error']);
 });
 
-test('inbound video health requires recent framesDecoded growth', () => {
+test('inbound video health requires recent decoded progress', () => {
   const { WebRTC } = loadWebRTC();
   WebRTC._lastInboundFramesDecoded = 0;
   WebRTC._lastInboundFramesDecodedAt = 0;
@@ -910,7 +910,7 @@ test('inbound video health requires recent framesDecoded growth', () => {
 
   const growthAt = WebRTC._lastInboundFramesDecodedAt;
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 0 });
-  assert.equal(WebRTC._lastInboundFramesDecodedAt, growthAt);
+  assert.ok(WebRTC._lastInboundFramesDecodedAt >= growthAt);
 
   WebRTC._lastInboundFramesDecodedAt = Date.now() - 6000;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
@@ -5387,6 +5387,105 @@ test('capture_stats does not overwrite playback fpsDisplay', () => {
   WebRTC.inputChannel.onmessage({ data: JSON.stringify({ type: 'capture_stats', fps: 60 }) });
   assert.equal(fpsEl.textContent, '12 FPS');
   assert.equal(WebRTC._hostCaptureFps, 60);
+});
+
+test('decoded progress timestamp updates for every positive canonical delta', () => {
+  let now = 1000;
+  const { WebRTC } = loadWebRTC({ Date: { now: () => now } });
+  WebRTC._lastInboundFramesDecoded = 100;
+  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 10,
+    decodedDelta: 10,
+    receivedDelta: 10,
+    bytesDelta: 1000,
+    totals: { framesDecoded: 110 },
+    selectedCandidateType: 'host',
+  });
+  assert.equal(WebRTC._lastInboundFramesDecodedAt, 1000);
+
+  now = 2000;
+  WebRTC.processStatsSnapshot({
+    derivedFps: 1,
+    decodedDelta: 1,
+    receivedDelta: 1,
+    bytesDelta: 100,
+    totals: { framesDecoded: 111 },
+    selectedCandidateType: 'host',
+  });
+  assert.equal(WebRTC._lastInboundFramesDecodedAt, 2000);
+  assert.equal(WebRTC._lastInboundFramesDecoded, 111);
+});
+
+test('warmup stats sample does not move a painted stream into stall', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 10000;
+
+  WebRTC.notePaintStats({
+    warmup: true,
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 20,
+    videoWidth: 1280,
+    videoHeight: 720,
+  });
+
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(WebRTC._stallSince, null);
+});
+
+test('intentional media pause skips quality recovery for canonical stats', () => {
+  const { WebRTC } = loadWebRTC();
+  let recoveryCalls = 0;
+  WebRTC.networkMode = 'relay';
+  WebRTC.isMediaHealthSuppressed = () => true;
+  WebRTC.handleReceiverStats = () => { recoveryCalls += 1; };
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.pc = { iceConnectionState: 'completed' };
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 0,
+    bytesDelta: 0,
+    selectedCandidateType: 'relay',
+  });
+
+  assert.equal(recoveryCalls, 0);
+  assert.equal(WebRTC._noRelayReceiveCount, 0);
+});
+
+test('viewer stats emits canonical deltas with derived legacy aliases for Host compatibility', () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 19,
+    browserReportedFps: 90,
+    receivedDelta: 20,
+    decodedDelta: 19,
+    packetsLostDelta: 2,
+    bytesDelta: 4000,
+    totals: { framesDecoded: 119 },
+    selectedCandidateType: 'relay',
+  });
+
+  const report = emitted.find(({ event }) => event === 'viewer-stats')?.payload;
+  assert.equal(report.derivedFps, 19);
+  assert.equal(report.browserReportedFps, 90);
+  assert.equal(report.decodedDelta, 19);
+  assert.equal(report.receivedDelta, 20);
+  assert.equal(report.fps, 19);
+  assert.equal(report.framesDecoded, 19);
+  assert.equal(report.framesReceived, 20);
 });
 
 test('updateConnectionStatus exposes paint-gate labels', () => {

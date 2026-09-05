@@ -51,35 +51,35 @@ const WebRtcStats = (() => {
 
   function deriveIntervalMediaStats(previous, current) {
     const elapsedMs = Math.max(0, Number(current?.sampledAt || 0) - Number(previous?.sampledAt || 0));
-    const framesReceived = nonNegativeDelta(previous?.framesReceived, current?.framesReceived);
-    const framesDecoded = nonNegativeDelta(previous?.framesDecoded, current?.framesDecoded);
-    const packetsLost = nonNegativeDelta(previous?.packetsLost, current?.packetsLost);
-    const bytesReceived = nonNegativeDelta(previous?.bytesReceived, current?.bytesReceived);
+    const receivedDelta = nonNegativeDelta(previous?.framesReceived, current?.framesReceived);
+    const decodedDelta = nonNegativeDelta(previous?.framesDecoded, current?.framesDecoded);
+    const packetsLostDelta = nonNegativeDelta(previous?.packetsLost, current?.packetsLost);
+    const bytesDelta = nonNegativeDelta(previous?.bytesReceived, current?.bytesReceived);
     const jitterDelay = nonNegativeDelta(previous?.jitterBufferDelay, current?.jitterBufferDelay);
     const jitterCount = nonNegativeDelta(
       previous?.jitterBufferEmittedCount,
       current?.jitterBufferEmittedCount,
     );
-    const framesDropped = nonNegativeDelta(previous?.framesDropped, current?.framesDropped);
-    const packetsReceived = nonNegativeDelta(previous?.packetsReceived, current?.packetsReceived);
-    const nackCount = nonNegativeDelta(previous?.nackCount, current?.nackCount);
-    const pliCount = nonNegativeDelta(previous?.pliCount, current?.pliCount);
-    const firCount = nonNegativeDelta(previous?.firCount, current?.firCount);
-    const freezeCount = nonNegativeDelta(previous?.freezeCount, current?.freezeCount);
+    const framesDroppedDelta = nonNegativeDelta(previous?.framesDropped, current?.framesDropped);
+    const packetsReceivedDelta = nonNegativeDelta(previous?.packetsReceived, current?.packetsReceived);
+    const nackCountDelta = nonNegativeDelta(previous?.nackCount, current?.nackCount);
+    const pliCountDelta = nonNegativeDelta(previous?.pliCount, current?.pliCount);
+    const firCountDelta = nonNegativeDelta(previous?.firCount, current?.firCount);
+    const freezeDelta = nonNegativeDelta(previous?.freezeCount, current?.freezeCount);
     return {
       elapsedMs,
-      fps: elapsedMs > 0 ? Math.round((framesDecoded * 1000 / elapsedMs) * 10) / 10 : 0,
-      framesReceived,
-      framesDecoded,
-      packetsLost,
-      bytesReceived,
+      derivedFps: elapsedMs > 0 ? Math.round((decodedDelta * 1000 / elapsedMs) * 10) / 10 : 0,
+      receivedDelta,
+      decodedDelta,
+      packetsLostDelta,
+      bytesDelta,
       jitterBufferMs: jitterCount > 0 ? Math.round((jitterDelay / jitterCount * 1000) * 10) / 10 : 0,
-      framesDropped,
-      packetsReceived,
-      nackCount,
-      pliCount,
-      firCount,
-      freezeCount,
+      framesDroppedDelta,
+      packetsReceivedDelta,
+      nackCountDelta,
+      pliCountDelta,
+      firCountDelta,
+      freezeDelta,
     };
   }
 
@@ -121,20 +121,20 @@ const WebRtcStats = (() => {
       ? deriveIntervalMediaStats(previous, current)
       : {
           elapsedMs: 0,
-          fps: Number(inbound.framesPerSecond || 0),
-          framesReceived: 0,
-          framesDecoded: 0,
-          packetsLost: 0,
-          bytesReceived: 0,
+          derivedFps: 0,
+          receivedDelta: 0,
+          decodedDelta: 0,
+          packetsLostDelta: 0,
+          bytesDelta: 0,
           jitterBufferMs: current.jitterBufferEmittedCount > 0
             ? Math.round((current.jitterBufferDelay / current.jitterBufferEmittedCount * 1000) * 10) / 10
             : 0,
-          framesDropped: 0,
-          packetsReceived: 0,
-          nackCount: 0,
-          pliCount: 0,
-          firCount: 0,
-          freezeCount: 0,
+          framesDroppedDelta: 0,
+          packetsReceivedDelta: 0,
+          nackCountDelta: 0,
+          pliCountDelta: 0,
+          firCountDelta: 0,
+          freezeDelta: 0,
         };
     const rttMs = Number.isFinite(Number(selected.pair?.currentRoundTripTime))
       ? Math.round(Number(selected.pair.currentRoundTripTime) * 1000)
@@ -143,8 +143,9 @@ const WebRtcStats = (() => {
     return {
       ...interval,
       interval: true,
+      warmup: !previous,
       sampledAt,
-      fps: Number(inbound.framesPerSecond || interval.fps || 0),
+      browserReportedFps: Number(inbound.framesPerSecond || 0),
       rttMs,
       codec: String(codec?.mimeType || ''),
       selectedCandidateType: localType,
