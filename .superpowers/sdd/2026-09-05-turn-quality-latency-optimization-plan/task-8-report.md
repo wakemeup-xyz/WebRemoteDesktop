@@ -31,11 +31,16 @@ Date: 2026-09-06
 | `git ls-files -z '*.sh' | xargs -0 -n 1 bash -n` | PASS: 35 tracked shell scripts parsed. |
 | `git ls-files -z '*.mjs' | xargs -0 -n 1 node --check` | PASS: 2 tracked MJS scripts parsed. |
 | `git ls-files -z '*.json' | xargs -0 -n 1 python3 -m json.tool` | PASS: 7 tracked JSON files parsed. |
-| `git diff --check` | Pending final staged-tree check. |
+| `git diff --cached --check` | PASS: staged docs tree had no whitespace errors before the documentation commit. |
 
 ## Commit
 
-Pending final staged-tree validation and commit.
+`f19668f docs(turn): sync relay quality acceptance evidence`
+
+This commit contains the reviewed artifacts, operator-facing documentation, the
+acceptance-ledger update, and this Task 8 report. Its full Python-suite failure
+is intentionally recorded above rather than hidden behind the successful Node
+and build checks.
 
 ## Concerns
 
