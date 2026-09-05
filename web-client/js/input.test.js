@@ -376,6 +376,91 @@ test('touch mapPoint keeps PointerEvent prototype geometry', () => {
   assert.equal(Number.isFinite(inputs[0].payload.relY), true);
 });
 
+test('touch geometry change releases a drag before stale coordinates are sent', () => {
+  const { Input, context, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = context.document.getElementById('remoteVideo');
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  video.getBoundingClientRect = () => ({ ...rect });
+  video.videoWidth = 100;
+  video.videoHeight = 100;
+  context.requestAnimationFrame = () => 1;
+  const adapter = Input.bindTouchAdapter(video);
+  const touch = (type, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 20, clientY: 20, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown');
+  touch('pointermove', { clientX: 40 });
+  rect = { ...rect, width: 120 };
+  touch('pointermove', { clientX: 60 });
+  touch('pointerup', { clientX: 60 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'reset']);
+  assert.equal(adapter.getSnapshot().state, 'IDLE');
+  assert.equal(Input._pendingMouseReset, true);
+});
+
+test('touch geometry signature aborts contain-to-cover and source-size changes', () => {
+  const run = (mutate) => {
+    const { Input, context, socketEvents } = loadInput();
+    loadTouchAdapter(context);
+    activate(Input, context);
+    const video = context.document.getElementById('remoteVideo');
+    let rect = { left: 0, top: 0, width: 100, height: 100 };
+    video.getBoundingClientRect = () => ({ ...rect });
+    video.videoWidth = 100;
+    video.videoHeight = 100;
+    video.style.objectFit = 'contain';
+    context.requestAnimationFrame = () => 1;
+    const adapter = Input.bindTouchAdapter(video);
+    const touch = (type, overrides = {}) => video.listeners.get(type)({
+      pointerType: 'touch', pointerId: 1, isPrimary: true,
+      clientX: 20, clientY: 20, buttons: type === 'pointerup' ? 0 : 1,
+      currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+    });
+    touch('pointerdown');
+    touch('pointermove', { clientX: 40 });
+    mutate({ video, setRect: (next) => { rect = { ...rect, ...next }; } });
+    touch('pointerup', { clientX: 40 });
+    return {
+      actions: socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action),
+      state: adapter.getSnapshot().state,
+    };
+  };
+
+  assert.deepEqual(run(({ video }) => { video.style.objectFit = 'cover'; }), { actions: ['down', 'reset'], state: 'IDLE' });
+  assert.deepEqual(run(({ video }) => { video.videoWidth = 120; }), { actions: ['down', 'reset'], state: 'IDLE' });
+});
+
+test('mouse geometry changes abort before mapping the next point', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const element = makeElement();
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  element.getBoundingClientRect = () => ({ ...rect });
+  element.videoWidth = 100;
+  element.videoHeight = 100;
+  context.requestAnimationFrame = () => 1;
+  Input.bindMouseEvents(element);
+
+  const pointer = (type, overrides = {}) => element.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 8, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+    clientX: 20, clientY: 20, currentTarget: element, preventDefault() {}, ...overrides,
+  });
+  pointer('pointerdown');
+  rect = { ...rect, height: 120 };
+  pointer('pointermove', { clientX: 40 });
+  pointer('pointerup', { clientX: 40, buttons: 0 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'reset']);
+});
+
 test('failed touch reset is rearmed by a new lease and allows a real touch click', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   loadTouchAdapter(context);

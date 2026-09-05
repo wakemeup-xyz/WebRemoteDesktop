@@ -12,6 +12,7 @@ const Input = {
   mobileTextInputAdapter: null,
   _mobileTextReturnFocus: null,
   _lastSurfaceGeometry: null,
+  _surfaceGeometryByElement: new WeakMap(),
   activeControlLease: null,
   lastKeyboardResetReason: null,
   modifierMask: 0,
@@ -28,6 +29,7 @@ const Input = {
   _lastTouchAdapter: null,
   _lastPointerCoords: null,
   _activePointerClickCount: 1,
+  _geometryAbortedPointerId: null,
   _lastPointerClickAt: null,
   _lastPointerClickButton: null,
   _lastPointerClickClientX: null,
@@ -498,11 +500,76 @@ const Input = {
     return result.inside || allowOutside ? { relX: result.relX, relY: result.relY } : null;
   },
 
+  getSurfaceGeometrySignature(surface, rect = null) {
+    const box = rect || surface?.getBoundingClientRect?.();
+    if (!surface || !box) return null;
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(surface) : (surface.style || {});
+    const numberOr = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    return {
+      left: numberOr(box.left),
+      top: numberOr(box.top),
+      width: numberOr(box.width),
+      height: numberOr(box.height),
+      sourceWidth: numberOr(surface.videoWidth || surface.naturalWidth || box.width),
+      sourceHeight: numberOr(surface.videoHeight || surface.naturalHeight || box.height),
+      objectFit: String(style.objectFit || 'contain'),
+      scale: String(style.scale || surface.style?.scale || 'none'),
+    };
+  },
+
+  surfaceGeometryEqual(left, right) {
+    if (!left || !right) return false;
+    return ['left', 'top', 'width', 'height', 'sourceWidth', 'sourceHeight', 'objectFit', 'scale']
+      .every((key) => left[key] === right[key]);
+  },
+
+  hasActiveSurfaceGesture(surface) {
+    if (this._activePointerElement === surface) return true;
+    const adapter = this._touchAdapters.get(surface);
+    const snapshot = adapter?.getSnapshot?.();
+    return Boolean(snapshot?.pointerCount || snapshot?.primaryActive || snapshot?.activeButton);
+  },
+
+  validateGeometry(element = null) {
+    const surface = element || this._lastSurfaceGeometry?.element || this.videoElement;
+    if (!surface?.getBoundingClientRect) return true;
+    const rect = surface.getBoundingClientRect();
+    const signature = this.getSurfaceGeometrySignature(surface, rect);
+    const previous = this._surfaceGeometryByElement.get(surface)
+      || (this._lastSurfaceGeometry?.element === surface ? this._lastSurfaceGeometry : null);
+    const remember = { element: surface, rect, signature };
+    if (!previous || previous.element !== surface || !this.hasActiveSurfaceGesture(surface)
+      || this.surfaceGeometryEqual(previous.signature, signature)) {
+      this._surfaceGeometryByElement.set(surface, remember);
+      this._lastSurfaceGeometry = remember;
+      return true;
+    }
+    // Save the new baseline before releasing so the next pointerdown can use
+    // the current geometry without being rejected a second time.
+    this._surfaceGeometryByElement.set(surface, remember);
+    this._lastSurfaceGeometry = remember;
+    this._geometryAbortedPointerId = this._activePointerId;
+    this.releasePointer('geometry-changed');
+    return false;
+  },
+
   refreshGeometry(element = null) {
     const surface = element || this.videoElement;
     if (!surface?.getBoundingClientRect) return null;
     const rect = surface.getBoundingClientRect();
-    this._lastSurfaceGeometry = { element: surface, rect };
+    const signature = this.getSurfaceGeometrySignature(surface, rect);
+    const previous = this._surfaceGeometryByElement.get(surface)
+      || (this._lastSurfaceGeometry?.element === surface ? this._lastSurfaceGeometry : null);
+    const changedDuringGesture = previous?.element === surface
+      && this.hasActiveSurfaceGesture(surface)
+      && !this.surfaceGeometryEqual(previous.signature, signature);
+    const remember = { element: surface, rect, signature };
+    this._surfaceGeometryByElement.set(surface, remember);
+    this._lastSurfaceGeometry = remember;
+    if (changedDuringGesture) {
+      this._geometryAbortedPointerId = this._activePointerId;
+      this.releasePointer('geometry-changed');
+    }
     return rect;
   },
 
@@ -563,6 +630,9 @@ const Input = {
       },
       isEnabled: () => this.isActive && !this._pendingMouseReset,
       getClickCount: (event) => this.getPointerClickCount(event),
+      beforeGesture: () => true,
+      commitGesture: (send) => Boolean(send()),
+      validateGeometry: () => this.validateGeometry(element),
     });
     adapter.bind();
     this._touchAdapters.set(element, adapter);
@@ -573,6 +643,7 @@ const Input = {
     element.addEventListener('pointermove', (event) => {
       if (event.pointerType === 'touch') return;
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
+      if (!this.validateGeometry(element)) return;
       const coords = this.getRelativeCoords(event, this._activePointerId === event.pointerId);
       if (coords) {
         this._lastPointerCoords = coords;
@@ -587,8 +658,10 @@ const Input = {
     element.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'touch') return;
       if (!this.isActive || this._pendingMouseReset) return;
+      this._geometryAbortedPointerId = null;
       event.preventDefault();
       this.focusDesktopSurface(element, 'surface-user');
+      if (!this.validateGeometry(element)) return;
       const coords = this.getRelativeCoords(event); if (!coords) return;
       element.setPointerCapture?.(event.pointerId);
       const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
@@ -597,7 +670,12 @@ const Input = {
     });
     element.addEventListener('pointerup', (event) => {
       if (event.pointerType === 'touch') return;
+      if (this._geometryAbortedPointerId === event.pointerId) {
+        this._geometryAbortedPointerId = null;
+        return;
+      }
       if (!this.isActive && this._pressedMouseButtons.size === 0) return;
+      if (!this.validateGeometry(element)) return;
       event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
       // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
       const id = coords
@@ -630,6 +708,7 @@ const Input = {
       if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
       if (!this.isActive) return;
       event.preventDefault();
+      if (!this.validateGeometry(element)) return;
       const coords = this.getRelativeCoords(event);
       if (!coords) return;
       this.queueWheel({
