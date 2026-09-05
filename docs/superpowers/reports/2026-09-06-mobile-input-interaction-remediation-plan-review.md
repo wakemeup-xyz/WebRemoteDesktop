@@ -27,7 +27,7 @@
 
 ## 复审结论
 
-最终独立复审结论：**PASS（规划层面）**，8项均闭环，无剩余P1/P2方案阻断。
+此前独立复审结论：**PASS（规划层面）**，针对当时R1–R8。下述主线程复审已推翻其作为整份方案最终结论的效力，不应据此直接宣称全部边界闭环。
 
 修订后首轮复审确认7项闭环，仅R2的modifier表示仍不符合现有controller接口。主线程检查remote-keyboard-controller.js的chordModifiers(value)后，将两文档同步为布尔对象，保留现有pressed合并；同时统一布局示例的clamp与归一化。最后一轮独立复审确认这两处已解决，才给出上述PASS。该PASS不表示生产代码或真机验收完成。
 
@@ -38,3 +38,15 @@
 本轮没有修改生产JS/CSS/HTML，没有运行实现后的测试，也没有启动/重启服务、操作tunnel、merge或push。原报告151项单测及离线缺陷复现是带日期的历史基线，不是新方案已经实现的证据。
 
 交付分层：设计/计划可审查；代码整改仍待实施；真实手机/iPad、系统键盘、Quartz、公网、live watcher仍为NOT RUN。后续必须按Task1–7逐项red→green和独立代码审查，不得把本报告当作产品验收PASS。
+
+## 主线程追加复审与修订（2026-09-06）
+
+主线程本人对照代码重新审查，运行隔离Node夹具确认3个遗漏，原结论改为NEEDS REVISION。用户随后授权修订文档并由luna/max实施测试，最终review仍由主线程本人完成。
+
+| 编号 | 级别 | 证据与遗漏 | 已并入的实施契约 |
+|---|---|---|---|
+| R9 | P1 | 画面Shift down→移动框keyup被stopPropagation且document路径跳过，pressed=1、sendText=false；直接交还trackedKeyup后恢复 | spec§5 / Task4：releaseTrackedKey callback先释放已跟踪键，再去重，保留所有安全释放；新textarea chord不多发up |
+| R10 | P1 | sendMouse down返回id后收到execution-failed，keyboard仍ready并接受文本；原计划只认传输接受 | spec§5.1 / Task4：Input surface确认门禁，手势结束且down/up成功ACK才settled；失败/超时uncertain、迟到无效，不跨系统混建队列 |
+| R11 | P2 | 普通modal送X但mobile仍留abc基线，后续left/Y导致游标不一致 | spec§5.2 / Task4：modal开/提交接统一门禁，接受后失效历史，取消/失败保留 |
+
+追加发现已写成具体接口、状态、超时与测试要求，尚须通过实施证据闭环；不再给仅文档修改标新的最终PASS。该复现只证明现有模块行为与计划遗漏，不是实机/Quartz/公网验证。

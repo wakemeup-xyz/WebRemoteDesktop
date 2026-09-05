@@ -12,7 +12,7 @@
 
 **Status:** 计划待实施；当前生产基线 `000547ff37dc1a05c3b5b953954af81e9ed7d43a`。本轮规划结束时将本spec/plan及支持报告纳入窄范围文档提交；文档提交不代表代码已经实施。
 
-**Review:** 独立复审已通过（规划层面PASS）；首轮1项P1、7项P2全部修订闭环。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
+**Review:** 主线程复审新增R9/R10(P1)、R11(P2)，此前整体PASS不再有效；已将修订契约并入Task4和Task7，实施与最终主线程review待完成。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
 
 ## Global Constraints
 
@@ -43,7 +43,7 @@
 
 ## 顺序与 review gate
 
-默认顺序 **Task1 → Task2 → Task3 → Task4 → Task5 → Task6 → Task7**。多个任务都改 input.js/HTML/CSS，禁止多个实现 agent 同时编辑这些文件。可并行只读审查与已完成任务的测试；review 不拥有写入权限。延续用户模型选择，若使用 subagent：`gpt-5.6-luna`、`xhigh`。
+默认顺序 **Task1 → Task2 → Task3 → Task4 → Task5 → Task6 → Task7**。多个任务都改input.js/HTML/CSS，禁止多个实现agent同时编辑这些文件。可并行只读审查和已完成任务测试；review不拥有写入权限。按用户最新指令，执行subagent使用`gpt-5.6-luna`、`max`，最终whole-branch review由主线程本人进行，不以subagent的PASS替代。
 
 每个任务先记录旧代码上的失败断言，再实现、跑绿并做 spec/代码双审查；未解决 P1/P2 不进入最终交付。以下测试代码添加到对应测试文件，使用其既有 harness；需扩展 harness 时在该任务内定义，不能引用不存在的跨任务测试工具。
 
@@ -192,7 +192,7 @@ test('public navigation updates the same cursor used by IME', () => {
 ```
 
 - [ ] **Step 2:** Run `node --test web-client/js/mobile-text-input.test.js web-client/js/input.test.js` 确认当前toolbar路径与新接口测试FAIL。
-- [ ] **Step 3:** 公开sendControlKey，加入pending/composing/uncertain门禁。textarea onKeydown显式传event四个modifier flags；Input的sendKey callback调用sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})，不传数组、不改controller接口；controller现有pressed集合自动合并虚拟modifier。编排读取flags和controller snapshot，有modifier经context-change，无modifier才更新cursor。textarea modifier单独keydown/up不转发远端，keyup本地去重，避免双发；composition不发，文本走DOM input。测试真实textarea Shift+ArrowLeft的keydown/keyup只一个shift chord、历史归零而非cursor--；Ctrl/Alt/Meta/虚拟Shift均覆盖并断言batch内modifier flags。其余操作使用callback事务：
+- [ ] **Step 3:** 公开sendControlKey，加入pending/composing/uncertain门禁。textarea onKeydown传四flags，Input的sendKey调用sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})；controller现有pressed自动合并虚拟modifier。含modifier走context-change，无modifier更新cursor。新modifier down不单发，但config新增releaseTrackedKey(event):boolean，Input注入controller.handleDomEvent，adapter.onKeyup先调用再stopPropagation：释放画面原已跟踪key，未跟踪keyup不发送。composition/pending/unsupported/停用均不得阻断安全释放。测试真实textarea Shift+Arrow平衡chord、无额外up；画面Shift或KeyA down→show→textarea up后pressed=0且sendText恢复。其余操作使用callback事务：
 
 ```js
 function runExternalAction(kind, send) {
@@ -207,6 +207,8 @@ function runExternalAction(kind, send) {
 `resetAcceptedHistory()` 在本任务定义为取消当前drain、generation++、acceptedValue/draftValue=哨兵、cursor=0、contextValid=true；只能在无pending且允许的外部动作成功后调用。
 
 - [ ] **Step 4:** 原action-bar和mobile-key-row使用同一编排。touch beforeGesture只读取草稿门禁；commitGesture接runExternalAction('context-change',send)，实际down接受才清历史。非touch实际down同样包装。up/reset永远流通，已接受手势的move/up不重复门禁。测试触点开始历史不变、成功down历史归零、failed down历史保留、long-press等待期间出现pending则不发送并consume；不以虚拟send()=>true代替真实sendMouse返回值。
+- [ ] **Step 4a (R10):** 按spec§5.1在Input集中增加surface settled/pending/uncertain+generation门禁，复用已有_desktopWritePending/acceptMouseAck。getMobileSurfaceContextSnapshot()仅state/generation；首down接受设pending，手势结束且down/up可靠ACK成功才settled。匹配失败ACK或3000ms超时设uncertain并adapter.onTransportState('reacquire-required')，不改lease；迟到ACK不解锁。isDeliverySettled叠加surface settled，文本等待时只存草稿，成功只刷UI、显式retry；安全up/reset/keyup永不阻断。reset/lease/park取消timer；discard清本地等待并提示核对，绝不补发。覆盖touch/mouse/pen/rightClick，测试down-ACK先于up、up后ACK、失败ACK、超时/迟到/旧leaseACK、控制安全释放、等待期间输入与确认后显式重试。确认正常连续文本不会仅因普通键盘ACK在途被迫每字手动retry。
+- [ ] **Step 4b (R11):** 普通文本modal打开先过移动草稿/composition/uncertain/surface门禁；开/取消不清历史。submit和compositionend共用runMobileEditingAction('context-change',()=>controller.sendText(text))；接受才清移动历史并关modal，false保留草稿且不关闭。测试移动abc→modal X→移动left/Y不沿用旧cursor、pending禁开、取消/失败保留、compositionend与click不重复、unsupported禁发。
 - [ ] **Step 5:** 对按钮pointerdown保留文本焦点；composition时显式拒绝导航并提示，不blur触发隐式提交。把移动编辑snapshot传给ChromeLayout idle/capability，明确visible/composing/pending/blocked状态与按钮enabled对应关系。
 - [ ] **Step 6:** Run `node --test web-client/js/mobile-text-input.test.js web-client/js/input.test.js web-client/js/touch-input-adapter.test.js web-client/js/chrome-layout.test.js`；补tap重新选目标、paste/selectAll、失败callback不清基线、modifier保留、安全释放不受阻、重复init不重复listener的断言。
 - [ ] **Step 7:** 暂存并check，提交 `fix(viewer): synchronize mobile navigation and text context`。
@@ -298,6 +300,7 @@ assert page.evaluate("document.documentElement.contains(document.getElementById(
 ```
 
 - [ ] **Step 3:** 加动作组合：真实DOM组合输入→120帧→工具栏left→继续输入→局部失败→retry→reset取消任务；使用虚拟远端字符串模型只在内存核对，不打印字符串。加drag起点、up/reset、第二指切滚动及新lease未重放测试。
+- [ ] **Step 3a:** 加R9–R11跨模块验收：已跟踪physical key跨焦点keyup、鼠标down/up确认与失败/timeout阻止文本、modal提交后的移动基线失效。使用真实Input/adapter/controller及fake ACK，断言待确认期间无远端文本，确认不自动重放、显式retry恰好一次。
 - [ ] **Step 4:** 浏览器布局矩阵375×812、768×1024、1024×1366、1440×900使用inset=0/300；568×320用inset=0/160覆盖ultraCompact，inset300仅测unsupportedViewport降级。触控true/false、overlay/resize两模式。前三种compact画面≥120，导航/retry/退出≥44×44且在键盘之上；实际rect误差≤1px：viewer.top=viewerTop、viewer.bottom<=dock.top、dock.bottom=visibleBottom-safeBottom-textReserve-8、text.bottom=visibleBottom-safeBottom、顶栏bottom<=viewer.top。测safeProbe注入、offsetTop非零、两组末键滚动可达；unsupported不假计全控件可达。真实DOM点全屏按钮，支持时验证fullscreenElement及可见可点；不支持明确NOT RUN原生全屏并测fallback。
 - [ ] **Step 5:** 先运行新CLI与单测红/绿，再进行最终命令（每条按对应目录执行，不能把cd串错）：
 

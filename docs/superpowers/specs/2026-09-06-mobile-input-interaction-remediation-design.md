@@ -1,6 +1,6 @@
 # 手机 / iPad 输入交互整改设计
 
-日期：2026-09-06。状态：设计与实施计划已完成独立复审（规划层面PASS）；未实施。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
+日期：2026-09-06。状态：主线程复审推翻此前整体PASS；新增R9–R11已修订为实施契约，开发待验收。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。执行subagent使用gpt-5.6-luna/max，最终review由主线程完成。
 
 基线：`main@000547ff37dc1a05c3b5b953954af81e9ed7d43a`。输入依据：[F1–F7 问题报告](../reports/2026-09-05-mobile-touch-keyboard-logic-review.md)、[既有移动设计](2026-08-30-mobile-remote-control-design.md)。
 
@@ -84,12 +84,24 @@ DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增
 新增 `Input.runMobileEditingAction(action, send) -> boolean` 作为编排接口，由 `setupActionButtons` 和画面 pointerdown 共用。`send` 是已有发送函数的回调，不允许 adapter 直接拿 WebRTC。
 
 - 无修饰的 Backspace、Enter、Escape、ArrowUp/Down/Left/Right 从 textarea 和导航按钮均调用公开 `MobileTextInput.sendControlKey(code)`；该函数只在发送被接受后更新本地 cursor/history。
-- textarea onKeydown把event的四个modifier布尔值快照传给sendControlKey(code,modifiers)，config.sendKey同步扩展为sendKey(code,modifiers)。Input转换为既有sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})的布尔对象，不传数组；controller原有pressed集合已负责合并虚拟modifier，Input不另造pressed状态。编排判断是否有修饰时同时读取flags与controller snapshot。含modifier时通过runExternalAction('context-change',callback)发送完整平衡chord，不做cursor±1；不将textarea modifier单独keydown/up转发远端，避免和chord重复。keyup继续只本地去重；composition拒绝，普通可打印键仍走DOM input，不扩展任意快捷键识别范围。
+- textarea onKeydown把event的四个modifier布尔值快照传给sendControlKey(code,modifiers)，config.sendKey同步扩展为sendKey(code,modifiers)。Input转换为既有sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})的布尔对象，不传数组；controller原有pressed集合负责合并虚拟modifier。含modifier时经runExternalAction发送平衡chord，不做cursor±1；textarea内新modifier keydown不单独转发。**安全keyup例外（R9）：**config新增releaseTrackedKey(event):boolean，Input注入controller.handleDomEvent；adapter.onKeyup必须先调用它再stopPropagation，controller既有trackedKeyup只释放已跟踪code，未跟踪keyup不发送。composition/pending/unsupported/isActive=false均不得截断该释放，不重复经document listener发送。测试画面Shift/普通键down→show移动框→textarea keyup，pressed归零且恢复文本；新textarea Shift+Arrow chord后keyup无额外up。普通可打印键仍走DOM input。
 - 带任意物理/虚拟 modifier 的导航不当作简单 cursor±1；与 Tab、全选、粘贴、剪切、撤销、查找、切输入法、右键和画面点击一并进入 context-change。复制/保存也采用保守 context-change，避免臆测远端焦点是否变化。
 - `runExternalAction` 在 composition、有 pending 或 deliveryUncertain 时返回 false，显示解决草稿提示，不调用 send。Mouse up/reset、keyboard reset 等安全释放永远不受草稿拦截。
 - 允许的动作仅执行 send 一次；true 后清理已接受历史为哨兵、cursor=0，建立新 generation。false 不推进历史，不偷删草稿；随后 transport 状态若异常按 §4.2 处理。
 - 新touch option `beforeGesture: () => boolean` 只做首个pointerdown的只读预检，不清历史。另加`commitGesture: (send:()=>boolean)=>boolean`，默认直接调用send；adapter把每个真实首down（tap/drag/long-press）的sendMouse封在此callback中，Input用runExternalAction('context-change',send)重新核对草稿并只在down接受后提交基线失效化。接受后同一手势move/up不重复门禁；若等待long-press期间出现composition/pending，拒绝down并结束该手势。mouse/pen的实际down也用同一事务包装，up/reset始终原释放流程。two-finger从未发down的纯滚动不虚构context提交；上下文真正改变的down才清历史。
 - 导航/重试按钮 pointerdown 对移动文本焦点使用 preventDefault，click 处理后如同一 textarea 仍 shown、控制有效、无 modal，再在用户手势内恢复该 textarea；composition 时禁止通过按钮强制 blur。
+
+### 5.1 远端目标确认门禁（R10）
+
+sendMouse返回inputId只是传输接受，不能证明目标已切换。Input增加本地surface context状态settled/pending/uncertain和generation，复用_desktopWritePending及acceptMouseAck，不新增wire/ACK队列。首down接受后进入pending；gesture仍按原流程move/up/reset，文本和新的上下文动作暂不发送，用户新文本只保留本页草稿。必须手势已经结束且该手势可靠down/up对应的ACK已applied/duplicate，才进入settled；拖拽不能因down ACK先到就提前允许文本。Input中统一跟踪touch、mouse/pen、toolbar rightClick；不要让每个adapter各建一套确认状态。
+
+对相关inputId/lease/generation匹配的execution-failed、sequence-gap、invalid-input、stale-lease、resync-required等非成功终态，或3000ms确认超时：进入uncertain，调用adapter.onTransportState('reacquire-required')使文本contextValid=false（这只是本地adapter通知，不擅改控制租约），保留草稿、不自动重发；迟到ACK不得解锁。reset/park/lease变化取消timer并失效旧generation。显式放弃操作清本地surface等待与草稿，提示用户核对远端；下一次明确操作重新建立上下文，不向远端补发任何内容。
+
+Input新增getMobileSurfaceContextSnapshot()只返回state/generation，不输出inputId/坐标；isDeliverySettled额外要求surface settled。新写入门禁与retry读取该状态，但安全keyup/up/reset始终放行。目标确认成功只刷新UI，不自动发送期间积累的草稿，必须显式retry。正常键盘连续输入本身不按每条ACK串行节流；只有已存在待重试草稿或surface pending时才保留追加编辑，避免把每次打字变成手动重试。
+
+### 5.2 普通文本弹窗（R11）
+
+setupTextInput的普通文本modal也属于外部写入：打开前检查移动composition/pending/uncertain及surface确认门禁，不通过则不打开/抢焦点，显示既有状态提示；打开本身和取消不清移动已接受历史。点击提交、compositionend自动提交共用同一个runMobileEditingAction('context-change',()=>controller.sendText(text))，只有接受后才清移动历史再关闭modal；false时保留两个入口各自草稿、不关闭。新布局不支持时也不能绕过门禁。测试移动abc→modal X→移动left/Y，不沿用旧abc cursor；以及pending拒绝打开、取消不清历史、失败提交保留、compositionend与click去重。
 
 ## 6. 手势起点（F4）
 
