@@ -224,3 +224,19 @@ It has no scenario-level `consumerBgraToYuv420` or interpolation-level
 `bgraToYuv420`; their retained measurements are nested in the labelled proxies.
 The fresh output preserves `selection.captureMultiplier={applied:false,
 value:2.0}` and `runtimePaintGate=PENDING`.
+
+## Task 8 full automation status (2026-09-06)
+
+The full Viewer suite passed 566 tests, and the Signal Server suite passed 339
+tests after rebuilding the Viewer bundle. The standalone Viewer build, tracked
+shell/MJS syntax checks, and tracked JSON parsing also passed.
+
+The full Python suite is not green: 251 passed, 2 failed, with one deprecation
+warning. `test_encoder_returns_clock_rtp_timestamps` cannot open the local
+VideoToolbox encoder and its fallback retry remains on that encoder;
+`test_decoder_refresh_requires_a_healthy_fps_sample` expects a decoder refresh
+that the current recovery gate rejects. These failures are not skipped or
+classified as a passing automation gate.
+
+This does not change any runtime gate: real selected-relay continuity, loss
+recovery, formal public-entry, and physical-device evidence remain `NOT RUN`.

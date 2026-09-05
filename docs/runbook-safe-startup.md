@@ -422,6 +422,18 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 5. 失败分类优先：配置缺失/不完整、Host 未就绪、节点 unknown、fingerprint 不一致、Allocate 失败（3478/防火墙/凭据）、有 candidate 无 selected、pair 有但 0 FPS（捕获/编码）
 6. Terminal **默认**仍走 Socket.IO，与 TURN 无关；可选 `webrtc-turn` 见设计 Phase 2，失败不得静默回退
 
+#### TURN relay 画质、解码和几何排障（2026-09-06）
+
+先确认当前会话是实际 relay，再按下面顺序读取脱敏的统计和日志；不要从入口健康、RTT 或浏览器报告的瞬时 FPS 推断媒体已恢复。
+
+1. 先看 Viewer 的 `derivedFps`、`receivedDelta` 与 `decodedDelta`。`derivedFps` 来自区间解码增量，浏览器报告 FPS 只用于诊断；第一份 warmup 样本不触发 stall。
+2. `receivedDelta>0` 而 `decodedDelta=0` 是解码 stall：核对关键帧恢复是否带当前 connection attempt 与 generation，并检查 `WRD_KEYFRAME emitted=true`。旧 identity、暂停期事件和冷却期内的重复请求都不应改变当前会话。
+3. 若解码持续推进、paint gap 没有异常但文字按固定节奏变糊，检查五秒聚合的 `WRD_ENCODER_SAMPLE` 中关键帧计数、原因和大小。这属于编码画质问题，不应靠重建 tunnel、重启 ICE 或自动降低分辨率处理。
+4. 若解码推进但画面仍不连续，查看 paint interval p50/p95/max、最大 paint gap、presented-frame delta 与视频几何。内容清晰度脉冲和页面几何抖动是两个独立问题。
+5. 未实测的编码、RTP 发送和端到端视频耗时必须保持 `null`；它们不能由 RTT、状态栏或脚本估算补齐。
+
+当前离线策略矩阵为 `no-offline-winner`，默认 `relay-legacy-v1` 保持不变，约一秒周期清晰度脉冲未关闭。采集仍为 target FPS 的 2 倍，因为候选倍率尚未通过浏览器 paint 门禁。真实 TURN、正式公网和物理设备均为 `NOT RUN`，等待 Task 9 与对应外部访问端执行；普通排障不得启动或重启 tunnel。
+
 ### 场景：画面糊 / 秒级卡顿但 RTT 只有 ~100ms
 
 Quality Lock（默认）：
