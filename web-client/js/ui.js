@@ -104,8 +104,9 @@ const UI = {
         const isFullscreen = document.fullscreenElement === viewerContainer;
         fullscreenBtn.textContent = isFullscreen ? '退出全屏' : '全屏';
         document.body.classList.toggle('fullscreen-active', isFullscreen);
-        if (isFullscreen) {
-          video.focus();
+        if (isFullscreen && typeof Input !== 'undefined'
+          && typeof Input.focusDesktopSurface === 'function') {
+          Input.focusDesktopSurface(video, 'surface-user');
         }
       });
     }

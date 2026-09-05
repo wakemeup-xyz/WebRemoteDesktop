@@ -10,6 +10,7 @@ const Input = {
   _desktopWritePending: new Map(),
   _desktopWriteRecovery: null,
   mobileTextInputAdapter: null,
+  _mobileTextReturnFocus: null,
   _lastSurfaceGeometry: null,
   activeControlLease: null,
   lastKeyboardResetReason: null,
@@ -229,9 +230,8 @@ const Input = {
     document.addEventListener('keyup', (event) => {
       if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
     });
-    video.addEventListener('click', () => video.focus());
-    relayImage?.addEventListener('click', () => relayImage.focus());
-    video.addEventListener('playing', () => { if (this.isActive) video.focus(); });
+    video.addEventListener('click', () => this.focusDesktopSurface(video, 'surface-user'));
+    relayImage?.addEventListener('click', () => this.focusDesktopSurface(relayImage, 'surface-user'));
     // A transient <video> pause must not override the media/control input gate.
     // While media is applied-active and lease is live, desktop input stays enabled.
     video.addEventListener('pause', () => {
@@ -325,6 +325,20 @@ const Input = {
     button.disabled = !this.isActive;
   },
 
+  focusDesktopSurface(element, reason) {
+    if (!['surface-user', 'initial-ready', 'restore'].includes(reason)) return false;
+    if (typeof document === 'undefined' || !this.isActive || !element?.isConnected) return false;
+    const active = document.activeElement;
+    const terminal = document.getElementById('terminalPanel');
+    const editing = active?.matches?.('input,textarea,select,[contenteditable="true"]')
+      || active?.closest?.('.modal')
+      || (terminal && !terminal.hidden && !terminal.classList?.contains?.('hidden'));
+    if (reason !== 'surface-user' && editing) return false;
+    if (typeof element.focus !== 'function') return false;
+    element.focus();
+    return document.activeElement === element;
+  },
+
   setActive(active, meta = {}) {
     const want = Boolean(active);
     // Desktop writes remain gated by WebRTC.canEnableDesktopInput when available.
@@ -344,12 +358,12 @@ const Input = {
       if (shouldResetKeyboard) this.resetKeyboard(reason);
     }
     this.isActive = next;
-    if (this.isActive && this.videoElement) this.videoElement.focus();
     this.updateKeyboardUI();
   },
 
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
+    this._mobileTextReturnFocus = null;
     this.mobileTextInputAdapter?.reset(reason);
     const dock = document.getElementById('mobileInputDock');
     if (dock) dock.hidden = true;
@@ -361,6 +375,7 @@ const Input = {
 
   parkKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
+    this._mobileTextReturnFocus = null;
     this.mobileTextInputAdapter?.reset(reason);
     const dock = document.getElementById('mobileInputDock');
     if (dock) dock.hidden = true;
@@ -572,7 +587,8 @@ const Input = {
     element.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'touch') return;
       if (!this.isActive || this._pendingMouseReset) return;
-      event.preventDefault(); element.focus();
+      event.preventDefault();
+      this.focusDesktopSurface(element, 'surface-user');
       const coords = this.getRelativeCoords(event); if (!coords) return;
       element.setPointerCapture?.(event.pointerId);
       const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
@@ -699,6 +715,21 @@ const Input = {
     const mobileDock = document.getElementById('mobileInputDock');
     const mobileInput = document.getElementById('mobileTextInput');
     let returnFocus = null;
+    const isVisibleFocusable = (target) => {
+      if (!target || target.isConnected === false || target.hidden || target.disabled) return false;
+      const style = target.style || {};
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      return typeof target.focus === 'function';
+    };
+    const isMobileFlowFocus = (target) => target === mobileInput || target === mobileButton
+      || Boolean(mobileDock?.contains?.(target));
+    const restoreMobileReturnFocus = (wasInMobileFlow = isMobileFlowFocus(document.activeElement)) => {
+      const target = this._mobileTextReturnFocus;
+      this._mobileTextReturnFocus = null;
+      if (!wasInMobileFlow || !isVisibleFocusable(target)) return false;
+      target.focus();
+      return document.activeElement === target;
+    };
     const close = () => {
       modal?.classList?.add('hidden');
       if (modal) modal.hidden = true;
@@ -747,9 +778,13 @@ const Input = {
         if (mobileDock) mobileDock.hidden = true;
         document.body?.classList?.remove?.('mobile-input-visible');
         mobileButton.setAttribute?.('aria-pressed', 'false');
+        const wasInMobileFlow = isMobileFlowFocus(document.activeElement);
         this.mobileTextInputAdapter.hide();
+        restoreMobileReturnFocus(wasInMobileFlow);
         return;
       }
+      const active = document.activeElement;
+      this._mobileTextReturnFocus = active === mobileButton ? this.videoElement : active;
       if (mobileDock) mobileDock.hidden = false;
       document.body?.classList?.add?.('mobile-input-visible');
       mobileButton.setAttribute?.('aria-pressed', 'true');

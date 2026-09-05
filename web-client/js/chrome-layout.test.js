@@ -345,6 +345,34 @@ test('shouldIdle only when streaming, chrome visible, idle long enough', () => {
   assert.equal(ChromeLayout.shouldIdle({
     streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: true, idleMs: 5000,
   }), false);
+  for (const mobileInputMode of ['visible', 'composing', 'pending']) {
+    assert.equal(ChromeLayout.shouldIdle({
+      streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: false,
+      mobileInputMode, idleMs: 5000,
+    }), false, `${mobileInputMode} mobile input must keep the chrome visible`);
+  }
+});
+
+test('collectIdleInputs reflects the mobile text adapter focus state', () => {
+  const previousInput = global.Input;
+  const classes = new Set(['stream-connected']);
+  const root = {
+    body: { classList: { contains: (name) => classes.has(name) } },
+    getElementById: () => null,
+    querySelector: () => null,
+  };
+  let snapshot = { shown: true, composing: false };
+  try {
+    global.Input = { mobileTextInputAdapter: { getSnapshot: () => snapshot } };
+    assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'visible');
+    snapshot = { shown: true, composing: true };
+    assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'composing');
+    snapshot = { shown: false, composing: false, pending: true };
+    assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'pending');
+  } finally {
+    if (previousInput === undefined) delete global.Input;
+    else global.Input = previousInput;
+  }
 });
 
 test('auto idle retreats docks after a connected idle period', () => {

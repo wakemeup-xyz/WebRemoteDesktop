@@ -196,6 +196,34 @@ test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   assert.equal(cleared, true);
 });
 
+test('production video frame callback syncs the input gate without moving focus', () => {
+  const { WebRTC, context, elements } = loadWebRTC({ realInput: true });
+  const Input = context.__Input;
+  const video = context.document.getElementById('remoteVideo');
+  let callback = null;
+  let focusCalls = 0;
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.focus = () => { focusCalls += 1; context.document.activeElement = video; };
+  video.requestVideoFrameCallback = (handler) => {
+    callback = handler;
+    return 1;
+  };
+  WebRTC.pc = {};
+  WebRTC.currentConnectionAttemptId = 'attempt-frame-focus';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = false;
+  WebRTC._mediaReadyConnectionAttemptId = null;
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.canEnableDesktopInput = () => true;
+  WebRTC.socket = { connected: true };
+  Input.videoElement = video;
+  WebRTC.startVideoFrameTracking();
+  callback(0, {});
+  assert.equal(Input.isActive, true);
+  assert.equal(focusCalls, 0, 'media frames must not steal focus from a text surface');
+});
+
 test('refresh attempt compares paint growth against a zero inbound baseline', () => {
   const { WebRTC } = loadWebRTC();
   WebRTC._lastInboundFramesDecoded = 400;

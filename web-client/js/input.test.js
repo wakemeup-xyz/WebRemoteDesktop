@@ -5,14 +5,17 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function makeElement() {
+function makeElement(onFocus = () => {}) {
   const listeners = new Map();
   const captured = new Set();
   return {
     value: '', textContent: '', style: {}, dataset: {}, listeners, captured,
+    hidden: false, disabled: false, isConnected: true,
     videoWidth: 100, videoHeight: 100,
-    classList: { add() {}, remove() {} },
-    focus() {}, setAttribute() {}, removeAttribute() {},
+    classList: { add() {}, remove() {}, contains() { return false; } },
+    focus() { onFocus(this); },
+    blur() { onFocus(null, this); },
+    setAttribute() {}, removeAttribute() {},
     getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
     addEventListener(type, handler) { listeners.set(type, handler); },
     setPointerCapture(id) { captured.add(id); },
@@ -42,9 +45,19 @@ function loadInput() {
           contains(name) { return bodyClasses.has(name); },
         },
       },
+      activeElement: null,
       addEventListener(type, handler) { documentListeners.set(type, handler); },
       querySelectorAll: () => [],
-      getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); },
+      getElementById(id) {
+        if (!elements.has(id)) {
+          elements.set(id, makeElement((element, blurred) => {
+            if (element) context.document.activeElement = element;
+            else if (context.document.activeElement === blurred) context.document.activeElement = null;
+          }));
+          if (id === 'terminalPanel') elements.get(id).hidden = true;
+        }
+        return elements.get(id);
+      },
     },
     WebRTC: {
       socket: { connected: true, emit(event, payload) { socketEvents.push({ event, payload }); } },
@@ -89,6 +102,137 @@ function activate(Input, context) {
   Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 3 });
   Input.setActive(true);
 }
+
+test('repeated active gate preserves the mobile textarea focus', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  for (let i = 0; i < 120; i += 1) Input.setActive(true);
+  assert.equal(context.document.activeElement, field);
+});
+
+test('playing callback does not steal focus from the mobile textarea', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  video.listeners.get('playing')?.();
+  assert.equal(context.document.activeElement, field);
+});
+
+test('surface interactions dispatch focus through the guarded helper', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  const calls = [];
+  Input.focusDesktopSurface = (element, reason) => {
+    calls.push([element, reason]);
+    return true;
+  };
+  video.listeners.get('click')({});
+  video.listeners.get('pointerdown')({
+    pointerType: 'mouse', pointerId: 1, clientX: 40, clientY: 40, button: 0, buttons: 1,
+    currentTarget: video, preventDefault() {},
+  });
+  assert.deepEqual(calls, [[video, 'surface-user'], [video, 'surface-user']]);
+});
+
+test('initial-ready focus does not steal modal or visible terminal focus', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  let focusCalls = 0;
+  video.focus = () => {
+    focusCalls += 1;
+    context.document.activeElement = video;
+  };
+
+  const modalInput = context.document.getElementById('remoteTextInput');
+  modalInput.closest = (selector) => selector === '.modal' ? {} : null;
+  context.document.activeElement = modalInput;
+  assert.equal(Input.focusDesktopSurface(video, 'initial-ready'), false);
+  assert.equal(focusCalls, 0);
+
+  const terminalPanel = elements.get('terminalPanel');
+  terminalPanel.hidden = false;
+  const terminalInput = elements.get('terminalComposer');
+  context.document.activeElement = terminalInput;
+  assert.equal(Input.focusDesktopSurface(video, 'initial-ready'), false);
+  assert.equal(focusCalls, 0);
+
+  assert.equal(Input.focusDesktopSurface(video, 'surface-user'), true);
+  assert.equal(focusCalls, 1);
+  video.isConnected = false;
+  assert.equal(Input.focusDesktopSurface(video, 'surface-user'), false);
+});
+
+test('mobile input restores its opener only on an ordinary close', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = elements.get('remoteVideo');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const mobileInput = elements.get('mobileTextInput');
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(context.document.activeElement, mobileInput);
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 1);
+  assert.equal(context.document.activeElement, opener);
+
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  Input.resetKeyboard('reset');
+  assert.equal(openerFocuses, 1, 'reset must not restore the mobile opener');
+});
+
+test('mobile input does not restore a disconnected or newly focused opener', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = elements.get('remoteVideo');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const mobileInput = elements.get('mobileTextInput');
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  opener.isConnected = false;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0);
+
+  opener.isConnected = true;
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  const anotherTarget = elements.get('textInputBtn');
+  context.document.activeElement = anotherTarget;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0, 'a new user focus must not be overridden');
+});
 
 test('mobile viewer acceptance CLI exposes the required operator-supplied arguments without reading a password', () => {
   const result = childProcess.spawnSync('python3', [
