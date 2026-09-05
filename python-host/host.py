@@ -39,6 +39,7 @@ from h264_videotoolbox_encoder import (
     get_session_gop_size,
     set_session_gop_size,
 )
+from media_timing import RtpFrameClock
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
@@ -970,7 +971,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
         self.last_time = time.time()
-        self._start = time.time()
+        self._frame_clock = RtpFrameClock()
         self._last_frame_time = 0
         self._target_fps = target_fps
         self._frame_interval = 1.0 / target_fps
@@ -1107,8 +1108,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 pass
 
     async def next_timestamp(self):
-        pts = int((time.time() - self._start) * 90000)
-        return pts, 90000
+        return self._frame_clock.next_timestamp()
 
     async def recv(self):
         loop = asyncio.get_event_loop()
