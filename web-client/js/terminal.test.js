@@ -1445,6 +1445,60 @@ test('TerminalPanel distinguishes observer role and makes detach non-destructive
   assert.equal(TerminalPanel.state.getSession('term-shared').presence, 'detached');
 });
 
+test('TerminalPanel keeps an explicitly detached session out of pool snapshot reattach until tab selection', () => {
+  const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, localStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  socketHandlers.get('connect')();
+
+  TerminalPanel.ensureSession({
+    sessionId: 'term-user-detached',
+    title: 'User detached shell',
+    status: 'attached',
+    presence: 'attached',
+    processStatus: 'running',
+  }, { activate: true });
+  TerminalPanel.attachedSessionIds.add('term-user-detached');
+  TerminalPanel.activateSession('term-user-detached', { announce: false });
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-user-detached');
+
+  assert.equal(TerminalPanel.detachSession('term-user-detached'), true);
+  socketHandlers.get('terminal:session_detached')({
+    sessionId: 'term-user-detached',
+    presence: 'detached',
+  });
+
+  const attachCountAfterDetach = emitted.filter((entry) => entry.event === 'terminal:attach_session').length;
+  socketHandlers.get('terminal:pool_snapshot')({
+    defaultSessionId: 'term-user-detached',
+    sessions: [{
+      sessionId: 'term-user-detached',
+      title: 'User detached shell',
+      status: 'detached',
+      presence: 'detached',
+      processStatus: 'running',
+    }],
+  });
+
+  assert.equal(TerminalPanel.userDetachedSessionId, 'term-user-detached');
+  assert.equal(localStorageMap.has('wrd_terminal_last_active_session_id'), false);
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session').length,
+    attachCountAfterDetach,
+  );
+
+  TerminalPanel.activateSession('term-user-detached', { announce: false });
+
+  assert.equal(TerminalPanel.userDetachedSessionId, null);
+  assert.equal(localStorageMap.get('wrd_terminal_last_active_session_id'), 'term-user-detached');
+  assert.equal(
+    emitted.filter((entry) => entry.event === 'terminal:attach_session').length,
+    attachCountAfterDetach + 1,
+  );
+});
+
 test('TerminalPanel auto-attaches the default shared session from a fresh pool snapshot', () => {
   const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');

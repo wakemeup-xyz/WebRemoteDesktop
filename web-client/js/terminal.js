@@ -237,6 +237,7 @@ const TerminalPanel = {
   attachedSessionIds: new Set(),
   pendingAttachSessionIds: new Map(),
   pendingCloseSessionIds: new Map(),
+  userDetachedSessionId: null,
   focusTimer: null,
   fitTimer: null,
   softWarnSessionCount: 4,
@@ -1485,9 +1486,11 @@ const TerminalPanel = {
       }
     });
     const persistedLastActive = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
-    const preferredSessionId = (persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null)
-      || payload.defaultSessionId
-      || this.state.activeSessionId();
+    const preferredSessionId = [
+      persistedLastActive && liveSessionIds.has(persistedLastActive) ? persistedLastActive : null,
+      liveSessionIds.has(payload.defaultSessionId) ? payload.defaultSessionId : null,
+      liveSessionIds.has(this.state.activeSessionId()) ? this.state.activeSessionId() : null,
+    ].find((sessionId) => sessionId && sessionId !== this.userDetachedSessionId) || null;
     if (preferredSessionId) {
       this.state.setActive(preferredSessionId);
       this.persistActiveSessionId(preferredSessionId);
@@ -1584,6 +1587,10 @@ const TerminalPanel = {
     if (!session.sessionId) return;
     this.attachedSessionIds.delete(session.sessionId);
     this.pendingAttachSessionIds.delete(session.sessionId);
+    if (localStorage.getItem(LAST_ACTIVE_SESSION_KEY) === session.sessionId) {
+      this.persistActiveSessionId('');
+    }
+    this.userDetachedSessionId = session.sessionId;
     this.state.updateSession(session.sessionId, {
       ...session,
       presence: 'detached',
@@ -1757,6 +1764,9 @@ const TerminalPanel = {
   activateSession(sessionId, options = {}) {
     this.state.setActive(sessionId);
     const activeSessionId = this.state.activeSessionId();
+    if (activeSessionId === sessionId && this.userDetachedSessionId === sessionId) {
+      this.userDetachedSessionId = null;
+    }
     this.persistActiveSessionId(activeSessionId || '');
     if (activeSessionId) {
       const alreadyAttached = this.attachedSessionIds.has(activeSessionId);
