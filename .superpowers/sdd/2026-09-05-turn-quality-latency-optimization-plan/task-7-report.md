@@ -70,3 +70,45 @@ and `git diff --check` after all Task 7 files are staged.
 - The probe does not encode, so it cannot validate periodic-IDR quality.
 - Results are local-machine measurements and do not prove a cross-machine CPU
   or end-to-end latency improvement.
+
+## Review correction, round 1/5 (2026-09-06)
+
+The previous serial-loop probe and its 1.0x production change were rejected.
+It had measured `grab`, resize, and conversion inside one pacing loop, which
+does not model `ScreenCaptureTrack`'s producer thread plus target-FPS consumer.
+The production capture method is restored to legacy 2.0x (`target_fps * 2`,
+capped at 60); no offline result may change it.
+
+The replacement probe uses a producer thread that only performs MSS `grab()`
+and publishes a latest sequence. Its independent consumer runs at the media
+target rate, clears the latest slot, and runs resize/BGRA VideoFrame/YUV420 only
+for a fresh sequence. It reports produced, freshConsumed, reused,
+initialBlank, overwrittenDropped, producer/consumer inter-arrival p50/p95/max,
+and separate producer-grab versus fresh-processing totals. The cost model does
+not multiply processing work by every producer call.
+
+Benchmark command and environment remain the same as above. The replacement
+used a 1792x1120 desktop, 1152x720 output, 20 FPS consumer, four seconds per
+scenario, macOS 13.7.6, Python 3.11.15, OpenCV 4.12.0, and PyAV 16.1.0. For
+each of legacy 2.0x, 1.0x, 1.25x, and 1.5x it ran aligned, consumer-first with
+fixed `0/+2/-1ms` producer jitter, and a controlled 8ms slow-grab scenario.
+
+| Multiplier | aligned fresh/reuse/blank/drop | consumer-first+jitter | slow-grab | Offline output |
+|---|---:|---:|---:|---|
+| legacy 2.0x | 79 / 0 / 1 / 80 | 79 / 0 / 1 / 78 | 79 / 0 / 1 / 30 | `LOCAL_CAPTURE_ONLY` |
+| 1.0x | 79 / 0 / 1 / 0 | 77 / 2 / 1 / 1 | 78 / 1 / 1 / 1 | `LOCAL_CAPTURE_ONLY` |
+| 1.25x | 79 / 0 / 1 / 20 | 79 / 0 / 1 / 19 | 79 / 0 / 1 / 19 | `LOCAL_CAPTURE_ONLY` |
+| 1.5x | 79 / 0 / 1 / 40 | 79 / 0 / 1 / 39 | 79 / 0 / 1 / 35 | `LOCAL_CAPTURE_ONLY` |
+
+The JSON selection is intentionally fixed at
+`captureMultiplier={applied:false, value:2.0, runtimePaintGate:"PENDING"}`.
+It records no offline winner. `INTER_LINEAR` remains the production
+interpolation; its local PSNR/edge proxy is also only `PENDING` until a
+selected-relay browser paint A/B. Task 9 is the required path for that A/B.
+
+### Round-1 verification
+
+```text
+pytest -q python-host/test_capture_benchmark.py python-host/test_media_profile.py python-host/test_latency_timing.py -> 13 passed
+scripts/benchmark-turn-capture.py --output /tmp/wrd-turn-capture.json -> production value 2.0, runtimePaintGate PENDING
+```

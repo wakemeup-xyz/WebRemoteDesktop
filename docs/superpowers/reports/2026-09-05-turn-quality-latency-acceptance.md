@@ -130,3 +130,33 @@ acceptance gate.
 proxies, so the existing `INTER_LINEAR` setting remains. The BGRA→YUV420 timing
 is a PyAV `VideoFrame` reformat measurement; no buffer-reuse, capture-Adapter,
 codec, GOP, bitrate, VBV, or Quality Lock change was made.
+
+### Task 7 review correction: production cadence remains legacy 2.0x (2026-09-06)
+
+The preceding capture result used one serial loop and incorrectly treated its
+local frame supply as authorization to reduce the production cadence. That
+measurement did not model the Host's independent latest-frame producer and
+target-FPS consumer, so its 1.0x application is superseded and reverted.
+
+The replacement probe has a producer thread that only runs MSS `grab()` at the
+candidate cadence. A separate 20-FPS consumer takes and clears the latest
+sequence; only a fresh-consumed sequence receives resize, BGRA `VideoFrame`,
+and BGRA→YUV420 work. It records producer/consumer inter-arrival p50/p95/max,
+produced, fresh-consumed, reuse, initial blanks, overwritten/dropped frames,
+and the real per-stage call totals. It runs aligned, consumer-first with a fixed
+jitter sequence, and a controlled 8ms slow-grab case for every multiplier.
+
+| Multiplier | aligned fresh/reuse/blank/drop | consumer-first+jitter | slow-grab | Offline status |
+|---|---:|---:|---:|---|
+| legacy 2.0x | 79 / 0 / 1 / 80 | 79 / 0 / 1 / 78 | 79 / 0 / 1 / 30 | `LOCAL_CAPTURE_ONLY` |
+| 1.0x | 79 / 0 / 1 / 0 | 77 / 2 / 1 / 1 | 78 / 1 / 1 / 1 | `LOCAL_CAPTURE_ONLY` |
+| 1.25x | 79 / 0 / 1 / 20 | 79 / 0 / 1 / 19 | 79 / 0 / 1 / 19 | `LOCAL_CAPTURE_ONLY` |
+| 1.5x | 79 / 0 / 1 / 40 | 79 / 0 / 1 / 39 | 79 / 0 / 1 / 35 | `LOCAL_CAPTURE_ONLY` |
+
+Every multiplier, including legacy 2.0x, has `runtimePaintGate=PENDING`; none
+is an online eligibility or a production selection. The script records
+`selection.captureMultiplier = {applied:false, value:2.0}`. Local grab and
+processing results cannot establish that browser paint FPS does not regress.
+Task 9 must perform the selected-relay browser A/B before any cadence change is
+considered. `INTER_LINEAR` remains unchanged; its local proxy is likewise
+`runtimePaintGate=PENDING`.
