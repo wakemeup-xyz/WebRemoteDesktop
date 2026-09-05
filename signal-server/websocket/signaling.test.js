@@ -202,7 +202,7 @@ test('terminal namespace wiring does not break viewer and host signaling', () =>
   assert.equal(connections.viewers.has('viewer-1'), true);
 });
 
-test('viewer media-profile-change is sanitized and forwarded to host', () => {
+test('viewer media-profile-change is sanitized and forwarded with a Signal-bound attempt', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io);
@@ -212,6 +212,20 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   io.connect(host);
   io.connect(viewer);
 
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-sanitized',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  // A legacy wire payload has no attempt or profile sequence. Signal must
+  // derive both from the authoritative binding before it reaches Host.
   viewer.trigger('media-profile-change', {
     profile: 'medium',
     width: 960,
@@ -234,6 +248,10 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   assert.equal(message.data.adaptiveResolution, false);
   assert.equal(message.data.continuityAction, 'none');
   assert.equal(message.data.extra, undefined);
+  assert.deepEqual(
+    [message.data.connectionAttemptId, message.data.generation, message.data.profileSequence],
+    ['attempt-sanitized', 1, 1],
+  );
 
   viewer.trigger('media-profile-change', {
     profile: 'low',
@@ -248,6 +266,25 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   const locked = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
   assert.equal(locked.adaptiveResolution, true);
   assert.equal(locked.continuityAction, 'keyframe');
+  assert.equal(locked.profileSequence, 2);
+});
+
+test('media profile without an authoritative attempt binding is rejected', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-no-attempt', 'host');
+  const viewer = new FakeSocket('viewer-no-attempt', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('media-profile-change', { profile: 'high' });
+
+  assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'no-active-attempt',
+  );
 });
 
 test('profile writes derive bound attempt identity and reject stale sequence or old attempt', () => {
@@ -309,6 +346,10 @@ test('profile writes derive bound attempt identity and reject stale sequence or 
     profile: 'low',
   });
   assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, countAfterCurrent);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
 });
 
 test('v2 viewers cannot forward unleased media writes and active media writes are bounded', () => {
@@ -331,6 +372,11 @@ test('v2 viewers cannot forward unleased media writes and active media writes ar
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
   const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-v2-media',
+    connectionAttemptSequence: 1,
+  });
   viewer.trigger('media-profile-change', { ...lease, profile: 'high', width: 99999, height: 99999, targetFps: 99, videoBitrateKbps: 99999 });
   viewer.trigger('resolution-change', { ...lease, width: 99999, height: 99999 });
 

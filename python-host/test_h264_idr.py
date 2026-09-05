@@ -1,4 +1,7 @@
+import asyncio
 from unittest.mock import MagicMock
+
+import host as host_module
 
 from h264_videotoolbox_encoder import (
     bitstream_contains_idr,
@@ -402,6 +405,43 @@ def test_encoder_captures_attempt_policy_and_ignores_later_provider_attempt(monk
 
     assert enc.codec_name == "libx264"
     assert created == ["libx264"]
+
+
+def test_sender_factory_keeps_attempt_policy_when_encoder_is_created_after_new_attempt(monkeypatch):
+    """Delayed creation/rebuild resolves the sender's frozen policy, never global state."""
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider_a = H264SessionPolicyProvider()
+    provider_a.bind_attempt("attempt-a")
+    policy_a = provider_a.publish(
+        MediaSessionIntent("attempt-a", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    ).policy
+    provider_b = H264SessionPolicyProvider()
+    provider_b.bind_attempt("attempt-b")
+    provider_b.publish(
+        MediaSessionIntent("attempt-b", 2, "direct", 1920, 1080, 20, 0),
+        "relay-balanced-v2",
+    )
+    # Attempt B publishes before A's sender first asks aiortc to create an
+    # encoder. The patched sender boundary is the actual factory call path.
+    sender = type("Sender", (), {"_wrd_h264_policy": policy_a})()
+    codec = type("Codec", (), {"mimeType": "video/H264"})()
+
+    async def delayed_factory(_sender, _codec):
+        return host_module._patched_get_encoder(_codec)
+
+    monkeypatch.setattr(host_module, "_original_next_encoded_frame", delayed_factory)
+    loop = asyncio.new_event_loop()
+    try:
+        encoder = loop.run_until_complete(host_module._patched_next_encoded_frame(sender, codec))
+        rebuilt = loop.run_until_complete(host_module._patched_next_encoded_frame(sender, codec))
+    finally:
+        loop.close()
+
+    assert encoder._policy is policy_a
+    assert encoder._policy.target_bitrate_bps == 1_800_000
+    assert rebuilt._policy is policy_a
 
 
 def test_staged_policy_update_reopens_once_at_the_next_frame_boundary(monkeypatch):

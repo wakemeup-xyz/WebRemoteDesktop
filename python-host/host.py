@@ -5,6 +5,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import socketio
@@ -68,40 +69,39 @@ V2_INPUT_ACK_STATUSES = frozenset({
     "execution-failed",
 })
 
-_h264_policy_provider_lock = threading.RLock()
-_current_h264_policy_provider = None
-
-
-def _set_current_h264_policy_provider(provider):
-    global _current_h264_policy_provider
-    with _h264_policy_provider_lock:
-        _current_h264_policy_provider = provider
-
-
-def _get_current_h264_policy_provider():
-    with _h264_policy_provider_lock:
-        return _current_h264_policy_provider
+# aiortc's encoder factory has no sender parameter. Its sender coroutine
+# supplies the immutable policy snapshot for just that PeerConnection.
+_sender_h264_policy = contextvars.ContextVar("wrd_sender_h264_policy", default=None)
 
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
     import aiortc.codecs as _aiortc_codecs
     import aiortc.rtcrtpsender as _aiortc_rtcrtpsender
     _original_get_encoder = _aiortc_codecs.get_encoder
+    _original_next_encoded_frame = _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame
+
+    async def _patched_next_encoded_frame(sender, codec):
+        token = _sender_h264_policy.set(getattr(sender, "_wrd_h264_policy", None))
+        try:
+            return await _original_next_encoded_frame(sender, codec)
+        finally:
+            _sender_h264_policy.reset(token)
 
     def _patched_get_encoder(codec):
         if codec.mimeType.lower() == "video/h264":
-            logger.info("Using custom H.264 encoder for negotiated codec: %s", codec)
-            provider = _get_current_h264_policy_provider()
-            # Capture a policy snapshot here. An encoder belongs to one
-            # PeerConnection and must never read a later attempt's provider.
-            return H264VideoToolboxEncoder(
-                policy=provider.current_policy() if provider is not None else None,
-            )
+            policy = _sender_h264_policy.get()
+            if policy is not None:
+                logger.info("Using session-bound custom H.264 encoder for negotiated codec: %s", codec)
+                return H264VideoToolboxEncoder(policy=policy)
+            # Never source a policy from process-global state for an arbitrary
+            # aiortc sender outside this Host session.
+            return _original_get_encoder(codec)
         logger.info("Using aiortc default encoder for negotiated codec: %s", codec)
         return _original_get_encoder(codec)
 
     _aiortc_codecs.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
+    _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -1419,7 +1419,6 @@ class WebRemoteHost:
         # media session or PeerConnection is created.
         self._h264_policy_version = policy_version_from_environment()
         self._h264_policy_provider = H264SessionPolicyProvider()
-        _set_current_h264_policy_provider(self._h264_policy_provider)
         self.sio = None
         self.pc = None
         self.token = None
@@ -2331,6 +2330,7 @@ class WebRemoteHost:
                 self.capture_adapter = CaptureAdapter(track=self.screen_track)
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)
+                self.video_sender._wrd_h264_policy = self._h264_policy_provider.current_policy()
                 self.media_sender = MediaSenderAdapter()
                 self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
                 self._prefer_h264_transceivers()
@@ -2621,7 +2621,6 @@ class WebRemoteHost:
         if provider is None:
             provider = H264SessionPolicyProvider()
             self._h264_policy_provider = provider
-            _set_current_h264_policy_provider(provider)
         provider.bind_attempt(attempt_id)
         generation = int(data.get("connectionAttemptSequence") or getattr(self, "_connection_generation", 0) or 0)
         policy_update = provider.publish(
@@ -2939,6 +2938,10 @@ class WebRemoteHost:
                 "applyMode": "invalid",
                 "reopenRequired": False,
             }
+        sender = getattr(self, "video_sender", None)
+        if policy is not None and sender is not None:
+            # Lazy creation/rebuild uses the policy owned by this sender.
+            sender._wrd_h264_policy = policy
         encoder = self._video_encoder()
         if encoder is None:
             return {
