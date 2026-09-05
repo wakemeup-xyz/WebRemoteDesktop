@@ -131,6 +131,7 @@ const WebRTC = {
   _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
+  _mediaProfileSequence: 0,
   desktopSessionState: null,
   selectedCandidatePair: null,
   candidateSummary: {
@@ -818,6 +819,7 @@ const WebRTC = {
     this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this._mediaProfileSequence = 0;
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
       socket: this.socket?.connected ? 'online' : 'connecting',
     });
@@ -1658,8 +1660,11 @@ const WebRTC = {
       + ` adaptiveRes=${allowResolutionChange ? 'on' : 'off'} reason=${reason}`,
     );
     if (this.socket && this.socket.connected) {
+      this._mediaProfileSequence = (Number(this._mediaProfileSequence) || 0) + 1;
       this.socket.emit('media-profile-change', {
         ...lease,
+        connectionAttemptId: this.currentConnectionAttemptId,
+        profileSequence: this._mediaProfileSequence,
         profile: profile.name,
         width,
         height,

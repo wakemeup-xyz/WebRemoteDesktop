@@ -216,6 +216,32 @@ test('refresh attempt compares paint growth against a zero inbound baseline', ()
   assert.equal(WebRTC.hasPaintedFrame, true);
 });
 
+test('media profile emits current attempt and a monotonic profile sequence', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit: (event, payload) => emitted.push({ event, payload }) };
+  WebRTC.controlState = {
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-current';
+  WebRTC._mediaProfileSequence = 0;
+  WebRTC.adaptiveResolutionEnabled = false;
+  WebRTC.currentResolution = { width: 1280, height: 720 };
+  WebRTC.getSessionPresentation = () => ({ width: 1280, height: 720 });
+  WebRTC.qualityFloorsForResolution = () => ({ minBitrateKbps: 1000, targetFps: 20, minFps: 10 });
+
+  WebRTC.applyMediaProfile({ name: 'high', bitrateKbps: 2500, fps: 20 }, 'connection-sync');
+  WebRTC.applyMediaProfile({ name: 'medium', bitrateKbps: 1400, fps: 15 }, 'quality');
+
+  const profiles = emitted.filter((entry) => entry.event === 'media-profile-change').map((entry) => entry.payload);
+  assert.deepEqual(
+    profiles.map((profile) => [profile.connectionAttemptId, profile.profileSequence]),
+    [['attempt-current', 1], ['attempt-current', 2]],
+  );
+});
+
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
     WebRTC.stopPortSearch('test-reset');

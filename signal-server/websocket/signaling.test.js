@@ -250,6 +250,67 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   assert.equal(locked.continuityAction, 'keyframe');
 });
 
+test('profile writes derive bound attempt identity and reject stale sequence or old attempt', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-profile', 'host');
+  const viewer = new FakeSocket('viewer-profile', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'profile-control' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    connectionAttemptSequence: 1,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 1,
+    profile: 'high',
+    width: 1280,
+    height: 720,
+    targetFps: 20,
+    videoBitrateKbps: 2500,
+  });
+  const current = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
+  assert.deepEqual(
+    [current.connectionAttemptId, current.generation, current.profileSequence],
+    ['attempt-current', 1, 1],
+  );
+
+  const countAfterCurrent = host.sent.filter((entry) => entry.event === 'media-profile-change').length;
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 0,
+    profile: 'low',
+  });
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, countAfterCurrent);
+
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-new',
+    connectionAttemptSequence: 2,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 99,
+    profile: 'low',
+  });
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, countAfterCurrent);
+});
+
 test('v2 viewers cannot forward unleased media writes and active media writes are bounded', () => {
   resetConnections();
   const io = makeIo();

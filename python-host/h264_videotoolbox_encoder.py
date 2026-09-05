@@ -13,7 +13,7 @@ from av.video.codeccontext import VideoCodecContext
 
 from aiortc.codecs import Encoder
 from aiortc.mediastreams import VIDEO_TIME_BASE, convert_timebase
-from h264_encoder_policy import H264SessionPolicy, H264SessionPolicyProvider, MediaSessionIntent, resolve_h264_policy
+from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, resolve_h264_policy
 
 logger = logging.getLogger(__name__)
 
@@ -198,17 +198,15 @@ class H264VideoToolboxEncoder(Encoder):
         self,
         *,
         policy: H264SessionPolicy | None = None,
-        policy_provider: H264SessionPolicyProvider | None = None,
     ) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
         self.codec: Optional[VideoCodecContext] = None
-        self._policy_provider = policy_provider
         self._policy = policy or resolve_h264_policy(
             MediaSessionIntent("legacy-local", 0, "direct", 1280, 720, 20, 0),
             "relay-legacy-v1",
         )
-        self._policy_generation = None
+        self._pending_policy: H264SessionPolicy | None = None
         self.gop_size = self._policy.periodic_idr_frames
         self.codec_name = self._policy.codec_name
         self.__target_bitrate = self._policy.target_bitrate_bps
@@ -225,28 +223,22 @@ class H264VideoToolboxEncoder(Encoder):
             min(int(requested_bitrate), policy.max_bitrate_bps),
         )
 
-    def _adopt_current_policy(self) -> None:
-        if self._policy_provider is None:
+    def stage_policy_update(self, policy: H264SessionPolicy) -> bool:
+        """Queue one verified policy replacement for the next encoded frame."""
+        if policy == self._policy or policy == self._pending_policy:
+            return False
+        self._pending_policy = policy
+        return True
+
+    def _adopt_pending_policy(self) -> None:
+        policy = self._pending_policy
+        if policy is None:
             return
-        current = self._policy_provider.current()
-        if current is None or current.policy is None or current.intent is None:
-            return
-        identity = (
-            current.intent.connection_attempt_id,
-            current.intent.generation,
-            current.policy.policy_id,
-        )
-        if identity == self._policy_generation:
-            # Profile updates may refresh bitrate/FPS inside the same guarded
-            # generation. They do not implicitly reopen an already-open codec.
-            self._policy = current.policy
-            return
-        self._policy_generation = identity
-        self._policy = current.policy
-        self.gop_size = current.policy.periodic_idr_frames
-        self.codec_name = current.policy.codec_name
-        requested = int(current.intent.requested_bitrate_bps or current.policy.target_bitrate_bps)
-        self.__target_bitrate = self._clamp_bitrate(current.policy, requested)
+        self._pending_policy = None
+        self._policy = policy
+        self.gop_size = policy.periodic_idr_frames
+        self.codec_name = policy.codec_name
+        self.__target_bitrate = self._clamp_bitrate(policy, policy.target_bitrate_bps)
         if self.codec is not None:
             self.codec = None
             self.last_idr_recreated = False
@@ -384,7 +376,7 @@ class H264VideoToolboxEncoder(Encoder):
     def _encode_frame(
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
-        self._adopt_current_policy()
+        self._adopt_pending_policy()
         if self.codec and (
             frame.width != self.codec.width
             or frame.height != self.codec.height
@@ -636,21 +628,15 @@ class H264VideoToolboxEncoder(Encoder):
                 "reopenRequired": True,
             }
         else:
-            try:
-                self.codec.bit_rate = clamped
-                effective = int(getattr(self.codec, "bit_rate", 0) or 0)
-                applied = effective == clamped
-            except Exception as exc:
-                logger.debug("hot bitrate update failed: %s", type(exc).__name__)
-                effective = int(getattr(self.codec, "bit_rate", 0) or 0)
-                applied = False
+            # PyAV property assignment is not proof that VideoToolbox accepted
+            # an in-flight rate-control change. Reopen on a safe frame instead.
             result = {
                 "requested": requested,
                 "clamped": clamped,
-                "effective": effective,
-                "applied": applied,
-                "applyMode": "hot" if applied else "reopen-required",
-                "reopenRequired": not applied,
+                "effective": int(getattr(self.codec, "bit_rate", 0) or 0),
+                "applied": False,
+                "applyMode": "reopen-required",
+                "reopenRequired": True,
             }
         logger.info("WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s", *(
             result["requested"], result["clamped"], result["effective"], result["applied"], result["applyMode"], result["reopenRequired"],

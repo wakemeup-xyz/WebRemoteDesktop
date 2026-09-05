@@ -23,6 +23,7 @@ class MediaSessionIntent:
     height: int
     target_fps: int
     requested_bitrate_bps: int
+    profile_sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,14 @@ def _direct_bitrate_range(intent: MediaSessionIntent) -> tuple[int, int, int]:
     return 500_000, target, 8_000_000
 
 
+def _relay_balanced_bitrate_range(intent: MediaSessionIntent) -> tuple[int, int, int]:
+    if _is_1080p(intent):
+        return 2_500_000, 4_000_000, 5_000_000
+    if int(intent.height) >= 700 or int(intent.width) * int(intent.height) >= 1152 * 720:
+        return 1_800_000, 2_500_000, 3_200_000
+    return 1_200_000, 1_800_000, 2_500_000
+
+
 def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264SessionPolicy:
     """Resolve every encoder choice from an explicit session intent and version."""
     if policy_version not in SUPPORTED_POLICY_VERSIONS:
@@ -104,8 +113,8 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
             minimum, target, maximum = _relay_legacy_bitrate_range(intent)
             vbv_buffer_ms = 100
         else:
-            # Candidate only: Task 6 freezes balanced values after measurement.
-            minimum, target, maximum = _relay_legacy_bitrate_range(intent)
+            # Candidate only: Task 6 freezes the selected value after measurement.
+            minimum, target, maximum = _relay_balanced_bitrate_range(intent)
             vbv_buffer_ms = 100
         requested = int(intent.requested_bitrate_bps or target)
         target = max(minimum, min(requested, maximum))
@@ -159,7 +168,7 @@ class H264SessionPolicyProvider:
     def publish(self, intent: MediaSessionIntent, policy_version: str) -> PublishedH264Policy:
         with self._lock:
             if self._active_attempt_id is None:
-                self._active_attempt_id = intent.connection_attempt_id
+                return PublishedH264Policy(False, "no-active-attempt", None, None)
             if intent.connection_attempt_id != self._active_attempt_id:
                 return PublishedH264Policy(False, "stale-attempt", None, self.current_policy())
             current = self._current
@@ -182,6 +191,12 @@ class H264SessionPolicyProvider:
                 return PublishedH264Policy(False, "stale-attempt", None, self.current_policy())
             if current is None or current.intent is None or intent.generation != current.intent.generation:
                 return PublishedH264Policy(False, "stale-generation", current.intent if current else None, current.policy if current else None)
+            if intent.profile_sequence < current.intent.profile_sequence:
+                return PublishedH264Policy(False, "stale-profile-sequence", current.intent, current.policy)
+            if intent.profile_sequence == current.intent.profile_sequence:
+                if intent == current.intent:
+                    return PublishedH264Policy(True, "idempotent-replay", current.intent, current.policy)
+                return PublishedH264Policy(False, "conflicting-profile-sequence", current.intent, current.policy)
             policy = resolve_h264_policy(intent, policy_version)
             published = PublishedH264Policy(True, None, intent, policy)
             self._current = published

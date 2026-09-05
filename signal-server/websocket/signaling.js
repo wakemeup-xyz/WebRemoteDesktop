@@ -485,6 +485,8 @@ function setupSignaling(io, options = {}) {
       connectionAttemptId,
       connectionAttemptSequence: sequence,
       generation: 0,
+      profileSequence: 0,
+      profileFingerprint: null,
     });
     return {
       ok: true,
@@ -500,6 +502,47 @@ function setupSignaling(io, options = {}) {
     return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
       ? prior.connectionAttemptId
       : null;
+  }
+
+  function resolveProfileWrite(viewerId, data, sanitized) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior || !isValidConnectionAttemptId(prior.connectionAttemptId)) {
+      return { ok: false, reason: 'no-active-attempt' };
+    }
+    // The client can only assert that it still believes this is current. Signal
+    // remains the authority and derives the identity forwarded to Host.
+    if (data.connectionAttemptId !== prior.connectionAttemptId) {
+      return { ok: false, reason: 'wrong-attempt' };
+    }
+    const sequence = data.profileSequence;
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      return { ok: false, reason: 'invalid-profile-sequence' };
+    }
+    const fingerprint = JSON.stringify(sanitized);
+    const priorSequence = Number.isSafeInteger(prior.profileSequence) ? prior.profileSequence : 0;
+    if (sequence < priorSequence) {
+      return { ok: false, reason: 'stale-profile-sequence' };
+    }
+    if (sequence === priorSequence) {
+      return prior.profileFingerprint === fingerprint
+        ? {
+            ok: true,
+            idempotent: true,
+            connectionAttemptId: prior.connectionAttemptId,
+            generation: prior.connectionAttemptSequence,
+            profileSequence: sequence,
+          }
+        : { ok: false, reason: 'conflicting-profile-sequence' };
+    }
+    prior.profileSequence = sequence;
+    prior.profileFingerprint = fingerprint;
+    return {
+      ok: true,
+      idempotent: false,
+      connectionAttemptId: prior.connectionAttemptId,
+      generation: prior.connectionAttemptSequence,
+      profileSequence: sequence,
+    };
   }
 
   function releaseRejectedMediaProgress(viewerId, data = {}) {
@@ -1068,6 +1111,18 @@ function setupSignaling(io, options = {}) {
         adaptiveResolution: data.adaptiveResolution === true,
         continuityAction: data.continuityAction === 'keyframe' ? 'keyframe' : 'none',
       };
+      // New clients always provide these fields. Retain the legacy wire shape
+      // only for old clients; active Host policies independently reject it.
+      if (data.connectionAttemptId !== undefined || data.profileSequence !== undefined) {
+        const resolved = resolveProfileWrite(socket.id, data, sanitized);
+        if (!resolved.ok) {
+          socket.emit('media-profile-rejected', { reason: resolved.reason });
+          return;
+        }
+        sanitized.connectionAttemptId = resolved.connectionAttemptId;
+        sanitized.generation = resolved.generation;
+        sanitized.profileSequence = resolved.profileSequence;
+      }
       if (connections.host) {
         connections.host.emit('media-profile-change', sanitized);
       }

@@ -91,7 +91,12 @@ try:
     def _patched_get_encoder(codec):
         if codec.mimeType.lower() == "video/h264":
             logger.info("Using custom H.264 encoder for negotiated codec: %s", codec)
-            return H264VideoToolboxEncoder(policy_provider=_get_current_h264_policy_provider())
+            provider = _get_current_h264_policy_provider()
+            # Capture a policy snapshot here. An encoder belongs to one
+            # PeerConnection and must never read a later attempt's provider.
+            return H264VideoToolboxEncoder(
+                policy=provider.current_policy() if provider is not None else None,
+            )
         logger.info("Using aiortc default encoder for negotiated codec: %s", codec)
         return _original_get_encoder(codec)
 
@@ -2618,7 +2623,7 @@ class WebRemoteHost:
             self._h264_policy_provider = provider
             _set_current_h264_policy_provider(provider)
         provider.bind_attempt(attempt_id)
-        generation = int(getattr(self, "_connection_generation", 0) or 0)
+        generation = int(data.get("connectionAttemptSequence") or getattr(self, "_connection_generation", 0) or 0)
         policy_update = provider.publish(
             MediaSessionIntent(
                 connection_attempt_id=attempt_id,
@@ -2628,6 +2633,7 @@ class WebRemoteHost:
                 height=adopted[1],
                 target_fps=int((getattr(self, "media_profile", None) or {}).get("target_fps") or 20),
                 requested_bitrate_bps=0,
+                profile_sequence=0,
             ),
             getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
         )
@@ -2745,6 +2751,8 @@ class WebRemoteHost:
                 if (
                     payload.get("connectionAttemptId") != current_policy.intent.connection_attempt_id
                     or payload.get("generation") != current_policy.intent.generation
+                    or not isinstance(payload.get("profileSequence"), int)
+                    or payload["profileSequence"] < 1
                 ):
                     logger.info(
                         "Ignoring stale media profile attempt=%s generation=%s currentAttempt=%s currentGeneration=%s",
@@ -2807,6 +2815,7 @@ class WebRemoteHost:
                         height=height,
                         target_fps=next_profile["target_fps"],
                         requested_bitrate_bps=next_profile["video_bitrate_kbps"] * 1000,
+                        profile_sequence=int(payload.get("profileSequence") or 0),
                     ),
                     getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
                 )
@@ -2851,7 +2860,10 @@ class WebRemoteHost:
                 apply_result = {}
             bitrate_kbps = int(next_profile["video_bitrate_kbps"])
             encoder_reopen = bool(apply_result.get("sizeChanged"))
-            bitrate_result = self._apply_encoder_bitrate_kbps(bitrate_kbps)
+            bitrate_result = self._apply_encoder_bitrate_kbps(
+                bitrate_kbps,
+                policy=refreshed.policy if current_policy is not None else None,
+            )
             logger.info(
                 "WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s encoderReopen=%s size=%sx%s",
                 bitrate_kbps,
@@ -2914,7 +2926,7 @@ class WebRemoteHost:
             logger.debug("decoder refresh failed: %s", type(exc).__name__)
         return False
 
-    def _apply_encoder_bitrate_kbps(self, bitrate_kbps):
+    def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
         """Return an honest bitrate-application result for the current encoder."""
         try:
             bitrate_bps = max(250_000, min(int(bitrate_kbps) * 1000, 8_000_000))
@@ -2940,7 +2952,11 @@ class WebRemoteHost:
         try:
             setter = getattr(encoder, "set_target_bitrate", None)
             if callable(setter):
-                return setter(bitrate_bps)
+                result = setter(bitrate_bps)
+                stage = getattr(encoder, "stage_policy_update", None)
+                if policy is not None and callable(stage):
+                    stage(policy)
+                return result
         except Exception as exc:
             logger.debug("encoder bitrate hot-update failed: %s", type(exc).__name__)
         return {

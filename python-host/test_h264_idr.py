@@ -374,6 +374,64 @@ def test_open_libx264_bitrate_update_reports_reopen_required():
     }
 
 
+def test_encoder_captures_attempt_policy_and_ignores_later_provider_attempt(monkeypatch):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider = H264SessionPolicyProvider()
+    provider.bind_attempt("attempt-old")
+    provider.publish(
+        MediaSessionIntent("attempt-old", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=provider.current_policy())
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    created = []
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: (created.append(codec_name) or FakeCodec([p_slice], repeat=True)),
+    )
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    provider.bind_attempt("attempt-new")
+    provider.publish(
+        MediaSessionIntent("attempt-new", 2, "direct", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert enc.codec_name == "libx264"
+    assert created == ["libx264"]
+
+
+def test_staged_policy_update_reopens_once_at_the_next_frame_boundary(monkeypatch):
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    legacy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    balanced = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1920, 1080, 20, 4_000_000),
+        "relay-balanced-v2",
+    )
+    enc = H264VideoToolboxEncoder(policy=legacy)
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    opened = []
+
+    def fake_create(self, frame, codec_name):
+        opened.append((codec_name, self._policy.target_bitrate_bps))
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.stage_policy_update(balanced) is True
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert opened == [("libx264", 1_800_000), ("libx264", 4_000_000)]
+
+
 def test_encoder_adopts_published_relay_policy(monkeypatch):
     from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
 
@@ -383,8 +441,8 @@ def test_encoder_adopts_published_relay_policy(monkeypatch):
         MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
         "relay-legacy-v1",
     )
-    enc = H264VideoToolboxEncoder(policy_provider=provider)
-    assert enc.codec_name == "h264_videotoolbox"
+    enc = H264VideoToolboxEncoder(policy=provider.current_policy())
+    assert enc.codec_name == "libx264"
     created = []
 
     def fake_create(self, frame, codec_name):

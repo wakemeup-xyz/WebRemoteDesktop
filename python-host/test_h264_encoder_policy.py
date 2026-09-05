@@ -81,3 +81,52 @@ def test_policy_provider_rejects_old_attempt_and_old_generation_without_replacem
     assert stale_attempt.accepted is False
     assert stale_attempt.reason == "stale-attempt"
     assert provider.current().intent.generation == 2
+
+
+def test_policy_provider_requires_an_authoritative_attempt_binding():
+    provider = H264SessionPolicyProvider()
+
+    result = provider.publish(_intent(), "relay-legacy-v1")
+
+    assert result.accepted is False
+    assert result.reason == "no-active-attempt"
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        (1_000_000, (2_500_000, 2_500_000, 5_000_000)),
+        (4_000_000, (2_500_000, 4_000_000, 5_000_000)),
+        (9_000_000, (2_500_000, 5_000_000, 5_000_000)),
+    ],
+)
+def test_balanced_1080p_policy_exposes_measurable_bitrate_candidates(requested, expected):
+    policy = resolve_h264_policy(
+        _intent(width=1920, height=1080, bitrate=requested),
+        "relay-balanced-v2",
+    )
+
+    assert (
+        policy.min_bitrate_bps,
+        policy.target_bitrate_bps,
+        policy.max_bitrate_bps,
+    ) == expected
+
+
+def test_profile_sequence_allows_only_identical_same_sequence_replay():
+    provider = H264SessionPolicyProvider()
+    provider.bind_attempt("attempt-1")
+    provider.publish(_intent(generation=4), "relay-legacy-v1")
+    update = MediaSessionIntent("attempt-1", 4, "relay", 1280, 720, 20, 2_000_000, 1)
+    accepted = provider.refresh_profile(update, "relay-legacy-v1")
+    replay = provider.refresh_profile(update, "relay-legacy-v1")
+    conflict = provider.refresh_profile(
+        MediaSessionIntent("attempt-1", 4, "relay", 1280, 720, 15, 1_800_000, 1),
+        "relay-legacy-v1",
+    )
+
+    assert accepted.accepted is True
+    assert replay.accepted is True
+    assert replay.reason == "idempotent-replay"
+    assert conflict.accepted is False
+    assert conflict.reason == "conflicting-profile-sequence"
