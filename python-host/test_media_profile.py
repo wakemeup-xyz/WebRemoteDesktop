@@ -3,6 +3,18 @@ import logging
 from host import ScreenCaptureTrack, WebRemoteHost
 
 
+def _publish_profile_policy(host, *, attempt="attempt-current", generation=1):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    host._h264_policy_version = "relay-legacy-v1"
+    host._h264_policy_provider = H264SessionPolicyProvider()
+    host._h264_policy_provider.bind_attempt(attempt)
+    host._h264_policy_provider.publish(
+        MediaSessionIntent(attempt, generation, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+
+
 class ListHandler(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -26,6 +38,7 @@ def test_media_profile_change_updates_host_state_and_logs():
     host.screen_track = None
     host.media_sender = None
     host.video_sender = None
+    _publish_profile_policy(host)
 
     handler = ListHandler()
     logger = logging.getLogger("host")
@@ -37,6 +50,9 @@ def test_media_profile_change_updates_host_state_and_logs():
         # adaptiveResolution true preserves legacy size-ladder behaviour.
         host.on_media_profile_change({
             "viewerId": "viewer-1",
+            "connectionAttemptId": "attempt-current",
+            "generation": 1,
+            "profileSequence": 1,
             "profile": "low",
             "width": 854,
             "height": 480,
@@ -71,9 +87,13 @@ def test_invalid_media_profile_is_clamped():
     host.screen_track = None
     host.media_sender = None
     host.video_sender = None
+    _publish_profile_policy(host)
 
     host.on_media_profile_change({
         "viewerId": "viewer-1",
+        "connectionAttemptId": "attempt-current",
+        "generation": 1,
+        "profileSequence": 1,
         "profile": "invalid",
         "width": 99999,
         "height": 1,
@@ -174,6 +194,86 @@ def test_current_profile_sequence_applies_once_and_rejects_lower_sequence():
     assert host.media_profile["profile"] == "medium"
     assert host.media_profile["video_bitrate_kbps"] == 2000
     assert host._h264_policy_provider.current().intent.profile_sequence == 1
+
+
+def test_profile_without_provider_is_fail_closed_before_mutation():
+    host = object.__new__(WebRemoteHost)
+    host.media_profile = {
+        "profile": "high", "width": 1280, "height": 720,
+        "target_fps": 20, "video_bitrate_kbps": 2500,
+    }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
+    host._h264_policy_provider = None
+
+    host.on_media_profile_change({
+        "viewerId": "viewer-1", "connectionAttemptId": "attempt-current",
+        "generation": 1, "profileSequence": 1, "profile": "low",
+        "width": 854, "height": 480, "targetFps": 12,
+        "videoBitrateKbps": 900, "adaptiveResolution": True,
+    })
+
+    assert host.media_profile["profile"] == "high"
+    assert host._user_resolution == {"width": 1280, "height": 720}
+
+
+def test_early_tunnel_only_profile_is_fail_closed_before_mutation():
+    from h264_encoder_policy import H264SessionPolicyProvider
+
+    host = object.__new__(WebRemoteHost)
+    host.media_profile = {
+        "profile": "high", "width": 1280, "height": 720,
+        "target_fps": 20, "video_bitrate_kbps": 2500,
+    }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
+    host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1", "connectionAttemptId": "attempt-early",
+    }
+    host._h264_policy_provider = H264SessionPolicyProvider()
+    host._h264_policy_provider.bind_attempt("attempt-early")
+
+    host.on_media_profile_change({
+        "viewerId": "viewer-1", "connectionAttemptId": "attempt-early",
+        "generation": 1, "profileSequence": 1, "profile": "low",
+        "width": 854, "height": 480, "targetFps": 12,
+        "videoBitrateKbps": 900, "adaptiveResolution": True,
+    })
+
+    assert host.media_profile["profile"] == "high"
+    assert host._user_resolution == {"width": 1280, "height": 720}
+
+
+def test_profile_rejects_viewer_mismatch_before_mutation():
+    host = object.__new__(WebRemoteHost)
+    host.media_profile = {
+        "profile": "high", "width": 1280, "height": 720,
+        "target_fps": 20, "video_bitrate_kbps": 2500,
+    }
+    host._user_resolution = {"width": 1280, "height": 720}
+    host.screen_track = None
+    host.media_sender = None
+    host.video_sender = None
+    host.current_viewer_id = "viewer-active"
+    host._active_input_binding = {
+        "viewerId": "viewer-active", "connectionAttemptId": "attempt-current",
+    }
+    _publish_profile_policy(host)
+
+    host.on_media_profile_change({
+        "viewerId": "viewer-other", "connectionAttemptId": "attempt-current",
+        "generation": 1, "profileSequence": 1, "profile": "low",
+        "width": 854, "height": 480, "targetFps": 12,
+        "videoBitrateKbps": 900, "adaptiveResolution": True,
+    })
+
+    assert host.media_profile["profile"] == "high"
+    assert host._user_resolution == {"width": 1280, "height": 720}
 
 
 def test_capture_fps_tracks_current_media_target_with_a_60_fps_cap():

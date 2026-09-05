@@ -287,6 +287,40 @@ test('media profile without an authoritative attempt binding is rejected', () =>
   );
 });
 
+test('media profile rejects a derived sequence beyond Number.MAX_SAFE_INTEGER', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-profile-overflow', 'host');
+  const viewer = new FakeSocket('viewer-profile-overflow', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'profile-overflow' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', {
+    ...lease, connectionAttemptId: 'attempt-overflow', connectionAttemptSequence: 1,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease, connectionAttemptId: 'attempt-overflow',
+    profileSequence: Number.MAX_SAFE_INTEGER, profile: 'high',
+  });
+  const forwarded = host.sent.filter((entry) => entry.event === 'media-profile-change').length;
+
+  // A legacy-shaped follow-up would derive MAX_SAFE_INTEGER + 1 and must fail.
+  viewer.trigger('media-profile-change', { ...lease, profile: 'low' });
+
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, forwarded);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'profile-sequence-exhausted',
+  );
+});
+
 test('profile writes derive bound attempt identity and reject stale sequence or old attempt', () => {
   resetConnections();
   const io = makeIo();

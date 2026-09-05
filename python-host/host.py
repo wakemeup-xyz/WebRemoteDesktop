@@ -2740,27 +2740,53 @@ class WebRemoteHost:
         except Exception as e:
             logger.error(f"Error handling resolution change: {e}")
 
+    def _admit_media_profile_change(self, payload, candidate_intent, next_profile):
+        """Fail closed before any profile, capture, or encoder mutation."""
+        provider = getattr(self, "_h264_policy_provider", None)
+        current = provider.current() if provider is not None else None
+        if current is None or current.intent is None or not current.accepted:
+            logger.info("Ignoring media profile without a published H.264 policy")
+            return None
+        intent = current.intent
+        sequence = payload.get("profileSequence")
+        if (
+            payload.get("connectionAttemptId") != intent.connection_attempt_id
+            or payload.get("generation") != intent.generation
+            or type(sequence) is not int
+            or sequence < 1
+            or sequence > 9007199254740991
+        ):
+            logger.info("Ignoring media profile with invalid session identity")
+            return None
+        binding = getattr(self, "_active_input_binding", None)
+        bound_viewer = binding.get("viewerId") if isinstance(binding, dict) else None
+        expected_viewer = bound_viewer if isinstance(bound_viewer, str) else getattr(self, "current_viewer_id", None)
+        if isinstance(expected_viewer, str) and expected_viewer and payload.get("viewerId") != expected_viewer:
+            logger.info("Ignoring media profile from non-active viewer")
+            return None
+        if isinstance(binding, dict):
+            bound_attempt = binding.get("connectionAttemptId")
+            if not isinstance(bound_attempt, str) or bound_attempt != intent.connection_attempt_id:
+                logger.info("Ignoring media profile with inactive attempt binding")
+                return None
+        if sequence < intent.profile_sequence:
+            logger.info("Ignoring media profile with stale profile sequence")
+            return None
+        if sequence == intent.profile_sequence:
+            profile_same = all(
+                (getattr(self, "media_profile", None) or {}).get(key) == next_profile.get(key)
+                for key in ("profile", "width", "height", "target_fps", "video_bitrate_kbps")
+            )
+            if candidate_intent != intent or not profile_same:
+                logger.info("Ignoring conflicting media profile replay")
+                return None
+        return current
+
     def on_media_profile_change(self, data):
         """Apply adaptive media profile requested by the active viewer."""
         try:
             payload = data if isinstance(data, dict) else {}
             policy_provider = getattr(self, "_h264_policy_provider", None)
-            current_policy = policy_provider.current() if policy_provider is not None else None
-            if current_policy is not None and current_policy.intent is not None:
-                if (
-                    payload.get("connectionAttemptId") != current_policy.intent.connection_attempt_id
-                    or payload.get("generation") != current_policy.intent.generation
-                    or not isinstance(payload.get("profileSequence"), int)
-                    or payload["profileSequence"] < 1
-                ):
-                    logger.info(
-                        "Ignoring stale media profile attempt=%s generation=%s currentAttempt=%s currentGeneration=%s",
-                        payload.get("connectionAttemptId"),
-                        payload.get("generation"),
-                        current_policy.intent.connection_attempt_id,
-                        current_policy.intent.generation,
-                    )
-                    return
             allowed_profiles = {"high", "medium", "low", "survival"}
             profile = payload.get("profile") if payload.get("profile") in allowed_profiles else "medium"
             # Quality Lock default: missing adaptiveResolution means false.
@@ -2770,7 +2796,6 @@ class WebRemoteHost:
             current = dict(getattr(self, "media_profile", None) or {})
             if adaptive_resolution:
                 width, height = requested_width, requested_height
-                self._set_user_resolution(width, height)
             else:
                 if is_lock_rejected_size(requested_width, requested_height):
                     width, height = self._locked_user_size()
@@ -2784,7 +2809,7 @@ class WebRemoteHost:
                         adaptive_resolution,
                     )
                 elif (requested_width, requested_height) in PRESENTATION_RUNGS:
-                    width, height = self._set_user_resolution(requested_width, requested_height)
+                    width, height = requested_width, requested_height
                 else:
                     width, height = self._locked_user_size()
                     if requested_width != width or requested_height != height:
@@ -2804,23 +2829,28 @@ class WebRemoteHost:
                 "target_fps": clamp_int(payload.get("targetFps"), 5, 30, 15),
                 "video_bitrate_kbps": clamp_int(payload.get("videoBitrateKbps"), 250, 5000, 1400),
             }
-            if current_policy is not None and current_policy.intent is not None:
-                refreshed = policy_provider.refresh_profile(
-                    MediaSessionIntent(
-                        connection_attempt_id=current_policy.intent.connection_attempt_id,
-                        generation=current_policy.intent.generation,
-                        path=current_policy.intent.path,
-                        width=width,
-                        height=height,
-                        target_fps=next_profile["target_fps"],
-                        requested_bitrate_bps=next_profile["video_bitrate_kbps"] * 1000,
-                        profile_sequence=int(payload.get("profileSequence") or 0),
-                    ),
-                    getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
-                )
-                if not refreshed.accepted:
-                    logger.info("Ignoring media profile rejected by H.264 policy: %s", refreshed.reason)
-                    return
+            current_policy = policy_provider.current() if policy_provider is not None else None
+            current_intent = current_policy.intent if current_policy is not None else None
+            candidate_intent = MediaSessionIntent(
+                connection_attempt_id=current_intent.connection_attempt_id if current_intent else "",
+                generation=current_intent.generation if current_intent else -1,
+                path=current_intent.path if current_intent else "",
+                width=width,
+                height=height,
+                target_fps=next_profile["target_fps"],
+                requested_bitrate_bps=next_profile["video_bitrate_kbps"] * 1000,
+                profile_sequence=payload.get("profileSequence", 0),
+            )
+            current_policy = self._admit_media_profile_change(payload, candidate_intent, next_profile)
+            if current_policy is None:
+                return
+            refreshed = policy_provider.refresh_profile(
+                candidate_intent,
+                getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+            )
+            if not refreshed.accepted:
+                logger.info("Ignoring media profile rejected by H.264 policy: %s", refreshed.reason)
+                return
             same = (
                 current.get("profile") == next_profile["profile"]
                 and int(current.get("width") or 0) == next_profile["width"]
@@ -2841,6 +2871,8 @@ class WebRemoteHost:
                 if continuity_action == "keyframe":
                     self._request_keyframe(reason=reason or "keyframe", viewer_id=viewer_id)
                 return
+            if adaptive_resolution or (requested_width, requested_height) in PRESENTATION_RUNGS:
+                self._set_user_resolution(width, height)
             self.media_profile = next_profile
             logger.info(
                 "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s adaptiveResolution=%s",

@@ -524,6 +524,12 @@ function setupSignaling(io, options = {}) {
     // Legacy payloads carry neither field. Signal derives a strictly advancing
     // profile generation from the current authoritative attempt binding.
     const sequence = suppliedSequence === undefined ? priorSequence + 1 : suppliedSequence;
+    if (!Number.isSafeInteger(sequence)) {
+      return {
+        ok: false,
+        reason: suppliedSequence === undefined ? 'profile-sequence-exhausted' : 'invalid-profile-sequence',
+      };
+    }
     if (sequence < priorSequence) {
       return { ok: false, reason: 'stale-profile-sequence' };
     }
@@ -1122,6 +1128,10 @@ function setupSignaling(io, options = {}) {
       // rejected before anything reaches Host.
       const resolved = resolveProfileWrite(socket.id, data, sanitized);
       if (!resolved.ok) {
+        emitControlEvent('media_profile_rejected', {
+          viewerId: socket.id,
+          reason: resolved.reason || 'profile-rejected',
+        });
         socket.emit('media-profile-rejected', { reason: resolved.reason });
         return;
       }

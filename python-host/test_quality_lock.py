@@ -14,7 +14,9 @@ class ListHandler(logging.Handler):
         self.records.append(record)
 
 
-def _make_host(width=1280, height=720):
+def _make_host(width=1280, height=720, attempt="attempt-quality"):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
     host = object.__new__(WebRemoteHost)
     host.media_profile = {
         "profile": "high",
@@ -29,7 +31,25 @@ def _make_host(width=1280, height=720):
     host.video_sender = None
     host.media_sender = MagicMock()
     host.media_sender.request_keyframe.return_value = True
+    host._h264_policy_version = "relay-legacy-v1"
+    host._h264_policy_provider = H264SessionPolicyProvider()
+    host._h264_policy_provider.bind_attempt(attempt)
+    host._h264_policy_provider.publish(
+        MediaSessionIntent(attempt, 1, "relay", width, height, 20, 0),
+        "relay-legacy-v1",
+    )
     return host
+
+
+def _profile_event(host, data, sequence=1):
+    intent = host._h264_policy_provider.current().intent
+    return {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": intent.connection_attempt_id,
+        "generation": intent.generation,
+        "profileSequence": sequence,
+        **data,
+    }
 
 
 def test_adaptive_resolution_false_ignores_smaller_size():
@@ -40,8 +60,7 @@ def test_adaptive_resolution_false_ignores_smaller_size():
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     try:
-        host.on_media_profile_change({
-            "viewerId": "viewer-1",
+        host.on_media_profile_change(_profile_event(host, {
             "profile": "survival",
             "width": 640,
             "height": 360,
@@ -49,7 +68,7 @@ def test_adaptive_resolution_false_ignores_smaller_size():
             "videoBitrateKbps": 900,
             "reason": "packet-loss",
             "adaptiveResolution": False,
-        })
+        }))
     finally:
         logger.removeHandler(handler)
         logger.setLevel(original_level)
@@ -67,15 +86,14 @@ def test_adaptive_resolution_false_ignores_smaller_size():
 
 def test_adaptive_resolution_missing_defaults_to_lock():
     host = _make_host(1280, 720)
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "low",
         "width": 854,
         "height": 480,
         "targetFps": 12,
         "videoBitrateKbps": 900,
         "reason": "packet-loss",
-    })
+    }))
     assert host.media_profile["width"] == 1280
     assert host.media_profile["height"] == 720
     assert host.media_profile["target_fps"] == 12
@@ -84,8 +102,7 @@ def test_adaptive_resolution_missing_defaults_to_lock():
 
 def test_adaptive_resolution_true_allows_size_change():
     host = _make_host(1280, 720)
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "low",
         "width": 854,
         "height": 480,
@@ -93,7 +110,7 @@ def test_adaptive_resolution_true_allows_size_change():
         "videoBitrateKbps": 900,
         "reason": "packet-loss",
         "adaptiveResolution": True,
-    })
+    }))
     assert host.media_profile["width"] == 854
     assert host.media_profile["height"] == 480
     assert host._user_resolution == {"width": 854, "height": 480}
@@ -111,15 +128,14 @@ def test_resolution_change_updates_user_size_truth():
     assert host.media_profile["width"] == 1920
     assert host.media_profile["height"] == 1080
 
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "medium",
         "width": 640,
         "height": 360,
         "targetFps": 15,
         "videoBitrateKbps": 1400,
         "adaptiveResolution": False,
-    })
+    }))
     assert host.media_profile["width"] == 1920
     assert host.media_profile["height"] == 1080
     assert host.media_profile["target_fps"] == 15
@@ -272,8 +288,7 @@ def test_keyframe_rate_limited_to_one_per_second():
 
 def test_continuity_action_keyframe_on_media_profile():
     host = _make_host()
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "high",
         "width": 1280,
         "height": 720,
@@ -282,17 +297,16 @@ def test_continuity_action_keyframe_on_media_profile():
         "reason": "keyframe-recovery",
         "adaptiveResolution": False,
         "continuityAction": "keyframe",
-    })
+    }))
     # Profile unchanged, but keyframe still requested.
     host.media_sender.request_keyframe.assert_called_once()
 
 
 def test_lock_adopts_720p_connection_sync_over_stale_1080p():
-    host = _make_host(1920, 1080)
+    host = _make_host(1920, 1080, attempt="wrd-new")
     host.screen_track = MagicMock()
     host.screen_track.apply_media_profile.return_value = {"sizeChanged": True}
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "high",
         "width": 1280,
         "height": 720,
@@ -301,7 +315,7 @@ def test_lock_adopts_720p_connection_sync_over_stale_1080p():
         "reason": "connection-sync",
         "adaptiveResolution": False,
         "connectionAttemptId": "wrd-new",
-    })
+    }))
     assert host.media_profile["width"] == 1280
     assert host.media_profile["height"] == 720
     assert host._user_resolution == {"width": 1280, "height": 720}
@@ -313,8 +327,7 @@ def test_lock_adopts_720p_connection_sync_over_stale_1080p():
 
 def test_lock_still_rejects_survival_auto_size():
     host = _make_host(1280, 720)
-    host.on_media_profile_change({
-        "viewerId": "viewer-1",
+    host.on_media_profile_change(_profile_event(host, {
         "profile": "survival",
         "width": 640,
         "height": 360,
@@ -322,7 +335,7 @@ def test_lock_still_rejects_survival_auto_size():
         "videoBitrateKbps": 500,
         "reason": "packet-loss",
         "adaptiveResolution": False,
-    })
+    }))
     assert host.media_profile["width"] == 1280
     assert host.media_profile["height"] == 720
 
