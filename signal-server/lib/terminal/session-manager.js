@@ -416,7 +416,7 @@ function createTerminalSessionManager(options = {}) {
     }
     if (!session.pty || typeof session.pty.kill !== 'function') {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return { attempted: false, killed: true, attemptCount: session.killAttemptCount };
     }
 
@@ -443,7 +443,7 @@ function createTerminalSessionManager(options = {}) {
   async function runCleanupPtyEscalation(session) {
     if (session.killState === 'confirmed' || session.exitObserved || !isPtyAlive(session)) {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return {
         attempted: false,
         killed: true,
@@ -524,7 +524,7 @@ function createTerminalSessionManager(options = {}) {
 
     if (result.killed || result.confirmed || session.exitObserved || !isPtyAlive(session)) {
       session.killState = 'confirmed';
-      session.exitObserved = true;
+      markExitObserved(session);
       return {
         attempted: Boolean(result.attempted),
         killed: true,
