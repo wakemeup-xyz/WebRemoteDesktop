@@ -530,10 +530,24 @@
       notifyState();
     }
 
-    function onTransportState(state) {
+    function onTransportState(state, options = {}) {
       const next = String(state || '').toLowerCase();
       if (!TRANSPORT_STATES.has(next)) return;
+      const resetAcknowledged = next === 'ready' && options?.resetAcknowledged === true;
       transportState = next;
+      if (resetAcknowledged) {
+        contextValid = true;
+        deliveryUncertain = false;
+        if (hasPending()) {
+          retryRequired = true;
+          pendingGeneration = generation;
+        } else {
+          retryRequired = false;
+          pendingGeneration = null;
+        }
+        notifyState();
+        return;
+      }
       if (next === 'blocked' || next === 'reacquire-required' || next === 'revoked') {
         cancelDrain();
         generation += 1;

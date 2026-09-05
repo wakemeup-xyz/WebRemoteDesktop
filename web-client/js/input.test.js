@@ -1155,6 +1155,124 @@ test('mobile input reset clears the reserved Dock state', () => {
   assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
 });
 
+test('owned keyboard reset ACK reopens mobile text only for the next explicit input', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.resetKeyboard('owned-reset');
+
+  const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+  assert.ok(reset);
+  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old']);
+
+  const ackResult = Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: reset.seq,
+    inputIds: reset.inputIds,
+  });
+  assert.equal(ackResult.status, 'applied');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
+});
+
+test('owned reset ACK preserves a new draft entered while the barrier is pending', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.resetKeyboard('owned-reset-with-draft');
+  const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+
+  mobileInput.value = 'during-reset';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const textBeforeAck = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textBeforeAck, ['old']);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+
+  Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: reset.seq,
+    inputIds: reset.inputIds,
+  });
+  assert.equal(mobileInput.value, 'during-reset');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1);
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'during-reset']);
+});
+
+test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
+  for (const status of ['stale', 'execution-failed']) {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const mobileInput = elements.get('mobileTextInput');
+    mobileInput.value = 'old';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    Input.resetKeyboard(`owned-reset-${status}`);
+    const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+    const ack = {
+      schemaVersion: 2,
+      leaseEpoch: status === 'stale' ? 999 : 3,
+      status,
+      appliedSeq: reset.seq,
+      inputIds: reset.inputIds,
+    };
+    const result = Input.acceptKeyboardAck(ack);
+    assert.equal(result.status, status === 'stale' ? 'stale' : 'reacquire-required', status);
+    Input.mobileTextInputAdapter.onTransportState('ready');
+    mobileInput.value = 'after-failure';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1, status);
+    assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true, status);
+    assert.equal(Input.mobileTextInputAdapter.retryPending(), false, status);
+  }
+});
+
+test('park clears mobile draft without a reset barrier and permits later explicit input', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const eventsBeforePark = socketEvents.length;
+  Input.parkKeyboard('visibility-hidden');
+  assert.equal(socketEvents.length, eventsBeforePark);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').length, 0);
+  assert.equal(mobileInput.value, '\u200b');
+
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
+});
+
 test('mouse pointer cancel releases capture and sends one reset', () => {
   const { Input, context, socketEvents } = loadInput();
   activate(Input, context);

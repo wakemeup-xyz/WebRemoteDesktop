@@ -16,6 +16,8 @@ const Input = {
   _mobileTextInputUiBound: false,
   _mobileTextInputToggleBound: false,
   _mobileTextReturnFocus: null,
+  _mobileResetPending: false,
+  _mobileResetAckInFlight: false,
   _lastSurfaceGeometry: null,
   _surfaceGeometryByElement: new WeakMap(),
   activeControlLease: null,
@@ -91,6 +93,15 @@ const Input = {
       this._mobileTransportSnapshot = snapshot || null;
       const state = String(snapshot?.state || '').toLowerCase();
       if (this.mobileTextInputAdapter) {
+        if (state === 'ready' && this._mobileResetAckInFlight) {
+          this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
+          return;
+        }
+        if (state === 'ready' && this._mobileResetPending) {
+          this.mobileTextInputAdapter.onTransportState('reacquire-required');
+          this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
+          return;
+        }
         if (state === 'ready' || state === 'blocked' || state === 'reacquire-required') {
           this.mobileTextInputAdapter.onTransportState(state);
         }
@@ -103,7 +114,9 @@ const Input = {
     const snapshot = this._mobileTransportSnapshot || this.keyboardTransport?.getSnapshot?.();
     if (!snapshot || !this.mobileTextInputAdapter) return;
     const state = String(snapshot.state || '').toLowerCase();
-    if (state === 'ready' || state === 'blocked' || state === 'reacquire-required' || state === 'revoked') {
+    if (state === 'ready' && this._mobileResetPending && !this._mobileResetAckInFlight) {
+      this.mobileTextInputAdapter.onTransportState('reacquire-required');
+    } else if (state === 'ready' || state === 'blocked' || state === 'reacquire-required' || state === 'revoked') {
       this.mobileTextInputAdapter.onTransportState(state);
     }
     this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
@@ -150,6 +163,8 @@ const Input = {
     if (leaseChanged) {
       // Clear the mobile draft before the controller changes the transport
       // identity. The old generation must never cross a lease boundary.
+      this._mobileResetPending = false;
+      this._mobileResetAckInFlight = false;
       this.clearMobileTextInputDock();
       this.mobileTextInputAdapter?.reset('lease-changed');
       this._desktopWriteSequence = 0;
@@ -171,7 +186,31 @@ const Input = {
 
   acceptKeyboardAck(ack) {
     if (!this.keyboardTransport) return { status: 'stale' };
-    const result = this.keyboardTransport.acceptAck(ack);
+    const ownedResetPending = this._mobileResetPending;
+    this._mobileResetAckInFlight = ownedResetPending;
+    let result;
+    try {
+      result = this.keyboardTransport.acceptAck(ack);
+    } finally {
+      this._mobileResetAckInFlight = false;
+    }
+    if (ownedResetPending && this._mobileResetPending) {
+      const transportState = this.keyboardTransport.getSnapshot?.().state;
+      const resetApplied = (result.status === 'applied' || result.status === 'duplicate')
+        && transportState === 'ready';
+      if (resetApplied) {
+        this._mobileResetPending = false;
+        this.mobileTextInputAdapter?.onTransportState('ready', { resetAcknowledged: true });
+      } else if (transportState === 'reacquire-required' || transportState === 'revoked'
+        || (result.status === 'stale' && transportState === 'ready')) {
+        this._mobileResetPending = false;
+        this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+      } else if (result.status === 'stale' || result.status === 'resync-required') {
+        // A reset barrier that has not been positively acknowledged remains
+        // fail-closed, even if a stale sequence or resync response arrives.
+        this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+      }
+    }
     this.modifierMask = Number.isInteger(ack?.modifierMask) ? ack.modifierMask : this.modifierMask;
     this.mobileTextInputAdapter?.refreshDeliveryState();
     this.updateKeyboardUI();
@@ -458,10 +497,16 @@ const Input = {
 
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
+    this._mobileResetPending = true;
     this.clearMobileTextInputDock();
     this.mobileTextInputAdapter?.reset(reason);
     this.updateMobileTextInputButton();
-    return this.keyboardController?.reset(reason) || false;
+    const accepted = Boolean(this.keyboardController?.reset(reason));
+    if (!accepted) {
+      this._mobileResetPending = false;
+      this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+    }
+    return accepted;
   },
 
   parkKeyboard(reason) {
