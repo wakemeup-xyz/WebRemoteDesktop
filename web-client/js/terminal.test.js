@@ -3100,6 +3100,37 @@ test('TerminalPanel does not cache bootstrapAuthToken on failed bootstrap and re
   assert.equal(TerminalPanel.allowPolling, true);
 });
 
+test('TerminalPanel connects websocket-only once after bootstrap HTTP 500', async () => {
+  let bootstrapCalls = 0;
+  const ioCalls = [];
+  const { TerminalPanel, sessionStorageMap, tokenKey } = loadTerminal({
+    fetch: async (url) => {
+      if (!String(url).endsWith('/api/terminal/bootstrap')) {
+        return { ok: true, json: async () => ({}) };
+      }
+      bootstrapCalls += 1;
+      if (bootstrapCalls <= 2) {
+        return { ok: false, status: 500, json: async () => ({ error: 'unavailable' }) };
+      }
+      return new Promise(() => {});
+    },
+    io: (url, options) => {
+      ioCalls.push({ url, options });
+      return createSocketDouble();
+    },
+  });
+  sessionStorageMap.set(tokenKey, 'admin-token');
+
+  const connectPromise = TerminalPanel.connectSocket();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(ioCalls.length, 1);
+  assert.ok(bootstrapCalls <= 2, `expected <=2 bootstrap calls, got ${bootstrapCalls}`);
+  assert.deepEqual(Array.from(ioCalls[0].options.transports), ['websocket']);
+  assert.equal(ioCalls[0].options.auth.token, 'admin-token');
+  await connectPromise;
+});
+
 test('TerminalPanel does not reuse in-flight bootstrap promise across different tokens', async () => {
   const started = [];
   const gates = new Map();

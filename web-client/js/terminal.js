@@ -272,6 +272,7 @@ const TerminalPanel = {
   poolCapacity: null,
   allowPolling: false,
   bootstrapAuthToken: null,
+  bootstrapAttemptToken: null,
   bootstrapPromisesByToken: new Map(),
   transportLatency: new Map(),
   aliasedEvents: new Map(),
@@ -530,10 +531,14 @@ const TerminalPanel = {
   connectSocket() {
     const token = this.getAdminToken();
     if (!token || typeof io === 'undefined') return;
-    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token) {
+    const canConnectWithoutBootstrap = this.bootstrapAttemptToken === token;
+    if (typeof fetch === 'function' && this.bootstrapAuthToken !== token && !canConnectWithoutBootstrap) {
       return this.ensureTerminalBootstrap(token).then(() => {
         if (this.getAdminToken() === token) this.connectSocket();
       });
+    }
+    if (canConnectWithoutBootstrap) {
+      this.bootstrapAttemptToken = null;
     }
     const canReuseSocket = this.socket
       && this.socket.connected
@@ -1249,8 +1254,9 @@ const TerminalPanel = {
         // F-08: only cache successful bootstrap for this token.
         this.bootstrapAuthToken = token;
       } catch (err) {
-        // Apply websocket-only for this attempt, but do not cache success.
+        // Apply websocket-only for this connection, but do not cache success.
         this.applyBootstrap({ allowPolling: false });
+        this.bootstrapAttemptToken = token;
       } finally {
         this.bootstrapPromisesByToken.delete(token);
       }
