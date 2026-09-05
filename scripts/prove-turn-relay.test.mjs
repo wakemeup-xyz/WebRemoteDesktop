@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { assertNoActiveViewer, parseProofArgs, redactSelectedPair, selectedPairIsRelay } from './prove-turn-relay.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  assertNoActiveViewer, buildFailedProofResult, parseProofArgs, proofSnapshotPasses,
+  redactSelectedPair, selectedPairIsRelay, writeResultAtomically,
+} from './prove-turn-relay.mjs';
 
 test('proof parameters accept bounded duration and an output path', () => {
   assert.deepEqual(parseProofArgs(['--duration-seconds', '12', '--output', '/tmp/proof.json']), {
@@ -10,6 +16,19 @@ test('proof parameters accept bounded duration and an output path', () => {
     help: false,
   });
   assert.throws(() => parseProofArgs(['--duration-seconds', '0']), /duration-seconds/);
+});
+
+test('pre-browser argument failures atomically write an incomplete result and exit non-zero', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-proof-cli-'));
+  const output = path.join(directory, 'proof.json');
+  const child = spawnSync(process.execPath, ['scripts/prove-turn-relay.mjs', '--output', output, '--duration-seconds', '0'], {
+    cwd: new URL('..', import.meta.url), encoding: 'utf8',
+  });
+  assert.notEqual(child.status, 0);
+  const result = JSON.parse(fs.readFileSync(output, 'utf8'));
+  assert.equal(result.ok, false);
+  assert.equal(result.proofComplete, false);
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('proof requires a selected local relay candidate and redacts candidate endpoints', () => {
@@ -28,4 +47,33 @@ test('proof help exits without requiring credentials or making a network request
   });
   assert.match(output, /--duration-seconds/);
   assert.match(output, /--output/);
+});
+
+test('proof rejects stale DOM, disconnected PC, and relay mode without selected relay', () => {
+  const base = { fps: 20, socketConnected: true, pcConnectionState: 'connected', selectedPair: { type: 'relay' }, dom: { connectionStatus: '已连接' } };
+  assert.equal(proofSnapshotPasses(base), true);
+  assert.equal(proofSnapshotPasses({ ...base, dom: { connectionStatus: '正在出画' } }), false);
+  assert.equal(proofSnapshotPasses({ ...base, pcConnectionState: 'disconnected' }), false);
+  assert.equal(proofSnapshotPasses({ ...base, selectedPair: { type: 'host' }, networkMode: 'relay' }), false);
+});
+
+test('proof failure result is incomplete and atomic output never leaves a partial success', () => {
+  const result = buildFailedProofResult({ baseUrl: 'http://127.0.0.1:8080' }, new Error('playwright unavailable'));
+  assert.equal(result.ok, false);
+  assert.equal(result.proofComplete, false);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-proof-'));
+  const output = path.join(directory, 'proof.json');
+  writeResultAtomically(result, output);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  assert.throws(() => writeResultAtomically({ ok: true }, output, {
+    ...fs,
+    writeFileSync() { throw new Error('write failed'); },
+  }), /write failed/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  assert.throws(() => writeResultAtomically({ ok: true }, output, {
+    ...fs,
+    renameSync() { throw new Error('rename failed'); },
+  }), /rename failed/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  fs.rmSync(directory, { recursive: true, force: true });
 });

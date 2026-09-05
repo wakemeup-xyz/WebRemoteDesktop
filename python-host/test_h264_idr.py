@@ -110,6 +110,45 @@ def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields
     assert sample["keyframes"] == {"forced": 1, "periodic": 1, "pli": 0}
 
 
+def test_encoder_discards_partial_aggregate_when_policy_identity_changes(caplog):
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    first = resolve_h264_policy(MediaSessionIntent("attempt-a", 1, "relay", 1280, 720, 20, 0), "relay-legacy-v1")
+    second = replace(first, connection_attempt_id="attempt-b", generation=2)
+    enc = H264VideoToolboxEncoder(policy=first)
+    enc._record_encoder_sample(elapsed_ms=5, encoded_bytes=10, idr_bytes=0, keyframe_kind=None, now=100)
+    enc.stage_policy_update(second)
+    enc._adopt_pending_policy()
+    with caplog.at_level(logging.INFO, logger="h264_videotoolbox_encoder"):
+        enc._record_encoder_sample(elapsed_ms=6, encoded_bytes=20, idr_bytes=0, keyframe_kind=None, now=105)
+        enc._record_encoder_sample(elapsed_ms=7, encoded_bytes=30, idr_bytes=0, keyframe_kind=None, now=110)
+    sample = json.loads(next(record.message.removeprefix("WRD_ENCODER_SAMPLE ") for record in caplog.records if record.message.startswith("WRD_ENCODER_SAMPLE ")))
+    assert sample["connectionAttemptId"] == "attempt-b"
+    assert sample["generation"] == 2
+    assert sample["encode"]["count"] == 2
+
+
+def test_waited_and_recreated_idr_keep_the_application_request_reason(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codecs = [FakeCodec([p_slice], repeat=True), FakeCodec([idr])]
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", lambda self, frame, codec_name: codecs.pop(0))
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    # The request arrives while VideoToolbox still waits for an earlier I-frame.
+    # It must own the actual delayed/recreated IDR rather than a synthetic log.
+    enc.note_keyframe_request("paint-stall", "attempt-a", 2, 9)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        if enc.last_requested_keyframe_emitted:
+            break
+    assert enc.last_requested_keyframe_emitted is True
+    assert enc._last_encoded_keyframe_kind == "forced"
+    assert enc._last_encoded_keyframe_reason == "paint-stall"
+
+
 class FakePacket:
     def __init__(self, data):
         self._data = data

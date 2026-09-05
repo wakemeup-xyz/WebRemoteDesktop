@@ -224,12 +224,14 @@ class H264VideoToolboxEncoder(Encoder):
         self._queued_force_tokens = []
         self._active_force_token = None
         self._last_encoded_keyframe_kind = None
+        self._last_encoded_keyframe_reason = None
         self._last_encoded_size = {"width": 0, "height": 0}
         self._encoder_sample_started_at = None
         self._encoder_sample_durations_ms = []
         self._encoder_sample_total_bytes = 0
         self._encoder_sample_idr_bytes = []
         self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
 
     @staticmethod
     def _sample_percentile(values: list[float], percentile: float) -> float:
@@ -245,6 +247,15 @@ class H264VideoToolboxEncoder(Encoder):
         self._encoder_sample_total_bytes = 0
         self._encoder_sample_idr_bytes = []
         self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
+
+    def _clear_encoder_sample(self) -> None:
+        self._encoder_sample_started_at = None
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
 
     def _record_encoder_sample(
         self,
@@ -253,6 +264,7 @@ class H264VideoToolboxEncoder(Encoder):
         encoded_bytes: int,
         idr_bytes: int,
         keyframe_kind: str | None,
+        keyframe_reason: str | None = None,
         now: float | None = None,
     ) -> None:
         """Aggregate local encode measurements; never infer cross-machine latency."""
@@ -267,6 +279,10 @@ class H264VideoToolboxEncoder(Encoder):
             self._encoder_sample_idr_bytes.append(int(idr_bytes))
         if keyframe_kind in self._encoder_sample_keyframes:
             self._encoder_sample_keyframes[keyframe_kind] += 1
+        if keyframe_kind and keyframe_reason:
+            self._encoder_sample_keyframe_reasons[keyframe_reason] = (
+                self._encoder_sample_keyframe_reasons.get(keyframe_reason, 0) + 1
+            )
         if sample_now - self._encoder_sample_started_at < 5.0:
             return
 
@@ -297,6 +313,7 @@ class H264VideoToolboxEncoder(Encoder):
                 "idrMax": max(idr_sizes) if idr_sizes else 0,
             },
             "keyframes": dict(self._encoder_sample_keyframes),
+            "keyframeReasons": dict(self._encoder_sample_keyframe_reasons),
         }
         logger.info("WRD_ENCODER_SAMPLE %s", json.dumps(sample, separators=(",", ":"), sort_keys=True))
         self._reset_encoder_sample(sample_now)
@@ -307,7 +324,9 @@ class H264VideoToolboxEncoder(Encoder):
         key = (str(connection_attempt_id or ""), int(generation or 0))
         self.keyframe_reason_counts[reason_s] = self.keyframe_reason_counts.get(reason_s, 0) + 1
         self.last_keyframe_request_generation = key
-        self._queued_force_tokens.append((key[0], key[1], int(request_sequence)))
+        self._queued_force_tokens.append({
+            "attempt": key[0], "generation": key[1], "sequence": int(request_sequence), "reason": reason_s,
+        })
         self.last_requested_keyframe_emitted = False
 
     @staticmethod
@@ -341,6 +360,7 @@ class H264VideoToolboxEncoder(Encoder):
             self._frames_encoded = 0
         self._queued_force_tokens.clear()
         self._active_force_token = None
+        self._clear_encoder_sample()
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -474,6 +494,7 @@ class H264VideoToolboxEncoder(Encoder):
     ) -> Iterator[bytes]:
         self._adopt_pending_policy()
         self._last_encoded_keyframe_kind = None
+        self._last_encoded_keyframe_reason = None
         self._last_encoded_size = {"width": int(frame.width), "height": int(frame.height)}
         if self.codec and (
             frame.width != self.codec.width
@@ -502,7 +523,7 @@ class H264VideoToolboxEncoder(Encoder):
         # frame. A force signal received during VideoToolbox's IDR wait still
         # belongs to a later submission; the old asynchronous IDR must not
         # acknowledge it.
-        if force_keyframe and due and self._queued_force_tokens:
+        if force_keyframe and (due or waiting) and self._queued_force_tokens and self._active_force_token is None:
             self._active_force_token = self._queued_force_tokens.pop(0)
         # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
         # the delayed IDR instead of stuffing I-frames every follow-up tick.
@@ -547,11 +568,14 @@ class H264VideoToolboxEncoder(Encoder):
             _nal_is_idr(packet) for packet in encoded_packets
         )
         if has_idr:
+            active_reason = self._active_force_token["reason"] if self._active_force_token else None
             self._last_encoded_keyframe_kind = (
-                "forced" if self._active_force_token is not None
+                "pli" if active_reason == "rtcp-or-unknown"
+                else "forced" if self._active_force_token is not None
                 else "pli" if force_keyframe
                 else "periodic"
             )
+            self._last_encoded_keyframe_reason = active_reason or ("rtcp-or-unknown" if force_keyframe else "periodic")
             self._frames_since_idr = 0
             self._idr_wait_remaining = 0
             if waiting or want_idr:
@@ -559,7 +583,9 @@ class H264VideoToolboxEncoder(Encoder):
                 self.last_idr_recreated = False
             if self._active_force_token is not None:
                 self.last_requested_keyframe_emitted = True
-                self.last_keyframe_request_ack = self._active_force_token
+                self.last_keyframe_request_ack = (
+                    self._active_force_token["attempt"], self._active_force_token["generation"], self._active_force_token["sequence"],
+                )
                 self._active_force_token = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s encoded=%s",
@@ -583,14 +609,24 @@ class H264VideoToolboxEncoder(Encoder):
                 self.codec = self._create_codec(frame, self.codec_name)
                 recreated_this_call = True
                 self.last_idr_recreated = True
-                data_to_send = b""
-                for package in self.codec.encode(frame):
-                    data_to_send += bytes(package)
-                self.last_force_emitted_idr = bitstream_contains_idr(data_to_send)
+                recreated_packets = list(self.codec.encode(frame))
+                data_to_send = b"".join(bytes(package) for package in recreated_packets)
+                self.last_force_emitted_idr = bitstream_contains_idr(data_to_send) or any(
+                    _nal_is_idr(bytes(package)) for package in recreated_packets
+                )
                 self._idr_wait_remaining = 0 if self.last_force_emitted_idr else IDR_WAIT_FRAMES
                 if self.last_force_emitted_idr:
                     self.last_idr_recreated = False
                     self._frames_since_idr = 0
+                    active_reason = self._active_force_token["reason"] if self._active_force_token else None
+                    self._last_encoded_keyframe_kind = "pli" if active_reason == "rtcp-or-unknown" else "forced" if active_reason else "periodic"
+                    self._last_encoded_keyframe_reason = active_reason or "periodic"
+                    if self._active_force_token is not None:
+                        self.last_requested_keyframe_emitted = True
+                        self.last_keyframe_request_ack = (
+                            self._active_force_token["attempt"], self._active_force_token["generation"], self._active_force_token["sequence"],
+                        )
+                        self._active_force_token = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
                     self.last_force_emitted_idr,
@@ -707,6 +743,7 @@ class H264VideoToolboxEncoder(Encoder):
             encoded_bytes=encoded_bytes,
             idr_bytes=idr_bytes,
             keyframe_kind=self._last_encoded_keyframe_kind,
+            keyframe_reason=self._last_encoded_keyframe_reason,
         )
         return packetized, timestamp
 

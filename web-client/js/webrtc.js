@@ -837,6 +837,8 @@ const WebRTC = {
     this._lastInboundFramesDecoded = 0;
     this._lastInboundFramesDecodedAt = 0;
     this._paintDecodedBaseline = 0;
+    this._paintObservationWindow = null;
+    this._lastPaintObservation = null;
     this._stallSince = null;
     this._keyframeRequestGeneration = '';
     this._keyframeRequestSequence = 0;
@@ -2003,7 +2005,17 @@ const WebRTC = {
       ? Number(this.signalingConnectBudgetMs)
       : 5000;
     return {
-      auth: { token, role: 'viewer', inputProtocolVersion: 2 },
+      auth: {
+        token,
+        role: 'viewer',
+        inputProtocolVersion: 2,
+        proofAdmission: (() => {
+          try {
+            if (typeof sessionStorage === 'undefined') return null;
+            return JSON.parse(sessionStorage.getItem('wrdProofAdmission') || 'null');
+          } catch (_err) { return null; }
+        })(),
+      },
       reconnection: Boolean(reconnection),
       // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
       transports,
@@ -4427,6 +4439,8 @@ if (this.tunnelLastObjectUrl) {
     }
     this._videoFrameCallbackId = null;
     this._videoFrameElement = null;
+    this._paintObservationWindow = null;
+    this._lastPaintObservation = null;
   },
 
   startVideoFrameTracking() {
@@ -4483,6 +4497,7 @@ if (this.tunnelLastObjectUrl) {
     let window = this._paintObservationWindow;
     if (!window) {
       window = {
+        connectionAttemptId: this.currentConnectionAttemptId || null,
         startedAt: paintAt,
         lastPaintAt: paintAt,
         intervals: [],
@@ -4515,6 +4530,7 @@ if (this.tunnelLastObjectUrl) {
     const firstPresented = Number(window.firstPresentedFrames);
     const lastPresented = Number(window.lastPresentedFrames);
     this._lastPaintObservation = {
+      connectionAttemptId: window.connectionAttemptId,
       intervalMs: {
         p50: percentile(0.5),
         p95: percentile(0.95),
@@ -4528,6 +4544,7 @@ if (this.tunnelLastObjectUrl) {
     };
     console.info('[WRD_PAINT_SAMPLE]', this._lastPaintObservation);
     this._paintObservationWindow = {
+      connectionAttemptId: window.connectionAttemptId,
       startedAt: paintAt,
       lastPaintAt: paintAt,
       intervals: [],

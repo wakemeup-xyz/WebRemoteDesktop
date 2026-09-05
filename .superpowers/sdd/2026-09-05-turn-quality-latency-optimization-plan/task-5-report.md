@@ -53,3 +53,58 @@ parameter tests in this task. No local service, real browser, TURN allocation,
 or manual Viewer session was started. Real cross-machine end-to-end validation
 therefore remains `NOT RUN`; any later estimate must be explicitly labeled
 `estimate`.
+
+## Review-fix round 1
+
+### Red phase
+
+The review tests first failed because the runner returned partial success when
+Playwright was absent, the Signal module had no proof-admission primitive, the
+paint schema assertion lacked attempt identity, and neither delayed IDR nor
+codec recreation retained a causal keyframe reason.
+
+### Admission and proof schema
+
+Signal now owns a monotonic `viewerEpoch` and one-time proof admissions.
+`POST /api/proof-admission` returns a token and epoch only while no desktop
+Viewer is present. The proof Viewer passes that admission in Socket.IO auth;
+Signal atomically checks the token, epoch, and empty Viewer map before adding
+the socket. A normal Viewer increments the epoch and invalidates outstanding
+proof admissions, so a human arriving between precheck and proof join remains
+connected while the proof is rejected. A later normal Viewer keeps the existing
+user-priority supersede behavior, and the proof's live socket/PC snapshot then
+fails.
+
+Every proof result is structured. Playwright/Chromium absence, pre-browser
+failures, browser launch failures, timeouts, and CLI parsing failures produce
+`ok:false` and `proofComplete:false` and exit non-zero. `--output` writes the
+structured result through a same-directory temporary file, file `fsync`, and
+atomic rename. Candidate evidence contains only selected-pair `type`,
+`protocol`, and `rttMs`; DOM candidate text is not emitted. Success requires a
+single current snapshot with DOM `已连接`, Socket.IO connected, RTCPeerConnection
+`connected`, FPS above zero, and a selected local relay pair.
+
+Encoder aggregates reset on policy identity replacement. Actual confirmed IDR
+output records its causal reason and bytes, including a request received during
+an existing wait and a successful recreation IDR; unmeasured end-to-end timing
+fields remain null. Paint start/stop/attempt transitions clear both active and
+last windows, and a logged paint aggregate carries its attempt ID.
+
+### Verification
+
+- RED: targeted Python and Node suites failed for the new causal-IDR, proof
+  helper, Signal admission, and paint identity expectations.
+- GREEN: `python -m pytest python-host/test_h264_idr.py -q` — 31 passed.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs signal-server/websocket/signaling.test.js web-client/js/webrtc.test.js` — 281 passed.
+- GREEN: `cd signal-server && npm run build:web`.
+- GREEN: proof CLI invalid-duration/no-network output test verifies non-zero and
+  `ok:false, proofComplete:false`; atomic write and rename error fixtures pass.
+- GREEN: `git diff --check`.
+
+### Commit and self-check
+
+This round is committed as `fix(observability): harden relay proof admission`.
+No service, browser, tunnel, or live Viewer was started. The only outstanding
+limitation is the intentionally absent real TURN/browser run; cross-machine
+values remain `NOT RUN` and any future cross-machine value must be marked
+`estimate`.

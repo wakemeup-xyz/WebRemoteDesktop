@@ -1782,12 +1782,30 @@ test('video frame tracking aggregates paint intervals and geometry every five se
   callbacks[2](5020, { presentedFrames: 14 });
 
   assert.deepEqual(JSON.parse(JSON.stringify(WebRTC._lastPaintObservation)), {
+    connectionAttemptId: 'attempt-paint',
     intervalMs: { p50: 20, p95: 5000, max: 5000 },
     maxGapMs: 5000,
     presentedFramesDelta: 4,
     video: { width: 1280, height: 720 },
     geometry: { x: 12, y: 24, width: 960, height: 540, changes: 0 },
   });
+});
+
+test('paint observations are cleared at stop and never cross connection attempts', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC._paintObservationWindow = { startedAt: 1 };
+  WebRTC._lastPaintObservation = { connectionAttemptId: 'old-attempt' };
+  WebRTC.stopVideoFrameTracking();
+  assert.equal(WebRTC._paintObservationWindow, null);
+  assert.equal(WebRTC._lastPaintObservation, null);
+
+  WebRTC._paintObservationWindow = { startedAt: 2 };
+  WebRTC._lastPaintObservation = { connectionAttemptId: 'old-attempt' };
+  WebRTC.beginConnectionAttempt('refresh');
+  assert.equal(WebRTC._paintObservationWindow, null);
+  assert.equal(WebRTC._lastPaintObservation, null);
+  assert.ok(WebRTC.currentConnectionAttemptId);
+  assert.ok(context.document);
 });
 
 test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {

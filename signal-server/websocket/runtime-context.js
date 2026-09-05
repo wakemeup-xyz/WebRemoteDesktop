@@ -1,5 +1,7 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
+
 /**
  * Per-server signaling state.  Keeping this state in an explicit object makes
  * tests and embedded servers independent without changing the legacy facade.
@@ -7,6 +9,8 @@
 function createRuntimeContext(options = {}) {
   const initialCapabilities = options.hostCapabilities || {};
   let hostCapabilities = normalizeCapabilities(initialCapabilities, false);
+  let viewerEpoch = 0;
+  const proofAdmissions = new Map();
   const connections = {
     host: null,
     viewers: new Map(),
@@ -25,6 +29,30 @@ function createRuntimeContext(options = {}) {
     clearHostCapabilities() {
       hostCapabilities = normalizeCapabilities({}, false);
       return cloneCapabilities(hostCapabilities);
+    },
+    issueProofAdmission() {
+      if (connections.viewers.size > 0) return null;
+      const admission = { token: randomUUID(), epoch: viewerEpoch };
+      proofAdmissions.set(admission.token, admission.epoch);
+      return { ...admission };
+    },
+    admitProofViewer(admission = {}) {
+      const token = String(admission.token || '');
+      const epoch = Number(admission.epoch);
+      if (!token || proofAdmissions.get(token) !== epoch || epoch !== viewerEpoch || connections.viewers.size > 0) {
+        return false;
+      }
+      proofAdmissions.delete(token);
+      viewerEpoch += 1;
+      return true;
+    },
+    noteHumanViewerAdmission() {
+      viewerEpoch += 1;
+      proofAdmissions.clear();
+      return viewerEpoch;
+    },
+    viewerEpoch() {
+      return viewerEpoch;
     },
     getViewerSnapshot() {
       return Array.from(connections.viewers.values()).map((socket) => ({

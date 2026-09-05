@@ -99,6 +99,9 @@ function setupSignaling(io, options = {}) {
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
   const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket;
+  const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
+  const admitProofViewer = (admission) => instanceRuntime.admitProofViewer(admission);
+  const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
   const emitViewerStatus = (reason, viewerSocket = null) => {
     const payload = {
       reason,
@@ -723,6 +726,15 @@ function setupSignaling(io, options = {}) {
         });
       });
     } else if (role === 'viewer') {
+      const proofAdmission = socket.handshake.auth?.proofAdmission;
+      const isProofViewer = Boolean(proofAdmission);
+      if (isProofViewer && !admitProofViewer(proofAdmission)) {
+        socket.emit('proof-admission-rejected', { reason: 'viewer-epoch-changed' });
+        socket.disconnect(true);
+        return;
+      }
+      if (!isProofViewer) noteHumanViewerAdmission();
+      socket._wrdProofViewer = isProofViewer;
       // Hard order: claim map slot → supersede others → only then welcome incoming.
       // New desktop viewers never auto-acquire control.
       connections.viewers.set(socket.id, socket);
@@ -1517,7 +1529,12 @@ function getConnectionStatus(context = runtime) {
     viewerCount: context.connections.viewers.size,
     relayViewerCount: context.connections.relayViewers.size,
     viewers: getViewerSnapshot(context),
+    viewerEpoch: context.viewerEpoch(),
   };
+}
+
+function issueProofAdmission(context = runtime) {
+  return context.issueProofAdmission();
 }
 
 module.exports = {
@@ -1530,4 +1547,5 @@ module.exports = {
   setHostCapabilities,
   clearHostCapabilities,
   ingestDiagnosticPayload,
+  issueProofAdmission,
 };

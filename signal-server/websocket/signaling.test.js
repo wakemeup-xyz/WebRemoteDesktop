@@ -13,6 +13,7 @@ const {
   connections,
   clearHostCapabilities,
   getHostCapabilities,
+  issueProofAdmission,
 } = require('./signaling');
 
 function v2Key(overrides = {}) {
@@ -134,6 +135,37 @@ test('standalone relay-viewer cannot stop host tunnel relay stream', () => {
 
   assert.equal(connections.relayViewers.has('relay-1'), false);
   assert.equal(host.sent.some((message) => message.event === 'relay-stream-control'), false);
+});
+
+test('human viewer arriving after proof admission issuance rejects proof without eviction', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const admission = issueProofAdmission();
+  const human = new FakeSocket('human-viewer', 'viewer');
+  io.connect(human);
+  const proof = new FakeSocket('proof-viewer', 'viewer');
+  proof.handshake.auth.proofAdmission = admission;
+  io.connect(proof);
+
+  assert.equal(connections.viewers.get('human-viewer'), human);
+  assert.equal(human.disconnected, false);
+  assert.equal(proof.disconnected, true);
+  assert.equal(proof.sent.some((entry) => entry.event === 'proof-admission-rejected'), true);
+});
+
+test('human viewer supersedes an admitted proof viewer under the existing user-priority rule', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const proof = new FakeSocket('proof-viewer', 'viewer');
+  proof.handshake.auth.proofAdmission = issueProofAdmission();
+  io.connect(proof);
+  const human = new FakeSocket('human-viewer', 'viewer');
+  io.connect(human);
+
+  assert.equal(proof.disconnected, true);
+  assert.equal(connections.viewers.get('human-viewer'), human);
 });
 
 test('terminal namespace wiring does not break viewer and host signaling', () => {
