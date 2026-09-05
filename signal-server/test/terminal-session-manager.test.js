@@ -61,6 +61,18 @@ function createAsyncExitPty(delayMs = 25) {
   return pty;
 }
 
+function createNonExitingPty() {
+  const pty = createFakePty();
+  pty.kill = function kill(signal) {
+    this.killCalls.push(signal);
+  };
+  return pty;
+}
+
+function waitForTestMs(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 test('shared session manager enforces a hard session ceiling and reports bounded capacity', async () => {
   const ptys = [];
   const manager = createTerminalSessionManager({
@@ -747,6 +759,94 @@ test('PTY registration cleanup awaits asynchronous onExit within the production 
   assert.deepEqual(pty.killCalls, ['SIGHUP']);
   assert.equal(manager._getCleanupPendingCount(), 0);
   assert.equal(manager.listSessions().length, 0);
+});
+
+test('PTY cleanup cancels its exit timeout when asynchronous onExit arrives first', async (t) => {
+  const pty = createAsyncExitPty();
+  t.after(() => pty.cancelExitTimer());
+  pty.onData = () => { throw new Error('registration SECRET_VALUE'); };
+  const activeTimers = new Set();
+  let clearCount = 0;
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    ptyKillWaitMs: 200,
+    setTimeout(handler, delay) {
+      const timer = setTimeout(() => {
+        activeTimers.delete(timer);
+        handler();
+      }, delay);
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      clearCount += 1;
+      activeTimers.delete(timer);
+      clearTimeout(timer);
+    },
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+
+  await assert.rejects(async () => manager.createSession({ clientId: 'browser-a' }),
+    (error) => error.code === 'pty_spawn_failed');
+  assert.equal(manager._getCleanupPendingCount(), 0);
+  assert.equal(activeTimers.size, 0);
+  assert.ok(clearCount >= 2);
+});
+
+test('PTY cleanup removes a timed-out waiter before a delayed onExit settles the latch', async (t) => {
+  const pty = createAsyncExitPty(40);
+  t.after(() => pty.cancelExitTimer());
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    ptyKillWaitMs: 5,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+
+  const created = await manager.createSession({ clientId: 'browser-a' });
+  const session = manager._getSession(created.sessionId);
+  await assert.rejects(
+    () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
+    (error) => error.code === 'pty_cleanup_failed',
+  );
+  assert.equal(session.exitWaiters.size, 0);
+
+  await waitForTestMs(60);
+  assert.equal(session.exitObserved, true);
+  assert.equal(session.exitWaiters.size, 0);
+  assert.equal(manager._getCleanupPendingCount(), 0);
+});
+
+test('repeated timed-out PTY cleanup retries keep exit waiters bounded', async () => {
+  const pty = createNonExitingPty();
+  const manager = createTerminalSessionManager({
+    ptyFactory: () => pty,
+    ptyKillWaitMs: 1,
+    logger: { warn() {}, info() {}, error() {} },
+    config: {
+      enableTerminal: true,
+      terminalAdminPassword: 'test-terminal-admin-password',
+    },
+  });
+
+  const created = await manager.createSession({ clientId: 'browser-a' });
+  const session = manager._getSession(created.sessionId);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await assert.rejects(
+      () => manager.closeSession(created.sessionId, { clientId: 'browser-a', reason: 'user-close' }),
+      (error) => error.code === 'pty_cleanup_failed',
+    );
+    assert.equal(session.exitWaiters.size, 0);
+  }
+  assert.equal(manager._getCleanupPendingCount(), 0);
+  assert.equal(pty.killCalls.length, 8 * 3);
 });
 
 test('PTY callback registration cleanup stops after two failed kill attempts and audits bounded failure', async () => {

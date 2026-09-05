@@ -357,6 +357,7 @@ function createTerminalSessionManager(options = {}) {
     if (Object.prototype.hasOwnProperty.call(exitInfo, 'signal')) {
       session.signal = exitInfo.signal;
     }
+    settleExitWaiters(session, true);
     if (typeof session.resolveExit === 'function') {
       session.resolveExit({
         exitCode: session.exitCode,
@@ -364,6 +365,13 @@ function createTerminalSessionManager(options = {}) {
       });
     }
     return true;
+  }
+
+  function settleExitWaiters(session, exited) {
+    if (!session.exitWaiters?.size) return;
+    for (const waiter of Array.from(session.exitWaiters)) {
+      waiter(exited);
+    }
   }
 
   function isPtyAlive(session) {
@@ -386,6 +394,12 @@ function createTerminalSessionManager(options = {}) {
     session.exitPromise = new Promise((resolve) => {
       session.resolveExit = resolve;
     });
+    // Keep one latch reaction per session. Individual waiters live in a
+    // removable Set so timed-out retries do not accumulate Promise reactions.
+    session.exitPromise.then(
+      () => settleExitWaiters(session, true),
+      () => settleExitWaiters(session, false),
+    );
     if (session.exitObserved && typeof session.resolveExit === 'function') {
       session.resolveExit({
         exitCode: session.exitCode,
@@ -458,24 +472,28 @@ function createTerminalSessionManager(options = {}) {
         if (waitMs <= 0) {
           return false;
         }
-        const exitPromise = ensureExitLatch(session);
+        ensureExitLatch(session);
         return new Promise((resolve) => {
           let settled = false;
           let timeout = null;
           const settle = (exited) => {
             if (settled) return;
             settled = true;
+            session.exitWaiters.delete(settle);
             if (timeout !== null) {
               cancelTimeout(timeout);
               timeout = null;
             }
             resolve(Boolean(exited));
           };
+          session.exitWaiters.add(settle);
           timeout = scheduleTimeout(() => settle(false), waitMs);
-          exitPromise.then(
-            () => settle(true),
-            () => settle(false),
-          );
+          // A deterministic test timer may invoke its callback synchronously.
+          // Cancel the handle after assignment so that path cannot leak it.
+          if (settled && timeout !== null) {
+            cancelTimeout(timeout);
+            timeout = null;
+          }
         });
       },
     });
@@ -826,6 +844,7 @@ function createTerminalSessionManager(options = {}) {
       exitObserved: false,
       exitPromise: null,
       resolveExit: null,
+      exitWaiters: new Set(),
       cleanupPromise: null,
       killState: 'idle',
       killAttemptCount: 0,
