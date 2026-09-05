@@ -862,6 +862,27 @@ body.chrome-idle .chrome-docks {
   touch-action: none;
 }
 
+#mobileInputStatus {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#mobileInputStatus:not([hidden]) {
+  display: block;
+}
+
+.mobile-input-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.mobile-input-actions .control-btn[hidden] {
+  display: none;
+}
+
 #mobileInputDock .control-btn {
   min-height: var(--touch-min);
 }

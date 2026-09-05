@@ -10,6 +10,11 @@ const Input = {
   _desktopWritePending: new Map(),
   _desktopWriteRecovery: null,
   mobileTextInputAdapter: null,
+  _mobileTextTransportUnsubscribe: null,
+  _mobileTextTransportOwner: null,
+  _mobileTransportSnapshot: null,
+  _mobileTextInputUiBound: false,
+  _mobileTextInputToggleBound: false,
   _mobileTextReturnFocus: null,
   _lastSurfaceGeometry: null,
   _surfaceGeometryByElement: new WeakMap(),
@@ -54,7 +59,10 @@ const Input = {
   },
 
   initKeyboardController() {
-    if (this.keyboardController) return this.keyboardController;
+    if (this.keyboardController) {
+      this._subscribeMobileTextTransport();
+      return this.keyboardController;
+    }
     if (typeof KeyboardTransport === 'undefined' || typeof RemoteKeyboardController === 'undefined') return null;
     this.keyboardTransport = KeyboardTransport.create({
       sendDataChannel: (payload) => this.sendKeyboardDataChannel(payload),
@@ -68,7 +76,37 @@ const Input = {
     if (typeof WebRTC === 'undefined' || WebRTC.inputChannel?.readyState !== 'open') {
       this.keyboardTransport.markAdapterUnavailable('dataChannel');
     }
+    this._subscribeMobileTextTransport();
     return this.keyboardController;
+  },
+
+  _subscribeMobileTextTransport() {
+    const transport = this.keyboardTransport;
+    if (!transport || typeof transport.subscribeState !== 'function') return;
+    if (this._mobileTextTransportOwner === transport && this._mobileTextTransportUnsubscribe) return;
+    this._mobileTextTransportUnsubscribe?.();
+    this._mobileTextTransportUnsubscribe = null;
+    this._mobileTextTransportOwner = transport;
+    this._mobileTextTransportUnsubscribe = transport.subscribeState((snapshot) => {
+      this._mobileTransportSnapshot = snapshot || null;
+      const state = String(snapshot?.state || '').toLowerCase();
+      if (this.mobileTextInputAdapter) {
+        if (state === 'ready' || state === 'blocked' || state === 'reacquire-required') {
+          this.mobileTextInputAdapter.onTransportState(state);
+        }
+        this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
+      }
+    });
+  },
+
+  _syncMobileTextTransport() {
+    const snapshot = this._mobileTransportSnapshot || this.keyboardTransport?.getSnapshot?.();
+    if (!snapshot || !this.mobileTextInputAdapter) return;
+    const state = String(snapshot.state || '').toLowerCase();
+    if (state === 'ready' || state === 'blocked' || state === 'reacquire-required' || state === 'revoked') {
+      this.mobileTextInputAdapter.onTransportState(state);
+    }
+    this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
   },
 
   setKeyboardDataChannelAvailable(available) {
@@ -110,6 +148,9 @@ const Input = {
     const leaseChanged = previousLease?.leaseId !== nextLease?.leaseId
       || previousLease?.leaseEpoch !== nextLease?.leaseEpoch;
     if (leaseChanged) {
+      // Clear the mobile draft before the controller changes the transport
+      // identity. The old generation must never cross a lease boundary.
+      this.mobileTextInputAdapter?.reset('lease-changed');
       this._desktopWriteSequence = 0;
       this._desktopWritePending.clear();
       this._desktopWriteRecovery = null;
@@ -123,6 +164,7 @@ const Input = {
     }
     this.activeControlLease = nextLease;
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
+    if (!nextLease) this.mobileTextInputAdapter?.onTransportState('revoked');
     this.updateKeyboardUI();
   },
 
@@ -130,6 +172,7 @@ const Input = {
     if (!this.keyboardTransport) return { status: 'stale' };
     const result = this.keyboardTransport.acceptAck(ack);
     this.modifierMask = Number.isInteger(ack?.modifierMask) ? ack.modifierMask : this.modifierMask;
+    this.mobileTextInputAdapter?.refreshDeliveryState();
     this.updateKeyboardUI();
     return result;
   },
@@ -293,7 +336,10 @@ const Input = {
 
   updateKeyboardUI() {
     const display = document.getElementById('keyInputDisplay');
-    if (!display) return;
+    if (!display) {
+      this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+      return;
+    }
     const raw = this.keyboardController?.getSnapshot().state || 'INACTIVE';
     const labels = {
       INACTIVE: '键盘：未激活',
@@ -308,6 +354,7 @@ const Input = {
     display.textContent = labels[raw] || `键盘：${raw}`;
     display.dataset.state = raw;
     this.updateMobileTextInputButton();
+    this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
     this.updateMobileVirtualModifierButtons();
   },
 
@@ -328,6 +375,38 @@ const Input = {
     if (!button) return;
     button.hidden = !this.supportsMobileTextInput();
     button.disabled = !this.isActive;
+  },
+
+  updateMobileTextInputState(snapshot = null) {
+    const state = snapshot || this.mobileTextInputAdapter?.getSnapshot?.();
+    const status = document.getElementById('mobileInputStatus');
+    const retry = document.getElementById('mobileInputRetryBtn');
+    const discard = document.getElementById('mobileInputDiscardBtn');
+    if (!state) {
+      if (status) status.hidden = true;
+      if (retry) retry.hidden = true;
+      if (discard) discard.hidden = true;
+      return;
+    }
+    const labels = {
+      pending: '有未发送内容',
+      blocked: '暂不可输入',
+      uncertain: '输入位置或连接已变化，请核对远端后放弃本地草稿',
+    };
+    const showStatus = Boolean(state.hasPending);
+    if (status) {
+      const label = labels[state.status] || '';
+      status.hidden = !showStatus || !label;
+      status.textContent = label;
+    }
+    if (retry) {
+      retry.hidden = !state.hasPending;
+      retry.disabled = !state.retryable;
+    }
+    if (discard) {
+      discard.hidden = !state.hasPending;
+      discard.disabled = !state.hasPending;
+    }
   },
 
   focusDesktopSurface(element, reason) {
@@ -827,6 +906,8 @@ const Input = {
     const mobileButton = document.getElementById('mobileTextInputBtn');
     const mobileDock = document.getElementById('mobileInputDock');
     const mobileInput = document.getElementById('mobileTextInput');
+    const mobileRetryButton = document.getElementById('mobileInputRetryBtn');
+    const mobileDiscardButton = document.getElementById('mobileInputDiscardBtn');
     let returnFocus = null;
     const isVisibleFocusable = (target) => {
       if (!target || target.isConnected === false || target.hidden || target.disabled) return false;
@@ -893,32 +974,55 @@ const Input = {
         sendText: (text) => this.keyboardController?.sendText(text),
         sendKey: (key) => this.keyboardController?.sendChord({ code: key }),
         isEnabled: () => this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
+        isDeliverySettled: () => {
+          const snapshot = this.keyboardTransport?.getSnapshot?.() || {};
+          return snapshot.state === 'ready' && snapshot.pendingCount === 0;
+        },
+        onStateChange: (snapshot) => this.updateMobileTextInputState(snapshot),
         refreshViewport: () => {
           if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
         },
       });
       this.mobileTextInputAdapter.attach();
+      this._syncMobileTextTransport();
     }
-    mobileButton?.addEventListener('click', (event) => {
-      event.preventDefault();
-      if (!this.isActive) return;
-      if (this.mobileTextInputAdapter?.getSnapshot().shown) {
-        if (mobileDock) mobileDock.hidden = true;
-        document.body?.classList?.remove?.('mobile-input-visible');
-        mobileButton.setAttribute?.('aria-pressed', 'false');
-        const wasInMobileFlow = isMobileFlowFocus(document.activeElement);
-        this.mobileTextInputAdapter.hide();
-        restoreMobileReturnFocus(wasInMobileFlow);
-        return;
-      }
-      const active = document.activeElement;
-      this._mobileTextReturnFocus = active === mobileButton ? this.videoElement : active;
-      if (mobileDock) mobileDock.hidden = false;
-      document.body?.classList?.add?.('mobile-input-visible');
-      mobileButton.setAttribute?.('aria-pressed', 'true');
-      this.mobileTextInputAdapter?.show();
-    });
+    if (!this._mobileTextInputUiBound) {
+      mobileRetryButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        this.mobileTextInputAdapter?.retryPending();
+        this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+      });
+      mobileDiscardButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        this.mobileTextInputAdapter?.discardPending();
+        this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+      });
+      this._mobileTextInputUiBound = true;
+    }
+    if (mobileButton && !this._mobileTextInputToggleBound) {
+      mobileButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (!this.isActive) return;
+        if (this.mobileTextInputAdapter?.getSnapshot().shown) {
+          if (mobileDock) mobileDock.hidden = true;
+          document.body?.classList?.remove?.('mobile-input-visible');
+          mobileButton.setAttribute?.('aria-pressed', 'false');
+          const wasInMobileFlow = isMobileFlowFocus(document.activeElement);
+          this.mobileTextInputAdapter.hide();
+          restoreMobileReturnFocus(wasInMobileFlow);
+          return;
+        }
+        const active = document.activeElement;
+        this._mobileTextReturnFocus = active === mobileButton ? this.videoElement : active;
+        if (mobileDock) mobileDock.hidden = false;
+        document.body?.classList?.add?.('mobile-input-visible');
+        mobileButton.setAttribute?.('aria-pressed', 'true');
+        this.mobileTextInputAdapter?.show();
+      });
+      this._mobileTextInputToggleBound = true;
+    }
     this.updateMobileTextInputButton();
+    this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
   },
 };
 

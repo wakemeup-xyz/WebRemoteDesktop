@@ -324,6 +324,11 @@
 
   <div id="mobileInputDock" hidden>
     <textarea id="mobileTextInput" maxlength="4096" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="远程文本输入"></textarea>
+    <div id="mobileInputStatus" role="status" aria-live="polite" hidden></div>
+    <div class="mobile-input-actions">
+      <button id="mobileInputRetryBtn" class="control-btn" type="button" hidden>重试</button>
+      <button id="mobileInputDiscardBtn" class="control-btn" type="button" hidden>放弃</button>
+    </div>
   </div>
 
   <div id="viewerSupersededOverlay" class="viewer-superseded-overlay hidden" hidden role="dialog" aria-modal="true" aria-labelledby="viewerSupersededTitle">

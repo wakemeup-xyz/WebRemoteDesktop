@@ -778,6 +778,111 @@ test('mobile text adapter routes text and control keys through the keyboard cont
   assert.equal(keyboardPayloads[1].payload.steps.map(({ code }) => code).join(','), 'Enter,Enter');
 });
 
+test('mobile draft retry waits for the keyboard ACK and only resends unsent text', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const first = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(first.action, 'text');
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
+
+  // With the socket adapter unavailable, the next edit is retained locally;
+  // the adapter must not turn a transport rejection into an automatic retry.
+  Input.keyboardTransport.markAdapterUnavailable('socket');
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  let snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.retryable, false);
+  assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 1);
+
+  Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: first.seq,
+    inputIds: first.inputIds,
+  });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.retryable, true, 'ACK settles delivery and unlocks explicit retry');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+
+  Input.keyboardTransport.markAdapterAvailable('socket');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  const textPayloads = socketEvents
+    .filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textPayloads, ['a', 'b']);
+});
+
+test('mobile transport state bridge is single-owner and lifecycle lease changes clear drafts', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const adapter = Input.mobileTextInputAdapter;
+  const firstUnsubscribe = Input._mobileTextTransportUnsubscribe;
+  Input.initKeyboardController();
+  assert.equal(Input._mobileTextTransportUnsubscribe, firstUnsubscribe);
+
+  adapter.onTransportState('blocked');
+  assert.equal(adapter.getSnapshot().status, 'blocked');
+  adapter.onTransportState('reacquire-required');
+  assert.equal(adapter.getSnapshot().deliveryUncertain, true);
+  assert.equal(adapter.getSnapshot().retryable, false);
+
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(adapter.getSnapshot().hasPending, false);
+  assert.equal(adapter.getSnapshot().shown, false);
+
+  // Same identity is idempotent and must not clear a new local draft.
+  Input.setupTextInput();
+  adapter.onTransportState('blocked');
+  mobileInput.value = 'new';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  Input.setControlLease(null);
+  assert.equal(adapter.getSnapshot().hasPending, false);
+  assert.equal(adapter.getSnapshot().status, 'uncertain');
+});
+
+test('mobile draft status and retry/discard controls stay metadata-only and bounded', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const status = elements.get('mobileInputStatus');
+  const retry = elements.get('mobileInputRetryBtn');
+  const discard = elements.get('mobileInputDiscardBtn');
+  Input.mobileTextInputAdapter.onTransportState('blocked');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '暂不可输入');
+  assert.equal(retry.hidden, false);
+  assert.equal(retry.disabled, true);
+  assert.equal(discard.hidden, false);
+  discard.listeners.get('click')({ preventDefault() {} });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+  assert.equal(status.hidden, true);
+  assert.equal(retry.hidden, true);
+  assert.equal(discard.hidden, true);
+});
+
 test('mobile textarea stops control and hardware text events before document keyboard handling', () => {
   const { Input, context, elements, documentListeners, socketEvents } = loadInput();
   activate(Input, context);
