@@ -3,6 +3,7 @@ const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { setupTerminal } = require('./terminal');
+const { createRuntimeContext } = require('./runtime-context');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
@@ -120,6 +121,24 @@ function resetConnections() {
   connections.relayViewers.clear();
   clearHostCapabilities();
 }
+
+test('proof admissions expire, enforce capacity, and cannot be replayed', () => {
+  let now = 1000;
+  const context = createRuntimeContext({
+    now: () => now,
+    proofAdmissionTtlMs: 1000,
+    maxProofAdmissions: 1,
+  });
+  const first = context.issueProofAdmission();
+  assert.ok(first?.token);
+  assert.equal(context.issueProofAdmission(), null);
+  now += 1001;
+  assert.equal(context.admitProofViewer(first), false);
+  const fresh = context.issueProofAdmission();
+  assert.ok(fresh?.token);
+  assert.equal(context.admitProofViewer(fresh), true);
+  assert.equal(context.admitProofViewer(fresh), false);
+});
 
 test('standalone relay-viewer cannot stop host tunnel relay stream', () => {
   resetConnections();

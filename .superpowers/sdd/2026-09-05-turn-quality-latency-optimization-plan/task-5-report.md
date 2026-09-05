@@ -108,3 +108,40 @@ No service, browser, tunnel, or live Viewer was started. The only outstanding
 limitation is the intentionally absent real TURN/browser run; cross-machine
 values remain `NOT RUN` and any future cross-machine value must be marked
 `estimate`.
+
+## Review-fix round 2
+
+### Red phase
+
+The review exposed that an output write or rename failure could leave a prior
+successful proof at the requested output pathname, and that one-time proof
+admissions had neither expiry nor bounded storage.
+
+### Output and admission hardening
+
+Before parsing can enter network or browser work, the runner atomically renames
+an existing `--output` target into a same-directory private stale file. A new
+success or failure then uses the existing temp-file, `fsync`, and rename path;
+the stale file is removed only after the replacement succeeds. Therefore a
+write/rename failure leaves the requested target absent rather than retaining
+an old `ok:true` result, reports the write error to stderr, and exits non-zero.
+
+Proof admissions now use a 30-second default TTL, lazy expiry cleanup, a
+global bounded capacity of 32, and delete-on-first-attempt semantics. Expired,
+over-capacity, invalidated, and replayed admissions are rejected. Tokens remain
+only in the in-memory admission map and are absent from status, logs, and proof
+result output.
+
+### Verification
+
+- RED: stale-target write/rename and expiry/capacity/replay fixtures initially
+  lacked the required helpers and admission controls.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs` — 6 passed.
+- GREEN: `node --test signal-server/websocket/signaling.test.js` — 70 passed,
+  including expiry, capacity, consume, and replay coverage.
+
+### Commit and concerns
+
+This round is committed as `fix(observability): expire relay proof admissions`.
+No service, tunnel, browser, or real TURN path was started; live proof remains
+`NOT RUN`.

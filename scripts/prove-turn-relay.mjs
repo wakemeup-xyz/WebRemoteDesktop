@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
+let outputSequence = 0;
 
 export function parseProofArgs(argv = []) {
   const result = { durationSeconds: 45, output: null, help: false };
@@ -61,6 +62,26 @@ export function writeResultAtomically(result, output, operations = fs) {
     if (fd !== null) try { operations.closeSync(fd); } catch (_closeError) { /* best effort */ }
     try { operations.unlinkSync(temporary); } catch (_unlinkError) { /* no new result remains */ }
     throw error;
+  }
+}
+export function isolateOutputTarget(output, operations = fs) {
+  if (!output) return null;
+  const backup = path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.${process.pid}.${Date.now()}.${outputSequence += 1}.stale`,
+  );
+  try {
+    operations.renameSync(output, backup);
+    return backup;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+export function cleanupIsolatedOutput(backup, operations = fs) {
+  if (!backup) return;
+  try { operations.unlinkSync(backup); } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
   }
 }
 
@@ -140,11 +161,35 @@ const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedPath === fileURLToPath(import.meta.url)) {
   let options = { durationSeconds: null, output: outputFromArgv(process.argv.slice(2)) };
   let result;
-  try { options = parseProofArgs(process.argv.slice(2)); if (options.help) printUsage(); else result = await main(options); }
-  catch (error) { result = buildFailedProofResult({ durationSeconds: options.durationSeconds }, error); }
+  let isolatedOutput = null;
+  let isolationAttempted = false;
+  try {
+    options = parseProofArgs(process.argv.slice(2));
+    if (options.help) printUsage();
+    else {
+      isolatedOutput = isolateOutputTarget(options.output);
+      isolationAttempted = true;
+      result = await main(options);
+    }
+  } catch (error) {
+    if (!isolationAttempted && options.output) {
+      try {
+        isolatedOutput = isolateOutputTarget(options.output);
+        isolationAttempted = true;
+      } catch (isolationError) {
+        error = isolationError;
+      }
+    }
+    result = buildFailedProofResult({ durationSeconds: options.durationSeconds }, error);
+  }
   if (result) {
     let outputWritten = true;
-    try { writeResultAtomically(result, options.output); }
+    try {
+      if (!isolationAttempted) isolatedOutput = isolateOutputTarget(options.output);
+      writeResultAtomically(result, options.output);
+      cleanupIsolatedOutput(isolatedOutput);
+      isolatedOutput = null;
+    }
     catch (error) { console.error(`proof result write failed: ${error instanceof Error ? error.message : error}`); outputWritten = false; process.exitCode = 1; }
     if (outputWritten) {
       console.log(JSON.stringify(result, null, 2));

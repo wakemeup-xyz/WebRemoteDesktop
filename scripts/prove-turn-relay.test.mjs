@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   assertNoActiveViewer, buildFailedProofResult, parseProofArgs, proofSnapshotPasses,
   redactSelectedPair, selectedPairIsRelay, writeResultAtomically,
+  isolateOutputTarget, cleanupIsolatedOutput,
 } from './prove-turn-relay.mjs';
 
 test('proof parameters accept bounded duration and an output path', () => {
@@ -63,17 +64,23 @@ test('proof failure result is incomplete and atomic output never leaves a partia
   assert.equal(result.proofComplete, false);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-proof-'));
   const output = path.join(directory, 'proof.json');
-  writeResultAtomically(result, output);
-  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  fs.writeFileSync(output, JSON.stringify({ ok: true, proofComplete: true }), 'utf8');
+  const backup = isolateOutputTarget(output);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(JSON.parse(fs.readFileSync(backup, 'utf8')).ok, true);
   assert.throws(() => writeResultAtomically({ ok: true }, output, {
     ...fs,
     writeFileSync() { throw new Error('write failed'); },
   }), /write failed/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  assert.equal(fs.existsSync(output), false);
   assert.throws(() => writeResultAtomically({ ok: true }, output, {
     ...fs,
     renameSync() { throw new Error('rename failed'); },
   }), /rename failed/);
+  assert.equal(fs.existsSync(output), false);
+  writeResultAtomically(result, output);
+  cleanupIsolatedOutput(backup);
   assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), result);
+  assert.equal(fs.existsSync(backup), false);
   fs.rmSync(directory, { recursive: true, force: true });
 });
