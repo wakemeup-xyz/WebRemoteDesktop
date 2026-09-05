@@ -71,7 +71,7 @@ const ChromeLayout = {
       && !controlsHidden
       && !menuOpen
       && !modalOpen
-      && !['visible', 'composing', 'pending'].includes(mobileInputMode)
+      && !['visible', 'composing', 'pending', 'blocked'].includes(mobileInputMode)
       && Number(idleMs) >= this.IDLE_MS;
   },
   collectIdleInputs(rootEl) {
@@ -82,11 +82,14 @@ const ChromeLayout = {
       || moreBtn?.getAttribute?.('aria-expanded') === 'true';
     const mobileInputSnapshot = typeof Input !== 'undefined'
       ? Input.mobileTextInputAdapter?.getSnapshot?.() : null;
-    const mobileInputMode = ['visible', 'composing', 'pending'].includes(mobileInputSnapshot?.mobileInputMode)
-      ? mobileInputSnapshot.mobileInputMode
-      : mobileInputSnapshot?.composing ? 'composing'
-        : mobileInputSnapshot?.shown ? 'visible'
-          : mobileInputSnapshot?.pending ? 'pending' : 'off';
+    const status = String(mobileInputSnapshot?.status || '').toLowerCase();
+    const mobileInputMode = status === 'blocked' || status === 'uncertain' || mobileInputSnapshot?.deliveryUncertain === true
+      ? 'blocked'
+      : status === 'composing' || mobileInputSnapshot?.composing === true ? 'composing'
+        : status === 'pending' || mobileInputSnapshot?.hasPending === true ? 'pending'
+          : ['visible', 'composing', 'pending', 'blocked'].includes(mobileInputSnapshot?.mobileInputMode)
+            ? mobileInputSnapshot.mobileInputMode
+            : mobileInputSnapshot?.shown ? 'visible' : 'off';
     return {
       streamConnected: !!body?.classList?.contains?.('stream-connected'),
       controlsHidden: !!body?.classList?.contains?.('controls-hidden'),
@@ -174,7 +177,7 @@ const ChromeLayout = {
       this._wasControlsHidden = inputs.controlsHidden;
       if (body?.classList?.contains?.('chrome-idle')
           && (!inputs.streamConnected || inputs.controlsHidden || inputs.menuOpen || inputs.modalOpen
-            || ['visible', 'composing', 'pending'].includes(inputs.mobileInputMode))) {
+            || ['visible', 'composing', 'pending', 'blocked'].includes(inputs.mobileInputMode))) {
         body.classList.remove('chrome-idle');
       }
       this.syncToggleControlsLabel(root);

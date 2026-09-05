@@ -321,6 +321,90 @@ test('a reliable left arrow permits the matching middle insertion', () => {
   assert.equal(h.input.value, 'abXc\u200B');
 });
 
+test('cursor-aware diff accepts a duplicate insertion after repeated left navigation', () => {
+  const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });
+  h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });
+  assert.equal(h.input.selectionStart, 1);
+  h.input.value = 'abbc\u200B'; h.input.selectionStart = 2; h.input.selectionEnd = 2;
+  h.emit('input');
+
+  assert.equal(h.input.value, 'abbc\u200B');
+  assert.deepEqual(h.sent, [
+    {kind: 'key', value: 'ArrowLeft'},
+    {kind: 'key', value: 'ArrowLeft'},
+    {kind: 'text', value: 'b'},
+  ]);
+  assert.equal(h.adapter.getSnapshot().status, 'idle');
+});
+
+test('cursor-aware diff rejects an accepted-history edit before the remote cursor', () => {
+  const h = makeTextHarness(); h.input.value = 'abc'; h.emit('input'); h.sent.length = 0;
+  h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });
+  h.emit('keydown', { key: 'ArrowLeft', stopPropagation() {}, preventDefault() {} });
+  h.input.value = 'xbc'; h.input.selectionStart = 1; h.input.selectionEnd = 1;
+  h.emit('input');
+
+  assert.equal(h.input.value, 'abc\u200B');
+  assert.deepEqual(h.sent, [
+    {kind: 'key', value: 'ArrowLeft'},
+    {kind: 'key', value: 'ArrowLeft'},
+  ]);
+});
+
+test('modifier navigation invalidates the local cursor history without changing the cursor', () => {
+  const sent = [];
+  const input = {
+    value: '', selectionStart: 0, selectionEnd: 0,
+    addEventListener(type, fn) { this.listeners.set(type, fn); },
+    removeEventListener() {}, focus() {}, blur() {}, listeners: new Map(),
+  };
+  const adapter = MobileTextInput.create({
+    element: input,
+    sendText: (value) => { sent.push(['text', value]); return true; },
+    sendKey: (value, modifiers) => { sent.push(['key', value, modifiers]); return true; },
+    isEnabled: () => true,
+  });
+  adapter.attach();
+  input.value = 'abc'; input.listeners.get('input')({target: input});
+  input.listeners.get('keydown')({
+    target: input, key: 'ArrowLeft', shiftKey: true, ctrlKey: false, altKey: false, metaKey: false,
+    stopPropagation() {}, preventDefault() {},
+  });
+
+  assert.deepEqual(sent, [
+    ['text', 'abc'],
+    ['key', 'ArrowLeft', {shiftKey: true, ctrlKey: false, altKey: false, metaKey: false}],
+  ]);
+  input.value = 'fresh'; input.listeners.get('input')({target: input});
+  assert.deepEqual(sent.at(-1), ['text', 'fresh']);
+});
+
+test('failed external navigation callback preserves accepted history and the local draft', () => {
+  const h = makeTextHarness({sendKeyResult: false});
+  h.input.value = 'abc'; h.emit('input');
+  assert.equal(h.adapter.runExternalAction('context-change', () => false), false);
+  h.input.value = 'abcd\u200b'; h.emit('input');
+  assert.equal(h.input.value, 'abcd\u200b');
+  assert.deepEqual(h.sent.filter((item) => item.kind === 'text').map((item) => item.value), ['abc', 'd']);
+});
+
+test('textarea keyup releases an already tracked key before local gates', () => {
+  const released = [];
+  const h = makeTextHarness();
+  const adapter = MobileTextInput.create({
+    element: h.input,
+    sendText: () => false,
+    sendKey: () => false,
+    isEnabled: () => false,
+    releaseTrackedKey: (event) => { released.push(event.code); return true; },
+  });
+  adapter.attach();
+  adapter.onTransportState('blocked');
+  h.emit('keyup', {code: 'ShiftLeft', stopPropagation() { this.stopped = true; }});
+  assert.deepEqual(released, ['ShiftLeft']);
+});
+
 test('surrogate-pair Emoji is not split into invalid text', () => {
   const h = makeTextHarness(); h.input.value = '🙂'; h.emit('input');
   assert.deepEqual(h.sent, [{kind: 'text', value: '🙂'}]);

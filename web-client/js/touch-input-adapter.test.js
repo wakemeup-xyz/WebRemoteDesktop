@@ -303,3 +303,17 @@ test('explicit right click uses the latest mapped point and a paired action', ()
     ['up', 'right', 0.5, 0.5],
   ]);
 });
+
+test('explicit right click commits its real down through the navigation gate', () => {
+  let commits = 0;
+  const h = makeTouchHarness({commitGesture: (send) => {
+    commits += 1;
+    return Boolean(send());
+  }});
+  h.pointer('pointerdown', {pointerId: 1, clientX: 80, clientY: 60, buttons: 1});
+  h.pointer('pointerup', {pointerId: 1, clientX: 80, clientY: 60, buttons: 0});
+  h.mouse.length = 0;
+  h.adapter.clickButton('right');
+  assert.equal(commits, 2, 'tap and explicit right click each commit one real down');
+  assert.deepEqual(h.mouse.map(({action}) => action), ['down', 'up']);
+});

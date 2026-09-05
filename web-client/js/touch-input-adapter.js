@@ -46,7 +46,7 @@
       const send = () => {
         attempted = true;
         inputId = sendMouse('down', payload);
-        return Boolean(inputId);
+        return inputId;
       };
       const accepted = Boolean(commitGesture(send));
       if (!accepted || !attempted || !inputId) {
@@ -186,7 +186,24 @@
     // leave this private latch set even after Input receives a fresh lease, so
     // expose the one state transition needed to re-arm touch delivery.
     function rearm() { resetSent = false; return true; }
-    function clickButton(button, coords) { if (!enabled()) return null; const p = coords && Number.isFinite(Number(coords.relX)) ? { relX: Number(coords.relX), relY: Number(coords.relY) } : lastPoint; if (!p) return null; const b = button === 'right' || button === 2 ? 'right' : button === 'middle' || button === 1 ? 'middle' : 'left'; const id = emit('down', { ...p, button: b, clickCount: 1, buttons: b === 'right' ? 2 : 1 }, 'button-down-failed'); if (!id) return null; activeButton = b; const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed'); activeButton = null; return up || id; }
+    function clickButton(button, coords) {
+      if (!enabled()) return null;
+      const p = coords && Number.isFinite(Number(coords.relX))
+        ? { relX: Number(coords.relX), relY: Number(coords.relY) }
+        : lastPoint;
+      if (!p) return null;
+      const b = button === 'right' || button === 2 ? 'right' : button === 'middle' || button === 1 ? 'middle' : 'left';
+      let inputId = null;
+      const accepted = Boolean(commitGesture(() => {
+        inputId = emit('down', { ...p, button: b, clickCount: 1, buttons: b === 'right' ? 2 : 1 }, 'button-down-failed');
+        return inputId;
+      }));
+      if (!accepted || !inputId) return null;
+      activeButton = b;
+      const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed');
+      activeButton = null;
+      return up || inputId;
+    }
     function flushPending() { if (pendingWheel && wheelFrame === null) wheelFrame = requestFrame(flushWheel); }
     function getSnapshot() { return { state, bound, pointerCount: pointers.size, primaryActive: primaryId !== null, activeButton, pendingReset: resetSent, wheelPending: Boolean(pendingWheel) }; }
     return { bind, unbind, reset, rearm, clickButton, flushPending, getSnapshot };

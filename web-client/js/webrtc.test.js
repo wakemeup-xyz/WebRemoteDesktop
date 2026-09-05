@@ -196,6 +196,18 @@ test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   assert.equal(cleared, true);
 });
 
+test('chrome snapshot exposes blocked mobile text state to the layout capability bridge', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const snapshot = { shown: true, composing: false, hasPending: true, status: 'uncertain', deliveryUncertain: true };
+  context.Input = { mobileTextInputAdapter: { getSnapshot: () => snapshot } };
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.inputChannel = { readyState: 'open' };
+
+  assert.equal(WebRTC.getChromeSnapshot().mobileInputMode, 'blocked');
+});
+
 test('production video frame callback syncs the input gate without moving focus', () => {
   const { WebRTC, context, elements } = loadWebRTC({ realInput: true });
   const Input = context.__Input;

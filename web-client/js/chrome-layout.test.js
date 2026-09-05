@@ -367,8 +367,14 @@ test('collectIdleInputs reflects the mobile text adapter focus state', () => {
     assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'visible');
     snapshot = { shown: true, composing: true };
     assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'composing');
-    snapshot = { shown: false, composing: false, pending: true };
+    snapshot = { shown: false, composing: false, hasPending: true, status: 'pending' };
     assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'pending');
+    snapshot = { shown: true, composing: false, hasPending: false, status: 'blocked' };
+    assert.equal(ChromeLayout.collectIdleInputs(root).mobileInputMode, 'blocked');
+    assert.equal(ChromeLayout.shouldIdle({
+      streamConnected: true, controlsHidden: false, menuOpen: false, modalOpen: false,
+      mobileInputMode: 'blocked', idleMs: 5000,
+    }), false);
   } finally {
     if (previousInput === undefined) delete global.Input;
     else global.Input = previousInput;

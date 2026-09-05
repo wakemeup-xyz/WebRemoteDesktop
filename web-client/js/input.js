@@ -15,6 +15,8 @@ const Input = {
   _mobileTransportSnapshot: null,
   _mobileTextInputUiBound: false,
   _mobileTextInputToggleBound: false,
+  _mobileTextInputModalBound: false,
+  _mobileActionButtonListeners: new WeakSet(),
   _mobileTextReturnFocus: null,
   _mobileResetPending: false,
   _mobileResetAckInFlight: false,
@@ -33,6 +35,10 @@ const Input = {
   _pressedMouseButtons: new Set(),
   _pendingMouseReset: false,
   _pendingMouseResetId: null,
+  _mobileSurfaceState: 'settled',
+  _mobileSurfaceGeneration: 0,
+  _mobileSurfaceGesture: null,
+  _mobileSurfaceTimer: null,
   _touchAdapters: new Map(),
   _lastTouchAdapter: null,
   _lastPointerCoords: null,
@@ -167,6 +173,7 @@ const Input = {
       this._mobileResetAckInFlight = false;
       this.clearMobileTextInputDock();
       this.mobileTextInputAdapter?.reset('lease-changed');
+      this._resetMobileSurfaceContext();
       this._desktopWriteSequence = 0;
       this._desktopWritePending.clear();
       this._desktopWriteRecovery = null;
@@ -215,6 +222,155 @@ const Input = {
     this.mobileTextInputAdapter?.refreshDeliveryState();
     this.updateKeyboardUI();
     return result;
+  },
+
+  _clearMobileSurfaceTimer() {
+    if (this._mobileSurfaceTimer !== null) clearTimeout(this._mobileSurfaceTimer);
+    this._mobileSurfaceTimer = null;
+  },
+
+  _resetMobileSurfaceContext({ preserveUncertainty = false } = {}) {
+    const previousState = this._mobileSurfaceState;
+    const keepUncertain = preserveUncertainty
+      && (previousState === 'uncertain' || previousState === 'pending');
+    this._clearMobileSurfaceTimer();
+    this._mobileSurfaceGeneration += 1;
+    this._mobileSurfaceState = keepUncertain ? 'uncertain' : 'settled';
+    this._mobileSurfaceGesture = null;
+    if (preserveUncertainty && keepUncertain) {
+      this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+    } else {
+      this.mobileTextInputAdapter?.refreshDeliveryState();
+    }
+  },
+
+  _markMobileSurfaceUncertain(_reason) {
+    this._clearMobileSurfaceTimer();
+    this._mobileSurfaceGeneration += 1;
+    this._mobileSurfaceState = 'uncertain';
+    this._mobileSurfaceGesture = null;
+    this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+    this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+  },
+
+  _beginMobileSurfaceGesture(inputId) {
+    if (!inputId || !this.activeControlLease) return false;
+    this._clearMobileSurfaceTimer();
+    const generation = this._mobileSurfaceGeneration + 1;
+    this._mobileSurfaceGeneration = generation;
+    this._mobileSurfaceState = 'pending';
+    this._mobileSurfaceGesture = {
+      generation,
+      leaseId: this.activeControlLease.leaseId,
+      leaseEpoch: this.activeControlLease.leaseEpoch,
+      downId: inputId,
+      downAck: false,
+      upId: null,
+      upAck: false,
+      ended: false,
+    };
+    const record = this._desktopWritePending.get(inputId);
+    if (record) record.surfaceGeneration = generation;
+    this._mobileSurfaceTimer = setTimeout(() => {
+      this._mobileSurfaceTimer = null;
+      const gesture = this._mobileSurfaceGesture;
+      if (this._mobileSurfaceState === 'pending' && gesture?.generation === generation) {
+        this._markMobileSurfaceUncertain('ack-timeout');
+      }
+    }, 3000);
+    this.mobileTextInputAdapter?.refreshDeliveryState();
+    return true;
+  },
+
+  _markMobileSurfaceGestureEnded(inputId) {
+    const gesture = this._mobileSurfaceGesture;
+    if (!gesture || this._mobileSurfaceState !== 'pending' || !inputId) return false;
+    gesture.upId = inputId;
+    gesture.ended = true;
+    const record = this._desktopWritePending.get(inputId);
+    if (record) record.surfaceGeneration = gesture.generation;
+    this._settleMobileSurfaceGestureIfReady();
+    return true;
+  },
+
+  _settleMobileSurfaceGestureIfReady() {
+    const gesture = this._mobileSurfaceGesture;
+    if (!gesture || !gesture.ended || !gesture.downAck || !gesture.upAck) return false;
+    this._clearMobileSurfaceTimer();
+    this._mobileSurfaceState = 'settled';
+    this._mobileSurfaceGesture = null;
+    this.mobileTextInputAdapter?.refreshDeliveryState();
+    this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+    return true;
+  },
+
+  _handleMobileSurfaceAck(ack, records) {
+    if (!records?.length || !this._mobileSurfaceGesture) return;
+    const gesture = this._mobileSurfaceGesture;
+    if (ack?.leaseEpoch !== gesture.leaseEpoch
+      || this.activeControlLease?.leaseId !== gesture.leaseId
+      || this.activeControlLease?.leaseEpoch !== gesture.leaseEpoch
+      || records.some((record) => record.surfaceGeneration !== gesture.generation)) return;
+    const status = ack?.status;
+    if (status !== 'applied' && status !== 'duplicate') {
+      this._markMobileSurfaceUncertain(`ack-${String(status || 'unknown')}`);
+      return;
+    }
+    const ackInputIds = Array.isArray(ack?.inputIds)
+      ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    for (const record of records) {
+      if (record.action === 'down' && ackInputIds.includes(record.inputId)) gesture.downAck = true;
+      if (record.action === 'up' && ackInputIds.includes(record.inputId)) gesture.upAck = true;
+    }
+    this._settleMobileSurfaceGestureIfReady();
+  },
+
+  getMobileSurfaceContextSnapshot() {
+    return { state: this._mobileSurfaceState, generation: this._mobileSurfaceGeneration };
+  },
+
+  _isMobileEditingActionAllowed() {
+    const snapshot = this.mobileTextInputAdapter?.getSnapshot?.();
+    if (snapshot && (snapshot.composing || snapshot.hasPending || snapshot.deliveryUncertain)) return false;
+    return this._mobileSurfaceState === 'settled' && !this._pendingMouseReset;
+  },
+
+  runMobileEditingAction(action, send) {
+    if (!['navigation', 'context-change'].includes(action)
+      || !this._isMobileEditingActionAllowed() || typeof send !== 'function') return false;
+    if (this.mobileTextInputAdapter?.runExternalAction) {
+      return this.mobileTextInputAdapter.runExternalAction(action, send);
+    }
+    let result;
+    try {
+      result = send();
+    } catch (_) {
+      return false;
+    }
+    return result === true;
+  },
+
+  _sendMobileSurfaceDown(payload) {
+    let inputId = null;
+    const accepted = this.runMobileEditingAction('context-change', () => {
+      inputId = this.sendInput('mouse', 'down', payload);
+      return Boolean(inputId);
+    });
+    if (!accepted || !this._beginMobileSurfaceGesture(inputId)) return null;
+    return inputId;
+  },
+
+  _sendMobileSurfaceUp(payload) {
+    const inputId = this.sendInput('mouse', 'up', payload);
+    if (inputId) this._markMobileSurfaceGestureEnded(inputId);
+    else if (this._mobileSurfaceState === 'pending') this._markMobileSurfaceUncertain('up-send-failed');
+    return inputId;
+  },
+
+  _sendMobileSurfaceReset(payload) {
+    const inputId = this.sendInput('mouse', 'reset', payload);
+    if (this._mobileSurfaceState === 'pending') this._markMobileSurfaceUncertain('mouse-reset');
+    return inputId;
   },
 
   _acceptDesktopWriteAck(ack, inputIds) {
@@ -270,9 +426,13 @@ const Input = {
     const hasInputType = Boolean(ack && Object.prototype.hasOwnProperty.call(ack, 'inputType'));
     const inputType = ack?.inputType;
     if (hasInputType && inputType !== 'mouse' && inputType !== 'command') return { status: 'stale' };
+    const surfaceRecords = inputIds
+      .map((inputId) => this._desktopWritePending.get(inputId))
+      .filter((record) => record?.surfaceGeneration !== undefined);
     const desktopResult = (inputType === 'mouse' || inputType === 'command')
       ? this._acceptDesktopWriteAck(ack, inputIds)
       : null;
+    this._handleMobileSurfaceAck(ack, surfaceRecords);
     if (desktopResult && inputType === 'command') return desktopResult;
     if (desktopResult && desktopResult.status !== 'stale'
       && desktopResult.status !== 'reacquire-required') {
@@ -430,12 +590,13 @@ const Input = {
     }
     const labels = {
       pending: '有未发送内容',
+      composing: '输入法组合中',
       blocked: '暂不可输入',
       uncertain: '输入位置或连接已变化，请核对远端后放弃本地草稿',
     };
     const hasDraft = Boolean(state.hasPending);
     const hasRecovery = Boolean(state.deliveryUncertain);
-    const showStatus = hasDraft || hasRecovery;
+    const showStatus = hasDraft || hasRecovery || state.status === 'pending' || state.status === 'composing';
     if (status) {
       const label = labels[state.status] || '';
       status.hidden = !showStatus || !label;
@@ -500,6 +661,7 @@ const Input = {
     this._mobileResetPending = true;
     this.clearMobileTextInputDock();
     this.mobileTextInputAdapter?.reset(reason);
+    this._resetMobileSurfaceContext({ preserveUncertainty: true });
     this.updateMobileTextInputButton();
     const accepted = Boolean(this.keyboardController?.reset(reason));
     if (!accepted) {
@@ -513,6 +675,7 @@ const Input = {
     this.lastKeyboardResetReason = reason;
     this.clearMobileTextInputDock();
     this.mobileTextInputAdapter?.reset(reason);
+    this._resetMobileSurfaceContext({ preserveUncertainty: true });
     this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
       this.keyboardController.park(reason);
@@ -586,6 +749,8 @@ const Input = {
         seq: nextSequence,
         type,
         action,
+        leaseId: data.leaseId,
+        leaseEpoch: data.leaseEpoch,
       });
     };
     if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
@@ -751,7 +916,7 @@ const Input = {
     const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
     this._pressedMouseButtons.clear(); this._activePointerId = null; this._activePointerElement = null; this._pendingMouseMove = null;
     if (!needsReset || wasPendingReset || adapterResetIssued || this._pendingMouseReset) return null;
-    const inputId = this.sendInput('mouse', 'reset', { reason });
+    const inputId = this._sendMobileSurfaceReset({ reason });
     this._pendingMouseReset = true;
     this._pendingMouseResetId = inputId || null;
     return inputId;
@@ -779,7 +944,11 @@ const Input = {
         return point;
       },
       sendMouse: (action, payload) => {
-        const id = this.sendInput('mouse', action, payload);
+        const id = action === 'up'
+          ? this._sendMobileSurfaceUp(payload)
+          : action === 'reset'
+            ? this._sendMobileSurfaceReset(payload)
+            : this.sendInput('mouse', action, payload);
         if (action === 'reset') {
           this._pendingMouseReset = true;
           this._pendingMouseResetId = id || null;
@@ -788,8 +957,17 @@ const Input = {
       },
       isEnabled: () => this.isActive && !this._pendingMouseReset,
       getClickCount: (event) => this.getPointerClickCount(event),
-      beforeGesture: () => true,
-      commitGesture: (send) => Boolean(send()),
+      beforeGesture: () => this._isMobileEditingActionAllowed(),
+      commitGesture: (send) => {
+        let inputId = null;
+        const accepted = this.runMobileEditingAction('context-change', () => {
+          const result = send();
+          inputId = result;
+          return Boolean(result);
+        });
+        if (!accepted || !this._beginMobileSurfaceGesture(inputId)) return false;
+        return true;
+      },
       validateGeometry: () => this.validateGeometry(element),
     });
     adapter.bind();
@@ -820,12 +998,13 @@ const Input = {
       this._pointerLifecycleGeneration += 1;
       this._geometryAbortedPointerId = null;
       event.preventDefault();
+      if (!this._isMobileEditingActionAllowed()) return;
       this.focusDesktopSurface(element, 'surface-user');
       if (!this.validateGeometry(element)) return;
       const coords = this.getRelativeCoords(event); if (!coords) return;
       element.setPointerCapture?.(event.pointerId);
       const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
-      if (!this.sendInput('mouse', 'down', { ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
+      if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
       this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
     });
     element.addEventListener('pointerup', (event) => {
@@ -839,7 +1018,7 @@ const Input = {
       event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
       // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
       const id = coords
-        ? this.sendInput('mouse', 'up', {
+        ? this._sendMobileSurfaceUp({
           ...coords,
           button,
           clickCount: this._activePointerClickCount,
@@ -849,7 +1028,7 @@ const Input = {
       this._pressedMouseButtons.delete(button);
       if (!id) {
         this._pendingMouseReset = true;
-        const resetId = this.sendInput('mouse', 'reset', { reason: 'pointer-up-failed' });
+        const resetId = this._sendMobileSurfaceReset({ reason: 'pointer-up-failed' });
         this._pendingMouseResetId = resetId || null;
       }
       if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
@@ -922,27 +1101,60 @@ const Input = {
       find: { code: 'KeyF', modifiers: { meta: true } }, screenshot: { code: 'KeyA', modifiers: { meta: true, shift: true } }, switchInputMethod: { code: 'Space', modifiers: { ctrl: true } },
     };
     const virtualModifiers = new Set(['shift', 'ctrl', 'alt', 'meta']);
-    document.querySelectorAll('.action-btn, [data-mobile-action]').forEach((button) => button.addEventListener('click', (event) => {
-      event.preventDefault();
-      if (button.disabled) return;
-      const action = button.dataset.action || button.dataset.mobileAction;
-      if (virtualModifiers.has(action)) {
-        const pressed = button.getAttribute?.('aria-pressed') === 'true';
-        if (this.keyboardController?.setVirtualModifier(action, !pressed)) {
-          button.setAttribute?.('aria-pressed', String(!pressed));
+    document.querySelectorAll('.action-btn, [data-mobile-action]').forEach((button) => {
+      if (this._mobileActionButtonListeners.has(button)) return;
+      this._mobileActionButtonListeners.add(button);
+      button.addEventListener('pointerdown', (event) => {
+        const snapshot = this.mobileTextInputAdapter?.getSnapshot?.();
+        if (snapshot?.shown) event.preventDefault?.();
+      });
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (button.disabled) return;
+        const action = button.dataset.action || button.dataset.mobileAction;
+        if (virtualModifiers.has(action)) {
+          if (!this._isMobileEditingActionAllowed()) return;
+          const pressed = button.getAttribute?.('aria-pressed') === 'true';
+          if (this.keyboardController?.setVirtualModifier(action, !pressed)) {
+            button.setAttribute?.('aria-pressed', String(!pressed));
+          }
+          return;
         }
-        return;
-      }
-      if (action === 'rightClick') {
-        const adapter = this._lastTouchAdapter
-          || this._touchAdapters.get(this.videoElement)
-          || this._touchAdapters.get(document.getElementById('relayImage'));
-        adapter?.clickButton('right');
-        return;
-      }
-      if (action === 'showDock') { this.sendInput('command', 'showDock', {}); return; }
-      const chord = actions[action]; if (chord) this.keyboardController?.sendChord(chord);
-    }));
+        if (action === 'rightClick') {
+          const adapter = this._lastTouchAdapter
+            || this._touchAdapters.get(this.videoElement)
+            || this._touchAdapters.get(document.getElementById('relayImage'));
+          adapter?.clickButton('right');
+          return;
+        }
+        if (action === 'showDock') { this.sendInput('command', 'showDock', {}); return; }
+        const chord = actions[action];
+        if (!chord) return;
+        const physical = {
+          shiftKey: Boolean(event.shiftKey),
+          ctrlKey: Boolean(event.ctrlKey),
+          altKey: Boolean(event.altKey),
+          metaKey: Boolean(event.metaKey),
+        };
+        const modifiers = {
+          shift: Boolean(chord.modifiers?.shift || physical.shiftKey),
+          ctrl: Boolean(chord.modifiers?.ctrl || physical.ctrlKey),
+          alt: Boolean(chord.modifiers?.alt || physical.altKey),
+          meta: Boolean(chord.modifiers?.meta || physical.metaKey),
+        };
+        const navigation = new Set(['Backspace', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+        if (this.mobileTextInputAdapter && navigation.has(chord.code)) {
+          this.mobileTextInputAdapter.sendControlKey(chord.code, physical);
+          this.updateMobileTextInputState(this.mobileTextInputAdapter.getSnapshot());
+          return;
+        }
+        this.runMobileEditingAction('context-change', () => this.keyboardController?.sendChord({
+          code: chord.code,
+          modifiers,
+        }) === true);
+        this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+      });
+    });
   },
 
   setupTextInput() {
@@ -997,35 +1209,58 @@ const Input = {
     };
     const commit = () => {
       const text = Array.from(input?.value || '').slice(0, 4096).join('');
-      if (text && this.keyboardController?.sendText(text)) close();
+      if (!text) return false;
+      const accepted = this.runMobileEditingAction('context-change', () => (
+        this.keyboardController?.sendText(text) === true
+      ));
+      if (accepted) close();
+      return accepted;
     };
-    button?.addEventListener('click', (event) => {
-      event.preventDefault();
-      returnFocus = document.activeElement || button;
-      modal?.classList?.remove('hidden');
-      if (modal) modal.hidden = false;
-      input?.focus();
-    });
-    submit?.addEventListener('click', (event) => { event.preventDefault(); commit(); });
-    cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
-    input?.addEventListener('compositionend', () => commit());
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+    if (!this._mobileTextInputModalBound) {
+      button?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+      submit?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+      cancel?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+      button?.addEventListener('click', (event) => {
         event.preventDefault();
-        close();
-      }
-    }, true);
+        if (!this._isMobileEditingActionAllowed()) return;
+        returnFocus = document.activeElement || button;
+        modal?.classList?.remove('hidden');
+        if (modal) modal.hidden = false;
+        input?.focus();
+      });
+      submit?.addEventListener('click', (event) => { event.preventDefault(); commit(); });
+      cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
+      input?.addEventListener('compositionend', () => commit());
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+          event.preventDefault();
+          close();
+        }
+      }, true);
+      this._mobileTextInputModalBound = true;
+    }
 
     if (!this.mobileTextInputAdapter && mobileInput && typeof MobileTextInput !== 'undefined') {
       this.mobileTextInputAdapter = MobileTextInput.create({
         element: mobileInput,
         sendText: (text) => this.keyboardController?.sendText(text),
-        sendKey: (key) => this.keyboardController?.sendChord({ code: key }),
+        sendKey: (key, modifiers = {}) => this.keyboardController?.sendChord({
+          code: key,
+          modifiers: {
+            shift: Boolean(modifiers.shiftKey),
+            ctrl: Boolean(modifiers.ctrlKey),
+            alt: Boolean(modifiers.altKey),
+            meta: Boolean(modifiers.metaKey),
+          },
+        }),
+        hasVirtualModifiers: () => (this.keyboardController?.getSnapshot()?.virtualModifiers || []).length > 0,
+        releaseTrackedKey: (event) => this.keyboardController?.handleDomEvent(event) === true,
         isEnabled: () => this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
         isDeliverySettled: () => {
           const snapshot = this.keyboardTransport?.getSnapshot?.() || {};
           return snapshot.state === 'ready' && snapshot.pendingCount === 0;
         },
+        isSurfaceSettled: () => this._mobileSurfaceState === 'settled',
         onStateChange: (snapshot) => this.updateMobileTextInputState(snapshot),
         refreshViewport: () => {
           if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
@@ -1035,6 +1270,8 @@ const Input = {
       this._syncMobileTextTransport();
     }
     if (!this._mobileTextInputUiBound) {
+      mobileRetryButton?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+      mobileDiscardButton?.addEventListener('pointerdown', (event) => event.preventDefault?.());
       mobileRetryButton?.addEventListener('click', (event) => {
         event.preventDefault();
         this.mobileTextInputAdapter?.retryPending();
@@ -1042,6 +1279,7 @@ const Input = {
       });
       mobileDiscardButton?.addEventListener('click', (event) => {
         event.preventDefault();
+        this._resetMobileSurfaceContext();
         this.mobileTextInputAdapter?.discardPending();
         this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
       });

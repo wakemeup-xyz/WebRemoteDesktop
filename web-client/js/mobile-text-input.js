@@ -15,8 +15,17 @@
     const sendText = typeof config.sendText === 'function' ? config.sendText : () => false;
     const sendKey = typeof config.sendKey === 'function' ? config.sendKey : () => false;
     const isEnabled = typeof config.isEnabled === 'function' ? config.isEnabled : () => false;
+    const hasVirtualModifiers = typeof config.hasVirtualModifiers === 'function'
+      ? config.hasVirtualModifiers
+      : () => false;
+    const releaseTrackedKey = typeof config.releaseTrackedKey === 'function'
+      ? config.releaseTrackedKey
+      : () => false;
     const isDeliverySettled = typeof config.isDeliverySettled === 'function'
       ? config.isDeliverySettled
+      : () => true;
+    const isSurfaceSettled = typeof config.isSurfaceSettled === 'function'
+      ? config.isSurfaceSettled
       : () => true;
     const onStateChange = typeof config.onStateChange === 'function' ? config.onStateChange : () => {};
     const refreshViewport = typeof config.refreshViewport === 'function' ? config.refreshViewport : () => {};
@@ -94,9 +103,50 @@
       return raw === acceptedValue && element?.selectionStart === end && element?.selectionEnd === end;
     }
 
-    function safeDiff(previous, next) {
+    function safeDiff(previous, next, options = {}) {
       const from = contentPoints(previous);
       const to = contentPoints(next);
+      const anchoredCursor = Number.isInteger(options.cursor)
+        ? options.cursor
+        : null;
+      if (anchoredCursor !== null && anchoredCursor >= 0 && anchoredCursor <= from.length) {
+        const prefix = from.slice(0, anchoredCursor);
+        const prefixMatches = prefix.every((point, index) => to[index] === point);
+        if (prefixMatches) {
+          let suffix = 0;
+          while (suffix < from.length - anchoredCursor && suffix < to.length - anchoredCursor
+            && from[from.length - 1 - suffix] === to[to.length - 1 - suffix]) suffix += 1;
+          const insertedEnd = to.length - suffix;
+          if (insertedEnd >= anchoredCursor) {
+            return {
+              prefix,
+              deleted: from.slice(anchoredCursor, from.length - suffix),
+              inserted: to.slice(anchoredCursor, insertedEnd),
+              suffix: from.slice(from.length - suffix),
+            };
+          }
+        }
+        // A browser Backspace moves the DOM cursor left before input fires.
+        // Accept only a pure deletion ending at the known remote cursor; do
+        // not fall back to greedy matching, which can rewrite an earlier
+        // duplicate character as if it were a valid remote edit.
+        let suffix = 0;
+        while (suffix < from.length - anchoredCursor && suffix < to.length
+          && from[from.length - 1 - suffix] === to[to.length - 1 - suffix]) suffix += 1;
+        if (suffix === from.length - anchoredCursor) {
+          const prefixLength = to.length - suffix;
+          if (prefixLength >= 0 && prefixLength <= anchoredCursor
+            && from.slice(0, prefixLength).every((point, index) => to[index] === point)) {
+            return {
+              prefix: from.slice(0, prefixLength),
+              deleted: from.slice(prefixLength, anchoredCursor),
+              inserted: [],
+              suffix: from.slice(anchoredCursor),
+            };
+          }
+        }
+        return null;
+      }
       let prefix = 0;
       while (prefix < from.length && prefix < to.length && from[prefix] === to[prefix]) prefix += 1;
       let suffix = 0;
@@ -149,7 +199,15 @@
 
     function deliverySettled() {
       try {
-        return isDeliverySettled() === true;
+        return isDeliverySettled() === true && isSurfaceSettled() === true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function surfaceSettled() {
+      try {
+        return isSurfaceSettled() === true;
       } catch (_) {
         return false;
       }
@@ -172,6 +230,7 @@
       if (deliveryUncertain || !contextValid
         || transportState === 'revoked' || transportState === 'reacquire-required') return 'uncertain';
       if (composing) return 'composing';
+      if (!surfaceSettled()) return 'pending';
       if (hasPending()) return 'pending';
       return 'idle';
     }
@@ -265,13 +324,26 @@
         markPending({ uncertain: true });
         return false;
       }
+      if (!surfaceSettled()) {
+        if (fromDrain || drainActive) cancelDrain();
+        markPending();
+        return false;
+      }
       if (!isEnabled() || transportState !== 'ready') {
         if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
       }
 
-      const diff = safeDiff(acceptedValue, draftValue);
+      const diff = safeDiff(acceptedValue, draftValue, { cursor: remoteCursor });
+      if (!diff) {
+        if (!retryRequired) {
+          draftValue = acceptedValue;
+          restoreAcceptedBuffer();
+        }
+        notifyState();
+        return false;
+      }
       const expectedCursor = diff.deleted.length > 0
         ? diff.prefix.length + diff.deleted.length
         : diff.prefix.length;
@@ -459,11 +531,22 @@
       // the accepted prefix.
       if (hasPending()) return;
       event.preventDefault?.();
-      sendControlKey(event.key);
+      sendControlKey(event.key, {
+        shiftKey: Boolean(event.shiftKey),
+        ctrlKey: Boolean(event.ctrlKey),
+        altKey: Boolean(event.altKey),
+        metaKey: Boolean(event.metaKey),
+      });
     }
 
     function onKeyup(event) {
-      if (event?.target === element) event.stopPropagation?.();
+      if (event?.target !== element) return;
+      try {
+        releaseTrackedKey(event);
+      } catch (_) {
+        // A release observer must not block DOM keyup propagation cleanup.
+      }
+      event.stopPropagation?.();
     }
 
     function onSelect() {
@@ -480,9 +563,55 @@
       restoreAcceptedBuffer();
     }
 
-    function sendControlKey(key) {
-      if (hasPending()) return false;
-      if (!isEnabled() || !accepted(sendKey(key))) return false;
+    function resetAcceptedHistory() {
+      cancelDrain();
+      generation += 1;
+      acceptedValue = SENTINEL;
+      draftValue = SENTINEL;
+      observedValue = SENTINEL;
+      remoteCursor = 0;
+      retryRequired = false;
+      pendingGeneration = null;
+      contextValid = true;
+      deliveryUncertain = false;
+      restoreAcceptedBuffer();
+    }
+
+    function runExternalAction(kind, send) {
+      if (!['navigation', 'context-change'].includes(kind)
+        || typeof send !== 'function'
+        || composing || hasPending() || deliveryUncertain || !contextValid
+        || !surfaceSettled()
+        || !isEnabled()) return false;
+      let result;
+      try {
+        result = send();
+      } catch (_) {
+        result = false;
+      }
+      if (!accepted(result)) return false;
+      resetAcceptedHistory();
+      notifyState();
+      return true;
+    }
+
+    function sendControlKey(key, modifiers = {}) {
+      if (!CONTROL_KEYS.has(key) || hasPending() || deliveryUncertain || !contextValid || !surfaceSettled()) return false;
+      const flags = {
+        shiftKey: Boolean(modifiers.shiftKey),
+        ctrlKey: Boolean(modifiers.ctrlKey),
+        altKey: Boolean(modifiers.altKey),
+        metaKey: Boolean(modifiers.metaKey),
+      };
+      let virtualModified = false;
+      try {
+        virtualModified = Boolean(hasVirtualModifiers());
+      } catch (_) {
+        virtualModified = true;
+      }
+      const modified = Object.values(flags).some(Boolean) || virtualModified;
+      if (modified) return runExternalAction('context-change', () => sendKey(key, flags));
+      if (!isEnabled() || !accepted(sendKey(key, flags))) return false;
       const content = contentPoints(acceptedValue);
       if (key === 'Backspace') {
         if (remoteCursor > 0) {
@@ -536,6 +665,12 @@
       const resetAcknowledged = next === 'ready' && options?.resetAcknowledged === true;
       transportState = next;
       if (resetAcknowledged) {
+        if (!surfaceSettled()) {
+          contextValid = false;
+          deliveryUncertain = true;
+          notifyState();
+          return;
+        }
         contextValid = true;
         deliveryUncertain = false;
         if (hasPending()) {
@@ -653,6 +788,7 @@
       onTransportState,
       refreshDeliveryState,
       sendControlKey,
+      runExternalAction,
     };
   }
 
