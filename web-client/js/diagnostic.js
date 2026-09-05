@@ -382,9 +382,21 @@
     const videoEl = (typeof document !== 'undefined' && typeof document.getElementById === 'function')
       ? document.getElementById('remoteVideo')
       : null;
-    const framesDecoded = lastStats.framesDecoded != null
-      ? Number(lastStats.framesDecoded)
-      : Number((typeof WebRTC !== 'undefined' && WebRTC._lastInboundFramesDecoded) || 0);
+    // _lastPaintStats is canonical interval telemetry. Keep all legacy names at
+    // this diagnostic schema boundary so consumers cannot mix paint totals with
+    // a current sampling interval.
+    const mediaStats = {
+      receivedDelta: Number(lastStats.receivedDelta || 0),
+      decodedDelta: Number(lastStats.decodedDelta || 0),
+      derivedFps: Number(lastStats.derivedFps || 0),
+      bytesDelta: Number(lastStats.bytesDelta || 0),
+      framesDroppedDelta: Number(lastStats.framesDroppedDelta || 0),
+      packetsReceivedDelta: Number(lastStats.packetsReceivedDelta || 0),
+      nackCountDelta: Number(lastStats.nackCountDelta || 0),
+      pliCountDelta: Number(lastStats.pliCountDelta || 0),
+      firCountDelta: Number(lastStats.firCountDelta || 0),
+      freezeDelta: Number(lastStats.freezeDelta || 0),
+    };
 
     return {
       type: 'connection-diagnostic',
@@ -420,17 +432,19 @@
         videoWidth: Number(lastStats.videoWidth || videoEl?.videoWidth || 0),
         videoHeight: Number(lastStats.videoHeight || videoEl?.videoHeight || 0),
         readyState: Number(videoEl?.readyState || 0),
-        framesReceived: Number(lastStats.framesReceived || 0),
-        framesDecoded,
-        fps: Number(lastStats.fps || 0),
+        ...mediaStats,
         jitterBufferMs: Number(lastStats.jitterBufferMs || 0),
-        bytesReceived: Number(lastStats.bytesReceived || 0),
-        framesDropped: Number(lastStats.framesDropped || 0),
-        packetsReceived: Number(lastStats.packetsReceived || 0),
-        nackCount: Number(lastStats.nackCount || 0),
-        pliCount: Number(lastStats.pliCount || 0),
-        firCount: Number(lastStats.firCount || 0),
-        freezeCount: Number(lastStats.freezeCount || 0),
+        // Compatibility aliases for the versioned diagnostic payload only.
+        framesReceived: mediaStats.receivedDelta,
+        framesDecoded: mediaStats.decodedDelta,
+        fps: mediaStats.derivedFps,
+        bytesReceived: mediaStats.bytesDelta,
+        framesDropped: mediaStats.framesDroppedDelta,
+        packetsReceived: mediaStats.packetsReceivedDelta,
+        nackCount: mediaStats.nackCountDelta,
+        pliCount: mediaStats.pliCountDelta,
+        firCount: mediaStats.firCountDelta,
+        freezeCount: mediaStats.freezeDelta,
         keyframeRequested: typeof WebRTC !== 'undefined'
           ? Boolean(WebRTC._lastKeyframeRequestAt || WebRTC._keyframeRequested)
           : false,

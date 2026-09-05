@@ -1443,7 +1443,9 @@ const WebRTC = {
       freezeDelta: canonical.freezeDelta,
     };
 
-    if (canonical.warmup) {
+    // Intentional suspension and warmup are not media-health samples. Clear any
+    // prior stall and leave the paint state untouched while delayed stats arrive.
+    if (canonical.warmup || this.isMediaHealthSuppressed()) {
       this._stallSince = null;
       return this.uiPhase;
     }
@@ -1554,12 +1556,6 @@ const WebRTC = {
 
     const result = controller.observe({
       ...canonical,
-      // LinkQualityController has not yet migrated its public parameter names.
-      // This is the sole legacy adapter; all Viewer state stays canonical.
-      fps: canonical.derivedFps,
-      framesReceived: canonical.receivedDelta,
-      framesDecoded: canonical.decodedDelta,
-      packetsLost: canonical.packetsLostDelta,
       selectedCandidatePair: this.selectedCandidatePair,
     });
     if (!result || result.action === 'hold') return;

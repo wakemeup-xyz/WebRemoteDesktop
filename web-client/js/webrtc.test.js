@@ -5460,6 +5460,35 @@ test('intentional media pause skips quality recovery for canonical stats', () =>
   assert.equal(WebRTC._noRelayReceiveCount, 0);
 });
 
+test('intentional media pause suppresses stalled paint diagnostics for delayed inbound data', () => {
+  const timers = new Map();
+  const diagnostics = [];
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) { timers.set(ms, callback); return ms; },
+    clearTimeout(ms) { timers.delete(ms); },
+    Diagnostic: { autoSendFailure(reason) { diagnostics.push(reason); } },
+  });
+  WebRTC.networkMode = 'relay';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 10000;
+  WebRTC.isMediaHealthSuppressed = () => true;
+
+  WebRTC.notePaintStats({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 20,
+    videoWidth: 1280,
+    videoHeight: 720,
+    source: 'stats',
+  });
+
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(WebRTC._stallSince, null);
+  assert.equal(timers.has(3000), false);
+  assert.deepEqual(diagnostics, []);
+});
+
 test('viewer stats emits canonical deltas with derived legacy aliases for Host compatibility', () => {
   const { WebRTC } = loadWebRTC();
   const emitted = [];

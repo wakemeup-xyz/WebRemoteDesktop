@@ -74,6 +74,7 @@ const LinkQualityController = {
       startupGraceSamplesRemaining: 0,
       lastPacketsLost: null,
       lastFramesDecoded: null,
+      lastDecodedDelta: 0,
       iceRestartAttempted: false,
       profileChanges: [],
       lastProfileChangeAt: 0,
@@ -109,6 +110,7 @@ const LinkQualityController = {
         this.goodCount = 0;
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
+        this.lastDecodedDelta = 0;
         this.iceRestartAttempted = false;
         return { changed: true, path: this.path, profile: this.currentProfile };
       },
@@ -129,6 +131,7 @@ const LinkQualityController = {
         this.goodCount = 0;
         this.lastPacketsLost = null;
         this.lastFramesDecoded = null;
+        this.lastDecodedDelta = 0;
         this.iceRestartAttempted = false;
       },
 
@@ -146,6 +149,7 @@ const LinkQualityController = {
           profileConfig: null,
           shouldRestartIce: Boolean(extra.shouldRestartIce),
           shouldRequestKeyframe: Boolean(extra.shouldRequestKeyframe),
+          decodedDelta: this.lastDecodedDelta,
           changed: false,
         };
       },
@@ -161,21 +165,30 @@ const LinkQualityController = {
       observe(stats = {}) {
         const packetsLost = Number(stats.packetsLost || 0);
         const framesDecoded = Number(stats.framesDecoded || 0);
-        const packetsLostDelta = stats.interval === true
+        const hasCanonicalPacketsLostDelta = stats.packetsLostDelta != null;
+        const hasCanonicalDecodedDelta = stats.decodedDelta != null;
+        const packetsLostDelta = hasCanonicalPacketsLostDelta
+          ? Math.max(0, Number(stats.packetsLostDelta) || 0)
+          : stats.interval === true
           ? packetsLost
           : this.lastPacketsLost == null
           ? packetsLost
           : Math.max(0, packetsLost - this.lastPacketsLost);
-        const decodedDelta = this.lastFramesDecoded == null
+        const decodedDelta = hasCanonicalDecodedDelta
+          ? Math.max(0, Number(stats.decodedDelta) || 0)
+          : stats.interval === true
+          ? Math.max(0, framesDecoded)
+          : this.lastFramesDecoded == null
           ? framesDecoded
           : Math.max(0, framesDecoded - this.lastFramesDecoded);
 
         this.lastPacketsLost = packetsLost;
         this.lastFramesDecoded = framesDecoded;
+        this.lastDecodedDelta = decodedDelta;
 
         const qualityLock = this.qualityLock === true;
         const hasSelectedPair = Boolean(stats.selectedCandidateType);
-        const fps = Number(stats.fps || 0);
+        const fps = Number(stats.derivedFps ?? stats.fps ?? 0);
         const rttMs = Number(stats.rttMs || 0);
         const jitterBufferMs = Number(stats.jitterBufferMs || 0);
         const zeroFps = fps === 0;
@@ -344,6 +357,7 @@ const LinkQualityController = {
           profileConfig: changed ? LinkQualityController.profiles[profile] : null,
           shouldRestartIce: Boolean(extra.shouldRestartIce),
           shouldRequestKeyframe: Boolean(extra.shouldRequestKeyframe),
+          decodedDelta: this.lastDecodedDelta,
           changed,
         };
       },
