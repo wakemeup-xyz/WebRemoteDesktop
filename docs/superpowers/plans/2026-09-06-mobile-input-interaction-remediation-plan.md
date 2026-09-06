@@ -310,6 +310,7 @@ assert page.evaluate("document.documentElement.contains(document.getElementById(
 
 - [ ] **Step 3:** 加动作组合：真实DOM组合输入→120帧→工具栏left→继续输入→局部失败→retry→reset取消任务；使用虚拟远端字符串模型只在内存核对，不打印字符串。加drag起点、up/reset、第二指切滚动及新lease未重放测试。
 - [ ] **Step 3a:** 加R9–R11跨模块验收：已跟踪physical key跨焦点keyup、鼠标down/up确认与失败/timeout阻止文本、modal提交后的移动基线失效。使用真实Input/adapter/controller及fake ACK，断言待确认期间无远端文本，确认不自动重放、显式retry恰好一次。
+- [ ] **Step 3b（实施复审回归）:** 加移动框收起→实体导航/输入→重新打开IME的内存远端模型一致性；R12虚拟modifier下的导航及安全释放；在支持尺寸、composition/pending/uncertain门禁关闭时，先通过真实controller锁定modifier，再用生产capability渲染与原生浏览器click证明OFF可达且只释放一次，不用对disabled按钮直接dispatchEvent假代。全屏不支持/reject场景用实际按钮点击证明移动焦点/草稿保留。极小unsupported另测明确提示、已有手势继续/几何取消、新动作拒绝，不要求20px内控件全可达。
 - [ ] **Step 4:** 浏览器布局矩阵375×812、768×1024、1024×1366、1440×900使用inset=0/300；568×320用inset=0/160覆盖ultraCompact，inset300仅测unsupportedViewport降级。触控true/false、overlay/resize两模式。前三种compact画面≥120，导航/retry/退出≥44×44且在键盘之上；实际rect误差≤1px：viewer.top=viewerTop、viewer.bottom<=dock.top、dock.bottom=visibleBottom-safeBottom-textReserve-8、text.bottom=visibleBottom-safeBottom、顶栏bottom<=viewer.top。测safeProbe注入、offsetTop非零、两组末键滚动可达；unsupported不假计全控件可达。真实DOM点全屏按钮，支持时验证fullscreenElement及可见可点；不支持明确NOT RUN原生全屏并测fallback。
 - [ ] **Step 5:** 先运行新CLI与单测红/绿，再进行最终命令（每条按对应目录执行，不能把cd串错）：
 
