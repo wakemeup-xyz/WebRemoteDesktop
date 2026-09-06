@@ -295,26 +295,60 @@ test('placeholder spinner is opt-in via is-connecting', () => {
   assert.match(html, /id="exitFullscreenBtn"/);
 });
 
-test('fullscreen owns the document root while the exit control stays in global status chrome', () => {
-  assert.doesNotMatch(css, /\.viewer-container:fullscreen/);
-  assert.match(css, /html:fullscreen\s+\.viewer-container/);
-  assert.match(css, /html:fullscreen\s+\.fullscreen-exit-btn/);
-  const fullscreenMedia = css.match(/html:fullscreen\s+\.viewer-container #remoteVideo,[\s\S]*?\}/)?.[0] || '';
-  assert.match(fullscreenMedia, /width:\s*100%;/);
-  assert.match(fullscreenMedia, /height:\s*100%;/);
-  const fullscreenViewer = css.match(/html:fullscreen\s+\.viewer-container\s*\{[^}]*\}/)?.[0] || '';
-  assert.match(fullscreenViewer, /height:\s*calc\(100dvh\s*-\s*var\(--chrome-top\)\)/);
+test('fullscreen chrome hides independently while exit overlay stays interactive', () => {
+  assert.match(html, /id="fullscreenExitOverlay"/);
+  assert.match(html, /id="mobileSafeAreaProbe"[^>]*aria-hidden="true"\s*><\/div>\s*<div id="fullscreenExitOverlay"/);
+
+  const exitOffset = html.indexOf('id="exitFullscreenBtn"');
+  const statusOffset = html.indexOf('id="statusBar"');
+  const docksOffset = html.indexOf('id="chromeDocks"');
+  assert.ok(exitOffset > -1 && exitOffset < statusOffset);
+  assert.ok(exitOffset < docksOffset);
   assert.equal((html.match(/id="exitFullscreenBtn"/g) || []).length, 1);
-  const statusStart = html.indexOf('class="status-actions"');
-  const statusEnd = html.indexOf('</div>', statusStart);
-  assert.ok(statusStart >= 0 && statusEnd > statusStart);
-  assert.match(html.slice(statusStart, statusEnd), /id="exitFullscreenBtn"/);
-  const viewerStart = html.indexOf('<div class="viewer-container">');
-  const viewerEnd = html.indexOf('\n    </div>\n\n    <div id="chromeDocks"', viewerStart);
-  assert.ok(viewerStart >= 0 && viewerEnd > viewerStart);
-  assert.doesNotMatch(html.slice(viewerStart, viewerEnd), /id="exitFullscreenBtn"/);
+
+  const statusActionsStart = html.indexOf('class="status-actions"');
+  const statusActionsEnd = html.indexOf('</div>', statusActionsStart);
+  assert.ok(statusActionsStart >= 0 && statusActionsEnd > statusActionsStart);
+  assert.doesNotMatch(html.slice(statusActionsStart, statusActionsEnd), /id="exitFullscreenBtn"/);
+  assert.match(html.slice(statusActionsStart, statusActionsEnd), /id="fullscreenStatus"/);
   assert.match(html, /id="fullscreenStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
-  assert.match(html, /id="fullscreenBtn"[^>]*data-core-control/);
+  assert.match(html, /id="fullscreenExitPanel"[^>]*hidden/);
+  assert.match(html, /id="fullscreenExitStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
+  assert.match(html, /id="fullscreenExitRevealBtn"[^>]*aria-controls="fullscreenExitPanel"[^>]*aria-expanded="false"/);
+
+  assert.match(css, /html:fullscreen body\.fullscreen-active #statusBar,\s*html:fullscreen body\.fullscreen-active #chromeDocks\s*\{[\s\S]*?visibility:\s*hidden[\s\S]*?pointer-events:\s*none/);
+  assert.match(css, /html:fullscreen body\.fullscreen-active:not\(\.mobile-layout-managed\):not\(\.mobile-input-visible\) \.viewer-container\s*\{[\s\S]*?height:\s*100vh[\s\S]*?height:\s*100dvh/);
+  assert.match(css, /html:fullscreen body\.fullscreen-active:not\(\.mobile-layout-managed\)\.mobile-input-visible \.viewer-container\s*\{[\s\S]*?height:\s*calc\(100dvh\s*-\s*var\(--mobile-text-dock-reserve/);
+  assert.doesNotMatch(css, /fullscreen-active[^\{]*controls-hidden/);
+
+  const overlay = getBlock('.fullscreen-exit-overlay');
+  assert.match(overlay, /position:\s*fixed/);
+  assert.match(overlay, /inset:\s*0/);
+  assert.match(overlay, /z-index:\s*400/);
+  assert.match(overlay, /pointer-events:\s*none/);
+  assert.match(css, /html:fullscreen body\.fullscreen-active \.fullscreen-exit-overlay\s*\{[\s\S]*?visibility:\s*visible/);
+
+  const reveal = css.match(/\.fullscreen-exit-reveal\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(reveal, /position:\s*fixed/);
+  assert.match(reveal, /top:\s*calc\([^;]*env\(safe-area-inset-top/);
+  assert.match(reveal, /right:\s*calc\([^;]*env\(safe-area-inset-right/);
+  assert.match(reveal, /min-width:\s*var\(--touch-min\)/);
+  assert.match(reveal, /min-height:\s*var\(--touch-min\)/);
+  assert.match(css, /\.fullscreen-exit-reveal,\s*\.fullscreen-exit-panel\s*\{[^}]*pointer-events:\s*auto/);
+
+  const exitButton = getBlock('.fullscreen-exit-btn');
+  assert.match(exitButton, /min-width:\s*var\(--touch-min\)/);
+  assert.match(exitButton, /min-height:\s*var\(--touch-min\)/);
+  assert.match(exitButton, /pointer-events:\s*auto/);
+  assert.match(css, /\.fullscreen-exit-panel\s*\{[\s\S]*?top:\s*calc\([^;]*env\(safe-area-inset-top/);
+  assert.match(css, /\.fullscreen-exit-panel\s*\{[\s\S]*?right:\s*calc\([^;]*env\(safe-area-inset-right/);
+  assert.match(css, /\.fullscreen-exit-panel\[hidden\]\s*\{[^}]*display:\s*none/);
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.fullscreen-exit-reveal[\s\S]*?\.fullscreen-exit-panel/);
+});
+
+test('managed fullscreen without the mobile text dock fills from viewer top to viewport', () => {
+  assert.match(css, /html:fullscreen body\.fullscreen-active\.mobile-layout-managed:not\(\.mobile-input-visible\) \.viewer-container\s*\{[\s\S]*?height:\s*calc\(100dvh\s*-\s*var\(--mobile-viewer-top/);
+  assert.doesNotMatch(css, /html:fullscreen body\.fullscreen-active\.mobile-layout-managed\.mobile-input-visible \.viewer-container\s*\{[^}]*height:\s*calc\(100dvh\s*-\s*var\(--mobile-viewer-top/);
 });
 
 test('workspace tabs expose tab semantics', () => {

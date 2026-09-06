@@ -61,6 +61,11 @@ const ChromeLayout = {
     return !!body?.classList?.contains?.('controls-hidden')
       || !!body?.classList?.contains?.('chrome-idle');
   },
+  isFullscreenActive(rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    const body = root?.body || root?.querySelector?.('body');
+    return !!body?.classList?.contains?.('fullscreen-active');
+  },
   syncToggleControlsLabel(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const body = root?.body || root?.querySelector?.('body');
@@ -118,8 +123,9 @@ const ChromeLayout = {
     };
   },
   enterIdle(rootEl) {
-    if (!this.autoIdleEnabled) return;
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    if (this.isFullscreenActive(root)) return;
+    if (!this.autoIdleEnabled) return;
     const body = root?.body || root?.querySelector?.('body');
     body?.classList?.add?.('chrome-idle');
     this.syncToggleControlsLabel(root);
@@ -128,6 +134,7 @@ const ChromeLayout = {
   },
   bump(rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    if (this.isFullscreenActive(root)) return;
     const body = root?.body || root?.querySelector?.('body');
     const wasIdle = !!body?.classList?.contains?.('chrome-idle');
     if (wasIdle) {
@@ -144,9 +151,11 @@ const ChromeLayout = {
     }
   },
   armIdleTimer(rootEl) {
-    this.clearIdleTimer();
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    if (this.isFullscreenActive(root)) return;
+    this.clearIdleTimer();
     this._idleTimer = setTimeout(() => {
+      if (this.isFullscreenActive(root)) return;
       this._idleTimer = null;
       const inputs = this.collectIdleInputs(root);
       if (this.shouldIdle(inputs)) this.enterIdle(root);
@@ -188,6 +197,7 @@ const ChromeLayout = {
     dockTargets.filter(Boolean).forEach((el) => el.addEventListener?.('pointerenter', onDocksEnter));
 
     const onMutate = () => {
+      if (this.isFullscreenActive(root)) return;
       const inputs = this.collectIdleInputs(root);
       const connectedBecame = inputs.streamConnected && !this._wasStreamConnected;
       const unhid = this._wasControlsHidden && !inputs.controlsHidden;
@@ -223,12 +233,29 @@ const ChromeLayout = {
       this.clearIdleTimer();
     };
   },
+  setFullscreenActive(active, rootEl) {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    this.clearIdleTimer();
+    this.recalculate(root, { schedule: true });
+    if (active || this.isFullscreenActive(root)) return;
+    if (!this.autoIdleEnabled) return;
+    const inputs = this.collectIdleInputs(root);
+    if (this.shouldIdle({ ...inputs, idleMs: this.IDLE_MS })) {
+      this._lastActivity = Date.now();
+      this.armIdleTimer(root);
+    }
+  },
   syncChromeTop(px, rootEl) {
     const height = Number(px);
-    if (!Number.isFinite(height) || height <= 0) return;
+    if (!Number.isFinite(height) || height < 0) return;
     const root = rootEl || (typeof document !== 'undefined' ? document.documentElement : null);
     const value = `${Math.round(height)}px`;
-    this._writeStyleValue(root, '--chrome-top', value);
+    this._writeStyleValue(root?.documentElement || root, '--chrome-top', value);
+  },
+  effectiveChromeTop(measured, rootEl) {
+    if (this.isFullscreenActive(rootEl)) return 0;
+    const value = Number(measured);
+    return Number.isFinite(value) && value > 0 ? value : 56;
   },
   _readStyleValue(style, name) {
     if (!style) return '';
@@ -428,10 +455,11 @@ const ChromeLayout = {
       && keyboard.overlaysContent === true
       && Number.isFinite(keyboardRectHeight) && keyboardRectHeight >= 0;
     const status = this._getElement(root, 'statusBar');
-    const chromeTop = this._readElementHeight(status) || 56;
     const docks = this._getElement(root, 'chromeDocks');
     const textDock = this._getElement(root, 'mobileInputDock');
     const textVisible = this._readMobileTextVisible(root);
+    const measuredChromeTop = this._readElementHeight(status);
+    const measuredDockContentHeight = this._readElementHeight(docks);
     return {
       layoutHeight,
       visualHeight,
@@ -439,8 +467,8 @@ const ChromeLayout = {
       keyboardRectHeight: keyboardOverlay ? keyboardRectHeight : 0,
       keyboardOverlay,
       safeBottom: this._readSafeAreaBottom(root),
-      chromeTop,
-      dockContentHeight: this._readElementHeight(docks),
+      chromeTop: this.effectiveChromeTop(measuredChromeTop, root),
+      dockContentHeight: this.isFullscreenActive(root) ? 0 : measuredDockContentHeight,
       textDockHeight: textVisible ? this._readElementHeight(textDock) : 0,
       textVisible,
       touchSupported: snapshot.touchSupported === true,
@@ -529,7 +557,7 @@ const ChromeLayout = {
   recalculate(rootEl, { schedule = false } = {}) {
     const { root } = this._viewportContext(rootEl);
     const status = root?.getElementById?.('statusBar') || root?.querySelector?.('#statusBar');
-    const chromeTop = this._readElementHeight(status) || 56;
+    const chromeTop = this.effectiveChromeTop(this._readElementHeight(status), root);
     this.syncChromeTop(chromeTop, root);
     this.syncMobileDockHeight(null, root);
     const snapshot = this.getMobileCapabilitySnapshot(this._mobileViewportSnapshot || {}, root);
@@ -698,12 +726,10 @@ const ChromeLayout = {
   observeStatusBar(statusEl, rootEl) {
     if (!statusEl) return () => {};
     if (typeof ResizeObserver === 'undefined') {
-      this.syncChromeTop(56, rootEl);
       this.recalculate(rootEl, { schedule: true });
       return () => {};
     }
     const apply = () => {
-      this.syncChromeTop(this._readElementHeight(statusEl), rootEl);
       this.recalculate(rootEl, { schedule: true });
     };
     apply();
