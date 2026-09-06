@@ -16,6 +16,16 @@ body {
   color: var(--text-primary);
 }
 
+html:fullscreen body.fullscreen-active {
+  padding-top: 0;
+}
+
+html:fullscreen body.fullscreen-active #statusBar,
+html:fullscreen body.fullscreen-active #chromeDocks {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ========== Viewer Container ========== */
 .viewer-container {
   width: 100vw;
@@ -28,16 +38,14 @@ body {
   position: relative;
 }
 
-html:fullscreen .viewer-container {
+html:fullscreen body.fullscreen-active .viewer-container {
   width: 100vw;
-  height: calc(100vh - var(--chrome-top));
-  height: calc(100dvh - var(--chrome-top));
   padding: 0;
   background: #000;
 }
 
-html:fullscreen .viewer-container #remoteVideo,
-html:fullscreen .viewer-container #relayImage {
+html:fullscreen body.fullscreen-active .viewer-container #remoteVideo,
+html:fullscreen body.fullscreen-active .viewer-container #relayImage {
   width: 100%;
   height: 100%;
   max-width: 100%;
@@ -45,15 +53,91 @@ html:fullscreen .viewer-container #relayImage {
   border-radius: 0;
 }
 
-.fullscreen-exit-btn {
-  display: none;
-  position: static;
-  z-index: 30;
-  min-height: var(--touch-min);
-  min-width: var(--touch-min);
-  padding: 0 12px;
+html:fullscreen body.fullscreen-active:not(.mobile-layout-managed):not(.mobile-input-visible) .viewer-container {
+  height: 100vh;
+  height: 100dvh;
 }
-html:fullscreen .fullscreen-exit-btn {
+
+html:fullscreen body.fullscreen-active:not(.mobile-layout-managed).mobile-input-visible .viewer-container {
+  height: calc(100vh - var(--mobile-text-dock-reserve, 0px));
+  height: calc(100dvh - var(--mobile-text-dock-reserve, 0px));
+}
+
+.fullscreen-exit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+html:fullscreen body.fullscreen-active .fullscreen-exit-overlay {
+  visibility: visible;
+}
+
+.fullscreen-exit-reveal,
+.fullscreen-exit-panel {
+  pointer-events: auto;
+}
+
+.fullscreen-exit-reveal {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  right: calc(env(safe-area-inset-right, 0px) + 4px);
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: var(--radius-pill);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fullscreen-exit-panel {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--touch-min) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 4px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-solid);
+  box-shadow: var(--shadow-md);
+}
+
+.fullscreen-exit-panel[hidden] {
+  display: none;
+}
+
+.fullscreen-exit-btn {
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 0 12px;
+  border: 1px solid rgba(59, 130, 246, 0.42);
+  border-radius: var(--radius-md);
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.fullscreen-exit-status {
+  max-width: min(260px, 60vw);
+  color: var(--accent-warning);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+html:fullscreen body.fullscreen-active .fullscreen-exit-reveal,
+html:fullscreen body.fullscreen-active .fullscreen-exit-panel {
   display: inline-flex;
   align-items: center;
 }
@@ -1858,5 +1942,11 @@ body.mobile-layout-managed.mobile-layout-ultra .mobile-input-actions {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .fullscreen-exit-reveal,
+  .fullscreen-exit-panel {
+    transform: none;
+    transition: none;
   }
 }

@@ -17,6 +17,14 @@
 </head>
 <body>
   <div id="mobileSafeAreaProbe" aria-hidden="true"></div>
+  <div id="fullscreenExitOverlay" class="fullscreen-exit-overlay" aria-label="全屏控制">
+    <button id="fullscreenExitRevealBtn" class="fullscreen-exit-reveal" type="button"
+            aria-label="显示退出全屏入口" aria-controls="fullscreenExitPanel" aria-expanded="false">退出</button>
+    <div id="fullscreenExitPanel" class="fullscreen-exit-panel" hidden>
+      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
+      <span id="fullscreenExitStatus" class="fullscreen-exit-status" role="status" aria-live="polite" hidden></span>
+    </div>
+  </div>
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
       <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
@@ -32,7 +40,6 @@
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
-      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
       <span id="fullscreenStatus" class="fullscreen-status" role="status" aria-live="polite" hidden></span>
       <button id="toggleControlsBtn" class="control-btn" type="button" data-core-control>隐藏控件</button>
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
