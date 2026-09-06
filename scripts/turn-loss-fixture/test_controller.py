@@ -36,6 +36,8 @@ def manifest(**overrides):
         "controlEndpoint": {"host": "127.0.0.1", "port": 19091},
         "credentialsFile": "credentials/turn.json",
         "receiverEvidenceFile": "receiver/sequence.json",
+        "receiverBridgeFile": "receiver/bridge.json",
+        "selectedTurn": {"id": "turn-candidate-1", "fingerprint": "sha256:" + "d" * 64},
         "versionDigest": "a" * 64,
         "imageDigests": {
             "turn": "registry.example/turn@sha256:" + "b" * 64,
@@ -374,7 +376,7 @@ def test_turn_entrypoint_can_execute_coturn_with_its_image_file_capability():
 
 
 def _session(fixture, *, generation=7, clock=None):
-    return fixture.open_session(manifest()["runId"], "control-session-a", generation, clock=clock)
+    return fixture.open_session(manifest()["runId"], "control-session-a", generation, attempt_id="attempt-a", stream_id="video-a", clock=clock)
 
 
 def test_apply_rolls_back_installed_rule_when_deadline_state_cannot_be_persisted():
@@ -460,7 +462,7 @@ def test_baseline_is_bound_to_session_generation_and_time_then_consumed():
     with pytest.raises(RuntimeError, match="baseline"):
         session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     with pytest.raises(ValueError, match="generation"):
-        fixture.open_session(manifest()["runId"], "control-session-a", 9)
+        fixture.open_session(manifest()["runId"], "control-session-a", 9, attempt_id="attempt-a", stream_id="video-a")
 
 
 def test_final_evidence_requires_nonzero_drop_and_strict_receiver_sequence_gaps():
@@ -494,6 +496,102 @@ def test_forged_plain_receiver_file_with_sha_shaped_digest_cannot_pass_media_eff
     fixture.collect_receiver_evidence(manifest()["runId"])
     fixture.clear_loss(manifest()["runId"])
     assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "BLOCKED"
+
+
+def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier", **changes):
+    """Make the same in-memory-only T3/T5 verifier bridge used by the Lab."""
+    scope = {"attemptId": event["attemptId"], "generation": event["generation"], "streamId": event["streamId"]}
+    t3 = {
+        "schemaVersion": 1, "kind": "turn-t3-lab-stage-run", "runId": raw_manifest["runId"],
+        "identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1},
+        "durationSeconds": 60, "scope": scope, "status": "OBSERVED", "failures": [],
+        "verification": {"algorithm": "HMAC-SHA256", "verifierSource": "lab-transcript-verifier/sha256:" + hashlib.sha256(verifier).hexdigest(), "selfVerified": True, "verifiedBeforeLabClose": True},
+    }
+    t3["signature"] = controller.sign_t3_artifact(t3, verifier)
+    t5 = {"identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1},
+          "static": {"status": "PASS"}, "automatic": {"status": "PASS"},
+          "receipts": [{"ack": {"status": "applied"}, "claim": {"status": "claimed"}, "receipt": {"status": "received"}, "visual": {"status": "PASS"}}]}
+    t5["signature"] = controller.sign_t5_transcript(t5, verifier)
+    bridge = {
+        "schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
+        "loss": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "sessionId": event["sessionId"],
+                 **scope, "selectedTurn": raw_manifest["selectedTurn"], "eventHandle": event["comment"],
+                 "startedMonotonicNs": event["startedMonotonicNs"], "endedMonotonicNs": event["endedMonotonicNs"],
+                 "sequences": {"before": [10, 11], "during": [13, 14], "after": [15, 16]}},
+        "recovery": {"pliOrFirAfterLoss": True, "idrAfterFeedback": True, "newPaintAfterIdr": True,
+                     "recoveryMs": 1999, "peerConnectionRebuilt": False, "resolutionChanged": False},
+    }
+    bridge.update(changes)
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    return bridge
+
+
+def _signed_fixture(raw_manifest, backend, *, verifier=b"live-lab-verifier"):
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(raw_manifest), backend=backend, receiver_source=StaticReceiver([1, 2]))
+    session = fixture.open_session(raw_manifest["runId"], "control-session-a", 7, attempt_id="attempt-a", stream_id="video-a")
+    session.confirm_selected_leg()
+    event = session.apply_loss(raw_manifest["runId"], "all_for_200ms", 200)
+    return fixture, event, verifier
+
+
+def test_authenticated_t3_t5_bridge_requires_live_verifier_and_all_recovery_links():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 2
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    result = fixture.verify_final_evidence(raw["runId"])
+    assert result["status"] == "PASS", result
+    assert result["event"]["receiverSequenceGaps"] == [12]
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda bridge: bridge["t3"].__setitem__("runId", "other-run"),
+    lambda bridge: bridge["loss"].__setitem__("attemptId", "other-attempt"),
+    lambda bridge: bridge["loss"].__setitem__("selectedTurn", {"id": "other", "fingerprint": "sha256:" + "e" * 64}),
+    lambda bridge: bridge["recovery"].__setitem__("idrAfterFeedback", False),
+    lambda bridge: bridge["recovery"].__setitem__("resolutionChanged", True),
+])
+def test_authenticated_bridge_rejects_forgery_replay_cross_attempt_and_partial_recovery(mutation):
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    mutation(bridge)  # Signature is intentionally not recomputed: persisted JSON is untrusted.
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_counter_only_or_visual_only_evidence():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    bridge["loss"]["sequences"] = {"before": [], "during": [], "after": []}
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_a_validly_signed_cross_attempt_replay():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    bridge["loss"]["attemptId"] = "replayed-attempt"
+    bridge["t3"]["scope"]["attemptId"] = "replayed-attempt"
+    bridge["t3"]["signature"] = controller.sign_t3_artifact(bridge["t3"], verifier)
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
 
 
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):
@@ -532,7 +630,7 @@ def test_loopback_control_server_runs_the_authenticated_open_command_then_closes
     thread.start()
     try:
         with socket.create_connection(server.server_address, timeout=1) as client:
-            client.sendall(b'{"operation":"open","controlToken":"temporary-token","runId":"6ed74e8f-0d87-4c3a-8675-b3834de2db01","sessionId":"socket-session","generation":1}\n')
+            client.sendall(b'{"operation":"open","controlToken":"temporary-token","runId":"6ed74e8f-0d87-4c3a-8675-b3834de2db01","sessionId":"socket-session","attemptId":"attempt-a","streamId":"video-a","generation":1}\n')
             assert b'"OPEN"' in client.recv(4096)
     finally:
         server.shutdown()
@@ -558,6 +656,7 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     assert (tmp_path / "turn.env").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "manifest.json").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "image-evidence.json").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "receiver" / "bridge.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_started_fixture_layout_verifies_the_manifest_derived_host_ports_and_network(tmp_path):
@@ -600,6 +699,8 @@ def test_control_rejects_extra_fields_and_self_reported_drop_counts():
     router.validate_request({"operation": "confirm", "controlToken": "token"})
     with pytest.raises(ValueError, match="fields"):
         router.validate_request({"operation": "confirm", "controlToken": "token", "packetCount": 1})
+    with pytest.raises(ValueError, match="attemptId"):
+        router.validate_request({"operation": "open", "controlToken": "token", "runId": manifest()["runId"], "sessionId": "s", "attemptId": 1, "streamId": "v", "generation": 1})
 
 
 def test_manifest_distinguishes_remote_turn_digest_from_local_controller_oci_id():

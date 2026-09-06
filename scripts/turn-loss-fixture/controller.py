@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -26,7 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 _SCHEMA_FIELDS = frozenset({
     "schemaVersion", "runId", "realm", "namespace", "interface",
-    "udpLegSelector", "controlEndpoint", "credentialsFile", "receiverEvidenceFile", "versionDigest", "imageDigests",
+    "udpLegSelector", "controlEndpoint", "credentialsFile", "receiverEvidenceFile", "receiverBridgeFile", "selectedTurn", "versionDigest", "imageDigests",
 })
 _PATTERNS = {
     "every_100th_for_30s": 30_000,
@@ -71,6 +72,8 @@ class LossFixtureManifest:
     control_endpoint: dict[str, Any]
     credentials_file: str
     receiver_evidence_file: str
+    receiver_bridge_file: str
+    selected_turn: dict[str, str]
     version_digest: str
     image_digests: dict[str, str]
 
@@ -138,6 +141,18 @@ class LossFixtureManifest:
         receiver_path = PurePosixPath(receiver_evidence_file)
         if receiver_path.is_absolute() or ".." in receiver_path.parts or receiver_path != PurePosixPath("receiver/sequence.json"):
             raise ValueError("receiverEvidenceFile must be the isolated receiver/sequence.json reference")
+        receiver_bridge_file = _require_string(raw["receiverBridgeFile"], "receiverBridgeFile")
+        bridge_path = PurePosixPath(receiver_bridge_file)
+        if bridge_path.is_absolute() or ".." in bridge_path.parts or bridge_path != PurePosixPath("receiver/bridge.json"):
+            raise ValueError("receiverBridgeFile must be the isolated receiver/bridge.json reference")
+        selected_turn_raw = raw["selectedTurn"]
+        if not isinstance(selected_turn_raw, Mapping) or set(selected_turn_raw) != {"id", "fingerprint"}:
+            raise ValueError("selectedTurn must identify the selected TURN candidate")
+        selected_turn = {"id": _require_string(selected_turn_raw["id"], "selectedTurn.id"),
+                         "fingerprint": _require_string(selected_turn_raw["fingerprint"], "selectedTurn.fingerprint")}
+        fingerprint = selected_turn["fingerprint"]
+        if not fingerprint.startswith("sha256:") or len(fingerprint) != 71 or any(char not in "0123456789abcdef" for char in fingerprint[7:]):
+            raise ValueError("selectedTurn fingerprint must be a sha256 digest")
         digest = _require_string(raw["versionDigest"], "versionDigest")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ValueError("versionDigest must be a sha256 hex digest")
@@ -154,7 +169,7 @@ class LossFixtureManifest:
         if not controller_image.startswith(controller_prefix) or len(controller_digest) != 64 or any(char not in "0123456789abcdef" for char in controller_digest):
             raise ValueError("controller image must be a local OCI sha256 image ID")
         image_digests = {"turn": turn_image, "controller": controller_image}
-        return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, digest, image_digests)
+        return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, receiver_bridge_file, selected_turn, digest, image_digests)
 
 
 class RuleBackend(Protocol):
@@ -461,11 +476,13 @@ def recover_deadline_state(state_store: DeadlineState, backend: RuleBackend, *, 
 
 
 class LossControlSession:
-    def __init__(self, controller: "LossController", run_id: str, session_id: str, generation: int) -> None:
+    def __init__(self, controller: "LossController", run_id: str, session_id: str, generation: int, attempt_id: str, stream_id: str) -> None:
         self._controller = controller
         self.run_id = run_id
         self.session_id = session_id
         self.generation = generation
+        self.attempt_id = attempt_id
+        self.stream_id = stream_id
         self.closed = False
 
     def confirm_selected_leg(self) -> None:
@@ -503,6 +520,116 @@ class FileReceiverEvidenceSource:
         return list(raw["sequences"])
 
 
+def _canonical_evidence(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def _without_signature(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if key != "signature"}
+
+
+def sign_t3_artifact(artifact: Mapping[str, Any], verifier: bytes) -> str:
+    """Mirror T3's sealed artifact contract without importing an untrusted file."""
+    return hmac.new(bytes(verifier), _canonical_evidence(_without_signature(artifact)), hashlib.sha256).hexdigest()
+
+
+def sign_t5_transcript(transcript: Mapping[str, Any], verifier: bytes) -> str:
+    body = {key: transcript[key] for key in ("identity", "static", "automatic", "receipts")}
+    return hmac.new(bytes(verifier), _canonical_evidence(body), hashlib.sha256).hexdigest()
+
+
+def sign_receiver_bridge(bridge: Mapping[str, Any], verifier: bytes) -> str:
+    return hmac.new(bytes(verifier), _canonical_evidence(_without_signature(bridge)), hashlib.sha256).hexdigest()
+
+
+class SignedT3T5ReceiverEvidenceSource:
+    """A live-Lab-only receiver bridge, not a persisted JSON assertion.
+
+    T3 and T5 are both HMAC sealed with LabRun.transcript_verifier().  That
+    verifier is intentionally unavailable after Lab close.  Requiring it here
+    means a copied bridge file, a self-declared capture digest, or a replay
+    from another run cannot make the media-effect gate pass.
+    """
+    _BRIDGE_FIELDS = frozenset({"schemaVersion", "kind", "t3", "t5", "loss", "recovery", "signature"})
+    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "sequences"})
+    _RECOVERY_FIELDS = frozenset({"pliOrFirAfterLoss", "idrAfterFeedback", "newPaintAfterIdr", "recoveryMs", "peerConnectionRebuilt", "resolutionChanged"})
+
+    def __init__(self, bridge: Mapping[str, Any] | Callable[[], Mapping[str, Any]], *, verifier: bytes) -> None:
+        if (not isinstance(bridge, Mapping) and not callable(bridge)) or not isinstance(verifier, bytes) or not verifier:
+            raise ValueError("a live Lab verifier and receiver bridge are required")
+        self._bridge_reader = bridge if callable(bridge) else lambda: dict(bridge)
+        self._verifier = bytes(verifier)
+
+    @classmethod
+    def from_file(cls, path: Path, *, verifier: bytes) -> "SignedT3T5ReceiverEvidenceSource":
+        def read() -> Mapping[str, Any]:
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+            if not isinstance(raw, Mapping):
+                raise RuntimeError("receiver bridge must be an object")
+            return raw
+        return cls(read, verifier=verifier)
+
+    def _verify_t3(self, value: Any, manifest: LossFixtureManifest, scope: Mapping[str, Any]) -> None:
+        if not isinstance(value, Mapping) or not hmac.compare_digest(str(value.get("signature") or ""), sign_t3_artifact(value, self._verifier)):
+            raise RuntimeError("T3 artifact signature is unavailable or invalid")
+        identity, verification = value.get("identity"), value.get("verification")
+        if (value.get("schemaVersion") != 1 or value.get("kind") != "turn-t3-lab-stage-run" or value.get("runId") != manifest.run_id
+                or value.get("durationSeconds") != 60 or value.get("status") != "OBSERVED" or value.get("failures") != []
+                or not isinstance(identity, Mapping) or identity.get("runId") != manifest.run_id or identity.get("realm") != manifest.realm
+                or value.get("scope") != dict(scope) or not isinstance(verification, Mapping)
+                or verification.get("algorithm") != "HMAC-SHA256" or verification.get("selfVerified") is not True
+                or verification.get("verifiedBeforeLabClose") is not True):
+            raise RuntimeError("T3 artifact does not bind the active Lab scope")
+
+    def _verify_t5(self, value: Any, manifest: LossFixtureManifest) -> None:
+        if not isinstance(value, Mapping) or set(value) != {"identity", "static", "automatic", "receipts", "signature"}:
+            raise RuntimeError("T5 transcript schema is invalid")
+        if not hmac.compare_digest(str(value.get("signature") or ""), sign_t5_transcript(value, self._verifier)):
+            raise RuntimeError("T5 transcript signature is unavailable or invalid")
+        identity, receipts = value["identity"], value["receipts"]
+        if (not isinstance(identity, Mapping) or identity.get("runId") != manifest.run_id or identity.get("realm") != manifest.realm
+                or not isinstance(value["static"], Mapping) or value["static"].get("status") != "PASS"
+                or not isinstance(value["automatic"], Mapping) or value["automatic"].get("status") != "PASS"
+                or not isinstance(receipts, list) or not receipts):
+            raise RuntimeError("T5 five-way evidence is incomplete")
+        for receipt in receipts:
+            if not isinstance(receipt, Mapping) or not all(isinstance(receipt.get(key), Mapping) for key in ("ack", "claim", "receipt", "visual")):
+                raise RuntimeError("T5 receipt does not contain five-way evidence")
+
+    def sequences_for(self, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
+        bridge = dict(self._bridge_reader())
+        if set(bridge) != self._BRIDGE_FIELDS or bridge.get("schemaVersion") != 1 or bridge.get("kind") != "turn-loss-receiver-bridge":
+            raise RuntimeError("receiver bridge schema is invalid")
+        if not hmac.compare_digest(str(bridge.get("signature") or ""), sign_receiver_bridge(bridge, self._verifier)):
+            raise RuntimeError("receiver bridge signature is unavailable or invalid")
+        loss, recovery = bridge.get("loss"), bridge.get("recovery")
+        if not isinstance(loss, Mapping) or set(loss) != self._LOSS_FIELDS or not isinstance(recovery, Mapping) or set(recovery) != self._RECOVERY_FIELDS:
+            raise RuntimeError("receiver bridge fields are invalid")
+        scope = {"attemptId": event.get("attemptId"), "generation": event.get("generation"), "streamId": event.get("streamId")}
+        if (not isinstance(scope["attemptId"], str) or not isinstance(scope["generation"], int) or isinstance(scope["generation"], bool) or not isinstance(scope["streamId"], str)
+                or any(loss.get(key) != value for key, value in {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": event.get("sessionId"), **scope}.items())
+                or loss.get("selectedTurn") != manifest.selected_turn or loss.get("eventHandle") != event.get("comment")
+                or loss.get("startedMonotonicNs") != event.get("startedMonotonicNs")
+                or loss.get("endedMonotonicNs") != event.get("endedMonotonicNs")
+                or not isinstance(loss.get("endedMonotonicNs"), int) or loss["endedMonotonicNs"] < loss["startedMonotonicNs"]):
+            raise RuntimeError("receiver bridge does not bind the active loss event")
+        if (not all(recovery.get(key) is True for key in ("pliOrFirAfterLoss", "idrAfterFeedback", "newPaintAfterIdr"))
+                or recovery.get("peerConnectionRebuilt") is not False or recovery.get("resolutionChanged") is not False
+                or not isinstance(recovery.get("recoveryMs"), int) or isinstance(recovery["recoveryMs"], bool) or not 0 <= recovery["recoveryMs"] <= 2000):
+            raise RuntimeError("receiver bridge recovery proof is incomplete")
+        sequences = loss.get("sequences")
+        if not isinstance(sequences, Mapping) or set(sequences) != {"before", "during", "after"} or not all(isinstance(sequences[key], list) and sequences[key] for key in sequences):
+            raise RuntimeError("receiver bridge requires RTP sequences before, during, and after loss")
+        result = [*sequences["before"], *sequences["during"], *sequences["after"]]
+        self._verify_t3(bridge.get("t3"), manifest, scope)
+        self._verify_t5(bridge.get("t5"), manifest)
+        return result
+
+    @property
+    def authenticated(self) -> bool:
+        return True
+
+
 class LossController:
     """Manifest-bound controller. Deadline removal belongs to another process."""
     def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns, probe_window_s: float = 0.25, probe_sleep: Callable[[float], None] = time.sleep) -> None:
@@ -528,16 +655,17 @@ class LossController:
         if run_id != self.manifest.run_id:
             raise ValueError("runId does not match the fixture manifest")
 
-    def open_session(self, run_id: str, session_id: str, generation: int, *, clock: Any | None = None) -> LossControlSession:
+    def open_session(self, run_id: str, session_id: str, generation: int, *, attempt_id: str, stream_id: str, clock: Any | None = None) -> LossControlSession:
         self._require_run(run_id)
-        if not isinstance(session_id, str) or not session_id or not isinstance(generation, int) or generation < 0:
-            raise ValueError("control session and generation are required")
+        if (not isinstance(session_id, str) or not session_id or not isinstance(generation, int) or generation < 0
+                or not isinstance(attempt_id, str) or not attempt_id or not isinstance(stream_id, str) or not stream_id):
+            raise ValueError("control session, attempt, stream, and generation are required")
         with self._lock:
             known = self._session_generations.get(session_id)
             if known is not None and known != generation:
                 raise ValueError("control session generation cannot change")
             self._session_generations[session_id] = generation
-        return LossControlSession(self, run_id, session_id, generation)
+        return LossControlSession(self, run_id, session_id, generation, attempt_id, stream_id)
 
     def _confirm_selected_leg(self, session: LossControlSession) -> None:
         if session.closed:
@@ -612,7 +740,7 @@ class LossController:
                 "schemaVersion": 1, "state": "installing", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
                 "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": dict(self.manifest.egress_selector),
-                "sessionId": session.session_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
+                "sessionId": session.session_id, "attemptId": session.attempt_id, "streamId": session.stream_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
                 "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
                 "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,
             }
@@ -644,13 +772,17 @@ class LossController:
                 raise RuntimeError("no active loss rule records this delivery")
             if self._receiver_source is None:
                 raise RuntimeError("receiver evidence source is unavailable")
-            gaps = sequence_gaps(self._receiver_source.sequences_for(self.manifest, event))
             current = self._backend.read_rule_counter(list(event["rule"]))
             baseline = event.get("dropCounterAtInstall")
             if not isinstance(baseline, int) or current < baseline:
                 raise RuntimeError("iptables counter evidence is invalid")
             event["actualDropCount"] = current - baseline
-            event["receiverSequenceGaps"] = gaps
+            # A signed T3/T5 bridge is constructed only after the loss closes,
+            # because its recovery proof includes the post-clear IDR and paint.
+            # Plain staging files remain diagnostic-only and keep legacy gap
+            # collection for debugging; neither path authorizes PASS here.
+            if not isinstance(self._receiver_source, SignedT3T5ReceiverEvidenceSource):
+                event["receiverSequenceGaps"] = sequence_gaps(self._receiver_source.sequences_for(self.manifest, event))
             if event is self.active_event:
                 self._state_store.save(event)
 
@@ -686,8 +818,13 @@ class LossController:
         event = self._last_event
         if event is None or event.get("runId") != run_id or event.get("endedMonotonicNs") is None:
             return {"status": "FAIL", "reason": "loss rule has not been cleanly removed"}
-        if not self._receiver_evidence_authenticated:
-            return {"status": "BLOCKED", "reason": "authenticated T4/T5 receiver evidence bridge is unavailable", "event": dict(event)}
+        if self._receiver_source is None or not isinstance(self._receiver_source, SignedT3T5ReceiverEvidenceSource):
+            return {"status": "BLOCKED", "reason": "authenticated T3/T5 receiver evidence bridge is unavailable", "event": dict(event)}
+        try:
+            event["receiverSequenceGaps"] = sequence_gaps(self._receiver_source.sequences_for(self.manifest, event))
+        except Exception as exc:
+            return {"status": "BLOCKED", "reason": f"authenticated receiver bridge rejected: {type(exc).__name__}", "event": dict(event)}
+        self._receiver_evidence_authenticated = True
         if event.get("actualDropCount", 0) <= 0 or not event.get("receiverSequenceGaps"):
             return {"status": "FAIL", "reason": "loss had zero observed media effect", "event": dict(event)}
         return {"status": "PASS", "event": dict(event)}
@@ -727,7 +864,7 @@ class ControlRequestRouter:
             raise ValueError("control request must be an object with an operation")
         expected = {
             "health": {"operation", "controlToken"},
-            "open": {"operation", "controlToken", "runId", "sessionId", "generation"},
+            "open": {"operation", "controlToken", "runId", "sessionId", "attemptId", "streamId", "generation"},
             "confirm": {"operation", "controlToken"},
             "apply": {"operation", "controlToken", "runId", "pattern", "durationMs"},
             "collect": {"operation", "controlToken"},
@@ -740,6 +877,9 @@ class ControlRequestRouter:
         for field in ("generation", "durationMs"):
             if field in request and (not isinstance(request[field], int) or isinstance(request[field], bool)):
                 raise ValueError(f"control field {field} must be an integer")
+        for field in ("controlToken", "runId", "sessionId", "attemptId", "streamId", "pattern"):
+            if field in request and (not isinstance(request[field], str) or not request[field]):
+                raise ValueError(f"control field {field} must be a non-empty string")
 
 
 class _ControlHandler(socketserver.StreamRequestHandler):
@@ -757,7 +897,7 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                 elif operation == "open":
                     if session is not None:
                         raise RuntimeError("control session is already open")
-                    session = router.controller.open_session(request["runId"], request["sessionId"], request["generation"])
+                    session = router.controller.open_session(request["runId"], request["sessionId"], request["generation"], attempt_id=request["attemptId"], stream_id=request["streamId"])
                     response = {"status": "OPEN", "generation": session.generation}
                 elif session is None:
                     raise RuntimeError("open a control session before this command")
@@ -839,6 +979,11 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     (runtime_dir / "turn.env").chmod(0o600)
     (runtime_dir / "manifest.json").write_text(json.dumps(dict(raw_manifest), sort_keys=True), encoding="utf-8")
     (runtime_dir / "manifest.json").chmod(0o600)
+    # The receiver may write a bridge here, but a file alone is never trusted:
+    # serve has no Lab verifier and consequently keeps final evidence BLOCKED.
+    bridge_path = runtime_dir / manifest.receiver_bridge_file
+    bridge_path.write_text(json.dumps({"status": "NOT_RUN", "reason": "requires-live-lab-transcript-verifier"}), encoding="utf-8")
+    bridge_path.chmod(0o600)
     (runtime_dir / "image-evidence.json").write_text(json.dumps({
         "turnRepoDigest": resolved_images.images["turn"],
         "controllerImageId": resolved_images.images["controller"],
@@ -885,6 +1030,9 @@ def _main() -> None:
         command.add_argument("--manifest", type=Path, required=True)
         command.add_argument("--state", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
+    subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
+    subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
+                                                help="inherited live-Lab verifier descriptor; never a path, argv secret, or environment variable")
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--manifest", type=Path, required=True)
     prepare.add_argument("--runtime", type=Path, required=True)
@@ -916,7 +1064,18 @@ def _main() -> None:
             recover_deadline_state(store, backend)
             time.sleep(0.1)
     credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
-    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=FileReceiverEvidenceSource(Path("/receiver/sequence.json")))
+    receiver_source: ReceiverEvidenceSource
+    if arguments.receiver_verifier_fd is None:
+        # The Compose mount is deliberately not authentication. A runtime that
+        # cannot inherit the still-live Lab verifier stays BLOCKED at final
+        # evidence verification.
+        receiver_source = FileReceiverEvidenceSource(Path("/receiver/sequence.json"))
+    else:
+        verifier = os.read(arguments.receiver_verifier_fd, 4096)
+        if not verifier or len(verifier) >= 4096:
+            raise RuntimeError("inherited live Lab verifier is unavailable or oversized")
+        receiver_source = SignedT3T5ReceiverEvidenceSource.from_file(arguments.receiver_bridge, verifier=verifier)
+    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=receiver_source)
     # Docker forwards the loopback-published host port to the fixture bridge
     # address, not the container loopback. The Compose override restricts the
     # published side to 127.0.0.1; this listener still exists only in TURN's

@@ -76,12 +76,19 @@ addition, counter read, and terminal state. A watchdog therefore cannot clear
 intent in the middle of a transaction. A process death after addition leaves
 recoverable exact handles, including the probe's user chain. It reports `IDLE`, `ARMED`, `CLEARED`, or
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
-is present.  The final evidence verifier records monotonic start/end, actual
+is present. The final evidence verifier records monotonic start/end, actual
 drop count from the exact iptables rule counter and strict ordered RTP sequence
-gaps from a receiver-owned evidence file. Until T4/T5 supply a formal signed
-receiver-bridge artifact bound to the run, attempt, generation, and selected
-pair, that plain file is diagnostics only: final media-effect verification is
-`BLOCKED` and cannot pass. The control connection cannot submit drop counts or sequences.  Zero observed effect cannot pass.  Credentials,
+gaps. A `receiver/bridge.json` can close this gate only through
+`SignedT3T5ReceiverEvidenceSource`, constructed by the live Lab while it still
+holds `LabRun.transcript_verifier()`. It verifies the sealed 60-second T3
+artifact and T5 five-way transcript with that non-persisted verifier, then
+binds run/realm/session/attempt/generation/stream, selected TURN id and
+fingerprint, event handle/timestamps, RTP before/during/after sequences, and
+PLI/FIR -> IDR -> new paint recovery within two seconds without a PC rebuild or
+resolution change. A JSON bridge mounted into Compose alone is diagnostic-only
+and final media-effect verification remains `BLOCKED`; the control connection
+cannot submit drop counts or sequences. Zero observed effect cannot pass.
+Credentials,
 TURN environment, and manifest are written with mode `0600`.
 
 Do not treat an HTTP throttle, sender-side hook, or offline packet simulation as
