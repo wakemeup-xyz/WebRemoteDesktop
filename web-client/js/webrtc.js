@@ -330,9 +330,12 @@ function decodeControlledMarkerRgba(data, width, height) {
     grid.push(row);
   }
   if (grid[0][0] !== 0 || grid[0][31] !== 1 || grid[15][0] !== 1 || grid[15][31] !== 1) return null;
+  for (let x = 1; x < 31; x += 1) if (grid[0][x] !== ((x - 1) % 2) || grid[15][x] !== 0) return null;
+  for (let y = 1; y < 15; y += 1) if (grid[y][0] !== 1 || grid[y][31] !== 1) return null;
   const interior = grid.slice(1, 15).flatMap((row) => row.slice(1, 31));
   const a = interior.slice(0, 192), b = interior.slice(192, 384);
   if (a.length !== 192 || a.some((value, index) => value !== b[index])) return null;
+  if (interior.slice(384).some((value, index) => value !== (index % 2))) return null;
   const bytes = new Uint8Array(24);
   a.forEach((value, index) => { bytes[Math.floor(index / 8)] |= value << (7 - (index % 8)); });
   const view = new DataView(bytes.buffer);
