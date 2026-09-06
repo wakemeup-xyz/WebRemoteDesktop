@@ -229,6 +229,7 @@ class RelayVbvRefinementTest(unittest.TestCase):
         self.assertEqual(result["selection"]["candidateId"], "on-demand-cap-bitrate-vbv250")
         self.assertEqual(result["selection"]["defaultPolicy"], "relay-legacy-v1")
 
+
     def test_invalid_225_comparability_stops_before_250(self):
         """Only a complete, comparable own-gate failure permits the final rung."""
         self.measurements[self.candidates[0]["id"]]["status"] = "FAIL"
@@ -254,6 +255,25 @@ class RelayVbvRefinementTest(unittest.TestCase):
 
         self.assertEqual(result["selection"]["state"], "no-offline-winner")
         self.assertEqual(result["selection"]["defaultPolicy"], "relay-legacy-v1")
+
+
+class PresetMatrixEvaluatorTest(unittest.TestCase):
+    def test_invalid_control_evidence_blocks_candidate_without_measuring_any_other_preset(self):
+        class Probe:
+            def __init__(self):
+                self.config_ids = []
+
+            def evaluate_preset_scenario_matrix(self, config):
+                self.config_ids.append(config.id)
+                return {"config": config.to_dict(), "input": {}, "runs": []}
+
+        probe = Probe()
+        result = MODULE.evaluate_preset_matrix(probe)
+
+        self.assertEqual(probe.config_ids, ["on-demand-cap-vbv200-ultrafast"])
+        self.assertEqual(result["offlineWinner"], None)
+        self.assertEqual(result["selection"]["state"], "no-offline-winner")
+        self.assertEqual(result["runtime"]["status"], "NOT RUN")
 
 
 if __name__ == "__main__":

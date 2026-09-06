@@ -12,6 +12,7 @@ import math
 import os
 import platform
 import random
+import hashlib
 import statistics
 import sys
 import time
@@ -300,4 +301,210 @@ def evaluate_legacy_policy() -> dict[str, Any]:
             "cpuCount": os.cpu_count(),
         },
         "runs": [evaluate_resolution(width, height, font) for width, height in RESOLUTIONS],
+    }
+
+
+def _scenario_source(
+    width: int, height: int, font: ImageFont.ImageFont, scenario_id: str, phase_index: int
+) -> np.ndarray:
+    """Keep a deterministic frame identity while making the scroll phase non-static."""
+    source = make_static_text_frame(width, height, font)
+    if scenario_id == "scrolling-text":
+        return np.roll(source, -(phase_index % 220), axis=0)
+    return source
+
+
+def _scenario_run(
+    width: int,
+    height: int,
+    font: ImageFont.ImageFont,
+    *,
+    config,
+    scenario_id: str,
+    session_id: str,
+    phase_start_index: int,
+    frame_count: int,
+    request_indices: tuple[int, ...],
+    encoder: H264VideoToolboxEncoder | None = None,
+    decoder: av.CodecContext | None = None,
+) -> tuple[dict[str, Any], H264VideoToolboxEncoder, av.CodecContext]:
+    """Run exactly one ScenarioRun, retaining an injected scroll session if supplied."""
+    from turn_encoder_experiments import submitted_options
+
+    resolution_key = f"{width}x{height}"
+    if encoder is None:
+        policy = resolve_h264_policy(
+            MediaSessionIntent(session_id, 1, "relay", width, height, FRAME_RATE, 0),
+            "relay-legacy-v1",
+        )
+        policy = replace(
+            policy,
+            periodic_idr_frames=config.periodic_idr_frames,
+            vbv_buffer_ms=config.vbv_ms,
+            min_bitrate_bps=config.bitrate_by_resolution[resolution_key],
+            target_bitrate_bps=config.bitrate_by_resolution[resolution_key],
+            max_bitrate_bps=config.bitrate_by_resolution[resolution_key],
+            preset=config.preset,
+        )
+        encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario_id)
+        decoder = av.CodecContext.create("h264", "r")
+    assert decoder is not None
+
+    previous: np.ndarray | None = None
+    frames: list[dict[str, Any]] = []
+    request_tokens: list[str] = []
+    for phase_index in range(frame_count):
+        index = phase_start_index + phase_index
+        source = _scenario_source(width, height, font, scenario_id, phase_index)
+        source_hash = hashlib.sha256(source.tobytes()).hexdigest()
+        frame = av.VideoFrame.from_ndarray(source, format="rgb24")
+        frame.pts = index * (90_000 // FRAME_RATE)
+        frame.time_base = Fraction(1, 90_000)
+        request_token = None
+        force = index in request_indices
+        if force:
+            request_token = f"{scenario_id}:{index}"
+            request_tokens.append(request_token)
+            encoder.note_keyframe_request("offline-on-demand", session_id, 1, index)
+
+        direct_started = time.perf_counter()
+        nals = list(encoder._encode_frame(frame, force))
+        direct_encode_ms = (time.perf_counter() - direct_started) * 1000
+        packetize_started = time.perf_counter()
+        packetized = encoder._packetize(nals)
+        packetize_ms = (time.perf_counter() - packetize_started) * 1000
+        bitstream = b"".join(b"\x00\x00\x00\x01" + nal for nal in nals)
+        decode_started = time.perf_counter()
+        decoded = decoder.decode(av.Packet(bitstream))
+        decode_ms = (time.perf_counter() - decode_started) * 1000
+        if not decoded:
+            raise RuntimeError(f"decoder produced no frame at {scenario_id}:{index}")
+        output = decoded[-1].to_ndarray(format="rgb24").astype(float)
+        mse = float(np.mean((output - source.astype(float)) ** 2))
+        change_mae = 0.0 if previous is None else float(np.mean(np.abs(output - previous)))
+        idr = bitstream_contains_idr(bitstream)
+        if idr and index == phase_start_index:
+            idr_kind = "initial"
+        elif idr and force and encoder.last_requested_keyframe_emitted:
+            idr_kind = "on-demand"
+        elif idr and scenario_id == "safety-net" and index == 1201:
+            idr_kind = "encoder-safety-net"
+        elif idr:
+            idr_kind = "unexpected"
+        else:
+            idr_kind = None
+        encoded_bytes = len(bitstream)
+        frames.append({
+            "index": index,
+            "phaseIndex": phase_index,
+            "inputHash": source_hash,
+            "pts": int(frame.pts),
+            "requestToken": request_token,
+            "idr": idr,
+            "bitstreamIdrKind": idr_kind,
+            "idrKind": idr_kind,
+            "psnr": round(10 * math.log10(255**2 / max(mse, 1e-9)), 3),
+            "changeMAE": round(change_mae, 3),
+            "encodeMs": round(direct_encode_ms + packetize_ms, 3),
+            "bytes": encoded_bytes,
+            "idrBytes": encoded_bytes if idr else 0,
+            "decodeMs": round(decode_ms, 3),
+            "encode": {
+                "directEncoderMs": round(direct_encode_ms, 3),
+                "packetizeMs": round(packetize_ms, 3),
+                "completeEncodePacketizeMs": round(direct_encode_ms + packetize_ms, 3),
+                "packetCount": len(packetized),
+            },
+            "decode": {"status": "decoded", "ms": round(decode_ms, 3)},
+            "quality": {"psnr": round(10 * math.log10(255**2 / max(mse, 1e-9)), 3), "changeMAE": round(change_mae, 3)},
+            "qp": None,
+        })
+        previous = output
+
+    idr_frames = [frame for frame in frames if frame["idr"]]
+    budget = 25.0 if (width, height) == (1152, 720) else 45.0
+    on_demand = [frame for frame in idr_frames if frame["idrKind"] == "on-demand"]
+    safety = [frame for frame in idr_frames if frame["idrKind"] == "encoder-safety-net"]
+    quality_passed = all(frame["psnr"] >= 28.0 for frame in on_demand)
+    if scenario_id == "safety-net":
+        quality_passed = bool(safety) and all(
+            frame["psnr"] >= 28.0 and frame["changeMAE"] <= 3.0 for frame in safety
+        )
+    records = [serialize_codec_creation_record(record) for record in encoder.codec_creation_records]
+    return ({
+        "scenarioId": scenario_id,
+        "sessionId": session_id,
+        "phaseStartIndex": phase_start_index,
+        "frameCount": frame_count,
+        "requestTokens": request_tokens,
+        "codecCreationRecords": records,
+        "configuredOptions": submitted_options(config, (width, height)),
+        "frames": frames,
+        "quality": {
+            "status": "PASS" if quality_passed else "FAIL",
+            "onDemandIdrPsnr": [frame["psnr"] for frame in on_demand],
+            "initialIdrPsnr": [frame["psnr"] for frame in idr_frames if frame["idrKind"] == "initial"],
+            "safetyNetPsnr": [frame["psnr"] for frame in safety],
+        },
+        "cost": {
+            "status": "PASS" if percentile_95([frame["encodeMs"] for frame in frames]) <= budget else "FAIL",
+            "encodeMsP95": round(percentile_95([frame["encodeMs"] for frame in frames]), 3),
+            "thresholdMs": budget,
+        },
+        "burst": {
+            "status": "PASS" if idr_frames else "FAIL",
+            "idrBytes": [frame["idrBytes"] for frame in idr_frames],
+            "note": "IDR bytes are retained for the later Viewer buffer gate.",
+        },
+    }, encoder, decoder)
+
+
+def evaluate_preset_scenario_matrix(config) -> dict[str, Any]:
+    """Collect the fixed five ScenarioRuns for one immutable preset config."""
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    logging.disable(logging.CRITICAL)
+    font, font_metadata = load_probe_font()
+    resolution_runs = []
+    scenario_specs = (
+        ("static-text", 0, 65, (5,)),
+        ("health-static", 0, 1201, ()),
+        ("scrolling-text", 0, 300, (5, 200)),
+        ("post-scroll-static", 300, 300, (305, 500)),
+        ("safety-net", 0, 1226, ()),
+    )
+    for width, height in RESOLUTIONS:
+        scenarios = []
+        scroll_encoder = None
+        scroll_decoder = None
+        for scenario_id, start, count, requests in scenario_specs:
+            session_id = f"{config.id}:{width}x{height}:{'scroll' if scenario_id in {'scrolling-text', 'post-scroll-static'} else scenario_id}"
+            if scenario_id == "post-scroll-static":
+                run, scroll_encoder, scroll_decoder = _scenario_run(
+                    width, height, font, config=config, scenario_id=scenario_id,
+                    session_id=session_id, phase_start_index=start, frame_count=count,
+                    request_indices=requests, encoder=scroll_encoder, decoder=scroll_decoder,
+                )
+            else:
+                run, created_encoder, created_decoder = _scenario_run(
+                    width, height, font, config=config, scenario_id=scenario_id,
+                    session_id=session_id, phase_start_index=start, frame_count=count,
+                    request_indices=requests,
+                )
+                if scenario_id == "scrolling-text":
+                    scroll_encoder, scroll_decoder = created_encoder, created_decoder
+            scenarios.append(run)
+        resolution_runs.append({"resolution": [width, height], "scenarios": scenarios})
+    return {
+        "config": config.to_dict(),
+        "scope": "offline synthetic encoder experiment; no desktop capture, Host startup, Viewer, or network connection",
+        "input": {
+            "randomSeed": RANDOM_SEED,
+            "frameRate": FRAME_RATE,
+            "timeBase": "1/90000",
+            "font": font_metadata,
+            "content": "fixed static and deterministic scrolling synthetic text",
+        },
+        "versions": {"pyav": av.__version__, "aiortc": aiortc.__version__},
+        "runs": resolution_runs,
     }

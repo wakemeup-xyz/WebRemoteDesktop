@@ -4,15 +4,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
 import re
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE_PATH = ROOT / "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py"
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def select_relay_candidate(candidates: list[dict]) -> dict:
@@ -724,6 +728,83 @@ def evaluate_relay_vbv_refinement(probe) -> dict:
     }
 
 
+def evaluate_preset_matrix(probe) -> dict:
+    """Run the sole fresh control/candidate pair and keep production on legacy."""
+    from turn_encoder_experiments import build_preset_experiments, validate_comparison
+
+    control, candidate = build_preset_experiments()
+    source_digests = {
+        str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (
+            Path(__file__).resolve(),
+            PROBE_PATH,
+            ROOT / "scripts/turn_encoder_experiments.py",
+            ROOT / "python-host/h264_videotoolbox_encoder.py",
+        )
+    }
+    base_evidence = probe.evaluate_preset_scenario_matrix(control)
+    base_errors = validate_comparison(base_evidence, {
+        "config": candidate.to_dict(),
+        "input": base_evidence.get("input"),
+        "runs": [],
+    })
+    # The comparison validator needs a candidate to validate both sides.  A
+    # malformed control must stop before spending CPU on the only candidate.
+    base_errors = [error for error in base_errors if error.startswith("base:")]
+    runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
+    if base_errors:
+        return {
+            "kind": "relay-preset-refinement",
+            "scope": "offline synthetic encoder experiment only; runtime gates remain NOT RUN",
+            "defaultPolicy": "relay-legacy-v1",
+            "base": {"config": control.to_dict(), "offline": base_evidence, "validationErrors": base_errors},
+            "candidates": [],
+            "offlineWinner": None,
+            "runtime": runtime,
+            "sourceDigests": source_digests,
+            "inputDigest": hashlib.sha256(
+                json.dumps(base_evidence.get("input", {}), sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "selection": select_relay_candidate([]),
+        }
+
+    candidate_evidence = probe.evaluate_preset_scenario_matrix(candidate)
+    errors = validate_comparison(base_evidence, candidate_evidence)
+    candidate_valid = not errors
+    candidate_row = {
+        "id": candidate.id,
+        "parameters": candidate.to_dict(),
+        "offline": {"status": "PASS" if candidate_valid else "FAIL", "evidence": candidate_evidence},
+        "runtime": runtime,
+        "eligible": candidate_valid,
+        "ineligibleReason": errors,
+    }
+    selection = select_relay_candidate([candidate_row])
+    result = {
+        "kind": "relay-preset-refinement",
+        "scope": "offline synthetic encoder experiment only; it cannot prove TURN, Viewer buffer, Host event loop, input acknowledgement, or loss recovery",
+        "defaultPolicy": "relay-legacy-v1",
+        "base": {"config": control.to_dict(), "offline": base_evidence, "validationErrors": []},
+        "candidates": [candidate_row],
+        "offlineWinner": candidate.id if candidate_valid else None,
+        "runtime": runtime,
+        "sourceDigests": source_digests,
+        "inputDigest": hashlib.sha256(
+            json.dumps(base_evidence.get("input", {}), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "selection": selection,
+    }
+    if candidate_valid:
+        result["frozenManifest"] = {
+            "candidateId": candidate.id,
+            "encoderParameterDigest": candidate.options_digest,
+            "sourceDigests": source_digests,
+            "status": "OFFLINE_PASS_ONLY",
+            "runtime": runtime,
+        }
+    return result
+
+
 def load_probe_module():
     spec = importlib.util.spec_from_file_location("turn_encoder_probe", PROBE_PATH)
     if spec is None or spec.loader is None:
@@ -737,7 +818,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--policy", choices=("relay-legacy-v1",))
-    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement"))
+    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement"))
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
 
@@ -751,6 +832,8 @@ def main() -> None:
         else evaluate_relay_matrix(probe)
         if args.matrix == "relay"
         else evaluate_relay_vbv_refinement(probe)
+        if args.matrix == "relay-vbv-refinement"
+        else evaluate_preset_matrix(probe)
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
