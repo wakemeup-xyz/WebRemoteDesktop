@@ -43,6 +43,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
   const bodyClasses = new Set();
   let requestedTarget = null;
   let requestCount = 0;
+  let exitCount = 0;
   let videoFocusCount = 0;
 
   const body = makeElement('body');
@@ -89,6 +90,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
       return null;
     },
     exitFullscreen() {
+      exitCount += 1;
       if (typeof exitFullscreen === 'function') return exitFullscreen(document);
       document.fullscreenElement = null;
       return Promise.resolve();
@@ -106,6 +108,11 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
     document,
     WebRTC: {},
     ChromeLayout: {},
+    window: {
+      innerWidth: 1440,
+      innerHeight: 900,
+      addEventListener() {},
+    },
   };
   context.globalThis = context;
   vm.createContext(context);
@@ -114,6 +121,8 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
 
   const fullscreenButton = document.getElementById('fullscreenBtn');
   const exitButton = document.getElementById('exitFullscreenBtn');
+  const fullscreenStatus = document.getElementById('fullscreenStatus');
+  fullscreenStatus.hidden = true;
   const video = document.getElementById('remoteVideo');
   document.getElementById('mobileTextInput');
   document.getElementById('terminalComposer');
@@ -133,6 +142,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
     video,
     get requestedTarget() { return requestedTarget; },
     get requestCount() { return requestCount; },
+    get exitCount() { return exitCount; },
     get videoFocusCount() { return videoFocusCount; },
     click(id) {
       const element = elements.get(id) || document.getElementById(id);
@@ -144,6 +154,10 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
       const handler = documentListeners.get(type);
       assert.equal(typeof handler, 'function', `${type} should have a document listener`);
       return handler();
+    },
+    resize(width, height) {
+      this.context.window.innerWidth = width;
+      this.context.window.innerHeight = height;
     },
   };
 }
@@ -248,6 +262,99 @@ test('exit fullscreen rejection is handled without changing fullscreen state', a
   assert.equal(h.document.fullscreenElement, h.document.documentElement);
   assert.equal(h.elements.get('fullscreenStatus').hidden, false);
   assert.match(h.elements.get('fullscreenStatus').textContent, /不支持全屏，可继续操作/);
+});
+
+test('missing exit fullscreen API keeps fullscreen state and preserves mobile editor focus', async () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+  delete h.document.exitFullscreen;
+
+  const field = h.elements.get('mobileTextInput');
+  field.focus();
+  let prevented = false;
+  h.exitButton.listeners.get('pointerdown')({
+    preventDefault() { prevented = true; },
+  });
+  await h.click('exitFullscreenBtn');
+
+  assert.equal(prevented, true);
+  assert.equal(h.exitCount, 0);
+  assert.equal(h.document.fullscreenElement, h.document.documentElement);
+  assert.equal(h.document.activeElement, field);
+  assert.equal(h.elements.get('fullscreenStatus').hidden, false);
+  assert.match(h.elements.get('fullscreenStatus').textContent, /不支持全屏，可继续操作/);
+});
+
+test('global fullscreen exit remains callable after mobile resize and preserves editor focus', async () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+
+  const field = h.elements.get('mobileTextInput');
+  field.focus();
+  h.resize(375, 812);
+  assert.equal(h.context.window.innerWidth, 375);
+  assert.equal(h.context.window.innerHeight, 812);
+  let prevented = false;
+  h.exitButton.listeners.get('pointerdown')({
+    preventDefault() { prevented = true; },
+  });
+  await h.click('exitFullscreenBtn');
+
+  assert.equal(prevented, true);
+  assert.equal(h.exitCount, 1);
+  assert.equal(h.document.fullscreenElement, null);
+  assert.equal(h.document.activeElement, field);
+});
+
+test('global fullscreen exit remains callable from the Terminal tab and preserves composer focus', async () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.context.document.body.classList.add('terminal-active');
+  h.document.getElementById('terminalPanel').hidden = false;
+  h.document.getElementById('desktopPanel').hidden = true;
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+
+  const composer = h.elements.get('terminalComposer');
+  composer.focus();
+  let prevented = false;
+  h.exitButton.listeners.get('pointerdown')({
+    preventDefault() { prevented = true; },
+  });
+  await h.click('exitFullscreenBtn');
+
+  assert.equal(prevented, true);
+  assert.equal(h.exitCount, 1);
+  assert.equal(h.document.fullscreenElement, null);
+  assert.equal(h.document.activeElement, composer);
+});
+
+test('global fullscreen exit remains callable after control lease loss and preserves editor focus', async () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.context.WebRTC.getDesktopSessionSnapshot = () => ({ canInput: false });
+  h.context.document.body.classList.add('controls-hidden');
+  h.fullscreenButton.disabled = true;
+  h.exitButton.disabled = false;
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+
+  const field = h.elements.get('mobileTextInput');
+  field.focus();
+  let prevented = false;
+  h.exitButton.listeners.get('pointerdown')({
+    preventDefault() { prevented = true; },
+  });
+  await h.click('exitFullscreenBtn');
+
+  assert.equal(prevented, true);
+  assert.equal(h.exitCount, 1);
+  assert.equal(h.document.fullscreenElement, null);
+  assert.equal(h.document.activeElement, field);
 });
 
 test('fullscreen exit and re-entry use the same root target', async () => {
