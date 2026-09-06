@@ -241,3 +241,39 @@ with one pre-existing MSS deprecation warning.
 
 This does not change any runtime gate: real selected-relay continuity, loss
 recovery, formal public-entry, and physical-device evidence remain `NOT RUN`.
+
+## Task 9 runtime preflight and acceptance record (2026-09-06)
+
+This is a documentation-only runtime record. The operator's preflight found an
+active local human Viewer (`viewerCount=1`), so Task 9 did not start a headless
+Viewer, restart local services, restart Host, change `.env`, read credentials,
+or operate either tunnel. A later read-only API snapshot returned
+`viewerCount=0`; it does not retroactively authorize an automated proof after
+the active-human-Viewer stop condition was observed.
+
+The existing local origin returned `/health` `status: ok` and `/api/status`
+`hostOnline: true`. This is **pre-existing runtime observed**, not proof that
+these processes have loaded this worktree's `de8edb0` code or policy. The
+service helper's recorded signal PID was absent while the HTTP origin was
+healthy; no process action was taken to reconcile that discrepancy.
+
+`/tmp/wrd-safe-current-url.txt` was present and readable. Its content was not
+changed and is intentionally not written to this versioned report. Because no
+restart occurred, this record does not make a before/after URL-stability claim.
+
+| Spec §11 gate | Status | Reason / evidence boundary |
+|---|---|---|
+| 11.1 automated regression | PASS (Task 8 evidence) | Full Python, Viewer, and Signal Server suites passed; this is not a live relay result. |
+| 11.2 offline quality and timing | `no-offline-winner` | The Task 6 matrix selected no v2 constants; legacy remains default. This does not prove the periodic pulse is fixed. |
+| 11.3 selected relay pair | NOT RUN | Active human Viewer stop condition prohibited the headless proof; no manual relay session was performed. |
+| 11.3 720p, 10-minute run | NOT RUN | No controlled selected-relay session; pre-existing health cannot establish paint, buffer, pulse, or geometry gates. |
+| 11.3 1080p, 5-minute run | NOT RUN | No controlled selected-relay session; no automatic resolution change was made. |
+| 11.3 paint, pause/resume, refresh, and input | NOT RUN | No browser interaction occurred; Host lag and input-ack gates have no new evidence. |
+| 11.3 finite-loss recovery | NOT RUN | No loss injection or selected-relay recovery observation occurred. |
+| Legacy-versus-v2 A/B | NOT RUN | `relay-balanced-v2` has no offline winner or selected constants, so there is no authorized v2 runtime candidate. |
+| 11.4 public and physical-device acceptance | NOT RUN | No formal-public external operator, network, or physical-device observation was performed. |
+
+The approximately one-second quality/clarity pulse remains unclosed. No `FAIL`
+status is inferred from these unexecuted gates; they remain `NOT RUN` pending a
+new operator-scheduled window with no active human Viewer and an eligible v2
+candidate, if one is established by the offline gates.
