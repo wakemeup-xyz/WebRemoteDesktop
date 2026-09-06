@@ -89,6 +89,19 @@ def test_marker_roi_calibration_uses_canvas_content_inside_the_visible_fixture_b
     assert adapter.calibrate_marker_roi(source_width=1152, source_height=720) == (50, 175, 256, 128)
 
 
+def test_marker_roi_is_configured_on_the_live_viewer_before_collecting_static_evidence():
+    calls = []
+    class Page:
+        def evaluate(self, script, value):
+            calls.append((script, value))
+            return True
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    adapter.viewer_page = Page()
+    marker_layout = runner.MarkerLayout.create(attempt_id="attempt", generation=1, source_width=1152, source_height=720, roi=(50, 175, 256, 128))
+    adapter.configure_marker_roi(marker_layout)
+    assert calls[0][1] == {"x": 50, "y": 175, "width": 256, "height": 128}
+
+
 def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dispatch_and_four_way_evidence():
     rows = []
 

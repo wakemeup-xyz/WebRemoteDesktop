@@ -396,6 +396,14 @@ class PlaywrightLabViewerAdapter:
         return MarkerLayout.create(attempt_id="calibration", generation=0, source_width=source_width,
                                    source_height=source_height, roi=(x, y, 256, 128)).roi
 
+    def configure_marker_roi(self, layout: MarkerLayout) -> None:
+        x, y, width, height = layout.roi
+        configured = self.viewer_page.evaluate("""(roi) =>
+          Boolean(window.WebRTC?.configureControlledSceneMarkerRoi?.(roi))
+        """, {"x": x, "y": y, "width": width, "height": height})
+        if configured is not True:
+            raise RuntimeError("viewer-controlled-marker-roi-configuration-refused")
+
     def prepare_native_action(self, action_id: int) -> None:
         result = self.producer_page.evaluate("""(actionId) => {
           if (!window.WRDTurnControlledProducer?.prepareNativeAction) return false;
@@ -494,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         roi = adapter.calibrate_marker_roi(source_width=session["sourceWidth"], source_height=session["sourceHeight"])
         layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
                                      source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=roi)
+        adapter.configure_marker_roi(layout)
         visible, reason = adapter.producer_window_precondition()
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
         if not visible:
