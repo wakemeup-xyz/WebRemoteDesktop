@@ -100,7 +100,7 @@ function setupSignaling(io, options = {}) {
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
   const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket;
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
-  const admitProofViewer = (admission) => instanceRuntime.admitProofViewer(admission);
+  const admitProofViewer = (admission, socketId) => instanceRuntime.admitProofViewer(admission, socketId);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
   const requiresViewerProof = () => typeof instanceRuntime.requiresViewerProof === 'function'
     && instanceRuntime.requiresViewerProof() === true;
@@ -737,7 +737,7 @@ function setupSignaling(io, options = {}) {
         socket.disconnect(true);
         return;
       }
-      if (isProofViewer && !admitProofViewer(proofAdmission)) {
+      if (isProofViewer && !admitProofViewer(proofAdmission, socket.id)) {
         socket.emit('proof-admission-rejected', { reason: 'viewer-epoch-changed' });
         socket.disconnect(true);
         return;

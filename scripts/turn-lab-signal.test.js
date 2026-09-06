@@ -162,7 +162,7 @@ test('lab signal creates a private runtime with random temporary authentication'
   }
 });
 
-test('lab context becomes a host-owned session when its viewer proof was consumed before host startup', async () => {
+test('lab context burns when its viewer proof was consumed before host startup', async () => {
   const lab = await createLabRuntime({ allowSourceFallback: true });
   try {
     const login = await fetch(`${lab.origin}/api/auth/login`, {
@@ -183,8 +183,7 @@ test('lab context becomes a host-owned session when its viewer proof was consume
     const consumed = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
     });
-    assert.equal(consumed.status, 200);
-    assert.equal((await consumed.json()).context.runId, 'run-stale');
+    assert.equal(consumed.status, 409);
     const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
     });
@@ -209,7 +208,7 @@ test('controlled input binding is loopback proof-and-host-secret bound and one-u
     assert.equal((await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
     })).status, 200);
-    assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission), true);
+    assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission, 'viewer-1'), true);
     lab.runtime.signalingRuntime.connections.viewers.set('viewer-1', { id: 'viewer-1' });
     const headers = { 'content-type': 'application/json', 'x-wrd-lab-host-secret': lab.credentials.hostSecret, 'x-wrd-lab-proof-token': admission.token };
     const digest = 'a'.repeat(64);

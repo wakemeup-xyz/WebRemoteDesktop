@@ -18,6 +18,9 @@ function createRuntimeContext(options = {}) {
   let hostCapabilities = normalizeCapabilities(initialCapabilities, false);
   let viewerEpoch = 0;
   const proofAdmissions = new Map();
+  // A Lab context must bind the exact socket which consumed its one-use proof;
+  // an epoch increase alone can be caused by an unrelated Viewer.
+  const consumedProofViewers = new Map();
   const connections = {
     host: null,
     viewers: new Map(),
@@ -27,6 +30,9 @@ function createRuntimeContext(options = {}) {
   function cleanupExpiredProofAdmissions(timestamp = now()) {
     for (const [token, admission] of proofAdmissions) {
       if (admission.expiresAt <= timestamp) proofAdmissions.delete(token);
+    }
+    for (const [token, consumer] of consumedProofViewers) {
+      if (consumer.expiresAt <= timestamp) consumedProofViewers.delete(token);
     }
   }
 
@@ -72,7 +78,7 @@ function createRuntimeContext(options = {}) {
       proofAdmissions.delete(admission.token);
       return true;
     },
-    admitProofViewer(admission = {}) {
+    admitProofViewer(admission = {}, socketId = '') {
       cleanupExpiredProofAdmissions();
       const token = String(admission.token || '');
       const epoch = Number(admission.epoch);
@@ -87,11 +93,23 @@ function createRuntimeContext(options = {}) {
       proofAdmissions.delete(token);
       if (epoch !== viewerEpoch || connections.viewers.size > 0) return false;
       viewerEpoch += 1;
+      if (typeof socketId === 'string' && socketId) {
+        consumedProofViewers.set(token, { epoch, realm, socketId, expiresAt: now() + proofAdmissionTtlMs });
+      }
       return true;
+    },
+    getProofViewerConsumer(admission = {}) {
+      cleanupExpiredProofAdmissions();
+      const token = typeof admission.token === 'string' ? admission.token : '';
+      const epoch = Number(admission.epoch);
+      const consumer = consumedProofViewers.get(token);
+      if (!consumer || consumer.epoch !== epoch || admission.realm !== consumer.realm) return null;
+      return { socketId: consumer.socketId };
     },
     noteHumanViewerAdmission() {
       viewerEpoch += 1;
       proofAdmissions.clear();
+      consumedProofViewers.clear();
       return viewerEpoch;
     },
     viewerEpoch() {

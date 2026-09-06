@@ -162,7 +162,10 @@ async function createLabRuntime(options = {}) {
       res.status(403).json({ error: 'lab binding denied' }); return false;
     }
     const viewers = [...runtime.signalingRuntime.connections.viewers.values()];
-    if (viewers.length !== 1 || runtime.signalingRuntime.viewerEpoch() <= session.admissionEpoch) {
+    const consumer = runtime.signalingRuntime.getProofViewerConsumer({
+      token: session.proofToken, epoch: session.admissionEpoch, realm: session.realm,
+    });
+    if (viewers.length !== 1 || !consumer || consumer.socketId !== viewers[0].id) {
       res.status(403).json({ error: 'lab viewer session is not bound' }); return false;
     }
     const viewer = viewers[0];
@@ -195,11 +198,10 @@ async function createLabRuntime(options = {}) {
     issuedContexts.delete(credential);
     if (!context) return res.status(409).json({ error: 'lab context absent or consumed' });
     const admission = { token: context.proofToken, epoch: context.epoch, realm: context.realm };
-    const admissionActive = runtime.signalingRuntime.hasProofAdmission(admission);
-    const proofWasConsumedByViewer = !admissionActive
-      && runtime.signalingRuntime.viewerEpoch() > context.epoch;
-    if (!admissionActive && !proofWasConsumedByViewer) {
-      return res.status(409).json({ error: 'lab context proof is neither active nor viewer-consumed' });
+    // An epoch bump cannot identify which Viewer consumed which proof.  The
+    // one-time context therefore burns if its proof was consumed first.
+    if (!runtime.signalingRuntime.hasProofAdmission(admission)) {
+      return res.status(409).json({ error: 'lab context proof is absent or consumed' });
     }
     const sessionKey = `${context.realm}|${context.runId}`;
     if (labSessions.has(sessionKey)) return res.status(409).json({ error: 'lab session already attached' });

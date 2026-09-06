@@ -86,6 +86,16 @@ test('lab can bind only an unconsumed realm-bound proof admission', () => {
   assert.equal(context.hasProofAdmission(admission), false);
 });
 
+test('a consumed Lab proof records only its exact Viewer socket identity', () => {
+  const context = createRuntimeContext({ realm: 'lab-test' });
+  const admission = context.issueProofAdmission();
+  assert.equal(context.getProofViewerConsumer(admission), null);
+  assert.equal(context.admitProofViewer(admission, 'viewer-proof-consumer'), true);
+  assert.deepEqual(context.getProofViewerConsumer(admission), { socketId: 'viewer-proof-consumer' });
+  assert.equal(context.getProofViewerConsumer({ ...admission, token: 'swapped' }), null);
+  assert.equal(context.getProofViewerConsumer({ ...admission, epoch: admission.epoch + 1 }), null);
+});
+
 test('default production proof admission rejects a swapped realm without consuming its proof', () => {
   const context = createRuntimeContext();
   const admission = context.issueProofAdmission();

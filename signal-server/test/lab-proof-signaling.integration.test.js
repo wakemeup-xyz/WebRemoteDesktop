@@ -84,6 +84,7 @@ test('strict Lab Socket.IO admits only one exact proof and rejects proofless and
     sockets.push(valid.socket);
     assert.equal(valid.accepted, true);
     assert.equal(valid.payload.role, 'viewer');
+    assert.deepEqual(lab.runtime.signalingRuntime.getProofViewerConsumer(admission), { socketId: valid.socket.id });
 
     const replay = await connect(lab.origin, token, { role: 'viewer', proofAdmission: admission });
     sockets.push(replay.socket);
