@@ -4,10 +4,14 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { assertLabOrigin, createLabRuntime } = require('./turn-lab-signal');
 
-test('lab signal rejects production port and non-loopback origins', () => {
-  assert.throws(() => assertLabOrigin('http://127.0.0.1:8080'), /8080/);
+test('lab signal matches Python bare-loopback origin validation', () => {
+  assert.throws(() => assertLabOrigin('http://127.0.0.1:8080'), /bare/);
+  assert.throws(() => assertLabOrigin('http://127.0.0.1:5173'), /bare/);
   assert.throws(() => assertLabOrigin('http://0.0.0.0:41000'), /loopback/);
   assert.throws(() => assertLabOrigin('https://example.test:41000'), /loopback/);
+  for (const value of ['http://127.0.0.1:8080/path', 'http://127.0.0.1:80@attacker.invalid', 'http://user@127.0.0.1:40123', 'http://127.0.0.1:40123?x=1', 'http://[::1]:40123/path', 'http://127.0.0.1:40123/']) {
+    assert.throws(() => assertLabOrigin(value), /bare|canonical/);
+  }
   assert.doesNotThrow(() => assertLabOrigin('http://127.0.0.1:41000'));
 });
 
@@ -28,22 +32,42 @@ test('lab signal creates a private runtime with random temporary authentication'
       method: 'POST', headers: { authorization: `Bearer ${token}` },
     });
     assert.equal(proof.status, 201);
-    assert.equal((await proof.json()).admission.realm, lab.realm);
+    const admission = (await proof.json()).admission;
+    assert.equal(admission.realm, lab.realm);
     const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
     });
     const credential = (await issue.json()).context.credential;
     const consume = await fetch(`${lab.origin}/api/lab-context/consume`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ credential }),
     });
     assert.equal(consume.status, 200);
     const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ credential }),
     });
     assert.equal(replay.status, 409);
+    const badToken = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: 'swapped', epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+    });
+    assert.equal(badToken.status, 400);
+    for (const changed of [
+      { realm: 'production' }, { epoch: 1 }, { mode: 'candidate' }, { policyId: '' },
+    ]) {
+      const rejected = await fetch(`${lab.origin}/api/lab-context/issue`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+        body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', ...changed }),
+      });
+      assert.equal(rejected.status, 400);
+    }
+    const unknown = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', extra: true }),
+    });
+    assert.equal(unknown.status, 400);
   } finally {
     await lab.close();
   }

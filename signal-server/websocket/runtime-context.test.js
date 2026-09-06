@@ -66,6 +66,17 @@ test('capability snapshots do not expose mutable arrays', () => {
   assert.deepEqual(context.getHostCapabilities().turnServerIds, ['a', 'b']);
 });
 
+test('lab can bind only an unconsumed realm-bound proof admission', () => {
+  const context = createRuntimeContext({ realm: 'lab-test', requireProofRealm: true });
+  const admission = context.issueProofAdmission();
+  assert.equal(context.hasProofAdmission(admission), true);
+  assert.equal(context.hasProofAdmission({ ...admission, token: 'swapped' }), false);
+  assert.equal(context.hasProofAdmission({ ...admission, realm: 'production' }), false);
+  assert.equal(context.hasProofAdmission({ ...admission, epoch: 1 }), false);
+  assert.equal(context.admitProofViewer(admission), true);
+  assert.equal(context.hasProofAdmission(admission), false);
+});
+
 test('setupSignaling accepts isolated contexts without cross-instance viewers', () => {
   const first = createRuntimeContext();
   const second = createRuntimeContext();

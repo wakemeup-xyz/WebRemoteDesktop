@@ -46,8 +46,8 @@ Tunnel 操作语义：
 实验 lab 边界：
 
 - `scripts/turn_lab.py` 不是生产启动路径，不能替代本 runbook 的 Host、Signal 或 tunnel 命令。
-- 它只接受固定本机生产入口 `http://127.0.0.1:8080` 的一次性 Viewer proof admission；后续监测只读取生产 status，发现 Viewer 或 epoch 变化即清理实验子进程。
-- 实验 Signal 只监听随机 loopback 端口；它为每个 run 生成独立 realm、临时认证和一次性 Host context credential。Host 仅可经 `scripts/turn_lab_host.py` 消费该 credential 后启动。
+- 它只接受固定本机生产入口 `http://127.0.0.1:8080` 的一次性 Viewer proof admission；后续监测只读取 production status，发现 Viewer、epoch 变化、状态读取失败或任一实验子进程退出即清理实验子进程。
+- 实验 Signal 只监听随机 loopback 端口；它为每个 run 生成独立 realm、临时认证和一次性 Host context credential。credential 严格绑定 origin、realm、proof token、epoch、mode、run ID 和 policy ID；Signal 只在该 proof 仍为本 realm/epoch 的未消费 admission 时签发。Host 只带 credential 与这些原始绑定字段，不带签发 secret，并只能经 `scripts/turn_lab_host.py` 原子消费一次后启动。
 - lab 不读取或写入 quick-tunnel URL、生产凭据文件、LaunchAgent、端口 8080/5173、firewall 或 pf。candidate evidence 尚未合格时，candidate mode 必须拒绝。
 
 ## 目标

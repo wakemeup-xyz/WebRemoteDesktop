@@ -27,12 +27,19 @@ if str(ROOT / "python-host") not in sys.path:
 # import time. Unit-test imports do not start a Host and do not opt into this
 # entry guard.
 def _validate_lab_origin(origin: str) -> str:
-    parsed = urlsplit(origin)
+    try:
+        parsed = urlsplit(origin)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("lab origin must be exact loopback") from exc
     if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}
-        or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
-        or parsed.port is None or parsed.port in {8080, 5173}):
+        or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment
+        or port is None or not 1 <= port <= 65535 or port in {8080, 5173}):
         raise ValueError("lab origin must be exact loopback")
-    return f"http://{'[::1]' if parsed.hostname == '::1' else '127.0.0.1'}:{parsed.port}"
+    canonical = f"http://{'[::1]' if parsed.hostname == '::1' else '127.0.0.1'}:{port}"
+    if origin != canonical:
+        raise ValueError("lab origin must be exact loopback")
+    return canonical
 
 
 if os.environ.get("WRD_LAB_HOST_ENTRY") == "1":
@@ -90,16 +97,16 @@ class VerifiedLabContext:
         object.__setattr__(self, "proof_token", proof_token); object.__setattr__(self, "epoch", epoch)
         object.__setattr__(self, "selection", selection); object.__setattr__(self, "mode", mode)
 
-    @classmethod
-    def _from_signal(cls, *, origin: str, realm: str, proof_token: str, epoch: int) -> "VerifiedLabContext":
-        digest = hashlib.sha256(f"legacy:{origin}:{realm}".encode()).hexdigest()
-        policy_id = f"experiment/{digest}"
-        return cls(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", _seal=_CONTEXT_SEAL)
+def _context_from_consumed_signal(*, origin: str, realm: str, proof_token: str, epoch: int) -> VerifiedLabContext:
+    """Module-private conversion after the one-time Signal credential is consumed."""
+    digest = hashlib.sha256(f"legacy:{origin}:{realm}".encode()).hexdigest()
+    policy_id = f"experiment/{digest}"
+    return VerifiedLabContext(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", _seal=_CONTEXT_SEAL)
 
 
 def _test_verified_context(*, origin: str, realm: str, proof_token: str, epoch: int) -> VerifiedLabContext:
-    """Private test seam; production entrypoints only use _from_signal after consume."""
-    return VerifiedLabContext._from_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch)
+    """Private test seam; production entrypoints consume a Signal credential."""
+    return _context_from_consumed_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch)
 
 
 _CANDIDATE_FIELDS = frozenset({"schemaVersion", "mode", "evidencePath", "evidenceSha256", "offlineStatus"})
@@ -149,28 +156,37 @@ class LabWebRemoteHost(WebRemoteHost):
         return context.selection
 
 
+def _context_from_verified_binding(raw: Mapping[str, Any], issued: Mapping[str, Any]) -> VerifiedLabContext:
+    """Validate every raw Host binding after Signal consumed its credential."""
+    required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "credential"}
+    if not isinstance(raw, Mapping) or set(raw) != required:
+        raise ValueError("lab Host context has missing or unknown fields")
+    origin = _validate_lab_origin(str(raw["origin"]))
+    for field in ("origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId"):
+        if issued.get(field) != raw.get(field):
+            raise ValueError("Signal-issued lab context binding mismatch")
+    if raw.get("mode") != "legacy":
+        raise ValueError("candidate lab Host is unavailable without qualified T2 evidence")
+    context = _context_from_consumed_signal(origin=origin, realm=str(raw["realm"]), proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]))
+    if context.selection.policy_id != raw["policyId"]:
+        raise ValueError("Signal-issued lab policy binding mismatch")
+    return context
+
+
 def main() -> int:
     try:
         raw = json.loads(os.environ["WRD_LAB_CONTEXT"])
+        required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "credential"}
+        if not isinstance(raw, dict) or set(raw) != required:
+            raise ValueError("lab Host context has missing or unknown fields")
         origin = _validate_lab_origin(str(raw["origin"]))
         consume = Request(
             f"{origin}/api/lab-context/consume", method="POST",
-            data=json.dumps({"credential": raw["credential"]}).encode(),
-            headers={"Content-Type": "application/json", "x-wrd-lab-context-secret": os.environ["WRD_LAB_CONTEXT_SECRET"]},
+            data=json.dumps({"credential": raw["credential"]}).encode(), headers={"Content-Type": "application/json"},
         )
         with urlopen(consume, timeout=5) as response:
             issued = json.loads(response.read().decode())["context"]
-        for field in ("origin", "realm", "epoch", "mode", "runId", "policyId"):
-            if issued.get(field) != raw.get(field):
-                raise ValueError("Signal-issued lab context binding mismatch")
-        context = VerifiedLabContext._from_signal(
-            origin=origin, realm=str(raw["realm"]),
-            proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]),
-        )
-        if context.selection.policy_id != raw["policyId"]:
-            raise ValueError("Signal-issued lab policy binding mismatch")
-        if raw.get("mode") != "legacy":
-            raise ValueError("candidate lab Host is unavailable without qualified T2 evidence")
+        context = _context_from_verified_binding(raw, issued)
         import asyncio
         asyncio.run(LabWebRemoteHost(context).run())
     except Exception as exc:

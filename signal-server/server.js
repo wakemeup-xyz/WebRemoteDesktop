@@ -420,6 +420,7 @@ function createServerApp(options = {}) {
     terminalAudit,
     recentEventStore,
     structuredLogger,
+    signalingRuntime,
     async close(reason = 'system:shutdown') {
       if (typeof terminal?.close === 'function') {
         return terminal.close(reason);

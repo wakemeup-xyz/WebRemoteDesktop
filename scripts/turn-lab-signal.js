@@ -12,11 +12,17 @@ function randomSecret() {
 
 function assertLabOrigin(origin) {
   const url = new URL(origin);
-  if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]', '::1'].includes(url.hostname)) {
-    throw new Error('lab origin must be loopback http');
+  const host = url.hostname === '[::1]' ? '::1' : url.hostname;
+  const port = Number(url.port);
+  if (url.protocol !== 'http:' || !['127.0.0.1', '::1'].includes(host)
+    || !url.port || !Number.isInteger(port) || port < 1 || port > 65535
+    || [8080, 5173].includes(port) || url.username || url.password
+    || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('lab origin must be a bare non-production loopback URL');
   }
-  if (Number(url.port) === 8080) throw new Error('lab origin must never use production port 8080');
-  return origin;
+  const canonical = `http://${host === '::1' ? '[::1]' : host}:${port}`;
+  if (origin !== canonical) throw new Error('lab origin must be canonical');
+  return canonical;
 }
 
 function labConfig(credentials, runtimeDir = '') {
@@ -62,13 +68,20 @@ async function createLabRuntime(options = {}) {
   runtime.app.post('/api/lab-context/issue', (req, res) => {
     if (!checkContextSecret(req, res)) return;
     const body = req.body || {};
-    if (body.origin !== origin || body.realm !== realm || !body.runId || !body.policyId || !Number.isInteger(body.epoch) || body.epoch < 0) return res.status(400).json({ error: 'invalid lab context binding' });
+    const allowed = new Set(['origin', 'realm', 'proofToken', 'epoch', 'mode', 'runId', 'policyId']);
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || body.origin !== origin || body.realm !== realm || body.mode !== 'legacy'
+      || !body.runId || !body.policyId || !body.proofToken || !Number.isInteger(body.epoch) || body.epoch < 0
+      || !runtime.signalingRuntime.hasProofAdmission({ token: body.proofToken, epoch: body.epoch, realm: body.realm })) {
+      return res.status(400).json({ error: 'invalid lab context binding' });
+    }
     const credential = crypto.randomUUID();
     issuedContexts.set(credential, { ...body, credential });
     return res.status(201).json({ context: { credential } });
   });
   runtime.app.post('/api/lab-context/consume', (req, res) => {
-    if (!checkContextSecret(req, res)) return;
+    const remote = req.socket.remoteAddress;
+    if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') return res.status(403).json({ error: 'lab context denied' });
     const credential = String(req.body?.credential || '');
     const context = issuedContexts.get(credential);
     issuedContexts.delete(credential);

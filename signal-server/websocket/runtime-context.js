@@ -49,6 +49,14 @@ function createRuntimeContext(options = {}) {
       proofAdmissions.set(admission.token, admission);
       return { token: admission.token, epoch: admission.epoch, realm };
     },
+    hasProofAdmission(admission = {}) {
+      cleanupExpiredProofAdmissions();
+      const token = String(admission.token || '');
+      const issued = proofAdmissions.get(token);
+      return Boolean(issued
+        && issued.epoch === Number(admission.epoch)
+        && (!requireProofRealm || admission.realm === realm));
+    },
     admitProofViewer(admission = {}) {
       cleanupExpiredProofAdmissions();
       const token = String(admission.token || '');
