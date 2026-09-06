@@ -3,7 +3,7 @@
 > EnterPlanMode 仓库同步副本。原始规划产物：`~/.Codex/plans/turn-quality-latency-optimization.md`。
 
 日期：2026-09-05
-状态：原实现已合入；2026-09-06 复核后继续 Task 11–13，产品验收未关闭
+状态：Task 11–12 已合入并重启；Task 13 长跑 FAIL、场景仍有 NOT RUN；Task 14 两档候选均 FAIL、到250ms上限停止，产品验收未关闭
 设计：`docs/superpowers/specs/2026-09-05-turn-quality-latency-optimization-design.md`
 诊断：`docs/superpowers/reports/2026-09-05-turn-quality-latency-review.md`
 
@@ -329,9 +329,9 @@ node scripts/prove-turn-relay.mjs --base-url http://127.0.0.1:8080 --duration-se
 
 ## 完成定义
 
-以下 Task 11–13 为 2026-09-06 用户要求继续后的纠正工作，沿用原 EnterPlanMode 路径和设计门禁。原始 Task 0–10 不重新派发；已合入代码保留，产品未验收项继续开放。
+以下 Task 11–14 为 2026-09-06 用户要求继续后的纠正工作，沿用原 EnterPlanMode 路径和设计门禁。原始 Task 0–10 不重新派发；已合入代码保留，产品未验收项继续开放。运行结果见 `docs/superpowers/reports/2026-09-06-turn-pulse-followup-implementation.md`。
 
-## Task 11：修正连续呈现采集器（当前实施）
+## Task 11：修正连续呈现采集器（已实施）
 
 **范围：** `scripts/turn_runtime_collector.py`、`scripts/test_turn_runtime_collector.py`，必要时新增直接执行采集 JS 的 Node 测试。不要改线上 Viewer/Host、恢复协议或编码默认。
 
@@ -360,7 +360,18 @@ node scripts/prove-turn-relay.mjs --base-url http://127.0.0.1:8080 --duration-se
 3. Viewer 退出且服务准备就绪后，按修正采集器重跑 720p 10 分钟、1080p 5 分钟及场景测试。无受控 Host 内容或隔离丢包环境时如实保留对应 `NOT RUN`，不能把它们替换为截图或 HTTP 限速。
 4. 原编码候选未合格前保持 legacy；修好采集器不等于关闭画质/性能问题。后续部署遵循已授权的 main 合入与本地重启范围，tunnel 保持不动。
 
-## 总体完成定义（不变）
+## Task 14：有界 VBV 细化实验（不改变生产）
+
+已有候选中最接近目标的是仅按需 IDR、上限码率、VBV200；其强制 IDR PSNR 为 24.378/26.156dB，未达到 28dB。原 spec 允许 VBV 至 250ms，但旧矩阵只测到 200ms。
+
+1. 在 `scripts/eval-turn-encoder-quality.py` 添加独立 `--matrix relay-vbv-refinement` 路径；保留旧矩阵及历史证据含义，不改任何 Host 生产准入、codec/preset/码率/GOP/capture 配置。配套纯逻辑测试可在长跑期间运行，实际编码实验必须等长跑结束。
+2. 新路径首先新测同一基线：libx264 / ultrafast / Baseline / 20FPS / 仅按需 IDR / 720p 3.2Mbps、1080p 5Mbps / VBV200。然后只测 `on-demand-cap-bitrate-vbv225`；225 自身全部离线门槛通过则不测250，否则再测 `on-demand-cap-bitrate-vbv250`。绝不超过250ms。
+3. 基线是测量对照，不要求其已经修复目标问题。它必须有完整有效的双分辨率测量、输入/版本记录、实际编码配置与有限逐帧结果；候选与基线只有VBV不同，输入、版本和其余编码参数须一致。丢失/非有限数据或参数漂移时立即停止本轮并标明原因；仅完整可比的225自身未通过离线门槛时才测250。
+4. 候选自身仍必须通过 spec6.5 全部离线质量/按需IDR/编码时间门槛，所有真实 TURN/丢包/输入门槛保留 `NOT RUN`，因此默认policy始终legacy。不能因为基线测量完整就把候选全局PASS；不能用更高PSNR覆盖成本失败。
+5. 先补纯逻辑失败测试：失败质量的有效基线不误阻挡完整合格候选；缺失/漂移基线仍阻挡；225通过短路250；225失败才执行250；二者失败保留no-offline-winner；无runtime证明不修改生产默认。
+6. 独立复核后，在长跑结束且无活动Viewer时，串行低优先级执行一次该路径，保存双分辨率逐帧JSON及SHA256摘要。新增结果单独落盘，不覆盖9月5日历史矩阵，不据离线PASS开放生产v2。
+
+## 总体完成定义（继续保持）
 
 - 产品代码、测试、构建和文档均通过。
 - 时间基错误已由单元测试和实际编码器时间戳probe关闭。

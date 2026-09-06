@@ -1,6 +1,9 @@
 # TURN quality and latency final delivery review
 
 **Date:** 2026-09-06
+
+**Later follow-up:** [Task 11–14 implementation and runtime evidence](2026-09-06-turn-pulse-followup-implementation.md) records the merged collector/frame-worker fixes and fresh 600s/300s TURN run. FPS medians 13/6 still fail; pulse closure and controlled input/loss acceptance remain open. The range and findings below describe the earlier delivery snapshot.
+
 **Reviewed implementation range:** `000547f..6c0c652` (37 commits)
 **Review mode:** source, test, versioned offline evidence, repository hygiene, and cross-review of post-merge local relay collector artifacts plus matching Signal/Host logs. No public endpoint or physical device was operated in this review.
 

@@ -1,0 +1,23 @@
+{
+  "wrd-turn-worker-before-20260906.json.gz": {
+    "runId": "turn-runtime-844f8163c2ed32e7",
+    "rawJsonSha256": "e8a94a845ae6dbf98171ddc07b3d91254b74066e1f0d0ee71b2e978ee0ef5784",
+    "compressedSha256": "7d5e2d82663ebf8b38ef2ea0b8f11b45589d72d97523beab406051d03ecc9f22",
+    "rawBytes": 169878,
+    "compressedBytes": 6677
+  },
+  "wrd-turn-worker-after-20260906.json.gz": {
+    "runId": "turn-runtime-05b96dbad70b9f62",
+    "rawJsonSha256": "4b9cc9a0522ea577c7e4a50a678b49d478ddbf42dec3fcc7492ab98ba06cc429",
+    "compressedSha256": "38cde27b1248a3cebc4d41ad18595af36a8dc66a1296611e99b940c5f840f168",
+    "rawBytes": 169718,
+    "compressedBytes": 6391
+  },
+  "wrd-turn-followup-endurance-20260906.json.gz": {
+    "runId": "turn-runtime-2bf80329b39ca358",
+    "rawJsonSha256": "8c5244aeb4b28f07c7d0b26bf43f7e734cd6a78b3cf708aa90f25b4a96b95dce",
+    "compressedSha256": "a8f8ca7851cf32ac2efad21598a822a347ebec59268a6c0f9d877a208a050c10",
+    "rawBytes": 2478124,
+    "compressedBytes": 65872
+  }
+}

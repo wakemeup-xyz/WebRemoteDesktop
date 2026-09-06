@@ -3,6 +3,8 @@
 **Date:** 2026-09-05
 **Scope:** relay media only; this ledger does not authorize service, tunnel, or encoder-parameter changes.
 
+**2026-09-06 follow-up:** the corrected collector and frame-worker fix are merged locally. A fresh 600s/300s TURN run measured FPS medians 13/6 and true maximum paint gaps 949/967ms; overall acceptance still fails. See [follow-up implementation and runtime evidence](2026-09-06-turn-pulse-followup-implementation.md) for the latest state. Historical runs below retain their original scope.
+
 ## Frozen legacy observations
 
 The following values are extracted from the existing runtime-log windows recorded in

@@ -1,0 +1,6796 @@
+{
+  "runtimeRunId": "turn-runtime-2bf80329b39ca358",
+  "scope": "Encoder windows sharing phase attempt IDs; window boundaries are not identical to Viewer sampling boundaries. encode() wall time includes reformat/encode/packetization and scheduling, not pure x264 CPU time.",
+  "rows": [
+    {
+      "loggedAt": "2026-09-06 16:38:27,164",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 16985.8,
+          "idrCount": 5,
+          "idrMax": 19632,
+          "total": 867375
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 15.227,
+          "count": 99,
+          "maxMs": 33.637,
+          "p95Ms": 32.338
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 5
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 5,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:32,205",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1852984
+        },
+        "bytes": {
+          "idrAvg": 19483.0,
+          "idrCount": 5,
+          "idrMax": 19543,
+          "total": 818571
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 22.668,
+          "count": 88,
+          "maxMs": 229.372,
+          "p95Ms": 43.361
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 5
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 5,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:37,208",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.5,
+          "idrCount": 4,
+          "idrMax": 19500,
+          "total": 797281
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 22.297,
+          "count": 90,
+          "maxMs": 84.106,
+          "p95Ms": 40.608
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:42,249",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19472.6,
+          "idrCount": 5,
+          "idrMax": 19502,
+          "total": 849920
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 24.026,
+          "count": 92,
+          "maxMs": 42.137,
+          "p95Ms": 40.544
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 5
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 5,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:47,305",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.75,
+          "idrCount": 4,
+          "idrMax": 19500,
+          "total": 771262
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 24.285,
+          "count": 87,
+          "maxMs": 45.206,
+          "p95Ms": 40.824
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:52,313",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19479.0,
+          "idrCount": 4,
+          "idrMax": 19499,
+          "total": 730199
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 28.013,
+          "count": 80,
+          "maxMs": 54.551,
+          "p95Ms": 47.372
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:38:57,361",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19466.75,
+          "idrCount": 4,
+          "idrMax": 19502,
+          "total": 722507
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 29.104,
+          "count": 79,
+          "maxMs": 49.078,
+          "p95Ms": 46.819
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:02,402",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19461.0,
+          "idrCount": 4,
+          "idrMax": 19497,
+          "total": 658947
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 33.851,
+          "count": 72,
+          "maxMs": 53.865,
+          "p95Ms": 50.481
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:07,466",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19475.0,
+          "idrCount": 3,
+          "idrMax": 19503,
+          "total": 556778
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.74,
+          "count": 61,
+          "maxMs": 77.517,
+          "p95Ms": 59.514
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:12,557",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19475.0,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 502259
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.399,
+          "count": 56,
+          "maxMs": 83.21,
+          "p95Ms": 69.487
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:17,589",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19463.333,
+          "idrCount": 3,
+          "idrMax": 19496,
+          "total": 555363
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.068,
+          "count": 61,
+          "maxMs": 80.639,
+          "p95Ms": 67.107
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:22,607",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19483.333,
+          "idrCount": 3,
+          "idrMax": 19502,
+          "total": 518910
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 46.563,
+          "count": 58,
+          "maxMs": 81.947,
+          "p95Ms": 77.75
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:27,706",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.333,
+          "idrCount": 3,
+          "idrMax": 19498,
+          "total": 558769
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.38,
+          "count": 61,
+          "maxMs": 70.973,
+          "p95Ms": 61.068
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:32,763",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19464.0,
+          "idrCount": 3,
+          "idrMax": 19496,
+          "total": 547221
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 46.804,
+          "count": 60,
+          "maxMs": 86.131,
+          "p95Ms": 77.855
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:37,814",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.667,
+          "idrCount": 3,
+          "idrMax": 19501,
+          "total": 587302
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.849,
+          "count": 64,
+          "maxMs": 78.694,
+          "p95Ms": 71.688
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:42,840",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19466.333,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 587577
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.286,
+          "count": 66,
+          "maxMs": 72.684,
+          "p95Ms": 58.019
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:47,908",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.667,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 551199
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.629,
+          "count": 61,
+          "maxMs": 80.141,
+          "p95Ms": 75.665
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:52,949",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.667,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 515687
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 49.24,
+          "count": 56,
+          "maxMs": 119.471,
+          "p95Ms": 78.806
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:39:58,051",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19447.667,
+          "idrCount": 3,
+          "idrMax": 19477,
+          "total": 590834
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.957,
+          "count": 66,
+          "maxMs": 104.324,
+          "p95Ms": 78.503
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:03,144",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.333,
+          "idrCount": 3,
+          "idrMax": 19498,
+          "total": 501333
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 48.44,
+          "count": 54,
+          "maxMs": 182.586,
+          "p95Ms": 91.027
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:08,197",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19472.333,
+          "idrCount": 3,
+          "idrMax": 19496,
+          "total": 612585
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.322,
+          "count": 69,
+          "maxMs": 74.771,
+          "p95Ms": 57.925
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:13,223",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19475.0,
+          "idrCount": 4,
+          "idrMax": 19501,
+          "total": 595751
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.614,
+          "count": 64,
+          "maxMs": 89.942,
+          "p95Ms": 72.266
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:18,259",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19459.0,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 583326
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.768,
+          "count": 64,
+          "maxMs": 96.735,
+          "p95Ms": 74.451
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:23,294",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.333,
+          "idrCount": 3,
+          "idrMax": 19498,
+          "total": 595536
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.738,
+          "count": 67,
+          "maxMs": 89.782,
+          "p95Ms": 71.176
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:28,350",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19471.333,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 558164
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.595,
+          "count": 62,
+          "maxMs": 76.797,
+          "p95Ms": 75.772
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:33,352",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19467.25,
+          "idrCount": 4,
+          "idrMax": 19503,
+          "total": 603404
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.327,
+          "count": 66,
+          "maxMs": 74.596,
+          "p95Ms": 60.296
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:38,397",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19476.0,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 623320
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.794,
+          "count": 68,
+          "maxMs": 75.366,
+          "p95Ms": 62.709
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:43,473",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19482.333,
+          "idrCount": 3,
+          "idrMax": 19500,
+          "total": 605428
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.161,
+          "count": 68,
+          "maxMs": 70.643,
+          "p95Ms": 57.719
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:48,509",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.5,
+          "idrCount": 4,
+          "idrMax": 19498,
+          "total": 593291
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.765,
+          "count": 64,
+          "maxMs": 95.925,
+          "p95Ms": 60.188
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:53,552",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19472.667,
+          "idrCount": 3,
+          "idrMax": 19498,
+          "total": 614406
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.809,
+          "count": 67,
+          "maxMs": 77.049,
+          "p95Ms": 58.217
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:40:58,553",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.25,
+          "idrCount": 4,
+          "idrMax": 19500,
+          "total": 650428
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 35.406,
+          "count": 73,
+          "maxMs": 67.344,
+          "p95Ms": 59.43
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:03,603",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19465.0,
+          "idrCount": 3,
+          "idrMax": 19496,
+          "total": 554014
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.242,
+          "count": 61,
+          "maxMs": 115.225,
+          "p95Ms": 70.296
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:08,618",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19445.667,
+          "idrCount": 3,
+          "idrMax": 19471,
+          "total": 666165
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.252,
+          "count": 74,
+          "maxMs": 80.272,
+          "p95Ms": 52.011
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:13,711",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19471.0,
+          "idrCount": 4,
+          "idrMax": 19496,
+          "total": 665963
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 34.637,
+          "count": 71,
+          "maxMs": 57.897,
+          "p95Ms": 54.126
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:18,712",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19475.667,
+          "idrCount": 3,
+          "idrMax": 19501,
+          "total": 580257
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.936,
+          "count": 65,
+          "maxMs": 75.486,
+          "p95Ms": 56.495
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:23,712",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19461.25,
+          "idrCount": 4,
+          "idrMax": 19497,
+          "total": 661669
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 35.467,
+          "count": 72,
+          "maxMs": 74.37,
+          "p95Ms": 53.923
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:28,719",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19465.667,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 658086
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 31.653,
+          "count": 74,
+          "maxMs": 76.137,
+          "p95Ms": 50.69
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:33,736",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19472.25,
+          "idrCount": 4,
+          "idrMax": 19499,
+          "total": 691154
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 32.229,
+          "count": 75,
+          "maxMs": 49.995,
+          "p95Ms": 47.552
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:38,788",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.333,
+          "idrCount": 3,
+          "idrMax": 19495,
+          "total": 561200
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.643,
+          "count": 62,
+          "maxMs": 382.621,
+          "p95Ms": 56.305
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:43,814",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19475.25,
+          "idrCount": 4,
+          "idrMax": 19501,
+          "total": 654834
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 33.041,
+          "count": 71,
+          "maxMs": 97.861,
+          "p95Ms": 49.609
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:48,862",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19448.333,
+          "idrCount": 3,
+          "idrMax": 19495,
+          "total": 604403
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 34.228,
+          "count": 68,
+          "maxMs": 88.486,
+          "p95Ms": 49.755
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:53,866",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19478.75,
+          "idrCount": 4,
+          "idrMax": 19502,
+          "total": 669622
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 31.81,
+          "count": 72,
+          "maxMs": 52.362,
+          "p95Ms": 50.781
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:41:58,902",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19482.333,
+          "idrCount": 3,
+          "idrMax": 19502,
+          "total": 604719
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.469,
+          "count": 68,
+          "maxMs": 79.734,
+          "p95Ms": 71.348
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:03,939",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19455.5,
+          "idrCount": 4,
+          "idrMax": 19479,
+          "total": 646204
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.888,
+          "count": 70,
+          "maxMs": 59.83,
+          "p95Ms": 56.877
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:08,990",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.333,
+          "idrCount": 3,
+          "idrMax": 19503,
+          "total": 613370
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.851,
+          "count": 68,
+          "maxMs": 67.871,
+          "p95Ms": 53.425
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:14,042",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19461.5,
+          "idrCount": 4,
+          "idrMax": 19495,
+          "total": 606520
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.885,
+          "count": 67,
+          "maxMs": 68.113,
+          "p95Ms": 56.574
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:19,105",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.333,
+          "idrCount": 3,
+          "idrMax": 19503,
+          "total": 609297
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.561,
+          "count": 67,
+          "maxMs": 72.347,
+          "p95Ms": 59.58
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:24,142",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.667,
+          "idrCount": 3,
+          "idrMax": 19503,
+          "total": 603322
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.125,
+          "count": 68,
+          "maxMs": 57.87,
+          "p95Ms": 51.097
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:29,163",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.25,
+          "idrCount": 4,
+          "idrMax": 19499,
+          "total": 618172
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.285,
+          "count": 67,
+          "maxMs": 72.161,
+          "p95Ms": 56.142
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:34,233",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19464.333,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 611766
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.758,
+          "count": 66,
+          "maxMs": 65.48,
+          "p95Ms": 55.674
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:39,255",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19465.333,
+          "idrCount": 3,
+          "idrMax": 19502,
+          "total": 568947
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.08,
+          "count": 64,
+          "maxMs": 77.709,
+          "p95Ms": 60.572
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:44,338",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19482.0,
+          "idrCount": 3,
+          "idrMax": 19502,
+          "total": 568372
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.838,
+          "count": 63,
+          "maxMs": 104.967,
+          "p95Ms": 54.301
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:49,400",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.667,
+          "idrCount": 3,
+          "idrMax": 19500,
+          "total": 555815
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.297,
+          "count": 61,
+          "maxMs": 72.644,
+          "p95Ms": 59.078
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:54,449",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19468.0,
+          "idrCount": 4,
+          "idrMax": 19498,
+          "total": 610661
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.091,
+          "count": 66,
+          "maxMs": 68.908,
+          "p95Ms": 54.811
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:42:59,508",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19472.333,
+          "idrCount": 3,
+          "idrMax": 19497,
+          "total": 634748
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 35.727,
+          "count": 70,
+          "maxMs": 69.439,
+          "p95Ms": 51.002
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:04,541",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19476.333,
+          "idrCount": 3,
+          "idrMax": 19503,
+          "total": 592642
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.797,
+          "count": 67,
+          "maxMs": 70.622,
+          "p95Ms": 51.854
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:09,551",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19473.75,
+          "idrCount": 4,
+          "idrMax": 19501,
+          "total": 607318
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.002,
+          "count": 65,
+          "maxMs": 55.02,
+          "p95Ms": 52.96
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:14,566",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.667,
+          "idrCount": 3,
+          "idrMax": 19499,
+          "total": 624356
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 35.641,
+          "count": 69,
+          "maxMs": 52.07,
+          "p95Ms": 50.547
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:19,649",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19474.5,
+          "idrCount": 4,
+          "idrMax": 19496,
+          "total": 612052
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.666,
+          "count": 68,
+          "maxMs": 68.55,
+          "p95Ms": 55.922
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:24,697",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19462.0,
+          "idrCount": 3,
+          "idrMax": 19488,
+          "total": 609381
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.996,
+          "count": 66,
+          "maxMs": 72.292,
+          "p95Ms": 52.621
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:29,766",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.667,
+          "idrCount": 3,
+          "idrMax": 19500,
+          "total": 599926
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.892,
+          "count": 67,
+          "maxMs": 60.238,
+          "p95Ms": 51.62
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:34,798",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19468.25,
+          "idrCount": 4,
+          "idrMax": 19499,
+          "total": 634563
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.635,
+          "count": 69,
+          "maxMs": 71.294,
+          "p95Ms": 52.432
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:39,858",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19454.667,
+          "idrCount": 3,
+          "idrMax": 19470,
+          "total": 601090
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.051,
+          "count": 66,
+          "maxMs": 74.117,
+          "p95Ms": 52.42
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:44,905",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19481.667,
+          "idrCount": 3,
+          "idrMax": 19502,
+          "total": 609477
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.27,
+          "count": 68,
+          "maxMs": 75.155,
+          "p95Ms": 55.456
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:49,938",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19230.0,
+          "idrCount": 3,
+          "idrMax": 19496,
+          "total": 439548
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 46.319,
+          "count": 47,
+          "maxMs": 94.236,
+          "p95Ms": 86.932
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:43:54,965",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 20789.0,
+          "idrCount": 2,
+          "idrMax": 20794,
+          "total": 475349
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 47.839,
+          "count": 53,
+          "maxMs": 165.73,
+          "p95Ms": 73.378
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:00,064",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19487.667,
+          "idrCount": 3,
+          "idrMax": 20664,
+          "total": 480748
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 53.101,
+          "count": 50,
+          "maxMs": 291.296,
+          "p95Ms": 85.465
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:05,117",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18895.0,
+          "idrCount": 2,
+          "idrMax": 18909,
+          "total": 447697
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 49.446,
+          "count": 50,
+          "maxMs": 103.944,
+          "p95Ms": 83.668
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:10,196",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19024.0,
+          "idrCount": 2,
+          "idrMax": 19096,
+          "total": 270797
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 92.53,
+          "count": 29,
+          "maxMs": 307.793,
+          "p95Ms": 237.489
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:15,390",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 17769.0,
+          "idrCount": 1,
+          "idrMax": 17769,
+          "total": 239034
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 92.01,
+          "count": 29,
+          "maxMs": 386.464,
+          "p95Ms": 332.937
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:20,397",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19915.0,
+          "idrCount": 2,
+          "idrMax": 20018,
+          "total": 269629
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 98.807,
+          "count": 29,
+          "maxMs": 538.272,
+          "p95Ms": 195.132
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:25,440",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18348.0,
+          "idrCount": 2,
+          "idrMax": 18525,
+          "total": 459122
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 50.56,
+          "count": 51,
+          "maxMs": 293.843,
+          "p95Ms": 87.519
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:30,512",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19020.0,
+          "idrCount": 3,
+          "idrMax": 20309,
+          "total": 563538
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 43.354,
+          "count": 62,
+          "maxMs": 104.202,
+          "p95Ms": 80.51
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:35,565",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18639.0,
+          "idrCount": 3,
+          "idrMax": 19062,
+          "total": 468337
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 56.197,
+          "count": 49,
+          "maxMs": 214.039,
+          "p95Ms": 91.109
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:40,593",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19617.333,
+          "idrCount": 3,
+          "idrMax": 19668,
+          "total": 599960
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.606,
+          "count": 67,
+          "maxMs": 77.327,
+          "p95Ms": 60.444
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:45,641",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18398.333,
+          "idrCount": 3,
+          "idrMax": 19661,
+          "total": 597069
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.113,
+          "count": 66,
+          "maxMs": 164.842,
+          "p95Ms": 60.52
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:50,642",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19062.5,
+          "idrCount": 4,
+          "idrMax": 20154,
+          "total": 596665
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.597,
+          "count": 65,
+          "maxMs": 99.742,
+          "p95Ms": 69.248
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:44:55,691",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18433.0,
+          "idrCount": 2,
+          "idrMax": 18508,
+          "total": 328762
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 53.695,
+          "count": 38,
+          "maxMs": 163.471,
+          "p95Ms": 144.438
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:00,694",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 17097.333,
+          "idrCount": 3,
+          "idrMax": 19539,
+          "total": 646179
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.798,
+          "count": 67,
+          "maxMs": 104.773,
+          "p95Ms": 70.375
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:05,754",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18492.0,
+          "idrCount": 3,
+          "idrMax": 18599,
+          "total": 579125
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.573,
+          "count": 59,
+          "maxMs": 129.757,
+          "p95Ms": 88.686
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:10,768",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 17488.0,
+          "idrCount": 3,
+          "idrMax": 18537,
+          "total": 626387
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.857,
+          "count": 67,
+          "maxMs": 74.975,
+          "p95Ms": 58.639
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:15,798",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 17798.333,
+          "idrCount": 3,
+          "idrMax": 18047,
+          "total": 450938
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 49.789,
+          "count": 48,
+          "maxMs": 156.453,
+          "p95Ms": 96.196
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:20,837",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18888.0,
+          "idrCount": 2,
+          "idrMax": 19779,
+          "total": 448589
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 45.543,
+          "count": 52,
+          "maxMs": 168.186,
+          "p95Ms": 100.009
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:25,841",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19366.333,
+          "idrCount": 3,
+          "idrMax": 20071,
+          "total": 427649
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 58.082,
+          "count": 46,
+          "maxMs": 255.751,
+          "p95Ms": 110.698
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:30,936",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18342.0,
+          "idrCount": 1,
+          "idrMax": 18342,
+          "total": 265378
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 75.668,
+          "count": 32,
+          "maxMs": 319.152,
+          "p95Ms": 190.077
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:36,688",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18141.5,
+          "idrCount": 2,
+          "idrMax": 18161,
+          "total": 302361
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 63.041,
+          "count": 35,
+          "maxMs": 205.476,
+          "p95Ms": 132.614
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:41,846",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18252.0,
+          "idrCount": 2,
+          "idrMax": 18335,
+          "total": 332490
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 71.561,
+          "count": 42,
+          "maxMs": 190.083,
+          "p95Ms": 106.445
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:46,853",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 20084.5,
+          "idrCount": 2,
+          "idrMax": 20117,
+          "total": 355633
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 57.868,
+          "count": 37,
+          "maxMs": 207.384,
+          "p95Ms": 96.412
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:51,891",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18505.5,
+          "idrCount": 2,
+          "idrMax": 18675,
+          "total": 378345
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 60.992,
+          "count": 43,
+          "maxMs": 359.349,
+          "p95Ms": 112.47
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:45:56,918",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18175.0,
+          "idrCount": 3,
+          "idrMax": 18182,
+          "total": 479930
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 50.117,
+          "count": 53,
+          "maxMs": 197.721,
+          "p95Ms": 86.886
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:01,919",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18141.0,
+          "idrCount": 2,
+          "idrMax": 18193,
+          "total": 495969
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 49.417,
+          "count": 55,
+          "maxMs": 93.176,
+          "p95Ms": 85.51
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:07,050",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18186.333,
+          "idrCount": 3,
+          "idrMax": 18187,
+          "total": 558288
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.497,
+          "count": 61,
+          "maxMs": 70.994,
+          "p95Ms": 56.321
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:12,060",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18171.667,
+          "idrCount": 3,
+          "idrMax": 18195,
+          "total": 499166
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 45.956,
+          "count": 53,
+          "maxMs": 201.306,
+          "p95Ms": 116.327
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:17,539",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18179.333,
+          "idrCount": 3,
+          "idrMax": 18188,
+          "total": 491861
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 49.548,
+          "count": 53,
+          "maxMs": 163.442,
+          "p95Ms": 107.461
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:22,630",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18167.5,
+          "idrCount": 2,
+          "idrMax": 18179,
+          "total": 356787
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 54.705,
+          "count": 39,
+          "maxMs": 191.822,
+          "p95Ms": 188.809
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:27,699",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18186.0,
+          "idrCount": 3,
+          "idrMax": 18192,
+          "total": 562887
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.958,
+          "count": 61,
+          "maxMs": 83.248,
+          "p95Ms": 63.845
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:32,708",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18177.333,
+          "idrCount": 3,
+          "idrMax": 18183,
+          "total": 591517
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.3,
+          "count": 65,
+          "maxMs": 58.747,
+          "p95Ms": 55.194
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:37,738",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18178.667,
+          "idrCount": 3,
+          "idrMax": 18192,
+          "total": 593432
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.108,
+          "count": 65,
+          "maxMs": 77.687,
+          "p95Ms": 67.56
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:42,778",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18175.75,
+          "idrCount": 4,
+          "idrMax": 18190,
+          "total": 642609
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 38.334,
+          "count": 69,
+          "maxMs": 69.437,
+          "p95Ms": 56.933
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:47,787",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18188.333,
+          "idrCount": 3,
+          "idrMax": 18192,
+          "total": 635048
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.24,
+          "count": 70,
+          "maxMs": 70.268,
+          "p95Ms": 54.929
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:52,842",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18360.75,
+          "idrCount": 4,
+          "idrMax": 18910,
+          "total": 645415
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 34.132,
+          "count": 70,
+          "maxMs": 57.011,
+          "p95Ms": 51.004
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:46:57,853",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18188.333,
+          "idrCount": 3,
+          "idrMax": 18193,
+          "total": 613008
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 36.389,
+          "count": 67,
+          "maxMs": 57.775,
+          "p95Ms": 55.158
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:02,888",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18177.333,
+          "idrCount": 3,
+          "idrMax": 18187,
+          "total": 601682
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 37.696,
+          "count": 67,
+          "maxMs": 59.278,
+          "p95Ms": 56.265
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:07,946",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18173.25,
+          "idrCount": 4,
+          "idrMax": 18192,
+          "total": 598029
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.744,
+          "count": 64,
+          "maxMs": 84.653,
+          "p95Ms": 56.982
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 4
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 4,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:12,957",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18171.333,
+          "idrCount": 3,
+          "idrMax": 18193,
+          "total": 597333
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.595,
+          "count": 64,
+          "maxMs": 76.885,
+          "p95Ms": 59.669
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:18,010",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18183.0,
+          "idrCount": 3,
+          "idrMax": 18191,
+          "total": 530768
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 42.521,
+          "count": 58,
+          "maxMs": 115.016,
+          "p95Ms": 60.329
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:23,053",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18174.667,
+          "idrCount": 3,
+          "idrMax": 18188,
+          "total": 564887
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.685,
+          "count": 61,
+          "maxMs": 64.523,
+          "p95Ms": 57.449
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:28,110",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18169.667,
+          "idrCount": 3,
+          "idrMax": 18180,
+          "total": 594080
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.22,
+          "count": 65,
+          "maxMs": 71.118,
+          "p95Ms": 56.289
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:33,131",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18562.667,
+          "idrCount": 3,
+          "idrMax": 19334,
+          "total": 529155
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 46.525,
+          "count": 57,
+          "maxMs": 90.676,
+          "p95Ms": 82.309
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:38,132",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18926.667,
+          "idrCount": 3,
+          "idrMax": 19317,
+          "total": 577538
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.249,
+          "count": 64,
+          "maxMs": 74.532,
+          "p95Ms": 57.017
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:43,197",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18946.667,
+          "idrCount": 3,
+          "idrMax": 19354,
+          "total": 580618
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.893,
+          "count": 65,
+          "maxMs": 72.793,
+          "p95Ms": 57.927
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:48,244",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19368.0,
+          "idrCount": 3,
+          "idrMax": 19438,
+          "total": 522572
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 45.402,
+          "count": 57,
+          "maxMs": 94.709,
+          "p95Ms": 85.282
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:53,281",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18921.0,
+          "idrCount": 3,
+          "idrMax": 19329,
+          "total": 570263
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 40.681,
+          "count": 64,
+          "maxMs": 77.225,
+          "p95Ms": 68.634
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:47:58,296",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18943.333,
+          "idrCount": 3,
+          "idrMax": 19355,
+          "total": 554423
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 41.326,
+          "count": 61,
+          "maxMs": 73.359,
+          "p95Ms": 58.494
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:03,334",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18937.333,
+          "idrCount": 3,
+          "idrMax": 19363,
+          "total": 536988
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 39.269,
+          "count": 59,
+          "maxMs": 87.316,
+          "p95Ms": 59.033
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:08,383",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 19385.5,
+          "idrCount": 2,
+          "idrMax": 19428,
+          "total": 360593
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 67.912,
+          "count": 40,
+          "maxMs": 215.239,
+          "p95Ms": 143.9
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:13,385",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 16746.5,
+          "idrCount": 2,
+          "idrMax": 18291,
+          "total": 357696
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 60.462,
+          "count": 39,
+          "maxMs": 212.616,
+          "p95Ms": 186.833
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:18,438",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 18442.0,
+          "idrCount": 3,
+          "idrMax": 18723,
+          "total": 416198
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 50.684,
+          "count": 44,
+          "maxMs": 151.587,
+          "p95Ms": 86.323
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 720,
+          "width": 1152
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:23,534",
+      "sample": {
+        "bitrate": {
+          "effective": 1800000,
+          "target": 1800000
+        },
+        "bytes": {
+          "idrAvg": 14090.667,
+          "idrCount": 3,
+          "idrMax": 18244,
+          "total": 479608
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788683901101-bhcsjn",
+        "encode": {
+          "avgMs": 51.701,
+          "count": 51,
+          "maxMs": 152.853,
+          "p95Ms": 138.353
+        },
+        "generation": 2,
+        "keyframeReasons": {
+          "periodic": 3
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 3,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1792
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:32,102",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 19644.0,
+          "idrCount": 2,
+          "idrMax": 25908,
+          "total": 353038
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 94.655,
+          "count": 30,
+          "maxMs": 196.743,
+          "p95Ms": 164.015
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:37,149",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25973.0,
+          "idrCount": 1,
+          "idrMax": 25973,
+          "total": 343156
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 94.871,
+          "count": 29,
+          "maxMs": 155.572,
+          "p95Ms": 147.164
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:42,338",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25962.5,
+          "idrCount": 2,
+          "idrMax": 25980,
+          "total": 422858
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 99.553,
+          "count": 31,
+          "maxMs": 220.841,
+          "p95Ms": 174.763
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:47,430",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25969.0,
+          "idrCount": 2,
+          "idrMax": 25972,
+          "total": 396433
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 86.768,
+          "count": 32,
+          "maxMs": 129.088,
+          "p95Ms": 122.712
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:52,430",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25970.0,
+          "idrCount": 1,
+          "idrMax": 25970,
+          "total": 420712
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 90.696,
+          "count": 32,
+          "maxMs": 108.391,
+          "p95Ms": 108.115
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:48:57,498",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25966.0,
+          "idrCount": 2,
+          "idrMax": 25988,
+          "total": 401153
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 90.164,
+          "count": 31,
+          "maxMs": 159.808,
+          "p95Ms": 112.944
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:02,512",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25983.0,
+          "idrCount": 1,
+          "idrMax": 25983,
+          "total": 382636
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 90.148,
+          "count": 31,
+          "maxMs": 133.623,
+          "p95Ms": 128.101
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:07,579",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25962.5,
+          "idrCount": 2,
+          "idrMax": 25966,
+          "total": 339457
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 100.08,
+          "count": 27,
+          "maxMs": 183.132,
+          "p95Ms": 150.079
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:12,648",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25978.0,
+          "idrCount": 1,
+          "idrMax": 25978,
+          "total": 279027
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 123.335,
+          "count": 23,
+          "maxMs": 289.836,
+          "p95Ms": 243.134
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:17,684",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26047.0,
+          "idrCount": 1,
+          "idrMax": 26047,
+          "total": 353494
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 91.308,
+          "count": 30,
+          "maxMs": 142.661,
+          "p95Ms": 120.708
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:22,897",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25902.0,
+          "idrCount": 2,
+          "idrMax": 26044,
+          "total": 343953
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 105.283,
+          "count": 28,
+          "maxMs": 173.379,
+          "p95Ms": 154.372
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:28,046",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25694.0,
+          "idrCount": 1,
+          "idrMax": 25694,
+          "total": 345130
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 89.89,
+          "count": 31,
+          "maxMs": 149.851,
+          "p95Ms": 128.765
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:33,096",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25654.5,
+          "idrCount": 2,
+          "idrMax": 25721,
+          "total": 358040
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 101.571,
+          "count": 30,
+          "maxMs": 224.865,
+          "p95Ms": 155.689
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:38,261",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25727.0,
+          "idrCount": 1,
+          "idrMax": 25727,
+          "total": 326652
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 101.45,
+          "count": 28,
+          "maxMs": 204.278,
+          "p95Ms": 163.348
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:43,305",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25692.5,
+          "idrCount": 2,
+          "idrMax": 25826,
+          "total": 331050
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 106.203,
+          "count": 28,
+          "maxMs": 231.108,
+          "p95Ms": 173.545
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:48,400",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25726.0,
+          "idrCount": 1,
+          "idrMax": 25726,
+          "total": 337643
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 104.546,
+          "count": 29,
+          "maxMs": 196.9,
+          "p95Ms": 143.891
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:53,489",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25645.0,
+          "idrCount": 2,
+          "idrMax": 25711,
+          "total": 364481
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 95.025,
+          "count": 31,
+          "maxMs": 180.659,
+          "p95Ms": 143.984
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:49:58,585",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25692.0,
+          "idrCount": 1,
+          "idrMax": 25692,
+          "total": 348608
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 99.669,
+          "count": 30,
+          "maxMs": 152.243,
+          "p95Ms": 144.19
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:04,351",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25855.0,
+          "idrCount": 1,
+          "idrMax": 25855,
+          "total": 296445
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 127.197,
+          "count": 26,
+          "maxMs": 843.438,
+          "p95Ms": 123.833
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:09,461",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25589.0,
+          "idrCount": 1,
+          "idrMax": 25589,
+          "total": 254117
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 120.72,
+          "count": 22,
+          "maxMs": 503.535,
+          "p95Ms": 213.569
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:14,490",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26069.5,
+          "idrCount": 2,
+          "idrMax": 26070,
+          "total": 407748
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 83.207,
+          "count": 34,
+          "maxMs": 140.433,
+          "p95Ms": 124.603
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:19,539",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25067.5,
+          "idrCount": 2,
+          "idrMax": 25617,
+          "total": 364373
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 96.062,
+          "count": 30,
+          "maxMs": 205.549,
+          "p95Ms": 145.275
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:24,638",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25548.0,
+          "idrCount": 1,
+          "idrMax": 25548,
+          "total": 417794
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 78.714,
+          "count": 36,
+          "maxMs": 112.052,
+          "p95Ms": 106.635
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:29,659",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25549.0,
+          "idrCount": 2,
+          "idrMax": 25558,
+          "total": 446044
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 82.938,
+          "count": 35,
+          "maxMs": 151.7,
+          "p95Ms": 122.052
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:34,783",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25499.0,
+          "idrCount": 2,
+          "idrMax": 25508,
+          "total": 470298
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 74.226,
+          "count": 37,
+          "maxMs": 103.878,
+          "p95Ms": 98.898
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:39,860",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25704.0,
+          "idrCount": 2,
+          "idrMax": 25887,
+          "total": 444805
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 74.63,
+          "count": 37,
+          "maxMs": 152.074,
+          "p95Ms": 104.071
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:44,946",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25532.0,
+          "idrCount": 2,
+          "idrMax": 25551,
+          "total": 423288
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 85.006,
+          "count": 34,
+          "maxMs": 141.575,
+          "p95Ms": 126.035
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:50,040",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25897.0,
+          "idrCount": 1,
+          "idrMax": 25897,
+          "total": 259864
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 145.908,
+          "count": 21,
+          "maxMs": 594.416,
+          "p95Ms": 283.119
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:50:55,158",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 15841.0,
+          "idrCount": 1,
+          "idrMax": 15841,
+          "total": 258871
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 143.802,
+          "count": 21,
+          "maxMs": 394.419,
+          "p95Ms": 313.471
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:00,297",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 17287.0,
+          "idrCount": 1,
+          "idrMax": 17287,
+          "total": 301313
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 123.799,
+          "count": 26,
+          "maxMs": 406.493,
+          "p95Ms": 304.05
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:05,340",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 21618.0,
+          "idrCount": 1,
+          "idrMax": 21618,
+          "total": 310226
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 91.782,
+          "count": 27,
+          "maxMs": 150.505,
+          "p95Ms": 147.435
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:10,474",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25368.0,
+          "idrCount": 2,
+          "idrMax": 26434,
+          "total": 426877
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 83.971,
+          "count": 35,
+          "maxMs": 121.519,
+          "p95Ms": 113.666
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:15,522",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 24332.5,
+          "idrCount": 2,
+          "idrMax": 26874,
+          "total": 365778
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 97.993,
+          "count": 30,
+          "maxMs": 153.308,
+          "p95Ms": 134.872
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:20,584",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26661.0,
+          "idrCount": 1,
+          "idrMax": 26661,
+          "total": 403091
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 84.667,
+          "count": 34,
+          "maxMs": 150.728,
+          "p95Ms": 125.42
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:25,691",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26847.5,
+          "idrCount": 2,
+          "idrMax": 26848,
+          "total": 441345
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 81.174,
+          "count": 36,
+          "maxMs": 195.12,
+          "p95Ms": 106.212
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:30,731",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26752.0,
+          "idrCount": 2,
+          "idrMax": 26856,
+          "total": 446143
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 79.534,
+          "count": 36,
+          "maxMs": 104.863,
+          "p95Ms": 102.614
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:35,825",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26840.0,
+          "idrCount": 2,
+          "idrMax": 26843,
+          "total": 393034
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 86.618,
+          "count": 34,
+          "maxMs": 276.674,
+          "p95Ms": 139.548
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:40,832",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25800.0,
+          "idrCount": 1,
+          "idrMax": 25800,
+          "total": 425454
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 77.922,
+          "count": 36,
+          "maxMs": 137.893,
+          "p95Ms": 100.816
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:45,878",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25607.5,
+          "idrCount": 2,
+          "idrMax": 25816,
+          "total": 456479
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 73.995,
+          "count": 38,
+          "maxMs": 105.046,
+          "p95Ms": 101.519
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:50,941",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25584.5,
+          "idrCount": 2,
+          "idrMax": 25741,
+          "total": 460469
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 74.424,
+          "count": 38,
+          "maxMs": 111.815,
+          "p95Ms": 101.288
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:51:55,952",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25606.0,
+          "idrCount": 2,
+          "idrMax": 25802,
+          "total": 431002
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 75.796,
+          "count": 35,
+          "maxMs": 109.283,
+          "p95Ms": 106.533
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:01,072",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25623.0,
+          "idrCount": 2,
+          "idrMax": 25816,
+          "total": 465009
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 72.512,
+          "count": 39,
+          "maxMs": 96.811,
+          "p95Ms": 95.499
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:06,139",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25589.0,
+          "idrCount": 2,
+          "idrMax": 25806,
+          "total": 458494
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 76.497,
+          "count": 38,
+          "maxMs": 104.054,
+          "p95Ms": 92.859
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:11,181",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25602.5,
+          "idrCount": 2,
+          "idrMax": 25808,
+          "total": 439519
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 78.097,
+          "count": 37,
+          "maxMs": 96.443,
+          "p95Ms": 96.108
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:16,192",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25408.0,
+          "idrCount": 1,
+          "idrMax": 25408,
+          "total": 414629
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 79.727,
+          "count": 36,
+          "maxMs": 97.57,
+          "p95Ms": 94.922
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:21,287",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26705.0,
+          "idrCount": 2,
+          "idrMax": 26765,
+          "total": 419873
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 84.142,
+          "count": 34,
+          "maxMs": 360.062,
+          "p95Ms": 101.794
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:26,334",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26078.5,
+          "idrCount": 2,
+          "idrMax": 26822,
+          "total": 340056
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 102.662,
+          "count": 28,
+          "maxMs": 379.797,
+          "p95Ms": 240.203
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:31,341",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26339.0,
+          "idrCount": 1,
+          "idrMax": 26339,
+          "total": 369771
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 92.656,
+          "count": 30,
+          "maxMs": 177.192,
+          "p95Ms": 131.609
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:36,481",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 25503.0,
+          "idrCount": 1,
+          "idrMax": 25503,
+          "total": 364583
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 101.456,
+          "count": 29,
+          "maxMs": 249.502,
+          "p95Ms": 130.486
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:41,926",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 24066.0,
+          "idrCount": 2,
+          "idrMax": 26515,
+          "total": 297940
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 143.963,
+          "count": 21,
+          "maxMs": 445.69,
+          "p95Ms": 325.012
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:47,098",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 27011.0,
+          "idrCount": 1,
+          "idrMax": 27011,
+          "total": 379738
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 95.746,
+          "count": 31,
+          "maxMs": 128.434,
+          "p95Ms": 124.795
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:52,151",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26995.0,
+          "idrCount": 2,
+          "idrMax": 26999,
+          "total": 391850
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 87.871,
+          "count": 32,
+          "maxMs": 148.543,
+          "p95Ms": 106.334
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:52:57,233",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 27008.0,
+          "idrCount": 1,
+          "idrMax": 27008,
+          "total": 396417
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 88.028,
+          "count": 33,
+          "maxMs": 128.649,
+          "p95Ms": 102.731
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:02,379",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 27044.5,
+          "idrCount": 2,
+          "idrMax": 27075,
+          "total": 414759
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 83.718,
+          "count": 34,
+          "maxMs": 105.695,
+          "p95Ms": 104.19
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:07,428",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26946.0,
+          "idrCount": 2,
+          "idrMax": 27061,
+          "total": 392889
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 87.495,
+          "count": 33,
+          "maxMs": 123.477,
+          "p95Ms": 119.64
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:12,443",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26649.0,
+          "idrCount": 1,
+          "idrMax": 26649,
+          "total": 398216
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 81.149,
+          "count": 34,
+          "maxMs": 96.484,
+          "p95Ms": 95.396
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 1
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 1,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:17,474",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26637.5,
+          "idrCount": 2,
+          "idrMax": 26645,
+          "total": 356299
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 84.53,
+          "count": 30,
+          "maxMs": 136.322,
+          "p95Ms": 111.971
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:22,543",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26635.0,
+          "idrCount": 2,
+          "idrMax": 26647,
+          "total": 434384
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 78.327,
+          "count": 37,
+          "maxMs": 194.958,
+          "p95Ms": 143.092
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    },
+    {
+      "loggedAt": "2026-09-06 16:53:27,636",
+      "sample": {
+        "bitrate": {
+          "effective": 2500000,
+          "target": 2500000
+        },
+        "bytes": {
+          "idrAvg": 26555.0,
+          "idrCount": 2,
+          "idrMax": 26638,
+          "total": 431481
+        },
+        "codec": "libx264",
+        "connectionAttemptId": "wrd-1788684505907-eswhvq",
+        "encode": {
+          "avgMs": 78.737,
+          "count": 36,
+          "maxMs": 111.32,
+          "p95Ms": 103.666
+        },
+        "generation": 3,
+        "keyframeReasons": {
+          "periodic": 2
+        },
+        "keyframes": {
+          "forced": 0,
+          "periodic": 2,
+          "pli": 0
+        },
+        "policyId": "relay-legacy-v1",
+        "size": {
+          "height": 1080,
+          "width": 1728
+        },
+        "targetFps": 20
+      }
+    }
+  ],
+  "aggregates": {
+    "720p": {
+      "summaryCount": 118,
+      "encodedFrameCount": 7301,
+      "weightedEncodeWallMsAvg": 40.768,
+      "encodeWallMsMax": 538.272,
+      "medianOfWindowEncodeP95Ms": 59.6245,
+      "windowEncodeP95MsMax": 332.937,
+      "policyIds": [
+        "relay-legacy-v1"
+      ],
+      "periodicIdrs": 366
+    },
+    "1080p": {
+      "summaryCount": 59,
+      "encodedFrameCount": 1861,
+      "weightedEncodeWallMsAvg": 91.018,
+      "encodeWallMsMax": 843.438,
+      "medianOfWindowEncodeP95Ms": 124.795,
+      "windowEncodeP95MsMax": 325.012,
+      "policyIds": [
+        "relay-legacy-v1"
+      ],
+      "periodicIdrs": 94
+    }
+  }
+}
