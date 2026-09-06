@@ -101,6 +101,53 @@ async def test_same_frame_stage_hooks_preserve_worker_pixels_and_loop_owned_pts(
 
 
 @pytest.mark.asyncio
+async def test_output_trace_transaction_cannot_split_registered_output_from_summary_denominator():
+    """The old cut could observe registered=1 with outputs=0 mid-recv."""
+    class BlockingRegistry(FrameTraceRegistry):
+        def __init__(self):
+            super().__init__()
+            self.registered = threading.Event()
+            self.release = threading.Event()
+
+        def register_capture(self, key, frame_pts):
+            result = super().register_capture(key, frame_pts)
+            self.registered.set()
+            assert self.release.wait(timeout=1)
+            return result
+
+    pixels = np.zeros((1, 1, 4), dtype=np.uint8)
+    track = bare_track(max_width=1, max_height=1)
+    registry = BlockingRegistry()
+    metrics = StageMetrics(registry=registry)
+    context = SenderFrameTraceContext(registry, metrics, "attempt", 1)
+    track._frame_trace_context = context
+    track._capture_buffer = Screenshot(pixels)
+    track._capture_seq = 1
+    now_ns = time.monotonic_ns()
+    track._capture_bounds_ns[1] = (now_ns - 1_000_000, now_ns)
+    summaries = []
+
+    def snapshot_during_registration():
+        assert registry.registered.wait(timeout=1)
+        summaries.append(track._frame_trace_summary(context))
+
+    snapshotter = threading.Thread(target=snapshot_during_registration)
+    snapshotter.start()
+    release = threading.Timer(0.05, registry.release.set)
+    release.start()
+    try:
+        await track.recv()
+    finally:
+        release.cancel()
+        snapshotter.join(timeout=1)
+        track._process_executor.shutdown(wait=True)
+
+    assert not snapshotter.is_alive()
+    assert summaries[0]["counts"]["outputs"] == 1
+    assert summaries[0]["traces"]["registeredOutputFrameCount"] == 1
+
+
+@pytest.mark.asyncio
 async def test_frame_construction_waits_in_imgproc_worker_without_blocking_event_loop(monkeypatch):
     """Moving construction back to recv would make the worker miss the heartbeat."""
     track = bare_track()

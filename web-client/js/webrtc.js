@@ -30,6 +30,15 @@ const PAINT_ISSUE_COPY = {
   },
 };
 
+const FRAME_TRACE_STAGES = [
+  'grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
+  'reformat', 'encode', 'packetize', 'encode_total',
+];
+const FRAME_TRACE_ROW_FIELDS = [
+  'attemptId', 'generation', 'streamId', 'captureSeq', 'encoderTimestamp',
+  'wireTimestamp', 'ssrc', 'framePts', 'idrKind', 'idrReason', 'policyDigest', 'stages',
+];
+
 // Host diagnostics use a monotonic Host clock.  This collector deliberately
 // performs identity joins only: rVFC's rtpTimestamp is never subtracted from a
 // Host timestamp or compared to the encoder's pre-origin timestamp.
@@ -85,13 +94,29 @@ class FrameTraceCollector {
   }
 
   isValidTrace(trace) {
-    return Boolean(trace)
-      && typeof trace.attemptId === 'string' && trace.attemptId.length > 0
-      && typeof trace.generation === 'number' && Number.isSafeInteger(trace.generation) && trace.generation >= 0
-      && typeof trace.streamId === 'string' && trace.streamId.length > 0
-      && typeof trace.wireTimestamp === 'number' && Number.isSafeInteger(trace.wireTimestamp)
-      && trace.wireTimestamp >= 0 && trace.wireTimestamp <= 0xFFFFFFFF
-      && typeof trace.captureSeq === 'number' && Number.isSafeInteger(trace.captureSeq) && trace.captureSeq >= 0;
+    if (!trace || typeof trace !== 'object' || Array.isArray(trace)) return false;
+    const fields = Object.keys(trace).sort();
+    if (fields.length !== FRAME_TRACE_ROW_FIELDS.length
+        || fields.some((field, index) => field !== [...FRAME_TRACE_ROW_FIELDS].sort()[index])) return false;
+    const isUInt32 = (value) => typeof value === 'number' && Number.isSafeInteger(value)
+      && value >= 0 && value <= 0xFFFFFFFF;
+    const nonemptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+    const nullableString = (value) => value === null || nonemptyString(value);
+    if (!nonemptyString(trace.attemptId)
+        || typeof trace.generation !== 'number' || !Number.isSafeInteger(trace.generation) || trace.generation < 0
+        || !nonemptyString(trace.streamId)
+        || typeof trace.captureSeq !== 'number' || !Number.isSafeInteger(trace.captureSeq) || trace.captureSeq < 0
+        || !isUInt32(trace.encoderTimestamp) || !isUInt32(trace.wireTimestamp) || !isUInt32(trace.ssrc)
+        || typeof trace.framePts !== 'number' || !Number.isSafeInteger(trace.framePts)
+        || !nullableString(trace.idrKind) || !nullableString(trace.idrReason)
+        || (trace.idrKind === null) !== (trace.idrReason === null)
+        || !nonemptyString(trace.policyDigest)
+        || !trace.stages || typeof trace.stages !== 'object' || Array.isArray(trace.stages)) return false;
+    const stageFields = Object.keys(trace.stages).sort();
+    if (stageFields.length !== FRAME_TRACE_STAGES.length
+        || stageFields.some((field, index) => field !== [...FRAME_TRACE_STAGES].sort()[index])) return false;
+    return FRAME_TRACE_STAGES.every((stage) => trace.stages[stage] === null
+      || (typeof trace.stages[stage] === 'number' && Number.isFinite(trace.stages[stage]) && trace.stages[stage] >= 0));
   }
 
   rejectInvalidBatch() {

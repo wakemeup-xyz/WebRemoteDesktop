@@ -220,7 +220,6 @@ class TestFrameTiming(unittest.TestCase):
 
                 track._last_trace_send_ns = 0
                 track._send_frame_trace_batch()
-                track._send_frame_timing(capture_prepare_ms=1.25, frame_convert_ms=2.5)
                 return sent
             finally:
                 track._process_executor.shutdown(wait=True)
@@ -239,15 +238,24 @@ class TestFrameTiming(unittest.TestCase):
             asyncio.set_event_loop(prior_loop if prior_loop is not None and not prior_loop.is_closed()
                                    else asyncio.new_event_loop())
         trace_raw = next(raw for raw in sent if json.loads(raw).get("type") == "frame_trace_batch")
-        timing_raw = sent[-1]
-        self.assertEqual(timing_raw, json.dumps({
-            "type": "frame_timing", "schemaVersion": 2, "frameId": 1,
-            "timings": {
-                "capturePrepareMs": 1.25, "frameConvertMs": 2.5,
-                "imgprocQueueMs": None, "imgprocBuildMs": None,
-                "encoderMs": None, "rtpSendMs": None, "endToEndVideoMs": None,
-            },
-        }))
+        # This is the message that recv itself emitted before the later trace
+        # batch. Removing recv's legacy send leaves no row and fails here.
+        timing_raw = next(raw for raw in sent if json.loads(raw).get("type") == "frame_timing")
+        timing = json.loads(timing_raw)
+        self.assertEqual(list(timing), ["type", "schemaVersion", "frameId", "timings"])
+        self.assertEqual(timing["type"], "frame_timing")
+        self.assertEqual(timing["schemaVersion"], 2)
+        self.assertEqual(timing["frameId"], 0)
+        self.assertEqual(list(timing["timings"]), [
+            "capturePrepareMs", "frameConvertMs", "imgprocQueueMs", "imgprocBuildMs",
+            "encoderMs", "rtpSendMs", "endToEndVideoMs",
+        ])
+        for name in ("capturePrepareMs", "frameConvertMs", "imgprocQueueMs", "imgprocBuildMs"):
+            self.assertIsInstance(timing["timings"][name], float)
+            self.assertGreaterEqual(timing["timings"][name], 0)
+        self.assertEqual({name: timing["timings"][name] for name in ("encoderMs", "rtpSendMs", "endToEndVideoMs")}, {
+            "encoderMs": None, "rtpSendMs": None, "endToEndVideoMs": None,
+        })
 
         viewer_script = textwrap.dedent("""
             const fs = require('fs'), vm = require('vm');

@@ -1097,15 +1097,18 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     continue
                 shot = self.sct.grab(self.monitor)
                 grab_finished_ns = time.monotonic_ns()
+                captured = False
                 with self._capture_lock:
                     if self._suspended:
                         continue
                     self._capture_buffer = shot
                     self._capture_seq += 1
                     self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
-                    self._increment_trace_interval(captures=1)
+                    captured = True
                     while len(self._capture_bounds_ns) > 2048:
                         self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
+                if captured:
+                    self._increment_trace_interval(captures=1)
                 with self._activity_condition:
                     self._activity_condition.notify_all()
             except Exception:
@@ -1267,28 +1270,28 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._reuse_count += 1
             self._total_reuse += 1
 
+        trace_context = getattr(self, "_frame_trace_context", None)
+        # aiortc encodes the prior recv result before asking this track for the
+        # next one. Cut before registering this output, so every completed
+        # encoder stage stays with its own registered output window.
+        if trace_context is not None and time.time() - self.last_time >= 5:
+            logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps(
+                self._frame_trace_summary(trace_context),
+                separators=(",", ":"), sort_keys=True,
+            ))
+
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
-        trace_context = getattr(self, "_frame_trace_context", None)
         if trace_context is not None:
-            grab_bounds = None
             capture_seq = seq if fresh else self._last_consumed_seq
+            with self._capture_lock:
+                grab_bounds = self._capture_bounds_ns.get(capture_seq)
             encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
             trace_key = trace_context.key(capture_seq, encoder_timestamp)
-            if trace_context.registry.register_capture(trace_key, pts):
-                with self._capture_lock:
-                    grab_bounds = self._capture_bounds_ns.get(capture_seq)
-                if grab_bounds is not None:
-                    trace_context.metrics.record(trace_key, "grab", grab_bounds[0], grab_bounds[1])
-                    trace_context.metrics.record(trace_key, "age_at_recv", grab_bounds[1], selected_at_ns)
-                trace_context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
-                trace_context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
-                trace_context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
-            self._increment_trace_interval(
-                outputs=1,
-                outputsWithCapture=1 if fresh else 0,
-                reusedOutputs=1 if reused else 0,
+            self._record_output_trace(
+                trace_context, trace_key, pts, grab_bounds, selected_at_ns, worker_timing,
+                fresh=fresh, reused=reused,
             )
             self._send_frame_trace_batch()
         convert_time = worker_timing["construct"]
@@ -1329,12 +1332,6 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.frame_count = 0
             self.last_time = current_time
             self._total_reuse = 0
-            if trace_context is not None:
-                logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps(
-                    self._frame_trace_summary(trace_context),
-                    separators=(",", ":"), sort_keys=True,
-                ))
-
             # Send capture stats to viewer via DataChannel for FPS/latency display
             host = getattr(self, '_host_ref', None)
             if host is not None:
@@ -1433,9 +1430,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 "reusedOutputs": 0,
                 "cpuStartedNs": time.process_time_ns(),
             }
+            metrics = context.metrics.snapshot(reset=True)
+            traces = context.registry.snapshot(reset=True)
         outputs = int(interval.get("outputs", 0) or 0)
-        metrics = context.metrics.snapshot(reset=True)
-        traces = context.registry.snapshot(reset=True)
         stage_coverage = {
             name: (
                 round(stage["count"] / outputs, 3)
@@ -1475,6 +1472,28 @@ class ScreenCaptureTrack(VideoStreamTrack):
             for name, value in increments.items():
                 if value:
                     self._trace_interval[name] += int(value)
+
+    def _record_output_trace(self, context, trace_key, frame_pts, grab_bounds, selected_at_ns,
+                             worker_timing, *, fresh, reused):
+        """Keep one registered output and its same-recv stage evidence in one window."""
+        with self._trace_interval_lock:
+            if context.registry.register_capture(trace_key, frame_pts):
+                if grab_bounds is not None:
+                    context.metrics.record(trace_key, "grab", grab_bounds[0], grab_bounds[1])
+                    context.metrics.record(trace_key, "age_at_recv", grab_bounds[1], selected_at_ns)
+                context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
+                context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
+                context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
+            self._increment_trace_interval_unlocked(
+                outputs=1,
+                outputsWithCapture=1 if fresh else 0,
+                reusedOutputs=1 if reused else 0,
+            )
+
+    def _increment_trace_interval_unlocked(self, **increments):
+        for name, value in increments.items():
+            if value:
+                self._trace_interval[name] += int(value)
 
     def _build_video_frame(self, screenshot, fallback_img, fresh, max_width, max_height, queued_at):
         """Process one capture and build one independent PyAV frame in imgproc.

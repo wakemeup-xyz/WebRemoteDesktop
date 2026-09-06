@@ -264,7 +264,13 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
     type: 'frame_trace_batch', schemaVersion: 1, traces: [{
       attemptId: WebRTC.currentConnectionAttemptId,
       generation: WebRTC.connectionAttemptSequence,
-      streamId: 'video', wireTimestamp: 77, captureSeq: 4,
+      streamId: 'video', captureSeq: 4, encoderTimestamp: 9000,
+      wireTimestamp: 77, ssrc: 7, framePts: 100,
+      idrKind: null, idrReason: null, policyDigest: 'relay-legacy-v1',
+      stages: {
+        grab: null, age_at_recv: null, worker_queue: null, prepare: null, build: null,
+        reformat: null, encode: null, packetize: null, encode_total: null,
+      },
     }],
   }) });
 
