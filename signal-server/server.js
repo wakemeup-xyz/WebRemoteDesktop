@@ -45,6 +45,7 @@ const { createRecentEventStore } = require('./lib/observability/store');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
 const rateLimit = require('express-rate-limit');
+const { createHash } = require('node:crypto');
 const { createTurnSelfTestRunner } = require('./lib/turn-selftest');
 
 const trustLoopbackProxy = proxyaddr.compile('loopback');
@@ -247,15 +248,37 @@ function createServerApp(options = {}) {
   // A healthy lab watchdog polls its proof five times per second.  Keep that
   // read-only route independent from release so routine observation cannot
   // exhaust the one operation that relinquishes the production admission.
-  const proofStatusLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false });
-  const proofReleaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
+  function createProofLeaseLimiter(max) {
+    return rateLimit({
+      windowMs: 60 * 1000,
+      max,
+      standardHeaders: true,
+      legacyHeaders: false,
+      // This middleware runs only after authentication and exact body
+      // validation.  The hash keeps raw lease material out of limiter keys,
+      // logs, and responses while isolating one proof from another.
+      keyGenerator(req) {
+        const lease = req.proofLease;
+        return createHash('sha256').update(JSON.stringify([
+          lease.realm, lease.epoch, lease.token,
+        ])).digest('hex');
+      },
+      // This release of express-rate-limit has no per-key-generator
+      // validation toggle.  The key is an explicit SHA-256 digest and never
+      // falls back to req.ip, so disable its generic startup validator.
+      validate: { default: false },
+    });
+  }
 
-  app.post('/api/proof-admission/status', proofStatusLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+  const proofStatusLimiter = createProofLeaseLimiter(600);
+  const proofReleaseLimiter = createProofLeaseLimiter(20);
+
+  app.post('/api/proof-admission/status', requireConfiguredAccessToken, requireViewerProofLease, proofStatusLimiter, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ active: Boolean(signalingRuntime.hasProofAdmission(req.proofLease)) });
   });
 
-  app.post('/api/proof-admission/release', proofReleaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+  app.post('/api/proof-admission/release', requireConfiguredAccessToken, requireViewerProofLease, proofReleaseLimiter, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ released: Boolean(signalingRuntime.releaseProofAdmission(req.proofLease)) });
   });

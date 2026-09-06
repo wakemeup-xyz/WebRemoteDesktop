@@ -173,6 +173,23 @@ test('human viewer arriving after proof admission issuance rejects proof without
   assert.equal(proof.sent.some((entry) => entry.event === 'proof-admission-rejected'), true);
 });
 
+test('websocket proof admission requires its exact production realm', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const admission = issueProofAdmission();
+  const swapped = new FakeSocket('swapped-proof', 'viewer');
+  swapped.handshake.auth.proofAdmission = { ...admission, realm: 'lab-test' };
+  io.connect(swapped);
+  assert.equal(swapped.disconnected, true);
+
+  const valid = new FakeSocket('valid-proof', 'viewer');
+  valid.handshake.auth.proofAdmission = admission;
+  io.connect(valid);
+  assert.equal(valid.disconnected, false);
+  assert.equal(connections.viewers.get('valid-proof'), valid);
+});
+
 test('human viewer supersedes an admitted proof viewer under the existing user-priority rule', () => {
   resetConnections();
   const io = makeIo();

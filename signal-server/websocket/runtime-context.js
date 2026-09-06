@@ -12,7 +12,6 @@ function createRuntimeContext(options = {}) {
   const proofAdmissionTtlMs = clampProofAdmissionTtl(options.proofAdmissionTtlMs);
   const maxProofAdmissions = clampProofAdmissionCapacity(options.maxProofAdmissions);
   const realm = String(options.realm || 'production');
-  const requireProofRealm = options.requireProofRealm === true;
   let hostCapabilities = normalizeCapabilities(initialCapabilities, false);
   let viewerEpoch = 0;
   const proofAdmissions = new Map();
@@ -72,13 +71,15 @@ function createRuntimeContext(options = {}) {
       const token = String(admission.token || '');
       const epoch = Number(admission.epoch);
       const issued = proofAdmissions.get(token);
-      // Consume before checking current state so a token has exactly one use,
-      // including an attempted admission rejected by a later human Viewer.
-      if (token) proofAdmissions.delete(token);
-      if (!issued || issued.epoch !== epoch || epoch !== viewerEpoch || connections.viewers.size > 0
-        || (requireProofRealm && admission.realm !== realm)) {
+      // Realm is part of the proof identity for production and Lab alike.  A
+      // swapped identity must not consume the original token; once identity
+      // matches, consume before current-state checks to preserve one-use
+      // semantics under a later human Viewer arrival.
+      if (!issued || issued.epoch !== epoch || admission.realm !== realm) {
         return false;
       }
+      proofAdmissions.delete(token);
+      if (epoch !== viewerEpoch || connections.viewers.size > 0) return false;
       viewerEpoch += 1;
       return true;
     },

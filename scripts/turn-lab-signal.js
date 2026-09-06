@@ -51,7 +51,10 @@ async function createLabRuntime(options = {}) {
   const issuedContexts = new Map();
   const runtime = createServerApp({
     config: labConfig(credentials, options.runtimeDir || ''),
-    signalingRuntimeContext: createRuntimeContext({ maxProofAdmissions: 1, realm, requireProofRealm: true }),
+    signalingRuntimeContext: createRuntimeContext({
+      maxProofAdmissions: options.maxProofAdmissions ?? 1,
+      realm,
+    }),
     allowSourceFallback: options.allowSourceFallback === true,
     logger: { log() {}, info() {}, warn() {}, error() {} },
   });

@@ -67,14 +67,24 @@ test('capability snapshots do not expose mutable arrays', () => {
 });
 
 test('lab can bind only an unconsumed realm-bound proof admission', () => {
-  const context = createRuntimeContext({ realm: 'lab-test', requireProofRealm: true });
+  const context = createRuntimeContext({ realm: 'lab-test' });
   const admission = context.issueProofAdmission();
   assert.equal(context.hasProofAdmission(admission), true);
   assert.equal(context.hasProofAdmission({ ...admission, token: 'swapped' }), false);
   assert.equal(context.hasProofAdmission({ ...admission, realm: 'production' }), false);
   assert.equal(context.hasProofAdmission({ ...admission, epoch: 1 }), false);
+  assert.equal(context.admitProofViewer({ ...admission, realm: 'production' }), false);
+  assert.equal(context.hasProofAdmission(admission), true);
   assert.equal(context.admitProofViewer(admission), true);
   assert.equal(context.hasProofAdmission(admission), false);
+});
+
+test('default production proof admission rejects a swapped realm without consuming its proof', () => {
+  const context = createRuntimeContext();
+  const admission = context.issueProofAdmission();
+  assert.equal(context.admitProofViewer({ ...admission, realm: 'lab-test' }), false);
+  assert.equal(context.hasProofAdmission(admission), true);
+  assert.equal(context.admitProofViewer(admission), true);
 });
 
 test('proof lease status and release require the exact token epoch and realm', () => {
