@@ -244,14 +244,18 @@ function createServerApp(options = {}) {
     return next();
   }
 
-  const proofLeaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
+  // A healthy lab watchdog polls its proof five times per second.  Keep that
+  // read-only route independent from release so routine observation cannot
+  // exhaust the one operation that relinquishes the production admission.
+  const proofStatusLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false });
+  const proofReleaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 
-  app.post('/api/proof-admission/status', proofLeaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+  app.post('/api/proof-admission/status', proofStatusLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ active: Boolean(signalingRuntime.hasProofAdmission(req.proofLease)) });
   });
 
-  app.post('/api/proof-admission/release', proofLeaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+  app.post('/api/proof-admission/release', proofReleaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ released: Boolean(signalingRuntime.releaseProofAdmission(req.proofLease)) });
   });

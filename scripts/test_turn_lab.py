@@ -453,14 +453,14 @@ def test_lab_host_launcher_has_no_arbitrary_command_escape_hatch(tmp_path, proof
     run.close()
 
 
-def test_close_and_start_host_race_cannot_leave_an_unregistered_child(tmp_path, proof_fixture, monkeypatch):
+def test_close_waits_for_host_popen_return_then_reaps_the_registered_child(tmp_path, proof_fixture, monkeypatch):
     run = _run(tmp_path, proof_fixture); run.start("legacy")
     entered, release, spawned, errors = threading.Event(), threading.Event(), [], []
     original = turn_lab_module.subprocess.Popen
     def blocked_host_spawn(*_args, **kwargs):
-        entered.set(); assert release.wait(2)
         proc = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
-        spawned.append(proc); return proc
+        spawned.append(proc); entered.set(); assert release.wait(2)
+        return proc
     monkeypatch.setattr(turn_lab_module.subprocess, "Popen", blocked_host_spawn)
     def launch():
         try: run.start_host()
@@ -468,10 +468,65 @@ def test_close_and_start_host_race_cannot_leave_an_unregistered_child(tmp_path, 
     launcher = threading.Thread(target=launch)
     launcher.start(); _wait(entered.is_set)
     closer = threading.Thread(target=run.close); closer.start()
+    time.sleep(.05)
+    assert closer.is_alive() and spawned[0].poll() is None
     release.set(); launcher.join(timeout=3); closer.join(timeout=3)
     assert not launcher.is_alive() and not closer.is_alive() and run.closed
-    assert errors == ["lab run was closed or replaced during Host startup"]
+    assert not errors
     assert spawned and spawned[0].poll() is not None
+
+
+def test_close_winning_before_host_spawn_never_calls_popen(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    entered, release, calls, errors = threading.Event(), threading.Event(), [], []
+    original_preflight = run._production_preflight
+    original_popen = turn_lab_module.subprocess.Popen
+
+    def paused_preflight(*args):
+        original_preflight(*args); entered.set()
+        assert release.wait(2)
+
+    def unexpected_popen(*args, **kwargs):
+        calls.append(args)
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(run, "_production_preflight", paused_preflight)
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", unexpected_popen)
+
+    def launch():
+        try: run.start_host()
+        except RuntimeError as exc: errors.append(str(exc))
+
+    launcher = threading.Thread(target=launch); launcher.start(); _wait(entered.is_set)
+    run.close(); release.set(); launcher.join(timeout=3)
+    assert not launcher.is_alive() and not calls
+    assert errors == ["lab run was closed or replaced during startup"]
+
+
+def test_close_waits_for_signal_popen_return_then_reaps_the_registered_child(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture)
+    entered, release, spawned, errors = threading.Event(), threading.Event(), [], []
+    original = turn_lab_module.subprocess.Popen
+
+    def blocked_signal_spawn(*_args, **kwargs):
+        proc = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        spawned.append(proc); entered.set(); assert release.wait(2)
+        return proc
+
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", blocked_signal_spawn)
+
+    def start():
+        try: run.start("legacy")
+        except RuntimeError as exc: errors.append(str(exc))
+
+    starter = threading.Thread(target=start); starter.start(); _wait(entered.is_set)
+    closer = threading.Thread(target=run.close); closer.start()
+    time.sleep(.05)
+    assert closer.is_alive() and spawned[0].poll() is None
+    release.set(); starter.join(timeout=3); closer.join(timeout=3)
+    assert not starter.is_alive() and not closer.is_alive() and run.closed
+    assert spawned[0].poll() is not None and not run._children
+    assert errors
 
 
 def _reap_group_and_close_stdout(proc):

@@ -169,6 +169,9 @@ class LabRun:
         self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
         self._generation = 0; self._run_token: object | None = None
         self._admission_token: object | None = None
+        # Spawn and close are linearized separately from the lifecycle state.
+        # Always acquire this lock before _lock; no path takes the reverse.
+        self._spawn_lock = threading.Lock()
 
     def _owns_locked(self, token: object, generation: int) -> bool:
         return not self.closed and self._run_token is token and self._generation == generation
@@ -278,23 +281,27 @@ class LabRun:
 
     def _spawn_signal(self, runtime_dir: Path, realm: str, token: object, generation: int) -> LabSignal:
         script = Path(__file__).with_name("turn-lab-signal.js"); env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
-        stderr_log = (runtime_dir / "signal.stderr.log").open("wb")
-        try:
-            proc = subprocess.Popen(["node", str(script), "--json", "--realm", realm, "--runtime-dir", str(runtime_dir)], cwd=script.parent.parent, env=env, stdout=subprocess.PIPE, stderr=stderr_log, start_new_session=True)
-        except Exception:
-            stderr_log.close()
-            raise
-        if proc.stdout is None:
-            self._terminate_child(proc); stderr_log.close(); raise RuntimeError("lab Signal did not expose stdout")
-        with self._lock:
-            attached = self._owns_locked(token, generation)
-            if attached:
+        with self._spawn_lock:
+            with self._lock:
+                if not self._owns_locked(token, generation):
+                    raise RuntimeError("lab run was closed or replaced during Signal startup")
+            stderr_log = (runtime_dir / "signal.stderr.log").open("wb")
+            try:
+                proc = subprocess.Popen(["node", str(script), "--json", "--realm", realm, "--runtime-dir", str(runtime_dir)], cwd=script.parent.parent, env=env, stdout=subprocess.PIPE, stderr=stderr_log, start_new_session=True)
+            except Exception:
+                stderr_log.close()
+                raise
+            if proc.stdout is None:
+                self._terminate_child(proc); stderr_log.close(); raise RuntimeError("lab Signal did not expose stdout")
+            with self._lock:
+                # close is blocked on _spawn_lock until this attachment is
+                # complete, then sees and reaps this exact child.
+                if not self._owns_locked(token, generation):
+                    self._terminate_child(proc); stderr_log.close()
+                    raise RuntimeError("lab run was closed or replaced during Signal startup")
                 self._children.append(proc)
                 self._handles.append(stderr_log)
                 self._stop_signal = lambda: self._terminate_child(proc)
-        if not attached:
-            self._terminate_child(proc); stderr_log.close()
-            raise RuntimeError("lab run was closed or replaced during Signal startup")
         try:
             payload = self._read_startup_json(proc, proc.stdout)
             self._require_owner(token, generation)
@@ -356,19 +363,21 @@ class LabRun:
         if token is None or proof is None: raise RuntimeError("lab identity is required before starting a Host")
         try:
             self._production_preflight(proof, proof.epoch)
-            self._require_owner(token, generation)
             env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1"})
-            log = (runtime_dir / "host.stderr.log").open("wb")
-            try:
-                proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name("turn_lab_host.py"))], cwd=Path(__file__).resolve().parents[1], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            except Exception:
-                log.close(); raise
-            with self._lock:
-                attached = self._owns_locked(token, generation)
-                if attached: self._children.append(proc); self._handles.append(log)
-            if not attached:
-                self._terminate_child(proc); log.close()
-                raise RuntimeError("lab run was closed or replaced during Host startup")
+            with self._spawn_lock:
+                with self._lock:
+                    if not self._owns_locked(token, generation):
+                        raise RuntimeError("lab run was closed or replaced during startup")
+                log = (runtime_dir / "host.stderr.log").open("wb")
+                try:
+                    proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name("turn_lab_host.py"))], cwd=Path(__file__).resolve().parents[1], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                except Exception:
+                    log.close(); raise
+                with self._lock:
+                    if not self._owns_locked(token, generation):
+                        self._terminate_child(proc); log.close()
+                        raise RuntimeError("lab run was closed or replaced during Host startup")
+                    self._children.append(proc); self._handles.append(log)
             return proc
         except Exception:
             self._close_generation(token, generation)
@@ -439,18 +448,19 @@ class LabRun:
                 child.wait(timeout=5)
 
     def _close_generation(self, token: object, generation: int) -> None:
-        with self._lock:
-            if not self._owns_locked(token, generation): return
-            self.closed = True
-            cancel = self._watch_stop
-            if cancel is not None: cancel.set()
-            watch, children, stop = self._watch_thread, tuple(self._children), self._stop_signal; handles, runtime_dir = tuple(self._handles), self._runtime_dir
-            if not self._last_status.startswith("stopped:"):
-                self._last_status = "closed"
-            proof = self._production_proof
-            admission_pending = self._admission_token is token
-            self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
-            self._run_token = None; self._watch_stop = None; self._watch_thread = None
+        with self._spawn_lock:
+            with self._lock:
+                if not self._owns_locked(token, generation): return
+                self.closed = True
+                cancel = self._watch_stop
+                if cancel is not None: cancel.set()
+                watch, children, stop = self._watch_thread, tuple(self._children), self._stop_signal; handles, runtime_dir = tuple(self._handles), self._runtime_dir
+                if not self._last_status.startswith("stopped:"):
+                    self._last_status = "closed"
+                proof = self._production_proof
+                admission_pending = self._admission_token is token
+                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
+                self._run_token = None; self._watch_stop = None; self._watch_thread = None
         for child in children:
             self._terminate_child(child)
             for stream in (child.stdout, child.stderr):
