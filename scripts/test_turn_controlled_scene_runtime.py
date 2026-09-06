@@ -54,3 +54,11 @@ def test_automatic_scene_is_blocked_without_a_dedicated_fixture_desktop_and_neve
     result = runtime.run_automatic_scene(proof=proof(), verified_context=context, layout=layout(), dedicated_desktop=False, fixture_window=False)
     assert result["status"] == runtime.BLOCKED
     assert result["failures"] == ["dedicated-desktop-and-fixture-window-required"]
+
+
+def test_action_aggregate_requires_reservation_ack_broker_receipt_and_matched_rtp_visual():
+    rows = dict(reservation={"inputId": "i"}, ack={"inputId": "i", "status": "applied"}, receipt={"inputId": "i"}, visual={"inputId": "i", "traceStatus": "matched", "rtpTimestamp": 1, "wireTimestamp": 1})
+    assert runtime.aggregate_action_evidence(**rows)["status"] == runtime.PASS
+    for key in rows:
+        broken = dict(rows); broken[key] = None
+        assert runtime.aggregate_action_evidence(**broken)["status"] == runtime.FAIL

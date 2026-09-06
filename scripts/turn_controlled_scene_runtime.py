@@ -119,6 +119,21 @@ class FixtureBroker:
         return self._receipts.get(input_id)
 
 
+def aggregate_action_evidence(*, reservation: Mapping[str, Any] | None, ack: Mapping[str, Any] | None,
+                              receipt: Mapping[str, Any] | None, visual: Mapping[str, Any] | None) -> dict[str, Any]:
+    """One action passes only with all four real causal boundaries."""
+    input_id = reservation.get("inputId") if isinstance(reservation, Mapping) else None
+    if not isinstance(input_id, str) or not input_id:
+        return {"status": FAIL, "failure": "missing-reservation"}
+    if not isinstance(ack, Mapping) or ack.get("inputId") != input_id or ack.get("status") != "applied":
+        return {"status": FAIL, "failure": "missing-applied-ack"}
+    if not isinstance(receipt, Mapping) or receipt.get("inputId") != input_id:
+        return {"status": FAIL, "failure": "missing-broker-receipt"}
+    if not isinstance(visual, Mapping) or visual.get("inputId") != input_id or visual.get("traceStatus") != "matched" or not visual.get("rtpTimestamp") or not visual.get("wireTimestamp"):
+        return {"status": FAIL, "failure": "missing-matched-wire-visual"}
+    return {"status": PASS, "inputId": input_id}
+
+
 def static_text_evidence(proof: ProducerProof, layout: MarkerLayout, frames: list[Mapping[str, Any]], *, seconds: int = 60) -> dict[str, Any]:
     """Validate an explicit frozen marker record independently of input scenes."""
     if seconds != 60 or len(frames) != 61:
