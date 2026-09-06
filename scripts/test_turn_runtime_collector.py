@@ -254,6 +254,17 @@ def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector
     assert "static-text-and-input-not-run" not in collector.marker_failures(marker)
 
 
+def test_lab_viewer_roi_adapter_requires_encoded_size_and_declares_nonzero_marker_roi():
+    calls = []
+    class Page:
+        def evaluate(self, script, value=None): calls.append((script, value)); return True
+    adapter = collector.LabViewerEvidenceAdapter(Page(), roi={"x": 64, "y": 48, "width": 256, "height": 128}, source_size=(1280, 720), dpr=2)
+    assert adapter.configure()
+    assert calls[0][1]["sourceWidth"] == 1280 and calls[0][1]["roi"]["x"] == 64
+    with pytest.raises(ValueError):
+        collector.LabViewerEvidenceAdapter(Page(), roi={"x": 0, "y": 48, "width": 256, "height": 128}, source_size=(1280, 720), dpr=2)
+
+
 def test_malformed_scene_result_fails_closed_instead_of_crashing_the_collector():
     marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000},
                                       "refresh": {"healthyRelay": True, "freshFrame": True}}, "sceneResult": "PASS"}

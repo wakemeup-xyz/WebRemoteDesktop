@@ -37,6 +37,40 @@ class _TrustedSceneEvidence(dict[str, Any]):
         return self._result
 
 
+class LabViewerEvidenceAdapter:
+    """Viewer-side ROI calibration for a Lab-only controlled scene.
+
+    Coordinates are encoded-video pixels, never CSS/screenshot coordinates.
+    DPR is recorded and checked only to reject an ambiguous viewport mapping.
+    """
+
+    def __init__(self, page: Any, *, roi: dict[str, Any], source_size: tuple[int, int], dpr: float) -> None:
+        if (not isinstance(roi, dict) or set(roi) != {"x", "y", "width", "height"}
+                or not all(isinstance(roi[key], int) and not isinstance(roi[key], bool) for key in roi)
+                or roi["x"] <= 0 or roi["y"] <= 0 or roi["width"] != 256 or roi["height"] != 128
+                or not all(isinstance(value, int) and value > 0 for value in source_size)
+                or not isinstance(dpr, (int, float)) or isinstance(dpr, bool) or not math.isfinite(float(dpr)) or dpr <= 0):
+            raise ValueError("invalid declared encoded marker ROI calibration")
+        self.page, self.roi, self.source_size, self.dpr = page, dict(roi), tuple(source_size), float(dpr)
+
+    def configure(self) -> bool:
+        return bool(self.page.evaluate("""({ roi, sourceWidth, sourceHeight, dpr }) => {
+          const video = document.getElementById('remoteVideo');
+          if (!video || Number(video.videoWidth) !== sourceWidth || Number(video.videoHeight) !== sourceHeight
+              || !Number.isFinite(dpr) || dpr <= 0) return false;
+          return WebRTC.configureControlledSceneMarkerRoi(roi);
+        }""", {"roi": self.roi, "sourceWidth": self.source_size[0], "sourceHeight": self.source_size[1], "dpr": self.dpr}))
+
+    def decoded_visual(self, input_id: str) -> dict[str, Any] | None:
+        rows = self.page.evaluate("() => WebRTC.frameTraceCollector?.takeControlledVisualEvidence?.() || []")
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if isinstance(row, dict):
+                return row
+        return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect continuous selected-TURN relay evidence. Does not inject loss or restart services."
@@ -710,7 +744,7 @@ def write_json_atomically(output: Path, artifact: dict[str, Any]) -> None:
     os.replace(temporary, output)
 
 
-def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
+def run(args: argparse.Namespace, project_root: Path, *, lab_driver_factory: Callable[[Any, str], Any] | None = None) -> dict[str, Any]:
     if not args.output:
         raise RuntimeError("--output is required; preserve a durable run artifact")
     password = load_viewer_password(project_root)
@@ -756,7 +790,8 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                 # selected relay predicate again before taking evidence.
                 wait_for_healthy_relay(page)
                 duration = phase_duration_seconds(phase, args.duration_seconds)
-                scene_result = record_interactions(page, bool(args.controlled_producer_id))
+                scene_driver = lab_driver_factory(page, phase) if lab_driver_factory is not None else None
+                scene_result = record_interactions(page, bool(args.controlled_producer_id), scene_driver=scene_driver)
                 marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": scene_result, "sceneResult": scene_result, "pauseResumeRefresh": record_pause_resume_refresh(page)}
                 # Markers intentionally pause and refresh media.  Start the
                 # evidence window only after they settle so their lifecycle
