@@ -730,7 +730,9 @@ def marker_failures(marker: dict[str, Any]) -> list[str]:
                                      and evaluated.execution_mode in {AUTOMATIC_ISOLATED, OPERATOR_REMOTE})
     except Exception:
         complete_remote_scene = False
-    if not complete_remote_scene:
+    # Static text uses a separate frozen 60-second ROI/quality record.  A
+    # controlled action chain cannot remove that fixed gate by itself.
+    if not complete_remote_scene or marker.get("staticText", {}).get("status") != "PASS":
         failures.append("static-text-and-input-not-run")
     return failures
 

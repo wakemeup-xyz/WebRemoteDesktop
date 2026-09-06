@@ -235,7 +235,7 @@ def test_controlled_producer_id_alone_stays_not_run_and_never_dispatches_input()
 def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector():
     from turn_controlled_scene import (AUTOMATIC_ISOLATED, ControlledSceneDriver, ProducerProof)
     from turn_lab_input_guard import LabInputGuard
-    proof = ProducerProof(5, 7, "http://127.0.0.1:49999", "a", 1)
+    proof = ProducerProof(5, 7, "http://127.0.0.1:49999", "a", 1, "lab-test", "run-test")
     class Viewer:
         def send_input(self, action, **_kwargs): return {"inputId": action["inputId"], "viewerClockMs": 1, "attemptId": "a", "generation": 1, "streamId": "video"}
         def wait_for_applied_ack(self, input_id): return {"inputId": input_id, "status": "applied", "viewerClockMs": 2, "attemptId": "a", "generation": 1, "streamId": "video"}
@@ -251,7 +251,10 @@ def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector
     assert "_trustedSceneResult" not in evidence
     assert "_trustedSceneResult" not in __import__("json").dumps(evidence)
     marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000}, "refresh": {"healthyRelay": True, "freshFrame": True}}, "sceneResult": evidence}
-    assert "static-text-and-input-not-run" not in collector.marker_failures(marker)
+    # Input causality cannot manufacture the separate 60-second static-text
+    # ROI evidence.  Until the real capture harness contributes it, this gate
+    # remains terminal even for a sealed remote-input result.
+    assert "static-text-and-input-not-run" in collector.marker_failures(marker)
 
 
 def test_lab_viewer_roi_adapter_requires_encoded_size_and_declares_nonzero_marker_roi():

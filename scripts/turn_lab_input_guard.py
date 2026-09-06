@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
+import json
 from typing import Any, Callable
 
 
@@ -75,12 +77,31 @@ class LabInputGuard:
         ids = envelope.get("inputIds") if isinstance(envelope, dict) else None
         if not isinstance(ids, list) or len(ids) != 1 or not isinstance(ids[0], str) or not ids[0]:
             return None
-        candidate = self._binding_resolver(ids[0])
+        candidate = self._binding_resolver(ids[0], envelope)
         candidate = await candidate if inspect.isawaitable(candidate) else candidate
         if candidate is None:
             return None
+        self._verify_claimed_envelope(candidate, envelope)
         self.bind_controlled_input(candidate)
         return self.action_for_envelope(envelope)
+
+    @staticmethod
+    def _action_digest(envelope: Any) -> str:
+        if not isinstance(envelope, dict):
+            raise InputGuardRejected("controlled envelope is invalid")
+        action = {key: envelope.get(key) for key in ("type", "action", "payload")}
+        return hashlib.sha256(json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+    def _verify_claimed_envelope(self, action: Any, envelope: Any) -> None:
+        if not isinstance(action, dict) or not isinstance(envelope, dict):
+            raise InputGuardRejected("controlled binding is invalid")
+        if action.get("leaseId") != envelope.get("leaseId"):
+            raise InputGuardRejected("controlled lease changed")
+        if action.get("leaseEpoch") != envelope.get("leaseEpoch"):
+            raise InputGuardRejected("controlled lease epoch changed")
+        digest = action.get("actionDigest")
+        if not isinstance(digest, str) or digest != self._action_digest(envelope):
+            raise InputGuardRejected("controlled action digest mismatch")
 
     def is_input_bound(self, input_id: Any) -> bool:
         return isinstance(input_id, str) and input_id in self._bound_actions
@@ -134,13 +155,16 @@ class GuardedLabInputAdapter:
     async def apply_keyboard(self, envelope: dict[str, Any], *, transport: Any = None) -> Any:
         action = await self._guard.resolve_action_for_envelope(envelope)
         if action is None:
-            raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
+            # The lab guard only owns a reservation it can prove.  Leaving
+            # ordinary traffic (and mouse-reset safety releases) on the real
+            # adapter preserves the Host's normal lifecycle semantics.
+            return await self._delegate.apply_keyboard(envelope, transport=transport)
         return await self._guard.execute_async(action, lambda: self._delegate.apply_keyboard(envelope, transport=transport))
 
     async def handle_input(self, envelope: dict[str, Any]) -> Any:
         action = await self._guard.resolve_action_for_envelope(envelope)
         if action is None:
-            raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
+            return await self._delegate.handle_input(envelope)
         return await self._guard.execute_async(action, lambda: self._delegate.handle_input(envelope))
 
     def __getattr__(self, name: str) -> Any:

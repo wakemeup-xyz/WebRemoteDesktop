@@ -46,6 +46,8 @@ class ProducerProof:
     origin: str
     attempt_id: str
     generation: int
+    realm: str
+    run_id: str
 
     def valid(self) -> bool:
         try:
@@ -53,9 +55,18 @@ class ProducerProof:
                     and isinstance(self.scene_id, int) and not isinstance(self.scene_id, bool) and 0 <= self.scene_id < 2**16
                     and isinstance(self.origin, str) and bool(self.origin) and isinstance(self.attempt_id, str)
                     and bool(self.attempt_id) and isinstance(self.generation, int) and not isinstance(self.generation, bool)
-                    and self.generation >= 0)
+                    and self.generation >= 0 and isinstance(self.realm, str) and self.realm.startswith("lab-")
+                    and isinstance(self.run_id, str) and bool(self.run_id))
         except (TypeError, ValueError):
             return False
+
+
+def proof_matches_verified_lab_context(proof: ProducerProof, context: Any) -> bool:
+    """Keep the producer realm/run scoped to the Signal-issued Lab context."""
+    return (proof.valid() and context is not None
+            and proof.origin == getattr(context, "origin", None)
+            and proof.realm == getattr(context, "realm", None)
+            and proof.run_id == getattr(context, "run_id", None))
 
 
 @dataclass(frozen=True)

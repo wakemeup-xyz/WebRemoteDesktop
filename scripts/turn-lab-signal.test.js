@@ -66,7 +66,7 @@ test('lab signal creates a private runtime with random temporary authentication'
     const secondConsume = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential: secondCredential }),
     });
-    assert.equal(secondConsume.status, 200);
+    assert.equal(secondConsume.status, 409);
     const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ credential }),
@@ -104,7 +104,7 @@ test('lab signal creates a private runtime with random temporary authentication'
   }
 });
 
-test('lab context credential burns when its proof was consumed before host startup', async () => {
+test('lab context becomes a host-owned session when its viewer proof was consumed before host startup', async () => {
   const lab = await createLabRuntime({ allowSourceFallback: true });
   try {
     const login = await fetch(`${lab.origin}/api/auth/login`, {
@@ -122,10 +122,11 @@ test('lab context credential burns when its proof was consumed before host start
     });
     const credential = (await issue.json()).context.credential;
     assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission), true);
-    const staleConsume = await fetch(`${lab.origin}/api/lab-context/consume`, {
+    const consumed = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
     });
-    assert.equal(staleConsume.status, 409);
+    assert.equal(consumed.status, 200);
+    assert.equal((await consumed.json()).context.runId, 'run-stale');
     const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
     });
@@ -142,15 +143,30 @@ test('controlled input binding is loopback proof-and-host-secret bound and one-u
     const token = (await login.json()).token;
     const proof = await fetch(`${lab.origin}/api/proof-admission`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
     const admission = (await proof.json()).admission;
+    const issued = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+    });
+    const credential = (await issued.json()).context.credential;
+    assert.equal((await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
+    })).status, 200);
+    assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission), true);
+    lab.runtime.signalingRuntime.connections.viewers.set('viewer-1', { id: 'viewer-1' });
     const headers = { 'content-type': 'application/json', 'x-wrd-lab-host-secret': lab.credentials.hostSecret, 'x-wrd-lab-proof-token': admission.token };
-    const binding = { realm: lab.realm, epoch: admission.epoch, inputId: 'input-1', leaseId: 'lease-1', fixtureId: 'fixture-1' };
+    const digest = 'a'.repeat(64);
+    const binding = { realm: lab.realm, runId: 'run-1', epoch: admission.epoch, inputId: 'input-1', leaseId: 'lease-1', leaseEpoch: 4, fixtureId: 'fixture-1', actionDigest: digest };
     const denied = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers: { ...headers, 'x-wrd-lab-host-secret': 'wrong' }, body: JSON.stringify(binding) });
     assert.equal(denied.status, 403);
     const bound = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers, body: JSON.stringify(binding) });
     assert.equal(bound.status, 201);
-    const claim = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify({ realm: lab.realm, epoch: admission.epoch, inputId: 'input-1' }) });
-    assert.deepEqual((await claim.json()).binding, { ...binding, proofToken: admission.token });
-    const replay = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify({ realm: lab.realm, epoch: admission.epoch, inputId: 'input-1' }) });
+    const claimBody = { realm: lab.realm, runId: 'run-1', epoch: admission.epoch, inputId: 'input-1', leaseId: 'lease-1', leaseEpoch: 4, actionDigest: digest };
+    const claim = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify(claimBody) });
+    const claimed = (await claim.json()).binding;
+    assert.equal(claimed.inputId, binding.inputId);
+    assert.equal(claimed.actionDigest, digest);
+    assert.equal(claimed.viewerSocketId, 'viewer-1');
+    const replay = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify(claimBody) });
     assert.equal(replay.status, 409);
   } finally { await lab.close(); }
 });

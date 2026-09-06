@@ -14,7 +14,7 @@ SPEC.loader.exec_module(scene)
 
 def proof(**changes):
     values = dict(run_nonce=0x0102030405060708, scene_id=7, origin="http://127.0.0.1:49152",
-                  attempt_id="attempt-a", generation=3)
+                  attempt_id="attempt-a", generation=3, realm="lab-test", run_id="run-test")
     values.update(changes)
     return scene.ProducerProof(**values)
 
@@ -109,6 +109,15 @@ def test_operator_remote_without_independent_control_endpoint_is_blocked():
                                          operator_endpoint=None)
     assert result.status == scene.BLOCKED
     assert "independent-operator-endpoint-required" in result.failures
+
+
+def test_producer_proof_must_match_the_verified_lab_origin_realm_and_run_identity():
+    context = type("Context", (), {"origin": "http://127.0.0.1:49152", "realm": "lab-test", "run_id": "run-test"})()
+    assert scene.proof_matches_verified_lab_context(proof(), context)
+    for field, value in (("origin", "http://127.0.0.1:49153"), ("realm", "lab-other"), ("run_id", "other-run")):
+        changed = dict(run_nonce=0x0102030405060708, scene_id=7, origin="http://127.0.0.1:49152", attempt_id="attempt-a", generation=3, realm="lab-test", run_id="run-test")
+        changed[field] = value
+        assert not scene.proof_matches_verified_lab_context(scene.ProducerProof(**changed), context)
 
 
 def test_marker_identity_without_the_t3_wire_rtp_join_is_unaligned_not_a_pass():

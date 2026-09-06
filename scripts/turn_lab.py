@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import secrets
 import selectors
@@ -353,7 +354,8 @@ class LabRun:
         proof_admission = {"token": self.identity._proof_token, "epoch": self.identity.epoch, "realm": self.identity.realm}
         return {"origin": self.identity.origin, "password": self._viewer_password, "proofAdmission": proof_admission, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
 
-    def bind_controlled_input(self, *, input_id: str, lease_id: str, fixture_id: str) -> None:
+    def bind_controlled_input(self, *, input_id: str, lease_id: str, lease_epoch: int, fixture_id: str,
+                               action: Mapping[str, Any]) -> None:
         """Reserve one existing Viewer inputId for the isolated Lab Host.
 
         This is a proof-and-host-secret authenticated loopback control call;
@@ -363,10 +365,13 @@ class LabRun:
             identity, secret = self.identity, self._host_secret
             if self.closed or identity is None or not secret:
                 raise RuntimeError("running lab identity is required")
-        if not all(isinstance(value, str) and value for value in (input_id, lease_id, fixture_id)):
+        if (not all(isinstance(value, str) and value for value in (input_id, lease_id, fixture_id))
+                or not isinstance(lease_epoch, int) or isinstance(lease_epoch, bool) or lease_epoch < 0
+                or not isinstance(action, Mapping) or set(action) != {"type", "action", "payload"}):
             raise ValueError("controlled binding requires input, lease and fixture identities")
-        body = {"realm": identity.realm, "epoch": identity.epoch, "inputId": input_id,
-                "leaseId": lease_id, "fixtureId": fixture_id}
+        digest = hashlib.sha256(json.dumps(dict(action), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+        body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch, "inputId": input_id,
+                "leaseId": lease_id, "leaseEpoch": lease_epoch, "fixtureId": fixture_id, "actionDigest": digest}
         request = Request(
             f"{identity.origin}/api/lab-controlled-input/bind", method="POST",
             data=json.dumps(body, separators=(",", ":")).encode(),

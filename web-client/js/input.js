@@ -14,6 +14,11 @@ const Input = {
   keyboardController: null,
   _desktopWriteSequence: 0,
   _desktopWritePending: new Map(),
+  // This is deliberately an object-identity capability, not a caller-supplied
+  // input-id parameter.  Only the isolated lab driver uses it to reserve an
+  // id before its Host-side one-use binding.  Normal sendInput never reads a
+  // fourth argument and keeps generating its own id.
+  _labPreparedInputs: new WeakMap(),
   _desktopWriteRecovery: null,
   mobileTextInputAdapter: null,
   _mobileTextTransportUnsubscribe: null,
@@ -813,9 +818,35 @@ const Input = {
     };
   },
 
-  sendInput(type, action, payload) {
+  _newInputId() {
+    return `inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  },
+
+  prepareLabInput(type, action, payload) {
     const lease = this.activeControlLease;
-    if (!lease) return null;
+    if (!lease || !this._canSendInput(type, action, payload)) return null;
+    const reservation = Object.freeze({ inputId: this._newInputId() });
+    this._labPreparedInputs.set(reservation, {
+      type, action, payload, inputId: reservation.inputId,
+      leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,
+    });
+    return reservation;
+  },
+
+  dispatchPreparedLabInput(reservation) {
+    const prepared = reservation && this._labPreparedInputs.get(reservation);
+    if (!prepared) return null;
+    // Claiming consumes the local reservation even when delivery cannot start;
+    // the Host reservation is one-use as well, so retrying would be unsafe.
+    this._labPreparedInputs.delete(reservation);
+    if (this.activeControlLease?.leaseId !== prepared.leaseId
+        || this.activeControlLease?.leaseEpoch !== prepared.leaseEpoch) return null;
+    return this._sendInput(prepared.type, prepared.action, prepared.payload, prepared.inputId);
+  },
+
+  _canSendInput(type, action, payload) {
+    const lease = this.activeControlLease;
+    if (!lease) return false;
     // Mouse/DOM keyboard path requires the media gate (isActive). Toolbar commands
     // like showDock only need the control lease so they keep working across brief
     // 0-FPS / media-ready gaps on full-relay.
@@ -824,15 +855,21 @@ const Input = {
     const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
     const isAcceptedGestureMove = type === 'mouse' && action === 'move'
       && this._isAcceptedMobileSurfaceMove(payload);
-    if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return null;
-    if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
+    if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return false;
+    if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return false;
+    return true;
+  },
+
+  _sendInput(type, action, payload, inputId) {
+    const lease = this.activeControlLease;
+    if (!lease || !this._canSendInput(type, action, payload)) return null;
     // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
     // Do not attach free-form metadata here; transport is added only for the path used.
     const data = {
       type,
       action,
       payload,
-      inputIds: [`inp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`],
+      inputIds: [inputId || this._newInputId()],
       schemaVersion: 2,
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
@@ -866,6 +903,10 @@ const Input = {
       return data.inputIds[0];
     }
     return null;
+  },
+
+  sendInput(type, action, payload) {
+    return this._sendInput(type, action, payload, null);
   },
 
   queueMouseMove(coords, surface = null) {

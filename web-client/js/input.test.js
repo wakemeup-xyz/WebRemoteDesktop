@@ -899,6 +899,25 @@ test('failed reliable mouse write does not consume desktop seq', () => {
   assert.equal(Input._desktopWriteSequence, 1);
 });
 
+test('lab reservation preissues an opaque id and dispatches the unchanged normal input envelope once', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const prepared = Input.prepareLabInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', clickCount: 1, buttons: 1,
+  });
+  assert.ok(prepared?.inputId);
+  const ordinaryId = Input.sendInput('mouse', 'down', { button: 'left' }, prepared.inputId);
+  assert.notEqual(ordinaryId, prepared.inputId,
+    'normal production sendInput must not accept an arbitrary input id');
+  assert.equal(Input.dispatchPreparedLabInput(prepared), prepared.inputId);
+  const envelope = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(envelope.inputIds.length, 1);
+  assert.equal(envelope.inputIds[0], prepared.inputId);
+  assert.equal(envelope.action, 'down');
+  assert.equal(envelope.leaseId, 'lease-000000000001');
+  assert.equal(Input.dispatchPreparedLabInput(prepared), null, 'a reservation is one use');
+});
+
 test('failed desktop execution ACK reconciles the next mouse and command sequence', () => {
   for (const [failedType, nextType] of [['mouse', 'command'], ['command', 'mouse']]) {
     const { Input, context, socketEvents } = loadInput();

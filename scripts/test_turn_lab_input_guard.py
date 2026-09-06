@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -93,5 +95,44 @@ async def test_installed_adapter_verifies_one_controlled_viewer_envelope_then_de
     envelope = {"schemaVersion": 2, "type": "keyboard", "action": "down", "inputIds": ["i"], "payload": {}}
     assert await boundary.apply_keyboard(envelope, transport="datachannel") == {"status": "applied", "inputIds": ["i"]}
     assert calls == [(envelope, "datachannel")]
-    with pytest.raises(guard_module.InputGuardRejected, match="unbound"):
-        await boundary.apply_keyboard({"schemaVersion": 2, "type": "keyboard", "inputIds": ["other"], "payload": {}})
+    assert await boundary.apply_keyboard({"schemaVersion": 2, "type": "keyboard", "inputIds": ["other"], "payload": {}}) == {"status": "applied", "inputIds": ["other"]}
+
+
+@pytest.mark.asyncio
+async def test_armed_guard_preserves_normal_and_safety_input_but_checks_a_claimed_controlled_binding():
+    calls = []
+    class Adapter:
+        async def apply_keyboard(self, envelope, *, transport=None):
+            calls.append(envelope); return {"status": "applied"}
+    guard = guard_module.LabInputGuard(
+        expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
+        desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True},
+        input_handler=lambda _action: None,
+    )
+    boundary = guard.install_at_lab_host(Adapter())
+    safety_reset = {"schemaVersion": 2, "type": "mouse", "action": "reset", "inputIds": ["release"], "payload": {}}
+    ordinary = {"schemaVersion": 2, "type": "keyboard", "action": "down", "inputIds": ["ordinary"], "payload": {}}
+    assert await boundary.apply_keyboard(safety_reset) == {"status": "applied"}
+    assert await boundary.apply_keyboard(ordinary) == {"status": "applied"}
+    assert calls == [safety_reset, ordinary]
+
+
+@pytest.mark.asyncio
+async def test_claimed_binding_cannot_attach_its_input_id_to_a_different_normal_envelope():
+    calls = []
+    class Adapter:
+        async def apply_keyboard(self, envelope, *, transport=None):
+            calls.append(envelope); return {"status": "applied"}
+    action = {"type": "keyboard", "action": "down", "payload": {"code": "KeyA"}}
+    digest = hashlib.sha256(json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+    guard = guard_module.LabInputGuard(
+        expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
+        desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True},
+        input_handler=lambda _action: None,
+        binding_resolver=lambda _input_id, _envelope: {"inputId": "claimed", "leaseId": "lease", "leaseEpoch": 2, "proofToken": "proof", "fixtureId": "fixture", "actionDigest": digest},
+    )
+    boundary = guard.install_at_lab_host(Adapter())
+    forged = {"schemaVersion": 2, "type": "keyboard", "action": "down", "inputIds": ["claimed"], "leaseId": "lease", "leaseEpoch": 2, "payload": {"code": "KeyB"}}
+    with pytest.raises(guard_module.InputGuardRejected, match="digest"):
+        await boundary.apply_keyboard(forged)
+    assert calls == []

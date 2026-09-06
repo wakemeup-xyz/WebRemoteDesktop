@@ -61,6 +61,12 @@ def _is_loopback_origin(origin: str) -> bool:
         return False
 
 
+def _controlled_action_digest(envelope: Mapping[str, Any]) -> str:
+    """Bind the exact normal Viewer action without adding a lab envelope field."""
+    action = {key: envelope.get(key) for key in ("type", "action", "payload")}
+    return hashlib.sha256(json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
 def _experiment_resolver(policy_id: str, parameter_digest: str) -> Callable[[MediaSessionIntent, str], H264SessionPolicy]:
     def resolve(intent: MediaSessionIntent, received_policy_id: str) -> H264SessionPolicy:
         if received_policy_id != policy_id:
@@ -83,8 +89,9 @@ class VerifiedLabContext:
     epoch: int
     selection: PolicySelection
     mode: str
+    run_id: str
 
-    def __init__(self, origin: str, realm: str, proof_token: str, epoch: int, selection: PolicySelection, mode: str, *, _seal: object | None = None) -> None:
+    def __init__(self, origin: str, realm: str, proof_token: str, epoch: int, selection: PolicySelection, mode: str, run_id: str, *, _seal: object | None = None) -> None:
         if _seal is not _CONTEXT_SEAL:
             raise TypeError("VerifiedLabContext is sealed; Signal-issued context required")
         if not _is_loopback_origin(origin):
@@ -93,22 +100,22 @@ class VerifiedLabContext:
             raise ValueError("verified lab context requires an isolated realm and proof")
         if not selection.policy_id.startswith("experiment/"):
             raise ValueError("lab policy selection must be an experiment policy")
-        if mode not in {"legacy", "candidate"}:
+        if mode not in {"legacy", "candidate"} or not isinstance(run_id, str) or not run_id:
             raise ValueError("invalid lab mode")
         object.__setattr__(self, "origin", origin); object.__setattr__(self, "realm", realm)
         object.__setattr__(self, "proof_token", proof_token); object.__setattr__(self, "epoch", epoch)
-        object.__setattr__(self, "selection", selection); object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "selection", selection); object.__setattr__(self, "mode", mode); object.__setattr__(self, "run_id", run_id)
 
-def _context_from_consumed_signal(*, origin: str, realm: str, proof_token: str, epoch: int) -> VerifiedLabContext:
+def _context_from_consumed_signal(*, origin: str, realm: str, proof_token: str, epoch: int, run_id: str) -> VerifiedLabContext:
     """Module-private conversion after the one-time Signal credential is consumed."""
     digest = hashlib.sha256(f"legacy:{origin}:{realm}".encode()).hexdigest()
     policy_id = f"experiment/{digest}"
-    return VerifiedLabContext(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", _seal=_CONTEXT_SEAL)
+    return VerifiedLabContext(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", run_id, _seal=_CONTEXT_SEAL)
 
 
 def _test_verified_context(*, origin: str, realm: str, proof_token: str, epoch: int) -> VerifiedLabContext:
     """Private test seam; production entrypoints consume a Signal credential."""
-    return _context_from_consumed_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch)
+    return _context_from_consumed_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch, run_id="test-run")
 
 
 _CANDIDATE_FIELDS = frozenset({"schemaVersion", "mode", "evidencePath", "evidenceSha256", "offlineStatus"})
@@ -159,10 +166,9 @@ class LabWebRemoteHost(WebRemoteHost):
             "isolated": False, "foreground": False, "fixtureWindow": False,
         }
         self._lab_input_adapter = self.input_adapter
-        self._install_controlled_input_guard(
-            lease_id="unarmed-lab-lease", fixture_id=verified_context.realm,
-            fixture_proof=self._controlled_fixture_proof,
-        )
+        # Idle labs must retain the real Host adapter.  The guard is installed
+        # only once a lifecycle-owned Viewer lease and fixture probe exist.
+        self.controlled_input_guard: LabInputGuard | None = None
 
     def _install_controlled_input_guard(self, *, lease_id: str, fixture_id: str,
                                         fixture_proof: Callable[[], dict[str, Any]]) -> None:
@@ -200,15 +206,21 @@ class LabWebRemoteHost(WebRemoteHost):
         future local driver must establish this binding after it obtains the
         existing lease and before it sends that same inputId through Input.
         """
+        if self.controlled_input_guard is None:
+            raise RuntimeError("controlled input guard is not armed by a live fixture lease")
         self.controlled_input_guard.bind_controlled_input(dict(action))
 
-    async def _claim_controlled_binding(self, input_id: str) -> dict[str, Any] | None:
+    async def _claim_controlled_binding(self, input_id: str, envelope: Mapping[str, Any]) -> dict[str, Any] | None:
         """Claim a one-use Driver binding over the isolated Signal loopback."""
         context = self._verified_lab_context
         secret = os.environ.get("HOST_SHARED_SECRET", "")
         if not secret or not isinstance(input_id, str) or not input_id:
             return None
-        body = {"realm": context.realm, "epoch": context.epoch, "inputId": input_id}
+        lease_id, lease_epoch = envelope.get("leaseId"), envelope.get("leaseEpoch")
+        if not isinstance(lease_id, str) or not lease_id or not isinstance(lease_epoch, int) or isinstance(lease_epoch, bool) or lease_epoch < 0:
+            return None
+        body = {"realm": context.realm, "runId": context.run_id, "epoch": context.epoch, "inputId": input_id,
+                "leaseId": lease_id, "leaseEpoch": lease_epoch, "actionDigest": _controlled_action_digest(envelope)}
         request = Request(
             f"{context.origin}/api/lab-controlled-input/claim", method="POST",
             data=json.dumps(body, separators=(",", ":")).encode(),
@@ -243,7 +255,7 @@ def _context_from_verified_binding(raw: Mapping[str, Any], issued: Mapping[str, 
             raise ValueError("Signal-issued lab context binding mismatch")
     if raw.get("mode") != "legacy":
         raise ValueError("candidate lab Host is unavailable without qualified T2 evidence")
-    context = _context_from_consumed_signal(origin=origin, realm=str(raw["realm"]), proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]))
+    context = _context_from_consumed_signal(origin=origin, realm=str(raw["realm"]), proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]), run_id=str(raw["runId"]))
     if context.selection.policy_id != raw["policyId"]:
         raise ValueError("Signal-issued lab policy binding mismatch")
     return context

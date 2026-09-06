@@ -106,20 +106,22 @@ def test_lab_host_requires_verified_context_and_rejects_viewer_selection():
     with pytest.raises(TypeError): VerifiedLabContext("http://127.0.0.1:40123", "lab-r", "x", 0, _context().selection, "legacy")
 
 
-def test_lab_host_constructs_and_holds_the_existing_input_adapter_guard_boundary(monkeypatch):
+def test_lab_host_installs_the_guard_only_after_the_real_fixture_lease_arms_it(monkeypatch):
     class Adapter:
         async def apply_keyboard(self, *_args, **_kwargs): return {"status": "applied"}
         async def handle_input(self, *_args, **_kwargs): return {"status": "applied"}
     monkeypatch.setattr(turn_lab_host_module.WebRemoteHost, "__init__", lambda self: setattr(self, "input_adapter", Adapter()))
     host = LabWebRemoteHost(_context())
-    assert host.controlled_input_guard.installed
-    assert type(host.input_adapter).__name__ == "GuardedLabInputAdapter"
+    assert host.controlled_input_guard is None
+    assert type(host.input_adapter).__name__ == "Adapter"
     host.arm_controlled_input(
         lease_id="lease-1", fixture_id="fixture-1",
         fixture_proof=lambda: {"leaseId": "lease-1", "proofToken": _context().proof_token,
                                "fixtureId": "fixture-1", "isolated": True,
                                "foreground": True, "fixtureWindow": True},
     )
+    assert host.controlled_input_guard.installed
+    assert type(host.input_adapter).__name__ == "GuardedLabInputAdapter"
     host.bind_controlled_input({"inputId": "input-1", "leaseId": "lease-1",
                                 "proofToken": _context().proof_token, "fixtureId": "fixture-1"})
     assert host.controlled_input_guard.is_input_bound("input-1")
@@ -183,12 +185,12 @@ def test_real_loopback_proof_fixture_admits_once_and_watchdog_stops_on_epoch(tmp
     assert run.monitor() == "stopped:production-epoch-changed"
 
 
-def test_lab_run_binds_one_input_through_proof_and_host_secret_loopback_ipc(tmp_path, proof_fixture):
+def test_lab_run_refuses_to_bind_controlled_input_before_a_real_lab_viewer_exists(tmp_path, proof_fixture):
     run = _run(tmp_path, proof_fixture)
     run.start("legacy")
-    run.bind_controlled_input(input_id="input-1", lease_id="lease-1", fixture_id="fixture-1")
     with pytest.raises(RuntimeError, match="refused"):
-        run.bind_controlled_input(input_id="input-1", lease_id="lease-1", fixture_id="fixture-1")
+        run.bind_controlled_input(input_id="input-1", lease_id="lease-1", lease_epoch=1, fixture_id="fixture-1",
+                                  action={"type": "mouse", "action": "down", "payload": {}})
     run.close()
 
 
