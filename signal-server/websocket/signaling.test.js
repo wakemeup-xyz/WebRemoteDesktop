@@ -190,6 +190,44 @@ test('websocket proof admission requires its exact production realm', () => {
   assert.equal(connections.viewers.get('valid-proof'), valid);
 });
 
+test('strict Lab signaling rejects proofless and relay viewers without consuming a valid proof', () => {
+  const context = createRuntimeContext({ realm: 'lab-test', requireViewerProof: true });
+  const io = makeIo();
+  setupSignaling(io, { runtimeContext: context });
+  const admission = context.issueProofAdmission();
+
+  const proofless = new FakeSocket('proofless', 'viewer');
+  io.connect(proofless);
+  assert.equal(proofless.disconnected, true);
+  assert.equal(context.hasProofAdmission(admission), true);
+  assert.equal(context.viewerEpoch(), 0);
+
+  const relay = new FakeSocket('relay', 'relay-viewer');
+  io.connect(relay);
+  assert.equal(relay.disconnected, true);
+  assert.equal(context.hasProofAdmission(admission), true);
+
+  const valid = new FakeSocket('valid', 'viewer');
+  valid.handshake.auth.proofAdmission = admission;
+  io.connect(valid);
+  assert.equal(valid.disconnected, false);
+  assert.equal(context.connections.viewers.get(valid.id), valid);
+});
+
+test('default production signaling retains proofless human and relay companion behavior', () => {
+  const context = createRuntimeContext();
+  const io = makeIo();
+  setupSignaling(io, { runtimeContext: context });
+  const human = new FakeSocket('human', 'viewer');
+  const relay = new FakeSocket('relay', 'relay-viewer');
+  io.connect(human);
+  io.connect(relay);
+  assert.equal(human.disconnected, false);
+  assert.equal(relay.disconnected, false);
+  assert.equal(context.connections.viewers.get(human.id), human);
+  assert.equal(context.connections.relayViewers.get(relay.id), relay);
+});
+
 test('human viewer supersedes an admitted proof viewer under the existing user-priority rule', () => {
   resetConnections();
   const io = makeIo();

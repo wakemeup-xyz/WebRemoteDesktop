@@ -778,6 +778,15 @@ test('buildSignalingSocketOptions keeps websocket before polling and timeout <= 
   assert.equal(options.auth.inputProtocolVersion, 2);
 });
 
+test('buildSignalingSocketOptions forwards the Lab proof admission from session storage unchanged', () => {
+  const admission = { token: 'lab-proof-token', epoch: 7, realm: 'lab-run-7' };
+  const { WebRTC } = loadWebRTC({
+    sessionStorage: { getItem: (key) => key === 'wrdProofAdmission' ? JSON.stringify(admission) : null },
+  });
+  const options = WebRTC.buildSignalingSocketOptions({ token: 't' });
+  assert.deepEqual(JSON.parse(JSON.stringify(options.auth.proofAdmission)), admission);
+});
+
 test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();

@@ -393,6 +393,20 @@ def test_manual_close_reports_closed_and_preserves_stop_reason(tmp_path, proof_f
     assert run.monitor() == "stopped:lab-identity-changed"
 
 
+def test_lab_viewer_credentials_publish_the_web_client_proof_admission_shape(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture)
+    identity = run.start("legacy")
+    try:
+        credentials = run.viewer_credentials()
+        assert credentials["origin"] == identity.origin
+        assert credentials["password"]
+        assert credentials["proofAdmission"] == {
+            "token": identity._proof_token, "epoch": identity.epoch, "realm": identity.realm,
+        }
+    finally:
+        run.close()
+
+
 def test_monitor_identity_gate_and_watchdog_internal_identity_check_fail_closed(tmp_path, proof_fixture):
     run = _run(tmp_path, proof_fixture); identity = run.start("legacy")
     forged = LabIdentity("other", identity.origin, identity.epoch, identity.realm, "other")

@@ -66,6 +66,13 @@ test('capability snapshots do not expose mutable arrays', () => {
   assert.deepEqual(context.getHostCapabilities().turnServerIds, ['a', 'b']);
 });
 
+test('strict viewer-proof mode is opt-in and does not change production defaults', () => {
+  const production = createRuntimeContext();
+  const lab = createRuntimeContext({ realm: 'lab-test', requireViewerProof: true });
+  assert.equal(production.requiresViewerProof(), false);
+  assert.equal(lab.requiresViewerProof(), true);
+});
+
 test('lab can bind only an unconsumed realm-bound proof admission', () => {
   const context = createRuntimeContext({ realm: 'lab-test' });
   const admission = context.issueProofAdmission();

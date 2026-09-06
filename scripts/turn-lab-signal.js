@@ -54,6 +54,7 @@ async function createLabRuntime(options = {}) {
     signalingRuntimeContext: createRuntimeContext({
       maxProofAdmissions: options.maxProofAdmissions ?? 1,
       realm,
+      requireViewerProof: true,
     }),
     allowSourceFallback: options.allowSourceFallback === true,
     logger: { log() {}, info() {}, warn() {}, error() {} },
@@ -89,6 +90,9 @@ async function createLabRuntime(options = {}) {
     const context = issuedContexts.get(credential);
     issuedContexts.delete(credential);
     if (!context) return res.status(409).json({ error: 'lab context absent or consumed' });
+    if (!runtime.signalingRuntime.hasProofAdmission({
+      token: context.proofToken, epoch: context.epoch, realm: context.realm,
+    })) return res.status(409).json({ error: 'lab context proof is no longer active' });
     return res.status(200).json({ context });
   });
   return {

@@ -103,3 +103,34 @@ test('lab signal creates a private runtime with random temporary authentication'
     await lab.close();
   }
 });
+
+test('lab context credential burns when its proof was consumed before host startup', async () => {
+  const lab = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    const login = await fetch(`${lab.origin}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: lab.credentials.viewerPassword }),
+    });
+    const token = (await login.json()).token;
+    const proofResponse = await fetch(`${lab.origin}/api/proof-admission`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` },
+    });
+    const admission = (await proofResponse.json()).admission;
+    const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-stale', policyId: 'experiment/test' }),
+    });
+    const credential = (await issue.json()).context.credential;
+    assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission), true);
+    const staleConsume = await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
+    });
+    assert.equal(staleConsume.status, 409);
+    const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential }),
+    });
+    assert.equal(replay.status, 409);
+  } finally {
+    await lab.close();
+  }
+});

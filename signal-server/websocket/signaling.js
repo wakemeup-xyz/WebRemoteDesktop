@@ -102,6 +102,8 @@ function setupSignaling(io, options = {}) {
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
   const admitProofViewer = (admission) => instanceRuntime.admitProofViewer(admission);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
+  const requiresViewerProof = () => typeof instanceRuntime.requiresViewerProof === 'function'
+    && instanceRuntime.requiresViewerProof() === true;
   const emitViewerStatus = (reason, viewerSocket = null) => {
     const payload = {
       reason,
@@ -730,6 +732,11 @@ function setupSignaling(io, options = {}) {
     } else if (role === 'viewer') {
       const proofAdmission = socket.handshake.auth?.proofAdmission;
       const isProofViewer = Boolean(proofAdmission);
+      if (requiresViewerProof() && !isProofViewer) {
+        socket.emit('proof-admission-rejected', { reason: 'viewer-proof-required' });
+        socket.disconnect(true);
+        return;
+      }
       if (isProofViewer && !admitProofViewer(proofAdmission)) {
         socket.emit('proof-admission-rejected', { reason: 'viewer-epoch-changed' });
         socket.disconnect(true);
@@ -757,6 +764,11 @@ function setupSignaling(io, options = {}) {
         reason: 'viewer-connected',
       });
     } else if (role === 'relay-viewer') {
+      if (requiresViewerProof()) {
+        socket.emit('proof-admission-rejected', { reason: 'relay-viewer-disabled' });
+        socket.disconnect(true);
+        return;
+      }
       connections.relayViewers.set(socket.id, socket);
       socket.emit('connected', {
         role: 'relay-viewer',

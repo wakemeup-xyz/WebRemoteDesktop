@@ -348,9 +348,10 @@ class LabRun:
         proof = Request(f"{lab.origin}/api/proof-admission", method="POST", headers={"Authorization": f"Bearer {token}"})
         with urlopen(proof, timeout=5) as response: return json.loads(response.read().decode("utf-8"))["admission"]
 
-    def viewer_credentials(self) -> Mapping[str, str]:
+    def viewer_credentials(self) -> Mapping[str, Any]:
         if self.closed or self.identity is None: raise RuntimeError("lab is not running")
-        return {"origin": self.identity.origin, "password": self._viewer_password, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
+        proof_admission = {"token": self.identity._proof_token, "epoch": self.identity.epoch, "realm": self.identity.realm}
+        return {"origin": self.identity.origin, "password": self._viewer_password, "proofAdmission": proof_admission, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
 
     def start_host(self) -> subprocess.Popen[Any]:
         # Snapshot under lock, make all HTTP calls without it, then claim the

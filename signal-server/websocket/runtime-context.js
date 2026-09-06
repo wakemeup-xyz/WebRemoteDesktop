@@ -12,6 +12,9 @@ function createRuntimeContext(options = {}) {
   const proofAdmissionTtlMs = clampProofAdmissionTtl(options.proofAdmissionTtlMs);
   const maxProofAdmissions = clampProofAdmissionCapacity(options.maxProofAdmissions);
   const realm = String(options.realm || 'production');
+  // Production preserves its existing human-first policy.  Disposable Lab
+  // runtimes opt in and accept only the exact realm-bound one-use proof.
+  const requireViewerProof = options.requireViewerProof === true;
   let hostCapabilities = normalizeCapabilities(initialCapabilities, false);
   let viewerEpoch = 0;
   const proofAdmissions = new Map();
@@ -37,6 +40,9 @@ function createRuntimeContext(options = {}) {
 
   return {
     connections,
+    requiresViewerProof() {
+      return requireViewerProof;
+    },
     getHostCapabilities() {
       return cloneCapabilities(hostCapabilities);
     },
