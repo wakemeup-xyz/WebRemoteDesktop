@@ -1,4 +1,5 @@
 const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
+const MOBILE_VIEWPORT_UNSUPPORTED_HINT = '可用空间不足，请收起系统键盘或旋转设备';
 
 const Input = {
   socket: null,
@@ -393,6 +394,27 @@ const Input = {
       && this._mobileSurfaceState === 'settled' && !this._pendingMouseReset;
   },
 
+  _isAcceptedMobileSurfaceMove(payload = null) {
+    const gesture = this._mobileSurfaceGesture;
+    if (this._mobileSurfaceState !== 'pending'
+      || !gesture?.downId
+      || gesture.ended === true
+      || gesture.generation !== this._mobileSurfaceGeneration
+      || this.activeControlLease?.leaseId !== gesture.leaseId
+      || this.activeControlLease?.leaseEpoch !== gesture.leaseEpoch) return false;
+
+    const trackedButtons = new Set(this._pressedMouseButtons);
+    this._touchAdapters.forEach((adapter) => {
+      const snapshot = adapter?.getSnapshot?.();
+      if (snapshot?.activeButton) trackedButtons.add(snapshot.activeButton);
+    });
+    if (!trackedButtons.size) return false;
+    const buttons = Number(payload?.buttons);
+    if (!Number.isSafeInteger(buttons) || buttons <= 0) return false;
+    const buttonMasks = { left: 1, right: 2, middle: 4 };
+    return [...trackedButtons].some((button) => (buttons & (buttonMasks[button] || 0)) !== 0);
+  },
+
   runMobileEditingAction(action, send) {
     if (!['navigation', 'context-change'].includes(action)
       || !this._isMobileEditingActionAllowed() || typeof send !== 'function') return false;
@@ -650,8 +672,12 @@ const Input = {
     const status = document.getElementById('mobileInputStatus');
     const retry = document.getElementById('mobileInputRetryBtn');
     const discard = document.getElementById('mobileInputDiscardBtn');
+    const viewportUnsupported = this._viewportInputSupported === false;
     if (!state) {
-      if (status) status.hidden = true;
+      if (status) {
+        status.hidden = !viewportUnsupported;
+        status.textContent = viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '';
+      }
       if (retry) retry.hidden = true;
       if (discard) discard.hidden = true;
       return;
@@ -664,9 +690,12 @@ const Input = {
     };
     const hasDraft = Boolean(state.hasPending);
     const hasRecovery = Boolean(state.deliveryUncertain);
-    const showStatus = hasDraft || hasRecovery || state.status === 'pending' || state.status === 'composing';
+    const showStatus = viewportUnsupported || hasDraft || hasRecovery
+      || state.status === 'pending' || state.status === 'composing';
     if (status) {
-      const label = labels[state.status] || '';
+      const labelsForState = labels[state.status] || '';
+      const label = [labelsForState, viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '']
+        .filter(Boolean).join('；');
       status.hidden = !showStatus || !label;
       status.textContent = label;
     }
@@ -794,7 +823,9 @@ const Input = {
     // Mouse up/reset are safety releases: they must still flow when the gate flips
     // mid-gesture, otherwise Host keeps a pressed button and every move becomes a drag.
     const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
-    if (!this._viewportInputSupported && !isMouseSafetyRelease) return null;
+    const isAcceptedGestureMove = type === 'mouse' && action === 'move'
+      && this._isAcceptedMobileSurfaceMove(payload);
+    if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return null;
     if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
     // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
     // Do not attach free-form metadata here; transport is added only for the path used.

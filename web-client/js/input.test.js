@@ -475,6 +475,142 @@ test('viewport support is a derived gate for new writes while safe releases and 
   assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
 });
 
+test('unsupported viewport announces a recoverable hint without replacing pending or uncertain status', () => {
+  const { Input, context, elements } = loadInput();
+  const status = context.document.getElementById('mobileInputStatus');
+
+  Input.setViewportInputSupported(false);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.match(status.textContent, /未发送/);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+
+  Input.setViewportInputSupported(true);
+  assert.match(status.textContent, /未发送/);
+  assert.doesNotMatch(status.textContent, /收起.*键盘|旋转/);
+
+  Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+  Input.setViewportInputSupported(false);
+  assert.match(status.textContent, /连接|位置/);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+  Input.setViewportInputSupported(true);
+  assert.match(status.textContent, /连接|位置/);
+  assert.doesNotMatch(status.textContent, /收起.*键盘|旋转/);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+});
+
+test('unsupported viewport preserves accepted touch and mouse moves until release or geometry reset', () => {
+  const touchCase = loadInput();
+  loadTouchAdapter(touchCase.context);
+  touchCase.context.requestAnimationFrame = (callback) => {
+    callback();
+    return null;
+  };
+  touchCase.context.navigator.maxTouchPoints = 1;
+  activate(touchCase.Input, touchCase.context);
+  touchCase.Input.setupEventListeners();
+  const touchSurface = touchCase.elements.get('remoteVideo');
+  const touch = (type, clientX, overrides = {}) => touchSurface.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: touchSurface, timeStamp: 10, preventDefault() {}, ...overrides,
+  });
+
+  touch('pointerdown', 20);
+  touch('pointermove', 40);
+  assert.equal(touchCase.Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  touchCase.Input.setViewportInputSupported(false);
+  const touchWritesBeforeMove = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  assert.equal(touchCase.Input.sendInput('mouse', 'move', { relX: 0.7, relY: 0.4, buttons: 0 }), null);
+  touch('pointermove', 56);
+  const touchWritesAfterMove = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(touchWritesAfterMove.length, touchWritesBeforeMove + 1);
+  assert.equal(touchWritesAfterMove.at(-1).payload.action, 'move');
+  touch('pointerup', 56);
+  const touchWritesAfterUp = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(touchWritesAfterUp.at(-1).payload.action, 'up');
+  assert.equal(touchWritesAfterUp.filter(({ payload }) => payload.action === 'up').length, 1);
+  assert.equal(touchCase.Input.sendInput('mouse', 'move', { relX: 0.7, relY: 0.4, buttons: 0 }), null);
+
+  const mouseCase = loadInput();
+  activate(mouseCase.Input, mouseCase.context);
+  mouseCase.Input.setupEventListeners();
+  const mouseSurface = mouseCase.elements.get('remoteVideo');
+  const mouse = (type, clientX, overrides = {}) => mouseSurface.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 8, button: 0, detail: 1,
+    clientX, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: mouseSurface, timeStamp: 10, preventDefault() {}, ...overrides,
+  });
+
+  mouse('pointerdown', 20);
+  assert.ok(mouseCase.Input._mobileSurfaceGesture);
+  mouseCase.Input.setViewportInputSupported(false);
+  const mouseWritesBeforeMove = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  mouse('pointermove', 44);
+  const mouseWritesAfterMove = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(mouseWritesAfterMove.length, mouseWritesBeforeMove + 1);
+  assert.equal(mouseWritesAfterMove.at(-1).payload.action, 'move');
+  mouseSurface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 80, height: 100 });
+  const writesBeforeGeometry = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  mouse('pointermove', 50);
+  const writesAfterGeometry = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(writesAfterGeometry.length, writesBeforeGeometry + 1);
+  assert.deepEqual(writesAfterGeometry.slice(writesBeforeGeometry).map(({ payload }) => payload.action), ['reset']);
+});
+
+test('unsupported viewport rejects new touch/context actions while up and reset remain safety releases', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const adapter = Input.bindTouchAdapter(surface);
+  Input._lastTouchAdapter = adapter;
+  Input.setViewportInputSupported(false);
+
+  assert.equal(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }), null);
+  assert.equal(Input.sendInput('mouse', 'down', { relX: 0.4, relY: 0.4, button: 'left' }), null);
+  assert.equal(Input.sendInput('mouse', 'move', { relX: 0.4, relY: 0.4, buttons: 0 }), null);
+  assert.equal(Input.sendInput('mouse', 'wheel', { relX: 0.4, relY: 0.4, deltaY: 1 }), null);
+
+  const rightClick = makeElement();
+  rightClick.dataset.mobileAction = 'rightClick';
+  const navigation = makeElement();
+  navigation.dataset.action = 'left';
+  const showDock = makeElement();
+  showDock.dataset.mobileAction = 'showDock';
+  context.document.querySelectorAll = (selector) => selector === '.action-btn, [data-mobile-action]'
+    ? [rightClick, navigation, showDock] : [];
+  Input.setupActionButtons();
+  rightClick.listeners.get('click')({ preventDefault() {} });
+  navigation.listeners.get('click')({ preventDefault() {} });
+  showDock.listeners.get('click')({ preventDefault() {} });
+  assert.equal(socketEvents.length, 0);
+
+  const upId = Input.sendInput('mouse', 'up', { relX: 0.4, relY: 0.4, button: 'left' });
+  const resetId = Input.sendInput('mouse', 'reset', { reason: 'unsupported-viewport' });
+  assert.ok(upId);
+  assert.ok(resetId);
+  assert.deepEqual(socketEvents.map(({ payload }) => payload.action), ['up', 'reset']);
+});
+
 test('touch click, touch wheel, and mobile text retain the active v2 lease envelope', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   loadTouchAdapter(context);
