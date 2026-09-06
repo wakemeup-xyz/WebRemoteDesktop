@@ -80,6 +80,8 @@ class LabInputGuard:
         candidate = self._binding_resolver(ids[0], envelope)
         candidate = await candidate if inspect.isawaitable(candidate) else candidate
         if candidate is None:
+            if ids[0].startswith("lab_inp_"):
+                raise InputGuardRejected("controlled input claim is absent, expired, or rejected")
             return None
         self._verify_claimed_envelope(candidate, envelope)
         self.bind_controlled_input(candidate)

@@ -825,7 +825,7 @@ const Input = {
   prepareLabInput(type, action, payload) {
     const lease = this.activeControlLease;
     if (!lease || !this._canSendInput(type, action, payload)) return null;
-    const reservation = Object.freeze({ inputId: this._newInputId() });
+    const reservation = Object.freeze({ inputId: `lab_${this._newInputId()}` });
     this._labPreparedInputs.set(reservation, {
       type, action, payload, inputId: reservation.inputId,
       leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,

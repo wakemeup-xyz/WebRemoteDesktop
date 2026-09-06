@@ -136,3 +136,20 @@ async def test_claimed_binding_cannot_attach_its_input_id_to_a_different_normal_
     with pytest.raises(guard_module.InputGuardRejected, match="digest"):
         await boundary.apply_keyboard(forged)
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_prepared_lab_input_with_a_missing_claim_never_falls_back_to_the_normal_adapter():
+    calls = []
+    class Adapter:
+        async def apply_keyboard(self, envelope, *, transport=None):
+            calls.append(envelope); return {"status": "applied"}
+    guard = guard_module.LabInputGuard(
+        expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
+        desktop_proof=lambda: {}, input_handler=lambda _action: None,
+        binding_resolver=lambda _input_id, _envelope: None,
+    )
+    boundary = guard.install_at_lab_host(Adapter())
+    with pytest.raises(guard_module.InputGuardRejected, match="claim"):
+        await boundary.apply_keyboard({"type": "keyboard", "action": "down", "inputIds": ["lab_inp_reserved"], "payload": {}})
+    assert calls == []
