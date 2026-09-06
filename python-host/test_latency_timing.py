@@ -1,7 +1,14 @@
 import time
+import threading
 import unittest
 import sys
 import os
+import json
+import subprocess
+import textwrap
+from types import SimpleNamespace
+
+import numpy as np
 
 # Add parent dir to path to import host module
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +17,9 @@ from host import ScreenCaptureTrack, WebRemoteHost
 from media_timing import RtpFrameClock
 from media_stage_metrics import FrameKey, FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from rtp_frame_observer import RtpFrameObserver
+from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+from h264_videotoolbox_encoder import H264VideoToolboxEncoder
+from test_frame_worker import Screenshot, bare_track
 
 
 class TestFrameTiming(unittest.TestCase):
@@ -78,6 +88,7 @@ class TestFrameTiming(unittest.TestCase):
             "captures": 2, "outputs": 2, "outputsWithCapture": 1, "reusedOutputs": 1,
             "cpuStartedNs": time.process_time_ns(),
         }
+        track._trace_interval_lock = __import__("threading").Lock()
 
         first = track._frame_trace_summary(context)
         second = track._frame_trace_summary(context)
@@ -89,7 +100,57 @@ class TestFrameTiming(unittest.TestCase):
         self.assertIsNone(second["coverage"]["sourceToWire"])
         self.assertEqual(second["alignmentState"], "UNALIGNED")
 
-    def test_host_attempt_identity_reaches_rtp_trace_batch_without_touching_legacy_timing(self):
+    def test_trace_interval_lock_serializes_a_capture_increment_before_snapshot_reset(self):
+        class GateLock:
+            def __init__(self):
+                self._lock = threading.Lock()
+                self.first_entered = threading.Event()
+                self.second_waiting = threading.Event()
+                self.release_first = threading.Event()
+                self._first = True
+
+            def __enter__(self):
+                if self._first:
+                    self._first = False
+                    self._lock.acquire()
+                    self.first_entered.set()
+                    assert self.release_first.wait(timeout=1)
+                else:
+                    self.second_waiting.set()
+                    self._lock.acquire()
+                return self
+
+            def __exit__(self, *_args):
+                self._lock.release()
+
+        registry = FrameTraceRegistry()
+        metrics = StageMetrics(registry=registry)
+        context = SenderFrameTraceContext(registry, metrics, "attempt", 1)
+        track = object.__new__(ScreenCaptureTrack)
+        track._trace_interval = {
+            "captures": 0, "outputs": 0, "outputsWithCapture": 0, "reusedOutputs": 0,
+            "cpuStartedNs": time.process_time_ns(),
+        }
+        gate = GateLock()
+        track._trace_interval_lock = gate
+        writer = threading.Thread(target=lambda: track._increment_trace_interval(captures=1))
+        snapshots = []
+        reader = threading.Thread(target=lambda: snapshots.append(track._frame_trace_summary(context)))
+        writer.start()
+        self.assertTrue(gate.first_entered.wait(timeout=1))
+        reader.start()
+        self.assertTrue(gate.second_waiting.wait(timeout=1))
+        gate.release_first.set()
+        writer.join(timeout=1)
+        reader.join(timeout=1)
+
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(snapshots[0]["counts"]["captures"], 1)
+        self.assertEqual(track._frame_trace_summary(context)["counts"]["captures"], 0)
+
+    def test_real_capture_encoder_rtp_datachannel_and_viewer_trace_wiring_preserves_legacy_timing(self):
+        """Exercise the production hand-offs; no registry annotation is injected."""
         registry = FrameTraceRegistry()
         host = object.__new__(WebRemoteHost)
         host._frame_trace_registry = registry
@@ -106,15 +167,63 @@ class TestFrameTiming(unittest.TestCase):
         })
         policy = host._h264_policy_provider.current_policy()
         context = host._frame_trace_context_for_policy(policy)
-        key = context.key(capture_seq=2, encoder_timestamp=9000)
-        self.assertTrue(registry.register_capture(key, frame_pts=100))
-        self.assertTrue(registry.annotate_encoder(key, "idr", "periodic", context.policy_digest))
-        observer = RtpFrameObserver(registry)
 
-        async def bind_actual_rtp_header():
-            observer.observe_encoded_frame(object(), encoder_timestamp=9000, ssrc=7)
-            packet = b"\x80\x60\x00\x01\x00\x00\x00\x4d\x00\x00\x00\x07x"
-            self.assertTrue(observer.observe_outgoing_rtp(packet, ssrc=7))
+        async def produce_host_messages():
+            track = bare_track(max_width=16, max_height=16)
+            sent = []
+            track._host_ref = type("Host", (), {
+                "get_input_datachannel": lambda _self: type("DC", (), {"send": lambda _dc, value: sent.append(value)})(),
+            })()
+            track._frame_trace_context = context
+            track._capture_buffer = Screenshot(np.zeros((16, 16, 4), dtype=np.uint8))
+            track._capture_seq = 1
+            now_ns = time.monotonic_ns()
+            track._capture_bounds_ns[1] = (now_ns - 1_000_000, now_ns)
+            try:
+                frame = await track.recv()
+                encoder = H264VideoToolboxEncoder(policy=policy, frame_trace_context=context)
+                packetized, encoder_timestamp = encoder.encode(frame)
+                self.assertTrue(packetized)
+
+                import aiortc.rtcrtpsender as sender_module
+                import aiortc.rtcdtlstransport as dtls_module
+                import rtp_frame_observer as observer_module
+                saved_next = sender_module.RTCRtpSender._next_encoded_frame
+                saved_send = dtls_module.RTCDtlsTransport._send_rtp
+
+                async def fake_next(_sender, _codec):
+                    return SimpleNamespace(timestamp=encoder_timestamp)
+
+                async def fake_send(transport, data):
+                    transport.sent.append(bytes(data))
+
+                sender_module.RTCRtpSender._next_encoded_frame = fake_next
+                dtls_module.RTCDtlsTransport._send_rtp = fake_send
+                try:
+                    observer = RtpFrameObserver(registry)
+                    original_compatibility = observer_module.aiortc_observer_compatibility
+                    observer_module.aiortc_observer_compatibility = lambda **_kwargs: (True, "ok")
+                    try:
+                        installed, reason = observer_module.install_aiortc_observer(observer)
+                        self.assertTrue(installed, reason)
+                        sender = SimpleNamespace(_wrd_frame_trace_context=context, _ssrc=7)
+                        await sender_module.RTCRtpSender._next_encoded_frame(sender, None)
+                        packet = b"\x80\x60\x00\x01\x00\x00\x00\x4d\x00\x00\x00\x07x"
+                        transport = SimpleNamespace(sent=[])
+                        await dtls_module.RTCDtlsTransport._send_rtp(transport, packet)
+                        self.assertEqual(transport.sent, [packet])
+                    finally:
+                        observer_module.aiortc_observer_compatibility = original_compatibility
+                finally:
+                    sender_module.RTCRtpSender._next_encoded_frame = saved_next
+                    dtls_module.RTCDtlsTransport._send_rtp = saved_send
+
+                track._last_trace_send_ns = 0
+                track._send_frame_trace_batch()
+                track._send_frame_timing(capture_prepare_ms=1.25, frame_convert_ms=2.5)
+                return sent
+            finally:
+                track._process_executor.shutdown(wait=True)
 
         asyncio = __import__("asyncio")
         try:
@@ -124,25 +233,41 @@ class TestFrameTiming(unittest.TestCase):
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(bind_actual_rtp_header())
+            sent = loop.run_until_complete(produce_host_messages())
         finally:
             loop.close()
             asyncio.set_event_loop(prior_loop if prior_loop is not None and not prior_loop.is_closed()
                                    else asyncio.new_event_loop())
-        batch = registry.take_frame_trace_batch()
-        self.assertEqual(batch["traces"][0]["attemptId"], "attempt-live")
-        self.assertEqual(batch["traces"][0]["generation"], 7)
-        self.assertEqual(batch["traces"][0]["wireTimestamp"], 77)
+        trace_raw = next(raw for raw in sent if json.loads(raw).get("type") == "frame_trace_batch")
+        timing_raw = sent[-1]
+        self.assertEqual(timing_raw, json.dumps({
+            "type": "frame_timing", "schemaVersion": 2, "frameId": 1,
+            "timings": {
+                "capturePrepareMs": 1.25, "frameConvertMs": 2.5,
+                "imgprocQueueMs": None, "imgprocBuildMs": None,
+                "encoderMs": None, "rtpSendMs": None, "endToEndVideoMs": None,
+            },
+        }))
 
-        sent = []
-        track = object.__new__(ScreenCaptureTrack)
-        track._host_ref = type("Host", (), {"get_input_datachannel": lambda self: type("DC", (), {"send": lambda self, value: sent.append(value)})()})()
-        track._pending_input_lock = __import__("threading").Lock()
-        track._pending_input_ids = set()
-        track._pending_input_data = []
-        track._timing_seq = 0
-        track._send_frame_timing(capture_prepare_ms=1, frame_convert_ms=2)
-        self.assertEqual(__import__("json").loads(sent[0])["type"], "frame_timing")
+        viewer_script = textwrap.dedent("""
+            const fs = require('fs'), vm = require('vm');
+            let callback = null;
+            function element() { return { classList: { add(){}, remove(){}, contains(){ return false; } }, style: {}, dataset: {}, addEventListener(){}, removeAttribute(){}, setAttribute(){}, getAttribute(){ return null; }, textContent: '', disabled: false }; }
+            const video = element(); video.videoWidth = 16; video.requestVideoFrameCallback = (fn) => { callback = fn; return 1; }; video.cancelVideoFrameCallback = () => {};
+            const context = { console: { log(){}, warn(){}, error(){}, info(){} }, performance: { now: () => 0 }, localStorage: { getItem(){ return null; }, setItem(){}, removeItem(){} }, document: { readyState: 'loading', body: element(), addEventListener(){}, querySelector(){ return null; }, getElementById(id){ return id === 'remoteVideo' ? video : element(); } }, window: { location: { origin: 'http://127.0.0.1:8080' }, RTCRtpReceiver: null }, navigator: { platform: 'MacIntel', userAgent: 'trace-fixture' }, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: (fn) => fn(), getComputedStyle: () => ({ objectFit: 'contain' }), io: () => ({ on(){}, emit(){}, disconnect(){}, connected: true }), Auth: { getToken: () => 'token', isLoggedIn: () => true, logout(){} } };
+            context.globalThis = context; vm.createContext(context);
+            vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + '\\nglobalThis.__WebRTC = WebRTC;', context);
+            const WebRTC = context.__WebRTC; WebRTC.connectionAttemptSequence = 6; WebRTC.createConnectionAttemptId = () => 'attempt-live'; WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected', createDataChannel(){ return { readyState: 'open', on(){}, send(){} }; } }; WebRTC._mediaIntent = { generation: 99 };
+            WebRTC.beginConnectionAttempt('viewer-open'); WebRTC.startVideoFrameTracking(); callback(10, { rtpTimestamp: 77 }); WebRTC.createInputChannel(); WebRTC.inputChannel.onmessage({ data: fs.readFileSync(0, 'utf8') });
+            process.stdout.write(JSON.stringify({ matched: WebRTC.frameTraceCollector.takeMatched(), diagnostics: WebRTC.getFrameTraceDiagnostics() }), () => process.exit(0));
+        """)
+        webrtc_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web-client", "js", "webrtc.js")
+        viewer = subprocess.run(["node", "-e", viewer_script, webrtc_path], input=trace_raw,
+                                text=True, capture_output=True, check=True, timeout=10)
+        viewer_result = json.loads(viewer.stdout)
+        self.assertEqual(viewer_result["matched"][0]["captureSeq"], 1)
+        self.assertEqual(viewer_result["matched"][0]["roi"]["metadata"]["rtpTimestamp"], 77)
+        self.assertEqual(viewer_result["diagnostics"]["acceptanceState"], "PENDING")
 
 
 if __name__ == '__main__':

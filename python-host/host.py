@@ -1066,6 +1066,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "reusedOutputs": 0,
             "cpuStartedNs": time.process_time_ns(),
         }
+        self._trace_interval_lock = threading.Lock()
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1102,7 +1103,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     self._capture_buffer = shot
                     self._capture_seq += 1
                     self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
-                    self._trace_interval["captures"] += 1
+                    self._increment_trace_interval(captures=1)
                     while len(self._capture_bounds_ns) > 2048:
                         self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
                 with self._activity_condition:
@@ -1284,11 +1285,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 trace_context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
                 trace_context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
                 trace_context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
-            self._trace_interval["outputs"] += 1
-            if fresh:
-                self._trace_interval["outputsWithCapture"] += 1
-            if reused:
-                self._trace_interval["reusedOutputs"] += 1
+            self._increment_trace_interval(
+                outputs=1,
+                outputsWithCapture=1 if fresh else 0,
+                reusedOutputs=1 if reused else 0,
+            )
             self._send_frame_trace_batch()
         convert_time = worker_timing["construct"]
         total_time = time.perf_counter() - recv_start
@@ -1423,7 +1424,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     def _frame_trace_summary(self, context):
         """Return one bounded five-second evidence window without cross-clock math."""
-        interval = dict(getattr(self, "_trace_interval", {}))
+        with self._trace_interval_lock:
+            interval = dict(self._trace_interval)
+            self._trace_interval = {
+                "captures": 0,
+                "outputs": 0,
+                "outputsWithCapture": 0,
+                "reusedOutputs": 0,
+                "cpuStartedNs": time.process_time_ns(),
+            }
         outputs = int(interval.get("outputs", 0) or 0)
         metrics = context.metrics.snapshot(reset=True)
         traces = context.registry.snapshot(reset=True)
@@ -1458,14 +1467,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "stages": metrics,
             "traces": traces,
         }
-        self._trace_interval = {
-            "captures": 0,
-            "outputs": 0,
-            "outputsWithCapture": 0,
-            "reusedOutputs": 0,
-            "cpuStartedNs": time.process_time_ns(),
-        }
         return summary
+
+    def _increment_trace_interval(self, **increments):
+        """Serialize capture-thread and recv-thread evidence counters."""
+        with self._trace_interval_lock:
+            for name, value in increments.items():
+                if value:
+                    self._trace_interval[name] += int(value)
 
     def _build_video_frame(self, screenshot, fallback_img, fresh, max_width, max_height, queued_at):
         """Process one capture and build one independent PyAV frame in imgproc.

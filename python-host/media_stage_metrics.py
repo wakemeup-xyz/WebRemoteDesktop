@@ -102,7 +102,9 @@ class FrameTraceRegistry:
         self.dropped_trace_count = 0
         self.expired_pending_count = 0
         self.active_scope_eviction_count = 0
-        self._interval_capture_count = 0
+        # Every successful registration is one encoded output identity, not a
+        # raw MSS capture. Raw capture count lives on ScreenCaptureTrack.
+        self._interval_registered_output_count = 0
         self._interval_wire_count = 0
 
     @staticmethod
@@ -188,7 +190,7 @@ class FrameTraceRegistry:
                                 discarded.ssrc, discarded.wire_timestamp), None)
             self.evicted_count += 1
         entries[timestamp] = FrameTrace(key=key, frame_pts=int(frame_pts), created_ns=now)
-        self._interval_capture_count += 1
+        self._interval_registered_output_count += 1
         return True
 
     def _get(self, key: FrameKey) -> FrameTrace | None:
@@ -300,14 +302,19 @@ class FrameTraceRegistry:
         with self._lock:
             self._purge(int(self._clock_ns()))
             source_to_wire = (
-                round(self._interval_wire_count / self._interval_capture_count, 3)
-                if self._interval_capture_count and self._interval_wire_count <= self._interval_capture_count else None
+                round(self._interval_wire_count / self._interval_registered_output_count, 3)
+                if self._interval_wire_count
+                and self._interval_registered_output_count
+                and self._interval_wire_count <= self._interval_registered_output_count else None
             )
             snapshot = {
                 "traceCount": sum(len(values) for values in self._traces.values()),
                 "activeScopeCount": len(self._active_generation),
                 "pendingCount": len(self._pending),
-                "registeredCaptureCount": self._interval_capture_count,
+                "registeredOutputFrameCount": self._interval_registered_output_count,
+                # Kept for diagnostic consumers that shipped in the first T3
+                # commit; its meaning is registered output frames, never MSS grabs.
+                "registeredCaptureCount": self._interval_registered_output_count,
                 "wireBoundCount": self._interval_wire_count,
                 "sourceToWireCoverage": source_to_wire,
                 "expiredCount": self.expired_count,
@@ -321,7 +328,7 @@ class FrameTraceRegistry:
                 "droppedTraceCount": self.dropped_trace_count,
             }
             if reset:
-                self._interval_capture_count = 0
+                self._interval_registered_output_count = 0
                 self._interval_wire_count = 0
                 self.expired_count = 0
                 self.evicted_count = 0

@@ -41,9 +41,14 @@ class FrameTraceCollector {
     this.lateWaitMs = lateWaitMs;
     this.frames = new Map();
     this.traces = new Map();
+    this.seen = new Map();
     this.matched = [];
     this.unaligned = false;
+    this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
+    this.invalidBatchCount = 0;
+    this.staleTraceCount = 0;
+    this.conflictingTraceCount = 0;
     this.scope = null;
   }
 
@@ -55,9 +60,14 @@ class FrameTraceCollector {
     this.scope = next;
     this.frames.clear();
     this.traces.clear();
+    this.seen.clear();
     this.matched = [];
     this.unaligned = false;
+    this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
+    this.invalidBatchCount = 0;
+    this.staleTraceCount = 0;
+    this.conflictingTraceCount = 0;
     return true;
   }
 
@@ -74,6 +84,30 @@ class FrameTraceCollector {
       Number(value?.wireTimestamp) >>> 0].join('|');
   }
 
+  isValidTrace(trace) {
+    return Boolean(trace)
+      && typeof trace.attemptId === 'string' && trace.attemptId.length > 0
+      && typeof trace.generation === 'number' && Number.isSafeInteger(trace.generation) && trace.generation >= 0
+      && typeof trace.streamId === 'string' && trace.streamId.length > 0
+      && typeof trace.wireTimestamp === 'number' && Number.isSafeInteger(trace.wireTimestamp)
+      && trace.wireTimestamp >= 0 && trace.wireTimestamp <= 0xFFFFFFFF
+      && typeof trace.captureSeq === 'number' && Number.isSafeInteger(trace.captureSeq) && trace.captureSeq >= 0;
+  }
+
+  rejectInvalidBatch() {
+    this.invalidBatchCount += 1;
+    this.failClosed();
+    return 0;
+  }
+
+  failClosed() {
+    this.unaligned = true;
+    this.terminalUnaligned = true;
+    this.frames.clear();
+    this.traces.clear();
+    this.matched = [];
+  }
+
   prune(map) {
     const deadline = Number(this.now()) - this.ttlMs;
     for (const [id, entry] of map) {
@@ -87,6 +121,7 @@ class FrameTraceCollector {
   expire() {
     this.prune(this.frames);
     this.prune(this.traces);
+    this.prune(this.seen);
     const lateDeadline = Number(this.now()) - this.lateWaitMs;
     for (const entry of this.frames.values()) {
       if (entry.at <= lateDeadline) this.unaligned = true;
@@ -103,13 +138,15 @@ class FrameTraceCollector {
 
   appendMatch(value) {
     if (this.matched.length >= this.capacity) {
-      this.matched.shift();
-      this.unaligned = true;
+      this.failClosed();
+      return false;
     }
     this.matched.push({ at: Number(this.now()), value });
+    return true;
   }
 
   observeVideoFrame(identity, roi) {
+    if (this.terminalUnaligned) return false;
     const timestamp = Number(identity?.rtpTimestamp);
     if (!Number.isFinite(timestamp)) {
       this.unaligned = true;
@@ -125,28 +162,43 @@ class FrameTraceCollector {
       return true;
     }
     if (this.frames.size >= this.capacity) {
-      this.frames.delete(this.frames.keys().next().value);
-      this.unaligned = true;
+      this.failClosed();
+      return false;
     }
     this.frames.set(id, { at: Number(this.now()), value: { identity, roi } });
     return false;
   }
 
   acceptBatch(batch) {
-    if (!batch || batch.type !== 'frame_trace_batch' || batch.schemaVersion !== 1 || !Array.isArray(batch.traces)) {
-      this.unaligned = true;
-      return 0;
+    if (this.terminalUnaligned) return 0;
+    this.expire();
+    if (!batch || batch.type !== 'frame_trace_batch' || batch.schemaVersion !== 1
+        || !Array.isArray(batch.traces) || batch.traces.length > 64
+        || (batch.droppedTraceCount != null
+          && (!Number.isSafeInteger(batch.droppedTraceCount) || batch.droppedTraceCount < 0))) return this.rejectInvalidBatch();
+    const identities = new Set();
+    for (const trace of batch.traces) {
+      if (!this.isValidTrace(trace)) return this.rejectInvalidBatch();
+      if (!this.isInScope(trace)) {
+        this.staleTraceCount += 1;
+        this.failClosed();
+        return 0;
+      }
+      const id = this.identity(trace);
+      if (identities.has(id) || this.traces.has(id) || this.seen.has(id)) {
+        this.conflictingTraceCount += 1;
+        this.failClosed();
+        return 0;
+      }
+      identities.add(id);
     }
+    if (this.seen.size + identities.size > this.capacity) return this.rejectInvalidBatch();
     this.droppedTraceCount += Math.max(0, Number(batch.droppedTraceCount) || 0);
     if (this.droppedTraceCount) this.unaligned = true;
     let joined = 0;
-    for (const trace of batch.traces.slice(0, 64)) {
-      if (!trace || !Number.isFinite(Number(trace.wireTimestamp))) {
-        this.unaligned = true;
-        continue;
-      }
-      if (!this.isInScope(trace)) continue;
+    for (const trace of batch.traces) {
       const id = this.identity(trace);
+      this.seen.set(id, { at: Number(this.now()) });
       const frame = this.frames.get(id);
       if (frame) {
         this.frames.delete(id);
@@ -155,8 +207,8 @@ class FrameTraceCollector {
         continue;
       }
       if (this.traces.size >= this.capacity) {
-        this.traces.delete(this.traces.keys().next().value);
-        this.unaligned = true;
+        this.failClosed();
+        return 0;
       }
       this.traces.set(id, { at: Number(this.now()), value: trace });
     }
@@ -176,8 +228,12 @@ class FrameTraceCollector {
       acceptanceState: this.unaligned ? 'UNALIGNED' : 'PENDING',
       pendingFrames: this.frames.size,
       pendingTraces: this.traces.size,
+      seenIdentities: this.seen.size,
       matchedCount: this.matched.length,
       droppedTraceCount: this.droppedTraceCount,
+      invalidBatchCount: this.invalidBatchCount,
+      staleTraceCount: this.staleTraceCount,
+      conflictingTraceCount: this.conflictingTraceCount,
     };
   }
 

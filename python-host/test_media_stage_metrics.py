@@ -129,6 +129,28 @@ def test_registry_snapshot_reset_keeps_live_rows_but_clears_interval_evidence():
     assert second["unmatchedWireCount"] == 0
 
 
+def test_source_to_wire_uses_registered_output_denominator_and_rejects_cross_window_overflow():
+    registry = FrameTraceRegistry()
+    key = FrameKey("attempt", 1, "video", 1, 90)
+    assert registry.register_capture(key, 1)
+    registry.snapshot(reset=True)
+    # The observer may report a packet from the preceding interval.  It must
+    # not produce a >1 rate by dividing it by raw MSS capture count or zero.
+    assert registry.bind_wire(key, 7, 77)
+    snapshot = registry.snapshot()
+
+    assert snapshot["registeredOutputFrameCount"] == 0
+    assert snapshot["wireBoundCount"] == 1
+    assert snapshot["sourceToWireCoverage"] is None
+
+    complete = FrameTraceRegistry()
+    complete_key = FrameKey("complete", 1, "video", 1, 90)
+    assert complete.register_capture(complete_key, 1)
+    assert complete.snapshot()["sourceToWireCoverage"] is None
+    assert complete.bind_wire(complete_key, 7, 77)
+    assert complete.snapshot()["sourceToWireCoverage"] == 1.0
+
+
 def test_registry_binds_wire_identity_per_reused_capture_and_batches_bounded_entries():
     """Matching by capture sequence would merge two encoded copies into one rVFC row."""
     registry = FrameTraceRegistry()

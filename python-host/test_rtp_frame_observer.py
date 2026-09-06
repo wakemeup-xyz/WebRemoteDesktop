@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from media_stage_metrics import FrameKey, FrameTraceRegistry
+import rtp_frame_observer as observer_module
 from rtp_frame_observer import RtpFrameObserver, aiortc_observer_compatibility, parse_rtp_timestamp
 
 
@@ -57,3 +58,21 @@ def test_observer_compatibility_fails_closed_for_unknown_aiortc_signature():
     compatible, reason = aiortc_observer_compatibility(version="0.0", next_signature="(self)", send_signature="(self, data: bytes)")
     assert compatible is False
     assert "version" in reason
+
+
+def test_abi_mismatch_does_not_patch_or_interrupt_the_existing_media_send(monkeypatch):
+    """An unsupported observer leaves the installed aiortc media functions alone."""
+    import aiortc.rtcrtpsender as sender_module
+    import aiortc.rtcdtlstransport as dtls_module
+
+    original_next = sender_module.RTCRtpSender._next_encoded_frame
+    original_send = dtls_module.RTCDtlsTransport._send_rtp
+    monkeypatch.setattr(observer_module, "aiortc_observer_compatibility", lambda **_kwargs: (False, "version-mismatch"))
+    observer = RtpFrameObserver(FrameTraceRegistry())
+    installed, reason = observer_module.install_aiortc_observer(observer)
+
+    assert installed is False
+    assert reason == "version-mismatch"
+    assert observer.enabled is False
+    assert sender_module.RTCRtpSender._next_encoded_frame is original_next
+    assert dtls_module.RTCDtlsTransport._send_rtp is original_send

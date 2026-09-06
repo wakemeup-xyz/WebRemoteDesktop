@@ -57,17 +57,22 @@ test('matched rows are bounded for diagnostics and expire at the 120 second inde
   let now = 0;
   const Collector = loadCollector(() => now);
   const collector = new Collector({ now: () => now, capacity: 2, lateWaitMs: 2000 });
-  for (const timestamp of [1, 2, 3]) {
+  for (const timestamp of [1, 2]) {
     collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: timestamp }, { timestamp });
     collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{
       attemptId: 'a', generation: 1, streamId: 'video', wireTimestamp: timestamp, captureSeq: timestamp,
     }] });
   }
   assert.equal(collector.diagnostics().matchedCount, 2);
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 3 }, { timestamp: 3 });
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{
+    attemptId: 'a', generation: 1, streamId: 'video', wireTimestamp: 3, captureSeq: 3,
+  }] });
+  assert.equal(collector.diagnostics().matchedCount, 0);
   assert.equal(collector.acceptanceState(), 'UNALIGNED');
   now = 2001;
   collector.expire();
-  assert.equal(collector.diagnostics().matchedCount, 2);
+  assert.equal(collector.diagnostics().matchedCount, 0);
   now = 120001;
   collector.expire();
   assert.equal(collector.takeMatched().length, 0);
@@ -83,4 +88,36 @@ test('a missing counterpart becomes UNALIGNED after two seconds but the index ex
   assert.equal(collector.diagnostics().pendingFrames, 1);
   now = 120001;
   assert.equal(collector.diagnostics().pendingFrames, 0);
+});
+
+test('incomplete, duplicate, conflicting, and stale trace batches never enter the current index', () => {
+  const Collector = loadCollector();
+  const collector = new Collector();
+  collector.setScope({ attemptId: 'live', generation: 3, streamId: 'video' });
+  const trace = {
+    attemptId: 'live', generation: 3, streamId: 'video', wireTimestamp: 77, captureSeq: 4,
+  };
+
+  assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{ ...trace, captureSeq: undefined }] }), 0);
+  assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace, { ...trace }] }), 0);
+  assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace, { ...trace, captureSeq: 5 }] }), 0);
+  assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{ ...trace, attemptId: 'old' }] }), 0);
+  assert.equal(collector.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'current' }), false);
+  assert.equal(collector.takeMatched().length, 0);
+  assert.equal(collector.diagnostics().pendingTraces, 0);
+  assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
+
+  const duplicate = new Collector();
+  duplicate.setScope({ attemptId: 'live', generation: 3, streamId: 'video' });
+  assert.equal(duplicate.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace] }), 0);
+  assert.equal(duplicate.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{ ...trace }] }), 0);
+  assert.equal(duplicate.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'duplicate' }), false);
+  assert.equal(duplicate.takeMatched().length, 0);
+  assert.equal(duplicate.diagnostics().acceptanceState, 'UNALIGNED');
+
+  const malformed = new Collector();
+  malformed.setScope({ attemptId: 'live', generation: 3, streamId: 'video' });
+  assert.equal(malformed.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, droppedTraceCount: '1', traces: [{ ...trace, generation: '3' }] }), 0);
+  assert.equal(malformed.diagnostics().invalidBatchCount, 1);
+  assert.equal(malformed.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'malformed' }), false);
 });
