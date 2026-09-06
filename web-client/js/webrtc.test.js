@@ -2679,8 +2679,8 @@ test('collectNetworkSnapshot summarizes candidate and state context', () => {
     localType: 'srflx',
     remoteType: 'host',
     protocol: 'udp',
-    localAddress: '203.0.113.1:5000',
-    remoteAddress: '192.168.0.2:6000',
+    localAddress: 'redacted-local-address',
+    remoteAddress: 'redacted-remote-address',
     rttMs: 42,
   };
 

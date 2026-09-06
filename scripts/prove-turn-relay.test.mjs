@@ -39,7 +39,8 @@ test('proof requires a selected local relay candidate and redacts candidate endp
   assert.throws(() => assertNoActiveViewer({ viewerCount: 1 }), /refusing headless proof/);
   assert.deepEqual(redactSelectedPair({
     localType: 'relay', protocol: 'udp', rttMs: 42,
-    localAddress: '10.0.0.1', localPort: 50000, remoteAddress: '203.0.113.10', remotePort: 3478,
+    localAddress: 'redacted-local-address', localPort: 50000,
+    remoteAddress: 'redacted-remote-address', remotePort: 3478,
   }), { type: 'relay', protocol: 'udp', rttMs: 42 });
 });
 
