@@ -1,7 +1,7 @@
 # 沉浸全屏 Chrome 设计
 
 日期：2026-09-06
-状态：Task 1–3 已实施；Task 4 已同步离线验收与当前文档，并在 Task 2 的 viewport 修复提交 `8682589` 后通过 12/12 场景的 offline Chromium、Node wrapper、Viewer 全量与 Signal build/test。真实设备、WebKit、Quartz、公网与 live watcher 仍为 NOT RUN；详见 Task 4 report。
+状态：Task 1–3 已实施；Task 4 已提交（完整 SHA `0a5e5caf1d53b3a82d24110c58649220b8982ab6`），并在 Task 2 的 viewport 修复提交 `8682589` 后通过 12/12 场景的 offline Chromium、Node wrapper、Viewer 全量与 Signal build/test。真实设备、WebKit、Quartz、公网与 live watcher 仍为 NOT RUN；详见 Task 4 report。
 关联：docs/superpowers/specs/2026-09-06-mobile-input-interaction-remediation-design.md §8（其中退出按钮位于状态栏的放置方案由本文取代；document-root、焦点与失败处理约束保留）
 
 ## 1. 问题与目标
@@ -153,7 +153,7 @@ Overlay 样式须满足：fixed、safe-area top/right、z-index 高于 300、but
 - Task 1：fullscreen 有效几何与 idle 隔离已实施，提交 `a61a787`、`1c23db0`。
 - Task 2：独立退出 overlay 与沉浸 CSS 已实施，提交 `1b454c8`；跨任务验收发现的无文本 Dock viewport 修复提交为 `8682589`。
 - Task 3：fullscreenchange、inert、edge reveal 与失败反馈已实施，提交 `1305d2f`、`060241e`。
-- Task 4：离线验收已改为分别测量 reveal handle / expanded exit、隐藏 chrome、visible-top、text reserve 与显式 handle→exit 路径；Task 2 viewport 修复后 1440×900 与 375×812 的 `viewerFillsVisibleViewportWithoutTextDock` 均为 `true`，native containment 与全部 12 个 offline Chromium 场景通过。保留完整安全 artifact bool，不以放宽断言换取 PASS。
+- Task 4：离线验收已改为分别测量 reveal handle / expanded exit、隐藏 chrome、visible-top、text reserve 与显式 handle→exit 路径；Task 2 viewport 修复后 1440×900 与 375×812 的 `viewerFillsVisibleViewportWithoutTextDock` 均为 `true`，native containment 与全部 12 个 offline Chromium 场景通过。状态为已提交，完整 SHA 为 `0a5e5caf1d53b3a82d24110c58649220b8982ab6`；保留完整安全 artifact bool，不以放宽断言换取 PASS。
 
 Task 4 使用的命令为：
 
@@ -169,4 +169,4 @@ git diff --check
 
 Signal build/test 前仅使用 `npm ci --offline` 补齐该 worktree 缺失的本地缓存依赖；未发生外部请求。
 
-Task 4 的提交 subject 为 `test(viewer): cover immersive fullscreen chrome`；最终 SHA 与每条命令的实际计数记录在被 `.superpowers/sdd` 忽略的 `task-4-report.md` 中。该报告只保留离线安全摘要，不记录 payload、文本、坐标、密码、token 或 URL。
+Task 4 的提交 subject 为 `test(viewer): cover immersive fullscreen chrome`，完整 SHA 为 `0a5e5caf1d53b3a82d24110c58649220b8982ab6`；每条命令的实际计数记录在被 `.superpowers/sdd` 忽略的 `task-4-report.md` 中。该报告只保留离线安全摘要，不记录 payload、文本、坐标、密码、token 或 URL。

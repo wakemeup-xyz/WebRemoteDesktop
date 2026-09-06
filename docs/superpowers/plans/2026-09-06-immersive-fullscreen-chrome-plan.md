@@ -4,7 +4,7 @@
 
 **Goal:** 让 document-level fullscreen 自动隐藏顶部状态栏和底部 Dock，同时以不占布局、按需唤出的 overlay 提供可靠退出路径。
 
-**Current status:** Task 1–3 已实施（Task 1: `a61a787`、`1c23db0`；Task 2: `1b454c8`、viewport 修复 `8682589`；Task 3: `1305d2f`、`060241e`）；Task 4 已更新离线 native acceptance、supersession note 与当前验证命令。Task 2 viewport 修复后，1440×900 与 375×812 的 `viewerFillsVisibleViewportWithoutTextDock` 均为 `true`，offline Chromium 12/12 场景通过，Node wrapper 4/4、focused trio 80/80、Viewer JS/CSS 715/715、Signal build/test 339/339 通过。真实设备、WebKit、Quartz、公网与 live watcher 仍 `NOT RUN`；完整安全 artifact 与命令计数见 Task 4 report。
+**Current status:** Task 1–3 已实施（Task 1: `a61a787`、`1c23db0`；Task 2: `1b454c8`、viewport 修复 `8682589`；Task 3: `1305d2f`、`060241e`）；Task 4 已提交，完整 SHA 为 `0a5e5caf1d53b3a82d24110c58649220b8982ab6`，并已更新离线 native acceptance、supersession note 与当前验证命令。Task 2 viewport 修复后，1440×900 与 375×812 的 `viewerFillsVisibleViewportWithoutTextDock` 均为 `true`，offline Chromium 12/12 场景通过，Node wrapper 4/4、focused trio 80/80、Viewer JS/CSS 715/715、Signal build/test 339/339 通过。真实设备、WebKit、Quartz、公网与 live watcher 仍 `NOT RUN`；完整安全 artifact 与命令计数见 Task 4 report。
 
 **Architecture:** 保留 document.documentElement 为唯一 fullscreen target，UI 镜像其状态到既有 body.fullscreen-active。ChromeLayout 在该派生状态中把有效顶栏高度归零并暂停自己的 idle timer；HTML/CSS 新增独立 fixed overlay，不能消费或改写 controls-hidden、chrome-idle 的普通 Viewer 语义。
 
@@ -352,7 +352,7 @@ git diff --cached --check
 git commit -m "test(viewer): cover immersive fullscreen chrome"
 ~~~
 
-Task 4 文档/验收提交的最终 SHA 记录在 `task-4-report.md`；commit subject 固定为 `test(viewer): cover immersive fullscreen chrome`。该 report 属于被忽略的本地 SDD 证据文件，不进入产品提交。
+Task 4 文档/验收提交的 commit subject 为 `test(viewer): cover immersive fullscreen chrome`，完整 SHA 为 `0a5e5caf1d53b3a82d24110c58649220b8982ab6`；该 report 属于被忽略的本地 SDD 证据文件，不进入产品提交。
 
 ## Final acceptance gate
 
