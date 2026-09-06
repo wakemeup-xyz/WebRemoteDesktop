@@ -776,6 +776,61 @@ def scenario_physical_keyup(browser: Any) -> dict[str, Any]:
         up_count = fixture.settle()
         up_after = keyboard_key_phase_counts(page, "ShiftLeft")
         state = safe_state(page)
+
+        # Keep the textarea Shift+Arrow path separate from the desktop-to-mobile
+        # transition above.  Native textarea modifier keydown is local-only;
+        # ArrowLeft creates one balanced production chord, and its native
+        # keyups must not create standalone releases for untracked keys.
+        chord_seed_before = wire_counts(page)
+        dispatch_mobile_input(page, "abc")
+        chord_seed_writes = fixture.settle()
+        chord_seed_after = wire_counts(page)
+        chord_seed_state = safe_state(page)
+        chord_before = wire_counts(page)
+        chord_shift_before = keyboard_key_phase_counts(page, "ShiftLeft")
+        chord_arrow_before = keyboard_key_phase_counts(page, "ArrowLeft")
+        page.keyboard.down('Shift')
+        page.keyboard.down('ArrowLeft')
+        page.keyboard.up('ArrowLeft')
+        page.keyboard.up('Shift')
+        chord_writes = fixture.settle()
+        chord_after = wire_counts(page)
+        chord_shift_after = keyboard_key_phase_counts(page, "ShiftLeft")
+        chord_arrow_after = keyboard_key_phase_counts(page, "ArrowLeft")
+        chord_state = safe_state(page)
+        chord_probe = page.evaluate(
+            """
+            (beforeBatch) => {
+              const batches = (globalThis.__offlineWire || [])
+                .filter((item) => item.type === 'keyboard' && item.action === 'batch');
+              const branchBatches = batches.slice(beforeBatch);
+              const steps = branchBatches.length === 1
+                ? branchBatches[0]?.payload?.steps || [] : [];
+              return {
+                exactlyOneBatch: branchBatches.length === 1,
+                balanced: steps.length === 4
+                  && steps[0]?.code === 'ShiftLeft' && steps[0]?.phase === 'down'
+                  && steps[1]?.code === 'ArrowLeft' && steps[1]?.phase === 'down'
+                  && steps[2]?.code === 'ArrowLeft' && steps[2]?.phase === 'up'
+                  && steps[3]?.code === 'ShiftLeft' && steps[3]?.phase === 'up',
+                carriesShiftFlags: steps.length === 4 && steps.every((step) =>
+                  step.modifiers?.shiftKey === true
+                  && step.modifiers?.ctrlKey === false
+                  && step.modifiers?.altKey === false
+                  && step.modifiers?.metaKey === false),
+              };
+            }
+            """,
+            chord_before["keyboardBatch"],
+        )
+        post_chord_text_before = wire_counts(page)
+        dispatch_mobile_input(page, "X")
+        post_chord_text_writes = fixture.settle()
+        post_chord_text_after = wire_counts(page)
+        post_chord_state = safe_state(page)
+        post_chord_model_nonempty = page.evaluate(
+            "() => (globalThis.__offlineModel?.value?.length || 0) > 0"
+        )
         counts = wire_counts(page)
         checks = {
             "startsOnDesktopSurface": bool(initial["mobileHidden"])
@@ -792,6 +847,25 @@ def scenario_physical_keyup(browser: Any) -> dict[str, Any]:
             "exactlyOnePhysicalModifierDown": down_after["down"] == 1,
             "exactlyOnePhysicalModifierUp": up_after["up"] == 1,
             "mobileFocusPreserved": state["activeElement"] == "mobileTextInput",
+            "textAfterTrackedReleaseAccepted": chord_seed_writes == 1
+                and chord_seed_after["keyboardText"] - chord_seed_before["keyboardText"] == 1
+                and chord_seed_state["mobilePending"] is False
+                and chord_seed_state["activeElement"] == "mobileTextInput",
+            "textareaChordHasOneAcceptedBatch": chord_writes == 1
+                and chord_after["keyboardBatch"] - chord_before["keyboardBatch"] == 1
+                and bool(chord_probe["exactlyOneBatch"]),
+            "textareaChordIsBalancedWithFlags": bool(chord_probe["balanced"])
+                and bool(chord_probe["carriesShiftFlags"]),
+            "textareaChordHasNoStandaloneKeyWrites": chord_after["keyboardKey"]
+                - chord_before["keyboardKey"] == 0,
+            "textareaChordHasNoUntrackedKeyupRelease": chord_shift_after == chord_shift_before
+                and chord_arrow_after == chord_arrow_before,
+            "textareaChordLeavesPressedTruthReleased": chord_state["pressedKeys"] == 0,
+            "textAfterTextareaChordAccepted": post_chord_text_writes == 1
+                and post_chord_text_after["keyboardText"] - post_chord_text_before["keyboardText"] == 1
+                and post_chord_model_nonempty
+                and post_chord_state["mobilePending"] is False
+                and post_chord_state["activeElement"] == "mobileTextInput",
         }
         return result(
             "physical-keyup-release",
@@ -802,6 +876,11 @@ def scenario_physical_keyup(browser: Any) -> dict[str, Any]:
                 "keyboardKeys": counts["keyboardKey"],
                 "shiftDown": up_after["down"],
                 "shiftUp": up_after["up"],
+                "textareaSeedWrites": chord_seed_writes,
+                "textareaChordWrites": chord_writes,
+                "textareaChordBatches": chord_after["keyboardBatch"] - chord_before["keyboardBatch"],
+                "textareaChordStandaloneKeys": chord_after["keyboardKey"] - chord_before["keyboardKey"],
+                "postChordTextWrites": post_chord_text_writes,
             },
         )
     finally:
