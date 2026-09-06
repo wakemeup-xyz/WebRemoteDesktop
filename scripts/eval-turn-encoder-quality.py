@@ -745,7 +745,12 @@ def evaluate_relay_vbv_refinement(probe) -> dict:
 
 def evaluate_preset_matrix(probe) -> dict:
     """Run the sole fresh control/candidate pair and keep production on legacy."""
-    from turn_encoder_experiments import build_preset_experiments, submitted_options, validate_comparison
+    from turn_encoder_experiments import (
+        build_preset_experiments,
+        submitted_options,
+        validate_comparison,
+        validate_control_integrity,
+    )
 
     control, candidate = build_preset_experiments()
     execution_source_revision = _execution_source_revision()
@@ -759,14 +764,10 @@ def evaluate_preset_matrix(probe) -> dict:
         )
     }
     base_evidence = probe.evaluate_preset_scenario_matrix(control)
-    base_errors = validate_comparison(base_evidence, {
-        "config": candidate.to_dict(),
-        "input": base_evidence.get("input"),
-        "runs": [],
-    })
-    # The comparison validator needs a candidate to validate both sides.  A
-    # malformed control must stop before spending CPU on the only candidate.
-    base_errors = [error for error in base_errors if error.startswith("base:")]
+    # A malformed control must stop before spending CPU on the only candidate.
+    # Its measured quality/cost outcomes remain reference data, so only
+    # reproducibility and structural integrity belong to this preflight.
+    base_errors = validate_control_integrity(base_evidence)
     runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
     if base_errors:
         declared_candidate_config = candidate.to_dict()

@@ -1,4 +1,6 @@
+import copy
 import importlib.util
+import json
 import re
 import subprocess
 import unittest
@@ -277,6 +279,47 @@ class PresetMatrixEvaluatorTest(unittest.TestCase):
         self.assertEqual(result["offlineWinner"], None)
         self.assertEqual(result["selection"]["state"], "no-offline-winner")
         self.assertEqual(result["runtime"]["status"], "NOT RUN")
+
+    def test_complete_unqualified_control_still_executes_superfast_candidate(self):
+        """Control quality/cost outcomes are reference data, not an execution stop."""
+        control, candidate = build_preset_experiments()
+        artifact = Path(
+            "docs/superpowers/reports/evidence/2026-09-06-turn-next/"
+            "relay-preset-refinement-corrected.json"
+        )
+        base_evidence = json.loads(artifact.read_text())["base"]["offline"]
+        candidate_evidence = copy.deepcopy(base_evidence)
+        candidate_evidence["config"] = candidate.to_dict()
+        for run in candidate_evidence["runs"]:
+            resolution = tuple(run["resolution"])
+            for scenario in run["scenarios"]:
+                scenario["configuredOptions"] = submitted_options(candidate, resolution)
+                for record in scenario["codecCreationRecords"]:
+                    record["requestedPreset"] = candidate.preset
+                    record["submittedCodecOptions"] = submitted_options(candidate, resolution)
+
+        class Probe:
+            def __init__(self):
+                self.config_ids = []
+
+            def evaluate_preset_scenario_matrix(self, config):
+                self.config_ids.append(config.id)
+                if config.id == control.id:
+                    return copy.deepcopy(base_evidence)
+                if config.id == candidate.id:
+                    return copy.deepcopy(candidate_evidence)
+                raise AssertionError(f"unexpected config: {config.id}")
+
+        probe = Probe()
+        result = MODULE.evaluate_preset_matrix(probe)
+
+        self.assertEqual(probe.config_ids, [control.id, candidate.id])
+        candidate_row = result["candidates"][0]
+        self.assertEqual(candidate_row["offline"]["status"], "FAIL")
+        self.assertEqual(candidate_row["runtime"]["status"], "NOT RUN")
+        records = candidate_row["offline"]["evidence"]["runs"][0]["scenarios"][0]["codecCreationRecords"]
+        self.assertEqual(records[0]["requestedPreset"], "superfast")
+        self.assertEqual(records[0]["submittedCodecOptions"]["preset"], "superfast")
 
     def test_base_stop_keeps_complete_declared_candidate_and_execution_provenance(self):
         """A rejected control must leave an auditable, unmeasured candidate declaration."""

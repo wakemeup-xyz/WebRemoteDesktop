@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "relay-preset-refinement-post-run-sidecar",
+  "postRunMetadata": true,
+  "statement": "This sidecar binds reproducibility metadata to the complete control-and-superfast offline execution. It does not alter the raw artifact.",
+  "rawArtifact": {
+    "path": "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-full.json",
+    "sha256": "806630a8233e3f7536a84b6d444677e170d5648dec1660e8cf7e28fb174e340f",
+    "unmodified": true
+  },
+  "executionContext": {
+    "command": "nice -n 15 /Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 scripts/eval-turn-encoder-quality.py --matrix relay-preset-refinement --output docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-full.json",
+    "preflight": {
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "viewers": [],
+      "viewerEpoch": 41,
+      "activePytestOrDockerSmoke": false
+    },
+    "interruptedAttempt": {
+      "reason": "overlapped another task's pytest run",
+      "artifactWritten": false
+    }
+  },
+  "executionSourceRevision": "ac58a7e640d9a2bf0fdf408211418b2f85c5f896",
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "ce39667c59a9f4161dffc845a2d139cae157e382d35ad67d7595b49ab545adc5",
+    "python-host/h264_videotoolbox_encoder.py": "1eff561493e454b966582f218e6da7baa77a4b7a68386cd90800ce40f87289b3",
+    "scripts/eval-turn-encoder-quality.py": "364b969d8dee44f0ba967e8c28da569d14bdaeeaa090713496a0eb2b1bc87bde",
+    "scripts/turn_encoder_experiments.py": "9e6841531a0489b53171bd0efcd5bdf55ebc68147b8f6269016c7f2f5d34c24e"
+  },
+  "inputDigest": "a83d190307d46b7c6482044561449c01d95825196ee2af84d4a74590f30e4434",
+  "candidate": {
+    "id": "on-demand-cap-vbv200-superfast",
+    "encoderParameterDigest": "9bb53b21f49471e12a3ff4a5c1fdf81cbbe94ee0e3130a1fbb64649b0b2fbdf9",
+    "actualCodecCreationPreset": "superfast",
+    "offlineStatus": "FAIL",
+    "runtimeStatus": "NOT RUN",
+    "frozenManifest": "NOT EMITTED"
+  }
+}

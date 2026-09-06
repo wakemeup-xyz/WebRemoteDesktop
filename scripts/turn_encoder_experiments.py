@@ -169,7 +169,7 @@ def _record_errors(
 
 
 def _scenario_errors(
-    scenario: Mapping[str, Any], config: ExperimentConfig, expected: tuple[str, int, int, tuple[int, ...]], resolution: tuple[int, int], *, enforce_quality: bool
+    scenario: Mapping[str, Any], config: ExperimentConfig, expected: tuple[str, int, int, tuple[int, ...]], resolution: tuple[int, int], *, enforce_quality: bool, enforce_cost: bool
 ) -> list[str]:
     expected_id, start, count, requests = expected
     errors: list[str] = []
@@ -241,10 +241,15 @@ def _scenario_errors(
     cost = scenario.get("cost")
     budget = 25.0 if resolution == (1152, 720) else 45.0
     actual_p95 = sorted(float(frame["encodeMs"]) for frame in frames)[math.ceil(len(frames) * .95) - 1]
-    if not isinstance(cost, Mapping) or cost.get("status") != "PASS" or not _finite(cost.get("encodeMsP95")) or abs(cost["encodeMsP95"] - round(actual_p95, 3)) > 1e-9 or actual_p95 > budget:
+    cost_aggregate_valid = (
+        isinstance(cost, Mapping)
+        and _finite(cost.get("encodeMsP95"))
+        and abs(cost["encodeMsP95"] - round(actual_p95, 3)) <= 1e-9
+    )
+    if not cost_aggregate_valid:
+        errors.append(f"{expected_id}: scenario cost aggregate drift")
+    elif enforce_cost and (cost.get("status") != "PASS" or actual_p95 > budget):
         errors.append(f"{expected_id}: scenario cost failure")
-        if isinstance(cost, Mapping) and _finite(cost.get("encodeMsP95")) and abs(cost["encodeMsP95"] - round(actual_p95, 3)) > 1e-9:
-            errors.append(f"{expected_id}: scenario cost aggregate drift")
     if not isinstance(scenario.get("quality"), Mapping):
         errors.append(f"{expected_id}: missing scenario quality")
     actual_idr_bytes = [frame.get("bytes") for frame in actual_idrs]
@@ -260,7 +265,9 @@ def _scenario_errors(
     return errors
 
 
-def _run_errors(run: Mapping[str, Any], config: ExperimentConfig, *, enforce_quality: bool) -> list[str]:
+def _run_errors(
+    run: Mapping[str, Any], config: ExperimentConfig, *, enforce_quality: bool, enforce_cost: bool
+) -> list[str]:
     resolution = tuple(run.get("resolution", ()))
     if resolution not in RELAY_RESOLUTIONS:
         return ["invalid resolution"]
@@ -275,7 +282,10 @@ def _run_errors(run: Mapping[str, Any], config: ExperimentConfig, *, enforce_qua
         scenario = by_id.get(expected[0])
         if scenario is None:
             continue
-        errors.extend(_scenario_errors(scenario, config, expected, resolution, enforce_quality=enforce_quality))
+        errors.extend(_scenario_errors(
+            scenario, config, expected, resolution,
+            enforce_quality=enforce_quality, enforce_cost=enforce_cost,
+        ))
     scrolling = by_id.get("scrolling-text")
     post = by_id.get("post-scroll-static")
     if isinstance(scrolling, Mapping) and isinstance(post, Mapping) and scrolling.get("sessionId") == post.get("sessionId"):
@@ -285,29 +295,50 @@ def _run_errors(run: Mapping[str, Any], config: ExperimentConfig, *, enforce_qua
     return errors
 
 
+def _evidence_errors(
+    label: str,
+    run: Mapping[str, Any],
+    config: ExperimentConfig,
+    *,
+    enforce_quality: bool,
+    enforce_cost: bool,
+) -> list[str]:
+    errors: list[str] = []
+    actual_config = _config_from_run(run)
+    if not isinstance(actual_config, Mapping) or actual_config.get("encoderParameterDigest") != config.options_digest:
+        errors.append(f"{label}: encoder parameter digest drift")
+    expected_config = _expected_config(config)
+    if actual_config != expected_config:
+        errors.append(f"{label}: immutable config drift")
+    runs = run.get("runs") if isinstance(run, Mapping) else None
+    if not isinstance(runs, list) or len(runs) != len(RELAY_RESOLUTIONS):
+        return errors + [f"{label}: incomplete dual-resolution runs"]
+    by_resolution = {tuple(item.get("resolution", ())): item for item in runs if isinstance(item, Mapping)}
+    if set(by_resolution) != set(RELAY_RESOLUTIONS):
+        return errors + [f"{label}: incomplete dual-resolution runs"]
+    for resolution in RELAY_RESOLUTIONS:
+        errors.extend(f"{label}: {error}" for error in _run_errors(
+            by_resolution[resolution], config,
+            enforce_quality=enforce_quality, enforce_cost=enforce_cost,
+        ))
+    return errors
+
+
+def validate_control_integrity(base: Mapping[str, Any]) -> list[str]:
+    """Reject an incomplete or drifting control without applying candidate gates to it."""
+    control, _ = build_preset_experiments()
+    return _evidence_errors(
+        "base", base, control, enforce_quality=False, enforce_cost=False,
+    )
+
+
 def validate_comparison(base: Mapping[str, Any], candidate: Mapping[str, Any]) -> list[str]:
     """Reject incomplete, drifting or unsafe evidence before any offline selection."""
     control, proposed = build_preset_experiments()
-    errors: list[str] = []
-    for label, run, config in (("base", base, control), ("candidate", candidate, proposed)):
-        actual_config = _config_from_run(run)
-        if not isinstance(actual_config, Mapping) or actual_config.get("encoderParameterDigest") != config.options_digest:
-            errors.append(f"{label}: encoder parameter digest drift")
-        expected_config = _expected_config(config)
-        if actual_config != expected_config:
-            errors.append(f"{label}: immutable config drift")
-        runs = run.get("runs") if isinstance(run, Mapping) else None
-        if not isinstance(runs, list) or len(runs) != len(RELAY_RESOLUTIONS):
-            errors.append(f"{label}: incomplete dual-resolution runs")
-            continue
-        by_resolution = {tuple(item.get("resolution", ())): item for item in runs if isinstance(item, Mapping)}
-        if set(by_resolution) != set(RELAY_RESOLUTIONS):
-            errors.append(f"{label}: incomplete dual-resolution runs")
-            continue
-        for resolution in RELAY_RESOLUTIONS:
-            errors.extend(f"{label}: {error}" for error in _run_errors(
-                by_resolution[resolution], config, enforce_quality=(label == "candidate")
-            ))
+    errors = validate_control_integrity(base)
+    errors.extend(_evidence_errors(
+        "candidate", candidate, proposed, enforce_quality=True, enforce_cost=True,
+    ))
     if errors:
         return errors
 
