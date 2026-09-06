@@ -63,6 +63,7 @@ function loadInput() {
         },
       },
       activeElement: null,
+      documentElement: {},
       fullscreenElement: null,
       addEventListener: addDocumentListener,
       querySelectorAll: () => [],
@@ -313,8 +314,7 @@ test('fullscreenchange preserves mobile text focus while updating fullscreen sta
 
   const UI = loadUi(context);
   UI.setupControlButtons();
-  const viewerContainer = context.document.querySelector('.viewer-container');
-  context.document.fullscreenElement = viewerContainer;
+  context.document.fullscreenElement = context.document.documentElement;
   documentListeners.get('fullscreenchange')();
 
   assert.equal(context.document.activeElement, field);
