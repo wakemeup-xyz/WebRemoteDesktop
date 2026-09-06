@@ -1,4 +1,6 @@
 import importlib.util
+import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -8,6 +10,7 @@ SPEC = importlib.util.spec_from_file_location("eval_turn_encoder_quality", SCRIP
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+from turn_encoder_experiments import build_preset_experiments, submitted_options
 
 
 def passing_runtime():
@@ -274,6 +277,37 @@ class PresetMatrixEvaluatorTest(unittest.TestCase):
         self.assertEqual(result["offlineWinner"], None)
         self.assertEqual(result["selection"]["state"], "no-offline-winner")
         self.assertEqual(result["runtime"]["status"], "NOT RUN")
+
+    def test_base_stop_keeps_complete_declared_candidate_and_execution_provenance(self):
+        """A rejected control must leave an auditable, unmeasured candidate declaration."""
+        class Probe:
+            def evaluate_preset_scenario_matrix(self, config):
+                return {"config": config.to_dict(), "input": {}, "runs": []}
+
+        result = MODULE.evaluate_preset_matrix(Probe())
+
+        _, declared_candidate = build_preset_experiments()
+        expected_revision = subprocess.check_output(
+            ("git", "-C", str(MODULE.ROOT), "rev-parse", "--verify", "HEAD"), text=True
+        ).strip()
+        self.assertEqual(result["executionSourceRevision"], expected_revision)
+        self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{40}", result["executionSourceRevision"]))
+        self.assertEqual(len(result["candidates"]), 1)
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["id"], declared_candidate.id)
+        expected_config = declared_candidate.to_dict()
+        expected_config["submittedCodecOptionsByResolution"] = {
+            f"{width}x{height}": submitted_options(declared_candidate, (width, height))
+            for width, height in MODULE.RELAY_RESOLUTIONS
+        }
+        self.assertEqual(candidate["declaredConfig"], expected_config)
+        self.assertEqual(candidate["declaredConfig"]["encoderParameterDigest"], declared_candidate.options_digest)
+        self.assertEqual(candidate["execution"]["status"], "NOT RUN")
+        self.assertEqual(candidate["offline"]["status"], "NOT RUN")
+        self.assertEqual(candidate["execution"]["baseStopReasons"], result["base"]["validationErrors"])
+        self.assertEqual(candidate["ineligibleReason"], result["base"]["validationErrors"])
+        self.assertNotIn("codecCreationRecords", candidate)
+        self.assertNotIn("evidence", candidate["offline"])
 
 
 if __name__ == "__main__":

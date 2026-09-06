@@ -9,6 +9,7 @@ import importlib.util
 import json
 import math
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,20 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE_PATH = ROOT / "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def _execution_source_revision() -> str:
+    """Return the repository revision recorded beside digest-bound matrix evidence."""
+    completed = subprocess.run(
+        ("git", "-C", str(ROOT), "rev-parse", "--verify", "HEAD"),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    revision = completed.stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeError("matrix execution source revision is invalid")
+    return revision
 
 
 def select_relay_candidate(candidates: list[dict]) -> dict:
@@ -730,9 +745,10 @@ def evaluate_relay_vbv_refinement(probe) -> dict:
 
 def evaluate_preset_matrix(probe) -> dict:
     """Run the sole fresh control/candidate pair and keep production on legacy."""
-    from turn_encoder_experiments import build_preset_experiments, validate_comparison
+    from turn_encoder_experiments import build_preset_experiments, submitted_options, validate_comparison
 
     control, candidate = build_preset_experiments()
+    execution_source_revision = _execution_source_revision()
     source_digests = {
         str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (
@@ -753,15 +769,30 @@ def evaluate_preset_matrix(probe) -> dict:
     base_errors = [error for error in base_errors if error.startswith("base:")]
     runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
     if base_errors:
+        declared_candidate_config = candidate.to_dict()
+        declared_candidate_config["submittedCodecOptionsByResolution"] = {
+            f"{width}x{height}": submitted_options(candidate, (width, height))
+            for width, height in RELAY_RESOLUTIONS
+        }
+        base_stop_candidate = {
+            "id": candidate.id,
+            "declaredConfig": declared_candidate_config,
+            "execution": {"status": "NOT RUN", "baseStopReasons": list(base_errors)},
+            "offline": {"status": "NOT RUN"},
+            "runtime": runtime,
+            "eligible": False,
+            "ineligibleReason": list(base_errors),
+        }
         return {
             "kind": "relay-preset-refinement",
             "scope": "offline synthetic encoder experiment only; runtime gates remain NOT RUN",
             "defaultPolicy": "relay-legacy-v1",
             "base": {"config": control.to_dict(), "offline": base_evidence, "validationErrors": base_errors},
-            "candidates": [],
+            "candidates": [base_stop_candidate],
             "offlineWinner": None,
             "runtime": runtime,
             "sourceDigests": source_digests,
+            "executionSourceRevision": execution_source_revision,
             "inputDigest": hashlib.sha256(
                 json.dumps(base_evidence.get("input", {}), sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest(),
@@ -789,6 +820,7 @@ def evaluate_preset_matrix(probe) -> dict:
         "offlineWinner": candidate.id if candidate_valid else None,
         "runtime": runtime,
         "sourceDigests": source_digests,
+        "executionSourceRevision": execution_source_revision,
         "inputDigest": hashlib.sha256(
             json.dumps(base_evidence.get("input", {}), sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),

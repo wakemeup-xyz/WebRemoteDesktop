@@ -30,15 +30,20 @@ nice -n 15 /Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 \
 ```
 
 The process completed at `2026-09-07T00:49:38+0800`.  Its last observed
-elapsed time was 46 minutes 13 seconds.  The deterministic result was copied
-without modification to
+elapsed time was 46 minutes 13 seconds.  The raw deterministic result alone
+was copied byte-for-byte to
 `docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-corrected.json`.
+The separately versioned
+`docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-corrected.sidecar.json`
+is post-run metadata and does not amend or replace that raw JSON.
 
 ## Bound evidence
 
 | Item | SHA-256 / value |
 | --- | --- |
 | Corrected evidence file | `0b6cbd31fa2f856262609f2863def073d54f49a7aefa3b2145f279531732dc62` |
+| Post-run sidecar | `relay-preset-refinement-corrected.sidecar.json` (bound to the corrected-evidence SHA above) |
+| Execution source revision | `5a2e97bfd35dc79c95ca08eeac0112e47f1be91b` |
 | Input digest | `a83d190307d46b7c6482044561449c01d95825196ee2af84d4a74590f30e4434` |
 | Ultrafast actual config digest | `9d47c98b0b6342cc2099737ed753c56795303d1125b89b126b00cb83787c2eb8` |
 | Superfast declared config digest (not executed) | `9bb53b21f49471e12a3ff4a5c1fdf81cbbe94ee0e3130a1fbb64649b0b2fbdf9` |
@@ -51,7 +56,10 @@ The executed control used libx264, `ultrafast`, Baseline, 20 FPS, fixed
 3.2 Mbps/5.0 Mbps caps, VBV 200 ms, and no periodic IDR.  The candidate was
 the sole authorized `superfast` configuration with those same settings; it
 has no actual codec-construction record because the control cost failure
-stopped the run before candidate execution.
+stopped the run before candidate execution. The sidecar records the complete
+declared superfast configuration/digest, exact base-stop errors, and the
+actual execution source revision without fabricating an encoder record or a
+candidate result.
 
 ## Per-scenario result
 

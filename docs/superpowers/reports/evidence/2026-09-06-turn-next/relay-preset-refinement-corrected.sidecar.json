@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "relay-preset-refinement-post-run-sidecar",
+  "postRunMetadata": true,
+  "statement": "This sidecar adds post-run provenance for the corrected offline execution. It does not alter the raw artifact.",
+  "rawArtifact": {
+    "path": "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-corrected.json",
+    "sha256": "0b6cbd31fa2f856262609f2863def073d54f49a7aefa3b2145f279531732dc62",
+    "unmodified": true
+  },
+  "executionSourceRevision": "5a2e97bfd35dc79c95ca08eeac0112e47f1be91b",
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "ce39667c59a9f4161dffc845a2d139cae157e382d35ad67d7595b49ab545adc5",
+    "python-host/h264_videotoolbox_encoder.py": "a9dbf26a24730f9b27bbe2db368148eae6268a93372e72dbac764b6a0dd8445d",
+    "scripts/eval-turn-encoder-quality.py": "9dd55e074d6e03986eba74541052854d9c642adaf0ae84a65c890a7029fac73e",
+    "scripts/turn_encoder_experiments.py": "7b7d9c8d1c17c7662d0937cdd05932dab6b41179005872a63d8b301d5677340f"
+  },
+  "inputDigest": "a83d190307d46b7c6482044561449c01d95825196ee2af84d4a74590f30e4434",
+  "declaredSuperfastConfig": {
+    "id": "on-demand-cap-vbv200-superfast",
+    "preset": "superfast",
+    "codec": "libx264",
+    "profile": "Baseline",
+    "fps": 20,
+    "bitrateByResolution": {
+      "1152x720": 3200000,
+      "1728x1080": 5000000
+    },
+    "vbvMs": 200,
+    "periodicIdrFrames": 0,
+    "options": {
+      "preset": "superfast",
+      "tune": "zerolatency",
+      "otherOptionsDigest": "threads=1;zerolatency;baseline;on-demand-cap"
+    },
+    "submittedCodecOptionsByResolution": {
+      "1152x720": {
+        "preset": "superfast",
+        "tune": "zerolatency",
+        "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:forced-idr=1:vbv-maxrate=3200:vbv-bufsize=640:vbv-init=0.4:nal-hrd=none"
+      },
+      "1728x1080": {
+        "preset": "superfast",
+        "tune": "zerolatency",
+        "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:forced-idr=1:vbv-maxrate=5000:vbv-bufsize=1000:vbv-init=0.4:nal-hrd=none"
+      }
+    },
+    "optionsDigest": "9bb53b21f49471e12a3ff4a5c1fdf81cbbe94ee0e3130a1fbb64649b0b2fbdf9",
+    "encoderParameterDigest": "9bb53b21f49471e12a3ff4a5c1fdf81cbbe94ee0e3130a1fbb64649b0b2fbdf9"
+  },
+  "candidateExecution": {
+    "status": "NOT RUN",
+    "baseStopReasons": [
+      "base: scrolling-text: scenario cost failure",
+      "base: static-text: scenario cost failure"
+    ]
+  }
+}
