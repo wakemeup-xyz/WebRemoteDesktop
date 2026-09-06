@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "relay-veryfast-refinement-post-run-sidecar",
+  "postRunMetadata": true,
+  "statement": "This sidecar binds reproducibility metadata to the complete superfast-control and veryfast-candidate offline execution. It does not alter the raw artifact.",
+  "rawArtifact": {
+    "path": "docs/superpowers/reports/evidence/2026-09-07-turn-veryfast/relay-veryfast-refinement-full.json",
+    "sha256": "20d8ddd3cbdc7fbaebb5e68b3eaed8b1fde054a120dea8bf33b7a454570ddd8c",
+    "unmodified": true
+  },
+  "executionContext": {
+    "command": "nice -n 15 /Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 scripts/eval-turn-encoder-quality.py --matrix relay-veryfast-refinement --output docs/superpowers/reports/evidence/2026-09-07-turn-veryfast/relay-veryfast-refinement-full.json",
+    "preflight": {
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "viewers": [],
+      "viewerEpoch": 41,
+      "activePytestOrDockerSmoke": false,
+      "activeMatrix": false,
+      "activeLabRunner": false,
+      "activeLabHost": false,
+      "activeT3Collector": false
+    }
+  },
+  "executionSourceRevision": "43bdb90f83363bcfbdf2d4b5db44106e61458632",
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "ce39667c59a9f4161dffc845a2d139cae157e382d35ad67d7595b49ab545adc5",
+    "python-host/h264_videotoolbox_encoder.py": "d78b86e71b1f60b1317148551f1af6ca5c43e7b42c52fbe2662631f281418773",
+    "scripts/eval-turn-encoder-quality.py": "1aefde7680faa81593613a8f95f3ccd509fd5cecfde360d8c0985428a4f53889",
+    "scripts/turn_encoder_experiments.py": "9e6841531a0489b53171bd0efcd5bdf55ebc68147b8f6269016c7f2f5d34c24e",
+    "scripts/turn_encoder_veryfast_experiments.py": "e25e526f032da74411b1e6387c4f6c4a4c07806c5da87fe832575ff32cf60b29"
+  },
+  "inputDigest": "a83d190307d46b7c6482044561449c01d95825196ee2af84d4a74590f30e4434",
+  "control": {
+    "id": "on-demand-cap-vbv200-superfast",
+    "encoderParameterDigest": "9bb53b21f49471e12a3ff4a5c1fdf81cbbe94ee0e3130a1fbb64649b0b2fbdf9",
+    "integrityStatus": "PASS"
+  },
+  "candidate": {
+    "id": "on-demand-cap-vbv200-veryfast",
+    "encoderParameterDigest": "5b9f15528b42024dba6f6010f7d33e2d6ea49125342e1033db676faca7ae5636",
+    "actualCodecCreationPreset": "veryfast",
+    "offlineStatus": "FAIL",
+    "runtimeStatus": "NOT RUN",
+    "frozenManifest": "NOT EMITTED"
+  }
+}
