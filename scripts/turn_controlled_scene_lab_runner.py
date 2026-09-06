@@ -58,6 +58,51 @@ class StaticViewer(Protocol):
     def static_frames(self, layout: MarkerLayout) -> list[dict[str, Any]]: ...
 
 
+class PlaywrightLabViewerAdapter:
+    """Concrete isolated Viewer adapter; it uses no OS input APIs.
+
+    The producer browser tab is intentionally separate from the Viewer tab.
+    A real fixture desktop must display that producer before decoded static
+    frames can pass; this adapter reports the missing visual evidence instead
+    of fabricating it.
+    """
+    def __init__(self, *, playwright: Any, browser: Any, context: Any, viewer_page: Any, producer_page: Any) -> None:
+        self._playwright, self._browser, self._context = playwright, browser, context
+        self.viewer_page, self.producer_page = viewer_page, producer_page
+
+    @classmethod
+    def open(cls, lab_run: Any) -> "PlaywrightLabViewerAdapter":
+        from turn_runtime_collector import _json_request, seed_viewer_storage, start_viewer, wait_for_healthy_relay
+        from playwright.sync_api import sync_playwright
+        credentials = lab_run.viewer_credentials()
+        status, login = _json_request(f"{credentials['origin']}/api/auth/login", method="POST", body={"password": credentials["password"]})
+        if status != 200 or not isinstance(login.get("token"), str):
+            raise RuntimeError("isolated Lab Viewer login failed")
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 1440, "height": 960})
+        try:
+            seed_viewer_storage(context, login["token"], credentials["proofAdmission"])
+            viewer = context.new_page(); viewer.goto(f"{credentials['origin']}/viewer.html", wait_until="domcontentloaded", timeout=45000)
+            start_viewer(viewer); wait_for_healthy_relay(viewer)
+            producer = context.new_page(); producer.goto(Path(__file__).with_name("turn-runtime-controlled-producer.html").as_uri(), wait_until="domcontentloaded")
+            return cls(playwright=playwright, browser=browser, context=context, viewer_page=viewer, producer_page=producer)
+        except Exception:
+            browser.close(); playwright.stop(); raise
+
+    def static_frames(self, layout: MarkerLayout) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for _ in range(61):
+            row = self.viewer_page.evaluate("() => WebRTC.frameTraceCollector?.takeControlledVisualEvidence?.()?.[0] || null")
+            if isinstance(row, dict):
+                rows.append(row)
+            self.viewer_page.wait_for_timeout(1000)
+        return rows
+
+    def close(self) -> None:
+        self._browser.close(); self._playwright.stop()
+
+
 class LabLifecycleCollector:
     """Wire LabRun, Host lifecycle, static Viewer evidence and transcript.
 
