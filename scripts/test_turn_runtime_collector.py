@@ -81,6 +81,15 @@ def test_summary_fails_closed_for_missing_paint_socket_or_wrong_resolution():
     assert {"socket-not-connected", "resolution-class", "missing-paint-gap"}.issubset(summary["failures"])
 
 
+def test_boundary_warmup_sample_may_lack_paint_but_later_samples_must_have_it():
+    samples = [{"elapsedMs": index * 1000, "cadenceLateMs": 0, "selectedPair": {"type": "relay"}, "pcConnectionState": "connected", "socketConnected": True,
+                "resolution": {"width": 1280, "height": 720}, "derivedFps": 20, "paintGapMs": None if index == 0 else 20, "jitterBufferMs": 20}
+               for index in range(3)]
+    assert "missing-paint-gap" not in collector.summarize_phase("720p", samples, duration_seconds=2)["failures"]
+    samples[2]["paintGapMs"] = None
+    assert "missing-paint-gap" in collector.summarize_phase("720p", samples, duration_seconds=2)["failures"]
+
+
 def test_seeded_storage_uses_python_playwright_single_script_argument():
     calls = []
     class Context:

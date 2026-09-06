@@ -102,7 +102,7 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
     fps = [sample.get("derivedFps") for sample in samples[1:]]
     buffers = [sample.get("jitterBufferMs") for sample in samples[1:]]
     required_duration = duration_seconds if duration_seconds is not None else PHASE_DURATIONS[phase]
-    for sample in samples:
+    for index, sample in enumerate(samples):
         selected = sample.get("selectedPair") or {}
         if str(selected.get("type") or "").lower() != "relay":
             failures.add("non-relay-sample")
@@ -114,7 +114,10 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
         height = float(resolution.get("height") or 0)
         if not ((600 <= height <= 800) if phase == "720p" else (900 <= height <= 1100)):
             failures.add("resolution-class")
-        if sample.get("paintGapMs") is None:
+        # The boundary snapshot registers requestVideoFrameCallback.  It has no
+        # prior paint interval by construction, so only interval samples prove
+        # paint presence and continuity.
+        if index > 0 and sample.get("paintGapMs") is None:
             failures.add("missing-paint-gap")
     for sample in samples[1:]:
         if sample.get("paintGapMs") is not None and float(sample.get("paintGapMs")) > 1000:
