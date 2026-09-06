@@ -1,8 +1,8 @@
 # TURN quality and latency final delivery review
 
 **Date:** 2026-09-06
-**Reviewed implementation range:** `000547f..e20d824` (29 commits)
-**Review mode:** source, test, versioned offline evidence, and repository-hygiene review only. No service, browser, tunnel, `.env`, public endpoint, or physical device was operated in this review.
+**Reviewed implementation range:** `000547f..6c0c652` (37 commits)
+**Review mode:** source, test, versioned offline evidence, repository hygiene, and cross-review of post-merge local relay collector artifacts plus matching Signal/Host logs. No public endpoint or physical device was operated in this review.
 
 ## Completion verdict
 
@@ -11,7 +11,7 @@
 The implementation and complete automated suites are passing, but the product acceptance gate is not closed for two independent reasons:
 
 1. The offline relay matrix selected `no-offline-winner`; there is no eligible `relay-balanced-v2` parameter set. `relay-legacy-v1` remains the default and the approximately one-second clarity pulse is therefore not closed.
-2. Task 9 observed an active human Viewer. The strict single-Viewer contract prohibited a headless proof, so controlled 720p/1080p TURN, paint, input, finite-loss, public-path, and physical-device gates were not run. A later empty snapshot cannot retroactively make that interrupted window valid evidence.
+2. The post-merge collector produced complete local selected-relay media windows: 720p for 600.006s / 601 samples and 1080p for 300.008s / 301 samples. It also produced one superseded 720p run, which is excluded. The complete runs did not authenticate static text or Host-side input, inject finite loss, use the formal public entry, or use a physical device.
 
 There is no verified P0/P1 implementation failure in the reviewed code or automated checks. The acceptance failure and the unexecuted runtime gates still block product completion.
 
@@ -29,7 +29,10 @@ There is no verified P0/P1 implementation failure in the reviewed code or automa
 | §9 capture optimization | PASS | Versioned Task 7 evidence keeps `selection.captureMultiplier={applied:false,value:2.0}`. | No offline capture experiment was promoted to production without the paint gate. |
 | §11.1 automation and build | PASS | Python 253 passed; Viewer 566 passed; Signal `npm test` 339 passed with its Viewer build; tracked shell/MJS/JSON syntax checks passed. | These are code and build results only. |
 | §11.2 offline pulse and quality | FAIL | `relay-balanced-v2` has no offline winner. | The matrix does not authorize a periodic-IDR or on-demand replacement. |
-| §11.3 selected relay, 720p/1080p, paint, input, loss | NOT RUN | Task 9 stopped before headless proof after finding an active human Viewer. | No controlled selected-pair, duration, buffer, paint, geometry, input-ack, pause/refresh, or finite-loss evidence exists. |
+| §11.3 selected relay | PASS for complete local runs | The complete 720p/1080p artifacts hold selected UDP relay plus connected socket and PC for every sample; the first 720p artifact was superseded and excluded. | Local selected-relay transport is proven for the two complete windows only. |
+| §11.3 720p / 1080p media continuity | PARTIAL PASS | 720p: 601 samples / 600.006s at 1152x720, derived-FPS p50 19, jitter p95 23.0ms, max paint gap 138ms. 1080p: 301 samples / 300.008s at 1728x1080, derived-FPS p50 19, jitter p95 17.3ms, max paint gap 105ms. | Loss/drop counters were zero; 720p observed one freeze and seven NACK increments, 1080p five NACK increments. This does not prove scene quality. |
+| §11.3 pause, resume, and refresh | PASS for complete local runs | Both runs observed suspended then active state with a fresh frame; refresh changed the attempt and restored a healthy selected relay with a fresh frame. | Local headless Viewer evidence only. |
+| §11.3 static text, scroll/drag/keyboard, and finite loss | NOT RUN | Collector markers deliberately leave unauthenticated producer content/input and non-isolated loss injection unexecuted. | There is no Host-side input ack/effect or controlled finite-loss recovery evidence. |
 | §11.4 formal public path and physical device | NOT RUN | No external operator or physical device was used. | The formal entry remains `https://link.stockhub.wiki`; local or unit evidence cannot stand in for this gate. |
 | §12 documentation and runbook | PASS | Requirements document, README, safe-startup runbook, acceptance ledger, matrix and Task 9 record are in scope. | They retain the legacy default, no-offline-winner limit, formal-entry rule, and no-tunnel-rebuild boundary. |
 
@@ -39,7 +42,18 @@ The three intended deep seams are present: `RtpFrameClock` owns PTS conversion a
 
 The proof boundary accepts only a current selected local relay candidate and emits candidate type, protocol, and RTT. It does not serialize candidate address or port. This review also replaced IP-shaped endpoint test fixtures with non-address redaction markers; the test continues to exercise endpoint stripping without committing address-like values.
 
-No runtime action occurred in this task. In particular, it did not start or restart the signal service or Host, open Chromium, read or modify `.env`, expose credentials, touch the safe-URL file, or operate a Cloudflare tunnel. The Task 9 active-human-Viewer stop condition remains authoritative.
+The post-merge local collector was admitted only after the server reported no
+active human Viewer. Its first 720p run was superseded by a second Viewer at
+13:42:41 local time, and the artifact's 43 subsequent no-media samples correctly
+make it non-acceptance evidence. The later 720p and 1080p runs remained a single
+selected-relay connection throughout their sample windows. The review does not
+write any endpoint, credential, token, or raw screenshot into version control.
+
+Host encoder summaries show `relay-legacy-v1` still runs `keyint=20` at 20 FPS
+and emits five periodic IDRs per five seconds. That confirms the known
+approximately one-second IDR driver remains active. Since controlled static text
+and IDR-boundary image measurements were not run, stable paint cadence is not
+evidence that the visible clarity pulse is fixed.
 
 ## Scope and hygiene audit
 
@@ -61,4 +75,11 @@ is non-`None`, including a callable with a false boolean value.
 
 ## Next valid gate
 
-Do not change the default policy or report the pulse as fixed. A future operator-scheduled window must first have no active human Viewer and must have an eligible offline candidate. It must then load the reviewed bundle under the runbook, prove a selected relay pair, run 720p for 10 minutes and explicit 1080p for 5 minutes, exercise static text, motion, pause/resume, refresh, finite loss, mouse/keyboard input, and record formal-public plus physical-device observations. Until then, every listed runtime/public/device row remains `NOT RUN`.
+Do not change the default policy or report the pulse as fixed. The complete local
+relay continuity windows do not need repetition unless configuration changes.
+The remaining valid gates are controlled static text at the IDR boundary,
+scroll/drag/keyboard with Host-side acknowledgements and effects, finite isolated
+TURN loss and bounded recovery, the formal public entry, and physical-device
+media/input observations. `relay-balanced-v2` remains unavailable until an
+eligible offline candidate exists. Until those gates are evidenced, this delivery
+remains **NOT COMPLETE**.

@@ -287,3 +287,39 @@ The approximately one-second quality/clarity pulse remains unclosed. No `FAIL`
 status is inferred from these unexecuted gates; they remain `NOT RUN` pending a
 new operator-scheduled window with no active human Viewer and an eligible v2
 candidate, if one is established by the offline gates.
+
+## Post-merge controlled local relay evidence (2026-09-06)
+
+Three atomic collector artifacts and the matching Signal/Host logs were reviewed
+after the reviewed branch was merged to `main`. They contain no endpoint,
+credential, token, or raw screenshot data; the untracked screenshot sidecars
+were deliberately excluded from this ledger.
+
+| Run | Status | Relay/session and wall-clock evidence | Media evidence | Boundary |
+|---|---|---|---|---|
+| First 720p, `turn-runtime-97ef0bf30c36eec4` | SUPERSEDED — excluded from acceptance | It started with a selected UDP relay, connected socket and PC. At 13:42:41 local time Signal recorded a second Viewer superseding the collector; 43 subsequent samples lost relay/socket/PC/resolution and one sample exceeded cadence tolerance. | 601 stored samples and 600.006s wall-clock do not repair the interrupted interval; `derivedFps` reached zero 43 times and paint gap reached 42.923s. | Not evidence for 720p continuity or quality. |
+| Second 720p, `turn-runtime-a8bdcc35324a27e3` | PARTIAL PASS — transport/media continuity only | Proof admission epoch equalled Viewer epoch; TURN fingerprint matched and self-test exposed one relay candidate. All 601/601 samples over 600.006s stayed on selected UDP relay with socket and PC `connected`; one connection attempt covered the sample window. | Actual output was 1152x720. Derived FPS min/p50/max: 17/19/21; jitter-buffer p95/max: 23.0/33.9ms; paint-gap max 138ms with no post-warmup gap above 1s. Received and decoded deltas both totalled 11,432; loss and dropped frames were zero. NACK=7, PLI=0, FIR=0, freeze=1. | Artifact remains `ok=false` solely because controlled static text and authenticated input were not run. |
+| 1080p, `turn-runtime-cc146b15869cb7cf` | PARTIAL PASS — transport/media continuity only | Proof admission epoch equalled Viewer epoch; all 301/301 samples over 300.008s stayed on selected UDP relay with socket and PC `connected`; one connection attempt covered the sample window. | Actual output was 1728x1080. Derived FPS min/p50/max: 17/19/20; jitter-buffer p95/max: 17.3/21.0ms; paint-gap max 105ms with no post-warmup gap above 1s. Received and decoded deltas both totalled 5,672; loss, dropped frames, PLI, FIR, and freeze were zero. NACK=5. | Artifact remains `ok=false` solely because controlled static text and authenticated input were not run. |
+
+Both complete runs passed the collector's pause/resume marker: suspension and
+active state were observed and a fresh frame followed resume. Both passed the
+refresh marker: the connection attempt changed, a selected relay became healthy,
+and a fresh frame followed refresh. These are local headless Viewer checks; they
+do not authenticate a producer scene or Host-side input effect.
+
+The Host log shows the active legacy encoder still uses `keyint=20`,
+`min-keyint=20`, and a 20 FPS target; its five-second encoder summaries record
+five periodic IDRs. Thus the periodic roughly one-second IDR driver remains
+active in these runs. No controlled static-text observation or IDR-boundary
+image measurement was performed, so the no-paint-gap result cannot prove that
+the visible clarity pulse has disappeared. The pulse is **not closed**.
+
+| Spec §11 gate | Post-merge status | Evidence boundary |
+|---|---|---|
+| 11.3 selected relay pair | PASS for the two complete local runs | Every post-warmup sample in the second 720p and 1080p artifacts was selected UDP relay with connected socket and PC. |
+| 11.3 720p, 10-minute continuity | PARTIAL PASS | Duration, sample count, resolution class, FPS, jitter, paint continuity, loss/drop counters and pause/refresh markers passed. Static-scene quality and authenticated input remain unmeasured. |
+| 11.3 1080p, 5-minute continuity | PARTIAL PASS | Duration, sample count, resolution class, FPS, jitter, paint continuity, loss/drop counters and pause/refresh markers passed. Static-scene quality and authenticated input remain unmeasured. |
+| 11.3 static text and scroll/drag/keyboard | NOT RUN | Viewer-only screenshots cannot authenticate the controlled producer; no Host-side input correlation or input ack was captured. |
+| 11.3 finite-loss recovery | NOT RUN | The collector explicitly forbids HTTP throttling and host firewall/pf mutation; no isolated TURN loss injector was available. |
+| Legacy-versus-v2 A/B | NOT RUN | `relay-balanced-v2` remains disallowed because the offline matrix has no winner. |
+| 11.4 formal public path and physical-device acceptance | NOT RUN | The runs used a local headless Viewer. No formal-public external operator, network observation, or physical device was used. |
