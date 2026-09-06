@@ -24,7 +24,7 @@
 
 依赖图：`T1→T2`；T3和T4-legacy可独立实现；`T2离线PASS→T4-candidate`；`T3+T4→T5/T7`；`T4+T5→T6`；`T2+T5+T6+T7→T8`。T3的真实阶段验证依赖T4-legacy，纯测试不依赖T4。Docker daemon当前不可达，T6先验证设施，失败则标记BLOCKED并继续独立任务。
 
-## T1：让preset真正进入codec配置（可独立交付）
+## Task 1（T1）：让preset真正进入codec配置（可独立交付）
 
 **Files:** 修改 `python-host/h264_videotoolbox_encoder.py`、`python-host/test_h264_idr.py`、`docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py`；必要的不可变实验参数只放 `scripts/turn_encoder_experiments.py`（新建），不把候选注册为生产枚举。
 
@@ -54,7 +54,7 @@
 - [ ] 用真实PyAV帧验证输出可解码、PTS单调、强制IDR token关联和无意外reopen；原测试转绿。
 - [ ] Terra High独立review后窄提交 `fix(turn): honor explicit encoder preset without changing legacy`。
 
-## T2：有界preset矩阵与成熟关键帧质量
+## Task 2（T2）：有界preset矩阵与成熟关键帧质量
 
 **Files:** 新建 `scripts/turn_encoder_experiments.py`、`scripts/test_turn_encoder_experiments.py`；修改 `scripts/eval-turn-encoder-quality.py`、`scripts/test_eval_turn_encoder_quality.py`及原probe。旧relay/VBV矩阵输出意义保留。
 
@@ -71,7 +71,7 @@
 - [ ] 逐场景重算质量/成本/完整性；原门槛全部通过才生成冻结manifest，失败输出 `no-offline-winner`。所有runtime仍为NOT_RUN；失败不自动试其他preset或硬件。
 - [ ] 归档JSON、源文件/配置/输入digest与复现命令，独立review后窄提交 `test(turn): evaluate one preset against a fresh controlled baseline`。
 
-## T3：建立可信的流水线阶段耗时
+## Task 3（T3）：建立可信的流水线阶段耗时
 
 **Files:** 新建 `python-host/media_stage_metrics.py`、`python-host/test_media_stage_metrics.py`、`python-host/rtp_frame_observer.py`、`python-host/test_rtp_frame_observer.py`、`web-client/js/webrtc.frame-trace.test.js`；修改 `python-host/host.py`、`python-host/h264_videotoolbox_encoder.py`、`python-host/test_latency_timing.py`、`python-host/test_frame_worker.py`及 `web-client/js/webrtc.js` 诊断接收。现有frame_timing字段保持兼容。
 
@@ -87,7 +87,7 @@
 - [ ] 在隔离Host用legacy运行相同60秒场景验证覆盖率及观测开销，缺少某关键阶段则不宣称已定位该瓶颈。观测带来可辨认回归时收窄采样后再测。
 - [ ] 独立review后提交 `feat(turn): measure frame stages with monotonic bounded evidence`。
 
-## T4：独立实验Host与不可绕过的生产边界
+## Task 4（T4）：独立实验Host与不可绕过的生产边界
 
 **Files:** 新建 `scripts/turn_lab.py`、`scripts/turn_lab_host.py`、`scripts/turn-lab-signal.js`、`scripts/test_turn_lab.py`、`scripts/turn-lab-signal.test.js`；修改policy provider的resolver依赖注入、Host策略selection构造方法及相应测试。复用Signal `createServerApp`，不改默认startServer。
 
@@ -100,7 +100,7 @@
 - [ ] candidate模式逐帧验证运行policy参数digest与manifest一致，profile切换不得悄悄回legacy；不得修改PRODUCTION_RELAY_POLICY_VERSION。
 - [ ] 运行 `python3 -m pytest -q scripts/test_turn_lab.py python-host/test_h264_encoder_policy.py` 与 `node --test scripts/turn-lab-signal.test.js`；独立review后提交。
 
-## T5：闭合受控文字、输入和画面因果链
+## Task 5（T5）：闭合受控文字、输入和画面因果链
 
 **Files:** 修改 `scripts/turn-runtime-controlled-producer.html`、`scripts/turn_runtime_collector.py`、`scripts/test_turn_runtime_collector.py`；新建 `scripts/turn_controlled_scene.py`、`scripts/test_turn_controlled_scene.py`、`scripts/turn-controlled-scene.test.mjs`、`scripts/turn_lab_input_guard.py`、`scripts/test_turn_lab_input_guard.py`。复用T3有界诊断，不新增输入旁路。
 
@@ -119,7 +119,7 @@
 - [ ] 验证小于采样周期的瞬时画质/尺寸变化仍被捕获，IDR前后ROI不含Viewer浮层。运行collector Python、直接JS和新producer测试；实际测试必须经T4。
 - [ ] 独立review后提交 `test(turn): verify controlled input and decoded scene identity`。
 
-## T6：建立隔离的真实TURN有限丢包fixture
+## Task 6（T6）：建立隔离的真实TURN有限丢包fixture
 
 **Files:** 新建 `scripts/turn-loss-fixture/README.md`、`compose.yaml`、`controller.py`、`test_controller.py`；在T4 driver接入独立fixture清单，不给生产collector增加通用--loss开关。
 
@@ -132,7 +132,7 @@
 - [ ] 经T4/T5各执行一次固定有限丢包，中间健康10秒；2秒恢复、IDR请求/输出/新画面关联、无Peer重建/分辨率变动全部检查。
 - [ ] 归档真实网络fixture与媒体证据；不能用sender hook或HTTP限速结果替代。独立review后提交fixture及报告，未执行保留NOT_RUN。
 
-## T7：依据阶段数据优化吞吐，每次一个变量
+## Task 7（T7）：依据阶段数据优化吞吐，每次一个变量
 
 **Files:** 修改 `python-host/host.py`、`python-host/test_frame_worker.py`；扩展T4 driver和新 `scripts/turn_capture_experiments.py`、`scripts/test_turn_capture_experiments.py`。实验配置只由T4内部注入，生产默认保持现状直到选中。
 
@@ -148,7 +148,7 @@
 - [ ] 如果encode仍超过预算，输出实际reformat/encode/packetize贡献，停止宣称吞吐已解决；进入独立硬件/编码后端设计，不在此任务顺手迁移后端。
 - [ ] 独立review后提交只有证据支持的实现；实验失败则只提交诊断/实验与失败报告，生产参数不变。
 
-## T8：合并验收、冻结策略与可回滚发布
+## Task 8（T8）：合并验收、冻结策略与可回滚发布
 
 **Files:** 原policy/Host生产参数、对应测试、README、`docs/runbook-safe-startup.md`、产品需求、本轮acceptance报告、原验收报告的最新状态链接。仅此任务可在已验证条件下开放固定v2，不能发布manifest加载器。
 
