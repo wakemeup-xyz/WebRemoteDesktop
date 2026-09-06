@@ -316,7 +316,7 @@ function controlledCrc32(bytes) {
 }
 
 function decodeControlledMarkerRgba(data, width, height) {
-  if (!(data instanceof Uint8ClampedArray) || width !== 256 || height !== 128 || data.length !== width * height * 4) return null;
+  if (!ArrayBuffer.isView(data) || data.BYTES_PER_ELEMENT !== 1 || width !== 256 || height !== 128 || data.length !== width * height * 4) return null;
   const grid = [];
   for (let gy = 0; gy < 16; gy += 1) {
     const row = [];

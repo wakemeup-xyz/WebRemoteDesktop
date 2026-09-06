@@ -35,9 +35,39 @@ function loadCollector(now = () => 0) {
   context.globalThis = context;
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
-  vm.runInContext(`${source}\nglobalThis.__Collector = FrameTraceCollector;`, context);
+  vm.runInContext(`${source}\nglobalThis.__Collector = FrameTraceCollector; globalThis.__DecodeControlledMarker = decodeControlledMarkerRgba;`, context);
+  context.__Collector.decodeControlledMarker = context.__DecodeControlledMarker;
   return context.__Collector;
 }
+
+function controlledMarkerPixels() {
+  const producerSource = fs.readFileSync(path.join(__dirname, '../../scripts/turn-runtime-controlled-producer.html'), 'utf8');
+  const script = producerSource.match(/<script>([\s\S]*)<\/script>/)?.[1];
+  const context = { window: {}, BigInt, Uint8Array, ArrayBuffer, DataView, TextEncoder };
+  vm.createContext(context); vm.runInContext(script, context);
+  const grid = context.window.WRDTurnControlledProducer.markerGrid({ runNonce: 0x0102030405060708n, sceneId: 7, tick: 3, actionId: 9 });
+  const pixels = new Uint8ClampedArray(256 * 128 * 4);
+  for (let gy = 0; gy < 16; gy += 1) for (let gx = 0; gx < 32; gx += 1) {
+    const value = grid[gy][gx] ? 224 : 32;
+    for (let y = gy * 8; y < gy * 8 + 8; y += 1) for (let x = gx * 8; x < gx * 8 + 8; x += 1) {
+      const offset = (y * 256 + x) * 4; pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value; pixels[offset + 3] = 255;
+    }
+  }
+  return pixels;
+}
+
+test('actual 256x128 canvas pixels decode the dual-CRC marker before T3 visual evidence is emitted', () => {
+  const Collector = loadCollector();
+  const marker = Collector.decodeControlledMarker(controlledMarkerPixels(), 256, 128);
+  assert.deepEqual(JSON.parse(JSON.stringify(marker)), { runNonce: '72623859790382856', sceneId: 7, tick: 3, actionId: 9 });
+  const collector = new Collector();
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 44 }, { marker });
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ attemptId: 'a', generation: 1, wireTimestamp: 44 })] });
+  const visual = collector.takeControlledVisualEvidence();
+  assert.equal(visual.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(visual[0].marker)), JSON.parse(JSON.stringify(marker)));
+  assert.equal(visual[0].traceStatus, 'matched');
+});
 
 test('late diagnostic joins the matching rVFC wire timestamp within two seconds', () => {
   let now = 100;
