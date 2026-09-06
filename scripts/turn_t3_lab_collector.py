@@ -89,6 +89,20 @@ def _valid_viewer_session(value: Any) -> dict[str, Any] | None:
     return {**scope, "sourceWidth": width, "sourceHeight": height}
 
 
+def _valid_viewer_presentation(value: Any) -> dict[str, Any] | None:
+    """Validate the adapter's documented attempt/generation/resolution shape."""
+    if not isinstance(value, Mapping):
+        return None
+    attempt, generation = value.get("attemptId"), value.get("generation")
+    width, height = value.get("sourceWidth"), value.get("sourceHeight")
+    if (not isinstance(attempt, str) or not attempt
+            or not isinstance(generation, int) or isinstance(generation, bool) or generation < 0
+            or not isinstance(width, int) or isinstance(width, bool) or width <= 0
+            or not isinstance(height, int) or isinstance(height, bool) or height <= 0):
+        return None
+    return {"attemptId": attempt, "generation": generation, "sourceWidth": width, "sourceHeight": height}
+
+
 def _matches_scope(value: Mapping[str, Any], scope: Mapping[str, Any]) -> bool:
     return all(value.get(key) == scope[key] for key in ("attemptId", "generation", "streamId"))
 
@@ -365,19 +379,16 @@ def _drain_viewer_trace_tap(page: Any) -> tuple[list[dict[str, Any]], list[dict[
 
 def _read_live_viewer_session(adapter: Any) -> dict[str, Any] | None:
     """Read the live rVFC scope and resolution together for every collector tick."""
-    presentation = adapter.viewer_session_identity()
-    trace_scope = adapter.viewer_page.evaluate("""() => (
+    presentation = _valid_viewer_presentation(adapter.viewer_session_identity())
+    trace_scope = _valid_scope(adapter.viewer_page.evaluate("""() => (
       typeof WebRTC === 'object' && typeof WebRTC.currentFrameTraceIdentity === 'function'
         ? WebRTC.currentFrameTraceIdentity() : null
-    )""")
-    session = _valid_viewer_session({**presentation, **trace_scope}) if isinstance(presentation, Mapping) and isinstance(trace_scope, Mapping) else None
-    if session is None:
+    )"""))
+    if (presentation is None or trace_scope is None or trace_scope["streamId"] != "video"
+            or presentation["attemptId"] != trace_scope["attemptId"]
+            or presentation["generation"] != trace_scope["generation"]):
         return None
-    # A stale presentation layer and rVFC identity must not be reconciled by
-    # the collector; they are independently observed identities.
-    presentation_scope = _valid_scope(presentation)
-    trace_scope = _valid_scope(trace_scope)
-    return session if presentation_scope == trace_scope else None
+    return {**trace_scope, "sourceWidth": presentation["sourceWidth"], "sourceHeight": presentation["sourceHeight"]}
 
 
 def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:

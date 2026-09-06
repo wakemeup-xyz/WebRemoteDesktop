@@ -141,17 +141,20 @@ def test_sixty_second_artifact_rejects_both_early_and_late_sampling_offsets():
     assert "sample-cadence-too-early" in early["failures"]
 
 
-def test_live_viewer_session_reader_rejects_a_presentation_and_rvfc_scope_split():
-    """The live collector never repairs a changed Viewer identity with startup metadata."""
+def test_live_viewer_session_reader_accepts_the_adapter_presentation_shape_but_rejects_a_scope_split():
+    """The adapter supplies attempt/generation/resolution; only the live rVFC identity supplies streamId."""
     class Page:
         def __init__(self): self.scope = SCOPE
         def evaluate(self, _script): return self.scope
 
     class Adapter:
         def __init__(self): self.viewer_page = Page()
-        def viewer_session_identity(self): return {**VIEWER_SESSION}
+        def viewer_session_identity(self):
+            return {"attemptId": "attempt", "generation": 2, "sourceWidth": 1280, "sourceHeight": 720}
 
     adapter = Adapter()
     assert collector._read_live_viewer_session(adapter) == VIEWER_SESSION
+    adapter.viewer_page.scope = {**SCOPE, "streamId": "audio"}
+    assert collector._read_live_viewer_session(adapter) is None
     adapter.viewer_page.scope = {**SCOPE, "generation": 3}
     assert collector._read_live_viewer_session(adapter) is None
