@@ -1,8 +1,8 @@
 # 手机 / iPad 输入交互整改验收
 
-日期：2026-09-06。状态：**Task1–6及追加拖拽修复已通过限定开发/测试/复审；Task7集成验收和主线程最终review进行中，本文尚非最终通过结论。**
+日期：2026-09-06。状态：**全部开发及离线自动化已完成，Task7限定审查和主线程最终review进行中，本文尚非最终审查通过结论。**
 
-- 分支：`codex/mobile-input-interaction-remediation`，从`main@195e0c6`隔离开发；当前生产整改提交至`bfc886d`。
+- 分支：`codex/mobile-input-interaction-remediation`，从`main@195e0c6`隔离开发；生产整改提交至`bfc886d`，最终验收脚本提交`0a346eb`。
 - [设计](../specs/2026-09-06-mobile-input-interaction-remediation-design.md)、[计划](../plans/2026-09-06-mobile-input-interaction-remediation-plan.md)、[原F1–F7问题与红态证据](2026-09-05-mobile-touch-keyboard-logic-review.md)、[方案审查及后续纠偏](2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
 - 开发/测试subagent：`gpt-5.6-luna / max`；各任务限定review与主线程独立复核分开记录，最终whole-branch review由主线程本人执行。
 - 未合main、未push、未重启本地服务、未操作tunnel或改变公网地址。代码与文档在开发分支，不代表运行服务已加载。
@@ -11,31 +11,33 @@
 
 | 编号 | 已实现的整改 | 当前模块自动化 | 完整集成 / 真机边界 |
 |---|---|---|---|
-| F1 | 门禁/连续帧不再抢焦点；明确用户动作及有条件返回焦点 | PASS，包含真实Input与媒体回调回归、离线DOM探针 | Task7进行中；系统IME/真机NOT RUN |
-| F2 | ChromeLayout单点计算遮挡，managed布局取消重复高度扣除 | PASS；已提交版本8项离线几何/原生按钮探针PASS | 完整44组合/连续帧矩阵待Task7；系统键盘NOT RUN |
-| F3 | 导航、modifier、实体键与modal接入已有编辑事务；surface down/up确认独立门禁 | PASS；ACK乱序、keyup安全释放、跨入口基线和显式重试回归 | Task7组合动作/内存模型继续补验；Quartz NOT RUN |
-| F4 | down使用最初触点；几何变化取消旧工作；修复提示造成的自取消拖拽 | PASS；主线程真实DOM鼠标事件probe已由FAIL转PASS | 完整touch组合待Task7；真实触屏NOT RUN |
-| F5 | 已接受前缀与本页未发草稿分离；有限删除、显式retry/discard、lease/generation隔离 | PASS；普通在途ACK仍允许正常连续输入 | Task7部分失败/模型/取消组合待完成；真机NOT RUN |
-| F6 | 按触控能力显示宽屏键栏；compact/ultra、safe-area与unsupported派生门禁 | PASS；保留可信已接受手势与安全释放 | Task7宽度跨越/Terminal/完整矩阵待完成；iPad NOT RUN |
-| F7 | documentElement完整Viewer全屏、全局退出、API失败提示及编辑焦点保护 | PASS；UI11/11、两类离线原生按钮探针PASS | Task7重入/Terminal/窄屏全组合待完成；iOS/Safari NOT RUN |
+| F1 | 门禁/连续帧不再抢焦点；明确用户动作及有条件返回焦点 | PASS，包含真实Input与媒体回调回归、离线DOM探针 | 非空composition内120帧门禁/焦点及后续编辑链PASS；系统IME/真机NOT RUN |
+| F2 | ChromeLayout单点计算遮挡，managed布局取消重复高度扣除 | PASS；离线真实几何与原生按钮动作通过 | 完整44组合及每次重新测量的20帧稳定性PASS；系统键盘NOT RUN |
+| F3 | 导航、modifier、实体键与modal接入已有编辑事务；surface down/up确认独立门禁 | PASS；ACK乱序、keyup安全释放、跨入口基线和显式重试回归 | 组合动作/内容及游标内存模型PASS；Quartz NOT RUN |
+| F4 | down使用最初触点；几何变化取消旧工作；修复提示造成的自取消拖拽 | PASS；主线程真实DOM鼠标事件probe已由FAIL转PASS | 跨帧拖动、up/reset/第二指/lease隔离与ACK门禁PASS；真实触屏NOT RUN |
+| F5 | 已接受前缀与本页未发草稿分离；有限删除、显式retry/discard、lease/generation隔离 | PASS；普通在途ACK仍允许正常连续输入 | 部分失败/显式重试/真实16步删除后取消PASS；真机NOT RUN |
+| F6 | 按触控能力显示宽屏键栏；compact/ultra、safe-area与unsupported派生门禁 | PASS；保留可信已接受手势与安全释放 | 899/900跨界、More、收起恢复、Terminal与inset300恢复控件PASS；iPad NOT RUN |
+| F7 | documentElement完整Viewer全屏、全局退出、API失败提示及编辑焦点保护 | PASS；UI11/11及原生按钮探针PASS | 全屏重入/窄屏/idle/Terminal/no-lease退出及失败回退PASS；iOS/Safari NOT RUN |
 
-上述PASS指各任务已提交实现的自动化，不把Task7未完成项或实机缺失折算为通过。
+上述PASS均指离线自动化，不把实机缺失折算为通过；最终审查状态与执行结果分开记录。
 
 ## 2. 已实际运行的命令
 
-主线程独立执行（在隔离worktree，生产提交`bfc886d`）：
+主线程独立执行（隔离worktree，已提交版本`0a346eb`，不是agent报告的转述）：
 
 | 工作目录 / 命令 | 退出码 | 结果 |
 |---|---|---|
 | 仓库根：`node --test web-client/js/*.test.js web-client/css/*.test.js` | 0 | 690/690，通过；无skip |
-| 仓库根：`node --test web-client/js/touch-input-adapter.test.js` | 0 | 20/20，通过 |
+| 仓库根：`node --test scripts/mobile-input-interaction-acceptance.test.js` | 0 | 4/4，通过；含正常CLI、隐私、缺运行时及启动后失败分类 |
+| 仓库根：`python3 scripts/mobile_input_interaction_acceptance.py --out /tmp/wrd-mobile-primary-final-chromium.json` | 0 | Chromium 12/12场景PASS；布局44组合、913检查 |
+| 仓库根：`python3 scripts/mobile_input_interaction_acceptance.py --browser webkit --out /tmp/wrd-mobile-primary-final-webkit.json` | 2 | WebKit 12/12 NOT RUN：browser-runtime-missing |
 | `signal-server`：`npm run build:web` | 0 | 构建完成；构建图包含现有移动模块、Input、ChromeLayout与UI |
-| `signal-server`：`npm test` | 0 | 332/332；此独立运行在`5d18ae5`，后续`bfc886d`仅改Viewer提示及测试，Signal代码未变；Task7仍将按最终命令重跑 |
+| `signal-server`：`npm test` | 0 | 332/332，通过；无skip |
 | 主线程临时离线`primary-drag-layout-probe.py` | 0 | `bfc886d`：布局稳定、down/up成对、无自触发reset；旧生产为exit1 |
 
 Viewer输出包含既有离线WebRTC配置fetch缺失的fallback提示，未将输出描述为无警告。逐任务报告另记录RED→GREEN；追加拖拽修复的命名单测先0/1、后1/1，完整Input99/99，MobileTextInput/ChromeLayout/CSS89/89。这些子集与690全套有重叠，不相加制造总数。
 
-Task7下列最终命令尚待完整结果，不预填PASS：
+开发agent也分别完成下列计划命令：Viewer690/690、CLI契约4/4、Chromium12/12、Signal332/332和构建通过；WebKit exit2/12 NOT RUN。其最终artifact为`/tmp/wrd-mobile-interaction-chromium-final.json`与`/tmp/wrd-mobile-interaction-webkit-final.json`。主线程独立结果见上表，不将重复运行相加制造测试总数。
 
 ```bash
 # 仓库根目录
@@ -71,15 +73,15 @@ npm test
 
 | 范围 | 状态 / 原因 |
 |---|---|
-| Task7严格离线Chromium集成 | IN PROGRESS；完整动作、44组合矩阵与CLI契约尚未完成 |
-| 主线程最终whole-branch review | PENDING；不会用各任务局部PASS替代 |
-| WebKit引擎 | NOT RUN；当前环境缺可用运行时，最终CLI将按exit2记录；不自动安装 |
+| Task7严格离线Chromium集成 | PASS；12场景，44组合矩阵及CLI契约已完成；限定审查待完成 |
+| 主线程最终whole-branch review | IN PROGRESS；独立最终命令已完成，不用测试PASS替代代码审查 |
+| WebKit引擎 | NOT RUN；当前环境缺可用运行时，最终CLI已按exit2记录；未自动安装 |
 | Android Chrome / iPhone Safari / iPad Safari | NOT RUN；没有真实设备执行证据，桌面touch模拟不替代 |
 | 系统软键盘 / 系统IME / 物理外接键盘 | NOT RUN；合成composition和DOM键事件不等于系统事件 |
 | Host / Quartz实际输入效果 | NOT RUN；本轮未改Host，不操作真实桌面输入 |
 | 正式公网Viewer / DataChannel或Socket真实会话 / live watcher | NOT RUN；未连接实际origin、Signal/Host或watcher |
 | main merge / push / 服务重启 | NOT RUN；本轮计划不授权部署操作 |
 
-`mobile_input_interaction_acceptance.py`是本轮新建的严格离线脚本；既有`mobile_viewer_acceptance.py --base-url ...`会连接操作者运行的origin，二者不能混称离线。结构化验收只保存场景名、状态、布尔检查与安全计数，文本/按键/坐标/剪贴板/凭据仅允许留在人工fixture内存，不输出到artifact或版本化正文。
+`mobile_input_interaction_acceptance.py`是本轮新建的严格离线脚本；既有`mobile_viewer_acceptance.py --base-url ...`会连接操作者运行的origin，二者不能混称离线。结构化验收只保存场景名、状态、布尔检查与安全计数；运行中的草稿、原始事件与远端模型值仅留在离线页面内存，不输出到artifact或文档。固定的人工测试输入位于测试源码，并非真实用户数据；本轮未读取用户文本、剪贴板或凭据。
 
 最终完成门槛：F1–F7代码与必要自动化通过、Task7报告及主线程review无未解决P1/P2，才称代码整改完成。真实设备/公网仍NOT RUN时，不称移动端全链路验收完成。
