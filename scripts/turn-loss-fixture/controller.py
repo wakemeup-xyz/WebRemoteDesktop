@@ -161,6 +161,9 @@ class RuleBackend(Protocol):
     def add_rule(self, argv: list[str]) -> None: ...
     def remove_rule(self, argv: list[str]) -> None: ...
     def read_rule_counter(self, argv: list[str]) -> int: ...
+    def add_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None: ...
+    def remove_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None: ...
+    def read_probe_counter(self, counter_rule: list[str]) -> int: ...
 
 
 class IptablesRuleBackend:
@@ -195,6 +198,27 @@ class IptablesRuleBackend:
                 if closing > 1:
                     return int(line[1:closing])
         raise RuntimeError("fixture rule counter was not found")
+
+    def add_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
+        self._run(["iptables", "-w", "-t", "mangle", "-N", chain])
+        self._run(["iptables", "-w", "-t", "mangle", "-A", "OUTPUT", *jump])
+        self._run(["iptables", "-w", "-t", "mangle", "-A", chain, *counter_rule])
+
+    def remove_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
+        # Cleanup is deliberately tolerant of every partial-install point.
+        for argv in (
+            ["iptables", "-w", "-t", "mangle", "-D", "OUTPUT", *jump],
+            ["iptables", "-w", "-t", "mangle", "-F", chain],
+            ["iptables", "-w", "-t", "mangle", "-X", chain],
+        ):
+            try:
+                self._run(argv)
+            except subprocess.CalledProcessError as exc:
+                if not any(marker in (exc.stderr or "") for marker in ("Bad rule", "No chain", "does a matching rule exist")):
+                    raise
+
+    def read_probe_counter(self, counter_rule: list[str]) -> int:
+        return self.read_rule_counter(counter_rule)
 
 
 class RuntimeBlocked(RuntimeError):
@@ -270,11 +294,19 @@ class DeadlineStateStore:
         except FileNotFoundError:
             return None
         if (not isinstance(raw, dict) or raw.get("schemaVersion") != 1
-                or raw.get("state") not in {"installing", "armed", "cleanupPending"}
+                or raw.get("state") not in {"probing", "installing", "armed", "cleanupPending"}
                 or not isinstance(raw.get("runId"), str) or not isinstance(raw.get("comment"), str)
-                or not isinstance(raw.get("rule"), list) or not all(isinstance(item, str) for item in raw["rule"])
                 or not isinstance(raw.get("deadlineMonotonicNs"), int)):
             raise RuntimeError("deadline state is corrupt; fixture must remain blocked")
+        probe = raw.get("probe")
+        if probe is not None:
+            if (not isinstance(probe, dict) or set(probe) != {"chain", "jump", "counterRule"}
+                    or not isinstance(probe["chain"], str) or not probe["chain"].startswith("WRDB")
+                    or not all(isinstance(probe[key], list) and all(isinstance(item, str) for item in probe[key])
+                               for key in ("jump", "counterRule"))):
+                raise RuntimeError("deadline probe state is corrupt; fixture must remain blocked")
+        elif not isinstance(raw.get("rule"), list) or not all(isinstance(item, str) for item in raw["rule"]):
+            raise RuntimeError("deadline loss state is corrupt; fixture must remain blocked")
         return raw
 
     def _save_unlocked(self, event: Mapping[str, Any]) -> None:
@@ -318,6 +350,8 @@ class DeadlineStateStore:
         handle = self._with_lock()
         installed = False
         try:
+            if self._load_unlocked() is not None:
+                raise RuntimeError("a probe or loss transaction is already active")
             self._save_unlocked(event)
             backend.add_rule(list(event["rule"]))
             installed = True
@@ -346,6 +380,35 @@ class DeadlineStateStore:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             handle.close()
 
+    def run_probe(self, event: dict[str, Any], backend: RuleBackend, observe: Callable[[], None]) -> tuple[int, int]:
+        """Run a nonterminal user-chain counter probe under the watchdog lock."""
+        handle = self._with_lock()
+        probe = event["probe"]
+        try:
+            if self._load_unlocked() is not None:
+                raise RuntimeError("a probe or loss transaction is already active")
+            self._save_unlocked(event)
+            backend.add_probe(probe["chain"], probe["jump"], probe["counterRule"])
+            before = backend.read_probe_counter(probe["counterRule"])
+            observe()
+            after = backend.read_probe_counter(probe["counterRule"])
+            backend.remove_probe(probe["chain"], probe["jump"], probe["counterRule"])
+            self.path.unlink(missing_ok=True)
+            return before, after
+        except Exception:
+            try:
+                backend.remove_probe(probe["chain"], probe["jump"], probe["counterRule"])
+            except Exception as cleanup_error:
+                event["state"] = "cleanupPending"
+                event["cleanupError"] = str(cleanup_error)
+                self._save_unlocked(event)
+                raise RuntimeError("probe cleanup failed") from cleanup_error
+            self.path.unlink(missing_ok=True)
+            raise
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
     def recover(self, backend: RuleBackend, now_ns: int | None) -> dict[str, Any]:
         handle = self._with_lock()
         try:
@@ -356,7 +419,11 @@ class DeadlineStateStore:
             if event["state"] == "armed" and current < event["deadlineMonotonicNs"]:
                 return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
             try:
-                backend.remove_rule(list(event["rule"]))
+                if "probe" in event:
+                    probe = event["probe"]
+                    backend.remove_probe(probe["chain"], probe["jump"], probe["counterRule"])
+                else:
+                    backend.remove_rule(list(event["rule"]))
             except Exception as exc:
                 event["state"] = "cleanupPending"
                 event["cleanupError"] = str(exc)
@@ -422,7 +489,7 @@ class ReceiverEvidenceSource(Protocol):
 
 
 class FileReceiverEvidenceSource:
-    """Read-only receiver-owned evidence, never supplied in the control RPC."""
+    """Untrusted staging reader; it cannot authorize a media-effect PASS."""
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 
@@ -443,6 +510,10 @@ class LossController:
         self._backend = backend
         self._state_store = state_store or MemoryDeadlineState()
         self._receiver_source = receiver_source
+        # T4/T5 do not yet expose a signed receiver-bridge artifact bound to
+        # run/attempt/generation/selected pair. Plain files are useful for
+        # diagnostics only and must never close the media-effect gate.
+        self._receiver_evidence_authenticated = False
         self._baseline_ttl_ns = baseline_ttl_ns
         self._monotonic_ns = monotonic_ns
         self._probe_window_s = probe_window_s
@@ -471,24 +542,34 @@ class LossController:
     def _confirm_selected_leg(self, session: LossControlSession) -> None:
         if session.closed:
             raise RuntimeError("control session is closed")
-        comment = f"wrd-baseline:{self.manifest.run_id[:8]}:{session.session_id}:{session.generation}"
+        if self.active_event is not None:
+            raise RuntimeError("cannot probe while a loss rule is active")
+        nonce = secrets.token_hex(6)
+        comment = f"wrd-baseline:{self.manifest.run_id[:8]}:{nonce}"
+        chain = f"WRDB{self.manifest.run_id.replace('-', '')[:8]}{nonce[:8]}"
         selector = self.manifest.egress_selector
-        probe_rule = [
+        jump = [
             "-o", self.manifest.interface, "-p", "udp",
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
             "-d", selector["destination"], "--dport", str(selector["destinationPort"]),
-            "-m", "comment", "--comment", comment, "-j", "RETURN",
+            "-m", "comment", "--comment", f"{comment}:jump", "-j", chain,
         ]
-        installed = False
-        try:
-            self._backend.add_rule(probe_rule)
-            installed = True
-            before = self._backend.read_rule_counter(probe_rule)
-            self._probe_sleep(self._probe_window_s)
-            after = self._backend.read_rule_counter(probe_rule)
-        finally:
-            if installed:
-                self._backend.remove_rule(probe_rule)
+        counter_rule = ["-m", "comment", "--comment", comment, "-j", "RETURN"]
+        event = {
+            "schemaVersion": 1, "state": "probing", "runId": self.manifest.run_id,
+            "comment": comment, "deadlineMonotonicNs": self._monotonic_ns() + 2_000_000_000,
+            "probe": {"chain": chain, "jump": jump, "counterRule": counter_rule},
+        }
+        if isinstance(self._state_store, DeadlineStateStore):
+            before, after = self._state_store.run_probe(event, self._backend, lambda: self._probe_sleep(self._probe_window_s))
+        else:
+            self._backend.add_probe(chain, jump, counter_rule)
+            try:
+                before = self._backend.read_probe_counter(counter_rule)
+                self._probe_sleep(self._probe_window_s)
+                after = self._backend.read_probe_counter(counter_rule)
+            finally:
+                self._backend.remove_probe(chain, jump, counter_rule)
         if not isinstance(before, int) or not isinstance(after, int) or after <= before:
             raise RuntimeError("selected-leg kernel counter probe observed no matching UDP traffic")
         observed = self._monotonic_ns()
@@ -605,6 +686,8 @@ class LossController:
         event = self._last_event
         if event is None or event.get("runId") != run_id or event.get("endedMonotonicNs") is None:
             return {"status": "FAIL", "reason": "loss rule has not been cleanly removed"}
+        if not self._receiver_evidence_authenticated:
+            return {"status": "BLOCKED", "reason": "authenticated T4/T5 receiver evidence bridge is unavailable", "event": dict(event)}
         if event.get("actualDropCount", 0) <= 0 or not event.get("receiverSequenceGaps"):
             return {"status": "FAIL", "reason": "loss had zero observed media effect", "event": dict(event)}
         return {"status": "PASS", "event": dict(event)}

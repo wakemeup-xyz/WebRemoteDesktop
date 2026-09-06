@@ -50,6 +50,8 @@ class RecordingBackend:
     def __init__(self):
         self.added: list[list[str]] = []
         self.removed: list[list[str]] = []
+        self.probes: list[tuple[str, list[str], list[str]]] = []
+        self.removed_probes: list[tuple[str, list[str], list[str]]] = []
         self._probe_counts: dict[tuple[str, ...], int] = {}
 
     def add_rule(self, argv):
@@ -59,12 +61,19 @@ class RecordingBackend:
         self.removed.append(list(argv))
 
     def read_rule_counter(self, _argv):
-        if any(part.startswith("wrd-baseline:") for part in _argv):
-            key = tuple(_argv)
-            value = self._probe_counts.get(key, 0)
-            self._probe_counts[key] = value + 1
-            return value
         return getattr(self, "counter", 0)
+
+    def add_probe(self, chain, jump, counter_rule):
+        self.probes.append((chain, list(jump), list(counter_rule)))
+
+    def remove_probe(self, chain, jump, counter_rule):
+        self.removed_probes.append((chain, list(jump), list(counter_rule)))
+
+    def read_probe_counter(self, counter_rule):
+        key = tuple(counter_rule)
+        value = self._probe_counts.get(key, 0)
+        self._probe_counts[key] = value + 1
+        return value
 
 
 class FailingRemovalBackend(RecordingBackend):
@@ -108,10 +117,8 @@ class ProbeCounterBackend(RecordingBackend):
         super().__init__()
         self.probe_counts = iter(probe_counts)
 
-    def read_rule_counter(self, argv):
-        if any(part.startswith("wrd-baseline:") for part in argv):
-            return next(self.probe_counts)
-        return super().read_rule_counter(argv)
+    def read_probe_counter(self, _counter_rule):
+        return next(self.probe_counts)
 
 
 class BlockingAddBackend(ProbeCounterBackend):
@@ -127,15 +134,33 @@ class BlockingAddBackend(ProbeCounterBackend):
             assert self.resume_add.wait(2)
 
 
+class ProbeCrashBackend(RecordingBackend):
+    def add_probe(self, chain, jump, counter_rule):
+        super().add_probe(chain, jump, counter_rule)
+        raise KeyboardInterrupt("simulated SIGKILL after probe chain install")
+
+
+class BlockingProbeBackend(ProbeCounterBackend):
+    def __init__(self):
+        super().__init__([0, 1])
+        self.installed = threading.Event()
+        self.resume = threading.Event()
+
+    def add_probe(self, chain, jump, counter_rule):
+        super().add_probe(chain, jump, counter_rule)
+        self.installed.set()
+        assert self.resume.wait(2)
+
+
 def test_baseline_is_kernel_counter_probe_not_control_caller_packet_count():
     backend = ProbeCounterBackend([17, 20])
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, probe_sleep=lambda _seconds: None)
     session = _session(fixture)
     session.confirm_selected_leg()
-    baseline_rule = backend.added[0]
-    assert any(part.startswith("wrd-baseline:") for part in baseline_rule)
-    assert baseline_rule[-1] == "RETURN"
-    assert backend.removed == [baseline_rule]
+    chain, jump, counter_rule = backend.probes[0]
+    assert chain.startswith("WRDB") and jump[-1] == chain
+    assert counter_rule[-1] == "RETURN"
+    assert backend.removed_probes == [(chain, jump, counter_rule)]
     assert fixture._baselines[session.session_id]["packetCount"] == 3
 
 
@@ -144,7 +169,47 @@ def test_zero_kernel_probe_delta_refuses_loss_without_arming_rule():
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, probe_sleep=lambda _seconds: None)
     with pytest.raises(RuntimeError, match="kernel counter"):
         _session(fixture).confirm_selected_leg()
-    assert backend.added == backend.removed
+    assert backend.probes == backend.removed_probes
+
+
+def test_probe_uses_user_chain_return_so_output_traversal_continues():
+    backend = ProbeCounterBackend([0, 1])
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, probe_sleep=lambda _seconds: None)
+    _session(fixture).confirm_selected_leg()
+    chain, jump, counter_rule = backend.probes[0]
+    assert jump[-1] == chain and "RETURN" not in jump
+    assert counter_rule[-1] == "RETURN"
+
+
+def test_sigkill_after_probe_install_leaves_durable_handles_for_watchdog_cleanup(tmp_path):
+    store = controller.DeadlineStateStore(tmp_path / "probe-state.json")
+    backend = ProbeCrashBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, state_store=store, probe_sleep=lambda _seconds: None)
+    with pytest.raises(KeyboardInterrupt, match="SIGKILL"):
+        _session(fixture).confirm_selected_leg()
+    event = store.load()
+    assert event and event["state"] == "probing" and event["probe"]["chain"].startswith("WRDB")
+    assert controller.recover_deadline_state(store, backend, now_ns=0)["status"] == "CLEARED"
+    assert backend.removed_probes == backend.probes
+
+
+def test_watchdog_cannot_clear_probe_intent_while_probe_transaction_holds_flock(tmp_path):
+    store = controller.DeadlineStateStore(tmp_path / "probe-state.json")
+    backend = BlockingProbeBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, state_store=store, probe_sleep=lambda _seconds: None)
+    session = _session(fixture)
+    confirm_done = threading.Event()
+    reaper_done = threading.Event()
+    worker = threading.Thread(target=lambda: (session.confirm_selected_leg(), confirm_done.set()))
+    worker.start()
+    assert backend.installed.wait(1)
+    reaper = threading.Thread(target=lambda: (controller.recover_deadline_state(store, backend, now_ns=0), reaper_done.set()))
+    reaper.start()
+    time.sleep(.05)
+    assert not reaper_done.is_set()
+    backend.resume.set()
+    worker.join(1); reaper.join(1)
+    assert confirm_done.is_set() and reaper_done.is_set() and store.load() is None
 
 
 def test_watchdog_cannot_observe_installing_state_until_atomic_install_transaction_releases_lock(tmp_path):
@@ -381,7 +446,7 @@ def test_reverse_selected_leg_is_canonicalized_to_egress_relay_port():
 
 
 def test_baseline_is_bound_to_session_generation_and_time_then_consumed():
-    clock = iter([100, 103, 102, 103])
+    clock = iter([99, 100, 103, 101, 102, 103])
     fixture = controller.LossController(
         controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend(),
         baseline_ttl_ns=2, monotonic_ns=lambda: next(clock),
@@ -405,13 +470,30 @@ def test_final_evidence_requires_nonzero_drop_and_strict_receiver_sequence_gaps(
     session.confirm_selected_leg()
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     fixture.clear_loss(manifest()["runId"])
-    assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "FAIL"
+    assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "BLOCKED"
     backend.counter = 1
     fixture.collect_receiver_evidence(manifest()["runId"])
-    assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "PASS"
+    assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "BLOCKED"
     for invalid in ([4, 4], [5, 4], [65535, 0, 65535]):
         with pytest.raises(ValueError):
             controller.sequence_gaps(invalid)
+
+
+def test_forged_plain_receiver_file_with_sha_shaped_digest_cannot_pass_media_effect(tmp_path):
+    evidence_path = tmp_path / "sequence.json"
+    evidence_path.write_text(__import__("json").dumps({
+        "runId": manifest()["runId"], "sessionId": "control-session-a", "generation": 7,
+        "selector": manifest()["udpLegSelector"], "sequences": [1, 3], "captureDigest": "a" * 64,
+    }))
+    backend = RecordingBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=controller.FileReceiverEvidenceSource(evidence_path))
+    session = _session(fixture)
+    session.confirm_selected_leg()
+    session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(manifest()["runId"])
+    fixture.clear_loss(manifest()["runId"])
+    assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "BLOCKED"
 
 
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):

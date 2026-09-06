@@ -54,9 +54,11 @@ mutable tag is never a Compose runtime value.
 
 The T4 driver connects to the generated loopback control endpoint with the
 generated control token, opens a session/generation, and requests a baseline.
-The controller installs a short-lived `RETURN` counter rule for the exact
-manifest leg in the TURN namespace, reads the kernel counter before and after,
-then removes it. Only a positive kernel delta grants a baseline; the control
+The controller persists a short-lived probe transaction, creates a unique user
+chain, and installs an exact-leg OUTPUT jump into that chain. Its `RETURN`
+counter rule lives only in the user chain, so normal OUTPUT traversal continues.
+It reads the kernel counter before and after, then removes the jump, rule, and
+chain. Only a positive kernel delta grants a baseline; the control
 caller cannot submit packet counts, selectors, or observation times. That
 baseline is bound to the control session, generation, selector, and monotonic
 time; it is consumed by one `apply_loss(run_id, pattern, duration_ms)` call. The controller
@@ -69,15 +71,17 @@ keeps the rule handle in `cleanupPending` state for retry.
 The independent watchdog reads the shared state at startup and continually
 removes expired or `cleanupPending` rules, so controller process loss cannot
 leave an accepted rule indefinitely. The controller holds the state store's
-cross-process lock across persisted `installing`, kernel rule addition, counter
-read, and persisted `armed`; a watchdog therefore cannot clear intent in the
-middle of an install. A process death after addition leaves recoverable
-`installing` intent. It reports `IDLE`, `ARMED`, `CLEARED`, or
+cross-process lock across persisted probe/install intent, kernel handle
+addition, counter read, and terminal state. A watchdog therefore cannot clear
+intent in the middle of a transaction. A process death after addition leaves
+recoverable exact handles, including the probe's user chain. It reports `IDLE`, `ARMED`, `CLEARED`, or
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
 is present.  The final evidence verifier records monotonic start/end, actual
 drop count from the exact iptables rule counter and strict ordered RTP sequence
-gaps from a receiver-owned evidence file.  The control connection cannot submit
-drop counts or sequences.  Zero observed effect cannot pass.  Credentials,
+gaps from a receiver-owned evidence file. Until T4/T5 supply a formal signed
+receiver-bridge artifact bound to the run, attempt, generation, and selected
+pair, that plain file is diagnostics only: final media-effect verification is
+`BLOCKED` and cannot pass. The control connection cannot submit drop counts or sequences.  Zero observed effect cannot pass.  Credentials,
 TURN environment, and manifest are written with mode `0600`.
 
 Do not treat an HTTP throttle, sender-side hook, or offline packet simulation as
