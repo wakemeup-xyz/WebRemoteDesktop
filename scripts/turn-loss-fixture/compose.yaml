@@ -5,15 +5,7 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     networks: [turn-loss]
-    ports:
-      - "127.0.0.1::3478/udp"
-      - "127.0.0.1::19091/tcp"
-      - "127.0.0.1:51000-51009:51000-51009/udp"
-    env_file:
-      - ./runtime/turn.env
     entrypoint: ["/bin/sh", "/runtime/turn-entrypoint.sh"]
-    volumes:
-      - ./runtime:/runtime:ro
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
@@ -28,7 +20,6 @@ services:
     cap_add: [NET_ADMIN]
     security_opt: [no-new-privileges:true]
     volumes:
-      - ./runtime:/runtime:ro
       - turn-loss-state:/state
 
   loss-watchdog:
@@ -41,7 +32,6 @@ services:
     cap_add: [NET_ADMIN]
     security_opt: [no-new-privileges:true]
     volumes:
-      - ./runtime:/runtime:ro
       - turn-loss-state:/state
 
 networks:

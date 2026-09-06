@@ -6,6 +6,7 @@ only useful from the ``loss-controller`` sidecar described in compose.yaml.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import threading
 import time
 import uuid
+import fcntl
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
@@ -23,7 +25,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 _SCHEMA_FIELDS = frozenset({
     "schemaVersion", "runId", "realm", "namespace", "interface",
-    "udpLegSelector", "controlEndpoint", "credentialsFile", "versionDigest", "imageDigests",
+    "udpLegSelector", "controlEndpoint", "credentialsFile", "receiverEvidenceFile", "versionDigest", "imageDigests",
 })
 _PATTERNS = {
     "every_100th_for_30s": 30_000,
@@ -67,6 +69,7 @@ class LossFixtureManifest:
     egress_selector: dict[str, Any]
     control_endpoint: dict[str, Any]
     credentials_file: str
+    receiver_evidence_file: str
     version_digest: str
     image_digests: dict[str, str]
 
@@ -130,6 +133,10 @@ class LossFixtureManifest:
         credential_path = PurePosixPath(credentials_file)
         if credential_path.is_absolute() or ".." in credential_path.parts:
             raise ValueError("credentialsFile must be a relative fixture reference")
+        receiver_evidence_file = _require_string(raw["receiverEvidenceFile"], "receiverEvidenceFile")
+        receiver_path = PurePosixPath(receiver_evidence_file)
+        if receiver_path.is_absolute() or ".." in receiver_path.parts or receiver_path != PurePosixPath("receiver/sequence.json"):
+            raise ValueError("receiverEvidenceFile must be the isolated receiver/sequence.json reference")
         digest = _require_string(raw["versionDigest"], "versionDigest")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ValueError("versionDigest must be a sha256 hex digest")
@@ -143,12 +150,13 @@ class LossFixtureManifest:
             if not repository or separator != "@sha256:" or len(image_digest) != 64 or any(char not in "0123456789abcdef" for char in image_digest):
                 raise ValueError("fixture images must be immutable sha256 digests")
             image_digests[name] = image
-        return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, digest, image_digests)
+        return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, digest, image_digests)
 
 
 class RuleBackend(Protocol):
     def add_rule(self, argv: list[str]) -> None: ...
     def remove_rule(self, argv: list[str]) -> None: ...
+    def read_rule_counter(self, argv: list[str]) -> int: ...
 
 
 class IptablesRuleBackend:
@@ -171,6 +179,40 @@ class IptablesRuleBackend:
             # kernel's no-such-rule response as idempotent success.
             if "Bad rule" not in (exc.stderr or ""):
                 raise
+
+    def read_rule_counter(self, argv: list[str]) -> int:
+        completed = subprocess.run(["iptables-save", "-c", "-t", "mangle"], check=True, capture_output=True, text=True)
+        marker = next((part for part in argv if part.startswith("wrd-loss:")), None)
+        if marker is None:
+            raise RuntimeError("fixture rule has no unique counter marker")
+        for line in completed.stdout.splitlines():
+            if marker in line and line.startswith("["):
+                closing = line.find(":")
+                if closing > 1:
+                    return int(line[1:closing])
+        raise RuntimeError("fixture rule counter was not found")
+
+
+class RuntimeBlocked(RuntimeError):
+    pass
+
+
+_RESOLVED_IMAGES_SEAL = object()
+
+
+@dataclass(frozen=True, init=False)
+class ResolvedImageEvidence:
+    images: dict[str, str]
+
+    def __init__(self, images: Mapping[str, str], *, _seal: object | None = None) -> None:
+        if _seal is not _RESOLVED_IMAGES_SEAL:
+            raise TypeError("ResolvedImageEvidence is sealed; use DockerRuntimeProbe")
+        object.__setattr__(self, "images", dict(images))
+
+
+def _test_resolved_images(images: Mapping[str, str]) -> ResolvedImageEvidence:
+    """Private test fixture; operational callers must use DockerRuntimeProbe."""
+    return ResolvedImageEvidence(images, _seal=_RESOLVED_IMAGES_SEAL)
 
 
 class DeadlineState(Protocol):
@@ -198,40 +240,99 @@ class DeadlineStateStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 
-    def save(self, event: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(dict(event), sort_keys=True), encoding="utf-8")
-        os.replace(temporary, self.path)
+    def _lock_path(self) -> Path:
+        return self.path.with_suffix(".lock")
 
-    def load(self) -> dict[str, Any] | None:
+    def _with_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self._lock_path().open("a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    def _load_unlocked(self) -> dict[str, Any] | None:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
-        if not isinstance(raw, dict) or not isinstance(raw.get("rule"), list) or not isinstance(raw.get("deadlineMonotonicNs"), int):
+        if (not isinstance(raw, dict) or raw.get("schemaVersion") != 1
+                or raw.get("state") not in {"installing", "armed", "cleanupPending"}
+                or not isinstance(raw.get("runId"), str) or not isinstance(raw.get("comment"), str)
+                or not isinstance(raw.get("rule"), list) or not all(isinstance(item, str) for item in raw["rule"])
+                or not isinstance(raw.get("deadlineMonotonicNs"), int)):
             raise RuntimeError("deadline state is corrupt; fixture must remain blocked")
         return raw
 
+    def _save_unlocked(self, event: Mapping[str, Any]) -> None:
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        temporary.write_text(json.dumps(dict(event), sort_keys=True), encoding="utf-8")
+        os.replace(temporary, self.path)
+
+    def save(self, event: Mapping[str, Any]) -> None:
+        handle = self._with_lock()
+        try:
+            self._save_unlocked(event)
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
+    def load(self) -> dict[str, Any] | None:
+        handle = self._with_lock()
+        try:
+            return self._load_unlocked()
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
     def clear(self) -> None:
+        handle = self._with_lock()
         try:
             self.path.unlink()
         except FileNotFoundError:
             pass
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
+    def recover(self, backend: RuleBackend, now_ns: int | None) -> dict[str, Any]:
+        handle = self._with_lock()
+        try:
+            event = self._load_unlocked()
+            if event is None:
+                return {"status": "IDLE"}
+            current = time.monotonic_ns() if now_ns is None else now_ns
+            if event["state"] == "armed" and current < event["deadlineMonotonicNs"]:
+                return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
+            try:
+                backend.remove_rule(list(event["rule"]))
+            except Exception as exc:
+                event["state"] = "cleanupPending"
+                event["cleanupError"] = str(exc)
+                self._save_unlocked(event)
+                return {"status": "CLEANUP_PENDING", "reason": str(exc)}
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+            return {"status": "CLEARED", "runId": event.get("runId")}
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
 
 def recover_deadline_state(state_store: DeadlineState, backend: RuleBackend, *, now_ns: int | None = None) -> dict[str, Any]:
     """Independently remove an expired or retry-pending persisted fixture rule."""
+    if isinstance(state_store, DeadlineStateStore):
+        return state_store.recover(backend, now_ns)
     event = state_store.load()
     if event is None:
         return {"status": "IDLE"}
     current = time.monotonic_ns() if now_ns is None else now_ns
-    if not event.get("cleanupPending") and current < event["deadlineMonotonicNs"]:
+    if event["state"] == "armed" and current < event["deadlineMonotonicNs"]:
         return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
     try:
         backend.remove_rule(list(event["rule"]))
     except Exception as exc:
-        event["cleanupPending"] = True
+        event["state"] = "cleanupPending"
         event["cleanupError"] = str(exc)
         state_store.save(event)
         return {"status": "CLEANUP_PENDING", "reason": str(exc)}
@@ -253,8 +354,8 @@ class LossControlSession:
     def apply_loss(self, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
         return self._controller._apply_loss(self, run_id, pattern, duration_ms)
 
-    def record_delivery(self, *, actual_drop_count: int, receiver_sequences: list[int]) -> None:
-        self._controller.record_delivery(self.run_id, actual_drop_count=actual_drop_count, receiver_sequences=receiver_sequences)
+    def collect_receiver_evidence(self) -> None:
+        self._controller.collect_receiver_evidence(self.run_id)
 
     def close(self) -> dict[str, Any]:
         if self.closed:
@@ -263,12 +364,32 @@ class LossControlSession:
         return self._controller._close_session(self)
 
 
+class ReceiverEvidenceSource(Protocol):
+    def sequences_for(self, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]: ...
+
+
+class FileReceiverEvidenceSource:
+    """Read-only receiver-owned evidence, never supplied in the control RPC."""
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+
+    def sequences_for(self, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        expected = {"runId", "sessionId", "generation", "selector", "sequences", "captureDigest"}
+        if not isinstance(raw, dict) or set(raw) != expected or raw["runId"] != manifest.run_id or raw["sessionId"] != event["sessionId"] or raw["generation"] != event["generation"] or raw["selector"] != manifest.selector:
+            raise RuntimeError("receiver evidence does not bind the active fixture run")
+        if not isinstance(raw["sequences"], list) or not isinstance(raw["captureDigest"], str) or len(raw["captureDigest"]) != 64:
+            raise RuntimeError("receiver evidence is incomplete")
+        return list(raw["sequences"])
+
+
 class LossController:
     """Manifest-bound controller. Deadline removal belongs to another process."""
-    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns) -> None:
+    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns) -> None:
         self.manifest = manifest
         self._backend = backend
         self._state_store = state_store or MemoryDeadlineState()
+        self._receiver_source = receiver_source
         self._baseline_ttl_ns = baseline_ttl_ns
         self._monotonic_ns = monotonic_ns
         self._lock = threading.RLock()
@@ -305,7 +426,7 @@ class LossController:
         with self._lock:
             self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "packetCount": packet_count, "observedMonotonicNs": observed}
 
-    def _rule_for(self, pattern: str) -> list[str]:
+    def _rule_for(self, pattern: str, comment: str) -> list[str]:
         selector = self.manifest.egress_selector
         rule = [
             "-o", self.manifest.interface, "-p", "udp",
@@ -314,6 +435,7 @@ class LossController:
         ]
         if pattern == "every_100th_for_30s":
             rule.extend(["-m", "statistic", "--mode", "nth", "--every", "100", "--packet", "0"])
+        rule.extend(["-m", "comment", "--comment", comment])
         rule.extend(["-j", "DROP"])
         return rule
 
@@ -334,16 +456,21 @@ class LossController:
                 raise RuntimeError("selected-leg baseline expired before loss injection")
             if self.active_event is not None:
                 raise RuntimeError("another loss rule is already active")
-            rule = self._rule_for(pattern)
-            self._backend.add_rule(rule)
+            comment = f"wrd-loss:{run_id[:8]}:{session.session_id}:{session.generation}"
+            rule = self._rule_for(pattern, comment)
             event = {
+                "schemaVersion": 1, "state": "installing", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
                 "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": dict(self.manifest.egress_selector),
                 "sessionId": session.session_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
                 "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
-                "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "cleanupPending": False,
+                "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,
             }
             try:
+                self._state_store.save(event)
+                self._backend.add_rule(rule)
+                event["dropCounterAtInstall"] = self._backend.read_rule_counter(rule)
+                event["state"] = "armed"
                 self._state_store.save(event)
             except Exception:
                 try:
@@ -354,16 +481,20 @@ class LossController:
             self.active_event = event
             return dict(event)
 
-    def record_delivery(self, run_id: str, *, actual_drop_count: int, receiver_sequences: list[int]) -> None:
+    def collect_receiver_evidence(self, run_id: str) -> None:
         self._require_run(run_id)
-        if not isinstance(actual_drop_count, int) or actual_drop_count < 0:
-            raise ValueError("actual_drop_count must be non-negative")
-        gaps = sequence_gaps(receiver_sequences)
         with self._lock:
             event = self.active_event or self._last_event
             if event is None or event.get("runId") != run_id:
                 raise RuntimeError("no active loss rule records this delivery")
-            event["actualDropCount"] += actual_drop_count
+            if self._receiver_source is None:
+                raise RuntimeError("receiver evidence source is unavailable")
+            gaps = sequence_gaps(self._receiver_source.sequences_for(self.manifest, event))
+            current = self._backend.read_rule_counter(list(event["rule"]))
+            baseline = event.get("dropCounterAtInstall")
+            if not isinstance(baseline, int) or current < baseline:
+                raise RuntimeError("iptables counter evidence is invalid")
+            event["actualDropCount"] = current - baseline
             event["receiverSequenceGaps"] = gaps
             if event is self.active_event:
                 self._state_store.save(event)
@@ -377,13 +508,13 @@ class LossController:
             try:
                 self._backend.remove_rule(list(event["rule"]))
             except Exception as exc:
-                event["cleanupPending"] = True
+                event["state"] = "cleanupPending"
                 event["cleanupError"] = str(exc)
                 self._state_store.save(event)
                 return {**event, "cleared": False}
             event["endedMonotonicNs"] = self._monotonic_ns()
             event["clearReason"] = reason
-            event["cleanupPending"] = False
+            event["state"] = "armed"
             self._state_store.clear()
             self.active_event = None
             self._last_event = event
@@ -434,6 +565,25 @@ class ControlRequestRouter:
         if not isinstance(token, str) or not secrets.compare_digest(token, self.control_token):
             raise PermissionError("fixture control token is invalid")
 
+    def validate_request(self, request: Mapping[str, Any]) -> None:
+        if not isinstance(request, Mapping) or not isinstance(request.get("operation"), str):
+            raise ValueError("control request must be an object with an operation")
+        expected = {
+            "health": {"operation", "controlToken"},
+            "open": {"operation", "controlToken", "runId", "sessionId", "generation"},
+            "confirm": {"operation", "controlToken", "selector", "packetCount", "observedMonotonicNs"},
+            "apply": {"operation", "controlToken", "runId", "pattern", "durationMs"},
+            "collect": {"operation", "controlToken"},
+            "clear": {"operation", "controlToken"},
+        }.get(request["operation"])
+        if expected is None or set(request) != expected:
+            if "actualDropCount" in request:
+                raise ValueError("actualDropCount is not accepted from the control caller")
+            raise ValueError("control request fields are invalid")
+        for field in ("generation", "packetCount", "observedMonotonicNs", "durationMs"):
+            if field in request and (not isinstance(request[field], int) or isinstance(request[field], bool)):
+                raise ValueError(f"control field {field} must be an integer")
+
 
 class _ControlHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
@@ -441,12 +591,15 @@ class _ControlHandler(socketserver.StreamRequestHandler):
         session: LossControlSession | None = None
         try:
             for line in self.rfile:
-                request = json.loads(line)
+                request = json.loads(line, parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
                 router.authorize(request)
+                router.validate_request(request)
                 operation = request.get("operation")
                 if operation == "health":
                     response: Mapping[str, Any] = {"status": "READY", "deadline": router.controller.active_event is not None}
                 elif operation == "open":
+                    if session is not None:
+                        raise RuntimeError("control session is already open")
                     session = router.controller.open_session(request["runId"], request["sessionId"], request["generation"])
                     response = {"status": "OPEN", "generation": session.generation}
                 elif session is None:
@@ -456,9 +609,9 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                     response = {"status": "BASELINE_CONFIRMED"}
                 elif operation == "apply":
                     response = session.apply_loss(request["runId"], request["pattern"], request["durationMs"])
-                elif operation == "delivery":
-                    session.record_delivery(actual_drop_count=request["actualDropCount"], receiver_sequences=request["receiverSequences"])
-                    response = {"status": "DELIVERY_RECORDED"}
+                elif operation == "collect":
+                    session.collect_receiver_evidence()
+                    response = {"status": "RECEIVER_EVIDENCE_COLLECTED"}
                 elif operation == "clear":
                     response = router.controller.clear_loss(session.run_id)
                 else:
@@ -490,7 +643,12 @@ def load_fixture_credentials(path: Path, realm: str) -> dict[str, str]:
     return {key: raw[key] for key in required}
 
 
-def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path) -> dict[str, str]:
+def _derived_ports(manifest: LossFixtureManifest) -> tuple[int, int]:
+    value = int(hashlib.sha256(manifest.run_id.encode()).hexdigest()[:8], 16)
+    return 20000 + value % 10000, 40000 + value % 10000
+
+
+def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resolved_images: ResolvedImageEvidence | None = None) -> dict[str, str]:
     """Validate one manifest and derive the only supported compose inputs.
 
     The generated override is intentionally separate from compose.yaml: callers
@@ -498,9 +656,14 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path) -> dict[
     variable may choose a realm, run ID, listener, or image.
     """
     manifest = LossFixtureManifest.parse(raw_manifest)
+    if resolved_images is None:
+        raise RuntimeBlocked("Docker resolved image evidence is required before fixture runtime preparation")
+    if resolved_images.images != manifest.image_digests:
+        raise RuntimeBlocked("resolved image evidence does not exactly match the fixture manifest")
     runtime_dir = Path(runtime_dir)
     credentials_dir = runtime_dir / "credentials"
     credentials_dir.mkdir(parents=True, exist_ok=False)
+    (runtime_dir / "receiver").mkdir(mode=0o700)
     credentials = {
         "realm": manifest.realm,
         "turnUsername": f"turn-loss-{manifest.run_id[:8]}",
@@ -511,20 +674,41 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path) -> dict[
     if credential_path != credentials_dir / "turn.json":
         raise ValueError("fixture credentialsFile must be credentials/turn.json")
     credential_path.write_text(json.dumps(credentials, sort_keys=True), encoding="utf-8")
+    credential_path.chmod(0o600)
     (runtime_dir / "turn.env").write_text(
         f"TURN_USERNAME={credentials['turnUsername']}\nTURN_PASSWORD={credentials['turnPassword']}\nTURN_REALM={manifest.realm}\n",
         encoding="utf-8",
     )
+    (runtime_dir / "turn.env").chmod(0o600)
     (runtime_dir / "manifest.json").write_text(json.dumps(dict(raw_manifest), sort_keys=True), encoding="utf-8")
+    (runtime_dir / "manifest.json").chmod(0o600)
     shutil.copyfile(Path(__file__).with_name("turn-entrypoint.sh"), runtime_dir / "turn-entrypoint.sh")
+    turn_port, control_port = _derived_ports(manifest)
     (runtime_dir / "compose.generated.yaml").write_text(
         "services:\n"
-        f"  turn:\n    image: {manifest.image_digests['turn']}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n"
-        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n",
+        f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
-    return {"projectName": f"turn-loss-{manifest.run_id[:8]}", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml")}
+    project = f"turn-loss-{manifest.run_id[:8]}"
+    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}"}
+
+
+def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[str]], tuple[int, str, str]]) -> dict[str, str]:
+    """Verify Docker's post-start mappings instead of trusting planned ports."""
+    required = {"projectName", "networkName", "composeOverride", "turnEndpoint", "controlEndpoint"}
+    if set(prepared) < required:
+        raise ValueError("prepared fixture layout is incomplete")
+    compose = ["docker", "compose", "--project-name", prepared["projectName"], "-f", str(Path(__file__).with_name("compose.yaml")), "-f", prepared["composeOverride"]]
+    for target, expected in (("3478", prepared["turnEndpoint"]), ("19091", prepared["controlEndpoint"])):
+        code, stdout, stderr = run([*compose, "port", "turn", target])
+        if code != 0 or stdout.strip() != expected:
+            raise RuntimeBlocked(f"fixture {target} mapping does not match prepared manifest layout: {stderr}")
+    code, stdout, stderr = run(["docker", "network", "inspect", "--format", "{{.Name}}", prepared["networkName"]])
+    if code != 0 or stdout.strip() != prepared["networkName"]:
+        raise RuntimeBlocked(f"fixture network is missing or mismatched: {stderr}")
+    return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "networkName": prepared["networkName"]}
 
 
 def _main() -> None:
@@ -540,7 +724,13 @@ def _main() -> None:
     prepare.add_argument("--runtime", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.command == "prepare":
-        result = prepare_runtime(json.loads(arguments.manifest.read_text(encoding="utf-8")), arguments.runtime)
+        raw_manifest = json.loads(arguments.manifest.read_text(encoding="utf-8"))
+        manifest = LossFixtureManifest.parse(raw_manifest)
+        try:
+            result = prepare_runtime(raw_manifest, arguments.runtime, resolved_images=DockerRuntimeProbe().resolve_fixture_images(manifest.image_digests))
+        except RuntimeBlocked as exc:
+            print(json.dumps({"status": "BLOCKED", "execution": "NOT_RUN", "reason": str(exc)}, sort_keys=True))
+            raise SystemExit(2) from exc
         print(json.dumps(result, sort_keys=True))
         return
     manifest = LossFixtureManifest.parse(json.loads(arguments.manifest.read_text(encoding="utf-8")))
@@ -551,13 +741,9 @@ def _main() -> None:
             recover_deadline_state(store, backend)
             time.sleep(0.1)
     credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
-    controller = LossController(manifest, backend=backend, state_store=store)
+    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=FileReceiverEvidenceSource(Path("/receiver/sequence.json")))
     server = LossControlServer(manifest.control_endpoint, ControlRequestRouter(controller, credentials["controlToken"]))
     server.serve_forever()
-
-
-if __name__ == "__main__":
-    _main()
 
 
 class DockerRuntimeProbe:
@@ -596,3 +782,21 @@ class DockerRuntimeProbe:
                 raise RuntimeError(f"image digest metadata for {image} was missing")
             resolved[image] = digest
         return resolved
+
+    def resolve_fixture_images(self, images: Mapping[str, str]) -> ResolvedImageEvidence:
+        if self.status()["status"] != "READY":
+            raise RuntimeBlocked("Docker daemon is unavailable; fixture preparation is BLOCKED")
+        if set(images) != {"turn", "controller"}:
+            raise RuntimeBlocked("fixture image set is incomplete")
+        observed = self.image_digests(list(images.values()))
+        if any(observed.get(image) != image for image in images.values()):
+            raise RuntimeBlocked("Docker image digest does not match manifest")
+        controller_image = images["controller"]
+        code, _stdout, stderr = self._run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh", controller_image, "-c", "test -f /fixture/controller.py && command -v iptables"])
+        if code != 0:
+            raise RuntimeBlocked(f"controller image lacks controller.py or iptables: {stderr}")
+        return ResolvedImageEvidence(images, _seal=_RESOLVED_IMAGES_SEAL)
+
+
+if __name__ == "__main__":
+    _main()

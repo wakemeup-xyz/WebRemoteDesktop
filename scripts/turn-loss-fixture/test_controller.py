@@ -33,6 +33,7 @@ def manifest(**overrides):
         },
         "controlEndpoint": {"host": "127.0.0.1", "port": 19091},
         "credentialsFile": "credentials/turn.json",
+        "receiverEvidenceFile": "receiver/sequence.json",
         "versionDigest": "a" * 64,
         "imageDigests": {
             "turn": "registry.example/turn@sha256:" + "b" * 64,
@@ -54,6 +55,9 @@ class RecordingBackend:
     def remove_rule(self, argv):
         self.removed.append(list(argv))
 
+    def read_rule_counter(self, _argv):
+        return getattr(self, "counter", 0)
+
 
 class FailingRemovalBackend(RecordingBackend):
     def __init__(self):
@@ -68,14 +72,27 @@ class FailingRemovalBackend(RecordingBackend):
 
 
 class FailingStateStore:
+    def __init__(self):
+        self.calls = 0
+
     def save(self, _event):
-        raise OSError("state volume unavailable")
+        self.calls += 1
+        if self.calls > 1:
+            raise OSError("state volume unavailable")
 
     def load(self):
         return None
 
     def clear(self):
         return None
+
+
+class StaticReceiver:
+    def __init__(self, sequences):
+        self.sequences = sequences
+
+    def sequences_for(self, _manifest, _event):
+        return self.sequences
 
 
 def test_fixture_manifest_is_strict_and_rejects_production_or_host_targets():
@@ -101,7 +118,7 @@ def test_fixture_manifest_requires_a_canonical_unique_uuid_run_id():
 
 def test_apply_requires_matching_run_selector_and_observed_nonzero_baseline():
     backend = RecordingBackend()
-    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend)
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=StaticReceiver([3, 4, 6, 7]))
     session = _session(fixture)
     with pytest.raises(RuntimeError, match="baseline"):
         session.apply_loss("6ed74e8f-0d87-4c3a-8675-b3834de2db01", "all_for_200ms", 200)
@@ -128,7 +145,7 @@ def test_apply_rejects_unapproved_patterns_and_duration(pattern, duration):
 
 def test_apply_generates_udp_media_rule_excluding_control_and_records_evidence():
     backend = RecordingBackend()
-    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend)
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=StaticReceiver([3, 4, 6, 7]))
     session = _session(fixture)
     session.confirm_selected_leg(manifest()["udpLegSelector"], 117)
     event = session.apply_loss(manifest()["runId"], "every_100th_for_30s", 30_000)
@@ -136,7 +153,8 @@ def test_apply_generates_udp_media_rule_excluding_control_and_records_evidence()
     assert "--every" in rule and "100" in rule and "19091" not in rule
     assert event["selector"] == manifest()["udpLegSelector"]
     assert event["startedMonotonicNs"] > 0
-    fixture.record_delivery(manifest()["runId"], actual_drop_count=1, receiver_sequences=[3, 4, 6, 7])
+    backend.counter = 1
+    fixture.collect_receiver_evidence(manifest()["runId"])
     cleared = fixture.clear_loss(manifest()["runId"])
     assert cleared["actualDropCount"] == 1
     assert cleared["receiverSequenceGaps"] == [5]
@@ -204,7 +222,7 @@ def test_remove_failure_stays_cleanup_pending_and_a_retry_keeps_the_rule_handle(
     session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     pending = fixture.clear_loss(manifest()["runId"])
-    assert pending["cleared"] is False and pending["cleanupPending"] is True
+    assert pending["cleared"] is False and pending["state"] == "cleanupPending"
     assert fixture.active_event is not None
     cleared = fixture.clear_loss(manifest()["runId"])
     assert cleared["cleared"] is True and fixture.active_event is None
@@ -214,7 +232,7 @@ def test_remove_failure_stays_cleanup_pending_and_a_retry_keeps_the_rule_handle(
 def test_external_deadline_cleanup_reclaims_expired_persisted_rule_without_controller_process(tmp_path):
     store = controller.DeadlineStateStore(tmp_path / "active-loss.json")
     backend = RecordingBackend()
-    event = {"runId": manifest()["runId"], "rule": ["-j", "DROP"], "deadlineMonotonicNs": 8, "cleanupPending": False}
+    event = {"schemaVersion": 1, "state": "armed", "comment": "wrd-loss-test", "runId": manifest()["runId"], "rule": ["-j", "DROP"], "deadlineMonotonicNs": 8}
     store.save(event)
     result = controller.recover_deadline_state(store, backend, now_ns=9)
     assert result["status"] == "CLEARED" and backend.removed == [["-j", "DROP"]]
@@ -227,9 +245,7 @@ def test_control_service_and_compose_expose_real_loopback_endpoint_and_temporary
     assert "controller.py" in compose and "serve" in compose
     assert "loss-watchdog" in compose and "watchdog" in compose
     assert "RUN_ID" not in compose and "TURN_REALM" not in compose
-    assert "127.0.0.1::19091/tcp" in compose
-    assert "127.0.0.1:51000-51009:51000-51009/udp" in compose
-    assert "runtime/turn.env" in compose
+    assert "./runtime" not in compose and "ports:" not in compose
     assert "TURN_USERNAME" in entrypoint and "TURN_PASSWORD" in entrypoint and "--user" in entrypoint
     assert "--external-ip=127.0.0.1" in entrypoint
     assert controller.ControlRequestRouter
@@ -265,13 +281,15 @@ def test_baseline_is_bound_to_session_generation_and_time_then_consumed():
 
 
 def test_final_evidence_requires_nonzero_drop_and_strict_receiver_sequence_gaps():
-    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend())
+    backend = RecordingBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=StaticReceiver([65534, 65535, 1]))
     session = _session(fixture)
     session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     fixture.clear_loss(manifest()["runId"])
     assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "FAIL"
-    fixture.record_delivery(manifest()["runId"], actual_drop_count=1, receiver_sequences=[65534, 65535, 1])
+    backend.counter = 1
+    fixture.collect_receiver_evidence(manifest()["runId"])
     assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "PASS"
     for invalid in ([4, 4], [5, 4], [65535, 0, 65535]):
         with pytest.raises(ValueError):
@@ -280,7 +298,7 @@ def test_final_evidence_requires_nonzero_drop_and_strict_receiver_sequence_gaps(
 
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):
     raw = manifest()
-    generated = controller.prepare_runtime(raw, tmp_path)
+    generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))
     assert generated["projectName"] == "turn-loss-6ed74e8f"
     assert (tmp_path / "credentials" / "turn.json").exists()
     assert (tmp_path / "turn-entrypoint.sh").read_text() == (HERE / "turn-entrypoint.sh").read_text()
@@ -293,13 +311,13 @@ def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only
         {**raw, "imageDigests": {"turn": "coturn/coturn:latest", "controller": raw["imageDigests"]["controller"]}},
     ):
         with pytest.raises(ValueError):
-            controller.prepare_runtime(unsafe, tmp_path / "unsafe")
+            controller.prepare_runtime(unsafe, tmp_path / "unsafe", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
 
 
 def test_generated_compose_is_syntactically_valid_without_user_environment(tmp_path):
     for name in ("compose.yaml", "turn-entrypoint.sh", "controller.py"):
         shutil.copyfile(HERE / name, tmp_path / name)
-    generated = controller.prepare_runtime(manifest(), tmp_path / "runtime")
+    generated = controller.prepare_runtime(manifest(), tmp_path / "runtime", resolved_images=controller._test_resolved_images(manifest()["imageDigests"]))
     completed = subprocess.run(
         ["docker", "compose", "-f", str(tmp_path / "compose.yaml"), "-f", generated["composeOverride"], "config", "--quiet"],
         text=True, capture_output=True, check=False,
@@ -320,3 +338,55 @@ def test_loopback_control_server_runs_the_authenticated_open_command_then_closes
         server.shutdown()
         server.server_close()
         thread.join(1)
+
+
+def test_prepare_is_blocked_without_a_docker_resolved_image_evidence(tmp_path):
+    with pytest.raises(controller.RuntimeBlocked):
+        controller.prepare_runtime(manifest(), tmp_path)
+
+
+def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_derived_endpoints(tmp_path):
+    raw = manifest()
+    generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    override = (tmp_path / "compose.generated.yaml").read_text()
+    assert f"{tmp_path}:/runtime:ro" in override
+    assert f"{tmp_path / 'turn.env'}" in override
+    assert generated["controlEndpoint"].startswith("127.0.0.1:")
+    assert generated["turnEndpoint"].startswith("127.0.0.1:")
+    assert generated["projectName"] in generated["networkName"]
+    assert (tmp_path / "credentials" / "turn.json").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "turn.env").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "manifest.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_started_fixture_layout_verifies_the_manifest_derived_host_ports_and_network(tmp_path):
+    raw = manifest()
+    generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    replies = iter([
+        (0, generated["turnEndpoint"] + "\n", ""),
+        (0, generated["controlEndpoint"] + "\n", ""),
+        (0, generated["networkName"] + "\n", ""),
+    ])
+    assert controller.verify_started_fixture(generated, run=lambda _argv: next(replies))["status"] == "READY"
+
+
+def test_installing_state_is_persisted_before_rule_and_watchdog_cleans_it(tmp_path):
+    store = controller.DeadlineStateStore(tmp_path / "state.json")
+    backend = RecordingBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, state_store=store)
+    session = _session(fixture)
+    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    # The explicit state contract lets a process that starts later clean an
+    # interrupted installation without consulting controller memory.
+    event = {"schemaVersion": 1, "state": "installing", "runId": manifest()["runId"], "rule": ["-j", "DROP"], "deadlineMonotonicNs": 999, "comment": "wrd-loss-test"}
+    store.save(event)
+    assert controller.recover_deadline_state(store, backend, now_ns=1)["status"] == "CLEARED"
+
+
+def test_control_rejects_extra_fields_and_self_reported_drop_counts():
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend())
+    router = controller.ControlRequestRouter(fixture, "token")
+    with pytest.raises(ValueError, match="fields"):
+        router.validate_request({"operation": "health", "controlToken": "token", "extra": True})
+    with pytest.raises(ValueError, match="actualDropCount"):
+        router.validate_request({"operation": "delivery", "controlToken": "token", "actualDropCount": 1})
