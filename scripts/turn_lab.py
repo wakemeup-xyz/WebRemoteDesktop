@@ -146,7 +146,7 @@ class ProductionAdmissionClient:
 
 @dataclass(frozen=True)
 class LabSignal:
-    origin: str; realm: str; host_secret: str; viewer_password: str; context_secret: str; stop: Callable[[], None]
+    origin: str; realm: str; host_secret: str; viewer_password: str; context_secret: str; transcript_secret: str; stop: Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -164,6 +164,7 @@ class LabRun:
         self._runtime_dir: Path | None = None; self._children: list[subprocess.Popen[Any]] = []; self._handles: list[Any] = []
         self._stop_signal: Callable[[], None] | None = None; self.identity: LabIdentity | None = None; self._context: dict[str, Any] | None = None
         self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch: int | None = None
+        self._transcript_secret = ""
         self._production_proof: ProductionProof | None = None; self._expected_identity: LabIdentity | None = None
         self.closed = True; self._lock = threading.RLock(); self._state_changed = threading.Condition(self._lock)
         self._watch_stop: threading.Event | None = None
@@ -270,7 +271,7 @@ class LabRun:
                 if not self._owns_locked(token, generation):
                     raise RuntimeError("lab run was closed or replaced during production preflight")
                 self.identity, self._context = identity, context
-                self._host_secret, self._viewer_password, self._context_secret = lab.host_secret, lab.viewer_password, lab.context_secret
+                self._host_secret, self._viewer_password, self._context_secret, self._transcript_secret = lab.host_secret, lab.viewer_password, lab.context_secret, lab.transcript_secret
                 self._production_epoch, self._production_proof, self._expected_identity = proof.epoch, proof, identity
                 self._last_status = "running"
                 watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-lab-watch-{run_id}", daemon=True)
@@ -306,7 +307,7 @@ class LabRun:
         try:
             payload = self._read_startup_json(proc, proc.stdout)
             self._require_owner(token, generation)
-            return LabSignal(str(payload["origin"]), str(payload["realm"]), str(payload["hostSecret"]), str(payload["viewerPassword"]), str(payload["contextSecret"]), lambda: self._terminate_child(proc))
+            return LabSignal(str(payload["origin"]), str(payload["realm"]), str(payload["hostSecret"]), str(payload["viewerPassword"]), str(payload["contextSecret"]), str(payload["transcriptSecret"]), lambda: self._terminate_child(proc))
         except Exception:
             # If attached, the generation's one cleanup path owns the child
             # and descriptor.  If close won the race, it has already reaped
@@ -353,6 +354,13 @@ class LabRun:
         if self.closed or self.identity is None: raise RuntimeError("lab is not running")
         proof_admission = {"token": self.identity._proof_token, "epoch": self.identity.epoch, "realm": self.identity.realm}
         return {"origin": self.identity.origin, "password": self._viewer_password, "proofAdmission": proof_admission, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
+
+    def transcript_verifier(self) -> bytes:
+        """Return the in-memory per-run HMAC verifier; never persist it in artifacts."""
+        with self._lock:
+            if self.closed or not self._transcript_secret:
+                raise RuntimeError("running lab transcript verifier is required")
+            return self._transcript_secret.encode("utf-8")
 
     def bind_controlled_input(self, *, input_id: str, lease_id: str, lease_epoch: int, fixture_id: str,
                                action: Mapping[str, Any]) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -29,25 +30,28 @@ class LabTranscript:
     static: dict[str, Any]
     automatic: dict[str, Any]
     receipts: list[dict[str, Any]]
-    digest: str
+    signature: str
 
     @classmethod
-    def create(cls, *, identity: Mapping[str, Any], static: Mapping[str, Any], automatic: Mapping[str, Any], receipts: list[Mapping[str, Any]]) -> "LabTranscript":
+    def create(cls, *, verifier: bytes, identity: Mapping[str, Any], static: Mapping[str, Any], automatic: Mapping[str, Any], receipts: list[Mapping[str, Any]]) -> "LabTranscript":
+        if not isinstance(verifier, bytes) or not verifier:
+            raise ValueError("captured Lab transcript verifier is required")
         body = {"identity": dict(identity), "static": dict(static), "automatic": dict(automatic), "receipts": [dict(row) for row in receipts]}
-        return cls(body["identity"], body["static"], body["automatic"], body["receipts"], hashlib.sha256(_canonical(body)).hexdigest())
+        return cls(body["identity"], body["static"], body["automatic"], body["receipts"], hmac.new(verifier, _canonical(body), hashlib.sha256).hexdigest())
 
     def as_dict(self) -> dict[str, Any]:
         return {"identity": self.identity, "static": self.static, "automatic": self.automatic,
-                "receipts": self.receipts, "digest": self.digest}
+                "receipts": self.receipts, "signature": self.signature}
 
 
-def verify_transcript(raw: Mapping[str, Any], *, identity: Mapping[str, Any]) -> bool:
-    if not isinstance(raw, Mapping) or set(raw) != {"identity", "static", "automatic", "receipts", "digest"}:
+def verify_transcript(raw: Mapping[str, Any], *, identity: Mapping[str, Any], verifier: bytes) -> bool:
+    if not isinstance(raw, Mapping) or set(raw) != {"identity", "static", "automatic", "receipts", "signature"}:
         return False
-    if raw["identity"] != dict(identity) or not isinstance(raw["receipts"], list) or not isinstance(raw["digest"], str):
+    if raw["identity"] != dict(identity) or not isinstance(raw["receipts"], list) or not isinstance(raw["signature"], str) or not isinstance(verifier, bytes):
         return False
     body = {key: raw[key] for key in ("identity", "static", "automatic", "receipts")}
-    return hashlib.sha256(_canonical(body)).hexdigest() == raw["digest"]
+    expected = hmac.new(verifier, _canonical(body), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, raw["signature"])
 
 
 class StaticViewer(Protocol):
@@ -73,7 +77,7 @@ class LabLifecycleCollector:
             static = static_text_evidence(proof, layout, self.viewer.static_frames(layout))
             automatic = run_automatic_scene(proof=proof, verified_context=identity, layout=layout,
                                              dedicated_desktop=dedicated_desktop, fixture_window=fixture_window)
-            return LabTranscript.create(identity={"origin": identity.origin, "realm": identity.realm,
+            return LabTranscript.create(verifier=self.lab_run.transcript_verifier(), identity={"origin": identity.origin, "realm": identity.realm,
                                                   "runId": identity.run_id, "epoch": identity.epoch},
                                         static=static, automatic=automatic, receipts=[])
         finally:
@@ -95,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     # Browser/producer adapters are intentionally required rather than guessed
     # from a personal desktop.  The lifecycle executable remains reviewable and
     # emits a durable BLOCKED artifact when no adapter was supplied.
-    blocked = LabTranscript.create(identity={}, static={"status": NOT_RUN, "failures": ["real-lab-viewer-adapter-required"]},
+    blocked = LabTranscript.create(verifier=b"unstarted-lab", identity={}, static={"status": NOT_RUN, "failures": ["real-lab-viewer-adapter-required"]},
                                     automatic={"status": BLOCKED, "failures": ["real-lab-viewer-adapter-required"]}, receipts=[])
     write_artifact(args.output, blocked)
     print(json.dumps(blocked.as_dict()))

@@ -21,6 +21,7 @@ class Run:
     def start(self, mode): self.calls.append(("start", mode)); return Identity()
     def start_host(self): self.calls.append(("host",))
     def close(self): self.calls.append(("close",))
+    def transcript_verifier(self): return b"captured-lab-secret"
 
 
 def proof(_identity): return runner.ProducerProof(7, 3, Identity.origin, "attempt", 2, Identity.realm, Identity.run_id)
@@ -39,11 +40,14 @@ def test_no_input_rehearsal_starts_lab_and_host_collects_static_then_blocks_only
     assert run.calls == [("start", "legacy"), ("host",), ("close",)]
     assert result.static["status"] == runner.PASS
     assert result.automatic["status"] == runner.BLOCKED
-    assert runner.verify_transcript(result.as_dict(), identity=result.identity)
+    assert runner.verify_transcript(result.as_dict(), identity=result.identity, verifier=b"captured-lab-secret")
 
 
-def test_transcript_digest_rejects_forged_receipt_or_identity():
-    result = runner.LabTranscript.create(identity={"runId": "r"}, static={"status": "PASS"}, automatic={"status": "BLOCKED"}, receipts=[]).as_dict()
-    assert runner.verify_transcript(result, identity={"runId": "r"})
+def test_transcript_signature_rejects_a_receipt_forgery_even_when_attacker_recomputes_an_unkeyed_digest():
+    result = runner.LabTranscript.create(verifier=b"captured", identity={"runId": "r"}, static={"status": "PASS"}, automatic={"status": "BLOCKED"}, receipts=[]).as_dict()
+    assert runner.verify_transcript(result, identity={"runId": "r"}, verifier=b"captured")
     result["receipts"].append({"inputId": "forged"})
-    assert not runner.verify_transcript(result, identity={"runId": "r"})
+    # An unkeyed recomputation is irrelevant: validation requires the captured
+    # run verifier, which is not present in the durable artifact.
+    result["signature"] = __import__("hashlib").sha256(__import__("json").dumps({key: result[key] for key in ("identity", "static", "automatic", "receipts")}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert not runner.verify_transcript(result, identity={"runId": "r"}, verifier=b"captured")

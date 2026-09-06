@@ -48,6 +48,7 @@ async function createLabRuntime(options = {}) {
   const credentials = { jwtSecret: randomSecret(), viewerPassword: randomSecret(), hostSecret: randomSecret() };
   const realm = options.realm || `lab-${crypto.randomUUID()}`;
   const contextSecret = randomSecret();
+  const transcriptSecret = randomSecret();
   const issuedContexts = new Map();
   // A proof admission is intentionally consumed by the Viewer socket.  The
   // Host context therefore transitions into this server-owned session instead
@@ -179,7 +180,7 @@ async function createLabRuntime(options = {}) {
     });
   });
   return {
-    runtime, origin, credentials, realm, contextSecret,
+    runtime, origin, credentials, realm, contextSecret, transcriptSecret,
     async close() {
       for (const session of labSessions.values()) session.bindings.clear();
       labSessions.clear();
@@ -195,7 +196,7 @@ async function main() {
   const runtimeIndex = process.argv.indexOf('--runtime-dir');
   const runtimeDir = runtimeIndex >= 0 ? process.argv[runtimeIndex + 1] : '';
   const lab = await createLabRuntime({ allowSourceFallback: true, realm, runtimeDir });
-  if (process.argv.includes('--json')) process.stdout.write(`${JSON.stringify({ origin: lab.origin, realm: lab.realm, hostSecret: lab.credentials.hostSecret, viewerPassword: lab.credentials.viewerPassword, contextSecret: lab.contextSecret })}\n`);
+  if (process.argv.includes('--json')) process.stdout.write(`${JSON.stringify({ origin: lab.origin, realm: lab.realm, hostSecret: lab.credentials.hostSecret, viewerPassword: lab.credentials.viewerPassword, contextSecret: lab.contextSecret, transcriptSecret: lab.transcriptSecret })}\n`);
   const close = async () => { await lab.close(); process.exit(0); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
 }
