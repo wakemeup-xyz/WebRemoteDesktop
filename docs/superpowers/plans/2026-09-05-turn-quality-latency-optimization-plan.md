@@ -4,6 +4,8 @@
 
 日期：2026-09-05
 状态：Task 11–12 已合入并重启；Task 13 长跑 FAIL、场景仍有 NOT RUN；Task 14 两档候选均 FAIL、到250ms上限停止，产品验收未关闭
+
+下一轮规划入口：[画质脉冲与出帧耗时计划](2026-09-06-turn-pulse-throughput-next-plan.md)。此处Task0–14保留历史状态，新计划已独立复审，尚未实施。
 设计：`docs/superpowers/specs/2026-09-05-turn-quality-latency-optimization-design.md`
 诊断：`docs/superpowers/reports/2026-09-05-turn-quality-latency-review.md`
 
