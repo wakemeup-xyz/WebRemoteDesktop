@@ -73,6 +73,19 @@ test('lab runtime exposes only the selected injected TURN path and preserves exp
   }
 });
 
+test('lab always serves its checked-out Viewer source instead of a shared stale dist manifest', async () => {
+  const lab = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    const viewer = await fetch(`${lab.origin}/viewer.html`);
+    const html = await viewer.text();
+    assert.equal(viewer.status, 200);
+    assert.match(html, /src="js\/webrtc\.js"/);
+    assert.doesNotMatch(html, /assets\/desktop-core\./);
+  } finally {
+    await lab.close();
+  }
+});
+
 test('lab signal creates a private runtime with random temporary authentication', async () => {
   const lab = await createLabRuntime({ allowSourceFallback: true });
   try {

@@ -3,6 +3,7 @@
 /* A disposable Signal server for the local lab. It never calls startServer(). */
 
 const crypto = require('node:crypto');
+const path = require('node:path');
 const { createServerApp } = require('../signal-server/server');
 const { createRuntimeContext } = require('../signal-server/websocket/runtime-context');
 
@@ -130,6 +131,10 @@ async function createLabRuntime(options = {}) {
   const turnBootstrap = options.turnBootstrap === undefined ? null : validateLabTurnBootstrap(options.turnBootstrap);
   const runtime = createServerApp({
     config: labConfig(credentials, options.runtimeDir || '', turnBootstrap),
+    // Lab must serve the checked-out source so its Viewer adapter and the
+    // marker decoder execute the exact code under test, never a stale shared
+    // production build manifest.
+    webClientDistPath: path.join(options.runtimeDir || process.cwd(), `.wrd-lab-no-dist-${crypto.randomUUID()}`),
     signalingRuntimeContext: createRuntimeContext({
       maxProofAdmissions: options.maxProofAdmissions ?? 1,
       realm,
