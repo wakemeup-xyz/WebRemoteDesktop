@@ -3,7 +3,7 @@
 > EnterPlanMode 仓库同步副本。原始规划产物：`~/.Codex/plans/turn-quality-latency-optimization.md`。
 
 日期：2026-09-05
-状态：Reviewed / Ready for implementation
+状态：原实现已合入；2026-09-06 复核后继续 Task 11–13，产品验收未关闭
 设计：`docs/superpowers/specs/2026-09-05-turn-quality-latency-optimization-design.md`
 诊断：`docs/superpowers/reports/2026-09-05-turn-quality-latency-review.md`
 
@@ -328,6 +328,39 @@ node scripts/prove-turn-relay.mjs --base-url http://127.0.0.1:8080 --duration-se
 5. 用户未明确要求commit/push时停在可审阅工作树；若之后授权commit，使用窄范围staging并执行仓库commit closure检查。
 
 ## 完成定义
+
+以下 Task 11–13 为 2026-09-06 用户要求继续后的纠正工作，沿用原 EnterPlanMode 路径和设计门禁。原始 Task 0–10 不重新派发；已合入代码保留，产品未验收项继续开放。
+
+## Task 11：修正连续呈现采集器（当前实施）
+
+**范围：** `scripts/turn_runtime_collector.py`、`scripts/test_turn_runtime_collector.py`，必要时新增直接执行采集 JS 的 Node 测试。不要改线上 Viewer/Host、恢复协议或编码默认。
+
+1. 先用实际 `SAMPLE_JS` 建立失败测试：帧回调 0ms 和 1490ms，采样 1000ms 和 2000ms；必须识别 1490ms 间隔，不能因帧龄为 1000/510ms 而通过。
+2. 将采样帧龄明确命名为 `paintAgeMs`，另采集逐帧 `maxPaintGapMs`；持续无帧尚未结束也必须被检出。采用有界累计统计，覆盖 phase 边界、首帧等待、跨采样间隔、attempt 改变、video 元素更换、旧回调取消/失效。不得将其他 phase 的暂停/恢复间隔计入当前窗口，也不得让 tracker 重置掩盖当前窗口故障。
+3. 采样中 `getStats()` 异步等待结束后的帧龄不能为负；采集 video 的 x/y/width/height 和变化范围，支持不大于 1 CSS px 的门槛。缺测、非有限值、attempt/尺寸变化必须诚实失败，不能沿用旧帧龄字段冒充完整证据。
+4. 汇总检查每个区间及累计最大间隔，不因最终恢复或 FPS 中位通过而放过卡顿。旧 artifact 缺少新字段不能通过新门禁。
+5. 修正报告语义；保持静止文字、输入和丢包等未执行项 `NOT RUN`。不能让采集器单凭帧间隔宣称画质脉冲消失。
+
+**验证：** Python collector 测试和直接执行生产采集 JS 的确定性测试，包含 1490ms 反例、健康 20FPS、无首帧、持续 stall、phase reset、attempt/video 更换、异步统计期间的新帧、几何变化。允许本地纯合成页面，不得连接或抢占现有 Viewer。独立 review 后才能集成。
+
+## Task 12：验证 Host 耗时机制与候选选择正确性
+
+1. 只读分析捕获、缩放、颜色转换、PyAV 编码、线程池与调度路径，并检查当前进程/日志；将事实与资源竞争假设分开。没有受控证据不直接改捕获倍率、线程数或编码默认。
+   - 已确认的事件循环同步工作：复用帧 `.copy()` 和 `VideoFrame.from_ndarray`；将它们及已有缩放统一在现有 `imgproc` 单线程池中顺序执行，每次返回独立 VideoFrame，PTS/time_base 在 await 后由 track 设置，不缓存或跨线程并发修改 VideoFrame/codec。
+   - 优先保持原 ndarray 缓存、异常回退与尺寸语义；暂停、停止和分辨率切换期间不能返回过期帧。不得增加无界队列或额外线程池。
+   - 先写失败测试证明构帧等待期间事件循环仍可执行心跳，再实现；用真实 PyAV 测试验证像素/格式/尺寸及逐帧 PTS。覆盖 fresh/reuse/fallback、暂停/停止和 profile 变化。
+   - 只有确定性事件循环隔离与内容测试通过才保留代码。运行增益依然标记待实测，不用合成探针证明真实 FPS 达标。
+2. 修复 `select_relay_candidate()` 遇到首个待验证候选就提前返回的问题：若后续候选完整通过门槛，应选首个完整通过的候选；否则保留首个离线合格候选等待运行验证；全部离线失败仍返回 `no-offline-winner`。先失败测试再实现。
+3. 将发现的可验证耗时优化及下一组编码实验写入复核报告，保持一次改变一个变量。允许有界、低优先级的离线探针；有活动 Viewer 时不运行高负载矩阵，也不把离线结果当真实 TURN 通过。
+
+## Task 13：复核、可用维护窗口验收与交付
+
+1. 对 Task 11、12 分别进行 spec/质量复核，修复 P1 后执行相关测试及一次全范围代码审查。
+2. 保留既有用户脏文件；只将本轮文件纳入分支。有活动 Viewer 时不重启或启动第二个 Viewer。
+3. Viewer 退出且服务准备就绪后，按修正采集器重跑 720p 10 分钟、1080p 5 分钟及场景测试。无受控 Host 内容或隔离丢包环境时如实保留对应 `NOT RUN`，不能把它们替换为截图或 HTTP 限速。
+4. 原编码候选未合格前保持 legacy；修好采集器不等于关闭画质/性能问题。后续部署遵循已授权的 main 合入与本地重启范围，tunnel 保持不动。
+
+## 总体完成定义（不变）
 
 - 产品代码、测试、构建和文档均通过。
 - 时间基错误已由单元测试和实际编码器时间戳probe关闭。

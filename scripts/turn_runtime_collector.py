@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import secrets
 import time
@@ -49,7 +50,15 @@ def phase_duration_seconds(phase: str, override: int | None) -> int:
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
-    numbers = sorted(float(value) for value in values if value is not None)
+    numbers = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            numbers.append(number)
+    numbers.sort()
     if not numbers:
         return None
     return numbers[min(len(numbers) - 1, int(len(numbers) * fraction))]
@@ -74,6 +83,7 @@ def collect_phase_samples(
     sample: Callable[[int], dict[str, Any]],
     now_ms: Callable[[], int] | None = None,
     wait_ms: Callable[[int], None] | None = None,
+    after_sample: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Collect exactly one sample per requested second; healthy samples never end the run."""
     now_ms = now_ms or (lambda: time.monotonic_ns() // 1_000_000)
@@ -93,15 +103,33 @@ def collect_phase_samples(
         record["scheduledElapsedMs"] = index * 1000
         record["cadenceLateMs"] = max(0, record["elapsedMs"] - record["scheduledElapsedMs"])
         records.append(redact_runtime_sample(record))
+        # Sidecars consume the remaining interval budget, not the timestamp of
+        # an already completed measurement. Overruns delay the next sample and
+        # still fail cadence; rVFC tracking remains active throughout.
+        if after_sample is not None:
+            after_sample(index)
     return records
 
 
 def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds: int | None = None) -> dict[str, Any]:
-    """Evaluate every sample.  A good final sample cannot hide an earlier outage."""
+    """Evaluate every sample; age snapshots cannot substitute for frame gaps."""
     failures: set[str] = set()
+    required_duration = duration_seconds if duration_seconds is not None else PHASE_DURATIONS[phase]
+    def finite(value: Any) -> bool:
+        try:
+            return value is not None and float(value) == float(value) and abs(float(value)) != float("inf")
+        except (TypeError, ValueError):
+            return False
+
     fps = [sample.get("derivedFps") for sample in samples[1:]]
     buffers = [sample.get("jitterBufferMs") for sample in samples[1:]]
-    required_duration = duration_seconds if duration_seconds is not None else PHASE_DURATIONS[phase]
+
+    attempts: set[str] = set()
+    videos: set[int] = set()
+    phase_ids: set[int] = set()
+    resolutions: set[tuple[float, float]] = set()
+    max_paint_gaps: list[float] = []
+    interval_paint_gaps: list[float] = []
     for index, sample in enumerate(samples):
         selected = sample.get("selectedPair") or {}
         if str(selected.get("type") or "").lower() != "relay":
@@ -111,24 +139,86 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
         if sample.get("socketConnected") is not True:
             failures.add("socket-not-connected")
         resolution = sample.get("resolution") or {}
-        height = float(resolution.get("height") or 0)
+        height = float(resolution.get("height")) if finite(resolution.get("height")) else 0
         if not ((600 <= height <= 800) if phase == "720p" else (900 <= height <= 1100)):
             failures.add("resolution-class")
-        # The boundary snapshot registers requestVideoFrameCallback.  It has no
-        # prior paint interval by construction, so only interval samples prove
-        # paint presence and continuity.
-        if index > 0 and sample.get("paintGapMs") is None:
-            failures.add("missing-paint-gap")
-    for sample in samples[1:]:
-        if sample.get("paintGapMs") is not None and float(sample.get("paintGapMs")) > 1000:
-            failures.add("post-warmup-paint-gap")
+        resolution_width = resolution.get("width")
+        resolution_height = resolution.get("height")
+        if not finite(resolution_width) or not finite(resolution_height):
+            failures.add("missing-resolution")
+        else:
+            resolutions.add((float(resolution_width), float(resolution_height)))
+        attempt = sample.get("connectionAttemptId")
+        video = sample.get("videoIdentity")
+        phase_id = sample.get("collectorPhaseId")
+        if attempt is None:
+            failures.add("missing-connection-attempt")
+        else:
+            attempts.add(str(attempt))
+        if not finite(video):
+            failures.add("missing-video-identity")
+        else:
+            videos.add(int(float(video)))
+        if not finite(phase_id):
+            failures.add("missing-collector-phase")
+        else:
+            phase_ids.add(int(float(phase_id)))
+        geometry = sample.get("geometry")
+        geometry_values = (
+            "x", "y", "width", "height", "minX", "maxX", "minY", "maxY",
+            "minWidth", "maxWidth", "minHeight", "maxHeight",
+        )
+        if not isinstance(geometry, dict) or not all(finite(geometry.get(name)) for name in geometry_values):
+            failures.add("missing-geometry")
+        elif any(float(geometry[f"max{name}"]) - float(geometry[f"min{name}"]) > 1
+                 for name in ("X", "Y", "Width", "Height")):
+            failures.add("geometry-changed")
+        # The boundary snapshot only starts the callback.  Every later sample
+        # needs a fresh first paint plus both interval and cumulative evidence.
+        if index > 0:
+            painted = sample.get("paintResolution")
+            dimensions = ("minWidth", "maxWidth", "minHeight", "maxHeight")
+            if not isinstance(painted, dict) or not all(finite(painted.get(name)) and float(painted[name]) > 0 for name in dimensions):
+                failures.add("missing-paint-resolution")
+            elif (float(painted["minWidth"]) != float(painted["maxWidth"])
+                  or float(painted["minHeight"]) != float(painted["maxHeight"])
+                  or float(painted["maxWidth"]) != float(resolution_width or 0)
+                  or float(painted["maxHeight"]) != float(resolution_height or 0)):
+                failures.add("resolution-changed")
+            if sample.get("paintEvidenceStatus") != "complete" or sample.get("firstPaintObserved") is not True:
+                failures.add("missing-first-paint")
+            age = sample.get("paintAgeMs")
+            if not finite(age) or float(age) < 0:
+                failures.add("invalid-paint-age")
+            cumulative = sample.get("maxPaintGapMs")
+            interval = sample.get("intervalMaxPaintGapMs")
+            if not finite(cumulative) or float(cumulative) < 0:
+                failures.add("missing-max-paint-gap")
+            else:
+                max_paint_gaps.append(float(cumulative))
+            if not finite(interval) or float(interval) < 0:
+                failures.add("missing-interval-paint-gap")
+            else:
+                interval_paint_gaps.append(float(interval))
+    if len(attempts) > 1:
+        failures.add("connection-attempt-changed")
+    if len(videos) > 1:
+        failures.add("video-element-changed")
+    if len(resolutions) > 1:
+        failures.add("resolution-changed")
+    if len(phase_ids) > 1:
+        failures.add("collector-phase-reset")
+    if any(value > 1000 for value in max_paint_gaps):
+        failures.add("max-paint-gap")
+    if any(value > 1000 for value in interval_paint_gaps):
+        failures.add("interval-paint-gap")
     if len(samples) != required_duration + 1 or not samples or samples[-1].get("elapsedMs", -1) < required_duration * 1000:
         failures.add("incomplete-wall-clock-duration")
     if any(float(sample.get("cadenceLateMs") or 0) > 250 for sample in samples):
         failures.add("sample-cadence")
     fps_p50 = percentile(fps, 0.5)
     jitter_p95 = percentile(buffers, 0.95)
-    jitter_max = max((float(value) for value in buffers if value is not None), default=None)
+    jitter_max = max((float(value) for value in buffers if finite(value)), default=None)
     required_fps = 18 if phase == "720p" else 15
     if fps_p50 is None or fps_p50 < required_fps:
         failures.add("fps-p50")
@@ -144,6 +234,8 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
         "derivedFpsP50": fps_p50,
         "jitterBufferMsP95": jitter_p95,
         "jitterBufferMsMax": jitter_max,
+        "maxPaintGapMs": max(max_paint_gaps, default=None),
+        "intervalMaxPaintGapMs": max(interval_paint_gaps, default=None),
         "failures": sorted(failures),
         "ok": not failures,
     }
@@ -218,15 +310,96 @@ def wait_for_healthy_relay(page: Any, timeout_seconds: int = 45) -> dict[str, An
 
 
 SAMPLE_JS = r"""async () => {
-  const now = performance.now();
-  const state = window.__wrdTurnCollector || (window.__wrdTurnCollector = { previous: null, lastPaintAt: null, trackerBound: false, inputAcks: [] });
-  const video = document.getElementById('remoteVideo');
-  if (video && !state.trackerBound && typeof video.requestVideoFrameCallback === 'function') {
-    state.trackerBound = true;
-    const tick = () => { state.lastPaintAt = performance.now(); video.requestVideoFrameCallback(tick); };
-    video.requestVideoFrameCallback(tick);
-  }
+  const state = window.__wrdTurnCollector || (window.__wrdTurnCollector = {});
+  state.inputAcks ||= [];
+  state.previous ||= null;
+  state.tracker ||= null;
+  state.trackerGeneration ||= 0;
+  state.collectorPhaseId ||= 0;
+  state.videoIds ||= new WeakMap();
+  state.nextVideoIdentity ||= 1;
+  const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+  const numberOrNull = (value) => finite(value) ? Number(value) : null;
+  const geometryFor = (element) => {
+    const rect = element?.getBoundingClientRect?.();
+    const geometry = { x: numberOrNull(rect?.x), y: numberOrNull(rect?.y), width: numberOrNull(rect?.width), height: numberOrNull(rect?.height) };
+    return Object.values(geometry).every((value) => value !== null) ? geometry : null;
+  };
+  const videoIdentity = (element) => {
+    if (!element) return null;
+    if (!state.videoIds.has(element)) state.videoIds.set(element, state.nextVideoIdentity++);
+    return state.videoIds.get(element);
+  };
+  const resetTracker = () => {
+    const old = state.tracker;
+    if (old?.callbackId !== null && old?.video?.cancelVideoFrameCallback) old.video.cancelVideoFrameCallback(old.callbackId);
+    state.trackerGeneration += 1;
+    state.tracker = null;
+    state.previous = null;
+  };
+  const updateGeometry = (tracker, geometry) => {
+    if (!geometry) { tracker.geometryInvalid = true; return; }
+    if (!tracker.geometry) {
+      tracker.geometry = { ...geometry, minX: geometry.x, maxX: geometry.x, minY: geometry.y, maxY: geometry.y, minWidth: geometry.width, maxWidth: geometry.width, minHeight: geometry.height, maxHeight: geometry.height };
+      return;
+    }
+    for (const [name, value] of Object.entries(geometry)) {
+      const title = name[0].toUpperCase() + name.slice(1);
+      tracker.geometry[name] = value;
+      tracker.geometry[`min${title}`] = Math.min(tracker.geometry[`min${title}`], value);
+      tracker.geometry[`max${title}`] = Math.max(tracker.geometry[`max${title}`], value);
+    }
+  };
+  const observeGap = (tracker, gap) => {
+    if (!finite(gap) || gap < 0) { tracker.timingInvalid = true; return; }
+    tracker.maxPaintGapMs = Math.max(tracker.maxPaintGapMs, gap);
+    tracker.intervalMaxPaintGapMs = Math.max(tracker.intervalMaxPaintGapMs, gap);
+  };
+  const observeResolution = (tracker, metadata) => {
+    const width = metadata?.width ?? tracker.video.videoWidth;
+    const height = metadata?.height ?? tracker.video.videoHeight;
+    if (!finite(width) || !finite(height) || width <= 0 || height <= 0) {
+      tracker.resolutionInvalid = true;
+      return;
+    }
+    const previous = tracker.paintResolution;
+    tracker.paintResolution = previous ? {
+      minWidth: Math.min(previous.minWidth, width), maxWidth: Math.max(previous.maxWidth, width),
+      minHeight: Math.min(previous.minHeight, height), maxHeight: Math.max(previous.maxHeight, height),
+    } : { minWidth: width, maxWidth: width, minHeight: height, maxHeight: height };
+  };
+  const resolveTracker = (at) => {
+    const video = document.getElementById('remoteVideo');
+    const attempt = WebRTC?.currentConnectionAttemptId ?? null;
+    const mediaPhase = WebRTC?.getMediaAppliedPhase?.() ?? null;
+    const identity = videoIdentity(video);
+    const active = mediaPhase === 'active';
+    const current = state.tracker;
+    if (current && (current.phaseId !== state.collectorPhaseId || current.attempt !== attempt || current.video !== video || current.active !== active)) resetTracker();
+    if (!active || !video || typeof video.requestVideoFrameCallback !== 'function') return { tracker: null, video, attempt, identity, mediaPhase, active };
+    if (!state.tracker) {
+      const tracker = { generation: state.trackerGeneration, phaseId: state.collectorPhaseId, attempt, video, identity, active, startedAt: at, intervalStartedAt: at, firstPaintAt: null, lastPaintAt: null, maxPaintGapMs: 0, intervalMaxPaintGapMs: 0, callbackId: null, geometry: null, geometryInvalid: false, timingInvalid: false };
+      const tick = (_now, metadata) => {
+        if (state.tracker !== tracker || tracker.generation !== state.trackerGeneration || tracker.video !== video) return;
+        const paintedAt = performance.now();
+        if (tracker.firstPaintAt === null) { observeGap(tracker, paintedAt - tracker.startedAt); tracker.firstPaintAt = paintedAt; }
+        else observeGap(tracker, paintedAt - tracker.lastPaintAt);
+        tracker.lastPaintAt = paintedAt;
+        observeResolution(tracker, metadata);
+        updateGeometry(tracker, geometryFor(video));
+        tracker.callbackId = video.requestVideoFrameCallback(tick);
+      };
+      updateGeometry(tracker, geometryFor(video));
+      state.tracker = tracker;
+      tracker.callbackId = video.requestVideoFrameCallback(tick);
+    }
+    return { tracker: state.tracker, video, attempt, identity, mediaPhase, active };
+  };
+  const startedAt = performance.now();
+  resolveTracker(startedAt);
   const reports = WebRTC?.pc ? Array.from((await WebRTC.pc.getStats()).values()) : [];
+  const now = performance.now();
+  const phase = resolveTracker(now);
   const inbound = reports.find((r) => r.type === 'inbound-rtp' && (r.kind === 'video' || r.mediaType === 'video')) || {};
   const transport = reports.find((r) => r.type === 'transport' && r.selectedCandidatePairId);
   const pair = reports.find((r) => r.id === transport?.selectedCandidatePairId) || reports.find((r) => r.type === 'candidate-pair' && r.state === 'succeeded' && (r.selected || r.nominated)) || {};
@@ -240,22 +413,66 @@ SAMPLE_JS = r"""async () => {
   const controller = window.LinkQualityController?.snapshot?.() || null;
   const input = window.Input?.getDiagnosticState?.() || null;
   const latency = window.LatencyMonitor?.getStats?.() || null;
+  const tracker = phase.tracker;
+  let paintAgeMs = null;
+  let maxPaintGapMs = null;
+  let intervalMaxPaintGapMs = null;
+  let firstPaintObserved = false;
+  let paintEvidenceStatus = phase.active ? 'awaiting-first-paint' : 'inactive-phase';
+  let geometry = tracker?.geometry && !tracker.geometryInvalid ? { ...tracker.geometry } : null;
+  if (tracker) {
+    updateGeometry(tracker, geometryFor(phase.video));
+    geometry = tracker.geometry && !tracker.geometryInvalid ? { ...tracker.geometry } : null;
+    if (geometry) {
+      for (const name of ['X', 'Y', 'Width', 'Height']) geometry[`range${name}`] = geometry[`max${name}`] - geometry[`min${name}`];
+    }
+    if (tracker.firstPaintAt !== null && tracker.lastPaintAt !== null) {
+      paintAgeMs = now - tracker.lastPaintAt;
+      if (!finite(paintAgeMs) || paintAgeMs < 0) tracker.timingInvalid = true;
+      else {
+        tracker.maxPaintGapMs = Math.max(tracker.maxPaintGapMs, paintAgeMs);
+        const intervalAgeMs = now - Math.max(tracker.lastPaintAt, tracker.intervalStartedAt);
+        if (!finite(intervalAgeMs) || intervalAgeMs < 0) tracker.timingInvalid = true;
+        else tracker.intervalMaxPaintGapMs = Math.max(tracker.intervalMaxPaintGapMs, intervalAgeMs);
+      }
+      if (!tracker.timingInvalid && finite(paintAgeMs) && paintAgeMs >= 0) {
+        firstPaintObserved = true;
+        maxPaintGapMs = tracker.maxPaintGapMs;
+        intervalMaxPaintGapMs = tracker.intervalMaxPaintGapMs;
+        paintEvidenceStatus = tracker.geometryInvalid ? 'invalid-geometry' : tracker.resolutionInvalid ? 'invalid-resolution' : 'complete';
+      } else paintEvidenceStatus = 'invalid-timing';
+    }
+  }
   const sample = {
     selectedPair: { type: String(local.candidateType || pair.localCandidateType || '').toLowerCase(), protocol: String(local.protocol || pair.protocol || '').toLowerCase(), rttMs: Number.isFinite(Number(pair.currentRoundTripTime)) ? Math.round(Number(pair.currentRoundTripTime) * 1000) : null },
     pcConnectionState: String(WebRTC?.pc?.connectionState || ''), socketConnected: !!WebRTC?.socket?.connected,
-    connectionAttemptId: WebRTC?.currentConnectionAttemptId || null,
-    resolution: { width: Number(video?.videoWidth || 0), height: Number(video?.videoHeight || 0), cssWidth: Math.round(video?.getBoundingClientRect?.().width || 0), cssHeight: Math.round(video?.getBoundingClientRect?.().height || 0) },
+    connectionAttemptId: phase.attempt, videoIdentity: phase.identity, collectorPhaseId: state.collectorPhaseId,
+    resolution: { width: numberOrNull(phase.video?.videoWidth), height: numberOrNull(phase.video?.videoHeight), cssWidth: geometry?.width ?? null, cssHeight: geometry?.height ?? null },
+    paintResolution: tracker?.paintResolution && !tracker.resolutionInvalid ? { ...tracker.paintResolution } : null,
     frameSequence: Number(WebRTC?._videoFrameSeq || 0), browserReportedFps: Number(inbound.framesPerSecond || 0),
     receivedDelta: delta('framesReceived'), decodedDelta: delta('framesDecoded'), packetsLostDelta: delta('packetsLost'), bytesDelta: delta('bytesReceived'),
     derivedFps: elapsed ? Math.round((delta('framesDecoded') * 1000 / elapsed) * 10) / 10 : 0,
     jitterBufferMs: jitterCount ? Math.round((delta('jitterBufferDelay') / jitterCount * 1000) * 10) / 10 : 0,
     framesDroppedDelta: delta('framesDropped'), packetsReceivedDelta: delta('packetsReceived'), nackCountDelta: delta('nackCount'), pliCountDelta: delta('pliCount'), firCountDelta: delta('firCount'), freezeDelta: delta('freezeCount'),
-    paintGapMs: state.lastPaintAt === null ? null : Math.round(now - state.lastPaintAt), paint: { ...paint },
+    paintAgeMs: paintAgeMs === null ? null : Math.round(paintAgeMs), maxPaintGapMs: maxPaintGapMs === null ? null : Math.round(maxPaintGapMs), intervalMaxPaintGapMs: intervalMaxPaintGapMs === null ? null : Math.round(intervalMaxPaintGapMs), firstPaintObserved, paintEvidenceStatus, geometry, paint: { ...paint },
     latency, input, policy: { networkMode: WebRTC?.networkMode || null, profile: controller?.currentProfile || null, profileChanges: controller?.profileChanges || [], keyframeRequested: WebRTC?._keyframeRequested === true, keyframeEmitted: WebRTC?._keyframeEmitted === true, keyframeRequestSequence: Number(WebRTC?._keyframeRequestSequence || 0) },
     inputAcks: [...state.inputAcks], mediaPhase: WebRTC?.getMediaAppliedPhase?.() || null,
   };
+  if (tracker) { tracker.intervalMaxPaintGapMs = 0; tracker.intervalStartedAt = now; }
   state.previous = { now, framesReceived: total('framesReceived'), framesDecoded: total('framesDecoded'), packetsLost: total('packetsLost'), bytesReceived: total('bytesReceived'), jitterBufferDelay: total('jitterBufferDelay'), jitterBufferEmittedCount: total('jitterBufferEmittedCount'), framesDropped: total('framesDropped'), packetsReceived: total('packetsReceived'), nackCount: total('nackCount'), pliCount: total('pliCount'), firCount: total('firCount'), freezeCount: total('freezeCount') };
   return sample;
+}"""
+
+
+PAINT_PHASE_START_JS = r"""() => {
+  const state = window.__wrdTurnCollector || (window.__wrdTurnCollector = {});
+  const old = state.tracker;
+  if (old?.callbackId !== null && old?.video?.cancelVideoFrameCallback) old.video.cancelVideoFrameCallback(old.callbackId);
+  state.trackerGeneration = Number(state.trackerGeneration || 0) + 1;
+  state.tracker = null;
+  state.previous = null;
+  state.collectorPhaseId = Number(state.collectorPhaseId || 0) + 1;
+  return state.collectorPhaseId;
 }"""
 
 
@@ -402,6 +619,10 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                 wait_for_healthy_relay(page)
                 duration = phase_duration_seconds(phase, args.duration_seconds)
                 marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": record_interactions(page, bool(args.controlled_producer_id)), "pauseResumeRefresh": record_pause_resume_refresh(page)}
+                # Markers intentionally pause and refresh media.  Start the
+                # evidence window only after they settle so their lifecycle
+                # gaps cannot be attributed to this phase.
+                page.evaluate(PAINT_PHASE_START_JS)
                 screenshots = []
                 screenshot_errors = []
                 output_path = Path(args.output)
@@ -409,7 +630,7 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                 screenshot_dir.mkdir(parents=True, exist_ok=True)
                 screenshot_marks = {0: "static-start", duration // 2: "static-middle", duration - 1: "static-end"}
 
-                def sample(index: int) -> dict[str, Any]:
+                def take_screenshot(index: int) -> None:
                     label = screenshot_marks.get(index)
                     if label:
                         target = screenshot_dir / f"{artifact['runId']}-{phase}-{label}.png"
@@ -418,9 +639,10 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                             screenshots.append(str(target))
                         except Exception as error:
                             screenshot_errors.append({"label": label, "message": str(error)})
-                    return page.evaluate(SAMPLE_JS)
-
-                samples = collect_phase_samples(duration, sample=sample, wait_ms=page.wait_for_timeout)
+                samples = collect_phase_samples(
+                    duration, sample=lambda _index: page.evaluate(SAMPLE_JS),
+                    wait_ms=page.wait_for_timeout, after_sample=take_screenshot,
+                )
                 summary = summarize_phase(phase, samples, duration_seconds=duration)
                 summary["markerFailures"] = marker_failures(marker)
                 if screenshot_errors or len(screenshots) != 3:

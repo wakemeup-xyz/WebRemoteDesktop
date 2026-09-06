@@ -22,7 +22,6 @@ import resource
 from mss import mss as MSS
 import numpy as np
 import av
-from av import VideoFrame
 from PIL import Image
 try:
     import cv2
@@ -31,6 +30,7 @@ except ImportError:
     cv2 = None
     HAS_CV2 = False
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCConfiguration, RTCIceServer
+from aiortc.mediastreams import MediaStreamError
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import screeninfo
@@ -999,6 +999,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._frame_interval = 1.0 / target_fps
         self._max_width = max_width
         self._max_height = max_height
+        self._target_generation = 0
         self._target_lock = threading.Lock()
         self._pending_input_ids = set()
         self._pending_input_data = []
@@ -1030,6 +1031,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         # Cache last processed frame for reuse when capture starves
         self._last_img = None
         self._last_img_shape = (0, 0)
+        self._last_img_target_generation = -1
         self._reuse_count = 0
         self._total_reuse = 0
 
@@ -1094,6 +1096,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             with self._capture_lock:
                 self._capture_buffer = None
                 self._last_img = None
+                self._last_img_target_generation = -1
             with self._pending_input_lock:
                 self._pending_input_ids.clear()
                 self._pending_input_data.clear()
@@ -1116,6 +1119,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         with self._activity_condition:
             self._capture_running = False
             self._suspended = False
+            self._capture_generation += 1
             self._activity_condition.notify_all()
         if self._capture_thread and self._capture_thread.is_alive():
             try:
@@ -1142,12 +1146,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         while self._suspended and self._capture_running:
             await asyncio.sleep(0.05)
         if not self._capture_running:
-            pts, time_base = await self.next_timestamp()
-            blank = np.zeros((max(1, self._max_height // 4), max(1, self._max_width // 4), 3), dtype=np.uint8)
-            frame = VideoFrame.from_ndarray(blank, format="rgb24")
-            frame.pts = pts
-            frame.time_base = time_base
-            return frame
+            raise MediaStreamError
 
         # Frame-rate control
         now = time.time()
@@ -1160,15 +1159,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
             while self._suspended and self._capture_running:
                 await asyncio.sleep(0.05)
             if not self._capture_running:
-                pts, time_base = await self.next_timestamp()
-                blank = np.zeros((max(1, self._max_height // 4), max(1, self._max_width // 4), 3), dtype=np.uint8)
-                frame = VideoFrame.from_ndarray(blank, format="rgb24")
-                frame.pts = pts
-                frame.time_base = time_base
-                return frame
+                raise MediaStreamError
         self._last_frame_time = time.time()
-
-        capture_prepare_start = time.perf_counter()
 
         # Zero-wait: grab latest capture from background thread
         with self._capture_lock:
@@ -1188,55 +1180,62 @@ class ScreenCaptureTrack(VideoStreamTrack):
             # After resume, fall through to capture a fresh frame on next loop.
             return await self.recv()
 
-        if screenshot is not None and seq != self._last_consumed_seq:
-            # Fresh frame available: process it
+        fresh = screenshot is not None and seq != self._last_consumed_seq
+        if fresh:
             self._last_consumed_seq = seq
-            try:
-                img = await loop.run_in_executor(
-                    self._process_executor,
-                    self._process_screenshot,
-                    screenshot
-                )
-                if isinstance(img, np.ndarray) and img.ndim == 3 and img.shape[2] >= 3:
-                    self._last_img = img
-                    self._last_img_shape = img.shape[:2]
-                    self._reuse_count = 0
-                else:
-                    img = self._last_img
-            except Exception:
-                img = self._last_img
-                self._reuse_count += 1
-        elif self._last_img is not None:
-            # Capture starving: reuse last frame (copy to avoid corrupting encoder buffer)
-            img = self._last_img.copy()
+        with self._target_lock:
+            max_width = self._max_width
+            max_height = self._max_height
+            target_generation = self._target_generation
+        capture_generation = self._capture_generation
+        fallback_img = (
+            self._last_img
+            if getattr(self, "_last_img_target_generation", -1) == target_generation
+            else None
+        )
+        queued_at = time.perf_counter()
+        try:
+            frame, cached_img, reused, worker_timing = await loop.run_in_executor(
+                self._process_executor,
+                self._build_video_frame,
+                screenshot if fresh else None,
+                fallback_img,
+                fresh,
+                max_width,
+                max_height,
+                queued_at,
+            )
+        except RuntimeError:
+            # shutdown(wait=False) may win before a new executor task is submitted.
+            if not self._capture_running:
+                raise MediaStreamError
+            raise
+
+        # The executor is allowed to finish its current operation after a state
+        # change, but its product must never cross the old capture/profile epoch.
+        if (
+            not self._capture_running
+            or self._suspended
+            or capture_generation != self._capture_generation
+            or target_generation != self._target_generation
+        ):
+            if not self._capture_running:
+                raise MediaStreamError
+            return await self.recv()
+
+        if cached_img is not None:
+            self._last_img = cached_img
+            self._last_img_shape = cached_img.shape[:2]
+            self._last_img_target_generation = target_generation
+            self._reuse_count = 0
+        elif reused:
             self._reuse_count += 1
             self._total_reuse += 1
-        else:
-            img = np.zeros((self._max_height, self._max_width, 4), dtype=np.uint8)
 
-        capture_prepare_ms = (time.perf_counter() - capture_prepare_start) * 1000
-
-        # Validate frame data
-        if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
-            img = np.zeros((self._max_height, self._max_width, 4), dtype=np.uint8)
-
-        convert_start = time.perf_counter()
-        try:
-            if img.shape[2] == 4:
-                frame = av.VideoFrame.from_ndarray(img, format="bgra")
-            else:
-                bgr = np.ascontiguousarray(img[:, :, :3], dtype=np.uint8)
-                frame = av.VideoFrame.from_ndarray(bgr[:, :, ::-1], format="rgb24")
-        except Exception as e:
-            logger.error(f"Frame conversion failed: {e}")
-            frame = av.VideoFrame.from_ndarray(
-                np.zeros((self._max_height, self._max_width, 4), dtype=np.uint8),
-                format="bgra",
-            )
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
-        convert_time = time.perf_counter() - convert_start
+        convert_time = worker_timing["construct"]
         total_time = time.perf_counter() - recv_start
 
         self._timing_totals["sleep"] += sleep_time
@@ -1292,13 +1291,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
                         pass
 
         self._send_frame_timing(
-            capture_prepare_ms=capture_prepare_ms,
+            capture_prepare_ms=worker_timing["prepare"] * 1000,
             frame_convert_ms=convert_time * 1000,
+            imgproc_queue_ms=worker_timing["queue"] * 1000,
+            imgproc_build_ms=worker_timing["build"] * 1000,
         )
 
         return frame
 
-    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms):
+    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms, imgproc_queue_ms=None, imgproc_build_ms=None):
         host = getattr(self, '_host_ref', None)
         if host is None:
             return
@@ -1319,6 +1320,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "timings": {
                 "capturePrepareMs": round(float(capture_prepare_ms), 3),
                 "frameConvertMs": round(float(frame_convert_ms), 3),
+                "imgprocQueueMs": None if imgproc_queue_ms is None else round(float(imgproc_queue_ms), 3),
+                "imgprocBuildMs": None if imgproc_build_ms is None else round(float(imgproc_build_ms), 3),
                 "encoderMs": None,
                 "rtpSendMs": None,
                 "endToEndVideoMs": None,
@@ -1335,6 +1338,68 @@ class ScreenCaptureTrack(VideoStreamTrack):
         except Exception as e:
             logger.debug("Frame timing send failed: %s", e)
 
+    def _build_video_frame(self, screenshot, fallback_img, fresh, max_width, max_height, queued_at):
+        """Process one capture and build one independent PyAV frame in imgproc.
+
+        PTS remains an asyncio-loop responsibility: aiortc may consume or mutate a
+        frame, so the worker never retains a VideoFrame between calls.
+        """
+        started_at = time.perf_counter()
+        cached_img = None
+        reused = False
+        try:
+            if fresh:
+                img = self._process_screenshot(screenshot, max_width, max_height)
+                if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
+                    raise ValueError("invalid processed screenshot")
+            elif isinstance(fallback_img, np.ndarray):
+                # Keep the ndarray cache; copy only for this independently-owned frame.
+                img = fallback_img.copy()
+                reused = True
+            else:
+                img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
+        except Exception as exc:
+            logger.error("Frame processing failed: %s", exc)
+            reused = True
+            if isinstance(fallback_img, np.ndarray):
+                img = fallback_img.copy()
+            else:
+                img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
+        prepared_at = time.perf_counter()
+        try:
+            frame = self._video_frame_from_image(img)
+            if fresh and not reused:
+                cached_img = img
+        except Exception as exc:
+            logger.error("Frame conversion failed: %s", exc)
+            cached_img = None
+            reused = True
+            try:
+                if isinstance(fallback_img, np.ndarray):
+                    frame = self._video_frame_from_image(fallback_img.copy())
+                else:
+                    raise ValueError("no valid cached frame")
+            except Exception:
+                frame = self._video_frame_from_image(
+                    np.zeros((max_height, max_width, 4), dtype=np.uint8)
+                )
+        finished_at = time.perf_counter()
+        return frame, cached_img, reused, {
+            "queue": max(0.0, started_at - queued_at),
+            "prepare": max(0.0, prepared_at - started_at),
+            "construct": max(0.0, finished_at - prepared_at),
+            "build": max(0.0, finished_at - started_at),
+        }
+
+    @staticmethod
+    def _video_frame_from_image(img):
+        if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
+            raise ValueError("invalid frame image")
+        if img.shape[2] == 4:
+            return av.VideoFrame.from_ndarray(img, format="bgra")
+        bgr = np.ascontiguousarray(img[:, :, :3], dtype=np.uint8)
+        return av.VideoFrame.from_ndarray(bgr[:, :, ::-1], format="rgb24")
+
     def set_max_resolution(self, width, height):
         ABSOLUTE_MAX_WIDTH = 1920
         ABSOLUTE_MAX_HEIGHT = 1080
@@ -1343,6 +1408,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         with self._target_lock:
             self._max_width = width
             self._max_height = height
+            self._target_generation += 1
         logger.info("Screen stream max resolution set to %sx%s (requested capped at %sx%s, monitor=%sx%s)",
                     width, height, ABSOLUTE_MAX_WIDTH, ABSOLUTE_MAX_HEIGHT,
                     self.monitor["width"], self.monitor["height"])
@@ -1352,6 +1418,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         with self._target_lock:
             self._target_fps = target_fps
             self._frame_interval = 1.0 / target_fps
+            self._target_generation += 1
         logger.info("Screen stream target FPS set to %s", target_fps)
 
     @staticmethod
@@ -1370,10 +1437,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.set_target_fps(profile["target_fps"])
         return {"sizeChanged": size_changed, "width": next_w, "height": next_h}
 
-    def _scale_image_array(self, img):
-        with self._target_lock:
-            max_width = self._max_width
-            max_height = self._max_height
+    def _scale_image_array(self, img, max_width=None, max_height=None):
+        if max_width is None or max_height is None:
+            with self._target_lock:
+                max_width = self._max_width
+                max_height = self._max_height
 
         height, width = img.shape[:2]
         if width <= max_width and height <= max_height:
@@ -1394,7 +1462,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         pil_img = pil_img.resize((scaled_width, scaled_height), Image.BOX)
         return np.array(pil_img)
 
-    def _process_screenshot(self, screenshot):
+    def _process_screenshot(self, screenshot, max_width=None, max_height=None):
         """Run numpy conversion + resize (may be called from thread).
         Uses zero-copy np.frombuffer on the raw bytearray for speed."""
         t0 = time.perf_counter()
@@ -1402,7 +1470,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             screenshot.height, screenshot.width, 4
         )
         t1 = time.perf_counter()
-        result = self._scale_image_array(img)
+        result = self._scale_image_array(img, max_width=max_width, max_height=max_height)
         t2 = time.perf_counter()
         elapsed = (t2 - t0) * 1000
         count = getattr(self, '_ps_count', 0) + 1

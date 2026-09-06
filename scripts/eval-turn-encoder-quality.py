@@ -15,6 +15,7 @@ PROBE_PATH = ROOT / "docs/superpowers/reports/evidence/2026-09-05-turn-quality/e
 
 def select_relay_candidate(candidates: list[dict]) -> dict:
     """Separate offline choice from the runtime evidence that can change defaults."""
+    first_offline_winner = None
     for candidate in candidates:
         offline = candidate.get("offline", {})
         runtime = candidate.get("runtime", {})
@@ -33,9 +34,13 @@ def select_relay_candidate(candidates: list[dict]) -> dict:
                 "defaultPolicy": "relay-balanced-v2",
                 "runtimeGateStatus": "PASS",
             }
+        if first_offline_winner is None:
+            first_offline_winner = candidate
+
+    if first_offline_winner is not None:
         return {
             "state": "runtime-validation-candidate",
-            "candidateId": candidate["id"],
+            "candidateId": first_offline_winner["id"],
             "defaultPolicy": "relay-legacy-v1",
             "runtimeGateStatus": "PENDING",
         }

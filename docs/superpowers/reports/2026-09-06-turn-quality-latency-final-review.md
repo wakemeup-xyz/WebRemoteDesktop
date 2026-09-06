@@ -11,9 +11,9 @@
 The implementation and complete automated suites are passing, but the product acceptance gate is not closed for two independent reasons:
 
 1. The offline relay matrix selected `no-offline-winner`; there is no eligible `relay-balanced-v2` parameter set. `relay-legacy-v1` remains the default and the approximately one-second clarity pulse is therefore not closed.
-2. The post-merge collector produced complete local selected-relay media windows: 720p for 600.006s / 601 samples and 1080p for 300.008s / 301 samples. It also produced one superseded 720p run, which is excluded. The complete runs did not authenticate static text or Host-side input, inject finite loss, use the formal public entry, or use a physical device.
+2. The post-merge collector produced complete scheduled local selected-relay sampling windows: 720p for 600.006s / 601 samples and 1080p for 300.008s / 301 samples. It also produced one superseded 720p run, which is excluded. The complete runs did not authenticate static text or Host-side input, inject finite loss, use the formal public entry, or use a physical device. Complete sampling duration does not establish uninterrupted presentation.
 
-There is no verified P0/P1 implementation failure in the reviewed code or automated checks. The acceptance failure and the unexecuted runtime gates still block product completion.
+**Superseded by the 2026-09-06 live-session re-review:** a P1 collector measurement defect is now confirmed: sampled paint age was treated as maximum inter-frame gap. The current human Viewer session also shows 720p FPS median 9 and repeated freezes. See [the performance regression review](2026-09-06-turn-performance-regression-review.md). Historical automated checks remain historical evidence; they do not establish current performance.
 
 ## Spec checklist
 
@@ -26,11 +26,11 @@ There is no verified P0/P1 implementation failure in the reviewed code or automa
 | §7 bounded recovery | PASS | Full Python/Viewer/Signal suites cover canonical receive/decode semantics, exact attempt/generation admission, causal IDR acknowledgement, two later stalled samples, and one reopen per episode. | No new recovery state machine, ICE restart, resolution change, or tunnel action was introduced. |
 | §8 canonical stats | PASS | Viewer suite (566 pass) and Signal suite (339 pass). | `derivedFps`, `receivedDelta`, and `decodedDelta` are the health contract; browser-reported FPS remains diagnostic-only. |
 | §8 observability | PASS | Proof tests (7 pass) and automated suites cover five-second encoder/paint aggregates, causal IDR fields, selected-pair relay proof, and endpoint redaction. | Unmeasured `encoderMs`, `rtpSendMs`, and `endToEndVideoMs` remain `null`. |
-| §9 capture optimization | PASS | Versioned Task 7 evidence keeps `selection.captureMultiplier={applied:false,value:2.0}`. | No offline capture experiment was promoted to production without the paint gate. |
+| §9 capture optimization | DEFERRED; admission guard PASS | Versioned Task 7 evidence keeps `selection.captureMultiplier={applied:false,value:2.0}`. | No capture cost reduction was shipped; only the guard against unvalidated changes passed. |
 | §11.1 automation and build | PASS | Python 253 passed; Viewer 566 passed; Signal `npm test` 339 passed with its Viewer build; tracked shell/MJS/JSON syntax checks passed. | These are code and build results only. |
 | §11.2 offline pulse and quality | FAIL | `relay-balanced-v2` has no offline winner. | The matrix does not authorize a periodic-IDR or on-demand replacement. |
 | §11.3 selected relay | PASS for complete local runs | The complete 720p/1080p artifacts hold selected UDP relay plus connected socket and PC for every sample; the first 720p artifact was superseded and excluded. | Local selected-relay transport is proven for the two complete windows only. |
-| §11.3 720p / 1080p media continuity | PARTIAL PASS | 720p: 601 samples / 600.006s at 1152x720, derived-FPS p50 19, jitter p95 23.0ms, max paint gap 138ms. 1080p: 301 samples / 300.008s at 1728x1080, derived-FPS p50 19, jitter p95 17.3ms, max paint gap 105ms. | Loss/drop counters were zero; 720p observed one freeze and seven NACK increments, 1080p five NACK increments. This does not prove scene quality. |
+| §11.3 720p / 1080p media continuity | INCOMPLETE; sampled transport/FPS evidence retained | 720p: 601 samples / 600.006s at 1152x720, derived-FPS p50 19, jitter p95 23.0ms, maximum sampled paint age 138ms. 1080p: 301 samples / 300.008s at 1728x1080, derived-FPS p50 19, jitter p95 17.3ms, maximum sampled paint age 105ms. | Paint age does not bound inter-frame gaps. Loss/drop counters were zero; 720p observed one freeze and seven NACK increments, 1080p five NACK increments. Neither continuous presentation nor scene quality is established. |
 | §11.3 pause, resume, and refresh | PASS for complete local runs | Both runs observed suspended then active state with a fresh frame; refresh changed the attempt and restored a healthy selected relay with a fresh frame. | Local headless Viewer evidence only. |
 | §11.3 static text, scroll/drag/keyboard, and finite loss | NOT RUN | Collector markers deliberately leave unauthenticated producer content/input and non-isolated loss injection unexecuted. | There is no Host-side input ack/effect or controlled finite-loss recovery evidence. |
 | §11.4 formal public path and physical device | NOT RUN | No external operator or physical device was used. | The formal entry remains `https://link.stockhub.wiki`; local or unit evidence cannot stand in for this gate. |
@@ -52,8 +52,8 @@ write any endpoint, credential, token, or raw screenshot into version control.
 Host encoder summaries show `relay-legacy-v1` still runs `keyint=20` at 20 FPS
 and emits five periodic IDRs per five seconds. That confirms the known
 approximately one-second IDR driver remains active. Since controlled static text
-and IDR-boundary image measurements were not run, stable paint cadence is not
-evidence that the visible clarity pulse is fixed.
+and IDR-boundary image measurements were not run, the sampled paint ages prove
+neither uninterrupted paint cadence nor removal of the visible clarity pulse.
 
 ## Scope and hygiene audit
 
@@ -75,8 +75,9 @@ is non-`None`, including a callable with a false boolean value.
 
 ## Next valid gate
 
-Do not change the default policy or report the pulse as fixed. The complete local
-relay continuity windows do not need repetition unless configuration changes.
+Do not change the default policy or report the pulse as fixed. Repeat the local
+720p/1080p presentation-continuity windows after correcting the collector;
+the prior sampled transport evidence cannot waive that requirement.
 The remaining valid gates are controlled static text at the IDR boundary,
 scroll/drag/keyboard with Host-side acknowledgements and effects, finite isolated
 TURN loss and bounded recovery, the formal public entry, and physical-device
