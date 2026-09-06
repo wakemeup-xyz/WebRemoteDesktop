@@ -5,21 +5,25 @@ only useful from the ``loss-controller`` sidecar described in compose.yaml.
 """
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import json
+import os
+import secrets
+import shutil
+import socketserver
 import subprocess
 import threading
 import time
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import PurePosixPath
-from typing import Any, Callable, Iterator, Mapping, Protocol
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Mapping, Protocol
 
 
 _SCHEMA_FIELDS = frozenset({
     "schemaVersion", "runId", "realm", "namespace", "interface",
-    "udpLegSelector", "controlEndpoint", "credentialsFile", "versionDigest",
+    "udpLegSelector", "controlEndpoint", "credentialsFile", "versionDigest", "imageDigests",
 })
 _PATTERNS = {
     "every_100th_for_30s": 30_000,
@@ -60,9 +64,11 @@ class LossFixtureManifest:
     namespace: str
     interface: str
     selector: dict[str, Any]
+    egress_selector: dict[str, Any]
     control_endpoint: dict[str, Any]
     credentials_file: str
     version_digest: str
+    image_digests: dict[str, str]
 
     @classmethod
     def parse(cls, raw: Mapping[str, Any]) -> "LossFixtureManifest":
@@ -108,8 +114,18 @@ class LossFixtureManifest:
         endpoint = {"host": endpoint_raw["host"], "port": _require_port(endpoint_raw["port"], "controlEndpoint.port")}
         if endpoint["port"] in {selector["sourcePort"], selector["destinationPort"]}:
             raise ValueError("control endpoint cannot be selected as media")
-        if selector["sourcePort"] not in _RELAY_PORTS:
-            raise ValueError("udpLegSelector sourcePort must be in the dedicated fixture relay range")
+        source_is_relay, destination_is_relay = selector["sourcePort"] in _RELAY_PORTS, selector["destinationPort"] in _RELAY_PORTS
+        if source_is_relay == destination_is_relay:
+            raise ValueError("udpLegSelector must have exactly one dedicated fixture relay port")
+        if source_is_relay:
+            egress_selector = dict(selector)
+        else:
+            # The selected pair can be reported from the peer's perspective.
+            # Rules always run at TURN's OUTPUT boundary, so canonicalize it.
+            egress_selector = {
+                "protocol": "udp", "source": selector["destination"], "sourcePort": selector["destinationPort"],
+                "destination": selector["source"], "destinationPort": selector["sourcePort"],
+            }
         credentials_file = _require_string(raw["credentialsFile"], "credentialsFile")
         credential_path = PurePosixPath(credentials_file)
         if credential_path.is_absolute() or ".." in credential_path.parts:
@@ -117,7 +133,17 @@ class LossFixtureManifest:
         digest = _require_string(raw["versionDigest"], "versionDigest")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ValueError("versionDigest must be a sha256 hex digest")
-        return cls(run_id, realm, namespace, interface, selector, endpoint, credentials_file, digest)
+        images_raw = raw["imageDigests"]
+        if not isinstance(images_raw, Mapping) or set(images_raw) != {"turn", "controller"}:
+            raise ValueError("imageDigests must identify immutable turn and controller images")
+        image_digests: dict[str, str] = {}
+        for name in ("turn", "controller"):
+            image = _require_string(images_raw[name], f"imageDigests.{name}")
+            repository, separator, image_digest = image.partition("@sha256:")
+            if not repository or separator != "@sha256:" or len(image_digest) != 64 or any(char not in "0123456789abcdef" for char in image_digest):
+                raise ValueError("fixture images must be immutable sha256 digests")
+            image_digests[name] = image
+        return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, digest, image_digests)
 
 
 class RuleBackend(Protocol):
@@ -138,40 +164,149 @@ class IptablesRuleBackend:
         self._run(["iptables", "-w", "-t", "mangle", "-A", "OUTPUT", *argv])
 
     def remove_rule(self, argv: list[str]) -> None:
-        self._run(["iptables", "-w", "-t", "mangle", "-D", "OUTPUT", *argv])
+        try:
+            self._run(["iptables", "-w", "-t", "mangle", "-D", "OUTPUT", *argv])
+        except subprocess.CalledProcessError as exc:
+            # An independent watchdog may have won the race.  Treat only the
+            # kernel's no-such-rule response as idempotent success.
+            if "Bad rule" not in (exc.stderr or ""):
+                raise
+
+
+class DeadlineState(Protocol):
+    def save(self, event: Mapping[str, Any]) -> None: ...
+    def load(self) -> dict[str, Any] | None: ...
+    def clear(self) -> None: ...
+
+
+class MemoryDeadlineState:
+    def __init__(self) -> None:
+        self.event: dict[str, Any] | None = None
+
+    def save(self, event: Mapping[str, Any]) -> None:
+        self.event = dict(event)
+
+    def load(self) -> dict[str, Any] | None:
+        return dict(self.event) if self.event is not None else None
+
+    def clear(self) -> None:
+        self.event = None
+
+
+class DeadlineStateStore:
+    """Shared run-state file consumed by a process independent watchdog."""
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+
+    def save(self, event: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(dict(event), sort_keys=True), encoding="utf-8")
+        os.replace(temporary, self.path)
+
+    def load(self) -> dict[str, Any] | None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        if not isinstance(raw, dict) or not isinstance(raw.get("rule"), list) or not isinstance(raw.get("deadlineMonotonicNs"), int):
+            raise RuntimeError("deadline state is corrupt; fixture must remain blocked")
+        return raw
+
+    def clear(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def recover_deadline_state(state_store: DeadlineState, backend: RuleBackend, *, now_ns: int | None = None) -> dict[str, Any]:
+    """Independently remove an expired or retry-pending persisted fixture rule."""
+    event = state_store.load()
+    if event is None:
+        return {"status": "IDLE"}
+    current = time.monotonic_ns() if now_ns is None else now_ns
+    if not event.get("cleanupPending") and current < event["deadlineMonotonicNs"]:
+        return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
+    try:
+        backend.remove_rule(list(event["rule"]))
+    except Exception as exc:
+        event["cleanupPending"] = True
+        event["cleanupError"] = str(exc)
+        state_store.save(event)
+        return {"status": "CLEANUP_PENDING", "reason": str(exc)}
+    state_store.clear()
+    return {"status": "CLEARED", "runId": event.get("runId")}
+
+
+class LossControlSession:
+    def __init__(self, controller: "LossController", run_id: str, session_id: str, generation: int) -> None:
+        self._controller = controller
+        self.run_id = run_id
+        self.session_id = session_id
+        self.generation = generation
+        self.closed = False
+
+    def confirm_selected_leg(self, selector: Mapping[str, Any], packet_count: int, *, observed_monotonic_ns: int | None = None) -> None:
+        self._controller._confirm_selected_leg(self, selector, packet_count, observed_monotonic_ns)
+
+    def apply_loss(self, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
+        return self._controller._apply_loss(self, run_id, pattern, duration_ms)
+
+    def record_delivery(self, *, actual_drop_count: int, receiver_sequences: list[int]) -> None:
+        self._controller.record_delivery(self.run_id, actual_drop_count=actual_drop_count, receiver_sequences=receiver_sequences)
+
+    def close(self) -> dict[str, Any]:
+        if self.closed:
+            return {"runId": self.run_id, "cleared": False}
+        self.closed = True
+        return self._controller._close_session(self)
 
 
 class LossController:
-    """Manifest-bound loss controller with watchdog and disconnect cleanup."""
-    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, timer_factory: Callable[[float, Callable[[], None]], Any] = threading.Timer, monotonic_ns: Callable[[], int] = time.monotonic_ns) -> None:
+    """Manifest-bound controller. Deadline removal belongs to another process."""
+    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns) -> None:
         self.manifest = manifest
         self._backend = backend
-        self._timer_factory = timer_factory
+        self._state_store = state_store or MemoryDeadlineState()
+        self._baseline_ttl_ns = baseline_ttl_ns
         self._monotonic_ns = monotonic_ns
         self._lock = threading.RLock()
-        self._baseline_packets = 0
-        self._baseline_confirmed = False
-        self._timer: Any | None = None
-        self._rule: list[str] | None = None
+        self._baselines: dict[str, dict[str, Any]] = {}
+        self._session_generations: dict[str, int] = {}
         self.active_event: dict[str, Any] | None = None
+        self._last_event: dict[str, Any] | None = None
 
     def _require_run(self, run_id: str) -> None:
         if run_id != self.manifest.run_id:
             raise ValueError("runId does not match the fixture manifest")
 
-    def confirm_selected_leg(self, run_id: str, selector: Mapping[str, Any], packet_count: int) -> None:
-        """Accept a dry-run only if observed packets used this exact selected leg."""
+    def open_session(self, run_id: str, session_id: str, generation: int, *, clock: Any | None = None) -> LossControlSession:
         self._require_run(run_id)
+        if not isinstance(session_id, str) or not session_id or not isinstance(generation, int) or generation < 0:
+            raise ValueError("control session and generation are required")
+        with self._lock:
+            known = self._session_generations.get(session_id)
+            if known is not None and known != generation:
+                raise ValueError("control session generation cannot change")
+            self._session_generations[session_id] = generation
+        return LossControlSession(self, run_id, session_id, generation)
+
+    def _confirm_selected_leg(self, session: LossControlSession, selector: Mapping[str, Any], packet_count: int, observed_monotonic_ns: int | None) -> None:
+        if session.closed:
+            raise RuntimeError("control session is closed")
         if dict(selector) != self.manifest.selector:
             raise ValueError("selected-leg selector does not exactly match the fixture manifest")
         if not isinstance(packet_count, int) or isinstance(packet_count, bool) or packet_count <= 0:
             raise ValueError("selected-leg dry-run requires a nonzero packet baseline")
+        observed = self._monotonic_ns() if observed_monotonic_ns is None else observed_monotonic_ns
+        if not isinstance(observed, int) or observed < 0:
+            raise ValueError("dry-run observation time is invalid")
         with self._lock:
-            self._baseline_packets = packet_count
-            self._baseline_confirmed = True
+            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "packetCount": packet_count, "observedMonotonicNs": observed}
 
     def _rule_for(self, pattern: str) -> list[str]:
-        selector = self.manifest.selector
+        selector = self.manifest.egress_selector
         rule = [
             "-o", self.manifest.interface, "-p", "udp",
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
@@ -182,83 +317,247 @@ class LossController:
         rule.extend(["-j", "DROP"])
         return rule
 
-    def apply_loss(self, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
+    def _apply_loss(self, session: LossControlSession, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
+        if session.closed:
+            raise RuntimeError("control session is closed")
         self._require_run(run_id)
         if pattern not in _PATTERNS or duration_ms != _PATTERNS.get(pattern) or duration_ms > _MAX_DURATION_MS:
             raise ValueError("pattern and duration must be one approved finite loss scenario")
         with self._lock:
-            if not self._baseline_confirmed or self._baseline_packets <= 0:
+            baseline = self._baselines.pop(session.session_id, None)  # one dry-run can arm one injection only
+            if baseline is None:
                 raise RuntimeError("selected-leg nonzero baseline is required before loss injection")
+            if baseline["generation"] != session.generation or baseline["selector"] != self.manifest.selector:
+                raise RuntimeError("selected-leg baseline does not match this control session")
+            now = self._monotonic_ns()
+            if now < baseline["observedMonotonicNs"] or now - baseline["observedMonotonicNs"] > self._baseline_ttl_ns:
+                raise RuntimeError("selected-leg baseline expired before loss injection")
             if self.active_event is not None:
                 raise RuntimeError("another loss rule is already active")
             rule = self._rule_for(pattern)
             self._backend.add_rule(rule)
             event = {
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
-                "interface": self.manifest.interface, "selector": dict(self.manifest.selector),
-                "pattern": pattern, "durationMs": duration_ms, "baselinePackets": self._baseline_packets,
-                "startedMonotonicNs": self._monotonic_ns(), "endedMonotonicNs": None,
-                "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None,
+                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": dict(self.manifest.egress_selector),
+                "sessionId": session.session_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
+                "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
+                "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "cleanupPending": False,
             }
-            self._rule = rule
+            try:
+                self._state_store.save(event)
+            except Exception:
+                try:
+                    self._backend.remove_rule(rule)
+                except Exception as rollback_error:
+                    raise RuntimeError("deadline state write failed and rule rollback failed") from rollback_error
+                raise
             self.active_event = event
-            self._timer = self._timer_factory(duration_ms / 1000, lambda: self.clear_loss(run_id, reason="watchdog"))
-            self._timer.start()
             return dict(event)
 
     def record_delivery(self, run_id: str, *, actual_drop_count: int, receiver_sequences: list[int]) -> None:
         self._require_run(run_id)
         if not isinstance(actual_drop_count, int) or actual_drop_count < 0:
             raise ValueError("actual_drop_count must be non-negative")
-        gaps = _sequence_gaps(receiver_sequences)
+        gaps = sequence_gaps(receiver_sequences)
         with self._lock:
-            if self.active_event is None:
+            event = self.active_event or self._last_event
+            if event is None or event.get("runId") != run_id:
                 raise RuntimeError("no active loss rule records this delivery")
-            self.active_event["actualDropCount"] += actual_drop_count
-            self.active_event["receiverSequenceGaps"] = gaps
+            event["actualDropCount"] += actual_drop_count
+            event["receiverSequenceGaps"] = gaps
+            if event is self.active_event:
+                self._state_store.save(event)
 
     def clear_loss(self, run_id: str, *, reason: str = "explicit") -> dict[str, Any]:
         self._require_run(run_id)
         with self._lock:
             if self.active_event is None:
                 return {"runId": run_id, "cleared": False}
-            event, rule, timer = self.active_event, self._rule, self._timer
-            self.active_event = None
-            self._rule = None
-            self._timer = None
-            if timer is not None:
-                timer.cancel()
+            event = self.active_event
             try:
-                assert rule is not None
-                self._backend.remove_rule(rule)
-            finally:
-                event["endedMonotonicNs"] = self._monotonic_ns()
-                event["clearReason"] = reason
-            return dict(event)
+                self._backend.remove_rule(list(event["rule"]))
+            except Exception as exc:
+                event["cleanupPending"] = True
+                event["cleanupError"] = str(exc)
+                self._state_store.save(event)
+                return {**event, "cleared": False}
+            event["endedMonotonicNs"] = self._monotonic_ns()
+            event["clearReason"] = reason
+            event["cleanupPending"] = False
+            self._state_store.clear()
+            self.active_event = None
+            self._last_event = event
+            return {**event, "cleared": True}
 
-    @contextmanager
-    def connection(self, run_id: str) -> Iterator["LossController"]:
-        """A control connection: any exit, including disconnect, removes loss."""
+    def _close_session(self, session: LossControlSession) -> dict[str, Any]:
+        self._baselines.pop(session.session_id, None)
+        if self.active_event is not None and self.active_event.get("sessionId") == session.session_id:
+            return self.clear_loss(session.run_id, reason="control-connection-closed")
+        return {"runId": session.run_id, "cleared": False}
+
+    def verify_final_evidence(self, run_id: str) -> dict[str, Any]:
         self._require_run(run_id)
-        try:
-            yield self
-        finally:
-            self.clear_loss(run_id, reason="control-connection-closed")
+        event = self._last_event
+        if event is None or event.get("runId") != run_id or event.get("endedMonotonicNs") is None:
+            return {"status": "FAIL", "reason": "loss rule has not been cleanly removed"}
+        if event.get("actualDropCount", 0) <= 0 or not event.get("receiverSequenceGaps"):
+            return {"status": "FAIL", "reason": "loss had zero observed media effect", "event": dict(event)}
+        return {"status": "PASS", "event": dict(event)}
 
 
-def _sequence_gaps(sequences: list[int]) -> list[int]:
+def sequence_gaps(sequences: list[int]) -> list[int]:
     if any(not isinstance(value, int) or not 0 <= value <= 65535 for value in sequences):
         raise ValueError("receiver sequences must be RTP uint16 values")
     if len(sequences) < 2:
         return []
-    # Fixture runs are bounded; reject a wrap/huge gap instead of inventing one.
-    ordered = sorted(set(sequences))
     result: list[int] = []
-    for previous, current in zip(ordered, ordered[1:]):
-        if current - previous > 4097:
+    seen = {sequences[0]}
+    for previous, current in zip(sequences, sequences[1:]):
+        if current in seen:
+            raise ValueError("receiver sequence contains a duplicate")
+        seen.add(current)
+        distance = (current - previous) % 65536
+        if distance == 0 or distance > 4097:
             raise ValueError("receiver sequence gap is too large for bounded fixture evidence")
-        result.extend(range(previous + 1, current))
+        result.extend((previous + offset) % 65536 for offset in range(1, distance))
     return result
+
+
+class ControlRequestRouter:
+    """Authenticated JSON command contract used by the loopback control TCP service."""
+    def __init__(self, controller: LossController, control_token: str) -> None:
+        self.controller = controller
+        self.control_token = control_token
+
+    def authorize(self, request: Mapping[str, Any]) -> None:
+        token = request.get("controlToken")
+        if not isinstance(token, str) or not secrets.compare_digest(token, self.control_token):
+            raise PermissionError("fixture control token is invalid")
+
+
+class _ControlHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        router: ControlRequestRouter = self.server.router  # type: ignore[attr-defined]
+        session: LossControlSession | None = None
+        try:
+            for line in self.rfile:
+                request = json.loads(line)
+                router.authorize(request)
+                operation = request.get("operation")
+                if operation == "health":
+                    response: Mapping[str, Any] = {"status": "READY", "deadline": router.controller.active_event is not None}
+                elif operation == "open":
+                    session = router.controller.open_session(request["runId"], request["sessionId"], request["generation"])
+                    response = {"status": "OPEN", "generation": session.generation}
+                elif session is None:
+                    raise RuntimeError("open a control session before this command")
+                elif operation == "confirm":
+                    session.confirm_selected_leg(request["selector"], request["packetCount"], observed_monotonic_ns=request.get("observedMonotonicNs"))
+                    response = {"status": "BASELINE_CONFIRMED"}
+                elif operation == "apply":
+                    response = session.apply_loss(request["runId"], request["pattern"], request["durationMs"])
+                elif operation == "delivery":
+                    session.record_delivery(actual_drop_count=request["actualDropCount"], receiver_sequences=request["receiverSequences"])
+                    response = {"status": "DELIVERY_RECORDED"}
+                elif operation == "clear":
+                    response = router.controller.clear_loss(session.run_id)
+                else:
+                    raise ValueError("unknown fixture control operation")
+                self.wfile.write((json.dumps(response, sort_keys=True) + "\n").encode())
+        except Exception as exc:
+            self.wfile.write((json.dumps({"status": "ERROR", "reason": str(exc)}) + "\n").encode())
+        finally:
+            if session is not None:
+                session.close()
+
+
+class LossControlServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, endpoint: Mapping[str, Any], router: ControlRequestRouter) -> None:
+        super().__init__((endpoint["host"], endpoint["port"]), _ControlHandler)
+        self.router = router
+
+
+def load_fixture_credentials(path: Path, realm: str) -> dict[str, str]:
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("realm") != realm:
+        raise ValueError("fixture credentials do not bind the manifest realm")
+    required = ("turnUsername", "turnPassword", "controlToken")
+    if any(not isinstance(raw.get(key), str) or not raw[key] for key in required):
+        raise ValueError("fixture credentials are incomplete")
+    return {key: raw[key] for key in required}
+
+
+def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path) -> dict[str, str]:
+    """Validate one manifest and derive the only supported compose inputs.
+
+    The generated override is intentionally separate from compose.yaml: callers
+    must use it with the project name returned here.  No Compose environment
+    variable may choose a realm, run ID, listener, or image.
+    """
+    manifest = LossFixtureManifest.parse(raw_manifest)
+    runtime_dir = Path(runtime_dir)
+    credentials_dir = runtime_dir / "credentials"
+    credentials_dir.mkdir(parents=True, exist_ok=False)
+    credentials = {
+        "realm": manifest.realm,
+        "turnUsername": f"turn-loss-{manifest.run_id[:8]}",
+        "turnPassword": secrets.token_urlsafe(32),
+        "controlToken": secrets.token_urlsafe(32),
+    }
+    credential_path = runtime_dir / manifest.credentials_file
+    if credential_path != credentials_dir / "turn.json":
+        raise ValueError("fixture credentialsFile must be credentials/turn.json")
+    credential_path.write_text(json.dumps(credentials, sort_keys=True), encoding="utf-8")
+    (runtime_dir / "turn.env").write_text(
+        f"TURN_USERNAME={credentials['turnUsername']}\nTURN_PASSWORD={credentials['turnPassword']}\nTURN_REALM={manifest.realm}\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "manifest.json").write_text(json.dumps(dict(raw_manifest), sort_keys=True), encoding="utf-8")
+    shutil.copyfile(Path(__file__).with_name("turn-entrypoint.sh"), runtime_dir / "turn-entrypoint.sh")
+    (runtime_dir / "compose.generated.yaml").write_text(
+        "services:\n"
+        f"  turn:\n    image: {manifest.image_digests['turn']}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n"
+        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n",
+        encoding="utf-8",
+    )
+    return {"projectName": f"turn-loss-{manifest.run_id[:8]}", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml")}
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser()
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    for name in ("serve", "watchdog"):
+        command = subcommands.add_parser(name)
+        command.add_argument("--manifest", type=Path, required=True)
+        command.add_argument("--state", type=Path, required=True)
+    subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
+    prepare = subcommands.add_parser("prepare")
+    prepare.add_argument("--manifest", type=Path, required=True)
+    prepare.add_argument("--runtime", type=Path, required=True)
+    arguments = parser.parse_args()
+    if arguments.command == "prepare":
+        result = prepare_runtime(json.loads(arguments.manifest.read_text(encoding="utf-8")), arguments.runtime)
+        print(json.dumps(result, sort_keys=True))
+        return
+    manifest = LossFixtureManifest.parse(json.loads(arguments.manifest.read_text(encoding="utf-8")))
+    store = DeadlineStateStore(arguments.state)
+    backend = IptablesRuleBackend()
+    if arguments.command == "watchdog":
+        while True:
+            recover_deadline_state(store, backend)
+            time.sleep(0.1)
+    credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
+    controller = LossController(manifest, backend=backend, state_store=store)
+    server = LossControlServer(manifest.control_endpoint, ControlRequestRouter(controller, credentials["controlToken"]))
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    _main()
 
 
 class DockerRuntimeProbe:

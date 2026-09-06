@@ -1,45 +1,52 @@
 services:
   turn:
-    image: ${TURN_IMAGE:-coturn/coturn:4.6.2}
+    # prepare_runtime() must override this unreachable digest with manifest.imageDigests.turn.
+    image: registry.invalid/wrd-turn-loss-turn@sha256:0000000000000000000000000000000000000000000000000000000000000000
     labels:
       com.wrd.turn-loss-fixture: "true"
-      com.wrd.turn-loss-run-id: ${RUN_ID:?RUN_ID is required}
     networks: [turn-loss]
     ports:
-      - "127.0.0.1:${TURN_LISTEN_PORT:?TURN_LISTEN_PORT is required}:3478/udp"
-    command:
-      - -n
-      - --realm=${TURN_REALM:?TURN_REALM is required}
-      - --min-port=51000
-      - --max-port=51009
-      - --lt-cred-mech
-      - --no-cli
-      - --no-tcp-relay
-      - --no-tls
-      - --no-dtls
+      - "127.0.0.1::3478/udp"
+      - "127.0.0.1::19091/tcp"
+      - "127.0.0.1:51000-51009:51000-51009/udp"
+    env_file:
+      - ./runtime/turn.env
+    entrypoint: ["/bin/sh", "/runtime/turn-entrypoint.sh"]
+    volumes:
+      - ./runtime:/runtime:ro
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
   loss-controller:
-    build:
-      context: .
-      dockerfile_inline: |
-        FROM python:3.11-alpine
-        RUN apk add --no-cache iptables
-        WORKDIR /fixture
-        COPY controller.py /fixture/controller.py
-        CMD ["sleep", "infinity"]
+    # The generated override supplies a prebuilt, digest-pinned controller image.
+    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
     labels:
       com.wrd.turn-loss-fixture: "true"
-      com.wrd.turn-loss-run-id: ${RUN_ID:?RUN_ID is required}
     network_mode: service:turn
+    command: ["python", "/fixture/controller.py", "serve", "--manifest", "/runtime/manifest.json", "--credentials", "/runtime/credentials/turn.json", "--state", "/state/active-loss.json"]
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
     security_opt: [no-new-privileges:true]
     volumes:
       - ./runtime:/runtime:ro
+      - turn-loss-state:/state
+
+  loss-watchdog:
+    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    labels:
+      com.wrd.turn-loss-fixture: "true"
+    network_mode: service:turn
+    command: ["python", "/fixture/controller.py", "watchdog", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json"]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./runtime:/runtime:ro
+      - turn-loss-state:/state
 
 networks:
   turn-loss:
-    name: turn-loss-${RUN_ID:?RUN_ID is required}
     internal: true
+
+volumes:
+  turn-loss-state:
