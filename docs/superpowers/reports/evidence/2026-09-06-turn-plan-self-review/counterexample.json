@@ -1,0 +1,44 @@
+{
+  "kind": "synthetic acceptance counterexample, not a live Viewer run",
+  "sourceCommit": "07c99dd6f62900c7cd870cba2f66e2c307cf9bf7",
+  "sourceSha256": {
+    "scripts/test_turn_runtime_collector.py": "9655a7624a197a932fd11aafa094b2658db658b8a37f6922b46fd510f9768096",
+    "scripts/turn_runtime_collector.py": "c06f0549e10b89949475169cfceab40947aa951ab55f19ae84a2dece98d15f85"
+  },
+  "frameGapPatternMs": [
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    150
+  ],
+  "patternDurationMs": 1000,
+  "repeatCount": 600,
+  "summary": {
+    "phase": "720p",
+    "sampleCount": 601,
+    "requiredSampleCount": 601,
+    "requiredDurationSeconds": 600,
+    "derivedFpsP50": 18.0,
+    "jitterBufferMsP95": 50.0,
+    "jitterBufferMsMax": 50.0,
+    "maxPaintGapMs": 150.0,
+    "intervalMaxPaintGapMs": 150.0,
+    "failures": [],
+    "ok": true
+  },
+  "boundary": "Only current numeric phase gates tested; scene/input/loss gates are not fabricated or exercised."
+}

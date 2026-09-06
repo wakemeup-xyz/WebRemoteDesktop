@@ -2,13 +2,15 @@
 
 > EnterPlanMode 路径的仓库内后续计划。沿用用户先前选择，不切换规划流程。For agentic workers: 实施时使用 superpowers:subagent-driven-development，Terra High逐任务开发并独立review；以下checkbox当前全部未执行。
 
+**可行性状态：** 当前候选未通过实验，本计划是有界验证与优化路径，不能保证全部问题在这一轮解决。T2失败记NO_QUALIFIED_CANDIDATE，保留失败证据并进入后续设计；T7瓶颈未解决保持OPEN，均阻止T8推广。
+
 **Goal:** 消除健康连接周期清晰度变化，降低Host生产流水线耗时，并完成真实文字、输入和有限丢包验收。
 **Architecture:** 编码候选与吞吐优化分别验证。生产策略默认保持legacy，离线合格候选通过独立实验Signal/Host验证后才在单独提交中推广。
 **Tech Stack:** Python3.11、aiortc/PyAV/libx264、MSS/OpenCV、Node/Socket.IO、Playwright、隔离Linux TURN fixture。
 **Spec:** `docs/superpowers/specs/2026-09-06-turn-pulse-throughput-next-design.md`。
 **Baseline:** main `91cf000`；历史Task0–14不重新执行。当前是计划交付，未授权由本次规划自动开始编码或服务实验。
 
-**Review:** 两位Terra High分别完成架构/边界与执行/验收复审，PASS；详见 `docs/superpowers/reports/2026-09-06-turn-pulse-throughput-plan-review.md`。PASS仅指计划可执行，不代表产品已修复。
+**Review:** 两位Terra High分别完成架构/边界与执行/验收复审，PASS；详见 `docs/superpowers/reports/2026-09-06-turn-pulse-throughput-plan-review.md`。该PASS已由主线程补充自审限定；新发现与修订见 `docs/superpowers/reports/2026-09-06-turn-pulse-throughput-self-review.md`，不代表候选可行或产品已修复。
 
 ## 全局约束与执行入口
 
@@ -106,12 +108,14 @@
 
 - [ ] 写失败测试：仅传controlled-producer-id、仅有截图、仅有applied ack、nonce不符、页面失焦、旧attempt均不得PASS，且不得继续发输入。
 - [ ] 按spec7实现32×16格/双192bit/CRC32固定marker，不用OCR。测试两档真实H.264 encode/decode、压缩损坏、尺寸/缩放错位、nonce/校验不符；单帧两副本不一致即UNALIGNED，不跨帧拼接。
+- [ ] 静止marker全部像素冻结，tick仅随明确场景/动作改变；测无marker/冻结marker对照，记录质量与成本影响。文字ROI排除marker和动态诊断，逐帧身份使用T3。增加静止60秒不变与动作后可解码转换测试。
 - [ ] 实际自动输入前验证专用实验桌面和fixture窗口；lab input guard在实际执行边界再核对窗口，调用原InputAdapter/InputHandler。Quartz全局输入无法因focus预检变为原子目标绑定，禁止在共享个人桌面自动执行。没有专用桌面可由操作者从实验Viewer发送远程动作，driver只读采样，无操作者则BLOCKED。直接在Host页面操作为producer-local，只能证明场景/可见变化，远程输入gate保持NOT_RUN；增加测试禁止其清除marker_failures或进入推广predicate。
 - [ ] operator-remote与automatic-isolated使用相同机器核验：真实Viewer inputId、Host applied ack、producer nonce/action状态、解码marker与Viewer同钟时延缺一不可；伪造inputIds列表、模式标签或人工确认都不能PASS。
 - [ ] operator-remote必须有独立控制端及已有授权的loopback端口转发；不得在被捕获桌面自指操作，不因测试开启新的公网监听/远程登录或改tunnel。缺此条件则BLOCKED，不降级为producer-local冒充远程测试。
 - [ ] 通过现有Viewer Input接口执行spec7固定序列，原lease/InputHandler链路不变。保存send→ack与send→visual两个浏览器同钟结果；20个必达文本样本不得用合并mousemove凑数。
 - [ ] 接入实际视频ROI及T3的wire-RTP对齐；缺rVFC rtpTimestamp时marker只能证明场景身份，IDR-ROI门槛仍UNALIGNED，不补0或猜帧号。至少通过非零origin的端到端join fixture才可声称关闭IDR周期谷值。
 - [ ] `marker_failures()` 只在SceneResult完整通过时取消固定NOT_RUN；无producer的既有collector保持旧失败语义。暂停恢复加入2秒计时门槛，不能只看最终freshFrame布尔值。
+- [ ] 实现spec9的逐帧periodic-paint-stall门禁及有界导出，不能由每秒max重建时间。600次[50ms×17,150ms]必须FAIL；均匀50ms、孤立150ms、场景/暂停/generation边界、丢样本均有回归。先校验legacy/健康对照与开销，再冻结门禁，候选后不得放宽。
 - [ ] 验证小于采样周期的瞬时画质/尺寸变化仍被捕获，IDR前后ROI不含Viewer浮层。运行collector Python、直接JS和新producer测试；实际测试必须经T4。
 - [ ] 独立review后提交 `test(turn): verify controlled input and decoded scene identity`。
 
@@ -149,8 +153,8 @@
 **Files:** 原policy/Host生产参数、对应测试、README、`docs/runbook-safe-startup.md`、产品需求、本轮acceptance报告、原验收报告的最新状态链接。仅此任务可在已验证条件下开放固定v2，不能发布manifest加载器。
 
 - [ ] 汇总T2/T5/T6/T7完整证据及源代码hash；同一冻结配置须全通过，任何BLOCKED/NOT_RUN/FAIL阻止推广。producer-local和只有人工可读性观察不能满足远程inputAck gate，必须有spec7完整远程因果链，不按executionMode标签放行。
-- [ ] 实验环境下按修正collector跑720p600秒、1080p300秒，保留逐帧gap分位数、freeze、buffer、IDR/ROI、loop lag和input ack；按原硬门槛评估，不能只看退出码或连接正常。
-- [ ] 用相同源代码、唯一参数集生成候选发布提交；更新 `PRODUCTION_RELAY_POLICY_VERSION` 与参数解析必须同时发生，env未知值拒绝仍保留。测试确保无placeholder GOP20回落。
+- [ ] 实验环境下按修正collector跑720p600秒、1080p300秒，保留逐帧gap分位数、freeze、buffer、IDR/ROI、loop lag和input ack；按原硬门槛及spec9新增周期短停顿门禁评估，不能只看退出码或连接正常。
+- [ ] 按spec6区分完整源码hash与encoderParameterDigest，生成唯一参数集发布提交；逐项审查固定策略注册/默认选择/已验证吞吐常量的推广差异，测试实验与生产参数相等。若改codec/Host/观测/采集实现，受影响证据作废并重跑。更新 `PRODUCTION_RELAY_POLICY_VERSION` 与参数解析必须同时发生，env未知值拒绝仍保留。测试确保无placeholder GOP20回落。
 - [ ] 完整回归：
   ```bash
   python3 -m pytest -q python-host scripts/test_turn_runtime_collector.py scripts/test_eval_turn_encoder_quality.py scripts/test_turn_encoder_experiments.py scripts/test_turn_lab.py scripts/test_turn_controlled_scene.py scripts/test_turn_lab_input_guard.py scripts/test_turn_capture_experiments.py scripts/turn-loss-fixture/test_controller.py
@@ -162,8 +166,9 @@
 - [ ] Terra High独立审查代码、架构边界、实验/生产证据与文档；修复所有P1后再合入。保留用户脏文件，只stage本轮文件。
 - [ ] 已授权实施后的维护窗口合入main，仅用service helper/restart-host脚本重启本地服务。核对Host配置和帧日志为冻结参数，tunnel hash/PID不变，并从运行配置回报两项密码。
 - [ ] 最终生产selected-TURN窗口重跑720p600秒/1080p300秒及受控交互；丢包仍只在专用fixture进行。生产结果与实验fixture属于不同证据层，不把后者冒称正式公网验证。
-- [ ] 生产失败：仅回滚本轮固定policy/吞吐参数并重启本地Host，保留有用观测，重新检查健康与tunnel；报告总体FAIL。生产全部必需项通过后才可声明本轮画质脉冲和性能验收完成。
+- [ ] 单独运行spec9原报告客户端/入口的最终复验，记录浏览器、DPR/缩放、实际TURN路径和Host负载。机器门禁与操作者观察均通过才记USER_SCENARIO_PASS；未运行记USER_SCENARIO_NOT_VERIFIED，不用本地生产长跑替代，不在生产注入丢包。
+- [ ] 生产失败：仅回滚本轮固定policy/吞吐参数并重启本地Host，保留有用观测，重新检查健康与tunnel；报告总体FAIL。生产及原用户场景全部必需项通过后才可声明本轮画质脉冲和性能验收完成；观察到残留脉冲则问题继续OPEN。
 
 ## 交付状态枚举
 
-`IMPLEMENTED` 表示代码与自动化通过；`OFFLINE_PASS` 表示所有场景质量/成本合格；`LAB_PASS` 表示隔离TURN、输入、丢包通过；`PRODUCTION_PASS` 表示冻结版本的真实生产维护窗口通过。`BLOCKED` 说明设施/受控场景缺失；`INCONCLUSIVE` 说明测量或环境不可比。任何前一层状态不能代替后一层。
+`IMPLEMENTED` 表示代码与自动化通过；`OFFLINE_PASS` 表示所有场景质量/成本合格；`LAB_PASS` 表示隔离TURN、输入、丢包通过；`PRODUCTION_PASS` 表示冻结版本的真实生产维护窗口通过。`BLOCKED` 说明设施/受控场景缺失；`INCONCLUSIVE` 说明测量或环境不可比。`USER_SCENARIO_PASS` 才表示原报告客户端场景也已验收；缺失为USER_SCENARIO_NOT_VERIFIED。任何前一层状态不能代替后一层，也不保证所有客户端/网络条件永不抖动。
