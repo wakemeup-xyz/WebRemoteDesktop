@@ -46,8 +46,14 @@ class ProducerProof:
     generation: int
 
     def valid(self) -> bool:
-        return (0 <= int(self.run_nonce) < 2**64 and 0 <= int(self.scene_id) < 2**16
-                and bool(self.origin) and bool(self.attempt_id) and int(self.generation) >= 0)
+        try:
+            return (isinstance(self.run_nonce, int) and not isinstance(self.run_nonce, bool) and 0 <= self.run_nonce < 2**64
+                    and isinstance(self.scene_id, int) and not isinstance(self.scene_id, bool) and 0 <= self.scene_id < 2**16
+                    and isinstance(self.origin, str) and bool(self.origin) and isinstance(self.attempt_id, str)
+                    and bool(self.attempt_id) and isinstance(self.generation, int) and not isinstance(self.generation, bool)
+                    and self.generation >= 0)
+        except (TypeError, ValueError):
+            return False
 
 
 @dataclass(frozen=True)
@@ -65,13 +71,37 @@ class MarkerDecode:
     failure: str | None = None
 
 
+@dataclass(frozen=True)
+class FrameBuffer:
+    """One declared grayscale decoded frame; stride may exceed visible width."""
+    pixels: bytes | bytearray
+    width: int
+    height: int
+    stride: int
+
+
+@dataclass(frozen=True)
+class ProducerActionEvent:
+    input_id: str
+    action_id: int
+    tick: int
+    run_nonce: int
+    scene_id: int
+    attempt_id: str
+    generation: int
+    stream_id: str = "video"
+    focused: bool = True
+
+
 @dataclass
 class SceneResult:
     status: str
     execution_mode: str
     input_ids: list[str] = field(default_factory=list)
     ack_samples: list[dict[str, Any]] = field(default_factory=list)
+    producer_samples: list[dict[str, Any]] = field(default_factory=list)
     visual_samples: list[dict[str, Any]] = field(default_factory=list)
+    send_samples: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     latencies: dict[str, list[float]] = field(default_factory=lambda: {"sendToAckMs": [], "sendToVisualMs": []})
 
@@ -81,7 +111,9 @@ class SceneResult:
             "executionMode": self.execution_mode,
             "inputIds": list(self.input_ids),
             "ackSamples": list(self.ack_samples),
+            "producerSamples": list(self.producer_samples),
             "visualSamples": list(self.visual_samples),
+            "sendSamples": list(self.send_samples),
             "failures": list(self.failures),
             "latencies": self.latencies,
         }
@@ -155,14 +187,35 @@ def encode_marker(proof: ProducerProof, *, tick: int, action_id: int, cell_pixel
     return output
 
 
-def _sample_cells(frame: bytes | bytearray, roi: tuple[int, int, int, int]) -> tuple[list[list[int]], str | None]:
-    # The isolated decoder receives a cropped single-plane ROI.  x/y are kept
-    # in the contract to make a caller declare its pre-authorized ROI.
-    _x, _y, width, height = roi
-    if width <= 0 or height <= 0 or width % GRID_WIDTH or height % GRID_HEIGHT:
+def _frame_layout(frame: bytes | bytearray | FrameBuffer, roi: tuple[int, int, int, int]) -> tuple[bytes | bytearray, int, int, int, str | None]:
+    if not isinstance(roi, tuple) or len(roi) != 4 or not all(isinstance(value, int) for value in roi):
+        return b"", 0, 0, 0, "roi-type"
+    x, y, roi_width, roi_height = roi
+    if isinstance(frame, FrameBuffer):
+        pixels, width, height, stride = frame.pixels, frame.width, frame.height, frame.stride
+    else:
+        # Backward-compatible cropped ROI input is only valid for origin 0.
+        pixels, width, height, stride = frame, roi_width, roi_height, roi_width
+        if x != 0 or y != 0:
+            return b"", 0, 0, 0, "full-frame-required"
+    if not isinstance(pixels, (bytes, bytearray)) or not all(isinstance(value, int) for value in (width, height, stride)):
+        return b"", 0, 0, 0, "frame-type"
+    if width <= 0 or height <= 0 or stride < width or len(pixels) < stride * height:
+        return b"", 0, 0, 0, "frame-geometry"
+    if x < 0 or y < 0 or roi_width <= 0 or roi_height <= 0 or x + roi_width > width or y + roi_height > height:
+        return b"", 0, 0, 0, "roi-oob"
+    return pixels, width, height, stride, None
+
+
+def _sample_cells(frame: bytes | bytearray | FrameBuffer, roi: tuple[int, int, int, int]) -> tuple[list[list[int]], str | None]:
+    pixels, _frame_width, _frame_height, stride, layout_error = _frame_layout(frame, roi)
+    if layout_error:
+        return [], layout_error
+    x, y, width, height = roi
+    if width % GRID_WIDTH or height % GRID_HEIGHT:
         return [], "roi-size"
     cell_w, cell_h = width // GRID_WIDTH, height // GRID_HEIGHT
-    if cell_w != cell_h or cell_w < 4 or len(frame) != width * height:
+    if cell_w != cell_h or cell_w < 4:
         return [], "scale"
     values = []
     for gy in range(GRID_HEIGHT):
@@ -172,7 +225,8 @@ def _sample_cells(frame: bytes | bytearray, roi: tuple[int, int, int, int]) -> t
             start_x = gx * cell_w + (cell_w - 4) // 2
             start_y = gy * cell_h + (cell_h - 4) // 2
             for py in range(start_y, start_y + 4):
-                centre.extend(frame[py * width + start_x:py * width + start_x + 4])
+                row_offset = (y + py) * stride + x + start_x
+                centre.extend(pixels[row_offset:row_offset + 4])
             median = statistics.median(centre)
             if median <= 96:
                 row.append(0)
@@ -184,7 +238,7 @@ def _sample_cells(frame: bytes | bytearray, roi: tuple[int, int, int, int]) -> t
     return values, None
 
 
-def decode_marker(frame: bytes | bytearray, *, roi: tuple[int, int, int, int]) -> MarkerDecode:
+def decode_marker(frame: bytes | bytearray | FrameBuffer, *, roi: tuple[int, int, int, int]) -> MarkerDecode:
     grid, error = _sample_cells(frame, roi)
     if error:
         return MarkerDecode(FAIL, failure=error)
@@ -203,7 +257,7 @@ def decode_marker(frame: bytes | bytearray, *, roi: tuple[int, int, int, int]) -
     return _parse_payload(first)
 
 
-def decode_marker_pair(first: bytes | bytearray, second: bytes | bytearray, *, roi: tuple[int, int, int, int]) -> MarkerDecode:
+def decode_marker_pair(first: bytes | bytearray | FrameBuffer, second: bytes | bytearray | FrameBuffer, *, roi: tuple[int, int, int, int]) -> MarkerDecode:
     """Check each frame alone; deliberately never composes replicas across frames."""
     first_result, second_result = decode_marker(first, roi=roi), decode_marker(second, roi=roi)
     if first_result.status != PASS or second_result.status != PASS:
@@ -229,28 +283,86 @@ def flip_payload_bit(frame: bytearray, *, copy_index: int, bit_index: int, cell_
 class ControlledProducer:
     """In-memory model shared by the HTML page's frozen-scene contract."""
 
-    def __init__(self, proof: ProducerProof) -> None:
+    def __init__(self, proof: ProducerProof, *, clock=lambda: 0) -> None:
         self.proof = proof
+        self._clock = clock
         self.tick = 0
         self.action_id = 0
+        self._events: dict[str, ProducerActionEvent] = {}
 
-    def apply_action(self, _action: str, *, action_id: int) -> None:
+    def apply_action(self, _action: str, *, action_id: int, input_id: str = "producer-local") -> ProducerActionEvent:
+        if not isinstance(input_id, str) or not input_id:
+            raise ValueError("input_id is required")
         self.tick += 1
         self.action_id = int(action_id)
+        event = ProducerActionEvent(input_id, self.action_id, self.tick, self.proof.run_nonce,
+                                    self.proof.scene_id, self.proof.attempt_id, self.proof.generation)
+        self._events[input_id] = event
+        return event
 
     def render_marker(self) -> bytearray:
         return encode_marker(self.proof, tick=self.tick, action_id=self.action_id)
 
+    def event_for(self, input_id: str) -> dict[str, Any] | None:
+        event = self._events.get(input_id)
+        if event is None:
+            return None
+        return {"inputId": event.input_id, "actionId": event.action_id, "tick": event.tick,
+                "runNonce": event.run_nonce, "sceneId": event.scene_id, "attemptId": event.attempt_id,
+                "generation": event.generation, "streamId": event.stream_id, "focused": event.focused}
 
-def _same_identity(sample: dict[str, Any], proof: ProducerProof) -> bool:
-    return sample.get("attemptId") == proof.attempt_id and int(sample.get("generation", -1)) == int(proof.generation)
+    def assert_frozen_for(self, duration_ms: int, *, sample_every_ms: int) -> bytearray:
+        if duration_ms < 0 or sample_every_ms <= 0:
+            raise ValueError("invalid frozen scene duration")
+        baseline = self.render_marker()
+        for _elapsed in range(0, duration_ms + 1, sample_every_ms):
+            self._clock()
+            if self.render_marker() != baseline:
+                raise RuntimeError("static marker changed without an action")
+        return baseline
+
+
+def _same_identity(sample: dict[str, Any], proof: ProducerProof, stream_id: str) -> bool:
+    return (sample.get("attemptId") == proof.attempt_id
+            and sample.get("generation") == proof.generation
+            and sample.get("streamId") == stream_id)
+
+
+def _indexed(rows: Any, field: str, failures: set[str], *, invalid: str, duplicate: str) -> dict[Any, dict[str, Any]]:
+    if not isinstance(rows, list):
+        failures.add(invalid)
+        return {}
+    result: dict[Any, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or field not in row:
+            failures.add(invalid)
+            continue
+        key = row[field]
+        if key in result:
+            failures.add(duplicate)
+            continue
+        result[key] = row
+    return result
+
+
+def _clock_delta(later: Any, earlier: Any) -> float | None:
+    if isinstance(later, bool) or isinstance(earlier, bool):
+        return None
+    if not isinstance(later, (int, float)) or not isinstance(earlier, (int, float)):
+        return None
+    value = float(later) - float(earlier)
+    return value if value >= 0 else None
 
 
 def evaluate_scene_result(
     proof: ProducerProof, *, execution_mode: str, input_ids: list[str], ack_samples: list[dict[str, Any]],
-    producer_samples: list[dict[str, Any]], visual_samples: list[dict[str, Any]],
+    producer_samples: list[dict[str, Any]], visual_samples: list[dict[str, Any]], send_samples: list[dict[str, Any]] | None = None,
 ) -> SceneResult:
-    result = SceneResult(NOT_RUN, execution_mode, list(input_ids), list(ack_samples), list(visual_samples))
+    safe_ids = list(input_ids) if isinstance(input_ids, list) else []
+    result = SceneResult(NOT_RUN, execution_mode, safe_ids, list(ack_samples) if isinstance(ack_samples, list) else [],
+                         list(producer_samples) if isinstance(producer_samples, list) else [],
+                         list(visual_samples) if isinstance(visual_samples, list) else [],
+                         send_samples=list(send_samples) if isinstance(send_samples, list) else [])
     if execution_mode not in REMOTE_EXECUTION_MODES | {PRODUCER_LOCAL}:
         result.status, result.failures = FAIL, ["unknown-execution-mode"]
         return result
@@ -260,19 +372,44 @@ def evaluate_scene_result(
     if not proof.valid():
         result.status, result.failures = BLOCKED, ["invalid-producer-proof"]
         return result
-    required = set(input_ids)
+    failures: set[str] = set()
+    if not isinstance(input_ids, list) or not all(isinstance(value, str) and value for value in input_ids):
+        failures.add("invalid-input-ids")
+    if len(set(safe_ids)) != len(safe_ids):
+        failures.add("duplicate-input-id")
+    required = set(safe_ids)
     if not required:
         result.status, result.failures = NOT_RUN, ["no-remote-input-samples"]
         return result
-    acks = {row.get("inputId"): row for row in ack_samples if row.get("status") == "applied"}
-    producers = {row.get("inputId"): row for row in producer_samples}
-    visuals = {row.get("actionId"): row for row in visual_samples}
-    failures: set[str] = set()
+    sends = _indexed(send_samples, "inputId", failures, invalid="invalid-send-samples", duplicate="conflicting-input-id")
+    acks = _indexed(ack_samples, "inputId", failures, invalid="invalid-ack-samples", duplicate="conflicting-input-id")
+    producers = _indexed(producer_samples, "inputId", failures, invalid="invalid-producer-samples", duplicate="conflicting-input-id")
+    # A marker object is unhashable; retain exactly one row per action ID while
+    # treating duplicate or malformed action records as terminal evidence.
+    visuals_by_action: dict[Any, dict[str, Any]] = {}
+    for visual in visual_samples if isinstance(visual_samples, list) else []:
+        marker = visual.get("marker") if isinstance(visual, dict) else None
+        action_id = marker.get("actionId") if isinstance(marker, dict) else None
+        if not isinstance(action_id, int):
+            failures.add("invalid-marker-payload")
+            continue
+        if action_id in visuals_by_action:
+            failures.add("conflicting-action-id")
+        else:
+            visuals_by_action[action_id] = visual
+    stream_id: str | None = None
     for input_id in required:
-        ack, producer = acks.get(input_id), producers.get(input_id)
+        send, ack, producer = sends.get(input_id), acks.get(input_id), producers.get(input_id)
+        if send is None:
+            failures.add("missing-send-sample"); continue
+        if not isinstance(send.get("streamId"), str) or not send["streamId"]:
+            failures.add("invalid-stream-id"); continue
+        stream_id = stream_id or send["streamId"]
+        if stream_id != send["streamId"] or not _same_identity(send, proof, stream_id):
+            failures.add("attempt-generation-mismatch")
         if ack is None:
             failures.add("missing-applied-ack"); continue
-        if not _same_identity(ack, proof):
+        if ack.get("status") != "applied" or not _same_identity(ack, proof, stream_id):
             failures.add("attempt-generation-mismatch")
         if producer is None:
             failures.add("missing-producer-event"); continue
@@ -280,26 +417,35 @@ def evaluate_scene_result(
             failures.add("producer-focus")
         if int(producer.get("runNonce", -1)) != int(proof.run_nonce):
             failures.add("nonce-mismatch")
-        if not _same_identity(producer, proof):
+        if not _same_identity(producer, proof, stream_id):
             failures.add("attempt-generation-mismatch")
-        visual = visuals.get(producer.get("actionId"))
+        visual = visuals_by_action.get(producer.get("actionId"))
         if visual is None:
             failures.add("missing-decoded-marker"); continue
-        if int(visual.get("runNonce", -1)) != int(proof.run_nonce) or visual.get("sceneId") != proof.scene_id:
+        marker = visual.get("marker")
+        if not isinstance(marker, dict) or set(marker) != {"runNonce", "sceneId", "tick", "actionId"}:
+            failures.add("invalid-marker-payload"); continue
+        if (marker.get("runNonce") != proof.run_nonce or marker.get("sceneId") != proof.scene_id
+                or marker.get("tick") != producer.get("tick") or marker.get("actionId") != producer.get("actionId")):
             failures.add("nonce-mismatch")
-        if not _same_identity(visual, proof):
+        if not _same_identity(visual, proof, stream_id):
             failures.add("attempt-generation-mismatch")
-        rtp_join = (visual.get("rtpAligned") is True
-                    and isinstance(visual.get("rtpTimestamp"), int)
+        rtp_join = (isinstance(visual.get("rtpTimestamp"), int)
                     and isinstance(visual.get("wireTimestamp"), int)
                     and isinstance(visual.get("captureSeq"), int)
+                    and isinstance(visual.get("rtpOrigin"), int) and visual["rtpOrigin"] != 0
+                    and visual.get("traceStatus") == "matched"
+                    and visual["rtpTimestamp"] != 0 and visual["wireTimestamp"] != 0
                     and visual["rtpTimestamp"] == visual["wireTimestamp"])
         if not rtp_join:
             failures.add("wire-rtp-unaligned")
-        if isinstance(ack.get("atMs"), (int, float)):
-            result.latencies["sendToAckMs"].append(float(ack["atMs"]))
-        if isinstance(visual.get("atMs"), (int, float)):
-            result.latencies["sendToVisualMs"].append(float(visual["atMs"]))
+        ack_delta = _clock_delta(ack.get("viewerClockMs"), send.get("viewerClockMs"))
+        visual_delta = _clock_delta(visual.get("viewerClockMs"), send.get("viewerClockMs"))
+        if ack_delta is None or visual_delta is None:
+            failures.add("viewer-clock-unavailable")
+        else:
+            result.latencies["sendToAckMs"].append(ack_delta)
+            result.latencies["sendToVisualMs"].append(visual_delta)
     result.failures = sorted(failures)
     alignment_only = failures == {"wire-rtp-unaligned"}
     result.status = PASS if not failures else (UNALIGNED if alignment_only else FAIL)
@@ -308,19 +454,46 @@ def evaluate_scene_result(
 
 def run_controlled_scenes(
     viewer: Any, producer: Any, proof: ProducerProof, *, execution_mode: str = AUTOMATIC_ISOLATED,
-    operator_endpoint: str | None = "pre-authorized-loopback-forward",
+    operator_endpoint: str | None = "pre-authorized-loopback-forward", guard: Any | None = None,
+    actions: list[dict[str, Any]] | None = None,
 ) -> SceneResult:
-    """Refuse before dispatch.  Execution is intentionally supplied by Lab code."""
+    """Run only the injected Viewer/Host/Producer interfaces, never OS input."""
     if execution_mode == OPERATOR_REMOTE and not operator_endpoint:
         return SceneResult(BLOCKED, execution_mode, failures=["independent-operator-endpoint-required"])
     if execution_mode == PRODUCER_LOCAL:
         return SceneResult(NOT_RUN, execution_mode, failures=["producer-local-is-not-remote-input"])
     if not proof.valid():
         return SceneResult(BLOCKED, execution_mode, failures=["invalid-producer-proof"])
-    # The actual runner will be added only behind LabInputGuard.  Never infer
-    # that a generic Viewer object is safe to drive merely because it has a
-    # send_input method.
-    return SceneResult(BLOCKED, execution_mode, failures=["lab-input-guard-required"])
+    if execution_mode == AUTOMATIC_ISOLATED:
+        from turn_lab_input_guard import LabInputGuard
+        if not isinstance(guard, LabInputGuard):
+            return SceneResult(BLOCKED, execution_mode, failures=["lab-input-guard-required"])
+    if not isinstance(actions, list) or not actions:
+        return SceneResult(NOT_RUN, execution_mode, failures=["no-declared-actions"])
+    sends: list[dict[str, Any]] = []; acks: list[dict[str, Any]] = []; producer_events: list[dict[str, Any]] = []; visuals: list[dict[str, Any]] = []; input_ids: list[str] = []
+    try:
+        for action in actions:
+            if not isinstance(action, dict):
+                raise ValueError("invalid-action")
+            sent = viewer.send_input(action, operator_endpoint=operator_endpoint)
+            if not isinstance(sent, dict) or not isinstance(sent.get("inputId"), str) or not sent["inputId"]:
+                raise ValueError("invalid-send-result")
+            input_id = sent["inputId"]; input_ids.append(input_id); sends.append(sent)
+            if execution_mode == AUTOMATIC_ISOLATED:
+                ack = guard.execute({**action, "inputId": input_id})
+            else:
+                ack = viewer.wait_for_applied_ack(input_id)
+            event = producer.event_for(input_id)
+            visual = viewer.decoded_visual(input_id)
+            if not all(isinstance(value, dict) for value in (ack, event, visual)):
+                raise ValueError("incomplete-evidence")
+            acks.append(ack); producer_events.append(event); visuals.append(visual)
+    except Exception as error:
+        return SceneResult(FAIL, execution_mode, input_ids, acks, producer_events, visuals, sends,
+                           failures=[f"orchestration-failed:{type(error).__name__}"])
+    return evaluate_scene_result(proof, execution_mode=execution_mode, input_ids=input_ids,
+                                 send_samples=sends, ack_samples=acks,
+                                 producer_samples=producer_events, visual_samples=visuals)
 
 
 def h264_marker_roundtrip(proof: ProducerProof, *, resolutions: list[tuple[int, int]]) -> dict[str, Any]:
@@ -341,8 +514,9 @@ def h264_marker_roundtrip(proof: ProducerProof, *, resolutions: list[tuple[int, 
         for width, height in resolutions:
             if width < 256 or height < 128:
                 return {"status": FAIL, "reason": "resolution-smaller-than-marker"}
+            roi_x, roi_y = 64, 48
             raw = np.full((height, width), BLACK, dtype=np.uint8)
-            raw[:128, :256] = marker_array
+            raw[roi_y:roi_y + 128, roi_x:roi_x + 256] = marker_array
             encoder = av.CodecContext.create("libx264", "w")
             encoder.width, encoder.height, encoder.pix_fmt = int(width), int(height), "yuv420p"
             encoder.time_base = Fraction(1, 20)
@@ -359,10 +533,19 @@ def h264_marker_roundtrip(proof: ProducerProof, *, resolutions: list[tuple[int, 
             if not frames:
                 return {"status": FAIL, "reason": f"h264-decode-empty:{width}x{height}"}
             pixels = frames[0].to_ndarray(format="gray")
-            decoded = decode_marker(np.ascontiguousarray(pixels[:128, :256]).tobytes(), roi=(0, 0, 256, 128))
+            full = FrameBuffer(np.ascontiguousarray(pixels).tobytes(), width=int(width), height=int(height), stride=int(pixels.shape[1]))
+            decoded = decode_marker(full, roi=(roi_x, roi_y, 256, 128))
             if decoded.status != PASS or decoded.payload is None or decoded.payload.run_nonce != proof.run_nonce:
                 return {"status": FAIL, "reason": f"h264-marker-decode:{width}x{height}:{decoded.failure}"}
+            corrupted = bytearray(full.pixels)
+            for corrupt_y in range(roi_y + 10, roi_y + 14):
+                corrupted[corrupt_y * full.stride + roi_x + 10:corrupt_y * full.stride + roi_x + 14] = b"\x80" * 4
+            corruption_status = decode_marker(FrameBuffer(corrupted, full.width, full.height, full.stride), roi=(roi_x, roi_y, 256, 128)).status
+            scale_status = decode_marker(full, roi=(roi_x, roi_y, 255, 128)).status
+            if corruption_status == PASS or scale_status == PASS:
+                return {"status": FAIL, "reason": "h264-adversarial-vector-accepted"}
             decoded_resolutions.append([int(width), int(height)])
     except Exception as error:
         return {"status": FAIL, "reason": f"h264-roundtrip-error:{type(error).__name__}:{error}"}
-    return {"status": PASS, "decodedResolutions": decoded_resolutions}
+    return {"status": PASS, "decodedResolutions": decoded_resolutions, "roi": [64, 48, 256, 128],
+            "corruptionStatus": FAIL, "scaleStatus": FAIL}

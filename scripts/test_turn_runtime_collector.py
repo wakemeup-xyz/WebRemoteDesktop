@@ -205,7 +205,7 @@ def test_marker_failures_only_lifts_static_input_gate_for_full_remote_scene_pass
     base["pauseResumeRefresh"]["pauseResume"]["resumeAfterMs"] = 2000
     base["sceneResult"] = {"status": "PASS", "executionMode": "producer-local"}
     assert "static-text-and-input-not-run" in collector.marker_failures(base)
-    base["sceneResult"] = {"status": "PASS", "executionMode": "automatic-isolated", "inputIds": ["i"], "ackSamples": [{"inputId": "i", "status": "applied", "attemptId": "a", "generation": 1}], "producerSamples": [{"inputId": "i", "focused": True, "runNonce": 5, "actionId": 8, "attemptId": "a", "generation": 1}], "visualSamples": [{"runNonce": 5, "sceneId": 1, "actionId": 8, "attemptId": "a", "generation": 1, "rtpAligned": True, "rtpTimestamp": 3, "wireTimestamp": 3, "captureSeq": 4}]}
+    base["sceneResult"] = {"status": "PASS", "executionMode": "automatic-isolated", "producerProof": {"run_nonce": 5, "scene_id": 1, "origin": "http://127.0.0.1:9999", "attempt_id": "a", "generation": 1}, "inputIds": ["i"], "sendSamples": [{"inputId": "i", "viewerClockMs": 1, "attemptId": "a", "generation": 1, "streamId": "video"}], "ackSamples": [{"inputId": "i", "status": "applied", "viewerClockMs": 2, "attemptId": "a", "generation": 1, "streamId": "video"}], "producerSamples": [{"inputId": "i", "focused": True, "runNonce": 5, "actionId": 8, "tick": 1, "attemptId": "a", "generation": 1, "streamId": "video"}], "visualSamples": [{"marker": {"runNonce": 5, "sceneId": 1, "actionId": 8, "tick": 1}, "viewerClockMs": 3, "attemptId": "a", "generation": 1, "streamId": "video", "rtpTimestamp": 3, "wireTimestamp": 3, "captureSeq": 4, "rtpOrigin": 1, "traceStatus": "matched"}]}
     assert "static-text-and-input-not-run" not in collector.marker_failures(base)
 
 
@@ -240,6 +240,44 @@ def test_malformed_pause_timing_fails_closed_instead_of_throwing():
     marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": "not-a-number"},
                                       "refresh": {"healthyRelay": True, "freshFrame": True}}}
     assert "pause-resume" in collector.marker_failures(marker)
+
+
+def test_marker_failures_reuses_strict_scene_validation_for_wrong_scene_and_zero_join():
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000}, "refresh": {"healthyRelay": True, "freshFrame": True}},
+              "sceneResult": {"status": "PASS", "executionMode": "automatic-isolated",
+                              "producerProof": {"run_nonce": 5, "scene_id": 7, "origin": "http://127.0.0.1:9999", "attempt_id": "a", "generation": 1},
+                              "inputIds": ["i"], "sendSamples": [{"inputId": "i", "viewerClockMs": 1, "attemptId": "a", "generation": 1, "streamId": "video"}],
+                              "ackSamples": [{"inputId": "i", "status": "applied", "viewerClockMs": 2, "attemptId": "a", "generation": 1, "streamId": "video"}],
+                              "producerSamples": [{"inputId": "i", "focused": True, "runNonce": 5, "actionId": 1, "tick": 1, "attemptId": "a", "generation": 1, "streamId": "video"}],
+                              "visualSamples": [{"marker": {"runNonce": 5, "sceneId": 999, "tick": 1, "actionId": 1}, "viewerClockMs": 3, "attemptId": "a", "generation": 1, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0}]}}
+    assert "static-text-and-input-not-run" in collector.marker_failures(marker)
+
+
+def test_periodic_gate_requires_one_frozen_active_target_fps_in_summary():
+    samples = [paint_sample(0), paint_sample(1, age=50, maximum=50, interval=50)]
+    for item in samples:
+        item.update({"paintFrameSampleStatus": "complete", "paintFrameSegment": "a", "frameGapsMs": [50], "activeTargetFps": 20})
+    samples[1]["activeTargetFps"] = 15
+    assert "periodic-paint-unaligned" in collector.summarize_phase("720p", samples, duration_seconds=1)["failures"]
+
+
+def test_pause_resume_keeps_the_media_phase_suspended_for_two_seconds(monkeypatch):
+    now = [0]
+    phase = ["active"]
+    class Locator:
+        def click(self):
+            phase[0] = "suspended" if phase[0] == "active" else "active"
+    class Page:
+        def locator(self, _selector): return Locator()
+        def evaluate(self, _script):
+            if "getMediaAppliedPhase" in _script: return phase[0]
+            if "Number(WebRTC?._videoFrameSeq" in _script and "attempt" not in _script: return 2
+            return {"attempt": "a", "frame": 1}
+        def wait_for_timeout(self, milliseconds): now[0] += milliseconds
+    monkeypatch.setattr(collector, "_wait_for_phase", lambda _page, expected, **_kwargs: phase[0] == expected)
+    monkeypatch.setattr(collector, "wait_for_healthy_relay", lambda _page, **_kwargs: True)
+    result = collector.record_pause_resume_refresh(Page(), clock=lambda: now[0] / 1000)
+    assert result["pauseResume"]["resumeAfterMs"] >= 2000
 
 
 def test_phase_summary_fails_when_the_connection_attempt_or_geometry_changes():

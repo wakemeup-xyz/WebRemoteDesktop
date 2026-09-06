@@ -275,7 +275,13 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
     # their historical predicate; all newly collected samples include this
     # field and therefore fail closed if it is absent or incomplete.
     if any("paintFrameSampleStatus" in sample for sample in samples):
-        failures.update(periodic_paint_stall_failures(samples, target_fps=20))
+        targets = {sample.get("activeTargetFps") for sample in samples
+                   if sample.get("paintFrameSampleStatus") == "complete"}
+        if (len(targets) != 1 or not isinstance(next(iter(targets)), (int, float))
+                or isinstance(next(iter(targets)), bool) or next(iter(targets)) <= 0):
+            failures.add("periodic-paint-unaligned")
+        else:
+            failures.update(periodic_paint_stall_failures(samples, target_fps=int(next(iter(targets)))))
     return {
         "phase": phase,
         "sampleCount": len(samples),
@@ -506,7 +512,7 @@ SAMPLE_JS = r"""async () => {
     derivedFps: elapsed ? Math.round((delta('framesDecoded') * 1000 / elapsed) * 10) / 10 : 0,
     jitterBufferMs: jitterCount ? Math.round((delta('jitterBufferDelay') / jitterCount * 1000) * 10) / 10 : 0,
     framesDroppedDelta: delta('framesDropped'), packetsReceivedDelta: delta('packetsReceived'), nackCountDelta: delta('nackCount'), pliCountDelta: delta('pliCount'), firCountDelta: delta('firCount'), freezeDelta: delta('freezeCount'),
-    paintAgeMs: paintAgeMs === null ? null : Math.round(paintAgeMs), maxPaintGapMs: maxPaintGapMs === null ? null : Math.round(maxPaintGapMs), intervalMaxPaintGapMs: intervalMaxPaintGapMs === null ? null : Math.round(intervalMaxPaintGapMs), firstPaintObserved, paintEvidenceStatus, geometry, paintFrameSampleStatus: tracker && tracker.frameGapDropped === 0 && paintEvidenceStatus === 'complete' ? 'complete' : 'dropped', paintFrameSegment: tracker ? `${tracker.phaseId}:${tracker.attempt}:${tracker.generation}` : null, frameGapsMs: tracker ? tracker.frameGaps.map((value) => Math.round(value * 1000) / 1000) : null, paint: { ...paint },
+    paintAgeMs: paintAgeMs === null ? null : Math.round(paintAgeMs), maxPaintGapMs: maxPaintGapMs === null ? null : Math.round(maxPaintGapMs), intervalMaxPaintGapMs: intervalMaxPaintGapMs === null ? null : Math.round(intervalMaxPaintGapMs), firstPaintObserved, paintEvidenceStatus, geometry, paintFrameSampleStatus: tracker && tracker.frameGapDropped === 0 && paintEvidenceStatus === 'complete' ? 'complete' : 'dropped', paintFrameSegment: tracker ? `${tracker.phaseId}:${tracker.attempt}:${tracker.generation}` : null, frameGapsMs: tracker ? tracker.frameGaps.map((value) => Math.round(value * 1000) / 1000) : null, activeTargetFps: Number(WebRTC?.targetFPS || WebRTC?.currentFPS || 0) || null, paint: { ...paint },
     latency, input, policy: { networkMode: WebRTC?.networkMode || null, profile: controller?.currentProfile || null, profileChanges: controller?.profileChanges || [], keyframeRequested: WebRTC?._keyframeRequested === true, keyframeEmitted: WebRTC?._keyframeEmitted === true, keyframeRequestSequence: Number(WebRTC?._keyframeRequestSequence || 0) },
     inputAcks: [...state.inputAcks], mediaPhase: WebRTC?.getMediaAppliedPhase?.() || null,
   };
@@ -576,11 +582,17 @@ def record_interactions(page: Any, enabled: bool) -> dict[str, Any]:
             "inputIds": [], "ackSamples": [], "producerSamples": [], "visualSamples": []}
 
 
-def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
+def record_pause_resume_refresh(page: Any, *, clock=time.monotonic, minimum_suspend_ms: int = 2000) -> dict[str, Any]:
     baseline = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
-    suspended_at = time.monotonic()
     page.locator("#pauseBtn").click()
     suspended = _wait_for_phase(page, "suspended")
+    suspended_at = clock()
+    while suspended and (clock() - suspended_at) * 1000 < minimum_suspend_ms:
+        if page.evaluate("() => WebRTC?.getMediaAppliedPhase?.()") != "suspended":
+            suspended = False
+            break
+        page.wait_for_timeout(100)
+    suspended_duration_ms = round((clock() - suspended_at) * 1000) if suspended else 0
     page.locator("#pauseBtn").click()
     active = _wait_for_phase(page, "active")
     deadline = time.monotonic() + 5
@@ -600,8 +612,7 @@ def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
         pass
     after_refresh = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
     refresh_fresh = after_refresh["frame"] > before_refresh["frame"]
-    resume_after_ms = round((time.monotonic() - suspended_at) * 1000)
-    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "resumeAfterMs": resume_after_ms, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
+    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "resumeAfterMs": suspended_duration_ms, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
 
 
 def marker_failures(marker: dict[str, Any]) -> list[str]:
@@ -619,30 +630,22 @@ def marker_failures(marker: dict[str, Any]) -> list[str]:
     scene = marker.get("sceneResult") or {}
     if not isinstance(scene, dict):
         scene = {}
-    input_ids = {str(value) for value in scene.get("inputIds", []) if value}
-    acks = {str(row.get("inputId")): row for row in scene.get("ackSamples", []) if row.get("status") == "applied"}
-    producer_events = {str(row.get("inputId")): row for row in scene.get("producerSamples", [])}
-    visuals = {row.get("actionId"): row for row in scene.get("visualSamples", [])}
-    def causal_row(input_id: str) -> bool:
-        ack, producer = acks.get(input_id), producer_events.get(input_id)
-        if not ack or not producer or producer.get("focused") is not True:
-            return False
-        if ack.get("attemptId") != producer.get("attemptId") or ack.get("generation") != producer.get("generation"):
-            return False
-        visual = visuals.get(producer.get("actionId"))
-        return bool(visual and visual.get("runNonce") == producer.get("runNonce")
-                    and visual.get("attemptId") == producer.get("attemptId")
-                    and visual.get("generation") == producer.get("generation")
-                    and visual.get("rtpAligned") is True
-                    and isinstance(visual.get("rtpTimestamp"), int)
-                    and isinstance(visual.get("wireTimestamp"), int)
-                    and visual.get("rtpTimestamp") == visual.get("wireTimestamp")
-                    and isinstance(visual.get("captureSeq"), int))
-    complete_remote_scene = (
-        scene.get("status") == "PASS"
-        and scene.get("executionMode") in {"automatic-isolated", "operator-remote"}
-        and bool(input_ids) and all(causal_row(input_id) for input_id in input_ids)
-    )
+    complete_remote_scene = False
+    try:
+        from turn_controlled_scene import (AUTOMATIC_ISOLATED, OPERATOR_REMOTE, PASS,
+                                           ProducerProof, evaluate_scene_result)
+        raw_proof = scene.get("producerProof")
+        if isinstance(raw_proof, dict):
+            proof = ProducerProof(**raw_proof)
+            evaluated = evaluate_scene_result(
+                proof, execution_mode=scene.get("executionMode"), input_ids=scene.get("inputIds"),
+                send_samples=scene.get("sendSamples"), ack_samples=scene.get("ackSamples"),
+                producer_samples=scene.get("producerSamples"), visual_samples=scene.get("visualSamples"),
+            )
+            complete_remote_scene = (scene.get("status") == PASS and evaluated.status == PASS
+                                     and evaluated.execution_mode in {AUTOMATIC_ISOLATED, OPERATOR_REMOTE})
+    except Exception:
+        complete_remote_scene = False
     if not complete_remote_scene:
         failures.append("static-text-and-input-not-run")
     return failures
