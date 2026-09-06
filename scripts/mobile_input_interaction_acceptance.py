@@ -390,6 +390,36 @@ def wait_frames(page: Any, count: int) -> None:
     )
 
 
+def set_mobile_text_visible(page: Any, visible: bool) -> None:
+    """Use the production mobile-text toggle while fullscreen chrome is hidden."""
+    current = bool(
+        page.evaluate(
+            "() => Input.mobileTextInputAdapter?.getSnapshot?.().shown === true"
+        )
+    )
+    if current == visible:
+        return
+    page.evaluate(
+        """
+        (visible) => {
+          const button = document.getElementById('mobileTextInputBtn');
+          if (!button) return;
+          button.hidden = false;
+          button.disabled = false;
+          button.click();
+          if (visible && Input.mobileTextInputAdapter
+              && !Input.mobileTextInputAdapter.getSnapshot().shown) {
+            Input.mobileTextInputAdapter.show();
+            document.getElementById('mobileInputDock').hidden = false;
+          }
+          ChromeLayout.recalculate();
+        }
+        """,
+        visible,
+    )
+    wait_frames(page, 4)
+
+
 def wire_counts(page: Any) -> dict[str, int]:
     return page.evaluate(
         """
@@ -2519,17 +2549,69 @@ def prepare_fullscreen_button(page: Any) -> dict[str, bool]:
 
 
 def fullscreen_exit_probe(page: Any) -> dict[str, bool]:
-    """Use one full-bounds/hit-target probe for every fullscreen exit phase."""
+    """Probe the safe-edge reveal handle and the expanded exit button separately."""
     return page.evaluate(
         """
         () => {
-          const node = document.getElementById('exitFullscreenBtn');
+          const probe = (selector) => {
+            const node = document.querySelector(selector);
+            const rect = node?.getBoundingClientRect();
+            const style = node ? getComputedStyle(node) : null;
+            const rendered = Boolean(node && !node.hidden && style
+              && style.display !== 'none' && style.visibility !== 'hidden'
+              && rect && rect.width > 0 && rect.height > 0);
+            const target44 = Boolean(rendered && rect.width >= 44 && rect.height >= 44);
+            const fullViewportBounds = Boolean(rendered
+              && rect.top >= -1 && rect.left >= -1
+              && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1);
+            const centerInViewport = Boolean(rendered
+              && rect.left + rect.width / 2 >= 0
+              && rect.left + rect.width / 2 <= innerWidth
+              && rect.top + rect.height / 2 >= 0
+              && rect.top + rect.height / 2 <= innerHeight);
+            const hit = rect && centerInViewport
+              ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+              : null;
+            const hitTarget = Boolean(node && (hit === node || node.contains(hit)));
+            return {
+              rendered,
+              target44,
+              fullViewportBounds,
+              hitTarget,
+              available: target44 && fullViewportBounds && hitTarget,
+            };
+          };
+          const reveal = probe('#fullscreenExitRevealBtn');
+          const exit = probe('#exitFullscreenBtn');
+          return {
+            revealVisible: reveal.rendered,
+            revealTarget44: reveal.target44,
+            revealInsideViewport: reveal.fullViewportBounds,
+            revealHitTarget: reveal.hitTarget,
+            revealAvailable: reveal.available,
+            exitVisibleAfterReveal: exit.rendered,
+            exitTarget44AfterReveal: exit.target44,
+            exitInsideViewportAfterReveal: exit.fullViewportBounds,
+            exitHitTargetAfterReveal: exit.hitTarget,
+            exitAvailableAfterReveal: exit.available,
+          };
+        }
+        """
+    )
+
+
+def click_fullscreen_reveal(page: Any) -> dict[str, bool]:
+    """Click the measured reveal handle through its native pointer path."""
+    target = page.evaluate(
+        """
+        () => {
+          const node = document.getElementById('fullscreenExitRevealBtn');
           const rect = node?.getBoundingClientRect();
-          const target44 = Boolean(rect && rect.width >= 44 && rect.height >= 44);
-          const fullViewportBounds = Boolean(rect
-            && rect.top >= -1 && rect.left >= -1
-            && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1);
-          const centerInViewport = Boolean(rect
+          const style = node ? getComputedStyle(node) : null;
+          const rendered = Boolean(node && !node.hidden && style
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && rect && rect.width > 0 && rect.height > 0);
+          const centerInViewport = Boolean(rendered
             && rect.left + rect.width / 2 >= 0
             && rect.left + rect.width / 2 <= innerWidth
             && rect.top + rect.height / 2 >= 0
@@ -2537,16 +2619,69 @@ def fullscreen_exit_probe(page: Any) -> dict[str, bool]:
           const hit = rect && centerInViewport
             ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
             : null;
-          const hitTarget = Boolean(node && hit === node || node?.contains(hit));
           return {
-            target44,
-            fullViewportBounds,
-            hitTarget,
-            available: target44 && fullViewportBounds && hitTarget,
+            available: Boolean(rendered && rect.width >= 44 && rect.height >= 44
+              && rect.top >= -1 && rect.left >= -1
+              && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1
+              && node && (hit === node || node.contains(hit))),
+            x: rendered ? rect.left + rect.width / 2 : 0,
+            y: rendered ? rect.top + rect.height / 2 : 0,
           };
         }
         """
     )
+    if not target["available"]:
+        return {
+            "revealHandleClicked": False,
+            "exitAvailableAfterHandle": False,
+        }
+    page.mouse.click(float(target["x"]), float(target["y"]))
+    wait_frames(page, 1)
+    after = fullscreen_exit_probe(page)
+    return {
+        "revealHandleClicked": True,
+        "exitAvailableAfterHandle": after["exitAvailableAfterReveal"],
+    }
+
+
+def click_fullscreen_exit(page: Any) -> dict[str, bool]:
+    """Reveal the exit control explicitly, then click its measured hit target."""
+    reveal = click_fullscreen_reveal(page)
+    if not reveal["exitAvailableAfterHandle"]:
+        return {**reveal, "exitButtonClicked": False, "exitLeavesFullscreen": False}
+    target = page.evaluate(
+        """
+        () => {
+          const node = document.getElementById('exitFullscreenBtn');
+          const rect = node?.getBoundingClientRect();
+          const style = node ? getComputedStyle(node) : null;
+          const rendered = Boolean(node && !node.hidden && style
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && rect && rect.width > 0 && rect.height > 0);
+          const centerInViewport = Boolean(rendered
+            && rect.left + rect.width / 2 >= 0
+            && rect.left + rect.width / 2 <= innerWidth
+            && rect.top + rect.height / 2 >= 0
+            && rect.top + rect.height / 2 <= innerHeight);
+          const hit = rect && centerInViewport
+            ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+            : null;
+          return {
+            available: Boolean(rendered && rect.width >= 44 && rect.height >= 44
+              && rect.top >= -1 && rect.left >= -1
+              && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1
+              && node && (hit === node || node.contains(hit))),
+            x: rendered ? rect.left + rect.width / 2 : 0,
+            y: rendered ? rect.top + rect.height / 2 : 0,
+          };
+        }
+        """
+    )
+    if not target["available"]:
+        return {**reveal, "exitButtonClicked": False, "exitLeavesFullscreen": False}
+    page.mouse.click(float(target["x"]), float(target["y"]))
+    page.wait_for_function("() => document.fullscreenElement === null", timeout=3000)
+    return {**reveal, "exitButtonClicked": True, "exitLeavesFullscreen": True}
 
 
 def enter_native_fullscreen(page: Any) -> dict[str, bool]:
@@ -2566,39 +2701,62 @@ def enter_native_fullscreen(page: Any) -> dict[str, bool]:
     }
 
 
-def fullscreen_containment(page: Any) -> dict[str, bool]:
+def fullscreen_containment(page: Any, *, expect_text_visible: bool = False) -> dict[str, bool]:
     exit_probe = fullscreen_exit_probe(page)
     geometry = page.evaluate(
         """
-        () => {
+        (expectTextVisible) => {
           const target = document.fullscreenElement;
           const viewer = document.querySelector('.viewer-container').getBoundingClientRect();
           const video = document.getElementById('remoteVideo').getBoundingClientRect();
-          const status = document.getElementById('statusBar').getBoundingClientRect();
-          const exitNode = document.getElementById('exitFullscreenBtn');
+          const text = document.getElementById('mobileInputDock');
+          const statusNode = document.getElementById('statusBar');
+          const docksNode = document.getElementById('chromeDocks');
+          const textRect = text.getBoundingClientRect();
+          const statusStyle = getComputedStyle(statusNode);
+          const docksStyle = getComputedStyle(docksNode);
+          const safeBottom = Number.parseFloat(
+            getComputedStyle(document.getElementById('mobileSafeAreaProbe')).paddingBottom,
+          ) || 0;
+          const textVisible = !text.hidden && textRect.width > 0 && textRect.height > 0;
+          const visibleTopValue = Number.parseFloat(
+            document.documentElement.style.getPropertyValue('--mobile-visible-top'),
+          );
+          const visibleTop = Number.isFinite(visibleTopValue) ? visibleTopValue : 0;
+          const expectedTextViewerBottom = innerHeight - textRect.height - safeBottom - 8;
           return {
             rootIsFullscreenTarget: target === document.documentElement,
             mobileDockContained: Boolean(target?.contains(document.getElementById('mobileInputDock'))),
             mobileKeysContained: Boolean(target?.contains(document.getElementById('mobileKeySurface'))),
             modalContained: Boolean(target?.contains(document.getElementById('textInputModal'))),
-            exitInGlobalStatus: document.querySelector('#statusBar .status-actions')?.contains(exitNode) === true,
-            viewerBelowStatus: viewer.top >= status.bottom - 1,
-            viewerFitsViewport: viewer.bottom <= innerHeight + 1,
+            statusChromeHidden: statusStyle.visibility === 'hidden' && statusStyle.pointerEvents === 'none',
+            dockChromeHidden: docksStyle.visibility === 'hidden' && docksStyle.pointerEvents === 'none',
+            viewerStartsAtVisibleTop: Math.abs(viewer.top - visibleTop) <= 1,
+            viewerFillsVisibleViewportWithoutTextDock: textVisible
+              || Math.abs(viewer.bottom - innerHeight) <= 1,
+            viewerRetainsExistingTextReserve: !textVisible
+              || Math.abs(viewer.bottom - expectedTextViewerBottom) <= 1,
+            textDockDoesNotOverlapViewer: !textVisible || viewer.bottom <= textRect.top + 1,
+            textDockStateAsExpected: textVisible === expectTextVisible,
+            textInputFocusRetained: !textVisible || document.activeElement?.id === 'mobileTextInput',
             mediaFillsViewer: Math.abs(video.top - viewer.top) <= 1
               && Math.abs(video.left - viewer.left) <= 1
               && Math.abs(video.width - viewer.width) <= 1
               && Math.abs(video.height - viewer.height) <= 1,
           };
         }
-        """
+        """,
+        expect_text_visible,
     )
     return {
         **geometry,
-        "exitVisibleInViewport": exit_probe["fullViewportBounds"],
-        "exitTarget44": exit_probe["target44"],
-        "exitUnobstructed": exit_probe["hitTarget"],
-        "exitFullyInsideViewport": exit_probe["fullViewportBounds"],
-        "exitAvailable": exit_probe["available"],
+        "revealTarget44": exit_probe["revealTarget44"],
+        "revealHitTarget": exit_probe["revealHitTarget"],
+        "revealInsideViewport": exit_probe["revealInsideViewport"],
+        "exitTarget44AfterReveal": exit_probe["exitTarget44AfterReveal"],
+        "exitHitTargetAfterReveal": exit_probe["exitHitTargetAfterReveal"],
+        "exitInsideViewportAfterReveal": exit_probe["exitInsideViewportAfterReveal"],
+        "exitAvailableAfterReveal": exit_probe["exitAvailableAfterReveal"],
     }
 
 
@@ -2628,6 +2786,7 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
         include_terminal=True,
     )
     page = fixture.page
+    checks: dict[str, bool] = {}
     try:
         if not page.evaluate("() => typeof document.documentElement.requestFullscreen === 'function'"):
             return result(
@@ -2637,8 +2796,15 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             )
         page.evaluate("() => TerminalPanel.init()")
 
+        # Each viewport first exercises the real toggle's closed state.  The
+        # text dock is opened as a separate phase below so its existing
+        # reserve/focus contract cannot hide a fullscreen geometry defect.
+        set_mobile_text_visible(page, False)
         wide_button = enter_native_fullscreen(page)
         wide = fullscreen_containment(page)
+        set_mobile_text_visible(page, True)
+        wide_text = fullscreen_containment(page, expect_text_visible=True)
+        set_mobile_text_visible(page, False)
 
         # Terminal is the real tab lifecycle while the documentElement is
         # fullscreen; no socket/auth path is available in this fixture.
@@ -2657,14 +2823,12 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             })
             """
         )
-        terminal_exit = fullscreen_exit_probe(page)
+        terminal_reveal = click_fullscreen_reveal(page)
         terminal.update({
-            "globalExitTarget44": terminal_exit["target44"],
-            "globalExitFullyInsideViewport": terminal_exit["fullViewportBounds"],
-            "globalExitHitTarget": terminal_exit["hitTarget"],
-            "globalExitAvailable": terminal_exit["available"],
+            "revealHandleClicked": terminal_reveal["revealHandleClicked"],
+            "exitAvailableAfterHandle": terminal_reveal["exitAvailableAfterHandle"],
         })
-        page.locator('#desktopTabBtn').click()
+        page.evaluate("() => document.getElementById('desktopTabBtn')?.click()")
         wait_frames(page, 4)
         desktop = page.evaluate(
             """
@@ -2678,35 +2842,32 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             """
         )
 
-        # Hide the mobile editor through its real toggle first; the production
-        # idle observer intentionally keeps controls visible while text input
-        # is shown.  With the editor off, enterIdle is the actual idle path.
-        page.locator('#mobileTextInputBtn').click()
-        wait_frames(page, 2)
-        # The actual idle class must not hide the global fullscreen exit action.
-        page.evaluate("() => ChromeLayout.enterIdle()")
-        wait_frames(page, 2)
-        idle_exit = fullscreen_exit_probe(page)
         idle = page.evaluate(
             """
-            () => ({
-              idleClassApplied: document.body.classList.contains('chrome-idle'),
-            })
+            () => {
+              document.body.classList.remove('chrome-idle');
+              ChromeLayout.enterIdle();
+              const fullscreenDoesNotWriteChromeIdle = !document.body.classList.contains('chrome-idle');
+              document.body.classList.add('chrome-idle');
+              ChromeLayout.enterIdle();
+              return {
+                fullscreenDoesNotWriteChromeIdle,
+                preExistingChromeIdlePreserved: document.body.classList.contains('chrome-idle'),
+              };
+            }
             """
         )
+        idle_reveal = click_fullscreen_reveal(page)
         idle.update({
-            "exitRemainsVisibleWhenIdle": idle_exit["fullViewportBounds"],
-            "exitRemainsHitTargetWhenIdle": idle_exit["hitTarget"],
-            "exitFullyInsideViewportWhenIdle": idle_exit["fullViewportBounds"],
-            "exitAvailableWhenIdle": idle_exit["available"],
+            "revealHandleClicked": idle_reveal["revealHandleClicked"],
+            "exitAvailableAfterHandle": idle_reveal["exitAvailableAfterHandle"],
         })
 
         # A lease loss cannot tear down documentElement fullscreen or remove
-        # the global safety exit; the lease is restored only for the narrow
+        # the independent safety exit; the lease is restored only for the narrow
         # re-entry portion below.
         page.evaluate("() => Input.setControlLease(null)")
         wait_frames(page, 3)
-        lease_exit = fullscreen_exit_probe(page)
         lease_loss = page.evaluate(
             """
             () => ({
@@ -2715,14 +2876,12 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             })
             """
         )
+        first_exit = click_fullscreen_exit(page)
         lease_loss.update({
-            "exitAvailableWithoutLease": lease_exit["available"],
-            "exitFullyInsideViewportWithoutLease": lease_exit["fullViewportBounds"],
-            "exitHitTargetWithoutLease": lease_exit["hitTarget"],
+            "revealHandleClicked": first_exit["revealHandleClicked"],
+            "exitAvailableAfterHandle": first_exit["exitAvailableAfterHandle"],
+            "exitButtonClicked": first_exit["exitButtonClicked"],
         })
-        page.locator('#exitFullscreenBtn').click()
-        page.wait_for_function("() => document.fullscreenElement === null", timeout=3000)
-        first_exit = page.evaluate("() => document.fullscreenElement === null")
 
         page.evaluate(
             """
@@ -2733,24 +2892,29 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             """
         )
         resize_fixture_viewport(page, 375, 812)
-        fixture.show_mobile()
+        set_mobile_text_visible(page, False)
         narrow_button = enter_native_fullscreen(page)
         narrow = fullscreen_containment(page)
-        page.locator('#exitFullscreenBtn').click()
-        page.wait_for_function("() => document.fullscreenElement === null", timeout=3000)
-        second_exit = page.evaluate("() => document.fullscreenElement === null")
+        set_mobile_text_visible(page, True)
+        narrow_text = fullscreen_containment(page, expect_text_visible=True)
+        set_mobile_text_visible(page, False)
+        second_exit = click_fullscreen_exit(page)
         checks = {
             **{f"wide_{key}": value for key, value in wide.items()},
+            **{f"wideText_{key}": value for key, value in wide_text.items()},
             **{f"terminal_{key}": value for key, value in terminal.items()},
             **{f"desktop_{key}": value for key, value in desktop.items()},
             **{f"idle_{key}": value for key, value in idle.items()},
             **{f"leaseLoss_{key}": value for key, value in lease_loss.items()},
             **{f"narrow_{key}": value for key, value in narrow.items()},
+            **{f"narrowText_{key}": value for key, value in narrow_text.items()},
             "wideFullscreenButtonHitTargetBeforeClick": wide_button["fullscreenButtonHitTargetBeforeClick"],
             "wideFullscreenButtonFullyInsideBeforeLocatorAutoscroll": wide_button[
                 "fullscreenButtonFullyInsideBeforeLocatorAutoscroll"
             ],
-            "wideFullscreenButtonMenuScrollChanged": wide_button["fullscreenButtonMenuScrollChanged"],
+            "wideFullscreenButtonMenuScrollChangedOrNotNeeded": wide_button[
+                "fullscreenButtonMenuScrollChangedOrNotNeeded"
+            ],
             "narrowFullscreenButtonHitTargetBeforeClick": narrow_button["fullscreenButtonHitTargetBeforeClick"],
             "narrowFullscreenButtonFullyInsideBeforeLocatorAutoscroll": narrow_button[
                 "fullscreenButtonFullyInsideBeforeLocatorAutoscroll"
@@ -2758,8 +2922,12 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             "narrowFullscreenButtonMenuScrollChangedOrNotNeeded": narrow_button[
                 "fullscreenButtonMenuScrollChangedOrNotNeeded"
             ],
-            "firstExitClickLeavesFullscreen": first_exit,
-            "secondExitClickLeavesFullscreen": second_exit,
+            "firstExitRevealHandleClicked": first_exit["revealHandleClicked"],
+            "firstExitButtonClicked": first_exit["exitButtonClicked"],
+            "firstExitClickLeavesFullscreen": first_exit["exitLeavesFullscreen"],
+            "secondExitRevealHandleClicked": second_exit["revealHandleClicked"],
+            "secondExitButtonClicked": second_exit["exitButtonClicked"],
+            "secondExitClickLeavesFullscreen": second_exit["exitLeavesFullscreen"],
         }
         return result(
             "fullscreen-native-containment",
@@ -2768,7 +2936,19 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             counts={"nativeEnter": 2, "nativeExit": 2, "terminalTransitions": 2},
         )
     except Exception:
-        return result("fullscreen-native-containment", "FAIL", checks={"nativeFullscreenFlow": False}, reason="browser-action-failed")
+        if not checks:
+            try:
+                probe = fullscreen_exit_probe(page)
+                checks = {
+                    "nativeFullscreenFlow": False,
+                    "revealTarget44": probe["revealTarget44"],
+                    "revealHitTarget": probe["revealHitTarget"],
+                    "exitTarget44AfterReveal": probe["exitTarget44AfterReveal"],
+                    "exitHitTargetAfterReveal": probe["exitHitTargetAfterReveal"],
+                }
+            except Exception:
+                checks = {"nativeFullscreenFlow": False}
+        return result("fullscreen-native-containment", "FAIL", checks=checks, reason="browser-action-failed")
     finally:
         fixture.close()
 

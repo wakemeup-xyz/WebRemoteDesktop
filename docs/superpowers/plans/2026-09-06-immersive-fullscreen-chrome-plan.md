@@ -4,6 +4,8 @@
 
 **Goal:** 让 document-level fullscreen 自动隐藏顶部状态栏和底部 Dock，同时以不占布局、按需唤出的 overlay 提供可靠退出路径。
 
+**Current status:** Task 1–3 已实施（Task 1: `a61a787`、`1c23db0`；Task 2: `1b454c8`、viewport 修复 `8682589`；Task 3: `1305d2f`、`060241e`）；Task 4 已更新离线 native acceptance、supersession note 与当前验证命令。Task 2 viewport 修复后，1440×900 与 375×812 的 `viewerFillsVisibleViewportWithoutTextDock` 均为 `true`，offline Chromium 12/12 场景通过，Node wrapper 4/4、focused trio 80/80、Viewer JS/CSS 715/715、Signal build/test 339/339 通过。真实设备、WebKit、Quartz、公网与 live watcher 仍 `NOT RUN`；完整安全 artifact 与命令计数见 Task 4 report。
+
 **Architecture:** 保留 document.documentElement 为唯一 fullscreen target，UI 镜像其状态到既有 body.fullscreen-active。ChromeLayout 在该派生状态中把有效顶栏高度归零并暂停自己的 idle timer；HTML/CSS 新增独立 fixed overlay，不能消费或改写 controls-hidden、chrome-idle 的普通 Viewer 语义。
 
 **Tech Stack:** Vanilla JavaScript、CSS、Node node:test、Python Playwright 离线 Chromium、Signal web build。
@@ -276,9 +278,9 @@ git commit -m "fix(viewer): preserve fullscreen exit outside chrome"
 - Keeps acceptance scope: offline-synthetic and all request routing blocked.
 - Replaces only stale fullscreen assertions; does not loosen pre-existing focus/lease/Terminal checks.
 
-- [ ] **Step 1: 先让离线 native fullscreen 验收表达新期望。**
+- [x] **Step 1: 先让离线 native fullscreen 验收表达新期望。**
 
-  修改 fullscreen_exit_probe() 以分别检测 reveal handle 与已展开的 exit button；在 click exit 前显式点击 handle，不能依赖 Playwright locator 的隐式滚动或自动显示。fullscreen_containment() 将旧的 exitInGlobalStatus/viewerBelowStatus 换为以下 bool：
+  修改 fullscreen_exit_probe() 以分别检测 reveal handle 与已展开的 exit button；在 click exit 前显式点击 handle，不能依赖 Playwright locator 的隐式滚动或自动显示。fullscreen_containment() 移除旧的 status-bar 放置与 viewer-top 关系断言，改为以下 bool：
 
 ~~~python
 {
@@ -294,12 +296,12 @@ git commit -m "fix(viewer): preserve fullscreen exit outside chrome"
 
   宽屏与 375×812 均先显式关闭移动文本输入再验证完整可视区；再单独打开 mobileInputDock，断言 fullscreen 仍隐藏 status/Dock、只保留既有 textReserve 且编辑焦点不丢失。Terminal、idle、lease loss 各自点击 handle 后仍得到可点击退出按钮。idle 断言改为“fullscreen 没有新写入 chrome-idle，已有 class 不影响 overlay”，而不是期待旧 exit 位于 status bar。
 
-- [ ] **Step 2: 运行跨任务离线验收。**
+- [x] **Step 2: 运行跨任务离线验收；Task 2 viewport 修复后通过。**
 
 Run: python3 scripts/mobile_input_interaction_acceptance.py --browser chromium --out /tmp/wrd-immersive-fullscreen-integration.json
 Expected: 在 Task 1–3 已完成时，fullscreen-native-containment PASS；其余场景的安全摘要保持无 payload/secret。若失败，保留 artifact 的具体 bool，回到所属的 Task 1/2/3 修复，不得放宽新断言。这个步骤是跨模块验收，不把已完成的单元 TDD 误写成“旧代码 red”。
 
-- [ ] **Step 3: 修改实现后运行离线验收与 wrapper。**
+- [x] **Step 3: 修改实现后运行离线验收与 wrapper。**
 
 Run:
 
@@ -310,7 +312,7 @@ node --test scripts/mobile-input-interaction-acceptance.test.js
 
 Expected: artifact scope remains offline-synthetic; all scenarios PASS or an explicitly supported browser-runtime NOT RUN; no artifact contains passwords, tokens, text payloads or coordinates.
 
-- [ ] **Step 4: 同步历史移动设计的 supersession note。**
+- [x] **Step 4: 同步历史移动设计的 supersession note。**
 
   在旧移动设计 §8 的全屏段首句添加：
 
@@ -321,7 +323,7 @@ Expected: artifact scope remains offline-synthetic; all scenarios PASS or an exp
 
   更新新 spec/plan 的状态、实际测试命令和 commit 哈希；不要重写已完成移动整改的 Task 状态或历史证据。
 
-- [ ] **Step 5: 跑全量静态、构建和相关测试。**
+- [x] **Step 5: 跑全量静态、构建和相关测试。**
 
 Run:
 
@@ -334,9 +336,11 @@ git diff --check
 
 Expected: all commands exit 0. 若 Chromium/WebKit/真实设备不可用，测试输出必须保留准确的 NOT RUN，不能转写为 PASS。
 
-- [ ] **Step 6: 做范围与文档自审后提交。**
+实际记录：native Chromium 已启动，12/12 场景 PASS；`fullscreen-native-containment` 的 wide/narrow 无文本 Dock viewport、overlay / hidden-chrome / focus / Terminal / idle / lease / re-entry bool 均为 true，计数为 `nativeEnter=2`、`nativeExit=2`、`terminalTransitions=2`。Node wrapper 4/4、focused trio 80/80、Viewer JS/CSS 全量 715/715、Signal build/test 339/339；Signal gate 前仅运行 `npm ci --offline` 使用本地缓存依赖，未发生外部请求。具体 artifact、命令退出码和安全范围见 Task 4 report。
 
-  逐项核对 spec §1–§7：fullscreen 隐藏 top/Dock、有效 top=0、overlay 44px/安全区/事件隔离、inert、focus/API failure、idle/lease/Terminal、离线证据和 NOT RUN 口径均有测试任务。搜索 plan/spec 中的 TODO|TBD|controls-hidden.*fullscreen|viewerBelowStatus|exitInGlobalStatus；前两个不得存在，后两个不得保留为当前验收期望。
+- [x] **Step 6: 做范围与文档自审后提交。**
+
+  逐项核对 spec §1–§7：fullscreen 隐藏 top/Dock、有效 top=0、overlay 44px/安全区/事件隔离、inert、focus/API failure、idle/lease/Terminal、离线证据和 NOT RUN 口径均有测试任务。搜索 plan/spec 中的 TODO|TBD|旧 status-bar 放置断言；TODO/TBD 不得存在，旧断言不得保留为当前验收期望。
 
 ~~~bash
 git add scripts/mobile_input_interaction_acceptance.py \
@@ -347,6 +351,8 @@ git add scripts/mobile_input_interaction_acceptance.py \
 git diff --cached --check
 git commit -m "test(viewer): cover immersive fullscreen chrome"
 ~~~
+
+Task 4 文档/验收提交的最终 SHA 记录在 `task-4-report.md`；commit subject 固定为 `test(viewer): cover immersive fullscreen chrome`。该 report 属于被忽略的本地 SDD 证据文件，不进入产品提交。
 
 ## Final acceptance gate
 

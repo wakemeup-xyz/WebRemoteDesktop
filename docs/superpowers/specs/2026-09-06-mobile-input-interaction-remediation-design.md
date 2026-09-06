@@ -165,6 +165,9 @@ safeBottom来自静态无交互`#mobileSafeAreaProbe`的computed padding-bottom�
 
 ## 8. 全屏（F7）
 
+> 退出入口的 DOM 放置和沉浸 chrome 规则由
+> 2026-09-06-immersive-fullscreen-chrome-design.md 取代；本节保留 root target、焦点、fallback 与验收约束。
+
 选择 `document.documentElement` 为完整 Viewer 全屏目标：现有状态栏、desktopPanel、移动 Dock 与 modal 都已经在其中，不在运行时搬移 DOM、不复制元素/监听器。UI 的 fullscreenchange 仅更新状态和布局，走 §3 焦点规则，不直接 video.focus。
 
 - `.viewer-container:fullscreen` CSS 改为 `html:fullscreen .viewer-container` 与全屏退出按钮规则；已有顶部高度、contain/cover/fill 和新布局算法继续生效。
