@@ -90,6 +90,7 @@ DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增
 - 带任意物理/虚拟 modifier 的导航不当作简单 cursor±1；与 Tab、全选、粘贴、剪切、撤销、查找、切输入法、右键和画面点击一并进入 context-change。复制/保存也采用保守 context-change，避免臆测远端焦点是否变化。
 - `runExternalAction` 在 composition、有 pending 或 deliveryUncertain 时返回 false，显示解决草稿提示，不调用 send。Mouse up/reset、keyboard reset 等安全释放永远不受草稿拦截。
 - 允许的动作仅执行 send 一次；true 后清理已接受历史为哨兵、cursor=0，建立新 generation。false 不推进历史，不偷删草稿；随后 transport 状态若异常按 §4.2 处理。
+- document层实体键盘同样属于外部编辑入口：移动框收起后，真正被controller接受的导航、可打印键或组合键必须同步本地cursor，或保守地通过上述context-change事务失效已接受历史；不能只检查门禁后直发，使重新打开的IME沿用旧cursor。未发送的本地输入框事件、controller拒绝及单独modifier按下不误清历史；tracked keyup始终走原安全释放。测试移动输入→收起→实体导航/输入→重新打开→继续输入，远端模型与新的本地基线一致，无重复报文。
 - 新touch option `beforeGesture: () => boolean` 只做首个pointerdown的只读预检，不清历史。另加`commitGesture: (send:()=>boolean)=>boolean`，默认直接调用send；adapter把每个真实首down（tap/drag/long-press）的sendMouse封在此callback中，Input用runExternalAction('context-change',send)重新核对草稿并只在down接受后提交基线失效化。接受后同一手势move/up不重复门禁；若等待long-press期间出现composition/pending，拒绝down并结束该手势。mouse/pen的实际down也用同一事务包装，up/reset始终原释放流程。two-finger从未发down的纯滚动不虚构context提交；上下文真正改变的down才清历史。
 - 导航/重试按钮 pointerdown 对移动文本焦点使用 preventDefault，click 处理后如同一 textarea 仍 shown、控制有效、无 modal，再在用户手势内恢复该 textarea；composition 时禁止通过按钮强制 blur。
 
