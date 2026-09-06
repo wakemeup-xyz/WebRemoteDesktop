@@ -111,6 +111,51 @@ def collect_phase_samples(
     return records
 
 
+def periodic_paint_stall_failures(samples: list[dict[str, Any]], *, target_fps: int) -> list[str]:
+    """Apply the fixed 150ms / 0.8--1.5s periodic-pulse gate to rVFC gaps.
+
+    This consumes individual callback intervals emitted by SAMPLE_JS.  A
+    missing callback batch is deliberately UNALIGNED; one-second summary
+    maxima cannot reconstruct event timing.
+    """
+    threshold = 3 * (1000 / int(target_fps))
+    events_by_segment: dict[str, list[float]] = {}
+    elapsed_by_segment: dict[str, float] = {}
+    failures: set[str] = set()
+    for sample in samples:
+        if sample.get("paintFrameSampleStatus") != "complete":
+            failures.add("periodic-paint-unaligned")
+            continue
+        segment = sample.get("paintFrameSegment")
+        gaps = sample.get("frameGapsMs")
+        if not isinstance(segment, str) or not isinstance(gaps, list):
+            failures.add("periodic-paint-unaligned")
+            continue
+        elapsed = elapsed_by_segment.get(segment, 0.0)
+        for gap in gaps:
+            try:
+                gap_value = float(gap)
+            except (TypeError, ValueError):
+                failures.add("periodic-paint-unaligned")
+                break
+            if not math.isfinite(gap_value) or gap_value < 0:
+                failures.add("periodic-paint-unaligned")
+                break
+            elapsed += gap_value
+            if gap_value >= threshold:
+                events_by_segment.setdefault(segment, []).append(elapsed)
+        elapsed_by_segment[segment] = elapsed
+    if "periodic-paint-unaligned" in failures:
+        return sorted(failures)
+    for events in events_by_segment.values():
+        for index in range(4, len(events)):
+            recent = events[index - 4:index + 1]
+            if all(800 <= later - earlier <= 1500 for earlier, later in zip(recent, recent[1:])):
+                failures.add("periodic-paint-stall")
+                return sorted(failures)
+    return sorted(failures)
+
+
 def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds: int | None = None) -> dict[str, Any]:
     """Evaluate every sample; age snapshots cannot substitute for frame gaps."""
     failures: set[str] = set()
@@ -226,6 +271,11 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds:
         failures.add("jitter-buffer-p95")
     if jitter_max is None or jitter_max > 300:
         failures.add("jitter-buffer-max")
+    # Older report artifacts predate the frame-level channel.  Do not rewrite
+    # their historical predicate; all newly collected samples include this
+    # field and therefore fail closed if it is absent or incomplete.
+    if any("paintFrameSampleStatus" in sample for sample in samples):
+        failures.update(periodic_paint_stall_failures(samples, target_fps=20))
     return {
         "phase": phase,
         "sampleCount": len(samples),
@@ -354,6 +404,8 @@ SAMPLE_JS = r"""async () => {
     if (!finite(gap) || gap < 0) { tracker.timingInvalid = true; return; }
     tracker.maxPaintGapMs = Math.max(tracker.maxPaintGapMs, gap);
     tracker.intervalMaxPaintGapMs = Math.max(tracker.intervalMaxPaintGapMs, gap);
+    if (tracker.frameGaps.length >= 2048) { tracker.frameGaps.shift(); tracker.frameGapDropped += 1; }
+    tracker.frameGaps.push(gap);
   };
   const observeResolution = (tracker, metadata) => {
     const width = metadata?.width ?? tracker.video.videoWidth;
@@ -378,7 +430,7 @@ SAMPLE_JS = r"""async () => {
     if (current && (current.phaseId !== state.collectorPhaseId || current.attempt !== attempt || current.video !== video || current.active !== active)) resetTracker();
     if (!active || !video || typeof video.requestVideoFrameCallback !== 'function') return { tracker: null, video, attempt, identity, mediaPhase, active };
     if (!state.tracker) {
-      const tracker = { generation: state.trackerGeneration, phaseId: state.collectorPhaseId, attempt, video, identity, active, startedAt: at, intervalStartedAt: at, firstPaintAt: null, lastPaintAt: null, maxPaintGapMs: 0, intervalMaxPaintGapMs: 0, callbackId: null, geometry: null, geometryInvalid: false, timingInvalid: false };
+      const tracker = { generation: state.trackerGeneration, phaseId: state.collectorPhaseId, attempt, video, identity, active, startedAt: at, intervalStartedAt: at, firstPaintAt: null, lastPaintAt: null, maxPaintGapMs: 0, intervalMaxPaintGapMs: 0, callbackId: null, geometry: null, geometryInvalid: false, timingInvalid: false, frameGaps: [], frameGapDropped: 0 };
       const tick = (_now, metadata) => {
         if (state.tracker !== tracker || tracker.generation !== state.trackerGeneration || tracker.video !== video) return;
         const paintedAt = performance.now();
@@ -454,11 +506,11 @@ SAMPLE_JS = r"""async () => {
     derivedFps: elapsed ? Math.round((delta('framesDecoded') * 1000 / elapsed) * 10) / 10 : 0,
     jitterBufferMs: jitterCount ? Math.round((delta('jitterBufferDelay') / jitterCount * 1000) * 10) / 10 : 0,
     framesDroppedDelta: delta('framesDropped'), packetsReceivedDelta: delta('packetsReceived'), nackCountDelta: delta('nackCount'), pliCountDelta: delta('pliCount'), firCountDelta: delta('firCount'), freezeDelta: delta('freezeCount'),
-    paintAgeMs: paintAgeMs === null ? null : Math.round(paintAgeMs), maxPaintGapMs: maxPaintGapMs === null ? null : Math.round(maxPaintGapMs), intervalMaxPaintGapMs: intervalMaxPaintGapMs === null ? null : Math.round(intervalMaxPaintGapMs), firstPaintObserved, paintEvidenceStatus, geometry, paint: { ...paint },
+    paintAgeMs: paintAgeMs === null ? null : Math.round(paintAgeMs), maxPaintGapMs: maxPaintGapMs === null ? null : Math.round(maxPaintGapMs), intervalMaxPaintGapMs: intervalMaxPaintGapMs === null ? null : Math.round(intervalMaxPaintGapMs), firstPaintObserved, paintEvidenceStatus, geometry, paintFrameSampleStatus: tracker && tracker.frameGapDropped === 0 && paintEvidenceStatus === 'complete' ? 'complete' : 'dropped', paintFrameSegment: tracker ? `${tracker.phaseId}:${tracker.attempt}:${tracker.generation}` : null, frameGapsMs: tracker ? tracker.frameGaps.map((value) => Math.round(value * 1000) / 1000) : null, paint: { ...paint },
     latency, input, policy: { networkMode: WebRTC?.networkMode || null, profile: controller?.currentProfile || null, profileChanges: controller?.profileChanges || [], keyframeRequested: WebRTC?._keyframeRequested === true, keyframeEmitted: WebRTC?._keyframeEmitted === true, keyframeRequestSequence: Number(WebRTC?._keyframeRequestSequence || 0) },
     inputAcks: [...state.inputAcks], mediaPhase: WebRTC?.getMediaAppliedPhase?.() || null,
   };
-  if (tracker) { tracker.intervalMaxPaintGapMs = 0; tracker.intervalStartedAt = now; }
+  if (tracker) { tracker.intervalMaxPaintGapMs = 0; tracker.intervalStartedAt = now; tracker.frameGaps = []; tracker.frameGapDropped = 0; }
   state.previous = { now, framesReceived: total('framesReceived'), framesDecoded: total('framesDecoded'), packetsLost: total('packetsLost'), bytesReceived: total('bytesReceived'), jitterBufferDelay: total('jitterBufferDelay'), jitterBufferEmittedCount: total('jitterBufferEmittedCount'), framesDropped: total('framesDropped'), packetsReceived: total('packetsReceived'), nackCount: total('nackCount'), pliCount: total('pliCount'), firCount: total('firCount'), freezeCount: total('freezeCount') };
   return sample;
 }"""
@@ -520,11 +572,13 @@ def record_interactions(page: Any, enabled: bool) -> dict[str, Any]:
     reason = "controlled producer identity cannot be verified from a Viewer-only session"
     if not enabled:
         reason = "requires a controlled producer and host-side event correlation"
-    return {"status": "NOT_RUN", "reason": reason}
+    return {"status": "NOT_RUN", "executionMode": "automatic-isolated", "reason": reason,
+            "inputIds": [], "ackSamples": [], "producerSamples": [], "visualSamples": []}
 
 
 def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
     baseline = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
+    suspended_at = time.monotonic()
     page.locator("#pauseBtn").click()
     suspended = _wait_for_phase(page, "suspended")
     page.locator("#pauseBtn").click()
@@ -546,20 +600,51 @@ def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
         pass
     after_refresh = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
     refresh_fresh = after_refresh["frame"] > before_refresh["frame"]
-    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
+    resume_after_ms = round((time.monotonic() - suspended_at) * 1000)
+    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "resumeAfterMs": resume_after_ms, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
 
 
 def marker_failures(marker: dict[str, Any]) -> list[str]:
     failures = []
     pause = marker.get("pauseResumeRefresh", {}).get("pauseResume", {})
     refresh = marker.get("pauseResumeRefresh", {}).get("refresh", {})
-    if not (pause.get("suspended") and pause.get("active") and pause.get("freshFrame")):
+    try:
+        resume_after_ms = float(pause.get("resumeAfterMs") or 0)
+    except (TypeError, ValueError):
+        resume_after_ms = -1
+    if not (pause.get("suspended") and pause.get("active") and pause.get("freshFrame") and resume_after_ms >= 2000):
         failures.append("pause-resume")
     if not (refresh.get("healthyRelay") and refresh.get("freshFrame")):
         failures.append("refresh")
-    # A controlled producer cannot be authenticated through only a captured
-    # video stream, so product interaction/static-text gates stay NOT RUN.
-    failures.append("static-text-and-input-not-run")
+    scene = marker.get("sceneResult") or {}
+    if not isinstance(scene, dict):
+        scene = {}
+    input_ids = {str(value) for value in scene.get("inputIds", []) if value}
+    acks = {str(row.get("inputId")): row for row in scene.get("ackSamples", []) if row.get("status") == "applied"}
+    producer_events = {str(row.get("inputId")): row for row in scene.get("producerSamples", [])}
+    visuals = {row.get("actionId"): row for row in scene.get("visualSamples", [])}
+    def causal_row(input_id: str) -> bool:
+        ack, producer = acks.get(input_id), producer_events.get(input_id)
+        if not ack or not producer or producer.get("focused") is not True:
+            return False
+        if ack.get("attemptId") != producer.get("attemptId") or ack.get("generation") != producer.get("generation"):
+            return False
+        visual = visuals.get(producer.get("actionId"))
+        return bool(visual and visual.get("runNonce") == producer.get("runNonce")
+                    and visual.get("attemptId") == producer.get("attemptId")
+                    and visual.get("generation") == producer.get("generation")
+                    and visual.get("rtpAligned") is True
+                    and isinstance(visual.get("rtpTimestamp"), int)
+                    and isinstance(visual.get("wireTimestamp"), int)
+                    and visual.get("rtpTimestamp") == visual.get("wireTimestamp")
+                    and isinstance(visual.get("captureSeq"), int))
+    complete_remote_scene = (
+        scene.get("status") == "PASS"
+        and scene.get("executionMode") in {"automatic-isolated", "operator-remote"}
+        and bool(input_ids) and all(causal_row(input_id) for input_id in input_ids)
+    )
+    if not complete_remote_scene:
+        failures.append("static-text-and-input-not-run")
     return failures
 
 
@@ -618,7 +703,8 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                 # selected relay predicate again before taking evidence.
                 wait_for_healthy_relay(page)
                 duration = phase_duration_seconds(phase, args.duration_seconds)
-                marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": record_interactions(page, bool(args.controlled_producer_id)), "pauseResumeRefresh": record_pause_resume_refresh(page)}
+                scene_result = record_interactions(page, bool(args.controlled_producer_id))
+                marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": scene_result, "sceneResult": scene_result, "pauseResumeRefresh": record_pause_resume_refresh(page)}
                 # Markers intentionally pause and refresh media.  Start the
                 # evidence window only after they settle so their lifecycle
                 # gaps cannot be attributed to this phase.

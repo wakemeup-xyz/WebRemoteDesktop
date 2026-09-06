@@ -163,6 +163,85 @@ def test_phase_summary_accepts_complete_20fps_evidence_with_one_pixel_geometry_t
     assert collector.summarize_phase("720p", samples, duration_seconds=2)["ok"] is True
 
 
+def test_periodic_paint_stall_gate_rejects_600_repeated_subsecond_pulses():
+    frame_gaps = [gap for _ in range(600) for gap in ([50] * 17 + [150])]
+    failures = collector.periodic_paint_stall_failures([
+        {"frameGapsMs": frame_gaps, "paintFrameSampleStatus": "complete", "paintFrameSegment": "a"}
+    ], target_fps=20)
+    assert "periodic-paint-stall" in failures
+
+
+def test_periodic_paint_stall_gate_retains_rvfc_timing_across_one_second_samples():
+    samples = [{"frameGapsMs": [50] * 17 + [150], "paintFrameSampleStatus": "complete", "paintFrameSegment": "a"}
+               for _ in range(5)]
+    assert "periodic-paint-stall" in collector.periodic_paint_stall_failures(samples, target_fps=20)
+
+
+def test_periodic_paint_stall_gate_accepts_uniform_and_isolated_but_fails_closed_on_missing_frames():
+    assert collector.periodic_paint_stall_failures([
+        {"frameGapsMs": [50] * 120, "paintFrameSampleStatus": "complete", "paintFrameSegment": "a"}
+    ], target_fps=20) == []
+    assert collector.periodic_paint_stall_failures([
+        {"frameGapsMs": [50] * 17 + [150] + [50] * 240, "paintFrameSampleStatus": "complete", "paintFrameSegment": "a"}
+    ], target_fps=20) == []
+    assert "periodic-paint-unaligned" in collector.periodic_paint_stall_failures([
+        {"frameGapsMs": [50], "paintFrameSampleStatus": "dropped", "paintFrameSegment": "a"}
+    ], target_fps=20)
+
+
+def test_periodic_paint_stall_does_not_join_events_across_pause_or_generation_boundaries():
+    samples = [
+        {"frameGapsMs": [50] * 17 + [150], "paintFrameSampleStatus": "complete", "paintFrameSegment": "a"},
+        {"frameGapsMs": [50] * 17 + [150], "paintFrameSampleStatus": "complete", "paintFrameSegment": "paused"},
+        {"frameGapsMs": [50] * 17 + [150], "paintFrameSampleStatus": "complete", "paintFrameSegment": "new-generation"},
+    ]
+    assert collector.periodic_paint_stall_failures(samples, target_fps=20) == []
+
+
+def test_marker_failures_only_lifts_static_input_gate_for_full_remote_scene_pass_and_pause_requires_two_seconds():
+    base = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 1999},
+                                   "refresh": {"healthyRelay": True, "freshFrame": True}}}
+    assert "pause-resume" in collector.marker_failures(base)
+    base["pauseResumeRefresh"]["pauseResume"]["resumeAfterMs"] = 2000
+    base["sceneResult"] = {"status": "PASS", "executionMode": "producer-local"}
+    assert "static-text-and-input-not-run" in collector.marker_failures(base)
+    base["sceneResult"] = {"status": "PASS", "executionMode": "automatic-isolated", "inputIds": ["i"], "ackSamples": [{"inputId": "i", "status": "applied", "attemptId": "a", "generation": 1}], "producerSamples": [{"inputId": "i", "focused": True, "runNonce": 5, "actionId": 8, "attemptId": "a", "generation": 1}], "visualSamples": [{"runNonce": 5, "sceneId": 1, "actionId": 8, "attemptId": "a", "generation": 1, "rtpAligned": True, "rtpTimestamp": 3, "wireTimestamp": 3, "captureSeq": 4}]}
+    assert "static-text-and-input-not-run" not in collector.marker_failures(base)
+
+
+def test_marker_failures_rejects_a_scene_result_without_the_t3_wire_join_fields():
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000},
+                                      "refresh": {"healthyRelay": True, "freshFrame": True}},
+              "sceneResult": {"status": "PASS", "executionMode": "automatic-isolated", "inputIds": ["i"], "ackSamples": [{"inputId": "i"}], "visualSamples": [{"rtpAligned": True}]}}
+    assert "static-text-and-input-not-run" in collector.marker_failures(marker)
+
+
+def test_marker_failures_rejects_forged_mode_and_input_lists_without_producer_causality():
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000},
+                                      "refresh": {"healthyRelay": True, "freshFrame": True}},
+              "sceneResult": {"status": "PASS", "executionMode": "operator-remote", "inputIds": ["invented"], "ackSamples": [{"inputId": "invented", "status": "applied"}], "visualSamples": [{"rtpAligned": True, "rtpTimestamp": 1, "wireTimestamp": 1, "captureSeq": 1}]}}
+    assert "static-text-and-input-not-run" in collector.marker_failures(marker)
+
+
+def test_controlled_producer_id_alone_stays_not_run_and_never_dispatches_input():
+    result = collector.record_interactions(object(), enabled=True)
+    assert result["status"] == "NOT_RUN"
+    assert result["inputIds"] == []
+    assert "Viewer-only" in result["reason"]
+
+
+def test_malformed_scene_result_fails_closed_instead_of_crashing_the_collector():
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000},
+                                      "refresh": {"healthyRelay": True, "freshFrame": True}}, "sceneResult": "PASS"}
+    assert "static-text-and-input-not-run" in collector.marker_failures(marker)
+
+
+def test_malformed_pause_timing_fails_closed_instead_of_throwing():
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": "not-a-number"},
+                                      "refresh": {"healthyRelay": True, "freshFrame": True}}}
+    assert "pause-resume" in collector.marker_failures(marker)
+
+
 def test_phase_summary_fails_when_the_connection_attempt_or_geometry_changes():
     changed_geometry = {"x": 12, "y": 20, "width": 1280, "height": 720,
                         "minX": 10, "maxX": 12, "minY": 20, "maxY": 20,

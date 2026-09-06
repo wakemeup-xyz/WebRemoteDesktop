@@ -1,11 +1,47 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>WRD TURN controlled producer</title>
-<style>body{font:24px/1.5 system-ui;margin:3rem;max-width:60rem}#target{height:16rem;border:4px dashed #246;display:grid;place-items:center;background:#eef;user-select:none}#log{white-space:pre-wrap;font:14px/1.4 ui-monospace,monospace;background:#111;color:#cfc;padding:1rem;min-height:10rem}</style>
-<h1>TURN runtime controlled producer</h1>
-<p>Display this local page on the captured Host only for an authorized maintenance run. It stores nothing and sends no network requests.</p>
-<div id="target" tabindex="0">Static high-contrast text · scroll / drag / keyboard target</div><pre id="log" aria-live="polite"></pre>
+<title>WRD controlled scene producer</title>
+<style>
+  body{font:18px/1.5 system-ui;margin:2rem;max-width:70rem;background:#f8fbff;color:#123}
+  #marker{image-rendering:pixelated;width:256px;height:128px;border:8px solid #123;display:block;margin:1rem 0}
+  #target{height:12rem;border:3px dashed #246;display:grid;place-items:center;background:#eef;padding:1rem}
+  #scroll{height:8rem;overflow:auto;background:#fff;border:1px solid #789;padding:1rem;margin:1rem 0}
+  #drag{width:5rem;height:3rem;background:#fd8;display:grid;place-items:center;touch-action:none;cursor:grab}
+  #log{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace;background:#111;color:#cfc;padding:1rem}
+</style>
+<h1>TURN controlled scene producer</h1>
+<p id="identity">This local page is a maintenance fixture. It makes no network request.</p>
+<canvas id="marker" width="256" height="128" aria-label="proof marker"></canvas>
+<div id="target" tabindex="0">Static 中英文文字 · thin lines · focused input fixture<br><input id="text" aria-label="controlled text input"></div>
+<div id="scroll">滚动区域 / scrolling text<br>line · 01<br>line · 02<br>line · 03<br>line · 04<br>line · 05<br>line · 06<br>line · 07<br>line · 08<br>line · 09<br>line · 10<br>line · 11<br>line · 12<br>line · 13<br>line · 14<br>line · 15<br>line · 16<br>line · 17<br>line · 18<br>line · 19<br>line · 20</div>
+<div id="drag" draggable="false">drag target</div>
+<pre id="log" aria-live="polite"></pre>
 <script>
-const log=document.querySelector('#log'); const add=(event)=>{log.textContent+=`${new Date().toISOString()} ${event.type} key=${event.key||''} x=${event.clientX??''} y=${event.clientY??''}\n`;log.scrollTop=log.scrollHeight};
-['pointerdown','pointermove','pointerup','wheel','keydown','keyup'].forEach(type=>document.querySelector('#target').addEventListener(type,add));
+(() => {
+  const WIDTH=32, HEIGHT=16, PAYLOAD=192, BLACK=32, WHITE=224;
+  const bits=(bytes)=>Array.from(bytes, byte=>Array.from({length:8},(_,i)=>(byte >>> (7-i))&1)).flat();
+  const crc32=(bytes)=>{let c=0xffffffff;for(const b of bytes){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^((c&1)?0xedb88320:0)}return (c^0xffffffff)>>>0};
+  const put=(view, offset, value, bytes)=>{ let v=BigInt(value); for(let i=bytes-1;i>=0;i--){view[offset+i]=Number(v&255n);v>>=8n} };
+  const payload=(state)=>{const raw=new Uint8Array(24);raw[0]=1;raw[1]=0;put(raw,2,state.runNonce,8);put(raw,10,state.sceneId,2);put(raw,12,state.tick,4);put(raw,16,state.actionId,4);put(raw,20,crc32(raw.slice(0,20)),4);return bits(raw)};
+  const markerGrid=(state)=>{
+    const grid=Array.from({length:HEIGHT},()=>Array(WIDTH).fill(0));
+    grid[0][0]=0;grid[0][31]=1;grid[15][0]=1;grid[15][31]=1;
+    for(let x=1;x<31;x++){grid[0][x]=(x-1)%2;grid[15][x]=0}
+    for(let y=1;y<15;y++){grid[y][0]=1;grid[y][31]=1}
+    const inside=[...payload(state),...payload(state),...Array.from({length:36},(_,i)=>i%2)];
+    inside.forEach((bit,index)=>{const y=Math.floor(index/30)+1,x=index%30+1;grid[y][x]=bit}); return grid;
+  };
+  const createState=({runNonce,sceneId})=>({runNonce:BigInt(runNonce),sceneId:Number(sceneId),tick:0,actionId:0});
+  const applyAction=(state,actionId)=>{state.tick=(state.tick+1)>>>0;state.actionId=Number(actionId)>>>0;return state};
+  window.WRDTurnControlledProducer={markerGrid,createState,applyAction,crc32};
+  if(typeof document==='undefined')return;
+  const nonce=BigInt('0x'+crypto.getRandomValues(new Uint32Array(2)).reduce((s,x)=>s+x.toString(16).padStart(8,'0'),''));
+  const state=createState({runNonce:nonce,sceneId:1}); const canvas=document.querySelector('#marker'), ctx=canvas.getContext('2d');
+  const draw=()=>{const image=ctx.createImageData(256,128), grid=markerGrid(state);for(let y=0;y<128;y++)for(let x=0;x<256;x++){const v=grid[Math.floor(y/8)][Math.floor(x/8)]?WHITE:BLACK,i=(y*256+x)*4;image.data[i]=image.data[i+1]=image.data[i+2]=v;image.data[i+3]=255}ctx.putImageData(image,0,0)};
+  const log=document.querySelector('#log'); let action=0; const note=(event)=>{applyAction(state,++action);draw();log.textContent+=`${event.type} action=${action} tick=${state.tick}\n`;log.scrollTop=log.scrollHeight};
+  document.querySelector('#identity').textContent=`Fixture nonce=${nonce.toString(16)} scene=1. Marker changes only on an explicit action.`;
+  ['input','keydown','pointerdown'].forEach(type=>document.querySelector('#target').addEventListener(type,note));
+  document.querySelector('#scroll').addEventListener('scroll',note); document.querySelector('#drag').addEventListener('pointermove',event=>{if(event.buttons)note(event)});
+  draw();
+})();
 </script>
