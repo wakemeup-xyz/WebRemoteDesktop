@@ -1,0 +1,17 @@
+{
+  "identity": {},
+  "static": {
+    "status": "NOT_RUN",
+    "failures": [
+      "lifecycle:RuntimeError:production-proof-admission-epoch-mismatch"
+    ]
+  },
+  "automatic": {
+    "status": "BLOCKED",
+    "failures": [
+      "lab-lifecycle-unavailable"
+    ]
+  },
+  "receipts": [],
+  "signature": "59b066f230340cc93eae44b3027f05c8cf4f9fb7f65be6947120f5880d45cf8a"
+}
