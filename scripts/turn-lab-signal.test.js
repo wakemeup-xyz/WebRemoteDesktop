@@ -2,7 +2,20 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { assertLabOrigin, createLabRuntime } = require('./turn-lab-signal');
+const { PassThrough } = require('node:stream');
+const { assertLabOrigin, createLabRuntime, readLabTurnBootstrap, validateLabTurnBootstrap } = require('./turn-lab-signal');
+
+function turnBootstrap() {
+  return {
+    schemaVersion: 1,
+    selectedTurnServerId: 'fixture-turn',
+    defaultTurnServerId: 'fixture-turn',
+    turnFingerprint: 'fixture-fingerprint',
+    turnUrls: ['turn:relay.fixture.invalid:3478?transport=udp'],
+    turnUsername: 'fixture-user',
+    turnCredential: 'fixture-credential',
+  };
+}
 
 test('lab signal matches Python bare-loopback origin validation', () => {
   assert.throws(() => assertLabOrigin('http://127.0.0.1:8080'), /bare/);
@@ -13,6 +26,51 @@ test('lab signal matches Python bare-loopback origin validation', () => {
     assert.throws(() => assertLabOrigin(value), /bare|canonical/);
   }
   assert.doesNotThrow(() => assertLabOrigin('http://127.0.0.1:41000'));
+});
+
+test('lab TURN bootstrap strictly accepts one selected complete TURN path and redacts validation errors', () => {
+  const bootstrap = turnBootstrap();
+  const validated = validateLabTurnBootstrap(bootstrap);
+  assert.deepEqual(validated, bootstrap);
+  assert.notEqual(validated, bootstrap);
+  for (const broken of [
+    { ...bootstrap, defaultTurnServerId: 'other' },
+    { ...bootstrap, turnUrls: ['https://not-turn.fixture.invalid'] },
+    { ...bootstrap, turnCredential: '' },
+    { ...bootstrap, unexpected: true },
+  ]) {
+    assert.throws(() => validateLabTurnBootstrap(broken), (error) => (
+      /lab TURN bootstrap/.test(error.message) && !error.message.includes('fixture-credential')
+    ));
+  }
+});
+
+test('lab Signal accepts one bounded stdin bootstrap and fails closed without one', async () => {
+  const complete = new PassThrough();
+  const accepted = readLabTurnBootstrap(complete);
+  complete.end(`${JSON.stringify(turnBootstrap())}\n`);
+  assert.equal((await accepted).selectedTurnServerId, 'fixture-turn');
+
+  const absent = new PassThrough();
+  const rejected = readLabTurnBootstrap(absent);
+  absent.end();
+  await assert.rejects(rejected, (error) => (
+    error.message === 'lab TURN bootstrap pipe is invalid' && !error.message.includes('fixture-credential')
+  ));
+});
+
+test('lab runtime exposes only the selected injected TURN path and preserves explicit no-TURN test mode', async () => {
+  const withTurn = await createLabRuntime({ allowSourceFallback: true, turnBootstrap: turnBootstrap() });
+  const noTurn = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    assert.equal(withTurn.runtime.config.selectedTurnServerId, 'fixture-turn');
+    assert.equal(withTurn.runtime.config.turnCatalog.servers.length, 1);
+    assert.equal(withTurn.runtime.config.turnCatalog.servers[0].credential, 'fixture-credential');
+    assert.equal(noTurn.runtime.config.turnConfigured, undefined);
+    assert.deepEqual(noTurn.runtime.config.turnUrls, []);
+  } finally {
+    await Promise.all([withTurn.close(), noTurn.close()]);
+  }
 });
 
 test('lab signal creates a private runtime with random temporary authentication', async () => {

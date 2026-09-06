@@ -25,7 +25,80 @@ function assertLabOrigin(origin) {
   return canonical;
 }
 
-function labConfig(credentials, runtimeDir = '') {
+const TURN_BOOTSTRAP_KEYS = new Set([
+  'schemaVersion', 'selectedTurnServerId', 'defaultTurnServerId',
+  'turnFingerprint', 'turnUrls', 'turnUsername', 'turnCredential',
+]);
+const MAX_TURN_BOOTSTRAP_BYTES = 16 * 1024;
+
+function validateLabTurnBootstrap(value) {
+  // Do not include ``value`` or its fields in errors: this object contains a
+  // production-derived TURN credential and errors go to the lab stderr log.
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length !== TURN_BOOTSTRAP_KEYS.size
+    || Object.keys(value).some((key) => !TURN_BOOTSTRAP_KEYS.has(key))) {
+    throw new Error('lab TURN bootstrap has an invalid schema');
+  }
+  if (value.schemaVersion !== 1
+    || typeof value.selectedTurnServerId !== 'string' || !value.selectedTurnServerId
+    || value.defaultTurnServerId !== value.selectedTurnServerId
+    || typeof value.turnFingerprint !== 'string' || !value.turnFingerprint
+    || !Array.isArray(value.turnUrls) || !value.turnUrls.length
+    || !value.turnUrls.every((url) => typeof url === 'string' && /^(turn|turns):/.test(url))
+    || typeof value.turnUsername !== 'string' || !value.turnUsername
+    || typeof value.turnCredential !== 'string' || !value.turnCredential) {
+    throw new Error('lab TURN bootstrap is incomplete or inconsistent');
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    selectedTurnServerId: value.selectedTurnServerId,
+    defaultTurnServerId: value.selectedTurnServerId,
+    turnFingerprint: value.turnFingerprint,
+    turnUrls: Object.freeze(value.turnUrls.slice()),
+    turnUsername: value.turnUsername,
+    turnCredential: value.turnCredential,
+  });
+}
+
+function readLabTurnBootstrap(input) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const fail = () => reject(new Error('lab TURN bootstrap pipe is invalid'));
+    input.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_TURN_BOOTSTRAP_BYTES) {
+        input.destroy();
+        fail();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    input.once('error', fail);
+    input.once('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (!raw.endsWith('\n') || raw.indexOf('\n') !== raw.length - 1) return fail();
+        resolve(validateLabTurnBootstrap(JSON.parse(raw)));
+      } catch (_error) {
+        fail();
+      }
+    });
+  });
+}
+
+function labConfig(credentials, runtimeDir = '', turnBootstrap = null) {
+  const selected = turnBootstrap ? validateLabTurnBootstrap(turnBootstrap) : null;
+  const turnServer = selected && {
+    id: selected.selectedTurnServerId,
+    label: selected.selectedTurnServerId,
+    urls: selected.turnUrls.slice(),
+    username: selected.turnUsername,
+    credential: selected.turnCredential,
+    fingerprint: selected.turnFingerprint,
+    configured: true,
+    source: 'lab-production-bootstrap',
+  };
   return {
     port: 0,
     nodeEnv: 'test',
@@ -33,8 +106,8 @@ function labConfig(credentials, runtimeDir = '') {
     viewerAccessPassword: credentials.viewerPassword,
     hostSharedSecret: credentials.hostSecret,
     corsOrigins: [],
-    stunUrls: [], turnUrls: [], turnUsername: '', turnCredential: '', turnSource: 'lab', turnFingerprint: '',
-    turnCatalog: { servers: [], defaultId: '', source: 'lab' }, selectedTurnServerId: '', defaultTurnServerId: '',
+    stunUrls: [], turnUrls: selected ? selected.turnUrls.slice() : [], turnUsername: selected ? selected.turnUsername : '', turnCredential: selected ? selected.turnCredential : '', turnSource: selected ? 'lab-production-bootstrap' : 'lab', turnFingerprint: selected ? selected.turnFingerprint : '',
+    turnCatalog: { servers: turnServer ? [turnServer] : [], defaultId: selected ? selected.selectedTurnServerId : '', source: selected ? 'lab-production-bootstrap' : 'lab' }, selectedTurnServerId: selected ? selected.selectedTurnServerId : '', defaultTurnServerId: selected ? selected.selectedTurnServerId : '',
     publicEntryUrl: '', enableDiagPersist: false, logLevel: 'error', logFormat: 'jsonl', logDir: runtimeDir, logMaxBytes: 1024 * 1024, logBackupCount: 0,
     hostVerboseDiagnostics: false, enableTerminal: false, terminalAdminPassword: '', terminalShell: '', terminalCwd: '', terminalPathEntries: [],
     terminalSoftWarnSessionCount: 1, terminalMaxSessions: 1, terminalReplayBufferBytes: 1024, terminalIdleTimeoutMs: 1000,
@@ -54,8 +127,9 @@ async function createLabRuntime(options = {}) {
   // Host context therefore transitions into this server-owned session instead
   // of re-checking an admission that must no longer exist.
   const labSessions = new Map();
+  const turnBootstrap = options.turnBootstrap === undefined ? null : validateLabTurnBootstrap(options.turnBootstrap);
   const runtime = createServerApp({
-    config: labConfig(credentials, options.runtimeDir || ''),
+    config: labConfig(credentials, options.runtimeDir || '', turnBootstrap),
     signalingRuntimeContext: createRuntimeContext({
       maxProofAdmissions: options.maxProofAdmissions ?? 1,
       realm,
@@ -195,7 +269,8 @@ async function main() {
   const realm = realmIndex >= 0 ? process.argv[realmIndex + 1] : '';
   const runtimeIndex = process.argv.indexOf('--runtime-dir');
   const runtimeDir = runtimeIndex >= 0 ? process.argv[runtimeIndex + 1] : '';
-  const lab = await createLabRuntime({ allowSourceFallback: true, realm, runtimeDir });
+  const turnBootstrap = await readLabTurnBootstrap(process.stdin);
+  const lab = await createLabRuntime({ allowSourceFallback: true, realm, runtimeDir, turnBootstrap });
   if (process.argv.includes('--json')) process.stdout.write(`${JSON.stringify({ origin: lab.origin, realm: lab.realm, hostSecret: lab.credentials.hostSecret, viewerPassword: lab.credentials.viewerPassword, contextSecret: lab.contextSecret, transcriptSecret: lab.transcriptSecret })}\n`);
   const close = async () => { await lab.close(); process.exit(0); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
@@ -203,4 +278,4 @@ async function main() {
 
 if (require.main === module) main().catch((error) => { console.error(error.stack || error); process.exit(1); });
 
-module.exports = { assertLabOrigin, createLabRuntime };
+module.exports = { assertLabOrigin, createLabRuntime, readLabTurnBootstrap, validateLabTurnBootstrap };

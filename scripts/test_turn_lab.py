@@ -27,6 +27,15 @@ class _ProofFixture:
     """Real loopback HTTP fixture; never points at the production port."""
     def __init__(self):
         self.epoch, self.viewers, self.proofs, self.fail_status, self.leases = 0, 0, 0, False, {}
+        self.turn_bootstrap_enabled = True
+        self.turn_host_ready = True
+        self.turn_urls = ["turn:relay.fixture.invalid:3478?transport=udp"]
+        self.turn_username = "fixture-turn-user"
+        self.turn_credential = "fixture-turn-credential"
+        self.turn_server_id = "fixture-turn"
+        self.turn_fingerprint = "fixture-turn-fingerprint"
+        self.omit_admission_realm = False
+        self.legacy_proof_lease_routes = False
         self.fail_proof_status_once = False
         self.block_next_status = False
         self.status_block_entered = threading.Event()
@@ -50,6 +59,21 @@ class _ProofFixture:
                         fixture.status_block_entered.set()
                         fixture.status_block_release.wait(3)
                     return self._json(200, {"viewerEpoch": fixture.epoch, "viewerCount": fixture.viewers})
+                if self.path == "/api/webrtc-config" and self.headers.get("Authorization") == "Bearer fixture-token":
+                    if not fixture.turn_bootstrap_enabled:
+                        return self._json(200, {"turnConfigured": False, "hostTurnReady": False})
+                    host_id = fixture.turn_server_id if fixture.turn_host_ready else "other-turn"
+                    host_fingerprint = fixture.turn_fingerprint if fixture.turn_host_ready else "other-fingerprint"
+                    return self._json(200, {
+                        "turnConfigured": True,
+                        "turnUrls": fixture.turn_urls,
+                        "turnFingerprint": fixture.turn_fingerprint,
+                        "selectedTurnServerId": fixture.turn_server_id,
+                        "hostTurnReady": fixture.turn_host_ready,
+                        "hostTurnServerId": host_id,
+                        "hostTurnFingerprint": host_fingerprint,
+                        "iceServers": [{"urls": ["stun:fixture.invalid:3478"]}, {"urls": fixture.turn_urls, "username": fixture.turn_username, "credential": fixture.turn_credential}],
+                    })
                 return self._json(404, {})
             def do_POST(self):
                 if self.path == "/api/proof-admission" and self.headers.get("Authorization") == "Bearer fixture-token":
@@ -62,8 +86,13 @@ class _ProofFixture:
                     fixture.proofs += 1
                     token = f"proof-token-{fixture.proofs}-long"
                     fixture.leases[token] = {"token": token, "epoch": fixture.epoch, "realm": "production"}
-                    return self._json(201, {"admission": fixture.leases[token]})
+                    admission = dict(fixture.leases[token])
+                    if fixture.omit_admission_realm:
+                        admission.pop("realm")
+                    return self._json(201, {"admission": admission})
                 if self.path in {"/api/proof-admission/status", "/api/proof-admission/release"} and self.headers.get("Authorization") == "Bearer fixture-token":
+                    if fixture.legacy_proof_lease_routes:
+                        return self._json(404, {})
                     if self.path.endswith("status") and fixture.fail_proof_status_once:
                         fixture.fail_proof_status_once = False
                         return self._json(503, {})
@@ -104,6 +133,91 @@ def test_lab_host_requires_verified_context_and_rejects_viewer_selection():
     with pytest.raises(TypeError): LabWebRemoteHost()  # type: ignore[call-arg]
     with pytest.raises(TypeError): LabWebRemoteHost(_context(), policy_selection="candidate")  # type: ignore[call-arg]
     with pytest.raises(TypeError): VerifiedLabContext("http://127.0.0.1:40123", "lab-r", "x", 0, _context().selection, "legacy")
+
+
+def test_strict_production_client_accepts_the_legacy_token_epoch_admission_shape_as_production(monkeypatch, proof_fixture):
+    proof_fixture.omit_admission_realm = True
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    # The test-only client origin is deliberately not production, so this
+    # compatibility rule must remain unavailable outside the exact origin.
+    with pytest.raises(RuntimeError, match="production proof admission"):
+        client.admit()
+
+    monkeypatch.setattr(turn_lab_module, "_PRODUCTION_ORIGIN", proof_fixture.origin)
+    strict = ProductionAdmissionClient(viewer_token="fixture-token", origin=proof_fixture.origin)
+    admitted = strict.admit()
+    assert admitted.realm == "production"
+    assert admitted.epoch == proof_fixture.epoch
+
+
+def test_strict_production_client_uses_a_fresh_zero_viewer_snapshot_when_legacy_lease_status_route_is_absent(monkeypatch, proof_fixture):
+    proof_fixture.omit_admission_realm = True
+    proof_fixture.legacy_proof_lease_routes = True
+    monkeypatch.setattr(turn_lab_module, "_PRODUCTION_ORIGIN", proof_fixture.origin)
+    client = ProductionAdmissionClient(viewer_token="fixture-token", origin=proof_fixture.origin)
+    proof = client.admit()
+    assert client.proof_active(proof) is True
+    proof_fixture.epoch += 1
+    assert client.proof_active(proof) is False
+    proof_fixture.epoch -= 1
+    assert client.release(proof) is True
+
+
+def test_authenticated_turn_bootstrap_keeps_the_selected_host_and_viewer_path_together(proof_fixture):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    proof = client.admit()
+    bootstrap = client.lab_turn_bootstrap(proof)
+    assert bootstrap.selected_turn_server_id == proof_fixture.turn_server_id
+    assert bootstrap.turn_urls == tuple(proof_fixture.turn_urls)
+    assert bootstrap.signal_payload()["turnCredential"] == proof_fixture.turn_credential
+    assert client.release(proof)
+
+
+@pytest.mark.parametrize("change", ["not-configured", "host-mismatch"])
+def test_turn_bootstrap_fails_closed_when_the_production_path_is_missing_or_not_shared(proof_fixture, change):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    proof = client.admit()
+    if change == "not-configured":
+        proof_fixture.turn_bootstrap_enabled = False
+    else:
+        proof_fixture.turn_host_ready = False
+    with pytest.raises(RuntimeError, match="TURN"):
+        client.lab_turn_bootstrap(proof)
+    assert client.release(proof)
+
+
+def test_lab_start_does_not_spawn_signal_when_authenticated_turn_bootstrap_is_unavailable(tmp_path, proof_fixture, monkeypatch):
+    proof_fixture.turn_bootstrap_enabled = False
+    run = _run(tmp_path, proof_fixture)
+    calls = []
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", lambda *args, **kwargs: calls.append((args, kwargs)))
+    with pytest.raises(RuntimeError, match="TURN"):
+        run.start("legacy")
+    assert not calls and run.closed and not proof_fixture.leases
+
+
+def test_turn_credential_is_pipe_only_not_argv_environment_or_runtime_artifacts(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture)
+    captured = []
+    original = turn_lab_module.subprocess.Popen
+
+    def inspect_spawn(*args, **kwargs):
+        captured.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", inspect_spawn)
+    try:
+        run.start("legacy")
+        assert len(captured) == 1
+        args, kwargs = captured[0]
+        assert proof_fixture.turn_credential not in repr(args)
+        assert proof_fixture.turn_credential not in repr(kwargs.get("env", {}))
+        assert kwargs["stdin"] is turn_lab_module.subprocess.PIPE
+        runtime_dir = run.runtime_dir()
+        assert all(proof_fixture.turn_credential.encode() not in path.read_bytes() for path in runtime_dir.rglob("*") if path.is_file())
+        assert not hasattr(run, "_turn_bootstrap")
+    finally:
+        run.close()
 
 
 def test_lab_host_installs_the_guard_only_after_the_real_fixture_lease_arms_it(monkeypatch):

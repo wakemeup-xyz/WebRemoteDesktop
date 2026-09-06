@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -55,6 +56,29 @@ class ProductionProof:
 
 def _seal_production_proof(token: str, epoch: int) -> ProductionProof:
     return ProductionProof("production", token, epoch, 0, _seal=_PROOF_SEAL)
+
+
+@dataclass(frozen=True)
+class LabTurnBootstrap:
+    """One selected production TURN path, kept only until Signal reads stdin."""
+    selected_turn_server_id: str
+    turn_fingerprint: str
+    turn_urls: tuple[str, ...]
+    turn_username: str
+    turn_credential: str
+
+    def signal_payload(self) -> Mapping[str, Any]:
+        # Deliberately do not retain this mapping on LabRun or serialize it to
+        # a path.  It is written exactly once to the Signal child's stdin.
+        return {
+            "schemaVersion": 1,
+            "selectedTurnServerId": self.selected_turn_server_id,
+            "defaultTurnServerId": self.selected_turn_server_id,
+            "turnFingerprint": self.turn_fingerprint,
+            "turnUrls": list(self.turn_urls),
+            "turnUsername": self.turn_username,
+            "turnCredential": self.turn_credential,
+        }
 
 
 class ProductionAdmissionClient:
@@ -100,8 +124,18 @@ class ProductionAdmissionClient:
                 raise RuntimeError("human Viewer present; lab refused")
             code, admitted = self._request_json("/api/proof-admission", method="POST", headers={"Authorization": f"Bearer {self._viewer_token}"})
             admission = admitted.get("admission") if isinstance(admitted, Mapping) else None
-            if (code != 201 or not isinstance(admission, Mapping) or admission.get("realm") != "production"
-                    or not isinstance(admission.get("token"), str) or not admission["token"] or admission.get("epoch") != epoch):
+            fields = set(admission) if isinstance(admission, Mapping) else set()
+            realm = admission.get("realm") if isinstance(admission, Mapping) else None
+            # The deployed production endpoint's original contract is the
+            # compact {token, epoch} pair.  Its origin is fixed in the public
+            # constructor, so only that exact production origin may restore
+            # the implicit production realm.  Lab/test origins must provide
+            # their realm explicitly and cannot inherit this compatibility.
+            if realm is None and self.origin == _PRODUCTION_ORIGIN and fields == {"token", "epoch"}:
+                realm = "production"
+            if (code != 201 or not isinstance(admission, Mapping) or fields not in ({"token", "epoch"}, {"token", "epoch", "realm"})
+                    or realm != "production" or not isinstance(admission.get("token"), str) or not admission["token"]
+                    or admission.get("epoch") != epoch):
                 raise RuntimeError("production proof admission was not granted for the observed epoch")
             self._proof = _seal_production_proof(admission["token"], epoch)
             return self._proof
@@ -123,6 +157,15 @@ class ProductionAdmissionClient:
             return False
         try:
             code, payload = self._request_json("/api/proof-admission/status", method="POST", headers={"Authorization": f"Bearer {self._viewer_token}", "Content-Type": "application/json"}, body={"token": proof.token, "epoch": proof.epoch, "realm": proof.realm})
+        except HTTPError as error:
+            # Older production deployments issue the legitimate compact
+            # admission but do not expose a lease-status route.  Their only
+            # available proof is a fresh unchanged zero-Viewer snapshot.
+            # This fallback is never enabled for arbitrary or Lab origins.
+            if error.code == 404 and self.origin == _PRODUCTION_ORIGIN:
+                current_epoch, viewers = self.status()
+                return current_epoch == proof.epoch and viewers == 0
+            raise RuntimeError("production proof status is unknown") from error
         except Exception as exc:
             raise RuntimeError("production proof status is unknown") from exc
         if code != 200 or not isinstance(payload, Mapping) or not isinstance(payload.get("active"), bool):
@@ -137,11 +180,73 @@ class ProductionAdmissionClient:
             try:
                 code, payload = self._request_json("/api/proof-admission/release", method="POST", headers={"Authorization": f"Bearer {self._viewer_token}", "Content-Type": "application/json"}, body={"token": target.token, "epoch": target.epoch, "realm": target.realm})
                 released = code == 200 and isinstance(payload, Mapping) and payload.get("released") is True
+            except HTTPError as error:
+                # The same legacy endpoint family has no server-side release
+                # contract.  Local ownership may still close after a fresh
+                # zero-Viewer/unchanged-epoch read; any other response stays
+                # fail-closed.
+                if error.code == 404 and self.origin == _PRODUCTION_ORIGIN:
+                    epoch, viewers = self.status()
+                    released = epoch == target.epoch and viewers == 0
+                else:
+                    released = False
             except Exception:
                 released = False
             if released:
                 self._proof = None
             return released
+
+    def lab_turn_bootstrap(self, proof: ProductionProof) -> LabTurnBootstrap:
+        """Fetch and validate the exact authenticated production TURN path.
+
+        The returned secret-bearing object belongs to the caller's stack only.
+        It must be delivered to the disposable Signal process through its
+        stdin and must never be retained in ``LabRun`` or an artifact.
+        """
+        with self._lock:
+            if proof is not self._proof:
+                raise RuntimeError("production TURN bootstrap requires the active proof")
+            try:
+                code, payload = self._request_json(
+                    "/api/webrtc-config",
+                    headers={"Authorization": f"Bearer {self._viewer_token}"},
+                )
+            except Exception as exc:
+                raise RuntimeError("production TURN bootstrap is unavailable") from exc
+        if code != 200 or not isinstance(payload, Mapping):
+            raise RuntimeError("production TURN bootstrap is unavailable")
+        selected = payload.get("selectedTurnServerId")
+        fingerprint = payload.get("turnFingerprint")
+        host_id = payload.get("hostTurnServerId")
+        host_fingerprint = payload.get("hostTurnFingerprint")
+        if (payload.get("turnConfigured") is not True or payload.get("hostTurnReady") is not True
+                or not isinstance(selected, str) or not selected
+                or not isinstance(fingerprint, str) or not fingerprint
+                or host_id != selected or host_fingerprint != fingerprint):
+            raise RuntimeError("production TURN path is not shared by Host and Viewer")
+        ice_servers = payload.get("iceServers")
+        if not isinstance(ice_servers, list):
+            raise RuntimeError("production TURN bootstrap has no ICE catalog")
+        turn_entries = []
+        for entry in ice_servers:
+            if not isinstance(entry, Mapping):
+                continue
+            urls = entry.get("urls")
+            if not isinstance(urls, list) or not urls or not all(isinstance(url, str) and url.startswith(("turn:", "turns:")) for url in urls):
+                continue
+            turn_entries.append(entry)
+        if len(turn_entries) != 1:
+            raise RuntimeError("production TURN bootstrap has an ambiguous ICE catalog")
+        entry = turn_entries[0]
+        urls, username, credential = entry.get("urls"), entry.get("username"), entry.get("credential")
+        if (not isinstance(urls, list) or not all(isinstance(url, str) and url for url in urls)
+                or not isinstance(username, str) or not username
+                or not isinstance(credential, str) or not credential):
+            raise RuntimeError("production TURN bootstrap is incomplete")
+        advertised_urls = payload.get("turnUrls")
+        if advertised_urls != urls:
+            raise RuntimeError("production TURN bootstrap catalog disagrees with selected ICE path")
+        return LabTurnBootstrap(selected, fingerprint, tuple(urls), username, credential)
 
 
 @dataclass(frozen=True)
@@ -243,6 +348,11 @@ class LabRun:
         if not owns_admission:
             raise RuntimeError("lab run was closed or replaced during production admission")
         try:
+            # This authenticated read is intentionally before any child is
+            # launched.  ``turn_bootstrap`` remains a local until its one
+            # write to the Signal stdin pipe below.
+            turn_bootstrap = self._production_client.lab_turn_bootstrap(proof)
+            self._require_owner(token, generation)
             parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
             runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
             with self._lock:
@@ -252,7 +362,7 @@ class LabRun:
                 shutil.rmtree(runtime_dir, ignore_errors=True)
                 raise RuntimeError("lab run was closed or replaced during runtime setup")
             self._require_owner(token, generation)
-            lab = self._spawn_signal(runtime_dir, realm, token, generation)
+            lab = self._spawn_signal(runtime_dir, realm, token, generation, turn_bootstrap)
             if lab.realm != realm or validate_lab_origin(lab.origin) != lab.origin:
                 raise RuntimeError("lab Signal did not publish a canonical isolated identity")
             lab_proof = self._issue_lab_proof(lab)
@@ -281,7 +391,8 @@ class LabRun:
         except Exception:
             self._close_generation(token, generation); raise
 
-    def _spawn_signal(self, runtime_dir: Path, realm: str, token: object, generation: int) -> LabSignal:
+    def _spawn_signal(self, runtime_dir: Path, realm: str, token: object, generation: int,
+                      turn_bootstrap: LabTurnBootstrap) -> LabSignal:
         script = Path(__file__).with_name("turn-lab-signal.js"); env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
         with self._spawn_lock:
             with self._lock:
@@ -289,12 +400,22 @@ class LabRun:
                     raise RuntimeError("lab run was closed or replaced during Signal startup")
             stderr_log = (runtime_dir / "signal.stderr.log").open("wb")
             try:
-                proc = subprocess.Popen(["node", str(script), "--json", "--realm", realm, "--runtime-dir", str(runtime_dir)], cwd=script.parent.parent, env=env, stdout=subprocess.PIPE, stderr=stderr_log, start_new_session=True)
+                proc = subprocess.Popen(["node", str(script), "--json", "--realm", realm, "--runtime-dir", str(runtime_dir)], cwd=script.parent.parent, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_log, start_new_session=True)
             except Exception:
                 stderr_log.close()
                 raise
-            if proc.stdout is None:
+            if proc.stdout is None or proc.stdin is None:
                 self._terminate_child(proc); stderr_log.close(); raise RuntimeError("lab Signal did not expose stdout")
+            try:
+                # No argv, environment, runtime file, log, or artifact ever
+                # carries TURN credentials.  Closing stdin guarantees Signal
+                # receives one bounded bootstrap document only.
+                proc.stdin.write(json.dumps(turn_bootstrap.signal_payload(), separators=(",", ":")).encode("utf-8") + b"\n")
+                proc.stdin.flush()
+                proc.stdin.close()
+            except Exception as exc:
+                self._terminate_child(proc); stderr_log.close()
+                raise RuntimeError("lab Signal TURN bootstrap pipe failed") from exc
             with self._lock:
                 # close is blocked on _spawn_lock until this attachment is
                 # complete, then sees and reaps this exact child.

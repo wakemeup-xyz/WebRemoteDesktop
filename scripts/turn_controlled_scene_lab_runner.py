@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 import time
@@ -31,10 +32,19 @@ def _canonical(value: Any) -> bytes:
 
 
 def lifecycle_failure(error: Exception) -> str:
-    """Persist one known actionable Lab boundary without persisting secrets."""
+    """Persist a bounded lifecycle category, never exception text or secrets."""
     if str(error) == "production proof admission was not granted for the observed epoch":
         return f"lifecycle:{type(error).__name__}:production-proof-admission-epoch-mismatch"
     return f"lifecycle:{type(error).__name__}"
+
+
+def resolve_viewer_token(args: Any, *, environ: Mapping[str, str] | None = None) -> str | None:
+    direct = getattr(args, "viewer_token", None)
+    if isinstance(direct, str) and direct:
+        return direct
+    env_name = getattr(args, "viewer_token_env", None)
+    value = (environ or os.environ).get(env_name) if isinstance(env_name, str) and env_name else None
+    return value if isinstance(value, str) and value else None
 
 
 @dataclass(frozen=True)
@@ -440,21 +450,27 @@ class LabLifecycleCollector:
             self.lab_run.close()
 
 
-def write_artifact(path: Path, transcript: LabTranscript) -> None:
+def write_artifact(path: Path, transcript: LabTranscript | Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(transcript.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    body = transcript.as_dict() if isinstance(transcript, LabTranscript) else dict(transcript)
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run isolated Lab Signal/Host/static lifecycle; never falls back to personal-desktop input.")
-    parser.add_argument("--viewer-token", required=True, help="Production Viewer bearer token used only for the zero-viewer proof preflight.")
+    token_group = parser.add_mutually_exclusive_group(required=True)
+    token_group.add_argument("--viewer-token", help="Production Viewer bearer token used only for the zero-viewer proof preflight.")
+    token_group.add_argument("--viewer-token-env", help="Environment variable holding the production Viewer bearer token.")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--dedicated-desktop", action="store_true")
     parser.add_argument("--fixture-window", action="store_true")
     parser.add_argument("--headed-producer", action="store_true", help="Open the producer in a visible disposable-desktop browser window.")
     args = parser.parse_args(argv)
     from turn_lab import LabRun
-    lab = LabRun(viewer_token=args.viewer_token)
+    viewer_token = resolve_viewer_token(args)
+    if viewer_token is None:
+        parser.error("--viewer-token-env did not name a nonempty environment variable")
+    lab = LabRun(viewer_token=viewer_token)
     adapter = None
     try:
         identity = lab.start("legacy")
@@ -505,9 +521,13 @@ def main(argv: list[str] | None = None) -> int:
             receipts=automatic.get("receipts", []) if isinstance(automatic.get("receipts"), list) else [])
         write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 0 if static["status"] == PASS and automatic["status"] == PASS else 1
     except Exception as exc:
-        transcript = LabTranscript.create(verifier=b"lab-start-failed", identity={}, static={"status": NOT_RUN, "failures": [lifecycle_failure(exc)]},
-            automatic={"status": BLOCKED, "failures": ["lab-lifecycle-unavailable"]}, receipts=[])
-        write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 2
+        # A lifecycle failure never reached a per-run verifier.  It must not
+        # impersonate a signed Lab transcript with a predictable static key.
+        artifact = {"artifactStatus": NOT_RUN, "identity": {},
+                    "static": {"status": NOT_RUN, "failures": [lifecycle_failure(exc)]},
+                    "automatic": {"status": BLOCKED, "failures": ["lab-lifecycle-unavailable"]},
+                    "receipts": [], "signature": None, "signatureStatus": "unavailable"}
+        write_artifact(args.output, artifact); print(json.dumps(artifact)); return 2
     finally:
         if adapter is not None: adapter.close()
         lab.close()

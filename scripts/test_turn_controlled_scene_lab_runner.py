@@ -137,6 +137,12 @@ def test_playwright_adapter_prepares_then_dispatches_the_same_page_owned_reserva
     assert "Input.dispatchPreparedLabInput" in calls[1][0]
 
 
+def test_viewer_token_can_be_loaded_from_a_named_environment_variable_without_putting_it_in_argv():
+    args = type("Args", (), {"viewer_token": None, "viewer_token_env": "WRD_LAB_VIEWER_TOKEN"})()
+    assert runner.resolve_viewer_token(args, environ={"WRD_LAB_VIEWER_TOKEN": "token-from-env"}) == "token-from-env"
+    assert runner.resolve_viewer_token(args, environ={}) is None
+
+
 def test_lifecycle_failure_keeps_the_known_admission_contract_error_but_redacts_unknown_exception_text():
     assert runner.lifecycle_failure(RuntimeError("production proof admission was not granted for the observed epoch")) == "lifecycle:RuntimeError:production-proof-admission-epoch-mismatch"
     assert runner.lifecycle_failure(RuntimeError("secret=must-not-persist")) == "lifecycle:RuntimeError"
