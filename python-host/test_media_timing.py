@@ -8,7 +8,8 @@ from aiortc.mediastreams import VIDEO_TIME_BASE
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from h264_videotoolbox_encoder import H264VideoToolboxEncoder, get_session_gop_size, set_session_gop_size
+from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+from h264_videotoolbox_encoder import H264VideoToolboxEncoder
 from media_timing import RtpFrameClock
 
 
@@ -80,21 +81,21 @@ class RtpFrameClockTest(unittest.TestCase):
         self.assertEqual(second_track.next_timestamp()[0], 0)
 
     def test_encoder_returns_clock_rtp_timestamps(self):
-        """The encoder boundary must preserve the clock's 32-bit relative RTP timeline."""
+        """A real PyAV/aiortc libx264 boundary preserves the clock RTP timeline."""
         source = FakeClock(1_000_000_000)
         clock = RtpFrameClock(now_ns=source)
-        previous_gop = get_session_gop_size()
-        set_session_gop_size(20)
-        try:
-            encoder = H264VideoToolboxEncoder()
-            timestamps = []
-            for _ in range(4):
-                frame = av.VideoFrame(width=16, height=16, format="yuv420p")
-                frame.pts, frame.time_base = clock.next_timestamp()
-                timestamps.append(encoder.encode(frame)[1])
-                source.now_ns += 50_000_000
-        finally:
-            set_session_gop_size(previous_gop)
+        policy = resolve_h264_policy(
+            MediaSessionIntent("clock-test", 1, "relay", 16, 16, 20, 0),
+            "relay-legacy-v1",
+        )
+        encoder = H264VideoToolboxEncoder(policy=policy)
+        self.assertEqual(encoder.codec_name, "libx264")
+        timestamps = []
+        for _ in range(4):
+            frame = av.VideoFrame(width=16, height=16, format="yuv420p")
+            frame.pts, frame.time_base = clock.next_timestamp()
+            timestamps.append(encoder.encode(frame)[1])
+            source.now_ns += 50_000_000
 
         self.assertEqual(timestamps, [0, 4500, 9000, 13500])
 

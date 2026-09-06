@@ -24,7 +24,7 @@ Date: 2026-09-06
 
 | Command | Result |
 |---|---|
-| `/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 -m pytest -q python-host` | FAIL: 251 passed, 2 failed, 1 deprecation warning. `test_encoder_returns_clock_rtp_timestamps` cannot open local VideoToolbox and its fallback retry still uses that encoder; `test_decoder_refresh_requires_a_healthy_fps_sample` expects a refresh that current gating rejects. |
+| `/Users/macstudio1/.homebrew/opt/python@3.11/libexec/bin/python3 -m pytest -q python-host` | PASS after fix round 1: 253 passed, 1 MSS deprecation warning. |
 | `node --test web-client/js/*.test.js` | PASS: 566 passed, 0 failed. |
 | `cd signal-server && npm test` | PASS: 339 passed, 0 failed; its pretest runs the Viewer build. |
 | `cd signal-server && npm run build:web` | PASS: exit 0. |
@@ -38,14 +38,11 @@ Date: 2026-09-06
 `f19668f docs(turn): sync relay quality acceptance evidence`
 
 This commit contains the reviewed artifacts, operator-facing documentation, the
-acceptance-ledger update, and this Task 8 report. Its full Python-suite failure
-is intentionally recorded above rather than hidden behind the successful Node
-and build checks.
+acceptance-ledger update, and the initial Task 8 report. Fix round 1 subsequently
+made the complete Python suite green and strengthened the recovery test to require
+the current identity, causal IDR acknowledgement, and two stalled samples.
 
 ## Concerns
 
-- The two Python failures are not skipped and are not reported as passing. They
-  are product-code failures outside Task 8's docs/test scope and require their
-  owning implementation task to resolve before the full Python suite is green.
 - No service, tunnel, real TURN, public endpoint, or physical device was started,
   restarted, or exercised by this task.

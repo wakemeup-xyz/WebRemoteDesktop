@@ -231,12 +231,13 @@ The full Viewer suite passed 566 tests, and the Signal Server suite passed 339
 tests after rebuilding the Viewer bundle. The standalone Viewer build, tracked
 shell/MJS syntax checks, and tracked JSON parsing also passed.
 
-The full Python suite is not green: 251 passed, 2 failed, with one deprecation
-warning. `test_encoder_returns_clock_rtp_timestamps` cannot open the local
-VideoToolbox encoder and its fallback retry remains on that encoder;
-`test_decoder_refresh_requires_a_healthy_fps_sample` expects a decoder refresh
-that the current recovery gate rejects. These failures are not skipped or
-classified as a passing automation gate.
+Fix round 1 made the RTP encoder-boundary test select the explicit relay libx264
+policy, so it still crosses the real PyAV/aiortc encoder boundary without
+depending on local VideoToolbox availability. The decoder-refresh test now
+requires the current attempt/generation/profile, a matching causal IDR request
+acknowledgement, and two consecutive decoder-stalled samples; a positive current
+decoded delta resets that episode. The full Python suite now passes 253 tests
+with one pre-existing MSS deprecation warning.
 
 This does not change any runtime gate: real selected-relay continuity, loss
 recovery, formal public-entry, and physical-device evidence remain `NOT RUN`.

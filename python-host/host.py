@@ -3030,6 +3030,7 @@ class WebRemoteHost:
             )
             state["idr_requested"] = False
             state["post_idr_stall_samples"] = 0
+            state["decoder_refresh_used"] = False
             return False
         if received <= 0:
             return False
