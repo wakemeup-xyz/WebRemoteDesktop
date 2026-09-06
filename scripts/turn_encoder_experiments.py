@@ -247,9 +247,15 @@ def _scenario_errors(
             errors.append(f"{expected_id}: scenario cost aggregate drift")
     if not isinstance(scenario.get("quality"), Mapping):
         errors.append(f"{expected_id}: missing scenario quality")
-    actual_idr_bytes = [frame.get("idrBytes") for frame in actual_idrs]
+    actual_idr_bytes = [frame.get("bytes") for frame in actual_idrs]
+    if any(
+        frame.get("idrBytes") != frame.get("bytes")
+        for frame in actual_idrs
+    ):
+        errors.append(f"{expected_id}: IDR bytes must match frame bytes")
     if (not isinstance(scenario.get("burst"), Mapping) or scenario["burst"].get("idrBytes") != actual_idr_bytes
-            or not actual_idr_bytes or any(not _finite(value) or value <= 0 for value in actual_idr_bytes)):
+            or not actual_idr_bytes
+            or any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in actual_idr_bytes)):
         errors.append(f"{expected_id}: missing IDR byte evidence")
     return errors
 

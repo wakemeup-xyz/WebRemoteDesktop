@@ -192,6 +192,13 @@ class PresetExperimentContractTest(unittest.TestCase):
         errors = MODULE.validate_comparison(self.base_run, broken)
         self.assertTrue(any("IDR byte evidence" in error for error in errors), errors)
 
+        broken = copy.deepcopy(self.candidate_run)
+        safety = broken["runs"][0]["scenarios"][4]
+        safety["frames"][1201]["idrBytes"] = 99
+        safety["burst"]["idrBytes"] = [100, 99]
+        errors = MODULE.validate_comparison(self.base_run, broken)
+        self.assertTrue(any("IDR bytes must match frame bytes" in error for error in errors), errors)
+
     def test_comparison_rejects_actual_profile_fps_bitrate_and_parameter_digest_drift(self):
         broken = copy.deepcopy(self.candidate_run)
         record = broken["runs"][1]["scenarios"][0]["codecCreationRecords"][0]
