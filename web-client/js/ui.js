@@ -40,9 +40,17 @@ const UI = {
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const exitFullscreenBtn = document.getElementById('exitFullscreenBtn');
     const fullscreenStatus = document.getElementById('fullscreenStatus');
+    const fullscreenExitStatus = document.getElementById('fullscreenExitStatus');
+    const fullscreenExitPanel = document.getElementById('fullscreenExitPanel');
+    const fullscreenExitRevealBtn = document.getElementById('fullscreenExitRevealBtn');
+    const statusBar = document.getElementById('statusBar');
+    const chromeDocks = document.getElementById('chromeDocks');
     const video = document.getElementById('remoteVideo');
     const relayImage = document.getElementById('relayImage');
     const fullscreenTarget = document.documentElement;
+    const FULLSCREEN_EXIT_REVEAL_MS = 4000;
+    let revealTimer = null;
+    const fullscreenInertAdded = new Set();
 
     const scaleModes = ['contain', 'cover', 'fill'];
     const scaleLabels = ['自适应', '填充', '拉伸'];
@@ -87,6 +95,13 @@ const UI = {
       }
     };
 
+    const setFullscreenExitStatus = (message) => {
+      if (fullscreenExitStatus) {
+        fullscreenExitStatus.textContent = message;
+        fullscreenExitStatus.hidden = !message;
+      }
+    };
+
     const preserveEditingFocusOnPointerDown = (event) => {
       const active = document.activeElement;
       const isEditing = active?.isContentEditable === true
@@ -99,9 +114,59 @@ const UI = {
       ? document.fullscreenElement === fullscreenTarget
       : Boolean(document.fullscreenElement);
 
+    const hasInert = (element) => element?.inert === true || element?.hasAttribute?.('inert') === true;
+
+    const setInert = (element, active) => {
+      if (!element) return;
+      if (active) {
+        element.inert = true;
+        element.setAttribute?.('inert', '');
+        return;
+      }
+      element.inert = false;
+      element.removeAttribute?.('inert');
+    };
+
+    const syncFullscreenInert = (isFullscreen) => {
+      if (isFullscreen) {
+        [statusBar, chromeDocks].filter(Boolean).forEach((element) => {
+          if (!hasInert(element)) {
+            fullscreenInertAdded.add(element);
+            setInert(element, true);
+          }
+        });
+        return;
+      }
+      fullscreenInertAdded.forEach((element) => setInert(element, false));
+      fullscreenInertAdded.clear();
+    };
+
+    const hideFullscreenExit = () => {
+      if (revealTimer !== null) {
+        clearTimeout(revealTimer);
+        revealTimer = null;
+      }
+      if (fullscreenExitPanel) fullscreenExitPanel.hidden = true;
+      fullscreenExitRevealBtn?.setAttribute?.('aria-expanded', 'false');
+    };
+
+    const revealFullscreenExit = () => {
+      if (!isDocumentFullscreen()) return;
+      if (revealTimer !== null) clearTimeout(revealTimer);
+      if (fullscreenExitPanel) fullscreenExitPanel.hidden = false;
+      fullscreenExitRevealBtn?.setAttribute?.('aria-expanded', 'true');
+      revealTimer = setTimeout(() => {
+        revealTimer = null;
+        if (fullscreenExitPanel) fullscreenExitPanel.hidden = true;
+        fullscreenExitRevealBtn?.setAttribute?.('aria-expanded', 'false');
+      }, FULLSCREEN_EXIT_REVEAL_MS);
+    };
+
     const exitFullscreen = async () => {
       if (typeof document.exitFullscreen !== 'function') {
         setFullscreenStatus('不支持全屏，可继续操作');
+        setFullscreenExitStatus('不支持全屏，可继续操作');
+        revealFullscreenExit();
         return false;
       }
       try {
@@ -109,14 +174,34 @@ const UI = {
         return true;
       } catch (err) {
         setFullscreenStatus('不支持全屏，可继续操作');
+        setFullscreenExitStatus('不支持全屏，可继续操作');
+        revealFullscreenExit();
         return false;
       }
     };
 
+    const consumeFullscreenOverlayEvent = (event) => {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      revealFullscreenExit();
+    };
+
+    if (fullscreenExitRevealBtn) {
+      fullscreenExitRevealBtn.addEventListener('pointerdown', consumeFullscreenOverlayEvent);
+      fullscreenExitRevealBtn.addEventListener('click', consumeFullscreenOverlayEvent);
+    }
+
     if (exitFullscreenBtn) {
-      exitFullscreenBtn.addEventListener('pointerdown', preserveEditingFocusOnPointerDown);
+      exitFullscreenBtn.addEventListener('pointerdown', (event) => {
+        preserveEditingFocusOnPointerDown(event);
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+      });
       exitFullscreenBtn.addEventListener('click', (event) => {
         event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
         if (isDocumentFullscreen()) void exitFullscreen();
       });
     }
@@ -128,8 +213,18 @@ const UI = {
         fullscreenBtn.setAttribute?.('aria-pressed', String(isFullscreen));
       }
       document.body.classList.toggle('fullscreen-active', isFullscreen);
-      if (isFullscreen) setFullscreenStatus('');
-      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.recalculate === 'function') {
+      syncFullscreenInert(isFullscreen);
+      if (isFullscreen) {
+        setFullscreenStatus('');
+        setFullscreenExitStatus('');
+        revealFullscreenExit();
+      } else {
+        hideFullscreenExit();
+        setFullscreenExitStatus('');
+      }
+      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.setFullscreenActive === 'function') {
+        ChromeLayout.setFullscreenActive(isFullscreen);
+      } else if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.recalculate === 'function') {
         ChromeLayout.recalculate();
       }
     };
