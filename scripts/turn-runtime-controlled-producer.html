@@ -33,12 +33,23 @@
   };
   const createState=({runNonce,sceneId})=>({runNonce:BigInt(runNonce),sceneId:Number(sceneId),tick:0,actionId:0});
   const applyAction=(state,actionId)=>{state.tick=(state.tick+1)>>>0;state.actionId=Number(actionId)>>>0;return state};
-  window.WRDTurnControlledProducer={markerGrid,createState,applyAction,crc32};
+  // The page never receives a Viewer input id.  A loopback FixtureBroker owns
+  // that reservation and joins it to this native DOM event by actionId.
+  let loopbackReporter=null;
+  const configureLoopbackProducer=({endpoint,identity})=>{
+    if(typeof endpoint!=='string'||!endpoint.startsWith('http://127.0.0.1:')||!identity)throw new Error('loopback producer endpoint required');
+    loopbackReporter=(nativeEvent)=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...identity,...nativeEvent})}).catch(()=>undefined);
+  };
+  window.WRDTurnControlledProducer={markerGrid,createState,applyAction,crc32,configureLoopbackProducer};
   if(typeof document==='undefined')return;
   const nonce=BigInt('0x'+crypto.getRandomValues(new Uint32Array(2)).reduce((s,x)=>s+x.toString(16).padStart(8,'0'),''));
   const state=createState({runNonce:nonce,sceneId:1}); const canvas=document.querySelector('#marker'), ctx=canvas.getContext('2d');
   const draw=()=>{const image=ctx.createImageData(256,128), grid=markerGrid(state);for(let y=0;y<128;y++)for(let x=0;x<256;x++){const v=grid[Math.floor(y/8)][Math.floor(x/8)]?WHITE:BLACK,i=(y*256+x)*4;image.data[i]=image.data[i+1]=image.data[i+2]=v;image.data[i+3]=255}ctx.putImageData(image,0,0)};
-  const log=document.querySelector('#log'); let action=0; const note=(event)=>{applyAction(state,++action);draw();log.textContent+=`${event.type} action=${action} tick=${state.tick}\n`;log.scrollTop=log.scrollHeight};
+  const log=document.querySelector('#log'); let action=0; let nextActionId=null;
+  // The laboratory driver assigns an action id before dispatching its prepared
+  // Viewer envelope.  This setter cannot set an input id or mutate identity.
+  window.WRDTurnControlledProducer.prepareNativeAction=(actionId)=>{if(!Number.isInteger(actionId)||actionId<1)throw new Error('action id required');nextActionId=actionId};
+  const note=(event)=>{const actionId=nextActionId??(++action);nextActionId=null;action=Math.max(action,actionId);applyAction(state,actionId);draw();const nativeEvent={eventType:event.type,actionId,tick:state.tick,runNonce:state.runNonce.toString(),sceneId:state.sceneId,focused:document.hasFocus()&&document.activeElement?.closest?.('#target,#scroll,#drag')!==null};loopbackReporter?.(nativeEvent);log.textContent+=`${event.type} action=${actionId} tick=${state.tick}\n`;log.scrollTop=log.scrollHeight};
   document.querySelector('#identity').textContent=`Fixture nonce=${nonce.toString(16)} scene=1. Marker changes only on an explicit action.`;
   ['input','keydown','pointerdown'].forEach(type=>document.querySelector('#target').addEventListener(type,note));
   document.querySelector('#scroll').addEventListener('scroll',note); document.querySelector('#drag').addEventListener('pointermove',event=>{if(event.buttons)note(event)});

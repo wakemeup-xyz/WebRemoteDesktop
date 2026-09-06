@@ -33,3 +33,10 @@ test('controlled producer keeps the marker frozen until an explicit action', () 
   assert.notEqual(JSON.stringify(producer.markerGrid(state)), frozen);
   assert.equal(JSON.stringify(producer.markerGrid(state)), JSON.stringify(producer.markerGrid(state)));
 });
+
+test('producer exposes only a loopback native-event reporter and never an input-id setter', () => {
+  const producer = api();
+  assert.throws(() => producer.configureLoopbackProducer({ endpoint: 'https://example.test/events', identity: {} }), /loopback/);
+  assert.doesNotThrow(() => producer.configureLoopbackProducer({ endpoint: 'http://127.0.0.1:41111/events', identity: { realm: 'lab-test' } }));
+  assert.equal('setInputId' in producer, false);
+});
