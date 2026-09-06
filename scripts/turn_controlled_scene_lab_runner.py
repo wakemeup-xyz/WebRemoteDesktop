@@ -528,12 +528,16 @@ class PlaywrightLabViewerAdapter:
           attemptId: WebRTC?.currentConnectionAttemptId || '',
           generation: Number(WebRTC?.connectionAttemptSequence || 0),
           streamId: String(WebRTC?.activeVideoStreamId || WebRTC?.remoteStream?.getVideoTracks?.()[0]?.id || ''),
+          selectedTurnId: String(WebRTC?.selectedCandidatePair?.turnServerId || WebRTC?.selectedTurnServerId || ''),
+          turnFingerprint: String(WebRTC?.selectedCandidatePair?.turnFingerprint || WebRTC?.turnFingerprint || ''),
+          turnDigest: String(WebRTC?.selectedCandidatePair?.turnAppliedDigest || WebRTC?.turnAppliedDigest || ''),
           sourceWidth: Number(document.getElementById('remoteVideo')?.videoWidth || 0),
           sourceHeight: Number(document.getElementById('remoteVideo')?.videoHeight || 0),
         })""")
         if (not isinstance(row, dict) or not isinstance(row.get("attemptId"), str) or not row["attemptId"]
                 or not isinstance(row.get("generation"), int) or row["generation"] <= 0
                 or not isinstance(row.get("streamId"), str) or not row["streamId"]
+                or not all(isinstance(row.get(key), str) and row[key] for key in ("selectedTurnId", "turnFingerprint", "turnDigest"))
                 or not isinstance(row.get("sourceWidth"), int) or row["sourceWidth"] <= 0
                 or not isinstance(row.get("sourceHeight"), int) or row["sourceHeight"] <= 0):
             return None
@@ -633,6 +637,9 @@ def main(argv: list[str] | None = None) -> int:
         adapter.configure_marker_roi(layout)
         visible, reason = adapter.producer_window_precondition()
         selected_turn = lab.selected_turn_identity()
+        if (session["selectedTurnId"] != selected_turn["id"] or session["turnFingerprint"] != selected_turn["fingerprint"]
+                or session["turnDigest"] != selected_turn["digest"]):
+            raise RuntimeError("viewer selected TURN identity does not match the Lab-preflighted path")
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
                            "scope": {"attemptId": session["attemptId"], "generation": session["generation"], "streamId": session["streamId"]},
                            "selectedTurn": selected_turn}
