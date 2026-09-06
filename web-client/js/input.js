@@ -4,6 +4,9 @@ const Input = {
   socket: null,
   videoElement: null,
   isActive: false,
+  // This is a derived viewport capability. It never owns lease or activity
+  // state and therefore must not reset a local draft when the keyboard resizes.
+  _viewportInputSupported: true,
   _listenersBound: false,
   keyboardMode: null,
   keyboardTransport: null,
@@ -377,10 +380,17 @@ const Input = {
     return { state: this._mobileSurfaceState, generation: this._mobileSurfaceGeneration };
   },
 
+  setViewportInputSupported(supported) {
+    this._viewportInputSupported = supported !== false;
+    this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot?.());
+    return this._viewportInputSupported;
+  },
+
   _isMobileEditingActionAllowed() {
     const snapshot = this.mobileTextInputAdapter?.getSnapshot?.();
     if (snapshot && (snapshot.composing || snapshot.hasPending || snapshot.deliveryUncertain)) return false;
-    return this._mobileSurfaceState === 'settled' && !this._pendingMouseReset;
+    return this._viewportInputSupported
+      && this._mobileSurfaceState === 'settled' && !this._pendingMouseReset;
   },
 
   runMobileEditingAction(action, send) {
@@ -777,6 +787,7 @@ const Input = {
     // Mouse up/reset are safety releases: they must still flow when the gate flips
     // mid-gesture, otherwise Host keeps a pressed button and every move becomes a drag.
     const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
+    if (!this._viewportInputSupported && !isMouseSafetyRelease) return null;
     if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
     // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
     // Do not attach free-form metadata here; transport is added only for the path used.
@@ -1316,7 +1327,8 @@ const Input = {
         }),
         hasVirtualModifiers: () => (this.keyboardController?.getSnapshot()?.virtualModifiers || []).length > 0,
         releaseTrackedKey: (event) => this.keyboardController?.handleDomEvent(event) === true,
-        isEnabled: () => this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
+        isEnabled: () => this._viewportInputSupported
+          && this.isActive && this.keyboardController?.getSnapshot().state === 'READY',
         isDeliverySettled: () => {
           const snapshot = this.keyboardTransport?.getSnapshot?.() || {};
           return snapshot.state === 'ready' && snapshot.pendingCount === 0;

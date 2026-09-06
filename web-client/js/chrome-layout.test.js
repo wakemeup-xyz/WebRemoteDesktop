@@ -134,6 +134,22 @@ test('applyCapabilities gates mobile virtual keys through the desktop input capa
   assert.equal(mobileKey.hidden, false);
 });
 
+test('capability close keeps a pressed virtual modifier visible and enabled for native release', () => {
+  const modifier = {
+    disabled: false,
+    hidden: false,
+    getAttribute(name) { return name === 'aria-pressed' ? 'true' : null; },
+  };
+  const root = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll(selector) { return selector === '[data-mobile-action]' ? [modifier] : []; },
+  };
+  ChromeLayout.applyCapabilities({ uiPhase: 'media-pending', streamReady: false, activeControl: false }, root);
+  assert.equal(modifier.disabled, false);
+  assert.equal(modifier.hidden, false);
+});
+
 test('more menu overflow buttons expose menuitem semantics', () => {
   const button = { dataset: {}, setAttribute(name, value) { this[name] = value; }, getAttribute() { return null; } };
   const bar = { querySelectorAll: () => [button] };
@@ -214,6 +230,8 @@ function createMoreMenuDom() {
   const ids = {};
   const match = (el, selector) => {
     if (selector === '.action-bar') return /\baction-bar\b/.test(el.className);
+    if (selector === '.control-bar') return /\bcontrol-bar\b/.test(el.className);
+    if (selector === '.control-btn') return /\bcontrol-btn\b/.test(el.className);
     if (selector === '.action-more' || selector === '#moreActionsBtn') {
       return el.id === 'moreActionsBtn' || /\baction-more\b/.test(el.className);
     }
@@ -282,6 +300,7 @@ function createMoreMenuDom() {
 
   const body = el('body');
   const bar = el('action-bar');
+  const controlBar = el('control-bar');
   const labels = ['enter', 'up', 'down', 'keyboard', 'copy'];
   const buttons = labels.map((name) => {
     const attrs = name === 'enter' || name === 'keyboard' ? { 'data-pin': 'always' } : {};
@@ -295,12 +314,19 @@ function createMoreMenuDom() {
   bar.appendChild(more);
   bar.appendChild(menu);
   body.appendChild(bar);
+  ['scale', 'fullscreen'].forEach((name, index) => {
+    const control = el('control-btn', {}, `${name}Btn`);
+    control.name = name;
+    controlBar.appendChild(control);
+    control.setAttribute('data-control-home-index', String(index));
+  });
+  body.appendChild(controlBar);
   const root = {
     body,
     getElementById: (id) => ids[id] || null,
     querySelector: (selector) => (match(bar, selector) ? bar : body.querySelector(selector)),
   };
-  return { root, bar, more, menu, buttons };
+  return { root, bar, controlBar, more, menu, buttons };
 }
 
 test('toggleMoreMenu moves overflow nodes and restores original order', () => {
@@ -327,6 +353,25 @@ test('toggleMoreMenu moves overflow nodes and restores original order', () => {
   assert.equal(menu.hidden, true);
   assert.equal(menu.children.length, 0);
   assert.deepEqual(names(), ['enter', 'up', 'down', 'keyboard', 'copy', 'more']);
+});
+
+test('compact more overlay temporarily contains ordinary control-bar buttons', () => {
+  const { root, bar, controlBar, menu } = createMoreMenuDom();
+  root.body.className = 'mobile-layout-managed mobile-layout-compact';
+  ChromeLayout.recordOverflowHomeIndexes(bar);
+  ChromeLayout.recordControlHomeIndexes(controlBar);
+
+  ChromeLayout.toggleMoreMenu(true, root);
+  assert.equal(controlBar.children.length, 0);
+  assert.deepEqual(menu.children.filter((child) => child.className === 'control-btn').map((child) => child.name), [
+    'scale', 'fullscreen',
+  ]);
+  assert.deepEqual(menu.children.filter((child) => child.className === 'control-btn')
+    .map((child) => child.getAttribute('role')), ['menuitem', 'menuitem']);
+
+  ChromeLayout.toggleMoreMenu(false, root);
+  assert.equal(menu.children.length, 0);
+  assert.deepEqual(controlBar.children.map((child) => child.name), ['scale', 'fullscreen']);
 });
 
 test('shouldIdle only when streaming, chrome visible, idle long enough', () => {
@@ -534,4 +579,206 @@ test('viewport refresh preserves the frozen WebRTC capability derivative', () =>
   assert.equal(after.mobileInputMode, 'armed');
   assert.equal(after.keyboardBottom, 180);
   assert.notEqual(after, before);
+});
+
+test('keyboard inset is consumed once for overlay and visualViewport resize routes', () => {
+  const base = {
+    layoutHeight: 812,
+    visualHeight: 512,
+    offsetTop: 0,
+    keyboardRectHeight: 300,
+    keyboardOverlay: true,
+    safeBottom: 0,
+    chromeTop: 44,
+    dockContentHeight: 44,
+    textDockHeight: 80,
+    textVisible: true,
+    touchSupported: true,
+  };
+  const overlay = ChromeLayout.computeMobileLayout(base);
+  const resize = ChromeLayout.computeMobileLayout({ ...base, keyboardOverlay: false });
+  assert.equal(overlay.availableHeight, 512);
+  assert.equal(resize.availableHeight, 512);
+  assert.equal(overlay.viewerHeight, 336);
+  assert.deepEqual(overlay, resize);
+});
+
+test('mobile layout uses offsetTop as the visible origin, not extra height', () => {
+  const result = ChromeLayout.computeMobileLayout({
+    layoutHeight: 800,
+    visualHeight: 400,
+    offsetTop: 100,
+    keyboardRectHeight: 0,
+    keyboardOverlay: false,
+    safeBottom: 12,
+    chromeTop: 44,
+    dockContentHeight: 44,
+    textDockHeight: 60,
+    textVisible: true,
+    touchSupported: true,
+  });
+  assert.equal(result.visibleTop, 100);
+  assert.equal(result.visibleBottom, 500);
+  assert.equal(result.availableHeight, 400);
+  assert.equal(result.viewerTop, 144);
+  assert.equal(result.bottomInset, 300);
+  assert.equal(result.ultraCompact, false);
+});
+
+test('mobile layout normalizes non-finite values and derives compact thresholds from available height', () => {
+  const ultra = ChromeLayout.computeMobileLayout({
+    layoutHeight: 320,
+    visualHeight: 320,
+    offsetTop: Number.NaN,
+    keyboardRectHeight: Number.POSITIVE_INFINITY,
+    keyboardOverlay: false,
+    safeBottom: 8,
+    chromeTop: 44,
+    dockContentHeight: 44,
+    textDockHeight: 44,
+    textVisible: true,
+    touchSupported: true,
+  });
+  assert.equal(ultra.availableHeight, 320);
+  assert.equal(ultra.compact, true);
+  assert.equal(ultra.ultraCompact, true);
+  assert.equal(ultra.unsupportedViewport, false);
+
+  const unsupported = ChromeLayout.computeMobileLayout({
+    layoutHeight: 320,
+    visualHeight: 120,
+    offsetTop: 0,
+    keyboardRectHeight: 0,
+    keyboardOverlay: false,
+    safeBottom: 8,
+    chromeTop: 44,
+    dockContentHeight: 44,
+    textDockHeight: 44,
+    textVisible: true,
+    touchSupported: true,
+  });
+  assert.equal(unsupported.availableHeight, 120);
+  assert.equal(unsupported.unsupportedViewport, true);
+});
+
+test('managed layout applies one coordinate set and clears it outside touch desktop mode', () => {
+  const classes = new Set();
+  const properties = new Map();
+  const body = {
+    classList: {
+      contains: (name) => classes.has(name),
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+    },
+  };
+  const panel = { hidden: false, classList: { contains: () => false } };
+  const tab = { getAttribute: () => 'true' };
+  const root = {
+    body,
+    documentElement: {
+      style: {
+        setProperty(name, value) { properties.set(name, value); },
+        removeProperty(name) { properties.delete(name); },
+        getPropertyValue(name) { return properties.get(name) || ''; },
+      },
+    },
+    getElementById(id) {
+      return id === 'desktopPanel' ? panel : id === 'desktopTabBtn' ? tab : null;
+    },
+  };
+  const layout = ChromeLayout.computeMobileLayout({
+    layoutHeight: 812, visualHeight: 512, offsetTop: 0, keyboardRectHeight: 300,
+    keyboardOverlay: true, safeBottom: 12, chromeTop: 44, dockContentHeight: 44,
+    textDockHeight: 48, textVisible: true, touchSupported: true,
+  });
+  const previousInput = global.Input;
+  global.Input = { setViewportInputSupported(value) { this.value = value; } };
+  try {
+    ChromeLayout._mobileLayoutLastSupported = null;
+    ChromeLayout._applyMobileLayout(root, layout, 12, true);
+    assert.equal(classes.has('mobile-layout-managed'), true);
+    assert.equal(properties.get('--mobile-viewer-top'), '44px');
+    assert.equal(properties.get('--mobile-text-bottom'), '312px');
+
+    panel.hidden = true;
+    ChromeLayout._applyMobileLayout(root, layout, 12, false);
+    assert.equal(classes.has('mobile-layout-managed'), false);
+    assert.equal(properties.has('--mobile-viewer-top'), false);
+    assert.equal(global.Input.value, true);
+  } finally {
+    if (previousInput === undefined) delete global.Input;
+    else global.Input = previousInput;
+    ChromeLayout._mobileLayoutLastSupported = null;
+  }
+});
+
+test('scheduled layout coalesces resize work and skips identical CSS writes', () => {
+  const classes = new Set();
+  const callbacks = [];
+  const properties = new Map();
+  let writes = 0;
+  const body = {
+    classList: {
+      contains: (name) => classes.has(name),
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+    },
+  };
+  const element = (height, hidden = false) => ({
+    hidden,
+    classList: { contains: () => false },
+    getBoundingClientRect: () => ({ height }),
+  });
+  const panel = element(0);
+  const tab = { getAttribute: () => 'true' };
+  const documentElement = {
+    clientHeight: 812,
+    style: {
+      setProperty(name, value) { writes += 1; properties.set(name, value); },
+      removeProperty(name) { properties.delete(name); },
+      getPropertyValue(name) { return properties.get(name) || ''; },
+    },
+  };
+  const elements = new Map([
+    ['desktopPanel', panel], ['desktopTabBtn', tab], ['statusBar', element(44)],
+    ['chromeDocks', element(44)], ['mobileInputDock', element(48)],
+  ]);
+  const visualViewport = { height: 512, offsetTop: 0 };
+  const view = {
+    innerHeight: 812,
+    visualViewport,
+    navigator: { maxTouchPoints: 1, virtualKeyboard: { overlaysContent: true, boundingRect: { height: 300 } } },
+    requestAnimationFrame(callback) { callbacks.push(callback); return callbacks.length; },
+    cancelAnimationFrame() {},
+  };
+  const root = {
+    body,
+    defaultView: view,
+    navigator: view.navigator,
+    documentElement,
+    getElementById(id) { return elements.get(id) || null; },
+    querySelector() { return null; },
+  };
+  const previousInput = global.Input;
+  global.Input = { setViewportInputSupported(value) { this.value = value; } };
+  try {
+    ChromeLayout._mobileLayoutCleanup?.();
+    ChromeLayout._mobileLayoutRaf = null;
+    ChromeLayout._mobileLayoutPending = null;
+    ChromeLayout._mobileLayoutLastSupported = null;
+    for (let index = 0; index < 20; index += 1) ChromeLayout.recalculate(root, { schedule: true });
+    assert.equal(callbacks.length, 1);
+    callbacks.shift()();
+    const writesAfterFirstFrame = writes;
+    for (let index = 0; index < 20; index += 1) ChromeLayout.recalculate(root, { schedule: true });
+    assert.equal(callbacks.length, 1);
+    callbacks.shift()();
+    assert.equal(writes, writesAfterFirstFrame);
+  } finally {
+    ChromeLayout._mobileLayoutRaf = null;
+    ChromeLayout._mobileLayoutPending = null;
+    ChromeLayout._mobileLayoutLastSupported = null;
+    if (previousInput === undefined) delete global.Input;
+    else global.Input = previousInput;
+  }
 });

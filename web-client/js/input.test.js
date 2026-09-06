@@ -341,6 +341,35 @@ test('mobile viewer acceptance CLI exposes the required operator-supplied argume
   assert.match(result.stdout, /--out/);
 });
 
+test('viewport support is a derived gate for new writes while safe releases and local drafts remain available', () => {
+  const { Input, context, elements, socketEvents, documentListeners } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  Input.setViewportInputSupported(false);
+  const keyboardCountBeforeDraft = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length;
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length, keyboardCountBeforeDraft);
+
+  const keydown = keyboard('keydown', { code: 'KeyA', key: 'a' });
+  documentListeners.get('keydown')(keydown);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length, keyboardCountBeforeDraft);
+
+  const release = keyboard('keyup', { code: 'ShiftLeft', key: 'Shift' });
+  documentListeners.get('keyup')(release);
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
 test('touch click, touch wheel, and mobile text retain the active v2 lease envelope', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   loadTouchAdapter(context);
