@@ -313,6 +313,7 @@ assert page.evaluate("document.documentElement.contains(document.getElementById(
 - [ ] **Step 3b（实施复审回归）:** 加移动框收起→实体导航/输入→重新打开IME的内存远端模型一致性；R12虚拟modifier下的导航及安全释放；在支持尺寸、composition/pending/uncertain门禁关闭时，先通过真实controller锁定modifier，再用生产capability渲染与原生浏览器click证明OFF可达且只释放一次，不用对disabled按钮直接dispatchEvent假代。全屏不支持/reject场景用实际按钮点击证明移动焦点/草稿保留。极小unsupported另测明确提示、已有手势继续/几何取消、新动作拒绝，不要求20px内控件全可达。
 - [ ] **Step 4:** 浏览器布局矩阵375×812、768×1024、1024×1366、1440×900使用inset=0/300；568×320用inset=0/160覆盖ultraCompact，inset300仅测unsupportedViewport降级。触控true/false、overlay/resize两模式。前三种compact画面≥120，导航/retry/退出≥44×44且在键盘之上；实际rect误差≤1px：viewer.top=viewerTop、viewer.bottom<=dock.top、dock.bottom=visibleBottom-safeBottom-textReserve-8、text.bottom=visibleBottom-safeBottom、顶栏bottom<=viewer.top。测safeProbe注入、offsetTop非零、两组末键滚动可达；unsupported不假计全控件可达。真实DOM点全屏按钮，支持时验证fullscreenElement及可见可点；不支持明确NOT RUN原生全屏并测fallback。
 - [ ] **主审新增回归:** 移动输入框已显示且无草稿时，真实mouse/touch拖拽跨多个rAF，首down不能因surface pending提示撑高Dock，必须正常up且无自触发geometry reset；外部几何变化仍应reset。另在up后ACK前输入草稿，确认无自动补发、显式retry只发一次。不得用fixture固定status高度或关闭几何检查消除失败。
+- [ ] **全屏可达性澄清:** 全局exit在wide/narrow/idle/Terminal/no-lease各状态均须无需滚动即完整位于视口内、44px且hittest；More内的fullscreen入口可先主动滚动菜单，证明滚动生效，再在原生click前测bounds/hittest，不能依赖click隐式滚动，也不能要求所有菜单项初始同时可见。
 - [ ] **Step 5:** 先运行新CLI与单测红/绿，再进行最终命令（每条按对应目录执行，不能把cd串错）：
 
 ```bash
