@@ -67,4 +67,4 @@
 
 ## 实施后续状态（2026-09-06）
 
-以上章节保留各轮审查发生时的原义。Task1–6已完成实施和限定复审；Task4上述六项在`b527ba6`解决，移动框收起→实体键→重新打开的基线问题在`cd9c671`解决。主线程随后用离线真实DOM复现“空草稿surface pending提示增高Dock，导致拖拽被几何reset自取消”；`bfc886d`的最小状态显示修复与独立复审已通过，原生鼠标事件probe由FAIL转PASS。完整Task7集成和最终主线程review仍在进行，见[当前验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)。这些开发分支结果没有改写main/运行服务或真机验收状态。
+以上章节保留各轮审查发生时的原义。Task1–6已完成实施和限定复审；Task4上述六项在`b527ba6`解决，移动框收起→实体键→重新打开的基线问题在`cd9c671`解决。主线程随后用离线真实DOM复现“空草稿surface pending提示增高Dock，导致拖拽被几何reset自取消”；`bfc886d`的最小状态显示修复与独立复审已通过，原生鼠标事件probe由FAIL转PASS。Task7严格离线集成与主线程最终review现已完成，四项验收缺口及恢复的textarea组合键检查通过两轮修正/复审，无未解决P1/P2；非阻塞维护项和证据边界见[当前验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)。这些开发分支结果没有改写main/运行服务或真机验收状态。

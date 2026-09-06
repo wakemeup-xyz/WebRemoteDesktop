@@ -1,6 +1,6 @@
 # 移动端远程桌面操控设计
 
-**状态：** 基础实现已合入；2026-09-05发现的交互问题已进入2026-09-06整改分支，Task1–6通过限定开发/测试/复审，最终浏览器集成与主审进行中；真机验收NOT RUN。后续以[整改设计](2026-09-06-mobile-input-interaction-remediation-design.md)及[当前验收](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)为准，下面保留原设计和带日期的历史基线，不表示整改已部署。
+**状态：** 基础实现已合入；2026-09-05发现的交互问题已进入2026-09-06整改分支，Task1–7完成开发/离线测试/限定复审，主线程最终审查无未解决P1/P2；真机验收NOT RUN。后续以[整改设计](2026-09-06-mobile-input-interaction-remediation-design.md)及[当前验收](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)为准，下面保留原设计和带日期的历史基线，不表示整改已部署。
 
 **日期：** 2026-08-30
 

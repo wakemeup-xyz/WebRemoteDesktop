@@ -1,6 +1,6 @@
 # 手机 / iPad 输入交互整改设计
 
-日期：2026-09-06。状态：Task1–6及主审追加拖拽提示修复已提交、测试并通过限定复审；Task7浏览器集成与最终主审仍在进行。开发分支`codex/mobile-input-interaction-remediation`，未合main、未push、未重启服务。见[当前验收](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)与[历史方案审查](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。执行subagent使用gpt-5.6-luna/max，最终review由主线程完成。
+日期：2026-09-06。状态：Task1–7及主审追加拖拽提示修复已提交、完成自动化并通过限定复审；主线程本人最终审查无未解决P1/P2。严格离线Chromium通过，真机/系统IME/Quartz/公网仍NOT RUN。开发分支`codex/mobile-input-interaction-remediation`，未合main、未push、未重启服务。见[当前验收](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)与[历史方案审查](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。执行subagent使用gpt-5.6-luna/max，最终review由主线程完成。
 
 基线：`main@000547ff37dc1a05c3b5b953954af81e9ed7d43a`。输入依据：[F1–F7 问题报告](../reports/2026-09-05-mobile-touch-keyboard-logic-review.md)、[既有移动设计](2026-08-30-mobile-remote-control-design.md)。
 

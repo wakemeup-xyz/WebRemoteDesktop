@@ -136,12 +136,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
 - [x] **既有origin浏览器验收 harness（非离线）**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 会认证并连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。本轮没有运行此脚本或连接实际origin。
-- [ ] **严格离线整改验收（开发中）**：新 `scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`。最终结果见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
+- [x] **严格离线整改验收**：新 `scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`。最终结果见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
 #### 3.4.1 整改分支当前操作与实现边界（2026-09-06）
 
-以下描述整改分支已提交的代码，不表示main或运行服务已经更新；最终集成验收仍在进行。
+以下描述整改分支已提交的代码，不表示main或运行服务已经更新；离线集成与最终主审已通过；真机、公网及与新main的组合结果仍未验证。
 
 | 用户操作 | 当前行为 |
 |---|---|
@@ -165,12 +165,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 2026-09-05基于`000547f`的复核曾在相关单测151/151通过时确认七项实际缺陷。历史定位和红态复现保留在[原问题报告](../superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)，不改写为旧版本已通过。
 
 - [x] F1 连续帧抢焦点：已实现焦点/门禁分离并有回归。
-- [x] F2/F6 键盘占高重复、宽屏键栏缺失：已实现单点布局与触控能力派生，浏览器完整矩阵仍待最终验收。
+- [x] F2/F6 键盘占高重复、宽屏键栏缺失：已实现单点布局与触控能力派生，离线浏览器44组合、913项布局检查通过。
 - [x] F5 失败草稿丢失：已实现本页草稿、有限删除事务、显式重试/放弃与lease隔离。
 - [x] F3 导航/实体键/modal基线：已接统一事务及独立surface确认门禁。
 - [x] F4 拖拽起点：已保留初始坐标、取消旧几何工作；主审追加修复提示引起的自取消。
 - [x] F7 全屏控件缺失：已切换完整documentElement目标及全局退出，保留失败提示和焦点。
-- [ ] Task7完整浏览器集成与最终主审：仍在进行；以上勾选表示代码整改，不等于全链路验收。
+- [x] Task7严格离线浏览器集成与最终主审：已完成；四项覆盖缺口及恢复的组合键检查通过复审，无未解决P1/P2。以上勾选表示分支代码/离线验收，不等于真机或公网全链路验收。
 
 按F编号的当前证据和剩余门槛见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。离线浏览器使用人工键盘inset和内存远端模型，没有连接真实Viewer/Host，不计入真实设备、Quartz或公网PASS。
 

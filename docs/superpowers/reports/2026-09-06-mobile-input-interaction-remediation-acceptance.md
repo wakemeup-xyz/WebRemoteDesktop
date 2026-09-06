@@ -1,11 +1,12 @@
 # 手机 / iPad 输入交互整改验收
 
-日期：2026-09-06。状态：**生产整改及正常离线测试已通过；Task7首次限定审查确认4项验收覆盖缺口，正在修正，主线程最终review尚未通过。**
+日期：2026-09-06。状态：**Task1–7开发、自动化及限定复审完成；主线程本人最终整分支review通过，无未解决P1/P2。代码整改完成，不代表真机/公网全链路验收或部署完成。**
 
-- 分支：`codex/mobile-input-interaction-remediation`，从`main@195e0c6`隔离开发；生产整改提交至`bfc886d`，最终验收脚本提交`0a346eb`。
+- 分支：`codex/mobile-input-interaction-remediation`，从`main@195e0c6`隔离开发；生产整改提交至`bfc886d`，最终验收脚本至`f2e694a`（初版`0a346eb`、补强`efeb25e`、组合键覆盖恢复`f2e694a`）。
 - [设计](../specs/2026-09-06-mobile-input-interaction-remediation-design.md)、[计划](../plans/2026-09-06-mobile-input-interaction-remediation-plan.md)、[原F1–F7问题与红态证据](2026-09-05-mobile-touch-keyboard-logic-review.md)、[方案审查及后续纠偏](2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
 - 开发/测试subagent：`gpt-5.6-luna / max`；各任务限定review与主线程独立复核分开记录，最终whole-branch review由主线程本人执行。
 - 未合main、未push、未重启本地服务、未操作tunnel或改变公网地址。代码与文档在开发分支，不代表运行服务已加载。
+- 收尾只读检查时main已由其他任务推进至`6c0c652`（TURN质量/运行时采集工作）；本分支与main的共同基点仍为`195e0c6`，`efeb25e`未包含在main中。本报告的测试只证明本分支，未验证与新main合并后的组合结果；未擅自rebase或混改其他子系统。
 
 ## 1. 按原问题编号的状态
 
@@ -23,7 +24,7 @@
 
 ## 2. 已实际运行的命令
 
-主线程独立执行（隔离worktree，已提交版本`0a346eb`，不是agent报告的转述）：
+主线程独立执行（隔离worktree，基础全套在已提交版本`0a346eb`；Task7修复后独立结果单列于下，不是agent报告的转述）：
 
 | 工作目录 / 命令 | 退出码 | 结果 |
 |---|---|---|
@@ -37,7 +38,19 @@
 
 Viewer输出包含既有离线WebRTC配置fetch缺失的fallback提示，未将输出描述为无警告。逐任务报告另记录RED→GREEN；追加拖拽修复的命名单测先0/1、后1/1，完整Input99/99，MobileTextInput/ChromeLayout/CSS89/89。这些子集与690全套有重叠，不相加制造总数。
 
-开发agent也分别完成下列计划命令：Viewer690/690、CLI契约4/4、Chromium12/12、Signal332/332和构建通过；WebKit exit2/12 NOT RUN。其最终artifact为`/tmp/wrd-mobile-interaction-chromium-final.json`与`/tmp/wrd-mobile-interaction-webkit-final.json`。主线程独立结果见上表，不将重复运行相加制造测试总数。
+Task7首次限定审查确认4项测试缺口：R11原断言只测已为false的pending，R12没有在门禁内实际OFF，R9没有真正切换焦点，外部几何变化没有放进正在执行的手势。主线程独立负向控制证实前两项原场景会容忍故意回归；这些是验收证据缺陷，不代表生产实现已被证明错误。`efeb25e`补齐4项，主线程在该提交独立执行：
+
+| 命令（仓库根） | 退出码 | 结果 |
+|---|---:|---|
+| `python3 scripts/mobile_input_interaction_acceptance.py --out /tmp/wrd-mobile-primary-fix1-chromium.json` | 0 | 12/12 PASS；44布局组合、913检查；physical 8、surface 33、modal 23、virtual modifier 24项布尔检查全部通过 |
+| `node --test scripts/mobile-input-interaction-acceptance.test.js` | 0 | 4/4 PASS；无skip |
+| `python3 .superpowers/sdd/2026-09-06-mobile-input-interaction-remediation-plan/primary-task7-negative-controls.py` | 0 | 2/2故意回归被检出：禁用modal历史失效、禁止editing gate内virtual OFF；正常代码仍PASS |
+
+负向控制为主线程保留在本worktree的临时诊断，不是版本化CLI依赖；只在离线页面内存替换对应行为，不改生产文件。修复只改Python验收脚本，Viewer/Signal源代码及测试未改变，因此保留上表690/332与构建证据，不把重复执行相加。开发agent同版本完成相同覆盖，并连续3次运行surface场景PASS。其修复期间曾有一次完整CLI仅双指滚动断言失败，随即重跑又通过；测试确认在resize后复用了旧坐标，改为等待2帧并重新测量当前位置，保留严格滚动断言。具体偶发丢失wheel的机制未单独证明，不将其写成生产根因；修正后agent和主线程的完整CLI与Node契约均通过。
+
+`efeb25e`限定复审确认四项原finding全部ADDRESSED，但指出替换R9场景时移除了设计要求的textarea新Shift+Arrow之后keyup无额外up检查。主线程对照spec§5认可，`f2e694a`恢复独立native组合键分支并保留真实焦点转换；第二轮复审为Spec ADDRESSED / Quality Approved，无新增Critical/Important。主线程独立运行该提交的`scenario_physical_keyup`：exit0、15项检查PASS，tracked Shift down/up各1，textarea chord batch1、额外standalone key0，释放后及chord后显式文本各接受1次；随后完整运行`python3 scripts/mobile_input_interaction_acceptance.py --out /tmp/wrd-mobile-primary-fix2-chromium.json`，exit0、12/12 PASS、44/913布局矩阵通过。此次仅增加验收检查，生产代码未变。
+
+开发agent分别完成计划命令：Viewer690/690、Signal332/332和构建通过；最终`f2e694a`的CLI契约4/4、Chromium12/12及两项负向控制检出通过；WebKit原执行exit2/12 NOT RUN，运行时仍缺失。最终agent Chromium artifact为`/tmp/wrd-mobile-interaction-chromium-fix2.json`，WebKit为`/tmp/wrd-mobile-interaction-webkit-final.json`。主线程独立执行的版本与结果分别见上文，不将重复运行相加制造测试总数。
 
 ```bash
 # 仓库根目录
@@ -69,19 +82,38 @@ npm test
 
 其余实现细化：真正被接受的非modifier实体键通过现有事务失效移动历史，未发送/拒绝事件不清历史；空草稿surface pending不能引发布局反馈自取消手势。
 
-## 5. 待完成项与NOT RUN
+## 5. 完成状态与NOT RUN
 
 | 范围 | 状态 / 原因 |
 |---|---|
-| Task7严格离线Chromium集成 | 原执行12场景PASS；首次限定审查发现R11历史、R12门禁内OFF、R9焦点转换及外部几何reset四项证据缺口，修复中；主线程两项负向控制证实原PASS不能识别对应故意回归 |
-| 主线程最终whole-branch review | IN PROGRESS；独立最终命令已完成，不用测试PASS替代代码审查 |
+| Task7严格离线Chromium集成 | PASS；四项原覆盖缺口及恢复的textarea组合键检查已闭合；限定复审通过，主线程最终提交独立12/12 PASS |
+| 主线程最终whole-branch review | COMPLETE；本人检查实现、跨模块关系、证据与文档，无未解决P1/P2；两项非阻塞维护项见§6 |
 | WebKit引擎 | NOT RUN；当前环境缺可用运行时，最终CLI已按exit2记录；未自动安装 |
 | Android Chrome / iPhone Safari / iPad Safari | NOT RUN；没有真实设备执行证据，桌面touch模拟不替代 |
 | 系统软键盘 / 系统IME / 物理外接键盘 | NOT RUN；合成composition和DOM键事件不等于系统事件 |
 | Host / Quartz实际输入效果 | NOT RUN；本轮未改Host，不操作真实桌面输入 |
 | 正式公网Viewer / DataChannel或Socket真实会话 / live watcher | NOT RUN；未连接实际origin、Signal/Host或watcher |
 | main merge / push / 服务重启 | NOT RUN；本轮计划不授权部署操作 |
+| 与外部已推进的main组合后的集成 | NOT RUN；当前分支基点195e0c6，收尾main为6c0c652，未自行合并或rebase |
 
 `mobile_input_interaction_acceptance.py`是本轮新建的严格离线脚本；既有`mobile_viewer_acceptance.py --base-url ...`会连接操作者运行的origin，二者不能混称离线。结构化验收只保存场景名、状态、布尔检查与安全计数；运行中的草稿、原始事件与远端模型值仅留在离线页面内存，不输出到artifact或文档。固定的人工测试输入位于测试源码，并非真实用户数据；本轮未读取用户文本、剪贴板或凭据。
 
 最终完成门槛：F1–F7代码与必要自动化通过、Task7报告及主线程review无未解决P1/P2，才称代码整改完成。真实设备/公网仍NOT RUN时，不称移动端全链路验收完成。
+
+## 6. 主线程本人整分支审查
+
+审查基点`195e0c6`，代码/验收终点`f2e694a`；分阶段审查生产实现，对照完整分支差异并逐项复查最后79行验收修正、装配和文档。不是仅转述Luna的结论。最终结论：**本整改分支无未解决Critical/Important（P1/P2）；限定复审发现的覆盖问题全部修复。与新main合并、部署及真实设备/公网仍未验证。**
+
+- F1/F5：媒体门禁不再强制聚焦；普通在途ACK与拒绝草稿分开处理；局部成功前缀、generation/lease失效、16步删除取消和显式重试均有实现与测试对应。
+- F3/F4：沿既有controller/transport发送，surface只保留当前手势最少确认元数据；键盘reset不掩盖surface不确定性；modifier OFF、已跟踪keyup、旧几何reset与新手势恢复保持安全路径。主线程发现的空提示拖拽自取消已通过修复及真实离线DOM回归。
+- F2/F6/F7：ChromeLayout单点布局，不新增第二套inset扣除；按钮原DOM保留，完整documentElement全屏及不依赖lease的全局退出；44组合固定点和native入口/退出/失败路径通过。
+- 验收可信度：四项Task7覆盖缺口已在最终代码逐项核对，主线程正常CLI与两项故意回归对照都实际执行；不以长度相等、已为false的pending、disabled按钮手工事件或缺失运行时冒充通过。构建产物装配移动模块和全局退出；Host/Signal/Terminal/tunnel生产范围未扩大。
+
+限定审查递交的两项Minor经主线程重新裁定为非阻塞，明确保留：
+
+| 位置 | 维护问题 | 本轮判断与后续方向 |
+|---|---|---|
+| `web-client/js/ui.js:124-134`、`web-client/js/webrtc.js:1304-1306` | fullscreenchange存在重复布局测量 | 幂等CSS写入、RAF合并及固定点矩阵未显示双扣或振荡；保留当前生命周期职责，以后集中合并测量触发，不作为本轮功能阻塞 |
+| `scripts/mobile_input_interaction_acceptance.py`（2994行） | 独立脚本集中fixture、模型与场景，文件较长 | 已有具名helper和场景边界，但维护成本仍在；可后续纯组织性拆分，必须保留相同断言及负向控制检出，不混入此次修复 |
+
+后续集成需要基于届时main重新验证共享Viewer/WebRTC及完整构建；部署和真机运行门槛不由本报告自动授权或取消。

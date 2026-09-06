@@ -10,9 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-06-mobile-input-interaction-remediation-design.md`
 
-**Status:** Task1–6及追加拖拽提示修复已完成限定开发/测试/复审；Task7浏览器集成和最终主线程review进行中。历史代码基线`000547f`；隔离分支从`main@195e0c6`开始，当前生产整改提交至`bfc886d`。未合main、未push、未重启服务；详见[当前验收报告](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
+**Status:** Task1–7及追加拖拽提示修复已完成开发、自动化与限定复审；主线程本人最终review无未解决P1/P2。历史代码基线`000547f`；隔离分支从`main@195e0c6`开始，生产整改提交至`bfc886d`，最终验收脚本至`f2e694a`。未合main、未push、未重启服务；详见[当前验收报告](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
 
-**Review:** 规划阶段主线程追加R9–R12，实施阶段继续修复ACK乱序、跨实体键盘基线、受限视口连续手势及状态提示自取消拖拽等问题；前六项限定审查已通过，最终整分支review仍待Task7完成。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
+**Review:** 规划阶段主线程追加R9–R12，实施阶段继续修复ACK乱序、跨实体键盘基线、受限视口连续手势及状态提示自取消拖拽等问题；七项限定审查及主线程最终整分支review已完成；Task7两轮修正闭合全部覆盖问题，两项非阻塞维护项保留于验收报告。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
 
 ## Global Constraints
 
@@ -297,8 +297,8 @@ assert.equal(h.videoFocusCount, 0);
 
 **Interfaces:** CLI `python3 scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]`；默认chromium；结果`scope=offline-synthetic`，每场景PASS/FAIL/NOT RUN，FAIL进程exit1，缺browser运行依赖exit2且写NOT RUN。
 
-- [ ] **Step 1:** 建Node测试启动CLI `--help`与结果解析：不得读取.env/password，不提供base-url参数，不启动服务；历史证据脚本保持不变，新脚本断言修复后的期望。
-- [ ] **Step 2:** Playwright只加载本地源码，去除script/link远程引用，route.abort所有请求；注入现有KeyboardTransport/Controller/Input/ChromeLayout/UI与fake socket。允许日志只有场景名/状态/计数，正文/事件坐标/用户数据不写artifact；布局输出布尔覆盖关系和safe摘要。
+- [x] **Step 1:** 建Node测试启动CLI `--help`与结果解析：不得读取.env/password，不提供base-url参数，不启动服务；历史证据脚本保持不变，新脚本断言修复后的期望。
+- [x] **Step 2:** Playwright只加载本地源码，去除script/link远程引用，route.abort所有请求；注入现有KeyboardTransport/Controller/Input/ChromeLayout/UI与fake socket。允许日志只有场景名/状态/计数，正文/事件坐标/用户数据不写artifact；布局输出布尔覆盖关系和safe摘要。
 
 ```python
 # 场景核心（page由本地fixture创建，不连接实际Host）：
@@ -308,13 +308,13 @@ assert page.evaluate("document.activeElement.id") == 'mobileTextInput'
 assert page.evaluate("document.documentElement.contains(document.getElementById('mobileInputDock'))")
 ```
 
-- [ ] **Step 3:** 加动作组合：真实DOM组合输入→120帧→工具栏left→继续输入→局部失败→retry→reset取消任务；使用虚拟远端字符串模型只在内存核对，不打印字符串。加drag起点、up/reset、第二指切滚动及新lease未重放测试。
-- [ ] **Step 3a:** 加R9–R11跨模块验收：已跟踪physical key跨焦点keyup、鼠标down/up确认与失败/timeout阻止文本、modal提交后的移动基线失效。使用真实Input/adapter/controller及fake ACK，断言待确认期间无远端文本，确认不自动重放、显式retry恰好一次。
-- [ ] **Step 3b（实施复审回归）:** 加移动框收起→实体导航/输入→重新打开IME的内存远端模型一致性；R12虚拟modifier下的导航及安全释放；在支持尺寸、composition/pending/uncertain门禁关闭时，先通过真实controller锁定modifier，再用生产capability渲染与原生浏览器click证明OFF可达且只释放一次，不用对disabled按钮直接dispatchEvent假代。全屏不支持/reject场景用实际按钮点击证明移动焦点/草稿保留。极小unsupported另测明确提示、已有手势继续/几何取消、新动作拒绝，不要求20px内控件全可达。
-- [ ] **Step 4:** 浏览器布局矩阵375×812、768×1024、1024×1366、1440×900使用inset=0/300；568×320用inset=0/160覆盖ultraCompact，inset300仅测unsupportedViewport降级。触控true/false、overlay/resize两模式。前三种compact画面≥120，导航/retry/退出≥44×44且在键盘之上；实际rect误差≤1px：viewer.top=viewerTop、viewer.bottom<=dock.top、dock.bottom=visibleBottom-safeBottom-textReserve-8、text.bottom=visibleBottom-safeBottom、顶栏bottom<=viewer.top。测safeProbe注入、offsetTop非零、两组末键滚动可达；unsupported不假计全控件可达。真实DOM点全屏按钮，支持时验证fullscreenElement及可见可点；不支持明确NOT RUN原生全屏并测fallback。
-- [ ] **主审新增回归:** 移动输入框已显示且无草稿时，真实mouse/touch拖拽跨多个rAF，首down不能因surface pending提示撑高Dock，必须正常up且无自触发geometry reset；外部几何变化仍应reset。另在up后ACK前输入草稿，确认无自动补发、显式retry只发一次。不得用fixture固定status高度或关闭几何检查消除失败。
-- [ ] **全屏可达性澄清:** 全局exit在wide/narrow/idle/Terminal/no-lease各状态均须无需滚动即完整位于视口内、44px且hittest；More内的fullscreen入口可先主动滚动菜单，证明滚动生效，再在原生click前测bounds/hittest，不能依赖click隐式滚动，也不能要求所有菜单项初始同时可见。
-- [ ] **Step 5:** 先运行新CLI与单测红/绿，再进行最终命令（每条按对应目录执行，不能把cd串错）：
+- [x] **Step 3:** 加动作组合：真实DOM组合输入→120帧→工具栏left→继续输入→局部失败→retry→reset取消任务；使用虚拟远端字符串模型只在内存核对，不打印字符串。加drag起点、up/reset、第二指切滚动及新lease未重放测试。
+- [x] **Step 3a:** 加R9–R11跨模块验收：已跟踪physical key跨焦点keyup、鼠标down/up确认与失败/timeout阻止文本、modal提交后的移动基线失效。使用真实Input/adapter/controller及fake ACK，断言待确认期间无远端文本，确认不自动重放、显式retry恰好一次。
+- [x] **Step 3b（实施复审回归）:** 加移动框收起→实体导航/输入→重新打开IME的内存远端模型一致性；R12虚拟modifier下的导航及安全释放；在支持尺寸、composition/pending/uncertain门禁关闭时，先通过真实controller锁定modifier，再用生产capability渲染与原生浏览器click证明OFF可达且只释放一次，不用对disabled按钮直接dispatchEvent假代。全屏不支持/reject场景用实际按钮点击证明移动焦点/草稿保留。极小unsupported另测明确提示、已有手势继续/几何取消、新动作拒绝，不要求20px内控件全可达。
+- [x] **Step 4:** 浏览器布局矩阵375×812、768×1024、1024×1366、1440×900使用inset=0/300；568×320用inset=0/160覆盖ultraCompact，inset300仅测unsupportedViewport降级。触控true/false、overlay/resize两模式。前三种compact画面≥120，导航/retry/退出≥44×44且在键盘之上；实际rect误差≤1px：viewer.top=viewerTop、viewer.bottom<=dock.top、dock.bottom=visibleBottom-safeBottom-textReserve-8、text.bottom=visibleBottom-safeBottom、顶栏bottom<=viewer.top。测safeProbe注入、offsetTop非零、两组末键滚动可达；unsupported不假计全控件可达。真实DOM点全屏按钮，支持时验证fullscreenElement及可见可点；不支持明确NOT RUN原生全屏并测fallback。
+- [x] **主审新增回归:** 移动输入框已显示且无草稿时，真实mouse/touch拖拽跨多个rAF，首down不能因surface pending提示撑高Dock，必须正常up且无自触发geometry reset；外部几何变化仍应reset。另在up后ACK前输入草稿，确认无自动补发、显式retry只发一次。不得用fixture固定status高度或关闭几何检查消除失败。
+- [x] **全屏可达性澄清:** 全局exit在wide/narrow/idle/Terminal/no-lease各状态均须无需滚动即完整位于视口内、44px且hittest；More内的fullscreen入口可先主动滚动菜单，证明滚动生效，再在原生click前测bounds/hittest，不能依赖click隐式滚动，也不能要求所有菜单项初始同时可见。
+- [x] **Step 5:** 先运行新CLI与单测红/绿，再进行最终命令（每条按对应目录执行，不能把cd串错）：
 
 ```bash
 node --test web-client/js/*.test.js web-client/css/*.test.js
@@ -325,9 +325,9 @@ python3 scripts/mobile_input_interaction_acceptance.py --browser webkit --out /t
 
 signal-server目录：`npm run build:web`，然后`npm test`。本计划未改Host，不要求为文档/前端改动反复全跑Host；如果发生协议/Host疑点，停止扩大改动并先补证据。依赖缺失先用现有已安装依赖的路径解决，不擅改lockfile或把缺依赖计成PASS。
 
-- [ ] **Step 6:** 写acceptance，逐F编号标`代码修复/自动化PASS/真实设备NOT RUN`。记录所有命令退出码和测试数；WebKit缺依赖与真机缺失分别写原因。保留原7项报告为历史发现并补后续链接，不能改历史缺陷脚本为假绿。
-- [ ] **Step 7:** 最终独立review新diff，检查所有F编号、草稿不重复/不串lease、focus不抢、layout仅算一次、全屏实际contain与构建装配。修完发现才勾对应完成项。
-- [ ] **Step 8:** `git diff --check`，逐路径暂存本次代码/测试/文档；审阅`git diff --cached --name-only`和`git diff --cached --check`后提交 `test(viewer): verify mobile interaction remediation`。本计划不会自动授权main merge、push或服务重启。
+- [x] **Step 6:** 写acceptance，逐F编号标`代码修复/自动化PASS/真实设备NOT RUN`。记录所有命令退出码和测试数；WebKit缺依赖与真机缺失分别写原因。保留原7项报告为历史发现并补后续链接，不能改历史缺陷脚本为假绿。
+- [x] **Step 7:** 最终独立review新diff，检查所有F编号、草稿不重复/不串lease、focus不抢、layout仅算一次、全屏实际contain与构建装配。修完发现才勾对应完成项。
+- [x] **Step 8:** `git diff --check`，逐路径暂存本次代码/测试/文档；审阅`git diff --cached --name-only`和`git diff --cached --check`后提交 `test(viewer): verify mobile interaction remediation`。本计划不会自动授权main merge、push或服务重启。
 
 ## Spec Coverage / 完成门槛
 

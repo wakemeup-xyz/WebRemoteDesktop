@@ -139,4 +139,4 @@ python3 docs/superpowers/reports/evidence/mobile-input-review-20260905/layout.py
 
 已编制[整改设计](../specs/2026-09-06-mobile-input-interaction-remediation-design.md)、[7任务实施计划](../plans/2026-09-06-mobile-input-interaction-remediation-plan.md)及[方案审查记录](2026-09-06-mobile-input-interaction-remediation-plan-review.md)。这些是后续实施契约，不代表F1–F7已经修复；本报告与原缺陷复现证据保持历史原义。
 
-后续实施记录（2026-09-06）：上述“尚未修复”是本报告原基线状态。整改分支现已完成Task1–6及主审追加拖拽提示修复，生产提交至`bfc886d`；完整浏览器集成与最终主审仍在进行，未合main或部署。以[整改验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)查看最新分层状态，不改写本文及原红态脚本/JSON为旧版本已通过。
+后续实施记录（2026-09-06）：上述“尚未修复”是本报告原基线状态。整改分支现已完成Task1–7及主审追加拖拽提示修复，生产提交至`bfc886d`、验收脚本至`f2e694a`；严格离线Chromium集成及主线程最终审查已通过，未合main或部署。以[整改验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)查看最新分层状态，不改写本文及原红态脚本/JSON为旧版本已通过。
