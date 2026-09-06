@@ -18,6 +18,7 @@ from av.video.codeccontext import VideoCodecContext
 from aiortc.codecs import Encoder
 from aiortc.mediastreams import VIDEO_TIME_BASE, convert_timebase
 from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, resolve_h264_policy
+from media_stage_metrics import SenderFrameTraceContext
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,7 @@ class H264VideoToolboxEncoder(Encoder):
         *,
         policy: H264SessionPolicy | None = None,
         scenario_id: str | None = None,
+        frame_trace_context: SenderFrameTraceContext | None = None,
     ) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
@@ -262,6 +264,9 @@ class H264VideoToolboxEncoder(Encoder):
         self._scenario_id = str(
             self._policy.connection_attempt_id if scenario_id is None else scenario_id
         )
+        # Sender-owned immutable context avoids attaching mutable state to a
+        # PyAV frame, which may cross aiortc's executor boundary.
+        self._frame_trace_context = frame_trace_context
         if not self._scenario_id:
             raise ValueError("scenario_id is required for encoder construction evidence")
         self._codec_creation_records: list[CodecCreationRecord] = []
@@ -845,9 +850,35 @@ class H264VideoToolboxEncoder(Encoder):
     ) -> tuple[list[bytes], int]:
         assert isinstance(frame, av.VideoFrame)
         started_at = time.monotonic()
-        packages = self._encode_frame(frame, force_keyframe)
+        started_ns = time.monotonic_ns()
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
+        trace_context = self._frame_trace_context
+        trace_key = None
+        if trace_context is not None:
+            # captureSeq is resolved from the registry by output timestamp; it
+            # is not copied through the PyAV frame.
+            trace_key = trace_context.registry.find_by_encoder_timestamp(
+                timestamp,
+                attempt_id=trace_context.attempt_id,
+                generation=trace_context.generation,
+                stream_id=trace_context.stream_id,
+            )
+        encode_started_ns = time.monotonic_ns()
+        packages = self._encode_frame(frame, force_keyframe)
+        encode_finished_ns = time.monotonic_ns()
+        packetize_started_ns = time.monotonic_ns()
         packetized = self._packetize(packages)
+        packetize_finished_ns = time.monotonic_ns()
+        if trace_context is not None and trace_key is not None:
+            trace_context.metrics.record(trace_key, "encode", encode_started_ns, encode_finished_ns)
+            trace_context.metrics.record(trace_key, "packetize", packetize_started_ns, packetize_finished_ns)
+            trace_context.metrics.record(trace_key, "encode_total", started_ns, packetize_finished_ns)
+            trace_context.registry.annotate_encoder(
+                trace_key,
+                self._last_encoded_keyframe_kind,
+                self._last_encoded_keyframe_reason,
+                trace_context.policy_digest or self._policy.policy_id,
+            )
         encoded_bytes = sum(len(packet) for packet in packetized)
         idr_bytes = encoded_bytes if self._last_encoded_keyframe_kind is not None else 0
         self._record_encoder_sample(

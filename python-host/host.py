@@ -19,6 +19,7 @@ import io
 import os
 import inspect
 import resource
+from functools import wraps
 from mss import mss as MSS
 import numpy as np
 import av
@@ -44,6 +45,8 @@ from h264_encoder_policy import (
     policy_version_from_environment,
 )
 from media_timing import RtpFrameClock
+from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
+from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
@@ -72,6 +75,7 @@ V2_INPUT_ACK_STATUSES = frozenset({
 # aiortc's encoder factory has no sender parameter. Its sender coroutine
 # supplies the immutable policy snapshot for just that PeerConnection.
 _sender_h264_policy = contextvars.ContextVar("wrd_sender_h264_policy", default=None)
+_sender_frame_trace_context = contextvars.ContextVar("wrd_sender_frame_trace_context", default=None)
 
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
@@ -80,19 +84,25 @@ try:
     _original_get_encoder = _aiortc_codecs.get_encoder
     _original_next_encoded_frame = _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame
 
+    @wraps(_original_next_encoded_frame)
     async def _patched_next_encoded_frame(sender, codec):
         token = _sender_h264_policy.set(getattr(sender, "_wrd_h264_policy", None))
+        trace_token = _sender_frame_trace_context.set(getattr(sender, "_wrd_frame_trace_context", None))
         try:
             return await _original_next_encoded_frame(sender, codec)
         finally:
             _sender_h264_policy.reset(token)
+            _sender_frame_trace_context.reset(trace_token)
 
     def _patched_get_encoder(codec):
         if codec.mimeType.lower() == "video/h264":
             policy = _sender_h264_policy.get()
             if policy is not None:
                 logger.info("Using session-bound custom H.264 encoder for negotiated codec: %s", codec)
-                return H264VideoToolboxEncoder(policy=policy)
+                return H264VideoToolboxEncoder(
+                    policy=policy,
+                    frame_trace_context=_sender_frame_trace_context.get(),
+                )
             # Never source a policy from process-global state for an arbitrary
             # aiortc sender outside this Host session.
             return _original_get_encoder(codec)
@@ -102,6 +112,13 @@ try:
     _aiortc_codecs.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
+
+    # This is an observer only: unsupported aiortc ABI disables trace evidence
+    # and leaves the pre-existing media path untouched.
+    _rtp_frame_observer = RtpFrameObserver()
+    _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
+    if not _rtp_observer_ready:
+        logger.warning("RTP frame trace observer unavailable: %s", _rtp_observer_reason)
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -987,7 +1004,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     kind = "video"
 
-    def __init__(self, target_fps=20, max_width=1280, max_height=720):
+    def __init__(self, target_fps=20, max_width=1280, max_height=720, *, frame_trace_context=None):
         super().__init__()
         self.sct = MSS()
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
@@ -1020,6 +1037,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._capture_lock = threading.Lock()
         self._capture_buffer = None
         self._capture_seq = 0
+        self._capture_bounds_ns = {}
         self._last_consumed_seq = -1
         self._capture_running = True
         self._activity_condition = threading.Condition()
@@ -1039,6 +1057,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._capture_total_time = 0.0
         self._capture_total_count = 0
         self._capture_last_log = time.time()
+        self._frame_trace_context = frame_trace_context
+        self._last_trace_send_ns = 0
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1062,23 +1082,27 @@ class ScreenCaptureTrack(VideoStreamTrack):
             with self._target_lock:
                 target_fps = self._target_fps
             _min_interval = 1.0 / self.capture_fps_for_target(target_fps)
-            t0 = time.perf_counter()
+            grab_started_ns = time.monotonic_ns()
             try:
                 # Gate again immediately before MSS grab.
                 if self._suspended or not self._capture_running:
                     continue
                 shot = self.sct.grab(self.monitor)
+                grab_finished_ns = time.monotonic_ns()
                 with self._capture_lock:
                     if self._suspended:
                         continue
                     self._capture_buffer = shot
                     self._capture_seq += 1
+                    self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
+                    while len(self._capture_bounds_ns) > 2048:
+                        self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
                 with self._activity_condition:
                     self._activity_condition.notify_all()
             except Exception:
                 time.sleep(0.005)
                 continue
-            elapsed = time.perf_counter() - t0
+            elapsed = (time.monotonic_ns() - grab_started_ns) / 1_000_000_000
             sleep_time = max(0.0, _min_interval - elapsed)
             if sleep_time > 0.001:
                 time.sleep(sleep_time)
@@ -1095,6 +1119,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         if suspended:
             with self._capture_lock:
                 self._capture_buffer = None
+                getattr(self, "_capture_bounds_ns", {}).clear()
                 self._last_img = None
                 self._last_img_target_generation = -1
             with self._pending_input_lock:
@@ -1193,7 +1218,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
             if getattr(self, "_last_img_target_generation", -1) == target_generation
             else None
         )
-        queued_at = time.perf_counter()
+        selected_at_ns = time.monotonic_ns()
+        queued_at = selected_at_ns
         try:
             frame, cached_img, reused, worker_timing = await loop.run_in_executor(
                 self._process_executor,
@@ -1235,6 +1261,21 @@ class ScreenCaptureTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
+        trace_context = getattr(self, "_frame_trace_context", None)
+        if trace_context is not None:
+            capture_seq = seq if fresh else self._last_consumed_seq
+            encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
+            trace_key = trace_context.key(capture_seq, encoder_timestamp)
+            if trace_context.registry.register_capture(trace_key, pts):
+                with self._capture_lock:
+                    grab_bounds = self._capture_bounds_ns.get(capture_seq)
+                if grab_bounds is not None:
+                    trace_context.metrics.record(trace_key, "grab", grab_bounds[0], grab_bounds[1])
+                    trace_context.metrics.record(trace_key, "age_at_recv", grab_bounds[1], selected_at_ns)
+                trace_context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
+                trace_context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
+                trace_context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
+            self._send_frame_trace_batch()
         convert_time = worker_timing["construct"]
         total_time = time.perf_counter() - recv_start
 
@@ -1273,6 +1314,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.frame_count = 0
             self.last_time = current_time
             self._total_reuse = 0
+            if trace_context is not None:
+                logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps({
+                    "stages": trace_context.metrics.snapshot(reset=True),
+                    "traces": trace_context.registry.snapshot(),
+                }, separators=(",", ":"), sort_keys=True))
 
             # Send capture stats to viewer via DataChannel for FPS/latency display
             host = getattr(self, '_host_ref', None)
@@ -1338,13 +1384,36 @@ class ScreenCaptureTrack(VideoStreamTrack):
         except Exception as e:
             logger.debug("Frame timing send failed: %s", e)
 
+    def _send_frame_trace_batch(self):
+        """Best-effort diagnostics every 100ms; media never waits for this channel."""
+        context = getattr(self, "_frame_trace_context", None)
+        if context is None:
+            return
+        now_ns = time.monotonic_ns()
+        if now_ns - self._last_trace_send_ns < 100_000_000:
+            return
+        self._last_trace_send_ns = now_ns
+        batch = context.registry.take_frame_trace_batch(limit=64)
+        if not batch["traces"]:
+            return
+        batch["droppedTraceCount"] = context.registry.snapshot()["droppedTraceCount"]
+        host = getattr(self, "_host_ref", None)
+        dc = host.get_input_datachannel() if host is not None else None
+        if dc is None or not hasattr(dc, "send"):
+            context.registry.note_dropped_trace(len(batch["traces"]))
+            return
+        try:
+            dc.send(json.dumps(batch))
+        except Exception:
+            context.registry.note_dropped_trace(len(batch["traces"]))
+
     def _build_video_frame(self, screenshot, fallback_img, fresh, max_width, max_height, queued_at):
         """Process one capture and build one independent PyAV frame in imgproc.
 
         PTS remains an asyncio-loop responsibility: aiortc may consume or mutate a
         frame, so the worker never retains a VideoFrame between calls.
         """
-        started_at = time.perf_counter()
+        started_ns = time.monotonic_ns()
         cached_img = None
         reused = False
         try:
@@ -1365,7 +1434,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 img = fallback_img.copy()
             else:
                 img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
-        prepared_at = time.perf_counter()
+        prepared_ns = time.monotonic_ns()
         try:
             frame = self._video_frame_from_image(img)
             if fresh and not reused:
@@ -1383,12 +1452,16 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 frame = self._video_frame_from_image(
                     np.zeros((max_height, max_width, 4), dtype=np.uint8)
                 )
-        finished_at = time.perf_counter()
+        finished_ns = time.monotonic_ns()
         return frame, cached_img, reused, {
-            "queue": max(0.0, started_at - queued_at),
-            "prepare": max(0.0, prepared_at - started_at),
-            "construct": max(0.0, finished_at - prepared_at),
-            "build": max(0.0, finished_at - started_at),
+            "queue": max(0.0, started_ns - queued_at) / 1_000_000_000,
+            "prepare": max(0.0, prepared_ns - started_ns) / 1_000_000_000,
+            "construct": max(0.0, finished_ns - prepared_ns) / 1_000_000_000,
+            "build": max(0.0, finished_ns - started_ns) / 1_000_000_000,
+            "queued_ns": queued_at,
+            "started_ns": started_ns,
+            "prepared_ns": prepared_ns,
+            "finished_ns": finished_ns,
         }
 
     @staticmethod
@@ -1488,6 +1561,9 @@ class WebRemoteHost:
         # media session or PeerConnection is created.
         self._h264_policy_version = policy_version_from_environment()
         self._h264_policy_provider = H264SessionPolicyProvider()
+        self._frame_trace_registry = FrameTraceRegistry()
+        self._stage_metrics = StageMetrics(registry=self._frame_trace_registry)
+        self._frame_trace_context = None
         self.sio = None
         self.pc = None
         self.token = None
@@ -1537,6 +1613,16 @@ class WebRemoteHost:
         self._media_activity_binding = None
         self._media_activity_suspended = False
         self._session_turn_server_id = None
+
+    def _frame_trace_context_for_policy(self, policy):
+        return SenderFrameTraceContext(
+            registry=self._frame_trace_registry,
+            metrics=self._stage_metrics,
+            attempt_id=str(getattr(policy, "connection_attempt_id", "legacy-local")),
+            generation=int(getattr(policy, "generation", 0) or 0),
+            stream_id="video",
+            policy_digest=str(getattr(policy, "policy_id", "") or ""),
+        )
 
     async def authenticate(self):
         try:
@@ -2392,15 +2478,19 @@ class WebRemoteHost:
                             logger.error(f"DataChannel input parse error: {e}")
 
                 # Add video track
+                policy = self._h264_policy_provider.current_policy()
+                self._frame_trace_context = self._frame_trace_context_for_policy(policy)
                 self.screen_track = ScreenCaptureTrack(
                     target_fps=self.media_profile["target_fps"],
                     max_width=self.media_profile["width"],
                     max_height=self.media_profile["height"],
+                    frame_trace_context=self._frame_trace_context,
                 )
                 self.capture_adapter = CaptureAdapter(track=self.screen_track)
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)
-                self.video_sender._wrd_h264_policy = self._h264_policy_provider.current_policy()
+                self.video_sender._wrd_h264_policy = policy
+                self.video_sender._wrd_frame_trace_context = self._frame_trace_context
                 self.media_sender = MediaSenderAdapter()
                 self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
                 self._prefer_h264_transceivers()
@@ -3157,6 +3247,12 @@ class WebRemoteHost:
         if policy is not None and sender is not None:
             # Lazy creation/rebuild uses the policy owned by this sender.
             sender._wrd_h264_policy = policy
+            self._frame_trace_context = self._frame_trace_context_for_policy(policy)
+            sender._wrd_frame_trace_context = self._frame_trace_context
+            if getattr(self, "screen_track", None) is not None:
+                self.screen_track._frame_trace_context = self._frame_trace_context
+            if hasattr(encoder := self._video_encoder(), "_frame_trace_context"):
+                encoder._frame_trace_context = self._frame_trace_context
         encoder = self._video_encoder()
         if encoder is None:
             return {

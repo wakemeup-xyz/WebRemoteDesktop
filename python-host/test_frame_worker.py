@@ -11,6 +11,7 @@ from aiortc.mediastreams import MediaStreamError
 
 import host
 from host import ScreenCaptureTrack
+from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 
 
 class Screenshot:
@@ -31,6 +32,7 @@ def bare_track(*, max_width=2, max_height=2):
     track._target_lock = threading.Lock()
     track._capture_buffer = None
     track._capture_seq = 0
+    track._capture_bounds_ns = {}
     track._last_consumed_seq = -1
     track._last_img = None
     track._last_img_shape = (0, 0)
@@ -47,6 +49,8 @@ def bare_track(*, max_width=2, max_height=2):
     track._timing_totals = {"sleep": 0.0, "capture_wait": 0.0, "convert": 0.0, "total": 0.0}
     track._timing_count = 0
     track._host_ref = None
+    track._frame_trace_context = None
+    track._last_trace_send_ns = 0
     track._pending_input_lock = threading.Lock()
     track._pending_input_ids = set()
     track._pending_input_data = []
@@ -63,6 +67,32 @@ def bare_track(*, max_width=2, max_height=2):
 
     track.next_timestamp = next_timestamp
     return track
+
+
+@pytest.mark.asyncio
+async def test_same_frame_stage_hooks_preserve_worker_pixels_and_loop_owned_pts():
+    """Timing evidence must not add frame attributes or change the established PTS path."""
+    pixels = np.array([[[7, 8, 9, 255]]], dtype=np.uint8)
+    track = bare_track(max_width=1, max_height=1)
+    registry = FrameTraceRegistry()
+    metrics = StageMetrics(registry=registry)
+    track._frame_trace_context = SenderFrameTraceContext(
+        registry=registry, metrics=metrics, attempt_id="attempt", generation=1,
+    )
+    track._capture_buffer = Screenshot(pixels)
+    track._capture_seq = 1
+    now_ns = time.monotonic_ns()
+    track._capture_bounds_ns[1] = (now_ns - 3_000_000, now_ns - 2_000_000)
+    try:
+        frame = await track.recv()
+    finally:
+        track._process_executor.shutdown(wait=True)
+
+    assert frame.pts == 9000
+    assert np.array_equal(frame.to_ndarray(format="bgra"), pixels)
+    stages = metrics.snapshot()["stages"]
+    assert all(stages[name]["count"] == 1 for name in ("grab", "age_at_recv", "worker_queue", "prepare", "build"))
+    assert stages["reformat"]["count"] == 0
 
 
 @pytest.mark.asyncio
