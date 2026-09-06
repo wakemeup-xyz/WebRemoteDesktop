@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WRD TURN controlled producer</title>
+<style>body{font:24px/1.5 system-ui;margin:3rem;max-width:60rem}#target{height:16rem;border:4px dashed #246;display:grid;place-items:center;background:#eef;user-select:none}#log{white-space:pre-wrap;font:14px/1.4 ui-monospace,monospace;background:#111;color:#cfc;padding:1rem;min-height:10rem}</style>
+<h1>TURN runtime controlled producer</h1>
+<p>Display this local page on the captured Host only for an authorized maintenance run. It stores nothing and sends no network requests.</p>
+<div id="target" tabindex="0">Static high-contrast text · scroll / drag / keyboard target</div><pre id="log" aria-live="polite"></pre>
+<script>
+const log=document.querySelector('#log'); const add=(event)=>{log.textContent+=`${new Date().toISOString()} ${event.type} key=${event.key||''} x=${event.clientX??''} y=${event.clientY??''}\n`;log.scrollTop=log.scrollHeight};
+['pointerdown','pointermove','pointerup','wheel','keydown','keyup'].forEach(type=>document.querySelector('#target').addEventListener(type,add));
+</script>
