@@ -90,7 +90,7 @@ class FrameTraceRegistry:
         self._capacity = int(capacity)
         self._ttl_ns = int(ttl_ns)
         self._traces: dict[tuple[str, int, str], OrderedDict[int, FrameTrace]] = {}
-        self._active_generation: dict[tuple[str, str], int] = {}
+        self._active_generation: OrderedDict[tuple[str, str], tuple[int, int]] = OrderedDict()
         self._wire: dict[tuple[str, int, str, int, int], FrameTrace] = {}
         self._pending: deque[FrameTrace] = deque()
         self.expired_count = 0
@@ -100,6 +100,10 @@ class FrameTraceRegistry:
         self.unmatched_encoder_count = 0
         self.unmatched_wire_count = 0
         self.dropped_trace_count = 0
+        self.expired_pending_count = 0
+        self.active_scope_eviction_count = 0
+        self._interval_capture_count = 0
+        self._interval_wire_count = 0
 
     @staticmethod
     def _scope(key: FrameKey) -> tuple[str, int, str]:
@@ -110,6 +114,9 @@ class FrameTraceRegistry:
         return (str(key.attempt_id), str(key.stream_id))
 
     def _purge(self, now: int) -> None:
+        for scope, (_generation, last_seen_ns) in list(self._active_generation.items()):
+            if now - last_seen_ns > self._ttl_ns:
+                self._active_generation.pop(scope, None)
         for scope, entries in list(self._traces.items()):
             while entries:
                 timestamp, trace = next(iter(entries.items()))
@@ -122,10 +129,29 @@ class FrameTraceRegistry:
                 self.expired_count += 1
             if not entries:
                 self._traces.pop(scope, None)
+        retained_pending = deque()
+        for trace in self._pending:
+            if now - trace.created_ns > self._ttl_ns:
+                self.expired_pending_count += 1
+                self.dropped_trace_count += 1
+            else:
+                retained_pending.append(trace)
+        self._pending = retained_pending
 
     def _is_current(self, key: FrameKey) -> bool:
         active = self._active_generation.get(self._generation_scope(key))
-        return active is not None and active == int(key.generation)
+        return active is not None and active[0] == int(key.generation)
+
+    def _discard_attempt_stream(self, attempt_id: str, stream_id: str) -> None:
+        for scope in [scope for scope in self._traces if scope[0] == attempt_id and scope[2] == stream_id]:
+            for trace in self._traces.pop(scope).values():
+                if trace.ssrc is not None and trace.wire_timestamp is not None:
+                    self._wire.pop((trace.key.attempt_id, trace.key.generation, trace.key.stream_id,
+                                    trace.ssrc, trace.wire_timestamp), None)
+        self._pending = deque(
+            trace for trace in self._pending
+            if not (trace.key.attempt_id == attempt_id and trace.key.stream_id == stream_id)
+        )
 
     def register_capture(self, key: FrameKey, frame_pts: int) -> bool:
         with self._lock:
@@ -135,22 +161,20 @@ class FrameTraceRegistry:
         now = int(self._clock_ns())
         self._purge(now)
         stream_scope = self._generation_scope(key)
-        active = self._active_generation.get(stream_scope)
+        active_entry = self._active_generation.get(stream_scope)
+        active = active_entry[0] if active_entry is not None else None
         if active is not None and int(key.generation) < active:
             self.cross_generation_count += 1
             return False
         if active is not None and int(key.generation) > active:
             # A generation boundary invalidates all joins from the previous one.
-            for scope in [scope for scope in self._traces if scope[0] == key.attempt_id and scope[2] == key.stream_id]:
-                for trace in self._traces.pop(scope).values():
-                    if trace.ssrc is not None and trace.wire_timestamp is not None:
-                        self._wire.pop((trace.key.attempt_id, trace.key.generation, trace.key.stream_id,
-                                        trace.ssrc, trace.wire_timestamp), None)
-            self._pending = deque(
-                trace for trace in self._pending
-                if not (trace.key.attempt_id == key.attempt_id and trace.key.stream_id == key.stream_id)
-            )
-        self._active_generation[stream_scope] = int(key.generation)
+            self._discard_attempt_stream(key.attempt_id, key.stream_id)
+        self._active_generation[stream_scope] = (int(key.generation), now)
+        self._active_generation.move_to_end(stream_scope)
+        while len(self._active_generation) > self._capacity:
+            (evicted_attempt, evicted_stream), _ = self._active_generation.popitem(last=False)
+            self._discard_attempt_stream(evicted_attempt, evicted_stream)
+            self.active_scope_eviction_count += 1
         scope = self._scope(key)
         entries = self._traces.setdefault(scope, OrderedDict())
         timestamp = int(key.encoder_timestamp) & 0xFFFFFFFF
@@ -164,6 +188,7 @@ class FrameTraceRegistry:
                                 discarded.ssrc, discarded.wire_timestamp), None)
             self.evicted_count += 1
         entries[timestamp] = FrameTrace(key=key, frame_pts=int(frame_pts), created_ns=now)
+        self._interval_capture_count += 1
         return True
 
     def _get(self, key: FrameKey) -> FrameTrace | None:
@@ -249,6 +274,7 @@ class FrameTraceRegistry:
             self._pending.popleft()
             self.dropped_trace_count += 1
         self._pending.append(trace)
+        self._interval_wire_count += 1
         return True
 
     def note_unmatched_wire(self) -> None:
@@ -262,6 +288,7 @@ class FrameTraceRegistry:
 
     def take_frame_trace_batch(self, limit: int = 64) -> dict:
         with self._lock:
+            self._purge(int(self._clock_ns()))
             rows = []
             for _ in range(min(max(0, int(limit)), 64)):
                 if not self._pending:
@@ -269,18 +296,43 @@ class FrameTraceRegistry:
                 rows.append(self._pending.popleft().as_wire_row())
             return {"type": "frame_trace_batch", "schemaVersion": 1, "traces": rows}
 
-    def snapshot(self) -> dict:
+    def snapshot(self, reset: bool = False) -> dict:
         with self._lock:
-            return {
-            "traceCount": sum(len(values) for values in self._traces.values()),
-            "expiredCount": self.expired_count,
-            "evictedCount": self.evicted_count,
-            "conflictCount": self.conflict_count,
-            "crossGenerationCount": self.cross_generation_count,
-            "unmatchedEncoderCount": self.unmatched_encoder_count,
-            "unmatchedWireCount": self.unmatched_wire_count,
-            "droppedTraceCount": self.dropped_trace_count,
+            self._purge(int(self._clock_ns()))
+            source_to_wire = (
+                round(self._interval_wire_count / self._interval_capture_count, 3)
+                if self._interval_capture_count and self._interval_wire_count <= self._interval_capture_count else None
+            )
+            snapshot = {
+                "traceCount": sum(len(values) for values in self._traces.values()),
+                "activeScopeCount": len(self._active_generation),
+                "pendingCount": len(self._pending),
+                "registeredCaptureCount": self._interval_capture_count,
+                "wireBoundCount": self._interval_wire_count,
+                "sourceToWireCoverage": source_to_wire,
+                "expiredCount": self.expired_count,
+                "expiredPendingCount": self.expired_pending_count,
+                "evictedCount": self.evicted_count,
+                "activeScopeEvictionCount": self.active_scope_eviction_count,
+                "conflictCount": self.conflict_count,
+                "crossGenerationCount": self.cross_generation_count,
+                "unmatchedEncoderCount": self.unmatched_encoder_count,
+                "unmatchedWireCount": self.unmatched_wire_count,
+                "droppedTraceCount": self.dropped_trace_count,
             }
+            if reset:
+                self._interval_capture_count = 0
+                self._interval_wire_count = 0
+                self.expired_count = 0
+                self.evicted_count = 0
+                self.conflict_count = 0
+                self.cross_generation_count = 0
+                self.unmatched_encoder_count = 0
+                self.unmatched_wire_count = 0
+                self.dropped_trace_count = 0
+                self.expired_pending_count = 0
+                self.active_scope_eviction_count = 0
+            return snapshot
 
 
 class StageMetrics:
@@ -345,4 +397,7 @@ class StageMetrics:
         if reset:
             for samples in self._samples.values():
                 samples.clear()
+            self.invalid_interval_count = 0
+            self.invalid_stage_count = 0
+            self.dropped_stage_samples = 0
         return snapshot

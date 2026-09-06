@@ -1059,6 +1059,13 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._capture_last_log = time.time()
         self._frame_trace_context = frame_trace_context
         self._last_trace_send_ns = 0
+        self._trace_interval = {
+            "captures": 0,
+            "outputs": 0,
+            "outputsWithCapture": 0,
+            "reusedOutputs": 0,
+            "cpuStartedNs": time.process_time_ns(),
+        }
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1095,6 +1102,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     self._capture_buffer = shot
                     self._capture_seq += 1
                     self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
+                    self._trace_interval["captures"] += 1
                     while len(self._capture_bounds_ns) > 2048:
                         self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
                 with self._activity_condition:
@@ -1263,6 +1271,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         frame.time_base = time_base
         trace_context = getattr(self, "_frame_trace_context", None)
         if trace_context is not None:
+            grab_bounds = None
             capture_seq = seq if fresh else self._last_consumed_seq
             encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
             trace_key = trace_context.key(capture_seq, encoder_timestamp)
@@ -1275,6 +1284,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 trace_context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
                 trace_context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
                 trace_context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
+            self._trace_interval["outputs"] += 1
+            if fresh:
+                self._trace_interval["outputsWithCapture"] += 1
+            if reused:
+                self._trace_interval["reusedOutputs"] += 1
             self._send_frame_trace_batch()
         convert_time = worker_timing["construct"]
         total_time = time.perf_counter() - recv_start
@@ -1315,10 +1329,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.last_time = current_time
             self._total_reuse = 0
             if trace_context is not None:
-                logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps({
-                    "stages": trace_context.metrics.snapshot(reset=True),
-                    "traces": trace_context.registry.snapshot(),
-                }, separators=(",", ":"), sort_keys=True))
+                logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps(
+                    self._frame_trace_summary(trace_context),
+                    separators=(",", ":"), sort_keys=True,
+                ))
 
             # Send capture stats to viewer via DataChannel for FPS/latency display
             host = getattr(self, '_host_ref', None)
@@ -1406,6 +1420,52 @@ class ScreenCaptureTrack(VideoStreamTrack):
             dc.send(json.dumps(batch))
         except Exception:
             context.registry.note_dropped_trace(len(batch["traces"]))
+
+    def _frame_trace_summary(self, context):
+        """Return one bounded five-second evidence window without cross-clock math."""
+        interval = dict(getattr(self, "_trace_interval", {}))
+        outputs = int(interval.get("outputs", 0) or 0)
+        metrics = context.metrics.snapshot(reset=True)
+        traces = context.registry.snapshot(reset=True)
+        stage_coverage = {
+            name: (
+                round(stage["count"] / outputs, 3)
+                if outputs and stage["count"] else None
+            )
+            for name, stage in metrics["stages"].items()
+        }
+        source_to_wire = traces["sourceToWireCoverage"]
+        alignment_state = "OBSERVED" if source_to_wire == 1.0 else "UNALIGNED"
+        summary = {
+            "counts": {
+                "captures": int(interval.get("captures", 0) or 0),
+                "outputs": outputs,
+                "outputsWithCapture": int(interval.get("outputsWithCapture", 0) or 0),
+                "reusedOutputs": int(interval.get("reusedOutputs", 0) or 0),
+            },
+            "cpu": {
+                "processCpuMs": round(
+                    max(0, time.process_time_ns() - int(interval.get("cpuStartedNs", time.process_time_ns()))) / 1_000_000,
+                    3,
+                ),
+            },
+            "coverage": {
+                "sourceToWire": source_to_wire,
+                "outputWithCapture": round(interval.get("outputsWithCapture", 0) / outputs, 3) if outputs else None,
+                "stages": stage_coverage,
+            },
+            "alignmentState": alignment_state,
+            "stages": metrics,
+            "traces": traces,
+        }
+        self._trace_interval = {
+            "captures": 0,
+            "outputs": 0,
+            "outputsWithCapture": 0,
+            "reusedOutputs": 0,
+            "cpuStartedNs": time.process_time_ns(),
+        }
+        return summary
 
     def _build_video_frame(self, screenshot, fallback_img, fresh, max_width, max_height, queued_at):
         """Process one capture and build one independent PyAV frame in imgproc.

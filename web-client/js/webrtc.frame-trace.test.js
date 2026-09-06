@@ -52,3 +52,35 @@ test('wrong generation and expired or missing diagnostics stay UNALIGNED', () =>
   assert.equal(collector.acceptanceState(), 'UNALIGNED');
   assert.equal(collector.takeMatched().length, 0);
 });
+
+test('matched rows are bounded for diagnostics and expire at the 120 second index TTL', () => {
+  let now = 0;
+  const Collector = loadCollector(() => now);
+  const collector = new Collector({ now: () => now, capacity: 2, lateWaitMs: 2000 });
+  for (const timestamp of [1, 2, 3]) {
+    collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: timestamp }, { timestamp });
+    collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{
+      attemptId: 'a', generation: 1, streamId: 'video', wireTimestamp: timestamp, captureSeq: timestamp,
+    }] });
+  }
+  assert.equal(collector.diagnostics().matchedCount, 2);
+  assert.equal(collector.acceptanceState(), 'UNALIGNED');
+  now = 2001;
+  collector.expire();
+  assert.equal(collector.diagnostics().matchedCount, 2);
+  now = 120001;
+  collector.expire();
+  assert.equal(collector.takeMatched().length, 0);
+});
+
+test('a missing counterpart becomes UNALIGNED after two seconds but the index expires at 120 seconds', () => {
+  let now = 0;
+  const Collector = loadCollector(() => now);
+  const collector = new Collector({ now: () => now, capacity: 2, lateWaitMs: 2000 });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 1 }, { roi: 'missing' });
+  now = 2001;
+  assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
+  assert.equal(collector.diagnostics().pendingFrames, 1);
+  now = 120001;
+  assert.equal(collector.diagnostics().pendingFrames, 0);
+});

@@ -422,6 +422,9 @@
         reason: meta.reason || basePayload.traceSummary?.reason || null,
         uiPhase: (typeof WebRTC !== 'undefined' && WebRTC.uiPhase) || null,
         hasPaintedFrame: typeof WebRTC !== 'undefined' ? WebRTC.hasPaintedFrame === true : false,
+        frameTrace: (typeof WebRTC !== 'undefined' && typeof WebRTC.getFrameTraceDiagnostics === 'function')
+          ? WebRTC.getFrameTraceDiagnostics()
+          : null,
         userPreference: session.userPreference || null,
         pathCap: session.pathCap || null,
         sessionPresentation: session.width

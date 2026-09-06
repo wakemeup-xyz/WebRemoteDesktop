@@ -236,6 +236,45 @@ test('production video frame callback syncs the input gate without moving focus'
   assert.equal(focusCalls, 0, 'media frames must not steal focus from a text surface');
 });
 
+test('frame trace uses the same attempt sequence sent to Host instead of media suspend generation', () => {
+  const { WebRTC, context, cleanup } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  let callback = null;
+  video.videoWidth = 1280;
+  video.requestVideoFrameCallback = (handler) => {
+    callback = handler;
+    return 1;
+  };
+  WebRTC.createConnectionAttemptId = () => 'attempt-trace';
+  WebRTC.pc = {
+    connectionState: 'connected', iceConnectionState: 'connected',
+    createDataChannel(label) {
+      const channel = { label, readyState: 'open', on() {}, send() {} };
+      return channel;
+    },
+  };
+  WebRTC._mediaIntent = { state: 'active', generation: 99 };
+  WebRTC.beginConnectionAttempt('viewer-open');
+  WebRTC.startVideoFrameTracking();
+  callback(10, { rtpTimestamp: 77 });
+  // The existing receiver path owns this handler in production. Invoke it with
+  // the actual attempt sequence emitted by beginConnectionAttempt.
+  WebRTC.createInputChannel();
+  WebRTC.inputChannel.onmessage({ data: JSON.stringify({
+    type: 'frame_trace_batch', schemaVersion: 1, traces: [{
+      attemptId: WebRTC.currentConnectionAttemptId,
+      generation: WebRTC.connectionAttemptSequence,
+      streamId: 'video', wireTimestamp: 77, captureSeq: 4,
+    }],
+  }) });
+
+  const matched = WebRTC.frameTraceCollector.takeMatched();
+  assert.equal(WebRTC.connectionAttemptSequence, 1);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].captureSeq, 4);
+  cleanup();
+});
+
 test('refresh attempt compares paint growth against a zero inbound baseline', () => {
   const { WebRTC } = loadWebRTC();
   WebRTC._lastInboundFramesDecoded = 400;

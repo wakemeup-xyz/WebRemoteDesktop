@@ -99,6 +99,36 @@ def test_registry_discards_queued_old_generation_diagnostics():
     assert registry.take_frame_trace_batch()["traces"] == []
 
 
+def test_registry_bounds_and_expires_pending_and_active_attempt_scopes():
+    """A long reconnect history must not retain active scopes or stale diagnostics."""
+    clock = Clock(0)
+    registry = FrameTraceRegistry(clock_ns=clock, capacity=2, ttl_ns=10)
+    for attempt, timestamp in (("a", 1), ("b", 2), ("c", 3)):
+        item = FrameKey(attempt, 1, "video", 1, timestamp)
+        assert registry.register_capture(item, 1)
+        assert registry.bind_wire(item, 7, timestamp)
+    clock.now = 11
+
+    assert registry.take_frame_trace_batch()["traces"] == []
+    assert registry.snapshot()["activeScopeCount"] == 0
+
+
+def test_registry_snapshot_reset_keeps_live_rows_but_clears_interval_evidence():
+    registry = FrameTraceRegistry()
+    key = FrameKey("attempt", 1, "video", 1, 90)
+    assert registry.register_capture(key, 1)
+    registry.note_unmatched_wire()
+
+    first = registry.snapshot(reset=True)
+    second = registry.snapshot()
+
+    assert first["registeredCaptureCount"] == 1
+    assert first["unmatchedWireCount"] == 1
+    assert second["traceCount"] == 1
+    assert second["registeredCaptureCount"] == 0
+    assert second["unmatchedWireCount"] == 0
+
+
 def test_registry_binds_wire_identity_per_reused_capture_and_batches_bounded_entries():
     """Matching by capture sequence would merge two encoded copies into one rVFC row."""
     registry = FrameTraceRegistry()

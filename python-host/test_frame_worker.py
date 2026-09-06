@@ -51,6 +51,10 @@ def bare_track(*, max_width=2, max_height=2):
     track._host_ref = None
     track._frame_trace_context = None
     track._last_trace_send_ns = 0
+    track._trace_interval = {
+        "captures": 0, "outputs": 0, "outputsWithCapture": 0, "reusedOutputs": 0,
+        "cpuStartedNs": time.process_time_ns(),
+    }
     track._pending_input_lock = threading.Lock()
     track._pending_input_ids = set()
     track._pending_input_data = []

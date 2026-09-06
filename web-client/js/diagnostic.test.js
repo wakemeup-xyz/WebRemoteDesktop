@@ -213,6 +213,22 @@ test('connection diagnostics include only the aggregated paint observation', () 
   assert.equal(JSON.stringify(payload).includes('presentedFrames: 1'), false);
 });
 
+test('connection diagnostics exports bounded frame-trace state without per-frame rows', () => {
+  const { context } = createDiagnosticContext();
+  context.WebRTC.getFrameTraceDiagnostics = () => ({
+    acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1,
+    matchedCount: 2048, droppedTraceCount: 3,
+  });
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual' });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.traceSummary.frameTrace)), {
+    acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1,
+    matchedCount: 2048, droppedTraceCount: 3,
+  });
+  assert.equal(JSON.stringify(payload.traceSummary.frameTrace).includes('captureSeq'), false);
+});
+
 test('keyboard diagnostics expose lease metadata only and never raw key labels', () => {
   const { context } = createDiagnosticContext();
   const Input = loadScript('input.js', context, 'Input');
