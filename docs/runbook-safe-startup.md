@@ -43,6 +43,13 @@ Tunnel 操作语义：
 - `status-safe-wrd.sh` 发现 cloudflared argv 含 `--token` 时只输出固定安全告警；不得打印 token、停止进程或执行 `launchctl remove`
 - 普通启动发现旧版 quick-tunnel LaunchAgent 时，`disable` 或 `bootout` 任一迁移操作失败都会明确报错并停止后续本地服务启动；不得输出 `safe wrd ready`，也不得把迁移失败当作 tunnel 已恢复。
 
+实验 lab 边界：
+
+- `scripts/turn_lab.py` 不是生产启动路径，不能替代本 runbook 的 Host、Signal 或 tunnel 命令。
+- 它只接受固定本机生产入口 `http://127.0.0.1:8080` 的一次性 Viewer proof admission；后续监测只读取生产 status，发现 Viewer 或 epoch 变化即清理实验子进程。
+- 实验 Signal 只监听随机 loopback 端口；它为每个 run 生成独立 realm、临时认证和一次性 Host context credential。Host 仅可经 `scripts/turn_lab_host.py` 消费该 credential 后启动。
+- lab 不读取或写入 quick-tunnel URL、生产凭据文件、LaunchAgent、端口 8080/5173、firewall 或 pf。candidate evidence 尚未合格时，candidate mode 必须拒绝。
+
 ## 目标
 
 - 只操作当前仓库自己的 `signal-server`、`python-host`、safe quick tunnel

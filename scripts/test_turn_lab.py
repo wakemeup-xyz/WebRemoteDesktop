@@ -12,8 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts")]
 
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent  # noqa: E402
-from turn_lab import LabIdentity, LabRun, LabSignal, ProductionProof  # noqa: E402
-from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, verify_candidate_manifest  # noqa: E402
+from turn_lab import (  # noqa: E402
+    LabIdentity, LabRun, LabSignal, ProductionAdmissionClient, ProductionProof,
+    validate_lab_origin,
+)
+from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _test_verified_context, verify_candidate_manifest  # noqa: E402
 
 
 def _intent(generation=1, sequence=0):
@@ -21,21 +24,32 @@ def _intent(generation=1, sequence=0):
 
 
 def _context():
-    return VerifiedLabContext.legacy(
+    return _test_verified_context(
         origin="http://127.0.0.1:40123", realm="lab-test-realm", proof_token="proof-token", epoch=4
     )
 
 
 def _proof(epoch=7, viewers=0):
-    return ProductionProof(realm="production", token="in-memory", epoch=epoch, viewer_count=viewers)
+    return ProductionProof._sealed("production", "in-memory", epoch, viewers)
+
+
+class _TestProductionClient(ProductionAdmissionClient):
+    def __init__(self, proofs): self.proofs = list(proofs); self.current = None
+    def admit(self): self.current = self.proofs.pop(0); return self.current
+    def status(self):
+        self.current = self.proofs.pop(0) if self.proofs else self.current
+        return self.current.epoch, self.current.viewer_count
 
 
 def _signal(_runtime, realm):
-    return LabSignal("http://127.0.0.1:40123", realm, "lab-host-secret", "lab-viewer-password", lambda: None)
+    return LabSignal("http://127.0.0.1:40123", realm, "lab-host-secret", "lab-viewer-password", "context-secret", lambda: None)
 
 
 def _lab_proof(signal):
     return {"token": "lab-proof", "epoch": 4, "realm": signal.realm}
+
+
+def _lab_context(*_args): return "test-context-credential"
 
 
 def test_lab_host_requires_verified_context_and_rejects_viewer_selection():
@@ -54,17 +68,16 @@ def test_lab_selection_uses_exact_experiment_policy_for_publish_refresh_and_rebu
         received.append(policy_id)
         return original(intent, policy_id)
 
-    context = context.with_resolver(recording_resolver)
-    provider = H264SessionPolicyProvider(resolver=context.selection.resolver)
+    provider = H264SessionPolicyProvider(resolver=recording_resolver)
     provider.bind_attempt("lab-attempt")
     assert provider.publish(_intent(), context.selection.policy_id).accepted
     assert provider.refresh_profile(_intent(sequence=1), context.selection.policy_id).accepted
-    rebuilt = H264SessionPolicyProvider(resolver=context.selection.resolver)
+    rebuilt = H264SessionPolicyProvider(resolver=recording_resolver)
     rebuilt.bind_attempt("lab-attempt")
     assert rebuilt.publish(_intent(), context.selection.policy_id).accepted
     assert received == [context.selection.policy_id] * 3
     with pytest.raises(ValueError, match="experiment policy"):
-        context.selection.resolver(_intent(), "relay-legacy-v1")
+        original(_intent(), "relay-legacy-v1")
 
 
 def test_unknown_or_unqualified_candidate_manifest_fails_closed(tmp_path):
@@ -93,7 +106,7 @@ def test_lab_run_requires_production_proof_and_stops_on_epoch_or_human_viewer(tm
     with pytest.raises(RuntimeError, match="production proof"):
         no_probe.start("legacy")
     proofs = [_proof(), _proof(epoch=8)]
-    run = LabRun(runtime_root=tmp_path, signal_launcher=_signal, production_probe=lambda: proofs.pop(0), lab_proof_issuer=_lab_proof)
+    run = LabRun(runtime_root=tmp_path, signal_launcher=_signal, production_client=_TestProductionClient(proofs), lab_proof_issuer=_lab_proof, lab_context_issuer=_lab_context)
     identity = run.start("legacy")
     assert identity.realm.startswith("lab-") and identity.origin.startswith("http://127.0.0.1:")
     assert run.monitor() == "stopped:production-epoch-changed"
@@ -108,7 +121,7 @@ def test_lab_identity_never_accepts_production_realm_proof():
 
 def test_candidate_rejection_happens_before_any_lab_child_starts(tmp_path):
     started = []
-    run = LabRun(runtime_root=tmp_path, signal_launcher=lambda *_args: (started.append(True), _signal(*_args))[1], production_probe=_proof, lab_proof_issuer=_lab_proof)
+    run = LabRun(runtime_root=tmp_path, signal_launcher=lambda *_args: (started.append(True), _signal(*_args))[1], production_client=_TestProductionClient([_proof()]), lab_proof_issuer=_lab_proof, lab_context_issuer=_lab_context)
     with pytest.raises(ValueError, match="candidate manifest"):
         run.start("candidate")
     assert started == []
@@ -117,7 +130,7 @@ def test_candidate_rejection_happens_before_any_lab_child_starts(tmp_path):
 
 def test_lab_run_finally_cleanup_removes_only_its_own_runtime(tmp_path):
     stopped = []
-    run = LabRun(runtime_root=tmp_path, signal_launcher=lambda _runtime, realm: LabSignal("http://127.0.0.1:40123", realm, "secret", "viewer", lambda: stopped.append(True)), production_probe=_proof, lab_proof_issuer=_lab_proof)
+    run = LabRun(runtime_root=tmp_path, signal_launcher=lambda _runtime, realm: LabSignal("http://127.0.0.1:40123", realm, "secret", "viewer", "context", lambda: stopped.append(True)), production_client=_TestProductionClient([_proof()]), lab_proof_issuer=_lab_proof, lab_context_issuer=_lab_context)
     with run:
         run.start("legacy")
         runtime_dir = run._runtime_dir
@@ -127,8 +140,25 @@ def test_lab_run_finally_cleanup_removes_only_its_own_runtime(tmp_path):
 
 
 def test_lab_host_launcher_has_no_arbitrary_command_escape_hatch(tmp_path):
-    run = LabRun(runtime_root=tmp_path, signal_launcher=_signal, production_probe=_proof, lab_proof_issuer=_lab_proof)
+    run = LabRun(runtime_root=tmp_path, signal_launcher=_signal, production_client=_TestProductionClient([_proof()]), lab_proof_issuer=_lab_proof, lab_context_issuer=_lab_context)
     run.start("legacy")
     with pytest.raises(TypeError):
         run.start_host([sys.executable])  # type: ignore[call-arg]
     run.close()
+
+
+@pytest.mark.parametrize("origin", [
+    "http://127.0.0.1:8080/path", "http://127.0.0.1:5173", "http://127.0.0.1:80@attacker.invalid",
+    "http://user@127.0.0.1:40123", "http://127.0.0.1:40123?x=1", "https://127.0.0.1:40123",
+    "http://[::1]:8080", "http://[::1]:5173", "http://[::1]:40123/path",
+])
+def test_lab_origin_rejects_ambiguous_or_production_urls(origin):
+    with pytest.raises(ValueError):
+        validate_lab_origin(origin)
+
+
+def test_public_lab_run_rejects_callable_and_manual_proof_sources(tmp_path):
+    with pytest.raises(TypeError, match="ProductionAdmissionClient"):
+        LabRun(runtime_root=tmp_path, production_client=lambda: _proof())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="sealed"):
+        ProductionProof(realm="production", token="forged", epoch=0, viewer_count=0)

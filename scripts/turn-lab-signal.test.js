@@ -29,6 +29,21 @@ test('lab signal creates a private runtime with random temporary authentication'
     });
     assert.equal(proof.status, 201);
     assert.equal((await proof.json()).admission.realm, lab.realm);
+    const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+    });
+    const credential = (await issue.json()).context.credential;
+    const consume = await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ credential }),
+    });
+    assert.equal(consume.status, 200);
+    const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ credential }),
+    });
+    assert.equal(replay.status, 409);
   } finally {
     await lab.close();
   }
