@@ -93,8 +93,13 @@ Every single-variable control failed its own offline gates, so no combination
 can become eligible even if a future combination's aggregate metric happens to
 pass. There is therefore no offline winner. Selection is `no-offline-winner`,
 `relay-balanced-v2` has no selected constants, and `relay-legacy-v1` remains the
-default. This is a stop result, not a claim that the periodic quality issue is
-fixed.
+default. The Host production configuration therefore admits only
+`relay-legacy-v1` and fails closed before media-resource construction when
+`WRD_RELAY_ENCODER_POLICY=relay-balanced-v2`; resolver/evaluator candidate data
+remains available for offline work. A single explicit production-admission
+constant may be updated only after a versioned selection record proves both an
+eligible offline candidate and every required runtime gate. This is a stop
+result, not a claim that the periodic quality issue is fixed.
 
 The Viewer buffer/decode-continuity, Host event-loop/input-ack, and finite-loss
 recovery gates remain `NOT RUN` pending the Task 9 real selected-relay path.
@@ -269,7 +274,7 @@ identify the policy of the already-running Host process.
 | Spec §11 gate | Status | Reason / evidence boundary |
 |---|---|---|
 | 11.1 automated regression | PASS (Task 8 evidence) | Full Python, Viewer, and Signal Server suites passed; this is not a live relay result. |
-| 11.2 offline quality and timing | `no-offline-winner` | The Task 6 matrix selected no v2 constants; legacy remains default. This does not prove the periodic pulse is fixed. |
+| 11.2 offline quality and timing | `no-offline-winner` | The Task 6 matrix selected no v2 constants; Host production config rejects v2 and admits legacy only. This does not prove the periodic pulse is fixed. |
 | 11.3 selected relay pair | NOT RUN | Active human Viewer stop condition prohibited the headless proof; no manual relay session was performed. |
 | 11.3 720p, 10-minute run | NOT RUN | No controlled selected-relay session; pre-existing health cannot establish paint, buffer, pulse, or geometry gates. |
 | 11.3 1080p, 5-minute run | NOT RUN | No controlled selected-relay session; no automatic resolution change was made. |

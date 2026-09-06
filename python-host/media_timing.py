@@ -13,7 +13,7 @@ class RtpFrameClock:
     """Produce strictly increasing video PTS values from a monotonic clock."""
 
     def __init__(self, now_ns=None):
-        self._now_ns = now_ns or time.monotonic_ns
+        self._now_ns = time.monotonic_ns if now_ns is None else now_ns
         self._origin_ns = None
         self._last_pts = -1
 

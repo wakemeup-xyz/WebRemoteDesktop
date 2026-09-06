@@ -47,6 +47,18 @@ No runtime action occurred in this task. In particular, it did not start or rest
 
 The reviewed range contains no committed `.playwright-mcp/`, logs, screenshots, database files, runtime `.env`, or temporary `trycloudflare` URL. The only scoped environment file is `signal-server/.env.example`, whose values remain placeholders. Candidate proof output is redacted; no real candidate endpoint or credential was found in the delivery artifacts.
 
+## Post-review safety fix
+
+The post-review fix closes the documented configuration bypass without changing
+the matrix result: `WRD_RELAY_ENCODER_POLICY=relay-balanced-v2` now fails before
+Host resource construction because v2 did not pass the offline gate; legacy is
+the only admitted production policy. Pure resolver/evaluator paths retain the
+candidate data for future selection work. A single explicit production-admission
+constant is the only code gate that may later open v2, and it must be changed
+only with versioned evidence of an eligible offline candidate and all required
+runtime gates. The RTP clock also now retains an injected callable whenever it
+is non-`None`, including a callable with a false boolean value.
+
 ## Next valid gate
 
 Do not change the default policy or report the pulse as fixed. A future operator-scheduled window must first have no active human Viewer and must have an eligible offline candidate. It must then load the reviewed bundle under the runbook, prove a selected relay pair, run 720p for 10 minutes and explicit 1080p for 5 minutes, exercise static text, motion, pause/resume, refresh, finite loss, mouse/keyboard input, and record formal-public plus physical-device observations. Until then, every listed runtime/public/device row remains `NOT RUN`.

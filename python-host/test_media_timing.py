@@ -21,6 +21,11 @@ class FakeClock:
         return self.now_ns
 
 
+class FalsyClock(FakeClock):
+    def __bool__(self):
+        return False
+
+
 class RtpFrameClockTest(unittest.TestCase):
     def test_twenty_fps_uses_video_time_base_and_4500_rtp_ticks(self):
         """A 20 FPS clock change must advance one 90 kHz RTP frame interval."""
@@ -45,6 +50,15 @@ class RtpFrameClockTest(unittest.TestCase):
         pts = [clock.next_timestamp()[0] for _ in range(3)]
 
         self.assertEqual(pts, [0, 1, 2])
+
+    def test_falsy_injected_clock_is_used_instead_of_production_clock(self):
+        """Clock injection is based on None, not the callable's truth value."""
+        source = FalsyClock(1_000_000_000)
+        clock = RtpFrameClock(now_ns=source)
+
+        self.assertEqual(clock.next_timestamp()[0], 0)
+        source.now_ns += 50_000_000
+        self.assertEqual(clock.next_timestamp()[0], 4500)
 
     def test_wall_clock_rollback_does_not_reverse_media_time(self):
         """RTP timing must use monotonic_ns, so wall-clock changes cannot reverse it."""

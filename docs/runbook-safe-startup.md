@@ -432,7 +432,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 4. 若解码推进但画面仍不连续，查看 paint interval p50/p95/max、最大 paint gap、presented-frame delta 与视频几何。内容清晰度脉冲和页面几何抖动是两个独立问题。
 5. 未实测的编码、RTP 发送和端到端视频耗时必须保持 `null`；它们不能由 RTT、状态栏或脚本估算补齐。
 
-当前离线策略矩阵为 `no-offline-winner`，默认 `relay-legacy-v1` 保持不变，约一秒周期清晰度脉冲未关闭。采集仍为 target FPS 的 2 倍，因为候选倍率尚未通过浏览器 paint 门禁。真实 TURN、正式公网和物理设备均为 `NOT RUN`，等待 Task 9 与对应外部访问端执行；普通排障不得启动或重启 tunnel。
+当前离线策略矩阵为 `no-offline-winner`，生产环境变量只接受 `relay-legacy-v1`；Host 会在创建媒体资源前拒绝 `relay-balanced-v2`，后者仅保留给 resolver/evaluator 的候选数据。未来只有版本化选择记录同时通过离线和必需运行时门禁，并更新单一生产门禁常量后才可开放 v2。约一秒周期清晰度脉冲未关闭。采集仍为 target FPS 的 2 倍，因为候选倍率尚未通过浏览器 paint 门禁。真实 TURN、正式公网和物理设备均为 `NOT RUN`，等待 Task 9 与对应外部访问端执行；普通排障不得启动或重启 tunnel。
 
 ### 场景：画面糊 / 秒级卡顿但 RTT 只有 ~100ms
 

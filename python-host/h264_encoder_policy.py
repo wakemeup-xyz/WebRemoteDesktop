@@ -12,6 +12,10 @@ RELAY_LEGACY_V1 = "relay-legacy-v1"
 RELAY_BALANCED_V2 = "relay-balanced-v2"
 SUPPORTED_POLICY_VERSIONS = frozenset({RELAY_LEGACY_V1, RELAY_BALANCED_V2})
 DEFAULT_POLICY_VERSION = RELAY_LEGACY_V1
+# This is the sole production-admission gate. Change it only after the
+# versioned selection record has an eligible offline candidate and all required
+# runtime gates validate that candidate; resolvers may still exercise v2.
+PRODUCTION_RELAY_POLICY_VERSION = RELAY_LEGACY_V1
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,12 @@ def policy_version_from_environment(environment: Mapping[str, str] | None = None
         raise ValueError(
             "WRD_RELAY_ENCODER_POLICY must be one of "
             f"{allowed}; received {value!r}"
+        )
+    if value != PRODUCTION_RELAY_POLICY_VERSION:
+        raise ValueError(
+            f"WRD_RELAY_ENCODER_POLICY={value!r} is not permitted because it did not pass "
+            "the offline gate; the only available production policy is "
+            f"{PRODUCTION_RELAY_POLICY_VERSION!r}"
         )
     return value
 

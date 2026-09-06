@@ -12,6 +12,7 @@ from h264_encoder_policy import (  # noqa: E402
     policy_version_from_environment,
     resolve_h264_policy,
 )
+from host import WebRemoteHost  # noqa: E402
 
 
 def _intent(*, attempt="attempt-1", generation=1, path="relay", width=1280, height=720, bitrate=0):
@@ -57,14 +58,24 @@ def test_legacy_policy_resolves_explicit_bitrate_ranges(intent, expected):
     ) == expected
 
 
-def test_policy_environment_defaults_allows_known_override_and_rejects_unknown():
+def test_policy_environment_fails_closed_when_v2_has_no_validated_selection():
     assert policy_version_from_environment({}) == "relay-legacy-v1"
-    assert policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-balanced-v2"}) == "relay-balanced-v2"
+
+    with pytest.raises(ValueError, match="offline gate") as exc_info:
+        policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-balanced-v2"})
+    assert "relay-legacy-v1" in str(exc_info.value)
+    assert "only available production policy" in str(exc_info.value)
 
     with pytest.raises(ValueError, match="WRD_RELAY_ENCODER_POLICY") as exc_info:
         policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "not-a-policy"})
     assert "relay-legacy-v1" in str(exc_info.value)
-    assert "relay-balanced-v2" in str(exc_info.value)
+
+
+def test_host_constructor_rejects_unvalidated_v2_before_starting_host_resources(monkeypatch):
+    monkeypatch.setenv("WRD_RELAY_ENCODER_POLICY", "relay-balanced-v2")
+
+    with pytest.raises(ValueError, match="offline gate"):
+        WebRemoteHost()
 
 
 def test_policy_provider_rejects_old_attempt_and_old_generation_without_replacement():
