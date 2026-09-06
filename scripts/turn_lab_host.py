@@ -49,6 +49,7 @@ if os.environ.get("WRD_LAB_HOST_ENTRY") == "1":
 
 from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, PolicySelection, RELAY_LEGACY_V1, resolve_h264_policy
 from host import WebRemoteHost
+from turn_lab_input_guard import LabInputGuard
 
 
 def _is_loopback_origin(origin: str) -> bool:
@@ -148,6 +149,56 @@ class LabWebRemoteHost(WebRemoteHost):
             raise TypeError("LabWebRemoteHost requires VerifiedLabContext")
         self._verified_lab_context = verified_context
         super().__init__()
+        # The controlled-scene path has no alternate injection route.  Keep a
+        # guard at the same InputAdapter boundary used by Viewer messages; it
+        # begins fail-closed because this process has not yet been given a
+        # verified fixture-window probe or a live Viewer control lease.
+        self._controlled_fixture_proof: Callable[[], dict[str, Any]] = lambda: {
+            "leaseId": "", "proofToken": "", "fixtureId": "",
+            "isolated": False, "foreground": False, "fixtureWindow": False,
+        }
+        self._lab_input_adapter = self.input_adapter
+        self._install_controlled_input_guard(
+            lease_id="unarmed-lab-lease", fixture_id=verified_context.realm,
+            fixture_proof=self._controlled_fixture_proof,
+        )
+
+    def _install_controlled_input_guard(self, *, lease_id: str, fixture_id: str,
+                                        fixture_proof: Callable[[], dict[str, Any]]) -> None:
+        context = self._verified_lab_context
+        self.controlled_input_guard = LabInputGuard(
+            expected_lease_id=lease_id,
+            expected_proof_token=context.proof_token,
+            expected_fixture_id=fixture_id,
+            desktop_proof=fixture_proof,
+            # GuardedLabInputAdapter delegates to the existing adapter; this
+            # callable cannot send an event and exists only for direct tests.
+            input_handler=lambda _action: None,
+        )
+        self.input_adapter = self.controlled_input_guard.install_at_lab_host(self._lab_input_adapter)
+
+    def arm_controlled_input(self, *, lease_id: str, fixture_id: str,
+                             fixture_proof: Callable[[], dict[str, Any]]) -> None:
+        """Arm one Lab-only input mapping after a trusted local fixture probe.
+
+        No Viewer or Signal payload can call this.  It replaces the initial
+        unarmed boundary with one bound to the currently observed Host lease,
+        the Signal-issued proof token and the dedicated fixture identity.
+        """
+        if not (isinstance(lease_id, str) and lease_id and isinstance(fixture_id, str) and fixture_id
+                and callable(fixture_proof)):
+            raise ValueError("controlled input requires lease, fixture and trusted probe")
+        self._install_controlled_input_guard(lease_id=lease_id, fixture_id=fixture_id,
+                                             fixture_proof=fixture_proof)
+
+    def bind_controlled_input(self, action: Mapping[str, Any]) -> None:
+        """Lab-only server-side binding for a pre-issued Viewer inputId.
+
+        There is no lab field in the Viewer/production input envelope.  A
+        future local driver must establish this binding after it obtains the
+        existing lease and before it sends that same inputId through Input.
+        """
+        self.controlled_input_guard.bind_controlled_input(dict(action))
 
     def _create_policy_selection(self) -> PolicySelection:
         context = getattr(self, "_verified_lab_context", None)

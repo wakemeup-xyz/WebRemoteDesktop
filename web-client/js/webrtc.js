@@ -170,6 +170,27 @@ class FrameTraceCollector {
     return true;
   }
 
+  matchedVisual(trace, rtpTimestamp, roi) {
+    // This is the only browser-side conversion from a Host trace plus rVFC.
+    // Keep every join identity so downstream scene validation never needs to
+    // invent a timestamp or infer a generation from a marker.
+    return {
+      attemptId: trace.attemptId,
+      generation: trace.generation,
+      streamId: trace.streamId,
+      captureSeq: trace.captureSeq,
+      rtpTimestamp: Number(rtpTimestamp) >>> 0,
+      wireTimestamp: trace.wireTimestamp,
+      // aiortc applies this uint32 offset between encoder and wire clocks.
+      // It is evidence of the observed mapping, never a clock for latency.
+      rtpOrigin: (trace.wireTimestamp - trace.encoderTimestamp) >>> 0,
+      traceStatus: 'matched',
+      viewerClockMs: Number(this.now()),
+      idrKind: trace.idrKind || null,
+      roi,
+    };
+  }
+
   observeVideoFrame(identity, roi) {
     if (this.terminalUnaligned) return false;
     const timestamp = Number(identity?.rtpTimestamp);
@@ -183,7 +204,7 @@ class FrameTraceCollector {
     const trace = this.traces.get(id);
     if (trace) {
       this.traces.delete(id);
-      this.appendMatch({ captureSeq: trace.value.captureSeq, idrKind: trace.value.idrKind || null, roi });
+      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi));
       return true;
     }
     if (this.frames.size >= this.capacity) {
@@ -227,7 +248,7 @@ class FrameTraceCollector {
       const frame = this.frames.get(id);
       if (frame) {
         this.frames.delete(id);
-        this.appendMatch({ captureSeq: trace.captureSeq, idrKind: trace.idrKind || null, roi: frame.value.roi });
+        this.appendMatch(this.matchedVisual(trace, frame.value.identity.rtpTimestamp, frame.value.roi));
         joined += 1;
         continue;
       }

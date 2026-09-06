@@ -62,7 +62,7 @@ def test_remote_scene_requires_complete_same_identity_causal_chain():
         input_ids=["i-1"],
         send_samples=[{"inputId": "i-1", "viewerClockMs": 0, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i-1", "status": "applied", "attemptId": "attempt-a", "generation": 3, "streamId": "video", "viewerClockMs": 10}],
-        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "actionId": 42, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 42, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 42, "tick": 1}, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 90000, "wireTimestamp": 90000, "captureSeq": 8, "rtpOrigin": 1, "traceStatus": "matched", "viewerClockMs": 30}],
     )
     assert result.status == scene.PASS
@@ -76,8 +76,8 @@ def test_ack_nonce_attempt_focus_or_rtp_gaps_fail_closed_without_sending_input()
         proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i-1"],
         send_samples=[{"inputId": "i-1", "viewerClockMs": 0, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i-1", "status": "applied", "attemptId": "attempt-a", "generation": 3, "streamId": "video", "viewerClockMs": 10}],
-        producer_samples=[{"inputId": "i-1", "runNonce": 99, "actionId": 1, "tick": 1, "focused": False, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        visual_samples=[{"marker": {"runNonce": 99, "sceneId": 7, "actionId": 1, "tick": 1}, "attemptId": "old", "generation": 2, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0, "viewerClockMs": 20}],
+        producer_samples=[{"inputId": "i-1", "runNonce": 99, "sceneId": 7, "actionId": 1, "tick": 1, "focused": False, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        visual_samples=[{"marker": {"runNonce": 99, "sceneId": 7, "actionId": 1, "tick": 1}, "attemptId": "old", "generation": 2, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0, "traceStatus": "matched", "viewerClockMs": 20}],
     )
     assert invalid.status == scene.FAIL
     assert {"producer-focus", "nonce-mismatch", "attempt-generation-mismatch", "wire-rtp-unaligned"}.issubset(invalid.failures)
@@ -97,7 +97,7 @@ def test_producer_local_cannot_satisfy_remote_input_gate_or_clear_marker_failure
     result = scene.evaluate_scene_result(
         proof(), execution_mode=scene.PRODUCER_LOCAL, input_ids=["i-1"],
         ack_samples=[{"inputId": "i-1", "status": "applied", "attemptId": "attempt-a", "generation": 3}],
-        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "actionId": 1, "focused": True, "attemptId": "attempt-a", "generation": 3}],
+        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 1, "focused": True, "attemptId": "attempt-a", "generation": 3}],
         visual_samples=[{"runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 1, "attemptId": "attempt-a", "generation": 3, "rtpAligned": True, "rtpTimestamp": 1, "wireTimestamp": 1, "captureSeq": 1}],
     )
     assert result.status == scene.NOT_RUN
@@ -116,8 +116,8 @@ def test_marker_identity_without_the_t3_wire_rtp_join_is_unaligned_not_a_pass():
         proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i-1"],
         send_samples=[{"inputId": "i-1", "viewerClockMs": 0, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i-1", "status": "applied", "attemptId": "attempt-a", "generation": 3, "streamId": "video", "viewerClockMs": 10}],
-        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "actionId": 3, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 3, "tick": 1}, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0, "viewerClockMs": 20}],
+        producer_samples=[{"inputId": "i-1", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 3, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 3, "tick": 1}, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0, "traceStatus": "matched", "viewerClockMs": 20}],
     )
     assert result.status == scene.UNALIGNED
     assert "wire-rtp-unaligned" in result.failures
@@ -151,8 +151,10 @@ def test_h264_roundtrip_uses_full_frames_nonzero_roi_and_reports_corruption_and_
     if result["status"] == scene.PASS:
         assert result["decodedResolutions"] == [[1280, 720], [1920, 1080]]
         assert result["roi"] != [0, 0, 256, 128]
-        assert result["corruptionStatus"] == scene.FAIL
+        assert result["corruptionStatus"] in {scene.FAIL, scene.UNALIGNED}
         assert result["scaleStatus"] == scene.FAIL
+        assert result["corruptionFailure"] in {"copies-disagree", "crc", "grey-zone"}
+        assert result["scaleFailure"]
 
 
 def test_scene_evaluator_rejects_duplicates_bad_types_and_incomplete_marker_or_t3_join():
@@ -167,11 +169,23 @@ def test_scene_evaluator_rejects_duplicates_bad_types_and_incomplete_marker_or_t
         proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i"],
         send_samples=[{"inputId": "i", "viewerClockMs": 10, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i", "status": "applied", "viewerClockMs": 20, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "actionId": 4, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 1, "actionId": 4}, "viewerClockMs": 30, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0}],
+        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 4, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 1, "actionId": 4}, "viewerClockMs": 30, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 0, "wireTimestamp": 0, "captureSeq": 1, "rtpOrigin": 0, "traceStatus": "matched"}],
     )
     assert incomplete.status == scene.UNALIGNED
     assert "wire-rtp-unaligned" in incomplete.failures
+
+
+def test_scene_evaluator_fails_closed_for_unhashable_or_non_numeric_evidence_values():
+    result = scene.evaluate_scene_result(
+        proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i"],
+        send_samples=[{"inputId": "i", "viewerClockMs": 10, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        ack_samples=[{"inputId": "i", "status": "applied", "viewerClockMs": 20, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        producer_samples=[{"inputId": "i", "runNonce": [], "sceneId": 7, "actionId": 4, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 1, "actionId": 4}, "viewerClockMs": 30, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 1, "wireTimestamp": 1, "captureSeq": 1, "rtpOrigin": 1, "traceStatus": "matched"}],
+    )
+    assert result.status == scene.FAIL
+    assert "invalid-producer-nonce" in result.failures
 
 
 def test_scene_evaluator_uses_viewer_clock_deltas_and_rejects_conflicting_actions():
@@ -179,7 +193,7 @@ def test_scene_evaluator_uses_viewer_clock_deltas_and_rejects_conflicting_action
         proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i"],
         send_samples=[{"inputId": "i", "viewerClockMs": 100, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i", "status": "applied", "viewerClockMs": 125, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "actionId": 9, "tick": 2, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 9, "tick": 2, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 2, "actionId": 9}, "viewerClockMs": 150, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 200, "wireTimestamp": 200, "captureSeq": 2, "rtpOrigin": 10, "traceStatus": "matched"}],
     )
     assert good.status == scene.PASS
@@ -188,29 +202,41 @@ def test_scene_evaluator_uses_viewer_clock_deltas_and_rejects_conflicting_action
         proof(), execution_mode=scene.AUTOMATIC_ISOLATED, input_ids=["i"],
         send_samples=[{"inputId": "i", "viewerClockMs": 100, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         ack_samples=[{"inputId": "i", "status": "applied", "viewerClockMs": 125, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
-        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "actionId": 9, "tick": 2, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
+        producer_samples=[{"inputId": "i", "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 9, "tick": 2, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}],
         visual_samples=[{"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 2, "actionId": 9}, "viewerClockMs": 150, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 200, "wireTimestamp": 200, "captureSeq": 2, "rtpOrigin": 10, "traceStatus": "matched"}, {"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 3, "actionId": 9}, "viewerClockMs": 160, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 201, "wireTimestamp": 201, "captureSeq": 3, "rtpOrigin": 10, "traceStatus": "matched"}],
     )
     assert conflicting.status == scene.FAIL
     assert "conflicting-action-id" in conflicting.failures
 
 
-def test_orchestration_runs_dependency_injected_guarded_remote_chain_without_os_input():
+def test_orchestration_uses_one_viewer_send_then_waits_for_host_boundary_ack_without_os_input():
     class Viewer:
+        sends = 0
         def send_input(self, action, **_kwargs):
+            self.sends += 1
             return {"inputId": action["inputId"], "viewerClockMs": 10, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}
+        def wait_for_applied_ack(self, input_id):
+            return {"inputId": input_id, "status": "applied", "viewerClockMs": 20, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}
         def decoded_visual(self, input_id):
-            return {"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 1, "actionId": 1}, "viewerClockMs": 30, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 88, "wireTimestamp": 88, "captureSeq": 2, "rtpOrigin": 1, "traceStatus": "matched", "inputId": input_id}
+            return {"marker": {"runNonce": 0x0102030405060708, "sceneId": 7, "tick": 1, "actionId": 1}, "viewerClockMs": 30, "attemptId": "attempt-a", "generation": 3, "streamId": "video", "rtpTimestamp": 88, "wireTimestamp": 88, "captureSeq": 2, "rtpOrigin": 1, "traceStatus": "matched"}
     class Producer:
         def event_for(self, input_id):
-            return {"inputId": input_id, "runNonce": 0x0102030405060708, "actionId": 1, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}
+            return {"inputId": input_id, "runNonce": 0x0102030405060708, "sceneId": 7, "actionId": 1, "tick": 1, "focused": True, "attemptId": "attempt-a", "generation": 3, "streamId": "video"}
     guard = LabInputGuard(
         expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
         desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True},
         input_handler=lambda action: {"inputId": action["inputId"], "status": "applied", "viewerClockMs": 20, "attemptId": "attempt-a", "generation": 3, "streamId": "video"},
     )
-    result = scene.run_controlled_scenes(Viewer(), Producer(), proof(), guard=guard, actions=[{"inputId": "i", "actionId": 1, "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"}])
+    # The Host installs this boundary around its existing InputAdapter.  The
+    # scene runner must never invoke it a second time after Viewer send.
+    guard.bind_controlled_input({"inputId": "i", "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"})
+    guard.install_at_lab_host(object())
+    viewer = Viewer()
+    result = scene.run_controlled_scenes(viewer, Producer(), proof(), guard=guard, actions=[{"inputId": "i", "actionId": 1, "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"}])
     assert result.status == scene.PASS
+    assert viewer.sends == 1
+    assert result.driver_generated
+    assert result.as_dict()["producerProof"]["origin"] == "http://127.0.0.1:49152"
 
 
 def test_automatic_orchestration_rejects_an_arbitrary_guard_object():

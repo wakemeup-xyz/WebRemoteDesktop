@@ -72,3 +72,24 @@ def test_guard_rejects_forged_generic_boolean_desktop_claims_without_bound_ident
     )
     with pytest.raises(guard_module.InputGuardRejected, match="lease"):
         guard.execute({"inputId": "input-1", "leaseId": "lease-1", "proofToken": "proof-1", "fixtureId": "fixture-1"})
+
+
+@pytest.mark.asyncio
+async def test_installed_adapter_verifies_one_controlled_viewer_envelope_then_delegates_once():
+    calls = []
+    class Adapter:
+        async def apply_keyboard(self, envelope, *, transport=None):
+            calls.append((envelope, transport)); return {"status": "applied", "inputIds": envelope["inputIds"]}
+    guard = guard_module.LabInputGuard(
+        expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
+        desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True},
+        input_handler=lambda _action: (_ for _ in ()).throw(AssertionError("must not call direct handler")),
+    )
+    guard.bind_controlled_input({"inputId": "i", "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"})
+    boundary = guard.install_at_lab_host(Adapter())
+    # This is the unchanged production-shaped Viewer envelope.  The Lab Host
+    # resolves its inputId against a server-side binding rather than accepting
+    # a lab-only field that production schema could parse.
+    envelope = {"schemaVersion": 2, "type": "keyboard", "action": "down", "inputIds": ["i"], "payload": {}}
+    assert await boundary.apply_keyboard(envelope, transport="datachannel") == {"status": "applied", "inputIds": ["i"]}
+    assert calls == [(envelope, "datachannel")]

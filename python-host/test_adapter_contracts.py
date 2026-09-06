@@ -3,6 +3,7 @@ import asyncio
 from adapters.capture import CaptureAdapter
 from adapters.input import InputAdapter
 from adapters.lifecycle import LifecycleCoordinator
+from host import WebRemoteHost
 
 
 def run(coro):
@@ -47,6 +48,14 @@ def test_input_adapter_delegates_to_existing_handler():
     adapter = InputAdapter(FakeInput())
     assert adapter.start() == "started"
     assert run(adapter.handle_input({"type": "mouse"})) == {"data": {"type": "mouse"}}
+
+
+def test_production_host_rejects_lab_only_controlled_scene_field_before_any_adapter_call():
+    host = WebRemoteHost.__new__(WebRemoteHost)
+    calls = []
+    host.input_adapter = type("Adapter", (), {"handle_input": lambda *_args: calls.append(True)})()
+    run(host.on_input({"controlledScene": {"inputId": "forged"}}))
+    assert calls == []
 
 
 def test_lifecycle_shutdown_is_idempotent_and_ordered():

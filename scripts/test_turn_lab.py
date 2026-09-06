@@ -19,6 +19,7 @@ sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts")]
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent  # noqa: E402
 from turn_lab import (LabIdentity, LabRun, ProductionAdmissionClient, ProductionProof, _make_test_lab_run, _make_test_production_client, validate_lab_origin)  # noqa: E402
 import turn_lab as turn_lab_module  # noqa: E402
+import turn_lab_host as turn_lab_host_module  # noqa: E402
 from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _context_from_verified_binding, _test_verified_context, verify_candidate_manifest  # noqa: E402
 
 
@@ -103,6 +104,25 @@ def test_lab_host_requires_verified_context_and_rejects_viewer_selection():
     with pytest.raises(TypeError): LabWebRemoteHost()  # type: ignore[call-arg]
     with pytest.raises(TypeError): LabWebRemoteHost(_context(), policy_selection="candidate")  # type: ignore[call-arg]
     with pytest.raises(TypeError): VerifiedLabContext("http://127.0.0.1:40123", "lab-r", "x", 0, _context().selection, "legacy")
+
+
+def test_lab_host_constructs_and_holds_the_existing_input_adapter_guard_boundary(monkeypatch):
+    class Adapter:
+        async def apply_keyboard(self, *_args, **_kwargs): return {"status": "applied"}
+        async def handle_input(self, *_args, **_kwargs): return {"status": "applied"}
+    monkeypatch.setattr(turn_lab_host_module.WebRemoteHost, "__init__", lambda self: setattr(self, "input_adapter", Adapter()))
+    host = LabWebRemoteHost(_context())
+    assert host.controlled_input_guard.installed
+    assert type(host.input_adapter).__name__ == "GuardedLabInputAdapter"
+    host.arm_controlled_input(
+        lease_id="lease-1", fixture_id="fixture-1",
+        fixture_proof=lambda: {"leaseId": "lease-1", "proofToken": _context().proof_token,
+                               "fixtureId": "fixture-1", "isolated": True,
+                               "foreground": True, "fixtureWindow": True},
+    )
+    host.bind_controlled_input({"inputId": "input-1", "leaseId": "lease-1",
+                                "proofToken": _context().proof_token, "fixtureId": "fixture-1"})
+    assert host.controlled_input_guard.is_input_bound("input-1")
 
 
 def test_lab_selection_uses_exact_experiment_policy_for_publish_refresh_and_rebuild():

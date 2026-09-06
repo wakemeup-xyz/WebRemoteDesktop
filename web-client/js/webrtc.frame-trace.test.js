@@ -52,6 +52,15 @@ test('late diagnostic joins the matching rVFC wire timestamp within two seconds'
   assert.equal(matched[0].captureSeq, 7);
   assert.equal(matched[0].idrKind, 'idr');
   assert.equal(matched[0].roi.roi, 'frame');
+  assert.deepEqual(
+    Object.keys(matched[0]).sort(),
+    ['attemptId', 'captureSeq', 'generation', 'idrKind', 'roi', 'rtpOrigin', 'rtpTimestamp', 'streamId', 'traceStatus', 'viewerClockMs', 'wireTimestamp'].sort(),
+  );
+  assert.equal(matched[0].rtpTimestamp, 44);
+  assert.equal(matched[0].wireTimestamp, 44);
+  assert.equal(matched[0].rtpOrigin, 0xFFFFDD04);
+  assert.equal(matched[0].traceStatus, 'matched');
+  assert.equal(matched[0].viewerClockMs, 100);
 });
 
 test('wrong generation and expired or missing diagnostics stay UNALIGNED', () => {

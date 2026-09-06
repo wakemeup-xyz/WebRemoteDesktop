@@ -206,7 +206,9 @@ def test_marker_failures_only_lifts_static_input_gate_for_full_remote_scene_pass
     base["sceneResult"] = {"status": "PASS", "executionMode": "producer-local"}
     assert "static-text-and-input-not-run" in collector.marker_failures(base)
     base["sceneResult"] = {"status": "PASS", "executionMode": "automatic-isolated", "producerProof": {"run_nonce": 5, "scene_id": 1, "origin": "http://127.0.0.1:9999", "attempt_id": "a", "generation": 1}, "inputIds": ["i"], "sendSamples": [{"inputId": "i", "viewerClockMs": 1, "attemptId": "a", "generation": 1, "streamId": "video"}], "ackSamples": [{"inputId": "i", "status": "applied", "viewerClockMs": 2, "attemptId": "a", "generation": 1, "streamId": "video"}], "producerSamples": [{"inputId": "i", "focused": True, "runNonce": 5, "actionId": 8, "tick": 1, "attemptId": "a", "generation": 1, "streamId": "video"}], "visualSamples": [{"marker": {"runNonce": 5, "sceneId": 1, "actionId": 8, "tick": 1}, "viewerClockMs": 3, "attemptId": "a", "generation": 1, "streamId": "video", "rtpTimestamp": 3, "wireTimestamp": 3, "captureSeq": 4, "rtpOrigin": 1, "traceStatus": "matched"}]}
-    assert "static-text-and-input-not-run" not in collector.marker_failures(base)
+    # JSON evidence cannot self-certify a remote scene; only the in-process
+    # registered driver result is trusted by the collector.
+    assert "static-text-and-input-not-run" in collector.marker_failures(base)
 
 
 def test_marker_failures_rejects_a_scene_result_without_the_t3_wire_join_fields():
@@ -228,6 +230,26 @@ def test_controlled_producer_id_alone_stays_not_run_and_never_dispatches_input()
     assert result["status"] == "NOT_RUN"
     assert result["inputIds"] == []
     assert "Viewer-only" in result["reason"]
+
+
+def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector():
+    from turn_controlled_scene import (AUTOMATIC_ISOLATED, ControlledSceneDriver, ProducerProof)
+    from turn_lab_input_guard import LabInputGuard
+    proof = ProducerProof(5, 7, "http://127.0.0.1:49999", "a", 1)
+    class Viewer:
+        def send_input(self, action, **_kwargs): return {"inputId": action["inputId"], "viewerClockMs": 1, "attemptId": "a", "generation": 1, "streamId": "video"}
+        def wait_for_applied_ack(self, input_id): return {"inputId": input_id, "status": "applied", "viewerClockMs": 2, "attemptId": "a", "generation": 1, "streamId": "video"}
+        def decoded_visual(self, _input_id): return {"marker": {"runNonce": 5, "sceneId": 7, "tick": 1, "actionId": 8}, "viewerClockMs": 3, "attemptId": "a", "generation": 1, "streamId": "video", "rtpTimestamp": 9, "wireTimestamp": 9, "captureSeq": 1, "rtpOrigin": 1, "traceStatus": "matched"}
+    class Producer:
+        def event_for(self, input_id): return {"inputId": input_id, "runNonce": 5, "sceneId": 7, "actionId": 8, "tick": 1, "focused": True, "attemptId": "a", "generation": 1, "streamId": "video"}
+    guard = LabInputGuard(expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture", desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True}, input_handler=lambda _action: None)
+    action = {"inputId": "i", "actionId": 8, "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"}
+    guard.bind_controlled_input({key: action[key] for key in ("inputId", "leaseId", "proofToken", "fixtureId")})
+    guard.install_at_lab_host(object())
+    evidence = collector.record_interactions(None, True, scene_driver=ControlledSceneDriver(viewer=Viewer(), producer=Producer(), proof=proof, execution_mode=AUTOMATIC_ISOLATED, guard=guard, actions=[action]))
+    assert evidence["status"] == "PASS" and evidence["_trustedSceneResult"].driver_generated
+    marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000}, "refresh": {"healthyRelay": True, "freshFrame": True}}, "sceneResult": evidence}
+    assert "static-text-and-input-not-run" not in collector.marker_failures(marker)
 
 
 def test_malformed_scene_result_fails_closed_instead_of_crashing_the_collector():
@@ -278,6 +300,29 @@ def test_pause_resume_keeps_the_media_phase_suspended_for_two_seconds(monkeypatc
     monkeypatch.setattr(collector, "wait_for_healthy_relay", lambda _page, **_kwargs: True)
     result = collector.record_pause_resume_refresh(Page(), clock=lambda: now[0] / 1000)
     assert result["pauseResume"]["resumeAfterMs"] >= 2000
+    assert result["pauseResume"]["suspendedAtMs"] == 0
+    assert result["pauseResume"]["resumeRequestedAtMs"] >= 2000
+
+
+def test_pause_resume_does_not_toggle_again_when_suspend_never_applies(monkeypatch):
+    clicks, now = [], [0]
+    class Locator:
+        def __init__(self, selector): self.selector = selector
+        def click(self): clicks.append(self.selector)
+    class Page:
+        def locator(self, selector): return Locator(selector)
+        def evaluate(self, _script):
+            if "getMediaAppliedPhase" in _script: return "active"
+            if "Number(WebRTC?._videoFrameSeq" in _script and "attempt" not in _script: return 1
+            return {"attempt": "a", "frame": 1}
+        def wait_for_timeout(self, milliseconds): now[0] += milliseconds
+    monkeypatch.setattr(collector, "_wait_for_phase", lambda _page, expected, **_kwargs: False)
+    monkeypatch.setattr(collector, "wait_for_healthy_relay", lambda _page, **_kwargs: True)
+    result = collector.record_pause_resume_refresh(Page(), clock=lambda: now[0] / 1000)
+    assert clicks == ["#pauseBtn"]
+    assert result["pauseResume"]["suspended"] is False
+    assert result["pauseResume"]["active"] is False
+    assert result["pauseResume"]["resumeRequestedAtMs"] is None
 
 
 def test_phase_summary_fails_when_the_connection_attempt_or_geometry_changes():

@@ -1807,6 +1807,12 @@ class WebRemoteHost:
             if not isinstance(data, dict):
                 logger.warning(f"Invalid input data type: {type(data)}")
                 return
+            # Controlled-scene metadata is a Lab Host server-side binding, not
+            # part of the production Viewer input protocol.  Reject it before
+            # any lease or adapter path can observe it.
+            if "controlledScene" in data:
+                logger.warning("Ignoring lab-only controlled scene input field")
+                return
             viewer_id = data.get("viewerId")
             is_v2 = data.get("schemaVersion") == 2
             input_type = data.get('type')

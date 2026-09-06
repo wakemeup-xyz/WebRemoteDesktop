@@ -574,7 +574,28 @@ def _wait_for_phase(page: Any, expected: str, timeout_seconds: int = 15) -> bool
     return page.evaluate("() => WebRTC?.getMediaAppliedPhase?.()") == expected
 
 
-def record_interactions(page: Any, enabled: bool) -> dict[str, Any]:
+def record_interactions(page: Any, enabled: bool, *, scene_driver: Any | None = None) -> dict[str, Any]:
+    """Collect an explicitly registered Lab driver; never synthesize input.
+
+    The normal Viewer-only collector has no Host fixture/lease binding and
+    remains NOT_RUN.  Tests and a future Lab invocation may supply the sealed
+    driver, which performs its own original-Viewer-path dispatch and waits for
+    evidence asynchronously through its injected endpoints.
+    """
+    if scene_driver is not None:
+        try:
+            from turn_controlled_scene import ControlledSceneDriver
+            if not isinstance(scene_driver, ControlledSceneDriver):
+                raise TypeError("unregistered controlled scene driver")
+            result = scene_driver.run()
+            evidence = result.as_dict()
+            # Kept in-process only; JSON artifacts cannot self-certify a PASS.
+            evidence["_trustedSceneResult"] = result
+            return evidence
+        except Exception as error:
+            return {"status": "FAIL", "executionMode": "automatic-isolated",
+                    "reason": f"controlled-driver-failed:{type(error).__name__}", "inputIds": [],
+                    "ackSamples": [], "producerSamples": [], "visualSamples": [], "sendSamples": []}
     reason = "controlled producer identity cannot be verified from a Viewer-only session"
     if not enabled:
         reason = "requires a controlled producer and host-side event correlation"
@@ -593,6 +614,15 @@ def record_pause_resume_refresh(page: Any, *, clock=time.monotonic, minimum_susp
             break
         page.wait_for_timeout(100)
     suspended_duration_ms = round((clock() - suspended_at) * 1000) if suspended else 0
+    # Do not toggle after a failed/lost suspend: the media FSM may already
+    # have changed, so another click can invert the final state.
+    if not suspended:
+        return {"pauseResume": {"suspended": False, "active": False, "freshFrame": False,
+                                 "resumeAfterMs": 0, "suspendedAtMs": None,
+                                 "resumeRequestedAtMs": None, "baseline": baseline},
+                "refresh": {"healthyRelay": False, "freshFrame": False}}
+    suspended_at_ms = round(suspended_at * 1000)
+    resume_requested_at_ms = round(clock() * 1000)
     page.locator("#pauseBtn").click()
     active = _wait_for_phase(page, "active")
     deadline = time.monotonic() + 5
@@ -612,7 +642,11 @@ def record_pause_resume_refresh(page: Any, *, clock=time.monotonic, minimum_susp
         pass
     after_refresh = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
     refresh_fresh = after_refresh["frame"] > before_refresh["frame"]
-    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "resumeAfterMs": suspended_duration_ms, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
+    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed,
+                             "resumeAfterMs": suspended_duration_ms, "suspendedAtMs": suspended_at_ms,
+                             "resumeRequestedAtMs": resume_requested_at_ms, "baseline": baseline},
+            "refresh": {"before": before_refresh, "after": after_refresh,
+                        "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
 
 
 def marker_failures(marker: dict[str, Any]) -> list[str]:
@@ -634,6 +668,11 @@ def marker_failures(marker: dict[str, Any]) -> list[str]:
     try:
         from turn_controlled_scene import (AUTOMATIC_ISOLATED, OPERATOR_REMOTE, PASS,
                                            ProducerProof, evaluate_scene_result)
+        trusted_result = scene.get("_trustedSceneResult") if isinstance(scene, dict) else None
+        # A persisted artifact is untrusted input.  Only an in-process result
+        # sealed by the registered driver can remove the fixed-input gate.
+        if trusted_result is None or not getattr(trusted_result, "driver_generated", False):
+            raise ValueError("scene result was not driver-generated")
         raw_proof = scene.get("producerProof")
         if isinstance(raw_proof, dict):
             proof = ProducerProof(**raw_proof)
