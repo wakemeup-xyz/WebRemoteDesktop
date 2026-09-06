@@ -366,23 +366,31 @@ class PlaywrightLabViewerAdapter:
           const marker = document.getElementById('marker');
           if (!marker) return null;
           const box = marker.getBoundingClientRect();
+          const style = getComputedStyle(marker);
           return { left: box.left, top: box.top, width: box.width, height: box.height,
+                   contentWidth: marker.width, contentHeight: marker.height,
+                   borderLeft: parseFloat(style.borderLeftWidth), borderTop: parseFloat(style.borderTopWidth),
                    screenX: window.screenX, screenY: window.screenY,
                    outerWidth: window.outerWidth, outerHeight: window.outerHeight,
                    innerWidth: window.innerWidth, innerHeight: window.innerHeight,
                    screenWidth: window.screen.width, screenHeight: window.screen.height,
                    dpr: window.devicePixelRatio };
         }""")
-        required = ("left", "top", "width", "height", "screenX", "screenY", "outerWidth", "outerHeight",
-                    "innerWidth", "innerHeight", "screenWidth", "screenHeight", "dpr")
+        required = ("left", "top", "width", "height", "contentWidth", "contentHeight", "borderLeft", "borderTop",
+                    "screenX", "screenY", "outerWidth", "outerHeight", "innerWidth", "innerHeight", "screenWidth", "screenHeight", "dpr")
         if not isinstance(raw, Mapping) or not all(isinstance(raw.get(key), (int, float)) for key in required):
             raise RuntimeError("producer-marker-runtime-geometry-unavailable")
-        if raw["width"] != 256 or raw["height"] != 128 or raw["screenWidth"] <= 0 or raw["screenHeight"] <= 0:
+        if (raw["contentWidth"] != 256 or raw["contentHeight"] != 128
+                or raw["width"] < raw["contentWidth"] or raw["height"] < raw["contentHeight"]
+                or raw["borderLeft"] < 0 or raw["borderTop"] < 0
+                or raw["screenWidth"] <= 0 or raw["screenHeight"] <= 0):
             raise RuntimeError("producer-marker-runtime-geometry-invalid")
         border_x = max(0.0, (float(raw["outerWidth"]) - float(raw["innerWidth"])) / 2)
         chrome_y = max(0.0, float(raw["outerHeight"]) - float(raw["innerHeight"]) - border_x)
-        x_css = float(raw["screenX"]) + border_x + float(raw["left"])
-        y_css = float(raw["screenY"]) + chrome_y + float(raw["top"])
+        # getBoundingClientRect includes the fixture's decorative border;
+        # marker decoding is for the canvas pixels inside that border.
+        x_css = float(raw["screenX"]) + border_x + float(raw["left"]) + float(raw["borderLeft"])
+        y_css = float(raw["screenY"]) + chrome_y + float(raw["top"]) + float(raw["borderTop"])
         x = round(x_css * source_width / float(raw["screenWidth"]))
         y = round(y_css * source_height / float(raw["screenHeight"]))
         return MarkerLayout.create(attempt_id="calibration", generation=0, source_width=source_width,

@@ -77,6 +77,18 @@ def test_viewer_session_identity_uses_the_live_webrtc_connection_sequence_for_ge
     assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "sourceWidth": 1920, "sourceHeight": 1080}
 
 
+def test_marker_roi_calibration_uses_canvas_content_inside_the_visible_fixture_border():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    class Page:
+        def evaluate(self, _script):
+            return {"left": 32, "top": 155.1171875, "width": 272, "height": 144,
+                    "contentWidth": 256, "contentHeight": 128, "borderLeft": 8, "borderTop": 8,
+                    "screenX": 22, "screenY": 25, "outerWidth": 1442, "outerHeight": 1006,
+                    "innerWidth": 1440, "innerHeight": 960, "screenWidth": 1440, "screenHeight": 960, "dpr": 1}
+    adapter.producer_page = Page()
+    assert adapter.calibrate_marker_roi(source_width=1152, source_height=720) == (50, 175, 256, 128)
+
+
 def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dispatch_and_four_way_evidence():
     rows = []
 
