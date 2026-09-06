@@ -110,9 +110,7 @@ const UI = {
       if (isEditing) event.preventDefault?.();
     };
 
-    const isDocumentFullscreen = () => fullscreenTarget
-      ? document.fullscreenElement === fullscreenTarget
-      : Boolean(document.fullscreenElement);
+    const isDocumentFullscreen = () => document.fullscreenElement === document.documentElement;
 
     const hasInert = (element) => element?.inert === true || element?.hasAttribute?.('inert') === true;
 

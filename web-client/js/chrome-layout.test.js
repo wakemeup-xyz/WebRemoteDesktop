@@ -210,6 +210,49 @@ test('fullscreen uses zero effective chrome top and dock height without rewritin
   }
 });
 
+test('fullscreen preserves a pre-existing chrome-idle through every idle entry point', () => {
+  const h = makeLayoutHarness({ chromeTop: 44, dockHeight: 132, streamConnected: true });
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const previousMutationObserver = global.MutationObserver;
+  const timers = [];
+  const observers = [];
+  global.setTimeout = (callback, delay) => {
+    const timer = { callback, delay };
+    timers.push(timer);
+    return timer;
+  };
+  global.clearTimeout = () => {};
+  global.MutationObserver = class MutationObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe() {}
+    disconnect() {}
+  };
+
+  try {
+    const unbind = ChromeLayout.bindIdle(h.root);
+    const preFullscreenTimer = timers[0];
+    h.body.classList.add('fullscreen-active');
+    h.body.classList.add('chrome-idle');
+    ChromeLayout.setFullscreenActive(true, h.root);
+
+    ChromeLayout.armIdleTimer(h.root);
+    preFullscreenTimer.callback();
+    observers[0].callback();
+    ChromeLayout.enterIdle(h.root);
+    ChromeLayout.bump(h.root);
+
+    assert.equal(h.body.classList.contains('chrome-idle'), true);
+    unbind();
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+    if (previousMutationObserver) global.MutationObserver = previousMutationObserver;
+    else delete global.MutationObserver;
+    h.restore();
+  }
+});
+
 test('fullscreen keeps only the visible mobile text dock reserve', () => {
   const h = makeLayoutHarness({
     chromeTop: 44, dockHeight: 132, textDockHeight: 52, textVisible: true,

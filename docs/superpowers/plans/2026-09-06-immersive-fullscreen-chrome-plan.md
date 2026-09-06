@@ -50,7 +50,7 @@
 - Produces ChromeLayout.setFullscreenActive(active, rootEl): void；调用方必须先同步 body class。
 - Consumes现有 syncChromeTop、recalculate、computeMobileLayout、bindIdle；不改 controls-hidden/chrome-idle 的公开语义。
 
-- [ ] **Step 1: 写 fullscreen 有效 top 与 idle 保持的失败测试。**
+- [x] **Step 1: 写 fullscreen 有效 top 与 idle 保持的失败测试。**
 
   在既有 fake root/样式夹具中加入 body classes、44px statusBar、非零 chromeDocks、touch desktop panel 和一个可观测 timer。覆盖：fullscreen 后 --chrome-top 是 0px、布局输入的有效 dockContentHeight 是 0、--mobile-viewer-top 是 0px 且 viewerHeight 不留 Dock 空白；退出后恢复 44px 与实测 Dock 高度。另测 mobileInputDock 可见时仅保留 textReserve。fullscreen 调用 enterIdle、timer callback 与 bump 不得改变预先存在的 chrome-idle 或 controls-hidden。
 
@@ -69,12 +69,12 @@ test('fullscreen uses zero effective chrome top without rewriting dock state', (
 });
 ~~~
 
-- [ ] **Step 2: 运行测试确认旧实现失败。**
+- [x] **Step 2: 运行测试确认旧实现失败。**
 
 Run: node --test web-client/js/chrome-layout.test.js
 Expected: fullscreen test fails because current syncChromeTop rejects 0 and idle methods still mutate normally.
 
-- [ ] **Step 3: 实现单一派生 fullscreen 检查与有效高度。**
+- [x] **Step 3: 实现单一派生 fullscreen 检查与有效高度。**
 
   添加 isFullscreenActive(rootEl)，从 root 的 body 读取 class。让 syncChromeTop 接受有限的非负值；新增内部 effectiveChromeTop(measured, root)，fullscreen 返回 0，其余保留 measured || 56。_getLayoutInputs() 在 fullscreen 时传入 dockContentHeight: 0，但不清掉真实 Dock 测量、也不改变 textDockHeight/textVisible。recalculate() 和 _getLayoutInputs() 必须都使用这一个有效值；observeStatusBar() 改为触发 recalculate()，不能先把原始高度直接写回 style。
 
@@ -91,7 +91,7 @@ syncChromeTop(px, rootEl) {
 },
 ~~~
 
-- [ ] **Step 4: 暂停 fullscreen 期间的 ChromeLayout idle 派生。**
+- [x] **Step 4: 暂停 fullscreen 期间的 ChromeLayout idle 派生。**
 
   setFullscreenActive(true) 清理 timer 后重算布局；false 时重算并仅在既有 stream/controls/mobile-input 门禁允许时重新 arm。armIdleTimer、timer callback、enterIdle、bump 和 mutation callback 开头检查 isFullscreenActive(root)；fullscreen 时不添加/移除 chrome-idle、不改 toggle 文案的普通状态语义、也不重启 timer。不要对 classes 做 snapshot/restore，避免覆盖全屏期间其他真实状态变化。
 
@@ -109,12 +109,12 @@ setFullscreenActive(active, rootEl) {
 },
 ~~~
 
-- [ ] **Step 5: 运行本任务测试。**
+- [x] **Step 5: 运行本任务测试。**
 
 Run: node --test web-client/js/chrome-layout.test.js
 Expected: PASS; 覆盖 normal/managed geometry、0 top、effective dock=0、移动文本 reserve 保留、退出恢复、fullscreen timer 无 class 写入、普通 controls-hidden/chrome-idle 行为不回归。
 
-- [ ] **Step 6: 提交本任务。**
+- [x] **Step 6: 提交本任务。**
 
 ~~~bash
 git add web-client/js/chrome-layout.js web-client/js/chrome-layout.test.js
@@ -134,7 +134,7 @@ git commit -m "fix(viewer): isolate fullscreen chrome geometry"
 - Keeps existing #fullscreenStatus in #statusBar .status-actions for ordinary requestFullscreen failure.
 - Consumes body.fullscreen-active and html:fullscreen；does not target controls-hidden.
 
-- [ ] **Step 1: 改写旧 DOM/CSS 契约的失败测试。**
+- [x] **Step 1: 改写旧 DOM/CSS 契约的失败测试。**
 
   把旧的“exit control stays in global status chrome”断言替换为：exit button 不在 #statusBar/#chromeDocks；overlay 是 body 直接子层；normal #fullscreenStatus 保留；fullscreen CSS 隐藏 status/docks 并让 Viewer 使用完整 100dvh；reveal 与 exit button 有 safe-area、fixed、44px、正确 pointer-events。
 
@@ -149,16 +149,16 @@ test('fullscreen chrome hides independently while exit overlay stays interactive
 });
 ~~~
 
-- [ ] **Step 2: 运行测试确认旧实现失败。**
+- [x] **Step 2: 运行测试确认旧实现失败。**
 
 Run: node --test web-client/css/viewer-layout.test.js
 Expected: FAIL because the current exit button is a status-actions child and fullscreen still subtracts --chrome-top.
 
-- [ ] **Step 3: 调整 HTML，保留普通错误状态，迁移唯一 exit button。**
+- [x] **Step 3: 调整 HTML，保留普通错误状态，迁移唯一 exit button。**
 
   从 .status-actions 移走仅有的 #exitFullscreenBtn，不能复制 ID。紧随 #mobileSafeAreaProbe 添加 spec 中的 overlay；#fullscreenExitPanel 初始 hidden，#fullscreenExitStatus 初始 hidden 且有 role=status、aria-live=polite。不要把 overlay 放入 .viewer-container，以便 Terminal tab 与 desktop panel hidden 时仍然可用。
 
-- [ ] **Step 4: 写 fullscreen 专属 CSS。**
+- [x] **Step 4: 写 fullscreen 专属 CSS。**
 
   删除旧 .fullscreen-exit-btn position: static 与全屏直接显示 status-bar child 的规则。添加根 fullscreen + body.fullscreen-active selectors：状态栏/Dock visibility:hidden; pointer-events:none，body padding=0，非 managed 且未显示 mobileInputDock 的 fullscreen viewer 为完整 100vh/100dvh；如既有 mobile-input-visible，唯一保留文本 dock reserve，不能与画面重叠。Overlay 使用 position:fixed; inset:0; z-index:400; pointer-events:none；顶部右侧 handle 和 panel 使用 pointer-events:auto、safe-area top/right、min-width/min-height:var(--touch-min)。
 
@@ -179,12 +179,12 @@ html:fullscreen body.fullscreen-active:not(.mobile-layout-managed).mobile-input-
 
   prefers-reduced-motion 下 panel/handle 不使用位移动画。不要新增 controls-hidden fullscreen 规则；原有 Dock、More、mobile managed 和 network advisor CSS 保持。
 
-- [ ] **Step 5: 运行 CSS/DOM 回归。**
+- [x] **Step 5: 运行 CSS/DOM 回归。**
 
 Run: node --test web-client/css/viewer-layout.test.js
 Expected: PASS; 旧 hidden/flex、mobile safe-area、Dock/More、Terminal layout assertions 继续通过。
 
-- [ ] **Step 6: 提交本任务。**
+- [x] **Step 6: 提交本任务。**
 
 ~~~bash
 git add web-client/viewer.html web-client/css/viewer.css web-client/css/viewer-layout.test.js
@@ -203,7 +203,7 @@ git commit -m "feat(viewer): add immersive fullscreen exit overlay"
 - Produces a closure-local revealFullscreenExit() / hideFullscreenExit() and FULLSCREEN_EXIT_REVEAL_MS = 4000.
 - Preserves exitFullscreen(): Promise<boolean> and original #fullscreenStatus behavior.
 
-- [ ] **Step 1: 扩展 UI harness 并写失败测试。**
+- [x] **Step 1: 扩展 UI harness 并写失败测试。**
 
   让 makeElement 支持 contains、hasAttribute、removeAttribute、toggleAttribute 和多个事件监听；harness 注入可手动 flush 的 fake timer，并让 fake ChromeLayout 记录 setFullscreenActive/recalculate 调用。新增测试：
 
@@ -227,12 +227,12 @@ test('fullscreen edge reveal never reuses controls-hidden', () => {
 });
 ~~~
 
-- [ ] **Step 2: 运行测试确认旧实现失败。**
+- [x] **Step 2: 运行测试确认旧实现失败。**
 
 Run: node --test web-client/js/ui.test.js
 Expected: FAIL because overlay IDs, timer behavior, inert handling and ChromeLayout.setFullscreenActive calls do not exist.
 
-- [ ] **Step 3: 实现一次性 overlay 生命周期。**
+- [x] **Step 3: 实现一次性 overlay 生命周期。**
 
   在 setupControlButtons() 获取新 DOM 节点，定义 revealTimer。revealFullscreenExit() 仅当 document-root fullscreen 时执行：清旧 timer、展开 panel、设置 aria-expanded=true，4 秒后仅隐藏 panel/aria state。Reveal handler 的 pointerdown/click 都要阻止冒泡；exit button 继续使用 preserveEditingFocusOnPointerDown，并额外阻止事件进入全局 input handler。
 
@@ -246,18 +246,18 @@ const revealFullscreenExit = () => {
 };
 ~~~
 
-- [ ] **Step 4: 在 fullscreenchange 中协调 UI 与 ChromeLayout。**
+- [x] **Step 4: 在 fullscreenchange 中协调 UI 与 ChromeLayout。**
 
   updateFullscreenState() 必须按以下顺序：计算 root fullscreen → 更新 fullscreenBtn 文案/aria → toggle fullscreen-active → 对 status/Dock 设置/恢复 inert（记录进入前是否已有 inert）→ 进入时 reveal，退出时 hide → 调用 ChromeLayout.setFullscreenActive(isFullscreen)；仅当该接口不存在时 fallback 到 recalculate()。不要改变 controls-hidden、chrome-idle、More 或 lease gate。
 
   exit API 失败时同时写入普通 fullscreenStatus 与 fullscreenExitStatus；后者只在 fullscreen 中触发 revealFullscreenExit()。request API 的已有失败路径只写普通 status，保持焦点/草稿/普通视图。
 
-- [ ] **Step 5: 运行 UI 单测。**
+- [x] **Step 5: 运行 UI 单测。**
 
 Run: node --test web-client/js/ui.test.js
 Expected: PASS; 包括已有 root target、request failure、Terminal、lease loss 与 re-entry 场景，以及新的 edge/timer/inert/state-isolation 场景。
 
-- [ ] **Step 6: 提交本任务。**
+- [x] **Step 6: 提交本任务。**
 
 ~~~bash
 git add web-client/js/ui.js web-client/js/ui.test.js

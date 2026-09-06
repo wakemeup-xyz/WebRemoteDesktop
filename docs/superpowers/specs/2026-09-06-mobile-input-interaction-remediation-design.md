@@ -170,8 +170,8 @@ safeBottom来自静态无交互`#mobileSafeAreaProbe`的computed padding-bottom�
 
 选择 `document.documentElement` 为完整 Viewer 全屏目标：现有状态栏、desktopPanel、移动 Dock 与 modal 都已经在其中，不在运行时搬移 DOM、不复制元素/监听器。UI 的 fullscreenchange 仅更新状态和布局，走 §3 焦点规则，不直接 video.focus。
 
-- `.viewer-container:fullscreen` CSS 改为 `html:fullscreen .viewer-container` 与全屏退出按钮规则；已有顶部高度、contain/cover/fill 和新布局算法继续生效。
-- 全屏内切 Terminal 使用已有 tab 生命周期，Terminal/PTY 代码不改。静态 HTML 将唯一的 `exitFullscreenBtn` 从 `.viewer-container` 移入 `#statusBar .status-actions`，保留现有 ID 和监听器；`fullscreenBtn` 保留原启动入口。退出按钮仅在 documentElement 全屏时显示，任何 tab 和 compact/idle 状态下均可见、可点击，不依赖桌面 ACTIVE 租约。
+- `.viewer-container:fullscreen` CSS 改为 `html:fullscreen .viewer-container` 与当前沉浸全屏规则；已有顶部高度、contain/cover/fill 和新布局算法继续生效。
+- 全屏内切 Terminal 使用已有 tab 生命周期，Terminal/PTY 代码不改。沉浸全屏的退出入口由当前设计的独立 overlay 提供；旧版退出按钮放置约定已被取代，不再作为 DOM 放置契约。`fullscreenBtn` 保留原启动入口。退出按钮仅在 documentElement 全屏时显示，任何 tab 和 compact/idle 状态下均可见、可点击，不依赖桌面 ACTIVE 租约。
 - 可达性区分：全局`exitFullscreenBtn`须在任何自动滚动前满足完整视口边界（≤1px误差）、44px目标和hittest；位于“更多”可滚动菜单内的`fullscreenBtn`入口允许用户主动滚动菜单，滚动后、点击前再测完整边界和hittest。不得让locator.click的隐式滚动替代此证据，也不得把入口初始未滚动位置误判为全局退出缺失。
 - 不支持 requestFullscreen、未允许或 promise reject 时，保留普通视图、草稿和焦点，显示可见“不支持全屏，可继续操作”；按钮 aria-pressed/文案不得假成功。不增加 iOS 私有 video-only fullscreen fallback。
 

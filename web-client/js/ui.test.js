@@ -10,6 +10,7 @@ function makeElement(id, onFocus = () => {}) {
   const attributes = new Map();
   return {
     id,
+    parentNode: null,
     tagName: id === 'mobileTextInput' || id === 'terminalComposer' ? 'TEXTAREA' : 'BUTTON',
     isContentEditable: false,
     inert: false,
@@ -42,7 +43,10 @@ function makeElement(id, onFocus = () => {}) {
       if (!dispatcher) {
         dispatcher = (event = {}) => {
           let result;
-          for (const listener of [...dispatcher.handlers]) result = listener(event);
+          for (const listener of [...dispatcher.handlers]) {
+            result = listener(event);
+            if (event.immediateStopped) break;
+          }
           return result;
         };
         dispatcher.handlers = [];
@@ -89,6 +93,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
     recalculate: [],
   };
   const timers = new Map();
+  const remoteInputEvents = [];
   let nextTimerId = 1;
   let requestedTarget = null;
   let requestCount = 0;
@@ -146,13 +151,18 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
           if (element) document.activeElement = element;
           else if (document.activeElement === blurred) document.activeElement = null;
         });
+        focusTarget.parentNode = body;
         elements.set(id, focusTarget);
       }
       return elements.get(id);
     },
     querySelector(selector) {
       if (selector === '.viewer-container') {
-        if (!elements.has('viewerContainer')) elements.set('viewerContainer', makeElement('viewerContainer'));
+        if (!elements.has('viewerContainer')) {
+          const viewer = makeElement('viewerContainer');
+          viewer.parentNode = body;
+          elements.set('viewerContainer', viewer);
+        }
         return elements.get('viewerContainer');
       }
       return null;
@@ -164,6 +174,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
       return Promise.resolve();
     },
   };
+  body.parentNode = document;
   documentElement.requestFullscreen = function requestFullscreenOnRoot() {
     requestedTarget = documentElement;
     requestCount += 1;
@@ -203,6 +214,21 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
   const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__UI = UI;`, context);
 
+  const dispatchBubbling = (element, type) => {
+    const event = makeEvent(element);
+    let current = element;
+    while (current) {
+      const dispatcher = current === document
+        ? documentListeners.get(type)
+        : current.listeners?.get(type);
+      const result = dispatcher?.(event);
+      if (result && typeof result.then === 'function') event.result = result;
+      if (event.stopped || event.immediateStopped) break;
+      current = current.parentNode || null;
+    }
+    return event;
+  };
+
   const fullscreenButton = document.getElementById('fullscreenBtn');
   const exitButton = document.getElementById('exitFullscreenBtn');
   const fullscreenStatus = document.getElementById('fullscreenStatus');
@@ -238,22 +264,29 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
     chromeLayoutCalls,
     get pendingTimerCount() { return timers.size; },
     get timerDelays() { return [...timers.values()].map(({ delay }) => delay); },
+    remoteInputEvents,
+    installGlobalRemoteInputListener(type) {
+      document.addEventListener(type, (event) => {
+        remoteInputEvents.push({ type, target: event.target });
+      });
+    },
+    dispatchRaw(id, type) {
+      const element = elements.get(id) || document.getElementById(id);
+      return dispatchBubbling(element, type);
+    },
     async click(id) {
       const element = elements.get(id) || document.getElementById(id);
       const handler = element.listeners.get('click');
       assert.equal(typeof handler, 'function', `${id} should have a click listener`);
-      const event = makeEvent(element);
-      const result = handler(event);
-      if (result && typeof result.then === 'function') await result;
+      const event = dispatchBubbling(element, 'click');
+      if (event.result && typeof event.result.then === 'function') await event.result;
       return event;
     },
     pointerDown(id) {
       const element = elements.get(id) || document.getElementById(id);
       const handler = element.listeners.get('pointerdown');
       assert.equal(typeof handler, 'function', `${id} should have a pointerdown listener`);
-      const event = makeEvent(element);
-      handler(event);
-      return event;
+      return dispatchBubbling(element, 'pointerdown');
     },
     flushTimers() {
       const pending = [...timers.values()];
@@ -263,7 +296,7 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
     dispatchDocument(type) {
       const handler = documentListeners.get(type);
       assert.equal(typeof handler, 'function', `${type} should have a document listener`);
-      return handler(makeEvent(document));
+      return dispatchBubbling(document, type);
     },
     resize(width, height) {
       this.context.window.innerWidth = width;
@@ -488,6 +521,40 @@ test('fullscreen uses documentElement and fullscreenchange preserves mobile focu
   assert.equal(h.document.activeElement, field);
   assert.equal(h.fullscreenButton.textContent, '退出全屏');
   assert.equal(h.context.document.body.classList.contains('fullscreen-active'), true);
+});
+
+test('non-root fullscreen never activates immersive chrome when the root target is unavailable', () => {
+  const h = makeHarness();
+  h.document.documentElement = null;
+  h.context.__UI.setupControlButtons();
+
+  h.document.fullscreenElement = h.elements.get('remoteVideo');
+  h.dispatchDocument('fullscreenchange');
+
+  assert.equal(h.document.body.classList.contains('fullscreen-active'), false);
+  assert.equal(h.fullscreenButton.textContent, '全屏');
+  assert.equal(h.elements.get('statusBar').inert, false);
+  assert.equal(h.elements.get('chromeDocks').inert, false);
+  assert.equal(h.elements.get('fullscreenExitPanel').hidden, true);
+});
+
+test('fullscreen overlay events do not reach the modeled global remote-input listener', async () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.installGlobalRemoteInputListener('pointerdown');
+  h.installGlobalRemoteInputListener('click');
+  h.dispatchRaw('remoteVideo', 'click');
+  assert.equal(h.remoteInputEvents.length, 1, 'the modeled global listener must observe an unhandled bubble');
+  h.remoteInputEvents.length = 0;
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+  h.flushTimers();
+
+  h.pointerDown('fullscreenExitRevealBtn');
+  await h.click('fullscreenExitRevealBtn');
+  await h.click('exitFullscreenBtn');
+
+  assert.deepEqual(h.remoteInputEvents, []);
 });
 
 test('fullscreen rejection keeps ordinary view, focus, and draft and announces recovery', async () => {
