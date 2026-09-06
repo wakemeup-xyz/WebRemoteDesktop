@@ -39,7 +39,7 @@ NAL_TYPE_STAP_A = 24
 
 _session_gop_size = 40
 
-LIBX264_ALLOWED_PRESETS = frozenset({"ultrafast", "superfast"})
+LIBX264_ALLOWED_PRESETS = frozenset({"ultrafast", "superfast", "veryfast"})
 CODEC_REOPEN_REASONS = frozenset({
     "initial",
     "resolution-change",

@@ -430,6 +430,20 @@ def test_relay_policy_uses_libx264_and_vbv_cap():
     assert enc.codec_name == "libx264"
 
 
+def test_libx264_options_allow_veryfast_without_changing_frozen_on_demand_vbv_settings():
+    options = libx264_zerolatency_options(5_000_000, 0, 200, preset="veryfast")
+
+    assert options["preset"] == "veryfast"
+    assert options["tune"] == "zerolatency"
+    assert options["x264-params"] == (
+        "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
+        "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+        "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+        "forced-idr=1:vbv-maxrate=5000:vbv-bufsize=1000:"
+        "vbv-init=0.4:nal-hrd=none"
+    )
+
+
 def test_real_codec_creation_submits_policy_preset_and_preserves_frozen_legacy_options():
     """A policy preset must reach the real libx264 codec configuration."""
     from dataclasses import replace
