@@ -238,8 +238,9 @@ const ChromeLayout = {
     this.clearIdleTimer();
     this.recalculate(root, { schedule: true });
     if (active || this.isFullscreenActive(root)) return;
+    if (!this.autoIdleEnabled) return;
     const inputs = this.collectIdleInputs(root);
-    if (inputs.streamConnected && !inputs.controlsHidden) {
+    if (this.shouldIdle({ ...inputs, idleMs: this.IDLE_MS })) {
       this._lastActivity = Date.now();
       this.armIdleTimer(root);
     }
@@ -249,7 +250,7 @@ const ChromeLayout = {
     if (!Number.isFinite(height) || height < 0) return;
     const root = rootEl || (typeof document !== 'undefined' ? document.documentElement : null);
     const value = `${Math.round(height)}px`;
-    this._writeStyleValue(root, '--chrome-top', value);
+    this._writeStyleValue(root?.documentElement || root, '--chrome-top', value);
   },
   effectiveChromeTop(measured, rootEl) {
     if (this.isFullscreenActive(rootEl)) return 0;

@@ -38,6 +38,7 @@ function makeLayoutHarness({
   const properties = new Map();
   const elements = new Map();
   const eventListeners = new Map();
+  let activeModal = null;
   const body = {
     classList: {
       contains(name) { return classes.has(name); },
@@ -83,10 +84,10 @@ function makeLayoutHarness({
     defaultView: view,
     navigator: view.navigator,
     documentElement,
-    style,
     getElementById(id) { return elements.get(id) || null; },
     querySelector(selector) {
       if (selector === 'body') return body;
+      if (selector === '.modal:not(.hidden)') return activeModal;
       if (selector.startsWith('#')) return elements.get(selector.slice(1)) || null;
       return null;
     },
@@ -107,6 +108,7 @@ function makeLayoutHarness({
     eventListeners,
     layoutInput: null,
     layout: null,
+    setActiveModal(modal) { activeModal = modal; },
     restore() {
       ChromeLayout.computeMobileLayout = originalCompute;
       ChromeLayout._mobileLayoutCleanup?.();
@@ -124,6 +126,21 @@ function makeLayoutHarness({
   };
   return harness;
 }
+
+test('recalculate writes chrome top to documentElement for a document-shaped root', () => {
+  const h = makeLayoutHarness({ chromeTop: 44, dockHeight: 132 });
+  try {
+    ChromeLayout.recalculate(h.root);
+    assert.equal(h.root.style, undefined);
+    assert.equal(h.root.documentElement.style.getPropertyValue('--chrome-top'), '44px');
+
+    h.body.classList.add('fullscreen-active');
+    ChromeLayout.setFullscreenActive(true, h.root);
+    assert.equal(h.root.documentElement.style.getPropertyValue('--chrome-top'), '0px');
+  } finally {
+    h.restore();
+  }
+});
 
 test('fullscreen uses zero effective chrome top and dock height without rewriting dock state', () => {
   const h = makeLayoutHarness({ chromeTop: 44, dockHeight: 132, streamConnected: true });
@@ -208,6 +225,90 @@ test('fullscreen keeps only the visible mobile text dock reserve', () => {
     assert.equal(h.layout.viewerHeight, 752);
   } finally {
     h.restore();
+  }
+});
+
+test('fullscreen exit re-arms idle only when the full idle gate allows it', () => {
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const previousInput = global.Input;
+  const timers = [];
+  global.setTimeout = (callback, delay) => {
+    const timer = { callback, delay };
+    timers.push(timer);
+    return timer;
+  };
+  global.clearTimeout = () => {};
+
+  const cases = [
+    {
+      name: 'menu open',
+      setup(h) {
+        h.elements.set('moreActionsBtn', { getAttribute: () => 'true' });
+      },
+    },
+    {
+      name: 'modal open',
+      setup(h) {
+        h.setActiveModal({});
+      },
+    },
+    {
+      name: 'mobile input visible',
+      setup() {
+        global.Input = { mobileTextInputAdapter: { getSnapshot: () => ({ shown: true }) } };
+      },
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const h = makeLayoutHarness();
+      try {
+        testCase.setup(h);
+        h.body.classList.add('fullscreen-active');
+        ChromeLayout.setFullscreenActive(true, h.root);
+        h.body.classList.remove('fullscreen-active');
+        timers.length = 0;
+        ChromeLayout.setFullscreenActive(false, h.root);
+        assert.equal(timers.length, 0, `${testCase.name} must block idle re-arm`);
+      } finally {
+        h.restore();
+        delete global.Input;
+      }
+    }
+
+    const disabled = makeLayoutHarness();
+    try {
+      ChromeLayout.autoIdleEnabled = false;
+      disabled.body.classList.add('fullscreen-active');
+      ChromeLayout.setFullscreenActive(true, disabled.root);
+      disabled.body.classList.remove('fullscreen-active');
+      timers.length = 0;
+      ChromeLayout.setFullscreenActive(false, disabled.root);
+      assert.equal(timers.length, 0, 'disabled auto idle must block re-arm');
+    } finally {
+      ChromeLayout.autoIdleEnabled = true;
+      disabled.restore();
+    }
+
+    const allowed = makeLayoutHarness();
+    try {
+      allowed.body.classList.add('fullscreen-active');
+      ChromeLayout.setFullscreenActive(true, allowed.root);
+      allowed.body.classList.remove('fullscreen-active');
+      timers.length = 0;
+      ChromeLayout.setFullscreenActive(false, allowed.root);
+      assert.equal(timers.length, 1, 'allowed exit must re-arm idle');
+    } finally {
+      allowed.restore();
+    }
+  } finally {
+    ChromeLayout.autoIdleEnabled = true;
+    if (previousInput === undefined) delete global.Input;
+    else global.Input = previousInput;
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
   }
 });
 
