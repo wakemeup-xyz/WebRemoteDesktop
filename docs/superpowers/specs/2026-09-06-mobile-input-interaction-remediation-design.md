@@ -149,6 +149,7 @@ viewerHeight = max(0, availableHeight - chromeTop - safeBottom - textReserve - d
 - `availableHeight < 360px` 时进入 ultraCompact：压缩为顶部一行44px、文本/重试一行44px、导航一行44px；正文预览可折叠，真正textarea保留可聚焦且不以display:none隐藏composition。该极限状态允许画面小于120px；空间足够时必需按钮必须可达，不通过CSS min-height把控件顶出屏幕。
 - 375×812/768×1024/1024×1366、300px inset 下以compact策略保证viewerHeight≥120px；568×320/inset160使用ultraCompact。`availableHeight < 140 + safeBottom`时设置unsupportedViewport=true，暂停新增文本与桌面写入、保留草稿与安全释放，提示收起系统键盘/旋转；此几何条件无法容纳三个44px行及8px间距，不要求假造全控件可达。恢复到支持尺寸只恢复输入门禁，不自动发送草稿，也不打断当前composition去强制blur。
 - ChromeLayout把该结果单向传给`Input.setViewportInputSupported(supported: boolean)`，只保存派生门禁，不重写lease/isActive、不reset草稿。文本isEnabled、新touch/mouse down、toolbar动作、物理keydown读取此门禁；keyup/mouse up/reset始终保持现有释放路径。缺少布局计算时默认true，避免桌面无touch退化。
+- unsupported暂停的是新的手势/上下文入口；已被接受且尚未结束的touch/mouse手势move保留原通路，但仍受几何失效/reset检查。普通hover或仅带buttons字段的未接受动作不得据此绕过门禁。既有mobileInputStatus须明确提示收起键盘或旋转，包括空草稿；恢复尺寸移除该提示，不清草稿或覆盖仍存在的不确定性。
 - `compact=touchSupported && textVisible`；`ultraCompact=compact && availableHeight<360`；`unsupportedViewport=ultraCompact && availableHeight<140+safeBottom`。模式选择不依赖自己改变后的DOM高度；先定模式再测量，不能按viewerHeight反向切换造成振荡。无touch桌面保持原布局和可输入门禁。ResizeObserver测量真实Dock内容；一次rAF批量写CSS，值不变不重写，同尺寸20帧不得抖动。
 - 所有键保持至少44×44 CSS px，溢出水平滚动；mobileInputMode 显式从适配器状态派生，不再永远默认 off；软键盘开时暂停 chrome auto-idle。
 

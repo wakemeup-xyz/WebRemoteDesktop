@@ -266,6 +266,7 @@ const viewerHeight = Math.max(0, availableHeight - chromeTop - safeBottom
 - [ ] **Step 6:** mode先按touchSupported/textVisible/availableHeight选择，ultraCompact阈值固定availableHeight<360，不依赖修改后的viewerHeight；ResizeObserver测量在一帧内归并，值相同不写。测试offsetTop=100/visualHeight=400时availableHeight=400、visibleBottom=500，不能算500px可见高度；顶部chrome随visibleTop定位。再覆盖safe-area、VK未生效、899px跨界、关闭恢复与20帧稳定。更新旧CSS regex测试，删除要求重复padding的断言。
 - [ ] **Step 7:** Run `node --test web-client/js/chrome-layout.test.js web-client/js/input.test.js web-client/css/viewer-layout.test.js`。补充unsupported时阻止新text/down/toolbar/物理keydown但keyup/up/reset可发送、草稿保留、恢复尺寸不重放。Task7浏览器必须再验证≥120px画面和控件可达，不以pure function PASS完成整个F2/F6验收。
 - [ ] **Step 8:** 暂存并check，提交 `fix(viewer): unify keyboard avoidance on phones and tablets`。
+- [ ] **审查补充:** unsupported的空草稿/待发草稿均显示收起键盘或旋转提示；恢复后保留原pending/uncertain状态。实际已接受且未结束的touch/mouse move仍经原通路，几何失效另行reset；未接受hover、新down、toolbar/rightClick保持拒绝，up/reset无阻。增加真实Input/Touch/controller回归，不仅断言派生setter或CSS class。
 
 ### Task 6: 完整Viewer全屏（F7）
 
