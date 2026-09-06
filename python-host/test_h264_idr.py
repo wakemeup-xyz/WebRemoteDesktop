@@ -3,6 +3,8 @@ import json
 import logging
 from unittest.mock import MagicMock
 
+import pytest
+
 import host as host_module
 
 from h264_videotoolbox_encoder import (
@@ -426,6 +428,82 @@ def test_relay_policy_uses_libx264_and_vbv_cap():
     assert "intra-refresh=0" in params
     enc = H264VideoToolboxEncoder(policy=policy)
     assert enc.codec_name == "libx264"
+
+
+def test_real_codec_creation_submits_policy_preset_and_preserves_frozen_legacy_options():
+    """A policy preset must reach the real libx264 codec configuration."""
+    from dataclasses import replace
+
+    import av
+    import numpy as np
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    intent = MediaSessionIntent("preset-test", 1, "relay", 1152, 720, 20, 0)
+    legacy_policy = resolve_h264_policy(intent, "relay-legacy-v1")
+    real_bgra_frame = av.VideoFrame.from_ndarray(
+        np.zeros((720, 1152, 4), dtype=np.uint8), format="bgra"
+    )
+    expected_legacy_options = {
+        "preset": "ultrafast",
+        "tune": "zerolatency",
+        "x264-params": (
+            "keyint=20:min-keyint=20:scenecut=0:bframes=0:"
+            "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+            "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+            "forced-idr=1:vbv-maxrate=1800:vbv-bufsize=180:"
+            "vbv-init=0.4:nal-hrd=none"
+        ),
+    }
+
+    legacy_encoder = H264VideoToolboxEncoder(policy=legacy_policy)
+    legacy_codec = legacy_encoder._create_codec(real_bgra_frame, "libx264")
+    assert legacy_codec.options == expected_legacy_options
+
+    policy = replace(legacy_policy, preset="superfast")
+    encoder = H264VideoToolboxEncoder(policy=policy)
+    codec = encoder._create_codec(real_bgra_frame, "libx264")
+
+    assert codec.options["preset"] == "superfast"
+    record = encoder.codec_creation_records[0]
+    assert record.scenario_id == "preset-test"
+    assert record.resolution == (1152, 720)
+    assert record.creation_index == 1
+    assert record.requested_preset == "superfast"
+    assert dict(record.submitted_codec_options)["preset"] == "superfast"
+    assert record.generation == 1
+    assert record.reopen_reason == "initial"
+    with pytest.raises(TypeError):
+        record.submitted_codec_options["preset"] = "ultrafast"
+
+
+def test_real_codec_creation_rejects_unknown_preset_before_opening_codec(monkeypatch):
+    """Invalid policy data must fail before PyAV is allowed to allocate a codec."""
+    from dataclasses import replace
+
+    import av
+    import h264_videotoolbox_encoder as encoder_module
+    import numpy as np
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    class UnexpectedCodecContext:
+        @staticmethod
+        def create(*_args, **_kwargs):
+            raise AssertionError("codec creation must not run for an invalid preset")
+
+    policy = replace(
+        resolve_h264_policy(
+            MediaSessionIntent("invalid-preset", 1, "relay", 1152, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        preset="medium",
+    )
+    frame = av.VideoFrame.from_ndarray(
+        np.zeros((720, 1152, 4), dtype=np.uint8), format="bgra"
+    )
+    monkeypatch.setattr(encoder_module.av, "CodecContext", UnexpectedCodecContext)
+
+    with pytest.raises(ValueError, match="unsupported libx264 preset"):
+        H264VideoToolboxEncoder(policy=policy)._create_codec(frame, "libx264")
 
 
 def test_encoder_does_not_change_codec_when_legacy_gop_changes():

@@ -4,9 +4,11 @@ import logging
 import math
 import time
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from itertools import tee
 from struct import pack, unpack_from
-from typing import Optional, Type, TypeVar
+from types import MappingProxyType
+from typing import Mapping, Optional, Type, TypeVar
 
 import av
 from av.frame import Frame
@@ -36,6 +38,29 @@ NAL_TYPE_STAP_A = 24
 
 _session_gop_size = 40
 
+LIBX264_ALLOWED_PRESETS = frozenset({"ultrafast", "superfast"})
+CODEC_REOPEN_REASONS = frozenset({
+    "initial",
+    "resolution-change",
+    "policy-update",
+    "codec-fallback",
+    "delayed-idr-recovery",
+    "decoder-refresh",
+})
+
+
+@dataclass(frozen=True)
+class CodecCreationRecord:
+    """Immutable local evidence of one actual codec construction."""
+
+    scenario_id: str
+    resolution: tuple[int, int]
+    creation_index: int
+    requested_preset: str
+    submitted_codec_options: Mapping[str, str]
+    generation: int
+    reopen_reason: str
+
 
 def set_session_gop_size(gop: int) -> int:
     global _session_gop_size
@@ -56,7 +81,17 @@ def periodic_idr_due(encoded_frame_count: int, periodic_idr_frames: int) -> bool
     )
 
 
-def libx264_zerolatency_options(bitrate_bps: int, gop: int, vbv_buffer_ms: int = 100) -> dict:
+def libx264_zerolatency_options(
+    bitrate_bps: int,
+    gop: int,
+    vbv_buffer_ms: int = 100,
+    *,
+    preset: str = "ultrafast",
+) -> dict:
+    preset_s = str(preset)
+    if preset_s not in LIBX264_ALLOWED_PRESETS:
+        allowed = ", ".join(sorted(LIBX264_ALLOWED_PRESETS))
+        raise ValueError(f"unsupported libx264 preset {preset_s!r}; allowed: {allowed}")
     kbps = max(1, int(bitrate_bps) // 1000)
     # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
     # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
@@ -65,7 +100,7 @@ def libx264_zerolatency_options(bitrate_bps: int, gop: int, vbv_buffer_ms: int =
         int(gop) if int(gop) > 0 else ON_DEMAND_ONLY_KEYINT_FRAMES
     )
     return {
-        "preset": "ultrafast",
+        "preset": preset_s,
         "tune": "zerolatency",
         "x264-params": (
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
@@ -212,6 +247,7 @@ class H264VideoToolboxEncoder(Encoder):
         self,
         *,
         policy: H264SessionPolicy | None = None,
+        scenario_id: str | None = None,
     ) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
@@ -220,6 +256,13 @@ class H264VideoToolboxEncoder(Encoder):
             MediaSessionIntent("legacy-local", 0, "direct", 1280, 720, 20, 0),
             "relay-legacy-v1",
         )
+        self._scenario_id = str(
+            self._policy.connection_attempt_id if scenario_id is None else scenario_id
+        )
+        if not self._scenario_id:
+            raise ValueError("scenario_id is required for encoder construction evidence")
+        self._codec_creation_records: list[CodecCreationRecord] = []
+        self._pending_codec_reopen_reason = "initial"
         self._pending_policy: H264SessionPolicy | None = None
         self.gop_size = self._policy.periodic_idr_frames
         self.codec_name = self._policy.codec_name
@@ -244,6 +287,31 @@ class H264VideoToolboxEncoder(Encoder):
         self._encoder_sample_idr_bytes = []
         self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
         self._encoder_sample_keyframe_reasons = {}
+
+    @property
+    def codec_creation_records(self) -> tuple[CodecCreationRecord, ...]:
+        """Return an append-only, read-only snapshot of local codec openings."""
+        return tuple(self._codec_creation_records)
+
+    def _set_pending_codec_reopen_reason(self, reopen_reason: str) -> None:
+        if reopen_reason not in CODEC_REOPEN_REASONS:
+            allowed = ", ".join(sorted(CODEC_REOPEN_REASONS))
+            raise ValueError(f"unsupported codec reopen reason {reopen_reason!r}; allowed: {allowed}")
+        self._pending_codec_reopen_reason = reopen_reason
+
+    def _consume_pending_codec_reopen_reason(self) -> str:
+        reopen_reason = self._pending_codec_reopen_reason
+        self._pending_codec_reopen_reason = "initial"
+        return reopen_reason
+
+    def _create_codec_for_reason(
+        self,
+        frame: av.VideoFrame,
+        codec_name: str,
+        reopen_reason: str,
+    ) -> VideoCodecContext:
+        self._set_pending_codec_reopen_reason(reopen_reason)
+        return self._create_codec(frame, codec_name)
 
     @staticmethod
     def _sample_percentile(values: list[float], percentile: float) -> float:
@@ -365,6 +433,7 @@ class H264VideoToolboxEncoder(Encoder):
         self.codec_name = policy.codec_name
         self.__target_bitrate = self._clamp_bitrate(policy, policy.target_bitrate_bps)
         if self.codec is not None:
+            self._set_pending_codec_reopen_reason("policy-update")
             self.codec = None
             self.last_idr_recreated = False
             self._idr_wait_remaining = 0
@@ -514,6 +583,7 @@ class H264VideoToolboxEncoder(Encoder):
         ):
             self.buffer_data = b""
             self.buffer_pts = None
+            self._set_pending_codec_reopen_reason("resolution-change")
             self.codec = None
             self.last_idr_recreated = False
             self._idr_wait_remaining = 0
@@ -565,7 +635,9 @@ class H264VideoToolboxEncoder(Encoder):
                 logger.warning("VideoToolbox encode failed, falling back to libx264: %s", exc)
                 _preferred_h264_codec = "libx264"
                 self.codec_name = "libx264"
-                self.codec = self._create_codec(frame, self.codec_name)
+                self.codec = self._create_codec_for_reason(
+                    frame, self.codec_name, "codec-fallback"
+                )
                 encoded_packets = [bytes(package) for package in self.codec.encode(frame)]
             else:
                 raise
@@ -617,7 +689,9 @@ class H264VideoToolboxEncoder(Encoder):
                 and self.codec_name != "libx264"
             ):
                 self.codec = None
-                self.codec = self._create_codec(frame, self.codec_name)
+                self.codec = self._create_codec_for_reason(
+                    frame, self.codec_name, "delayed-idr-recovery"
+                )
                 recreated_this_call = True
                 self.last_idr_recreated = True
                 recreated_packets = list(self.codec.encode(frame))
@@ -684,6 +758,7 @@ class H264VideoToolboxEncoder(Encoder):
             getattr(self.codec, "width", 0),
             getattr(self.codec, "height", 0),
         )
+        self._set_pending_codec_reopen_reason("decoder-refresh")
         self.codec = None
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
@@ -694,6 +769,15 @@ class H264VideoToolboxEncoder(Encoder):
         codec_name = self._policy.codec_name
         bitrate = self._clamp_bitrate(self._policy, self.__target_bitrate)
         self.__target_bitrate = bitrate
+        codec_options = None
+        if codec_name == "libx264":
+            codec_options = libx264_zerolatency_options(
+                bitrate,
+                gop,
+                self._policy.vbv_buffer_ms,
+                preset=self._policy.preset,
+            )
+        reopen_reason = self._consume_pending_codec_reopen_reason()
 
         logger.info(
             "Opening H.264 encoder codec=%s size=%dx%d bitrate=%d gop=%s",
@@ -731,12 +815,23 @@ class H264VideoToolboxEncoder(Encoder):
             codec.flags = flags
         except Exception:
             pass
-        if codec_name == "libx264":
-            codec.options = libx264_zerolatency_options(bitrate, gop, self._policy.vbv_buffer_ms)
+        if codec_options is not None:
+            codec.options = codec_options
             logger.info(
                 "WRD_ENCODER_X264 params=%s",
                 (codec.options or {}).get("x264-params", "-"),
             )
+        self._codec_creation_records.append(
+            CodecCreationRecord(
+                scenario_id=self._scenario_id,
+                resolution=(int(frame.width), int(frame.height)),
+                creation_index=len(self._codec_creation_records) + 1,
+                requested_preset=str(self._policy.preset),
+                submitted_codec_options=MappingProxyType(dict(codec.options or {})),
+                generation=int(self._policy.generation),
+                reopen_reason=reopen_reason,
+            )
+        )
         return codec
 
     def encode(

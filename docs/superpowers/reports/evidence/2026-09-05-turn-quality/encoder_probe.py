@@ -12,7 +12,6 @@ import math
 import os
 import platform
 import random
-import re
 import statistics
 import sys
 import time
@@ -33,9 +32,9 @@ if str(PYTHON_HOST) not in sys.path:
     sys.path.insert(0, str(PYTHON_HOST))
 
 from h264_videotoolbox_encoder import (  # noqa: E402
+    CodecCreationRecord,
     H264VideoToolboxEncoder,
     bitstream_contains_idr,
-    libx264_zerolatency_options,
     periodic_idr_due,
 )
 from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy  # noqa: E402
@@ -75,20 +74,62 @@ def make_static_text_frame(width: int, height: int, font: ImageFont.ImageFont) -
     return np.array(image)
 
 
-def legacy_encoder_settings(bitrate_bps: int, policy) -> dict[str, Any]:
-    """Report the encoder settings configured by the probe without changing them."""
-    x264_options = libx264_zerolatency_options(
-        bitrate_bps,
-        policy.periodic_idr_frames,
-        policy.vbv_buffer_ms,
-    )
-    x264_params = x264_options["x264-params"]
-    match = re.search(r"vbv-bufsize=(\d+)", x264_params)
-    vbv_kbits = int(match.group(1)) if match else 0
+def serialize_codec_creation_record(record: CodecCreationRecord) -> dict[str, Any]:
+    """Expose the immutable call-site record using the evidence schema names."""
+    return {
+        "scenarioId": record.scenario_id,
+        "resolution": list(record.resolution),
+        "creationIndex": record.creation_index,
+        "requestedPreset": record.requested_preset,
+        "submittedCodecOptions": dict(record.submitted_codec_options),
+        "generation": record.generation,
+        "reopenReason": record.reopen_reason,
+    }
+
+
+def encoder_settings_from_creation_records(
+    records: tuple[CodecCreationRecord, ...],
+    *,
+    policy,
+    scenario_id: str,
+    resolution: tuple[int, int],
+    bitrate_bps: int,
+) -> dict[str, Any]:
+    """Validate and report actual codec submissions without regenerating options."""
+    if not records:
+        raise RuntimeError("missing codec creation record")
+
+    expected_resolution = tuple(map(int, resolution))
+    for expected_index, record in enumerate(records, start=1):
+        if record.scenario_id != scenario_id:
+            raise RuntimeError("codec creation scenario mismatch")
+        if record.resolution != expected_resolution:
+            raise RuntimeError("codec creation resolution mismatch")
+        if record.creation_index != expected_index:
+            raise RuntimeError("codec creation index mismatch")
+        if record.requested_preset != policy.preset:
+            raise RuntimeError("codec creation requested preset mismatch")
+        if record.generation != policy.generation:
+            raise RuntimeError("codec creation generation mismatch")
+        if record.reopen_reason != "initial":
+            raise RuntimeError(f"unexpected codec reopen: {record.reopen_reason}")
+        submitted = dict(record.submitted_codec_options)
+        if submitted.get("preset") != policy.preset:
+            raise RuntimeError("codec creation submitted preset mismatch")
+
+    submitted_options = dict(records[-1].submitted_codec_options)
+    x264_params = submitted_options.get("x264-params")
+    if not isinstance(x264_params, str):
+        raise RuntimeError("codec creation record is missing submitted x264 options")
+    vbv_marker = "vbv-bufsize="
+    vbv_value = x264_params.partition(vbv_marker)[2].partition(":")[0]
+    if not vbv_value.isdigit():
+        raise RuntimeError("codec creation record has invalid submitted vbv buffer")
+    vbv_kbits = int(vbv_value)
     return {
         "codec": policy.codec_name,
-        "preset": x264_options["preset"],
-        "tune": x264_options["tune"],
+        "preset": submitted_options["preset"],
+        "tune": submitted_options["tune"],
         "profile": policy.profile,
         "targetFps": policy.target_fps,
         "bitrateBps": bitrate_bps,
@@ -138,6 +179,8 @@ def evaluate_resolution(
     target_bitrate_bps: int | None = None,
     frame_count: int = FRAME_COUNT,
     on_demand_idr_frame: int | None = None,
+    preset: str = "ultrafast",
+    scenario: str | None = None,
 ) -> dict[str, Any]:
     """Encode deterministic candidate parameters without any desktop or network path."""
     source = make_static_text_frame(width, height, font)
@@ -158,8 +201,9 @@ def evaluate_resolution(
             if target_bitrate_bps is None
             else int(target_bitrate_bps)
         ),
+        preset=str(preset),
     )
-    encoder = H264VideoToolboxEncoder(policy=policy)
+    encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario)
     decoder = av.CodecContext.create("h264", "r")
     previous: np.ndarray | None = None
     frames: list[dict[str, Any]] = []
@@ -201,10 +245,21 @@ def evaluate_resolution(
         previous = output
 
     warm_frames = frames[5:]
-    encoder_settings = legacy_encoder_settings(encoder.target_bitrate, policy)
+    creation_records = encoder.codec_creation_records
+    expected_scenario = policy.connection_attempt_id if scenario is None else str(scenario)
+    encoder_settings = encoder_settings_from_creation_records(
+        creation_records,
+        policy=policy,
+        scenario_id=expected_scenario,
+        resolution=(width, height),
+        bitrate_bps=encoder.target_bitrate,
+    )
     return {
         "resolution": [width, height],
         "encoder": encoder_settings,
+        "codecCreationRecords": [
+            serialize_codec_creation_record(record) for record in creation_records
+        ],
         "frames": frames,
         "summary": {
             "encodeMsMedian": round(statistics.median(frame["encodeMs"] for frame in warm_frames), 3),
