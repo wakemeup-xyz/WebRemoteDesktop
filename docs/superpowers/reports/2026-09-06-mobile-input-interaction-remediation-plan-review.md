@@ -64,3 +64,7 @@
 针对实现b75a284，主线程复现ACK乱序仍pending、document实体keydown绕过surface等待、composition起始导航被接受、surface click抢焦点四项；Luna/max复核同意，并确认虚拟modifier关闭被误阻和长拖拽误超时。结论为Needs fixes，不覆盖前述规划历史结论。
 
 主线程裁定3000ms是可靠输入确认超时，不是手势时长上限；同一gesture保留最少确认元数据以抵抗累计pending清理，不新增发送/重试队列。虚拟modifier关闭必须沿用controller原有释放和keyup，review中“不要发新modifier报文”不能被理解为只清本地pressed。spec§5.1及Task4增加具体回归；这些裁定仍须实现和测试证明。
+
+## 实施后续状态（2026-09-06）
+
+以上章节保留各轮审查发生时的原义。Task1–6已完成实施和限定复审；Task4上述六项在`b527ba6`解决，移动框收起→实体键→重新打开的基线问题在`cd9c671`解决。主线程随后用离线真实DOM复现“空草稿surface pending提示增高Dock，导致拖拽被几何reset自取消”；`bfc886d`的最小状态显示修复与独立复审已通过，原生鼠标事件probe由FAIL转PASS。完整Task7集成和最终主线程review仍在进行，见[当前验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)。这些开发分支结果没有改写main/运行服务或真机验收状态。
