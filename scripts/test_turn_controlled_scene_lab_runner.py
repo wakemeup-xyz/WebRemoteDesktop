@@ -74,9 +74,9 @@ def test_viewer_session_identity_uses_the_live_webrtc_connection_sequence_for_ge
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
     class Page:
         def evaluate(self, _script):
-            return {"attemptId": "runtime-attempt", "generation": 7, "sourceWidth": 1920, "sourceHeight": 1080}
+                return {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "sourceWidth": 1920, "sourceHeight": 1080}
     adapter.viewer_page = Page()
-    assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "sourceWidth": 1920, "sourceHeight": 1080}
+    assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "sourceWidth": 1920, "sourceHeight": 1080}
 
 
 def test_marker_roi_calibration_uses_canvas_content_inside_the_visible_fixture_border():
@@ -278,4 +278,16 @@ def test_viewer_token_can_be_loaded_from_a_named_environment_variable_without_pu
 
 def test_lifecycle_failure_keeps_the_known_admission_contract_error_but_redacts_unknown_exception_text():
     assert runner.lifecycle_failure(RuntimeError("production proof admission was not granted for the observed epoch")) == "lifecycle:RuntimeError:production-proof-admission-epoch-mismatch"
+
+
+def test_t4_t5_owner_seals_only_after_clear_through_the_host_unix_authority(tmp_path):
+    commands = []
+    result = type("Result", (), {"returncode": 0})()
+    runner.seal_loss_bridge_after_clear(
+        manifest_path=tmp_path / "manifest.json", socket_path=tmp_path / "authority.sock",
+        raw_bridge_path=tmp_path / "raw.json", cleared_event_path=tmp_path / "cleared.json", seal_path=tmp_path / "seal.json",
+        run=lambda command: commands.append(command) or result,
+    )
+    assert commands[0][2] == "seal-bridge"
+    assert "--verifier-fd" not in commands[0] and "--event" in commands[0]
     assert runner.lifecycle_failure(RuntimeError("secret=must-not-persist")) == "lifecycle:RuntimeError"

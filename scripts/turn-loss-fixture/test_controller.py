@@ -37,7 +37,7 @@ def manifest(**overrides):
         "credentialsFile": "credentials/turn.json",
         "receiverEvidenceFile": "receiver/sequence.json",
         "receiverBridgeFile": "receiver/bridge.json",
-        "selectedTurn": {"id": "turn-candidate-1", "fingerprint": "sha256:" + "d" * 64},
+        "selectedTurn": {"id": "turn-candidate-1", "fingerprint": "sha256:" + "d" * 64, "digest": "e" * 64},
         "versionDigest": "a" * 64,
         "imageDigests": {
             "turn": "registry.example/turn@sha256:" + "b" * 64,
@@ -510,7 +510,7 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
     t3["signature"] = controller.sign_t3_artifact(t3, verifier)
     t5 = {"identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1, "scope": scope, "selectedTurn": raw_manifest["selectedTurn"]},
           "static": {"status": "PASS"}, "automatic": {"status": "PASS", "workload": [{"actionId": 1}]},
-          "receipts": [{"inputId": "input-1", "actionId": 1, "reservation": {"inputId": "input-1"}, "ack": {"inputId": "input-1", "status": "applied"}, "claim": {"inputId": "input-1", "status": "claimed"}, "receipt": {"inputId": "input-1"}, "visual": {"inputId": "input-1", "status": "PASS"}}]}
+          "receipts": [{"inputId": "input-1", "actionId": 101, "logicalActionId": 1, "reservation": {"inputId": "input-1"}, "binding": {"fixtureId": "fixture", "leaseId": "lease", "leaseEpoch": 1, "action": {}}, "ack": {"inputId": "input-1", "status": "applied"}, "claim": {"inputId": "input-1", "status": "claimed"}, "native": {"inputId": "input-1"}, "visual": {"inputId": "input-1", "status": "PASS"}}]}
     t5["signature"] = controller.sign_t5_transcript(t5, verifier)
     bridge = {
         "schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
@@ -549,7 +549,7 @@ def test_authenticated_t3_t5_bridge_requires_live_verifier_and_all_recovery_link
 @pytest.mark.parametrize("mutation", [
     lambda bridge: bridge["t3"].__setitem__("runId", "other-run"),
     lambda bridge: bridge["loss"].__setitem__("attemptId", "other-attempt"),
-    lambda bridge: bridge["loss"].__setitem__("selectedTurn", {"id": "other", "fingerprint": "sha256:" + "e" * 64}),
+    lambda bridge: bridge["loss"].__setitem__("selectedTurn", {"id": "other", "fingerprint": "sha256:" + "e" * 64, "digest": "f" * 64}),
     lambda bridge: bridge["timeline"].__setitem__("idr", {}),
     lambda bridge: bridge["timeline"]["pc"].append({"id": "pc-2", "state": "connected", "resolution": {"width": 1280, "height": 720}}),
 ])
@@ -588,6 +588,21 @@ def test_authenticated_bridge_rejects_a_validly_signed_cross_attempt_replay():
     bridge["loss"]["attemptId"] = "replayed-attempt"
     bridge["t3"]["scope"]["attemptId"] = "replayed-attempt"
     bridge["t3"]["signature"] = controller.sign_t3_artifact(bridge["t3"], verifier)
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_a_validly_signed_legacy_t5_without_scope_or_native_receipt():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    bridge["t5"]["identity"].pop("scope")
+    bridge["t5"]["receipts"][0].pop("native")
+    bridge["t5"]["signature"] = controller.sign_t5_transcript(bridge["t5"], verifier)
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
     assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"

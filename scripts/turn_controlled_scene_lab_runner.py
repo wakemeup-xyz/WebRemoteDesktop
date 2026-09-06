@@ -13,6 +13,8 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -132,10 +134,12 @@ class ExecutableLabDriver:
                     result = aggregate_action_evidence(reservation=reservation, ack=ack, claim=claim, receipt=receipt, visual=visual)
                     if result["status"] != PASS:
                         raise RuntimeError(str(result.get("failure") or "five-way-evidence-failed"))
-                    receipts.append({"inputId": input_id, "actionId": item.action_id, "markerActionId": step.action_id,
+                    receipts.append({"inputId": input_id, "actionId": step.action_id, "logicalActionId": item.action_id, "markerActionId": step.action_id,
                                      "kind": item.kind, "phase": step.phase,
                                      **({"text": item.text} if item.kind == "text" else {}),
-                                     "ack": dict(ack), "claim": dict(claim), "receipt": dict(receipt), "visual": dict(visual)})
+                                     "reservation": dict(reservation),
+                                     "binding": {"fixtureId": self.fixture_id, "leaseId": lease_id, "leaseEpoch": lease_epoch, "action": action},
+                                     "claim": dict(claim), "ack": dict(ack), "native": dict(receipt), "visual": dict(visual)})
                     if step.kind == "drag" and step.phase == "up":
                         drag_started = False
                 completed_workload.append(workload_record(item))
@@ -523,11 +527,13 @@ class PlaywrightLabViewerAdapter:
         row = self.viewer_page.evaluate("""() => ({
           attemptId: WebRTC?.currentConnectionAttemptId || '',
           generation: Number(WebRTC?.connectionAttemptSequence || 0),
+          streamId: String(WebRTC?.activeVideoStreamId || WebRTC?.remoteStream?.getVideoTracks?.()[0]?.id || ''),
           sourceWidth: Number(document.getElementById('remoteVideo')?.videoWidth || 0),
           sourceHeight: Number(document.getElementById('remoteVideo')?.videoHeight || 0),
         })""")
         if (not isinstance(row, dict) or not isinstance(row.get("attemptId"), str) or not row["attemptId"]
                 or not isinstance(row.get("generation"), int) or row["generation"] <= 0
+                or not isinstance(row.get("streamId"), str) or not row["streamId"]
                 or not isinstance(row.get("sourceWidth"), int) or row["sourceWidth"] <= 0
                 or not isinstance(row.get("sourceHeight"), int) or row["sourceHeight"] <= 0):
             return None
@@ -578,6 +584,22 @@ def write_artifact(path: Path, transcript: LabTranscript | Mapping[str, Any]) ->
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def seal_loss_bridge_after_clear(*, manifest_path: Path, socket_path: Path, raw_bridge_path: Path,
+                                 cleared_event_path: Path, seal_path: Path,
+                                 run: Callable[[list[str]], Any] | None = None) -> None:
+    """T4/T5 owner entrypoint after controller `clear` returns its event.
+
+    The parent invokes this while its LabRun still owns the Unix authority.
+    It forwards no verifier: `bridge-authority` already holds it in memory.
+    """
+    command = [sys.executable, str(Path(__file__).with_name("turn-loss-fixture") / "controller.py"), "seal-bridge",
+               "--manifest", str(manifest_path), "--socket", str(socket_path), "--bridge", str(raw_bridge_path),
+               "--event", str(cleared_event_path), "--output", str(seal_path)]
+    completed = (run or (lambda argv: subprocess.run(argv, check=False, capture_output=True, text=True)))(command)
+    if getattr(completed, "returncode", 0) != 0:
+        raise RuntimeError("isolated loss bridge seal was refused")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run isolated Lab Signal/Host/static lifecycle; never falls back to personal-desktop input.")
     token_group = parser.add_mutually_exclusive_group(required=True)
@@ -610,7 +632,10 @@ def main(argv: list[str] | None = None) -> int:
                                      source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=roi)
         adapter.configure_marker_roi(layout)
         visible, reason = adapter.producer_window_precondition()
-        identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
+        selected_turn = lab.selected_turn_identity()
+        identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
+                           "scope": {"attemptId": session["attemptId"], "generation": session["generation"], "streamId": session["streamId"]},
+                           "selectedTurn": selected_turn}
         if not visible:
             transcript = LabTranscript.create(verifier=lab.transcript_verifier(), identity=identity_record,
                 static={"status": NOT_RUN, "failures": [reason], "layout": asdict(layout)},

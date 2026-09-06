@@ -278,7 +278,7 @@ class LabRun:
         self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch: int | None = None
         self._transcript_secret = ""
         self._production_proof: ProductionProof | None = None; self._expected_identity: LabIdentity | None = None
-        self._expected_turn_applied_digest = ""
+        self._expected_turn_applied_digest = ""; self._selected_turn_identity: dict[str, str] | None = None
         self.closed = True; self._lock = threading.RLock(); self._state_changed = threading.Condition(self._lock)
         self._watch_stop: threading.Event | None = None
         self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
@@ -393,6 +393,9 @@ class LabRun:
                 self._host_secret, self._viewer_password, self._context_secret, self._transcript_secret = lab.host_secret, lab.viewer_password, lab.context_secret, lab.transcript_secret
                 self._production_epoch, self._production_proof, self._expected_identity = proof.epoch, proof, identity
                 self._expected_turn_applied_digest = expected_turn_applied_digest
+                self._selected_turn_identity = {"id": turn_bootstrap.selected_turn_server_id,
+                                                "fingerprint": turn_bootstrap.turn_fingerprint,
+                                                "digest": expected_turn_applied_digest}
                 self._last_status = "running"
                 watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-lab-watch-{run_id}", daemon=True)
                 self._watch_thread = watch
@@ -492,6 +495,13 @@ class LabRun:
             if self.closed or not self._transcript_secret:
                 raise RuntimeError("running lab transcript verifier is required")
             return self._transcript_secret.encode("utf-8")
+
+    def selected_turn_identity(self) -> dict[str, str]:
+        """Read the already production-preflighted TURN identity without credentials."""
+        with self._lock:
+            if self.closed or self._selected_turn_identity is None:
+                raise RuntimeError("running Lab selected TURN identity is required")
+            return dict(self._selected_turn_identity)
 
     def runtime_dir(self) -> Path:
         """Expose the current Lab-owned log directory for read-only collectors."""
@@ -716,7 +726,7 @@ class LabRun:
                     self._last_status = "closed"
                 proof = self._production_proof
                 admission_pending = self._admission_token is token
-                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._expected_turn_applied_digest = ""; self._production_epoch = None; self._production_proof = None
+                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._expected_turn_applied_digest = ""; self._selected_turn_identity = None; self._production_epoch = None; self._production_proof = None
                 self._run_token = None; self._watch_stop = None; self._watch_thread = None
         for child in children:
             self._terminate_child(child)

@@ -147,13 +147,16 @@ class LossFixtureManifest:
         if bridge_path.is_absolute() or ".." in bridge_path.parts or bridge_path != PurePosixPath("receiver/bridge.json"):
             raise ValueError("receiverBridgeFile must be the isolated receiver/bridge.json reference")
         selected_turn_raw = raw["selectedTurn"]
-        if not isinstance(selected_turn_raw, Mapping) or set(selected_turn_raw) != {"id", "fingerprint"}:
+        if not isinstance(selected_turn_raw, Mapping) or set(selected_turn_raw) != {"id", "fingerprint", "digest"}:
             raise ValueError("selectedTurn must identify the selected TURN candidate")
         selected_turn = {"id": _require_string(selected_turn_raw["id"], "selectedTurn.id"),
-                         "fingerprint": _require_string(selected_turn_raw["fingerprint"], "selectedTurn.fingerprint")}
+                         "fingerprint": _require_string(selected_turn_raw["fingerprint"], "selectedTurn.fingerprint"),
+                         "digest": _require_string(selected_turn_raw["digest"], "selectedTurn.digest")}
         fingerprint = selected_turn["fingerprint"]
         if not fingerprint.startswith("sha256:") or len(fingerprint) != 71 or any(char not in "0123456789abcdef" for char in fingerprint[7:]):
             raise ValueError("selectedTurn fingerprint must be a sha256 digest")
+        if len(selected_turn["digest"]) != 64 or any(char not in "0123456789abcdef" for char in selected_turn["digest"]):
+            raise ValueError("selectedTurn digest must be a sha256 hex digest")
         digest = _require_string(raw["versionDigest"], "versionDigest")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ValueError("versionDigest must be a sha256 hex digest")
@@ -600,18 +603,19 @@ class SignedT3T5ReceiverEvidenceSource:
                 or not isinstance(value["automatic"], Mapping) or value["automatic"].get("status") != "PASS"
                 or not isinstance(receipts, list) or not receipts or not isinstance(workload, list) or not workload):
             raise RuntimeError("T5 five-way evidence is incomplete")
-        input_ids, action_ids = set(), set()
+        input_ids, action_ids, logical_ids = set(), set(), set()
         for receipt in receipts:
             if (not isinstance(receipt, Mapping) or not isinstance(receipt.get("inputId"), str) or not isinstance(receipt.get("actionId"), int)
-                    or receipt["inputId"] in input_ids or receipt["actionId"] in action_ids
-                    or not all(isinstance(receipt.get(key), Mapping) for key in ("reservation", "ack", "claim", "receipt", "visual"))):
+                    or not isinstance(receipt.get("logicalActionId"), int) or receipt["inputId"] in input_ids or receipt["actionId"] in action_ids
+                    or not all(isinstance(receipt.get(key), Mapping) for key in ("reservation", "binding", "ack", "claim", "native", "visual"))):
                 raise RuntimeError("T5 receipt does not contain five-way evidence")
             input_ids.add(receipt["inputId"]); action_ids.add(receipt["actionId"])
             input_id = receipt["inputId"]
-            if any(receipt[key].get("inputId") != input_id for key in ("reservation", "ack", "claim", "receipt", "visual")):
+            logical_ids.add(receipt["logicalActionId"])
+            if any(receipt[key].get("inputId") != input_id for key in ("reservation", "ack", "claim", "native", "visual")):
                 raise RuntimeError("T5 five-way receipt has mismatched input identity")
         workload_ids = {row.get("actionId") for row in workload if isinstance(row, Mapping)}
-        if len(workload_ids) != len(workload) or workload_ids != action_ids:
+        if len(workload_ids) != len(workload) or workload_ids != logical_ids:
             raise RuntimeError("T5 exact workload does not match five-way receipts")
 
     def sequences_for(self, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
