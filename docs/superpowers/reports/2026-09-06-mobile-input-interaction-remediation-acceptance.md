@@ -1,6 +1,6 @@
 # 手机 / iPad 输入交互整改验收
 
-日期：2026-09-06。状态：**全部开发及离线自动化已完成，Task7限定审查和主线程最终review进行中，本文尚非最终审查通过结论。**
+日期：2026-09-06。状态：**生产整改及正常离线测试已通过；Task7首次限定审查确认4项验收覆盖缺口，正在修正，主线程最终review尚未通过。**
 
 - 分支：`codex/mobile-input-interaction-remediation`，从`main@195e0c6`隔离开发；生产整改提交至`bfc886d`，最终验收脚本提交`0a346eb`。
 - [设计](../specs/2026-09-06-mobile-input-interaction-remediation-design.md)、[计划](../plans/2026-09-06-mobile-input-interaction-remediation-plan.md)、[原F1–F7问题与红态证据](2026-09-05-mobile-touch-keyboard-logic-review.md)、[方案审查及后续纠偏](2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
@@ -73,7 +73,7 @@ npm test
 
 | 范围 | 状态 / 原因 |
 |---|---|
-| Task7严格离线Chromium集成 | PASS；12场景，44组合矩阵及CLI契约已完成；限定审查待完成 |
+| Task7严格离线Chromium集成 | 原执行12场景PASS；首次限定审查发现R11历史、R12门禁内OFF、R9焦点转换及外部几何reset四项证据缺口，修复中；主线程两项负向控制证实原PASS不能识别对应故意回归 |
 | 主线程最终whole-branch review | IN PROGRESS；独立最终命令已完成，不用测试PASS替代代码审查 |
 | WebKit引擎 | NOT RUN；当前环境缺可用运行时，最终CLI已按exit2记录；未自动安装 |
 | Android Chrome / iPhone Safari / iPad Safari | NOT RUN；没有真实设备执行证据，桌面touch模拟不替代 |
