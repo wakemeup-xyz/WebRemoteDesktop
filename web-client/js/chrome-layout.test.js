@@ -8,10 +8,207 @@ test('syncChromeTop writes pixel height to --chrome-top', () => {
   assert.equal(root.style['--chrome-top'], '223px');
 });
 
-test('syncChromeTop ignores non-positive heights', () => {
+test('syncChromeTop accepts zero and ignores negative or non-finite heights', () => {
   const root = { style: { setProperty(name, value) { this[name] = value; } } };
   ChromeLayout.syncChromeTop(0, root);
-  assert.equal(root.style['--chrome-top'], undefined);
+  assert.equal(root.style['--chrome-top'], '0px');
+  ChromeLayout.syncChromeTop(-1, root);
+  assert.equal(root.style['--chrome-top'], '0px');
+  ChromeLayout.syncChromeTop(Number.NaN, root);
+  assert.equal(root.style['--chrome-top'], '0px');
+});
+
+function makeLayoutHarness({
+  chromeTop = 44,
+  dockHeight = 132,
+  textDockHeight = 52,
+  textVisible = false,
+  streamConnected = true,
+  bodyClass = '',
+} = {}) {
+  ChromeLayout._mobileLayoutCleanup?.();
+  ChromeLayout._mobileLayoutRaf = null;
+  ChromeLayout._mobileLayoutPending = null;
+  ChromeLayout._mobileLayoutLastSupported = null;
+  ChromeLayout._mobileViewportSnapshot = null;
+  ChromeLayout._idleTimer = null;
+
+  const classes = new Set(String(bodyClass).split(/\s+/).filter(Boolean));
+  if (streamConnected) classes.add('stream-connected');
+  const properties = new Map();
+  const elements = new Map();
+  const eventListeners = new Map();
+  const body = {
+    classList: {
+      contains(name) { return classes.has(name); },
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+    },
+  };
+  const element = (height, visible = true) => ({
+    hidden: !visible,
+    classList: { contains(name) { return name === 'hidden' && !visible; } },
+    style: {},
+    getBoundingClientRect() { return { height }; },
+    offsetHeight: height,
+  });
+  const status = element(chromeTop);
+  const docks = element(dockHeight);
+  const textDock = element(textDockHeight, textVisible);
+  const panel = element(0);
+  const desktopTab = { getAttribute(name) { return name === 'aria-selected' ? 'true' : null; } };
+  elements.set('statusBar', status);
+  elements.set('chromeDocks', docks);
+  elements.set('mobileInputDock', textDock);
+  elements.set('desktopPanel', panel);
+  elements.set('desktopTabBtn', desktopTab);
+  const style = {
+    setProperty(name, value) { properties.set(name, value); },
+    removeProperty(name) { properties.delete(name); },
+    getPropertyValue(name) { return properties.get(name) || ''; },
+  };
+  const documentElement = { clientHeight: 812, style };
+  const view = {
+    innerHeight: 812,
+    visualViewport: { height: 812, offsetTop: 0 },
+    navigator: { maxTouchPoints: 1 },
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
+    cancelAnimationFrame() {},
+  };
+  const root = {
+    body,
+    defaultView: view,
+    navigator: view.navigator,
+    documentElement,
+    style,
+    getElementById(id) { return elements.get(id) || null; },
+    querySelector(selector) {
+      if (selector === 'body') return body;
+      if (selector.startsWith('#')) return elements.get(selector.slice(1)) || null;
+      return null;
+    },
+    querySelectorAll() { return []; },
+    addEventListener(type, handler) {
+      if (!eventListeners.has(type)) eventListeners.set(type, new Set());
+      eventListeners.get(type).add(handler);
+    },
+    removeEventListener(type, handler) { eventListeners.get(type)?.delete(handler); },
+  };
+  const originalCompute = ChromeLayout.computeMobileLayout;
+  const harness = {
+    root,
+    body,
+    classes,
+    properties,
+    elements,
+    eventListeners,
+    layoutInput: null,
+    layout: null,
+    restore() {
+      ChromeLayout.computeMobileLayout = originalCompute;
+      ChromeLayout._mobileLayoutCleanup?.();
+      ChromeLayout._mobileLayoutRaf = null;
+      ChromeLayout._mobileLayoutPending = null;
+      ChromeLayout._mobileLayoutLastSupported = null;
+      ChromeLayout._mobileViewportSnapshot = null;
+      ChromeLayout._idleTimer = null;
+    },
+  };
+  ChromeLayout.computeMobileLayout = (input) => {
+    harness.layoutInput = { ...input };
+    harness.layout = originalCompute.call(ChromeLayout, input);
+    return harness.layout;
+  };
+  return harness;
+}
+
+test('fullscreen uses zero effective chrome top and dock height without rewriting dock state', () => {
+  const h = makeLayoutHarness({ chromeTop: 44, dockHeight: 132, streamConnected: true });
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const previousMutationObserver = global.MutationObserver;
+  const timers = [];
+  const cleared = [];
+  const observers = [];
+  global.setTimeout = (callback, delay) => {
+    const timer = { callback, delay };
+    timers.push(timer);
+    return timer;
+  };
+  global.clearTimeout = (timer) => cleared.push(timer);
+  global.MutationObserver = class MutationObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe() {}
+    disconnect() {}
+  };
+
+  try {
+    ChromeLayout.recalculate(h.root);
+    assert.equal(h.properties.get('--chrome-top'), '44px');
+    assert.equal(h.layoutInput.chromeTop, 44);
+    assert.equal(h.layoutInput.dockContentHeight, 132);
+    const normalViewerHeight = h.layout.viewerHeight;
+
+    const unbind = ChromeLayout.bindIdle(h.root);
+    assert.equal(timers.length, 1);
+    h.body.classList.add('fullscreen-active');
+    h.body.classList.add('controls-hidden');
+    ChromeLayout.setFullscreenActive(true, h.root);
+
+    assert.equal(ChromeLayout.isFullscreenActive(h.root), true);
+    assert.equal(h.properties.get('--chrome-top'), '0px');
+    assert.equal(h.properties.get('--mobile-viewer-top'), '0px');
+    assert.equal(h.layoutInput.chromeTop, 0);
+    assert.equal(h.layoutInput.dockContentHeight, 0);
+    assert.equal(h.layout.viewerHeight, normalViewerHeight + 44 + 132);
+    assert.equal(cleared.length, 1);
+
+    ChromeLayout.armIdleTimer(h.root);
+    observers[0].callback();
+    timers[0].callback();
+    ChromeLayout.enterIdle(h.root);
+    ChromeLayout.bump(h.root);
+    assert.equal(h.body.classList.contains('controls-hidden'), true);
+    assert.equal(h.body.classList.contains('chrome-idle'), false);
+    assert.equal(timers.length, 1);
+
+    h.body.classList.remove('fullscreen-active');
+    ChromeLayout.setFullscreenActive(false, h.root);
+    assert.equal(ChromeLayout.isFullscreenActive(h.root), false);
+    assert.equal(h.properties.get('--chrome-top'), '44px');
+    assert.equal(h.properties.get('--mobile-viewer-top'), '44px');
+    assert.equal(h.layoutInput.chromeTop, 44);
+    assert.equal(h.layoutInput.dockContentHeight, 132);
+    assert.equal(h.layout.viewerHeight, normalViewerHeight);
+    unbind();
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+    if (previousMutationObserver) global.MutationObserver = previousMutationObserver;
+    else delete global.MutationObserver;
+    h.restore();
+  }
+});
+
+test('fullscreen keeps only the visible mobile text dock reserve', () => {
+  const h = makeLayoutHarness({
+    chromeTop: 44, dockHeight: 132, textDockHeight: 52, textVisible: true,
+  });
+  try {
+    h.body.classList.add('fullscreen-active');
+    ChromeLayout.setFullscreenActive(true, h.root);
+    assert.equal(h.layoutInput.chromeTop, 0);
+    assert.equal(h.layoutInput.dockContentHeight, 0);
+    assert.equal(h.layoutInput.textDockHeight, 52);
+    assert.equal(h.layoutInput.textVisible, true);
+    assert.equal(h.layout.viewerHeight, h.layout.availableHeight - 52 - 8);
+    assert.equal(h.layout.viewerHeight, 752);
+  } finally {
+    h.restore();
+  }
 });
 
 test('observeStatusBar falls back to the default chrome height without ResizeObserver', () => {
