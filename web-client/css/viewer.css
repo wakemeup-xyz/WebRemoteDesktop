@@ -63,6 +63,15 @@ html:fullscreen body.fullscreen-active:not(.mobile-layout-managed).mobile-input-
   height: calc(100dvh - var(--mobile-text-dock-reserve, 0px));
 }
 
+/* ChromeLayout keeps an 8px normal-flow gap in --mobile-viewer-height.  A
+   managed document fullscreen has no visible dock to separate from the
+   media surface, so consume the full viewport after the existing viewer top;
+   the text-visible path intentionally keeps ChromeLayout's measured reserve. */
+html:fullscreen body.fullscreen-active.mobile-layout-managed:not(.mobile-input-visible) .viewer-container {
+  height: calc(100vh - var(--mobile-viewer-top, 0px));
+  height: calc(100dvh - var(--mobile-viewer-top, 0px));
+}
+
 .fullscreen-exit-overlay {
   position: fixed;
   inset: 0;

@@ -346,6 +346,11 @@ test('fullscreen chrome hides independently while exit overlay stays interactive
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.fullscreen-exit-reveal[\s\S]*?\.fullscreen-exit-panel/);
 });
 
+test('managed fullscreen without the mobile text dock fills from viewer top to viewport', () => {
+  assert.match(css, /html:fullscreen body\.fullscreen-active\.mobile-layout-managed:not\(\.mobile-input-visible\) \.viewer-container\s*\{[\s\S]*?height:\s*calc\(100dvh\s*-\s*var\(--mobile-viewer-top/);
+  assert.doesNotMatch(css, /html:fullscreen body\.fullscreen-active\.mobile-layout-managed\.mobile-input-visible \.viewer-container\s*\{[^}]*height:\s*calc\(100dvh\s*-\s*var\(--mobile-viewer-top/);
+});
+
 test('workspace tabs expose tab semantics', () => {
   assert.match(html, /id="desktopTabBtn"[^>]*role="tab"[^>]*aria-controls="desktopPanel"/);
   assert.match(html, /id="terminalTabBtn"[^>]*role="tab"[^>]*aria-controls="terminalPanel"/);
