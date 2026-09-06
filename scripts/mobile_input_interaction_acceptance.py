@@ -414,6 +414,24 @@ def wire_counts(page: Any) -> dict[str, int]:
     )
 
 
+def keyboard_key_phase_counts(page: Any, code: str) -> dict[str, int]:
+    """Count one keyboard code's accepted down/up phases without exposing it."""
+    return page.evaluate(
+        """
+        (code) => {
+          const keys = (globalThis.__offlineWire || [])
+            .filter((item) => item.type === 'keyboard' && item.action === 'key'
+              && item.payload?.code === code);
+          return {
+            down: keys.filter((item) => item.payload?.phase === 'down').length,
+            up: keys.filter((item) => item.payload?.phase === 'up').length,
+          };
+        }
+        """,
+        code,
+    )
+
+
 def safe_state(page: Any) -> dict[str, Any]:
     return page.evaluate(
         """
@@ -724,38 +742,68 @@ def scenario_text_transaction(browser: Any) -> dict[str, Any]:
 
 
 def scenario_physical_keyup(browser: Any) -> dict[str, Any]:
-    fixture = OfflineFixture(browser, width=768, height=1024, touch=True)
+    fixture = OfflineFixture(browser, width=768, height=1024, touch=True, show_mobile=False)
     page = fixture.page
     try:
-        page.evaluate(
+        initial = page.evaluate(
             """
-            () => document.body.dispatchEvent(new KeyboardEvent('keydown', {
-              bubbles: true, code: 'ShiftLeft', key: 'Shift', shiftKey: true,
-            }))
+            () => ({
+              mobileHidden: Input.mobileTextInputAdapter?.getSnapshot?.().shown !== true,
+              activeElement: document.activeElement?.id || '',
+            })
             """
         )
+        page.locator('#remoteVideo').focus()
+        desktop_focus = page.evaluate("() => document.activeElement?.id === 'remoteVideo'")
+        down_before = keyboard_key_phase_counts(page, "ShiftLeft")
+        page.keyboard.down('Shift')
         down_count = fixture.settle()
-        page.locator('#mobileTextInput').dispatch_event(
-            'keydown',
-            {"key": "ArrowLeft", "code": "ArrowLeft", "shiftKey": True, "bubbles": True},
+        down_after = keyboard_key_phase_counts(page, "ShiftLeft")
+        down_state = safe_state(page)
+        mobile_button_ready = page.locator('#mobileTextInputBtn').evaluate(
+            "el => !el.hidden && !el.disabled"
         )
-        chord_count = fixture.settle()
-        page.locator('#mobileTextInput').dispatch_event(
-            'keyup',
-            {"key": "Shift", "code": "ShiftLeft", "shiftKey": False, "bubbles": True},
+        page.locator('#mobileTextInputBtn').click()
+        mobile_transition = page.evaluate(
+            """
+            () => ({
+              mobileShown: Input.mobileTextInputAdapter?.getSnapshot?.().shown === true,
+              activeElement: document.activeElement?.id || '',
+            })
+            """
         )
+        page.keyboard.up('Shift')
         up_count = fixture.settle()
+        up_after = keyboard_key_phase_counts(page, "ShiftLeft")
         state = safe_state(page)
         counts = wire_counts(page)
         checks = {
-            "physicalModifierDownAccepted": down_count == 1,
-            "textareaChordAccepted": chord_count == 1,
-            "trackedKeyupAccepted": up_count == 1,
+            "startsOnDesktopSurface": bool(initial["mobileHidden"])
+                and bool(desktop_focus) and initial["activeElement"] == "",
+            "physicalModifierDownAccepted": down_count == 1
+                and down_after["down"] - down_before["down"] == 1
+                and down_state["pressedKeys"] == 1,
+            "nativeMobileShowTransition": bool(mobile_button_ready)
+                and bool(mobile_transition["mobileShown"])
+                and mobile_transition["activeElement"] == "mobileTextInput",
+            "trackedKeyupAccepted": up_count == 1
+                and up_after["up"] - down_after["up"] == 1,
             "pressedTruthReleased": state["pressedKeys"] == 0,
-            "exactlyOnePhysicalModifierUp": counts["keyboardKey"] >= 2,
+            "exactlyOnePhysicalModifierDown": down_after["down"] == 1,
+            "exactlyOnePhysicalModifierUp": up_after["up"] == 1,
             "mobileFocusPreserved": state["activeElement"] == "mobileTextInput",
         }
-        return result("physical-keyup-release", "PASS" if all(checks.values()) else "FAIL", checks=checks, counts={"writes": counts["total"], "keyboardKeys": counts["keyboardKey"]})
+        return result(
+            "physical-keyup-release",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "writes": counts["total"],
+                "keyboardKeys": counts["keyboardKey"],
+                "shiftDown": up_after["down"],
+                "shiftUp": up_after["up"],
+            },
+        )
     finally:
         fixture.close()
 
@@ -855,15 +903,72 @@ def scenario_surface_confirmation(browser: Any) -> dict[str, Any]:
             drag_point,
         )
 
-        # Two touch pointers switch to the production scrolling state without
-        # fabricating another mouse down.  The coalesced wheel is a safe count.
-        two_before = wire_counts(page)
-        dispatch_touch(page, 'pointerdown', 40, drag_point['x'], drag_point['y'], 1)
-        dispatch_touch(page, 'pointerdown', 41, drag_point['x'] + 20, drag_point['y'], 1, is_primary=False)
-        dispatch_touch(page, 'pointermove', 41, drag_point['x'] + 36, drag_point['y'] + 12, 1, is_primary=False)
+        # Deliberately mutate the rendered surface during a second accepted
+        # gesture.  The browser resize changes the actual video rect; the next
+        # pointer move must issue one safety reset, suppress the stale move/up,
+        # and require the production discard path before a fresh pointer works.
+        geometry_before_rect = page.evaluate(
+            """
+            () => {
+              const rect = document.getElementById('remoteVideo').getBoundingClientRect();
+              return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+            }
+            """
+        )
+        geometry_before = wire_counts(page)
+        geometry_point = surface_point(page)
+        page.mouse.move(geometry_point['x'], geometry_point['y'])
+        page.mouse.down()
+        geometry_down = safe_state(page)
+        page.set_viewport_size({"width": 900, "height": 768})
         wait_frames(page, 2)
-        dispatch_touch(page, 'pointerup', 41, drag_point['x'] + 36, drag_point['y'] + 12, 0, is_primary=False)
-        dispatch_touch(page, 'pointerup', 40, drag_point['x'], drag_point['y'], 0)
+        geometry_after_rect_changed = page.evaluate(
+            """
+            (before) => {
+              const rect = document.getElementById('remoteVideo').getBoundingClientRect();
+              return ['left', 'top', 'width', 'height'].some((key) =>
+                Math.abs(Number(rect[key]) - Number(before[key])) > 1);
+            }
+            """,
+            geometry_before_rect,
+        )
+        geometry_before_move = wire_counts(page)
+        geometry_move_point = surface_point(page)
+        page.mouse.move(geometry_move_point['x'] + 18, geometry_move_point['y'])
+        wait_frames(page, 2)
+        geometry_after_move = wire_counts(page)
+        geometry_reset_state = safe_state(page)
+        page.mouse.up()
+        geometry_after_stale_up = wire_counts(page)
+        fixture.settle()
+        geometry_after_reset_ack = safe_state(page)
+        geometry_discard_visible = page.locator('#mobileInputDiscardBtn').evaluate(
+            "el => !el.hidden && !el.disabled"
+        )
+        page.locator('#mobileInputDiscardBtn').click()
+        geometry_recovered = safe_state(page)
+        fresh_point = surface_point(page)
+        fresh_before = wire_counts(page)
+        page.mouse.move(fresh_point['x'], fresh_point['y'])
+        page.mouse.down()
+        fresh_down = safe_state(page)
+        page.mouse.up()
+        fixture.settle()
+        fresh_after = safe_state(page)
+        fresh_after_counts = wire_counts(page)
+
+        # Two touch pointers switch to the production scrolling state without
+        # fabricating another mouse down.  Re-read the post-resize surface only
+        # after a settled layout frame; never reuse the pre-resize drag point.
+        wait_frames(page, 2)
+        two_point = surface_point(page)
+        two_before = wire_counts(page)
+        dispatch_touch(page, 'pointerdown', 40, two_point['x'], two_point['y'], 1)
+        dispatch_touch(page, 'pointerdown', 41, two_point['x'] + 20, two_point['y'], 1, is_primary=False)
+        dispatch_touch(page, 'pointermove', 41, two_point['x'] + 36, two_point['y'] + 12, 1, is_primary=False)
+        wait_frames(page, 2)
+        dispatch_touch(page, 'pointerup', 41, two_point['x'] + 36, two_point['y'] + 12, 0, is_primary=False)
+        dispatch_touch(page, 'pointerup', 40, two_point['x'], two_point['y'], 0)
         fixture.settle()
         two_after = wire_counts(page)
 
@@ -930,6 +1035,29 @@ def scenario_surface_confirmation(browser: Any) -> dict[str, Any]:
                 and drag_after["mouseUp"] - drag_before["mouseUp"] == 1,
             "dragStartPointPreserved": bool(drag_payload_checks["startPointPreserved"]),
             "dragMoveUsesCurrentPoint": bool(drag_payload_checks["moveAdvancesFromStart"]),
+            "geometryMutationChangesRenderedRect": bool(geometry_after_rect_changed),
+            "geometryMutationStartsAcceptedGesture": geometry_down["surfaceState"] == "pending",
+            "geometryMutationIssuesExactlyOneReset": geometry_after_move["mouseReset"]
+                - geometry_before["mouseReset"] == 1,
+            "geometryMutationKeepsExactlyOneResetThroughStaleUp": geometry_after_stale_up["mouseReset"]
+                - geometry_before["mouseReset"] == 1,
+            "geometryMutationSuppressesStaleMove": geometry_after_move["mouseMove"]
+                == geometry_before_move["mouseMove"],
+            "geometryMutationSuppressesStaleUp": geometry_after_stale_up["mouseUp"]
+                == geometry_after_move["mouseUp"],
+            "geometryResetAckClearsPressedState": geometry_after_reset_ack["pendingMouseReset"] is False
+                and geometry_after_reset_ack["pressedMouse"] == 0,
+            "geometryResetUsesNativeDiscardRecovery": geometry_reset_state["mobileUncertain"] is True
+                and geometry_after_reset_ack["surfaceState"] == "uncertain"
+                and geometry_discard_visible,
+            "geometryRecoveryClearsSurfaceUncertainty": geometry_recovered["surfaceState"] == "settled"
+                and geometry_recovered["mobileUncertain"] is False
+                and geometry_recovered["mobilePending"] is False,
+            "freshPointerWorksAfterGeometryRecovery": fresh_down["surfaceState"] == "pending"
+                and fresh_after["surfaceState"] == "settled"
+                and fresh_after_counts["mouseDown"] - fresh_before["mouseDown"] == 1
+                and fresh_after_counts["mouseUp"] - fresh_before["mouseUp"] == 1
+                and fresh_after_counts["mouseReset"] - fresh_before["mouseReset"] == 0,
             "secondFingerSwitchesToScroll": two_after["mouseDown"] - two_before["mouseDown"] == 0
                 and two_after["mouseWheel"] - two_before["mouseWheel"] >= 1,
             "leaseChangeClearsDraftAndDoesNotReplay": lease_state["mobilePending"] is False
@@ -955,17 +1083,131 @@ def scenario_modal(browser: Any) -> dict[str, Any]:
     page = fixture.page
     try:
         dispatch_mobile_input(page, "abc")
-        fixture.settle()
+        initial_writes = fixture.settle()
         page.locator('#textInputBtn').click()
         opened = page.locator('#textInputModal').evaluate("el => !el.hidden && !el.classList.contains('hidden')")
-        page.locator('#remoteTextInput').fill('modal')
+        page.locator('#remoteTextInput').fill('X')
+        accepted_before = wire_counts(page)
         page.locator('#textInputSubmitBtn').click()
         submit_writes = fixture.settle()
         after_submit = safe_state(page)
+        accepted_after = wire_counts(page)
         modal_closed = page.locator('#textInputModal').evaluate("el => el.hidden")
+        after_submit_model_matches = page.evaluate(
+            """
+            () => {
+              const expected = Array.from('abcX');
+              const actual = globalThis.__offlineModel;
+              return actual.cursor === expected.length
+                && actual.value.length === expected.length
+                && actual.value.every((value, index) => value === expected[index]);
+            }
+            """
+        )
+        after_submit_history = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const adapter = Input.mobileTextInputAdapter?.getSnapshot?.() || {};
+              return {
+                acceptedBufferReset: input?.value === '\u200b'
+                  && input.selectionStart === 0 && input.selectionEnd === 0,
+                mobileFocusRestored: document.activeElement?.id === 'mobileTextInput',
+                mobileHistoryIdle: adapter.shown === true && adapter.hasPending !== true,
+              };
+            }
+            """
+        )
 
-        # A failed modal submission remains open and does not clear the mobile
-        # draft/history; cancel then only closes the modal.
+        # A later mobile navigation must be a fresh context transaction after
+        # the modal write, then a new mobile character must use that same
+        # remote model without inheriting the old textarea cursor.
+        page.locator('[data-mobile-action="left"]').click()
+        navigation_writes = fixture.settle()
+        after_navigation_model_matches = page.evaluate(
+            """
+            () => {
+              const expected = Array.from('abcX');
+              const actual = globalThis.__offlineModel;
+              return actual.cursor === 3
+                && actual.value.length === expected.length
+                && actual.value.every((value, index) => value === expected[index]);
+            }
+            """
+        )
+        dispatch_mobile_input(page, "Y")
+        follow_up_writes = fixture.settle()
+        after_follow_up_model_matches = page.evaluate(
+            """
+            () => {
+              const expected = Array.from('abcYX');
+              const actual = globalThis.__offlineModel;
+              return actual.cursor === 4
+                && actual.value.length === expected.length
+                && actual.value.every((value, index) => value === expected[index]);
+            }
+            """
+        )
+
+        # A pending mobile draft blocks opening the external modal and must not
+        # be sent by that blocked attempt.  The draft is then explicitly
+        # discarded so each subsequent branch starts from a known context.
+        page.evaluate("() => Input.mobileTextInputAdapter.discardPending()")
+        page.evaluate(
+            """
+            () => {
+              const controller = Input.keyboardController;
+              globalThis.__offlineOriginalSendText = controller.sendText.bind(controller);
+              controller.sendText = () => false;
+            }
+            """
+        )
+        dispatch_pending_mobile_draft(page, "pending")
+        pending_state = safe_state(page)
+        pending_before = wire_counts(page)
+        page.locator('#textInputBtn').click()
+        pending_modal_open = page.locator('#textInputModal').evaluate(
+            "el => !el.hidden && !el.classList.contains('hidden')"
+        )
+        pending_after = wire_counts(page)
+        page.evaluate(
+            """
+            () => {
+              Input.keyboardController.sendText = globalThis.__offlineOriginalSendText;
+              Input.mobileTextInputAdapter.discardPending();
+            }
+            """
+        )
+
+        # Seed a non-empty accepted mobile history for the failure/cancel
+        # branch.  Keep the comparison in page memory so neither the draft nor
+        # model content can enter the safe artifact.
+        dispatch_mobile_input(page, "retain")
+        baseline_seed_writes = fixture.settle()
+        failure_baseline = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const model = globalThis.__offlineModel;
+              const content = input.value.replaceAll('\u200b', '');
+              globalThis.__offlineModalFailureBaseline = {
+                inputValue: input.value,
+                selectionStart: input.selectionStart,
+                selectionEnd: input.selectionEnd,
+                modelValue: [...model.value],
+                modelCursor: model.cursor,
+              };
+              return {
+                nonEmpty: content.length > 0,
+                cursorAtEnd: input.selectionStart === content.length
+                  && input.selectionEnd === content.length,
+              };
+            }
+            """
+        )
+
+        # An accepted modal submission is a transaction; a failed one keeps
+        # the modal and its local value, while cancel only closes it.
         page.locator('#textInputBtn').click()
         page.locator('#remoteTextInput').fill('retry')
         page.evaluate(
@@ -977,20 +1219,121 @@ def scenario_modal(browser: Any) -> dict[str, Any]:
             }
             """
         )
+        failure_before = wire_counts(page)
         page.locator('#textInputSubmitBtn').click()
-        failed_open = page.locator('#textInputModal').evaluate("el => !el.hidden && !el.classList.contains('hidden')")
+        failure_settle_writes = fixture.settle()
+        failed_open = page.locator('#textInputModal').evaluate(
+            "el => !el.hidden && !el.classList.contains('hidden')"
+        )
+        failed_value_retained = page.locator('#remoteTextInput').evaluate(
+            "el => String(el.value || '').length > 0"
+        )
+        failure_after = wire_counts(page)
+        failure_preservation = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const model = globalThis.__offlineModel;
+              const baseline = globalThis.__offlineModalFailureBaseline;
+              return {
+                mobileHistoryPreserved: input.value === baseline?.inputValue
+                  && input.selectionStart === baseline?.selectionStart
+                  && input.selectionEnd === baseline?.selectionEnd,
+                remoteModelUnchanged: model.cursor === baseline?.modelCursor
+                  && model.value.length === baseline?.modelValue?.length
+                  && model.value.every((value, index) => value === baseline?.modelValue?.[index]),
+              };
+            }
+            """
+        )
         page.locator('#textInputCancelBtn').click()
-        page.evaluate("() => { Input.keyboardController.sendText = globalThis.__offlineOriginalSendText; }")
+        cancel_after = wire_counts(page)
         after_cancel = safe_state(page)
+        modal_closed_after_cancel = page.locator('#textInputModal').evaluate("el => el.hidden")
+        cancel_preservation = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const model = globalThis.__offlineModel;
+              const baseline = globalThis.__offlineModalFailureBaseline;
+              return {
+                mobileHistoryPreserved: input.value === baseline?.inputValue
+                  && input.selectionStart === baseline?.selectionStart
+                  && input.selectionEnd === baseline?.selectionEnd,
+                remoteModelUnchanged: model.cursor === baseline?.modelCursor
+                  && model.value.length === baseline?.modelValue?.length
+                  && model.value.every((value, index) => value === baseline?.modelValue?.[index]),
+              };
+            }
+            """
+        )
+        page.evaluate("() => { Input.keyboardController.sendText = globalThis.__offlineOriginalSendText; }")
+
+        # The remote input's compositionend listener and the submit click share
+        # one commit path.  Reopening and clicking with the cleared value must
+        # not duplicate the accepted composition write.
+        page.locator('#textInputBtn').click()
+        page.locator('#remoteTextInput').fill('compose')
+        composition_before = wire_counts(page)
+        page.locator('#remoteTextInput').dispatch_event('compositionend', {"bubbles": True})
+        composition_commit_writes = fixture.settle()
+        composition_closed = page.locator('#textInputModal').evaluate("el => el.hidden")
+        page.locator('#textInputBtn').click()
+        page.locator('#textInputSubmitBtn').click()
+        composition_click_writes = fixture.settle()
+        composition_after = wire_counts(page)
+
         checks = {
             "modalOpensFromMobileContext": bool(opened),
-            "acceptedSubmitClearsMobileHistory": not after_submit["mobilePending"],
+            "initialMobileWriteAccepted": initial_writes == 1,
+            "acceptedSubmitClearsMobileHistory": bool(after_submit_history["acceptedBufferReset"]),
+            "acceptedSubmitRestoresMobileFocus": bool(after_submit_history["mobileFocusRestored"]),
+            "acceptedSubmitLeavesMobileHistoryIdle": bool(after_submit_history["mobileHistoryIdle"]),
             "acceptedSubmitClosesModal": bool(modal_closed),
+            "acceptedSubmitProducedExactlyOneWrite": submit_writes == 1
+                and accepted_after["keyboardText"] - accepted_before["keyboardText"] == 1,
+            "remoteModelAfterAcceptedModal": bool(after_submit_model_matches),
+            "mobileNavigationAfterModalAcceptedOnce": navigation_writes == 1,
+            "remoteModelAfterMobileNavigation": bool(after_navigation_model_matches),
+            "mobileFollowUpAfterModalAcceptedOnce": follow_up_writes == 1,
+            "remoteModelAfterMobileFollowUp": bool(after_follow_up_model_matches),
+            "pendingDraftBlocksModalOpen": pending_state["mobilePending"] is True
+                and not pending_modal_open
+                and pending_after["keyboardText"] == pending_before["keyboardText"],
             "failedSubmitRetainsModal": bool(failed_open),
+            "failedSubmitRetainsValue": bool(failed_value_retained),
+            "failureBranchStartsWithAcceptedMobileHistory": bool(failure_baseline["nonEmpty"])
+                and bool(failure_baseline["cursorAtEnd"]) and baseline_seed_writes == 1,
+            "failedSubmitPreservesMobileHistory": bool(failure_preservation["mobileHistoryPreserved"])
+                and bool(failure_preservation["remoteModelUnchanged"]),
+            "failedSubmitProducesNoWrite": failure_settle_writes == 0
+                and failure_after["keyboardText"] == failure_before["keyboardText"],
+            "cancelClosesModalWithoutWrite": bool(modal_closed_after_cancel)
+                and cancel_after["keyboardText"] == failure_after["keyboardText"],
+            "cancelPreservesMobileHistory": bool(cancel_preservation["mobileHistoryPreserved"])
+                and bool(cancel_preservation["remoteModelUnchanged"]),
             "cancelDoesNotCreateRecoveryState": not after_cancel["mobileUncertain"],
-            "acceptedSubmitProducedOneWrite": submit_writes >= 1,
+            "compositionendCommitsExactlyOnce": composition_commit_writes == 1
+                and composition_after["keyboardText"] - composition_before["keyboardText"] == 1,
+            "compositionendThenSubmitDoesNotDuplicate": composition_closed
+                and composition_click_writes == 0
+                and composition_after["keyboardText"] - composition_before["keyboardText"] == 1,
         }
-        return result("modal-context-change", "PASS" if all(checks.values()) else "FAIL", checks=checks, counts={"submitWrites": submit_writes})
+        return result(
+            "modal-context-change",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "initialWrites": initial_writes,
+                "submitWrites": submit_writes,
+                "navigationWrites": navigation_writes,
+                "followUpWrites": follow_up_writes,
+                "baselineSeedWrites": baseline_seed_writes,
+                "failureWrites": failure_settle_writes,
+                "cancelWrites": cancel_after["keyboardText"] - failure_after["keyboardText"],
+                "compositionWrites": composition_after["keyboardText"] - composition_before["keyboardText"],
+            },
+        )
     finally:
         fixture.close()
 
@@ -1078,9 +1421,27 @@ def scenario_virtual_modifier(browser: Any) -> dict[str, Any]:
         dispatch_mobile_input(page, "abc")
         initial_text = fixture.settle()
         modifier = page.locator('[data-mobile-modifier="shift"]')
-        modifier.click()
-        shift_on = fixture.settle()
-        latched = safe_state(page)
+
+        def native_shift_click() -> dict[str, Any]:
+            before = wire_counts(page)
+            before_phase = keyboard_key_phase_counts(page, "ShiftLeft")
+            modifier.click()
+            writes = fixture.settle()
+            after = wire_counts(page)
+            after_phase = keyboard_key_phase_counts(page, "ShiftLeft")
+            return {
+                "before": before,
+                "after": after,
+                "beforePhase": before_phase,
+                "afterPhase": after_phase,
+                "writes": writes,
+                "keyboardDelta": after["keyboard"] - before["keyboard"],
+                "state": safe_state(page),
+                "ariaPressed": modifier.get_attribute("aria-pressed") == "true",
+                "renderedAndEnabled": modifier.evaluate("el => !el.hidden && !el.disabled"),
+            }
+
+        shift_on = native_shift_click()
         page.locator('[data-mobile-action="left"]').click()
         chord = fixture.settle()
         after_chord = safe_state(page)
@@ -1101,11 +1462,7 @@ def scenario_virtual_modifier(browser: Any) -> dict[str, Any]:
             """
         )
         # Native locator click is the production capability path for OFF.
-        visible_before_off = modifier.evaluate("el => !el.hidden && !el.disabled")
-        modifier.click()
-        shift_off = fixture.settle()
-        released = safe_state(page)
-        counts_after_off = wire_counts(page)
+        shift_off = native_shift_click()
         dispatch_mobile_input(page, "z")
         context_text = fixture.settle()
         context_model = page.evaluate(
@@ -1120,38 +1477,50 @@ def scenario_virtual_modifier(browser: Any) -> dict[str, Any]:
             """
         )
 
-        # Each local editing gate is exercised through the production native
-        # modifier button.  No button state is manually toggled or dispatched.
-        composition_before = wire_counts(page)
+        # Each local editing gate first locks Shift through the real native
+        # capability-rendered button, then proves native OFF is still reachable
+        # while the gate is active.  A second native click proves a new ON is
+        # blocked after release; no button state is manually toggled.
+        composition_on = native_shift_click()
         page.locator('#mobileTextInput').dispatch_event('compositionstart', {"bubbles": True})
-        modifier.click()
-        composition_after = wire_counts(page)
         composition_state = safe_state(page)
+        composition_off = native_shift_click()
+        composition_blocked_before = wire_counts(page)
+        modifier.click()
+        composition_blocked_after = wire_counts(page)
+        composition_blocked_state = safe_state(page)
         page.locator('#mobileTextInput').dispatch_event('compositionend', {"bubbles": True})
         fixture.settle()
 
-        page.evaluate(
-            """
-            () => {
-              const controller = Input.keyboardController;
-              globalThis.__offlineVirtualOriginalSendText = controller.sendText.bind(controller);
-              controller.sendText = () => false;
-            }
-            """
-        )
+        pending_on = native_shift_click()
+        pending_point = surface_point(page)
+        dispatch_touch(page, 'pointerdown', 70, pending_point['x'], pending_point['y'], 1)
+        dispatch_touch(page, 'pointermove', 70, pending_point['x'] + 20, pending_point['y'], 1)
+        wait_frames(page, 2)
+        pending_surface_state = safe_state(page)
         dispatch_pending_mobile_draft(page)
         pending_state = safe_state(page)
-        pending_before = wire_counts(page)
+        pending_off = native_shift_click()
+        pending_blocked_before = wire_counts(page)
         modifier.click()
-        pending_after = wire_counts(page)
-        page.evaluate("() => { Input.keyboardController.sendText = globalThis.__offlineVirtualOriginalSendText; }")
-        page.evaluate("() => Input.mobileTextInputAdapter.discardPending()")
+        pending_blocked_after = wire_counts(page)
+        pending_blocked_state = safe_state(page)
+        dispatch_touch(page, 'pointerup', 70, pending_point['x'], pending_point['y'], 0)
+        fixture.settle()
+        pending_discard_visible = page.locator('#mobileInputDiscardBtn').evaluate(
+            "el => !el.hidden && !el.disabled"
+        )
+        page.locator('#mobileInputDiscardBtn').click()
+        pending_cleanup_state = safe_state(page)
 
+        uncertain_on = native_shift_click()
         page.evaluate("() => Input.mobileTextInputAdapter.onTransportState('reacquire-required')")
         uncertain_state = safe_state(page)
-        uncertain_before = wire_counts(page)
+        uncertain_off = native_shift_click()
+        uncertain_blocked_before = wire_counts(page)
         modifier.click()
-        uncertain_after = wire_counts(page)
+        uncertain_blocked_after = wire_counts(page)
+        uncertain_blocked_state = safe_state(page)
 
         # Re-arm only after the gate checks; this is a fixture lease transition
         # and must not turn any blocked click into a replayed modifier write.
@@ -1162,28 +1531,66 @@ def scenario_virtual_modifier(browser: Any) -> dict[str, Any]:
         counts = wire_counts(page)
         checks = {
             "initialTextAccepted": initial_text == 1,
-            "virtualShiftOnAccepted": shift_on == 1,
-            "virtualShiftPressedTruth": latched["virtualModifierCount"] == 1,
+            "virtualShiftOnAccepted": shift_on["writes"] == 1
+                and shift_on["afterPhase"]["down"] - shift_on["beforePhase"]["down"] == 1,
+            "virtualShiftPressedTruth": shift_on["state"]["virtualModifierCount"] == 1
+                and shift_on["ariaPressed"] and shift_on["renderedAndEnabled"],
             "navigationChordAccepted": chord == 1,
             "chordKeepsVirtualShift": after_chord["virtualModifierCount"] == 1,
             "chordCarriesModifierFlags": bool(chord_payload["carriesShiftFlags"]),
             "chordHasNoSyntheticModifierStep": bool(chord_payload["noSyntheticModifierStep"]),
             "modifiedNavigationKeepsRemoteCursor": bool(chord_payload["remoteCursorUnchangedByModifiedNavigation"]),
-            "offButtonRenderedAndEnabled": bool(visible_before_off),
-            "virtualShiftOffAccepted": shift_off == 1,
-            "virtualShiftReleasedExactlyOnce": released["virtualModifierCount"] == 0
-                and counts_after_off["keyboardKey"] == 2
-                and counts["keyboardKey"] == counts_after_off["keyboardKey"],
-            "noPressedKeysRemain": released["pressedKeys"] == 0,
+            "offButtonRenderedAndEnabled": shift_off["renderedAndEnabled"],
+            "virtualShiftOffAccepted": shift_off["keyboardDelta"] == 1,
+            "virtualShiftReleasedExactlyOnce": shift_off["state"]["virtualModifierCount"] == 0
+                and not shift_off["ariaPressed"]
+                and shift_off["afterPhase"]["up"] - shift_off["beforePhase"]["up"] == 1,
+            "noPressedKeysRemain": shift_off["state"]["pressedKeys"] == 0,
             "postChordTextUsesFreshModelBaseline": context_text == 1 and bool(context_model),
-            "compositionGateBlocksModifierOn": composition_state["mobileStatus"] == "composing"
-                and composition_after["keyboard"] == composition_before["keyboard"],
-            "pendingGateBlocksModifierOn": pending_state["mobilePending"] is True
-                and pending_after["keyboard"] == pending_before["keyboard"],
-            "uncertainGateBlocksModifierOn": uncertain_state["mobileUncertain"] is True
-                and uncertain_after["keyboard"] == uncertain_before["keyboard"],
+            "compositionGateLatchesBeforeOff": composition_on["state"]["virtualModifierCount"] == 1
+                and composition_on["ariaPressed"] and composition_on["renderedAndEnabled"],
+            "compositionGateBlocksNewModifierOn": composition_state["mobileStatus"] == "composing"
+                and composition_blocked_after["keyboard"] == composition_blocked_before["keyboard"]
+                and composition_blocked_state["virtualModifierCount"] == 0,
+            "compositionGateReleasesExactlyOnce": composition_off["keyboardDelta"] == 1
+                and composition_off["state"]["virtualModifierCount"] == 0
+                and not composition_off["ariaPressed"]
+                and composition_off["afterPhase"]["up"] - composition_off["beforePhase"]["up"] == 1,
+            "pendingGateCreatesLocalDraft": pending_surface_state["surfaceState"] == "pending"
+                and pending_state["mobilePending"] is True,
+            "pendingGateLatchesBeforeOff": pending_on["state"]["virtualModifierCount"] == 1
+                and pending_on["ariaPressed"] and pending_on["renderedAndEnabled"],
+            "pendingGateBlocksNewModifierOn": pending_blocked_after["keyboard"] == pending_blocked_before["keyboard"]
+                and pending_blocked_state["virtualModifierCount"] == 0,
+            "pendingGateReleasesExactlyOnce": pending_off["keyboardDelta"] == 1
+                and pending_off["state"]["virtualModifierCount"] == 0
+                and not pending_off["ariaPressed"]
+                and pending_off["afterPhase"]["up"] - pending_off["beforePhase"]["up"] == 1,
+            "pendingGateUsesNativeDiscardCleanup": pending_discard_visible
+                and pending_cleanup_state["surfaceState"] == "settled"
+                and not pending_cleanup_state["mobilePending"],
+            "uncertainGateLatchesBeforeOff": uncertain_on["state"]["virtualModifierCount"] == 1
+                and uncertain_on["ariaPressed"] and uncertain_on["renderedAndEnabled"],
+            "uncertainGateBlocksNewModifierOn": uncertain_state["mobileUncertain"] is True
+                and uncertain_blocked_after["keyboard"] == uncertain_blocked_before["keyboard"]
+                and uncertain_blocked_state["virtualModifierCount"] == 0,
+            "uncertainGateReleasesExactlyOnce": uncertain_off["keyboardDelta"] == 1
+                and uncertain_off["state"]["virtualModifierCount"] == 0
+                and not uncertain_off["ariaPressed"]
+                and uncertain_off["afterPhase"]["up"] - uncertain_off["beforePhase"]["up"] == 1,
         }
-        return result("virtual-modifier-release", "PASS" if all(checks.values()) else "FAIL", checks=checks, counts={"keyboardWrites": counts["keyboard"], "keyboardBatches": counts["keyboardBatch"]})
+        return result(
+            "virtual-modifier-release",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "keyboardWrites": counts["keyboard"],
+                "keyboardBatches": counts["keyboardBatch"],
+                "compositionOffWrites": composition_off["keyboardDelta"],
+                "pendingOffWrites": pending_off["keyboardDelta"],
+                "uncertainOffWrites": uncertain_off["keyboardDelta"],
+            },
+        )
     finally:
         fixture.close()
 
