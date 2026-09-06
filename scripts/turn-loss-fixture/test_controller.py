@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import shutil
 import socket
 import subprocess
@@ -37,7 +38,7 @@ def manifest(**overrides):
         "versionDigest": "a" * 64,
         "imageDigests": {
             "turn": "registry.example/turn@sha256:" + "b" * 64,
-            "controller": "registry.example/controller@sha256:" + "c" * 64,
+            "controller": "sha256:" + "c" * 64,
         },
     }
     result.update(overrides)
@@ -195,6 +196,20 @@ def test_compose_keeps_host_namespaces_out_and_grants_net_admin_only_to_controll
     assert "network_mode: host" not in compose and "pid: host" not in compose
     assert compose.count("NET_ADMIN") == 2
     assert "network_mode: service:turn" in compose
+    # A dedicated bridge must permit the fixture's explicitly loopback-bound
+    # relay/control ports. Docker Desktop suppresses those mappings for an
+    # `internal` bridge.
+    assert "internal: true" not in compose
+
+
+def test_turn_entrypoint_can_execute_coturn_with_its_image_file_capability():
+    compose = (HERE / "compose.yaml").read_text(encoding="utf-8")
+    turn_block = compose.split("  loss-controller:", 1)[0]
+    # coturn ships turnserver with a file capability; Docker's
+    # no-new-privileges and an empty capability set reject exec before the
+    # isolated process starts.
+    assert "no-new-privileges" not in turn_block
+    assert "NET_BIND_SERVICE" in turn_block
 
 
 def _session(fixture, *, generation=7, clock=None):
@@ -249,6 +264,13 @@ def test_control_service_and_compose_expose_real_loopback_endpoint_and_temporary
     assert "TURN_USERNAME" in entrypoint and "TURN_PASSWORD" in entrypoint and "--user" in entrypoint
     assert "--external-ip=127.0.0.1" in entrypoint
     assert controller.ControlRequestRouter
+
+
+def test_serving_binds_inside_the_isolated_namespace_while_compose_publishes_only_loopback(tmp_path):
+    source = (HERE / "controller.py").read_text(encoding="utf-8")
+    assert 'server = LossControlServer({"host": "0.0.0.0", "port": manifest.control_endpoint["port"]}' in source
+    override = controller.prepare_runtime(manifest(), tmp_path, resolved_images=controller._test_resolved_images(manifest()["imageDigests"]))
+    assert "127.0.0.1:" in Path(override["composeOverride"]).read_text(encoding="utf-8")
 
 
 def test_reverse_selected_leg_is_canonicalized_to_egress_relay_port():
@@ -357,17 +379,24 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     assert (tmp_path / "credentials" / "turn.json").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "turn.env").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "manifest.json").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "image-evidence.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_started_fixture_layout_verifies_the_manifest_derived_host_ports_and_network(tmp_path):
     raw = manifest()
     generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    calls = []
     replies = iter([
         (0, generated["turnEndpoint"] + "\n", ""),
         (0, generated["controlEndpoint"] + "\n", ""),
         (0, generated["networkName"] + "\n", ""),
     ])
-    assert controller.verify_started_fixture(generated, run=lambda _argv: next(replies))["status"] == "READY"
+    def run(argv):
+        calls.append(argv)
+        return next(replies)
+    assert controller.verify_started_fixture(generated, run=run)["status"] == "READY"
+    assert calls[0][:3] == ["docker", "inspect", "--format"]
+    assert calls[0][-1] == generated["projectName"] + "-turn-1"
 
 
 def test_installing_state_is_persisted_before_rule_and_watchdog_cleans_it(tmp_path):
@@ -390,3 +419,55 @@ def test_control_rejects_extra_fields_and_self_reported_drop_counts():
         router.validate_request({"operation": "health", "controlToken": "token", "extra": True})
     with pytest.raises(ValueError, match="actualDropCount"):
         router.validate_request({"operation": "delivery", "controlToken": "token", "actualDropCount": 1})
+
+
+def test_manifest_distinguishes_remote_turn_digest_from_local_controller_oci_id():
+    parsed = controller.LossFixtureManifest.parse(manifest())
+    assert parsed.image_digests["turn"].startswith("registry.example/turn@sha256:")
+    assert parsed.image_digests["controller"].startswith("sha256:")
+    bad_turn = manifest()
+    bad_turn["imageDigests"] = {**bad_turn["imageDigests"], "turn": "sha256:" + "b" * 64}
+    with pytest.raises(ValueError, match="TURN image"):
+        controller.LossFixtureManifest.parse(bad_turn)
+    bad_controller = manifest()
+    bad_controller["imageDigests"] = {**bad_controller["imageDigests"], "controller": "registry.example/controller@sha256:" + "c" * 64}
+    with pytest.raises(ValueError, match="controller image"):
+        controller.LossFixtureManifest.parse(bad_controller)
+
+
+def test_controller_dockerfile_uses_a_digest_pinned_base_and_installs_iptables():
+    source = (HERE / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG CONTROLLER_BASE_IMAGE" in source
+    assert "FROM ${CONTROLLER_BASE_IMAGE}" in source
+    assert "iptables" in source
+    assert "COPY controller.py /fixture/controller.py" in source
+
+
+def test_controller_build_entrypoint_has_no_mutable_runtime_tag():
+    source = (HERE / "controller.py").read_text(encoding="utf-8")
+    assert 'add_parser("build-controller")' in source
+    assert '"--iidfile"' in source
+    assert '"--build-arg", f"CONTROLLER_BASE_IMAGE={base_digest}"' in source
+    assert '"org.wrd.turn-loss.base-repodigest"' in source
+
+
+def test_runtime_probe_verifies_local_controller_id_labels_and_network_none_contents():
+    labels = {
+        "org.wrd.turn-loss.base-repodigest": "python@sha256:" + "d" * 64,
+        "org.wrd.turn-loss.controller-sha256": hashlib.sha256((HERE / "controller.py").read_bytes()).hexdigest(),
+        "org.wrd.turn-loss.dockerfile-sha256": hashlib.sha256((HERE / "Dockerfile").read_bytes()).hexdigest(),
+    }
+    responses = iter([
+        (0, "27.5.1", ""),
+        (0, "27.5.1", ""),
+        (0, '["registry.example/turn@sha256:' + "b" * 64 + '"]', ""),
+        (0, "sha256:" + "c" * 64, ""),
+        (0, __import__("json").dumps(labels), ""),
+        (0, "", ""),
+    ])
+    probe = controller.DockerRuntimeProbe(run=lambda _argv: next(responses))
+    resolved = probe.resolve_fixture_images(manifest()["imageDigests"])
+    assert resolved.images == manifest()["imageDigests"]
+    assert resolved.controller_base_digest == labels["org.wrd.turn-loss.base-repodigest"]
+    assert resolved.controller_source_sha256 == labels["org.wrd.turn-loss.controller-sha256"]
+    assert resolved.controller_dockerfile_sha256 == labels["org.wrd.turn-loss.dockerfile-sha256"]

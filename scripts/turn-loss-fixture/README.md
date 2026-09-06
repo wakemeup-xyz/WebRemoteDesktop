@@ -9,25 +9,30 @@ Before use, the T4 driver must create a unique UUID `runId`, a realm beginning
 runs `python3 controller.py prepare --manifest INPUT --runtime runtime`.  This
 is the only supported way to derive the Compose project name, one-time TURN
 username/password, control token, credentials file, and generated Compose
-override.  The manifest also binds both TURN and controller images to
-`repo@sha256:...` identities.  A default port, inferred UDP pair, tag, local
-build, or user-supplied Compose environment variable is invalid.  `prepare`
-first requires Docker's sealed digest resolution and an isolated inspection of
-the controller image for `/fixture/controller.py` and `iptables`; an unavailable
-daemon is `BLOCKED` and produces no runnable fixture.
+override. The manifest binds TURN to a remote `repo@sha256:...` identity and
+the controller to a locally-built OCI image ID `sha256:...`.
+`build-controller --base-image REF` resolves REF to a base RepoDigest, builds
+the repository Dockerfile without a runtime tag, and records the returned image
+ID plus base, Dockerfile, and controller source hashes as labels. `prepare`
+verifies those labels, the exact local image ID, and `docker run --network none`
+availability of `/fixture/controller.py` and `iptables`; an unavailable daemon
+is `BLOCKED` and produces no runnable fixture.
 
 Use the generated override with the generated project name.  Compose assigns
 manifest-derived loopback host ports for TURN and the controller's loopback-only
 TCP endpoint.  The driver verifies the running Compose mappings and derived
 network name with `verify_started_fixture()` before connecting.  The TURN relay
-range `51000-51009` is mapped only to loopback
-and coturn advertises that isolated address, so the experiment endpoints can
-reach the selected relay leg without any public listener.  The selected leg
-must have exactly one endpoint in that range.  The TURN service has no added
-capabilities.  The `loss-controller` and
-independent `loss-watchdog` sidecars alone receive `NET_ADMIN`, inside TURN's
-non-host network namespace; no service has host networking or a host PID
-namespace.  The entrypoint loads the generated temporary credentials into
+range `51000-51009` is mapped only to loopback and coturn advertises that
+isolated address, so experiment endpoints can reach the selected relay leg
+without any public listener. The selected leg must have exactly one endpoint
+in that range. The project has a dedicated bridge network (not Docker
+`internal`, because Docker Desktop suppresses required loopback mappings); no
+service uses host networking or host PID. The TURN service receives only
+`NET_BIND_SERVICE`. The `loss-controller` and independent `loss-watchdog`
+sidecars alone receive `NET_ADMIN`, inside TURN's non-host network namespace.
+The control server binds the fixture namespace so Docker can forward it, while
+Compose publishes it only as `127.0.0.1`; every request still needs its
+generated control token. The entrypoint loads the generated temporary credentials into
 coturn with `--lt-cred-mech --user`.  Neither Compose nor this controller
 starts, stops, or changes any production service or tunnel.
 
@@ -42,9 +47,10 @@ the separate deadline owner.
 The driver must first run `DockerRuntimeProbe.status()`.  A missing or
 unreachable daemon is `BLOCKED` and all real injection/recovery evidence stays
 `NOT_RUN`; the Python tests do not substitute a network run.  Once a daemon is
-available, pull the manifest's exact images and archive `docker image inspect`'s
-`RepoDigests` alongside the manifest.  A tag or local build is not an
-image-digest record.
+available, pull the manifest TURN RepoDigest and archive its `docker image
+inspect` evidence. Build the controller only through `build-controller`; archive
+its local OCI image ID and provenance labels from `image-evidence.json`. A
+mutable tag is never a Compose runtime value.
 
 The T4 driver connects to the generated loopback control endpoint with the
 generated control token, opens a session/generation, and confirms the exact

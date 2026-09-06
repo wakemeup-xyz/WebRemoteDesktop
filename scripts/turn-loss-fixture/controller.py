@@ -14,6 +14,7 @@ import secrets
 import shutil
 import socketserver
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -143,13 +144,16 @@ class LossFixtureManifest:
         images_raw = raw["imageDigests"]
         if not isinstance(images_raw, Mapping) or set(images_raw) != {"turn", "controller"}:
             raise ValueError("imageDigests must identify immutable turn and controller images")
-        image_digests: dict[str, str] = {}
-        for name in ("turn", "controller"):
-            image = _require_string(images_raw[name], f"imageDigests.{name}")
-            repository, separator, image_digest = image.partition("@sha256:")
-            if not repository or separator != "@sha256:" or len(image_digest) != 64 or any(char not in "0123456789abcdef" for char in image_digest):
-                raise ValueError("fixture images must be immutable sha256 digests")
-            image_digests[name] = image
+        turn_image = _require_string(images_raw["turn"], "imageDigests.turn")
+        repository, separator, turn_digest = turn_image.partition("@sha256:")
+        if not repository or separator != "@sha256:" or len(turn_digest) != 64 or any(char not in "0123456789abcdef" for char in turn_digest):
+            raise ValueError("TURN image must be a remote repo@sha256 immutable digest")
+        controller_image = _require_string(images_raw["controller"], "imageDigests.controller")
+        controller_prefix = "sha256:"
+        controller_digest = controller_image.removeprefix(controller_prefix)
+        if not controller_image.startswith(controller_prefix) or len(controller_digest) != 64 or any(char not in "0123456789abcdef" for char in controller_digest):
+            raise ValueError("controller image must be a local OCI sha256 image ID")
+        image_digests = {"turn": turn_image, "controller": controller_image}
         return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, digest, image_digests)
 
 
@@ -203,16 +207,27 @@ _RESOLVED_IMAGES_SEAL = object()
 @dataclass(frozen=True, init=False)
 class ResolvedImageEvidence:
     images: dict[str, str]
+    controller_base_digest: str
+    controller_source_sha256: str
+    controller_dockerfile_sha256: str
 
-    def __init__(self, images: Mapping[str, str], *, _seal: object | None = None) -> None:
+    def __init__(self, images: Mapping[str, str], *, controller_base_digest: str, controller_source_sha256: str,
+                 controller_dockerfile_sha256: str, _seal: object | None = None) -> None:
         if _seal is not _RESOLVED_IMAGES_SEAL:
             raise TypeError("ResolvedImageEvidence is sealed; use DockerRuntimeProbe")
         object.__setattr__(self, "images", dict(images))
+        object.__setattr__(self, "controller_base_digest", controller_base_digest)
+        object.__setattr__(self, "controller_source_sha256", controller_source_sha256)
+        object.__setattr__(self, "controller_dockerfile_sha256", controller_dockerfile_sha256)
 
 
 def _test_resolved_images(images: Mapping[str, str]) -> ResolvedImageEvidence:
     """Private test fixture; operational callers must use DockerRuntimeProbe."""
-    return ResolvedImageEvidence(images, _seal=_RESOLVED_IMAGES_SEAL)
+    return ResolvedImageEvidence(
+        images, controller_base_digest="python@sha256:" + "d" * 64,
+        controller_source_sha256="e" * 64, controller_dockerfile_sha256="f" * 64,
+        _seal=_RESOLVED_IMAGES_SEAL,
+    )
 
 
 class DeadlineState(Protocol):
@@ -682,6 +697,14 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     (runtime_dir / "turn.env").chmod(0o600)
     (runtime_dir / "manifest.json").write_text(json.dumps(dict(raw_manifest), sort_keys=True), encoding="utf-8")
     (runtime_dir / "manifest.json").chmod(0o600)
+    (runtime_dir / "image-evidence.json").write_text(json.dumps({
+        "turnRepoDigest": resolved_images.images["turn"],
+        "controllerImageId": resolved_images.images["controller"],
+        "controllerBaseRepoDigest": resolved_images.controller_base_digest,
+        "controllerSourceSha256": resolved_images.controller_source_sha256,
+        "dockerfileSha256": resolved_images.controller_dockerfile_sha256,
+    }, sort_keys=True), encoding="utf-8")
+    (runtime_dir / "image-evidence.json").chmod(0o600)
     shutil.copyfile(Path(__file__).with_name("turn-entrypoint.sh"), runtime_dir / "turn-entrypoint.sh")
     turn_port, control_port = _derived_ports(manifest)
     (runtime_dir / "compose.generated.yaml").write_text(
@@ -700,9 +723,10 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     required = {"projectName", "networkName", "composeOverride", "turnEndpoint", "controlEndpoint"}
     if set(prepared) < required:
         raise ValueError("prepared fixture layout is incomplete")
-    compose = ["docker", "compose", "--project-name", prepared["projectName"], "-f", str(Path(__file__).with_name("compose.yaml")), "-f", prepared["composeOverride"]]
-    for target, expected in (("3478", prepared["turnEndpoint"]), ("19091", prepared["controlEndpoint"])):
-        code, stdout, stderr = run([*compose, "port", "turn", target])
+    turn_container = f"{prepared['projectName']}-turn-1"
+    for target, expected in (("3478/udp", prepared["turnEndpoint"]), ("19091/tcp", prepared["controlEndpoint"])):
+        template = f'{{{{with index .NetworkSettings.Ports "{target}"}}}}{{{{(index . 0).HostIp}}}}:{{{{(index . 0).HostPort}}}}{{{{end}}}}'
+        code, stdout, stderr = run(["docker", "inspect", "--format", template, turn_container])
         if code != 0 or stdout.strip() != expected:
             raise RuntimeBlocked(f"fixture {target} mapping does not match prepared manifest layout: {stderr}")
     code, stdout, stderr = run(["docker", "network", "inspect", "--format", "{{.Name}}", prepared["networkName"]])
@@ -722,7 +746,16 @@ def _main() -> None:
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--manifest", type=Path, required=True)
     prepare.add_argument("--runtime", type=Path, required=True)
+    build_controller = subcommands.add_parser("build-controller")
+    build_controller.add_argument("--base-image", required=True)
     arguments = parser.parse_args()
+    if arguments.command == "build-controller":
+        try:
+            print(json.dumps(DockerRuntimeProbe().build_local_controller_image(arguments.base_image), sort_keys=True))
+        except RuntimeBlocked as exc:
+            print(json.dumps({"status": "BLOCKED", "execution": "NOT_RUN", "reason": str(exc)}, sort_keys=True))
+            raise SystemExit(2) from exc
+        return
     if arguments.command == "prepare":
         raw_manifest = json.loads(arguments.manifest.read_text(encoding="utf-8"))
         manifest = LossFixtureManifest.parse(raw_manifest)
@@ -742,7 +775,11 @@ def _main() -> None:
             time.sleep(0.1)
     credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
     controller = LossController(manifest, backend=backend, state_store=store, receiver_source=FileReceiverEvidenceSource(Path("/receiver/sequence.json")))
-    server = LossControlServer(manifest.control_endpoint, ControlRequestRouter(controller, credentials["controlToken"]))
+    # Docker forwards the loopback-published host port to the fixture bridge
+    # address, not the container loopback. The Compose override restricts the
+    # published side to 127.0.0.1; this listener still exists only in TURN's
+    # dedicated, non-host namespace.
+    server = LossControlServer({"host": "0.0.0.0", "port": manifest.control_endpoint["port"]}, ControlRequestRouter(controller, credentials["controlToken"]))
     server.serve_forever()
 
 
@@ -783,19 +820,85 @@ class DockerRuntimeProbe:
             resolved[image] = digest
         return resolved
 
+    def build_local_controller_image(self, base_image: str) -> dict[str, str]:
+        """Build an untagged controller image from a resolved base RepoDigest.
+
+        The returned OCI image ID is the only value Compose may execute.  The
+        input can be a pull reference, but the Dockerfile receives the resolved
+        RepoDigest, never that mutable reference.
+        """
+        if self.status()["status"] != "READY":
+            raise RuntimeBlocked("Docker daemon is unavailable; controller build is BLOCKED")
+        try:
+            base_digest = self.image_digests([base_image])[base_image]
+        except RuntimeError as exc:
+            raise RuntimeBlocked(str(exc)) from exc
+        fixture_dir = Path(__file__).parent
+        controller_sha = hashlib.sha256((fixture_dir / "controller.py").read_bytes()).hexdigest()
+        dockerfile_sha = hashlib.sha256((fixture_dir / "Dockerfile").read_bytes()).hexdigest()
+        with tempfile.NamedTemporaryFile(prefix="turn-loss-controller-", suffix=".iid", delete=False) as handle:
+            iid_path = Path(handle.name)
+        try:
+            command = [
+                "docker", "build", "--iidfile", str(iid_path),
+                "--build-arg", f"CONTROLLER_BASE_IMAGE={base_digest}",
+                "--label", f"org.wrd.turn-loss.base-repodigest={base_digest}",
+                "--label", f"org.wrd.turn-loss.controller-sha256={controller_sha}",
+                "--label", f"org.wrd.turn-loss.dockerfile-sha256={dockerfile_sha}",
+                "--file", str(fixture_dir / "Dockerfile"), str(fixture_dir),
+            ]
+            code, _stdout, stderr = self._run(command)
+            if code != 0:
+                raise RuntimeBlocked(f"local controller image build failed: {stderr}")
+            image_id = iid_path.read_text(encoding="utf-8").strip()
+        finally:
+            iid_path.unlink(missing_ok=True)
+        if not image_id.startswith("sha256:") or len(image_id) != 71 or any(char not in "0123456789abcdef" for char in image_id[7:]):
+            raise RuntimeBlocked("Docker build did not return a local OCI image ID")
+        return {
+            "status": "READY", "controllerImageId": image_id,
+            "baseRepoDigest": base_digest, "controllerSourceSha256": controller_sha,
+            "dockerfileSha256": dockerfile_sha,
+        }
+
     def resolve_fixture_images(self, images: Mapping[str, str]) -> ResolvedImageEvidence:
         if self.status()["status"] != "READY":
             raise RuntimeBlocked("Docker daemon is unavailable; fixture preparation is BLOCKED")
         if set(images) != {"turn", "controller"}:
             raise RuntimeBlocked("fixture image set is incomplete")
-        observed = self.image_digests(list(images.values()))
-        if any(observed.get(image) != image for image in images.values()):
-            raise RuntimeBlocked("Docker image digest does not match manifest")
+        turn_image = images["turn"]
+        observed = self.image_digests([turn_image])
+        if observed.get(turn_image) != turn_image:
+            raise RuntimeBlocked("TURN image digest does not match manifest")
         controller_image = images["controller"]
+        code, image_id, stderr = self._run(["docker", "image", "inspect", "--format", "{{.Id}}", controller_image])
+        if code != 0 or image_id != controller_image:
+            raise RuntimeBlocked(f"controller local OCI image ID does not match manifest: {stderr}")
+        code, label_json, stderr = self._run(["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", controller_image])
+        if code != 0:
+            raise RuntimeBlocked(f"controller image labels cannot be inspected: {stderr}")
+        try:
+            labels = json.loads(label_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeBlocked("controller image labels are malformed") from exc
+        if not isinstance(labels, dict):
+            raise RuntimeBlocked("controller image labels are unavailable")
+        base_digest = labels.get("org.wrd.turn-loss.base-repodigest")
+        source_digest = labels.get("org.wrd.turn-loss.controller-sha256")
+        dockerfile_digest = labels.get("org.wrd.turn-loss.dockerfile-sha256")
+        fixture_dir = Path(__file__).parent
+        expected_source_digest = hashlib.sha256((fixture_dir / "controller.py").read_bytes()).hexdigest()
+        expected_dockerfile_digest = hashlib.sha256((fixture_dir / "Dockerfile").read_bytes()).hexdigest()
+        if (not isinstance(base_digest, str) or "@sha256:" not in base_digest
+                or not all(isinstance(item, str) and len(item) == 64 and all(char in "0123456789abcdef" for char in item)
+                           for item in (source_digest, dockerfile_digest))
+                or source_digest != expected_source_digest or dockerfile_digest != expected_dockerfile_digest):
+            raise RuntimeBlocked("controller build provenance labels are incomplete")
         code, _stdout, stderr = self._run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh", controller_image, "-c", "test -f /fixture/controller.py && command -v iptables"])
         if code != 0:
             raise RuntimeBlocked(f"controller image lacks controller.py or iptables: {stderr}")
-        return ResolvedImageEvidence(images, _seal=_RESOLVED_IMAGES_SEAL)
+        return ResolvedImageEvidence(images, controller_base_digest=base_digest, controller_source_sha256=source_digest,
+                                     controller_dockerfile_sha256=dockerfile_digest, _seal=_RESOLVED_IMAGES_SEAL)
 
 
 if __name__ == "__main__":
