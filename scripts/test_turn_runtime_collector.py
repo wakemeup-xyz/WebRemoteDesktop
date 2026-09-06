@@ -232,6 +232,14 @@ def test_controlled_producer_id_alone_stays_not_run_and_never_dispatches_input()
     assert "Viewer-only" in result["reason"]
 
 
+def test_collector_lab_scene_flag_routes_to_the_executable_harness_and_fails_blocked_without_a_real_lab_driver():
+    parsed = collector.parse_args(["--phase", "720p", "--output", "/tmp/evidence.json", "--lab-controlled-scene"])
+    assert parsed.lab_controlled_scene is True
+    result = collector.record_interactions(object(), enabled=False, lab_requested=True)
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "real-lab-driver-required"
+
+
 def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector():
     from turn_controlled_scene import (AUTOMATIC_ISOLATED, ControlledSceneDriver, ProducerProof)
     from turn_lab_input_guard import LabInputGuard

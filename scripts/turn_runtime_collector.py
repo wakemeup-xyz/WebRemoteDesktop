@@ -82,6 +82,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-url", default=os.environ.get("WRD_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--controlled-producer-id", default=None,
                         help="Opt in to mouse/keyboard only after a human displays the controlled producer page.")
+    parser.add_argument("--lab-controlled-scene", action="store_true",
+                        help="Use only an isolated Lab driver; without it the evidence is BLOCKED and no input is sent.")
     args = parser.parse_args(argv)
     if args.duration_seconds is not None and not 1 <= args.duration_seconds <= 3600:
         parser.error("--duration-seconds must be an integer from 1 to 3600")
@@ -620,7 +622,7 @@ def _wait_for_phase(page: Any, expected: str, timeout_seconds: int = 15) -> bool
     return page.evaluate("() => WebRTC?.getMediaAppliedPhase?.()") == expected
 
 
-def record_interactions(page: Any, enabled: bool, *, scene_driver: Any | None = None) -> dict[str, Any]:
+def record_interactions(page: Any, enabled: bool, *, scene_driver: Any | None = None, lab_requested: bool = False) -> dict[str, Any]:
     """Collect an explicitly registered Lab driver; never synthesize input.
 
     The normal Viewer-only collector has no Host fixture/lease binding and
@@ -641,6 +643,9 @@ def record_interactions(page: Any, enabled: bool, *, scene_driver: Any | None = 
             return {"status": "FAIL", "executionMode": "automatic-isolated",
                     "reason": f"controlled-driver-failed:{type(error).__name__}", "inputIds": [],
                     "ackSamples": [], "producerSamples": [], "visualSamples": [], "sendSamples": []}
+    if lab_requested:
+        return {"status": "BLOCKED", "executionMode": "automatic-isolated", "reason": "real-lab-driver-required",
+                "inputIds": [], "ackSamples": [], "producerSamples": [], "visualSamples": [], "sendSamples": []}
     reason = "controlled producer identity cannot be verified from a Viewer-only session"
     if not enabled:
         reason = "requires a controlled producer and host-side event correlation"
@@ -793,7 +798,8 @@ def run(args: argparse.Namespace, project_root: Path, *, lab_driver_factory: Cal
                 wait_for_healthy_relay(page)
                 duration = phase_duration_seconds(phase, args.duration_seconds)
                 scene_driver = lab_driver_factory(page, phase) if lab_driver_factory is not None else None
-                scene_result = record_interactions(page, bool(args.controlled_producer_id), scene_driver=scene_driver)
+                scene_result = record_interactions(page, bool(args.controlled_producer_id), scene_driver=scene_driver,
+                                                   lab_requested=bool(args.lab_controlled_scene))
                 marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": scene_result, "sceneResult": scene_result, "pauseResumeRefresh": record_pause_resume_refresh(page)}
                 # Markers intentionally pause and refresh media.  Start the
                 # evidence window only after they settle so their lifecycle
