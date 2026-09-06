@@ -332,7 +332,23 @@ def get_turn_fingerprint(turn_urls=None, username=None):
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def get_host_turn_capability(selected_turn_server_id=None):
+def get_host_turn_capability(selected_turn_server_id=None, turn_override=None):
+    if isinstance(turn_override, dict):
+        urls = normalize_turn_urls(turn_override.get("urls") or [])
+        username = str(turn_override.get("username") or "").strip()
+        credential = str(turn_override.get("credential") or "").strip()
+        selected_id = str(turn_override.get("selectedTurnServerId") or "").strip()
+        fingerprint = str(turn_override.get("turnFingerprint") or "").strip()
+        return {
+            "turnReady": bool(urls and username and credential and selected_id and fingerprint),
+            "turnFingerprint": fingerprint,
+            "supportsSessionTurn": True,
+            "supportsMultiTurn": False,
+            "turnServerId": selected_id,
+            "defaultTurnServerId": selected_id,
+            "turnServerIds": [selected_id] if selected_id else [],
+            **({"labTurnAppliedDigest": str(turn_override["appliedDigest"])} if turn_override.get("appliedDigest") else {}),
+        }
     try:
         from turn_catalog import get_cached_turn_catalog, resolve_turn_server
     except ImportError:
@@ -394,7 +410,7 @@ def is_lock_rejected_size(width, height) -> bool:
     return (int(width), int(height)) in LOCK_AUTO_SHRINK_SIZES
 
 
-def build_ice_servers(mode="auto", turn_server_id=None):
+def build_ice_servers(mode="auto", turn_server_id=None, turn_override=None):
     """Build Host ICE config; TURN inclusion is session/mode/id scoped."""
     ice_servers = []
     normalized_mode = normalize_network_mode(mode) or "auto"
@@ -409,7 +425,13 @@ def build_ice_servers(mode="auto", turn_server_id=None):
     turn_username = ""
     turn_credential = ""
     selected_id = ""
-    try:
+    if isinstance(turn_override, dict):
+        turn_urls = normalize_turn_urls(turn_override.get("urls") or [])
+        turn_username = str(turn_override.get("username") or "").strip()
+        turn_credential = str(turn_override.get("credential") or "").strip()
+        selected_id = str(turn_override.get("selectedTurnServerId") or "").strip()
+    else:
+      try:
         from turn_catalog import get_cached_turn_catalog, resolve_turn_server
         catalog = get_cached_turn_catalog()
         selected = resolve_turn_server(catalog, turn_server_id)
@@ -418,7 +440,7 @@ def build_ice_servers(mode="auto", turn_server_id=None):
             turn_username = str(selected.get("username") or "").strip()
             turn_credential = str(selected.get("credential") or "").strip()
             selected_id = str(selected.get("id") or "")
-    except ImportError:
+      except ImportError:
         turn_urls = normalize_turn_urls(os.environ.get("TURN_URLS"))
         turn_username = str(os.environ.get("TURN_USERNAME") or "").strip()
         turn_credential = str(os.environ.get("TURN_CREDENTIAL") or "").strip()
@@ -1795,7 +1817,7 @@ class WebRemoteHost:
             )
             logger.info("Connected to signaling server")
             try:
-                capability = get_host_turn_capability()
+                capability = self._host_turn_capability() if hasattr(self, "_host_turn_capability") else get_host_turn_capability()
                 await self.sio.emit("host-capabilities", capability)
                 logger.info(
                     "Host capabilities reported turnReady=%s multi=%s default=%s fingerprint=%s ids=%s",
@@ -2483,11 +2505,14 @@ class WebRemoteHost:
                 )
                 self._session_turn_server_id = str(turn_server_id or "").strip() or None
                 config = RTCConfiguration(
-                    iceServers=build_ice_servers(network_mode, self._session_turn_server_id)
+                    iceServers=build_ice_servers(network_mode, self._session_turn_server_id,
+                                                 getattr(self, "_session_turn_override", None))
                 )
                 self.pc = RTCPeerConnection(configuration=config)
                 try:
-                    session_caps = get_host_turn_capability(self._session_turn_server_id)
+                    session_caps = (self._host_turn_capability(self._session_turn_server_id)
+                                    if hasattr(self, "_host_turn_capability")
+                                    else get_host_turn_capability(self._session_turn_server_id))
                     await self.sio.emit("host-capabilities", session_caps)
                 except Exception as cap_err:
                     logger.warning("Failed to refresh host TURN capability after offer: %s", cap_err)

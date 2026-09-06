@@ -53,8 +53,8 @@
   window.WRDTurnControlledProducer.prepareNativeAction=(actionId)=>{if(!Number.isInteger(actionId)||actionId<1)throw new Error('action id required');nextActionId=actionId};
   const note=(event)=>{const actionId=nextActionId??(++action);nextActionId=null;action=Math.max(action,actionId);applyAction(state,actionId);draw();const nativeEvent={eventType:event.type,actionId,tick:state.tick,runNonce:state.runNonce.toString(),sceneId:state.sceneId,focused:document.hasFocus()&&document.activeElement?.closest?.('#target,#scroll,#drag')!==null};loopbackReporter?.(nativeEvent);log.textContent+=`${event.type} action=${actionId} tick=${state.tick}\n`;log.scrollTop=log.scrollHeight};
   document.querySelector('#identity').textContent=`Fixture nonce=${nonce.toString(16)} scene=1. Marker changes only on an explicit action.`;
-  ['input','keydown','pointerdown'].forEach(type=>document.querySelector('#target').addEventListener(type,note));
-  document.querySelector('#scroll').addEventListener('scroll',note); document.querySelector('#drag').addEventListener('pointermove',event=>{if(event.buttons)note(event)});
+  ['input','keydown','keyup','pointerdown','pointerup'].forEach(type=>document.querySelector('#target').addEventListener(type,note));
+  document.querySelector('#scroll').addEventListener('scroll',note); ['pointerdown','pointermove','pointerup'].forEach(type=>document.querySelector('#drag').addEventListener(type,event=>{if(type!=='pointermove'||event.buttons)note(event)}));
   draw();
 })();
 </script>

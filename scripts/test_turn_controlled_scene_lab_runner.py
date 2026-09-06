@@ -120,6 +120,8 @@ def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dis
     class Run:
         def bind_controlled_input(self, **kwargs):
             rows.append(("bind", kwargs["input_id"], kwargs["action"]))
+        def wait_for_controlled_claim(self, input_id):
+            return {"inputId": input_id, "status": "claimed"}
 
     class Producer:
         def prepare_native_action(self, action_id): rows.append(("native", action_id))
@@ -132,9 +134,47 @@ def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dis
 
     assert result["status"] == runner.PASS
     assert result["failures"] == []
-    assert len(result["receipts"]) == 31
+    assert len(result["receipts"]) == 51
     assert result["workload"] == [runner.workload_record(item) for item in runner.exact_workload()]
-    assert [row for row in rows if row[0] == "dispatch"] == [("dispatch", f"i-{item.action_id}") for item in runner.exact_workload()]
+    assert [row for row in rows if row[0] == "dispatch"] == [
+        ("dispatch", f"i-{step.action_id}") for item in runner.exact_workload() for step in runner.work_steps(item)
+    ]
+
+
+def test_workload_expands_drag_transactions_and_keyboard_submission_without_leaving_a_pressed_input():
+    drag = next(item for item in runner.exact_workload() if item.kind == "drag")
+    text = next(item for item in runner.exact_workload() if item.kind == "text")
+    assert [step.phase for step in runner.work_steps(drag)] == ["down", "move", "up"]
+    assert [step.phase for step in runner.work_steps(text)] == ["text"]
+
+
+def test_driver_sends_a_normal_safety_release_when_a_drag_fails_before_up():
+    releases = []
+    class Adapter:
+        def prepare_lab_input(self, step):
+            return {"inputId": f"i-{step.action_id}", "leaseId": "lease", "leaseEpoch": 4,
+                    "type": "mouse", "action": step.phase, "payload": {}}
+        def dispatch_prepared_lab_input(self, reservation): return reservation["inputId"]
+        def wait_for_applied_ack(self, input_id): return None
+        def wait_for_decoded_visual(self, input_id, action_id): return None
+        def dispatch_safety_release(self): releases.append("up")
+    class Run:
+        def bind_controlled_input(self, **_kwargs): pass
+        def wait_for_controlled_claim(self, input_id): return {"inputId": input_id, "status": "claimed"}
+    class Producer:
+        def prepare_native_action(self, _action_id): pass
+    class Broker:
+        def reserve(self, **_kwargs): pass
+        def wait_for_receipt(self, _input_id): return None
+    drag = next(item for item in runner.exact_workload() if item.kind == "drag")
+    original = runner.exact_workload
+    runner.exact_workload = lambda: (drag,)
+    try:
+        result = runner.ExecutableLabDriver(lab_run=Run(), viewer=Adapter(), producer=Producer(), broker=Broker(), fixture_id="fixture").run()
+    finally:
+        runner.exact_workload = original
+    assert result["status"] == runner.FAIL
+    assert releases == ["up"]
 
 
 def test_loopback_fixture_receiver_merges_only_a_native_event_with_its_reserved_input_id():
@@ -143,13 +183,36 @@ def test_loopback_fixture_receiver_merges_only_a_native_event_with_its_reserved_
     broker = runner.FixtureBroker(proof, layout)
     broker.reserve(input_id="i-12", action_id=12)
     with runner.LoopbackFixtureReceiver(broker) as receiver:
-        body = {"runNonce": 7, "sceneId": 3, "tick": 1, "actionId": 12, "attemptId": "attempt", "generation": 2,
+        body = {"runNonce": "7", "sceneId": 3, "tick": 1, "actionId": 12, "attemptId": "attempt", "generation": 2,
                 "realm": Identity.realm, "runId": Identity.run_id, "focused": True,
                 "sourceWidth": 1280, "sourceHeight": 720, "roi": [64, 48, 256, 128], "layoutDigest": layout.layout_digest}
         request = Request(receiver.endpoint, method="POST", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
         with urlopen(request, timeout=2) as response:
             assert response.status == 202
         assert receiver.wait_for_receipt("i-12", timeout_seconds=.2)["inputId"] == "i-12"
+
+
+def test_loopback_nonce_accepts_the_canonical_marker_string_for_an_integer_proof_and_rejects_ambiguous_spellings():
+    proof = runner.ProducerProof(7, 3, Identity.origin, "attempt", 2, Identity.realm, Identity.run_id)
+    layout = runner.MarkerLayout.create(attempt_id="attempt", generation=2, source_width=1280, source_height=720, roi=(64, 48, 256, 128))
+    broker = runner.FixtureBroker(proof, layout)
+    for action_id, nonce in enumerate(("07", "+7", " 7", "7.0", -1), start=1):
+        broker.reserve(input_id=f"i-{action_id}", action_id=action_id)
+        event = {"runNonce": nonce, "sceneId": 3, "tick": 1, "actionId": action_id, "attemptId": "attempt", "generation": 2,
+                 "realm": Identity.realm, "runId": Identity.run_id, "focused": True,
+                 "sourceWidth": 1280, "sourceHeight": 720, "roi": [64, 48, 256, 128], "layoutDigest": layout.layout_digest}
+        assert broker.record_native_event(event) is None
+
+
+def test_five_way_gate_refuses_a_pass_without_the_host_input_adapter_claim_receipt():
+    result = runner.aggregate_action_evidence(
+        reservation={"inputId": "i-1"},
+        ack={"inputId": "i-1", "status": "applied"},
+        claim=None,
+        receipt={"inputId": "i-1"},
+        visual={"inputId": "i-1", "traceStatus": "matched", "rtpTimestamp": 1, "wireTimestamp": 1},
+    )
+    assert result == {"status": runner.FAIL, "failure": "missing-host-guard-claim"}
 
 
 def test_playwright_adapter_prepares_then_dispatches_the_same_page_owned_reservation_through_input_api():
@@ -165,7 +228,7 @@ def test_playwright_adapter_prepares_then_dispatches_the_same_page_owned_reserva
             return True
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
     adapter.viewer_page = Page()
-    reservation = adapter.prepare_lab_input(runner.exact_workload()[0])
+    reservation = adapter.prepare_lab_input(runner.work_steps(runner.exact_workload()[0])[0])
     assert adapter.dispatch_prepared_lab_input(reservation) == "i-1"
     assert "Input.prepareLabInput" in calls[0][0]
     assert "Input.dispatchPreparedLabInput" in calls[1][0]

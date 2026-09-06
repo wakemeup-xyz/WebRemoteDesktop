@@ -206,7 +206,7 @@ test('lab context burns when its viewer proof was consumed before host startup',
   }
 });
 
-test('controlled input binding is loopback proof-and-host-secret bound and one-use', async () => {
+test('controlled input binding stays fail-closed until an independent Host guard arm is acknowledged', async () => {
   const lab = await createLabRuntime({ allowSourceFallback: true });
   try {
     const login = await fetch(`${lab.origin}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: lab.credentials.viewerPassword }) });
@@ -229,14 +229,19 @@ test('controlled input binding is loopback proof-and-host-secret bound and one-u
     const denied = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers: { ...headers, 'x-wrd-lab-host-secret': 'wrong' }, body: JSON.stringify(binding) });
     assert.equal(denied.status, 403);
     const bound = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers, body: JSON.stringify(binding) });
-    assert.equal(bound.status, 201);
-    const claimBody = { realm: lab.realm, runId: 'run-1', epoch: admission.epoch, inputId: 'input-1', leaseId: 'lease-1', leaseEpoch: 4, actionDigest: digest };
-    const claim = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify(claimBody) });
-    const claimed = (await claim.json()).binding;
-    assert.equal(claimed.inputId, binding.inputId);
-    assert.equal(claimed.actionDigest, digest);
-    assert.equal(claimed.viewerSocketId, 'viewer-1');
-    const replay = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify(claimBody) });
-    assert.equal(replay.status, 409);
+    assert.equal(bound.status, 409);
+    const emitted = [];
+    lab.runtime.signalingRuntime.connections.host = { emit: (name, body) => emitted.push({ name, body }) };
+    const arm = await fetch(`${lab.origin}/api/lab-controlled-input/arm`, { method: 'POST', headers, body: JSON.stringify({
+      realm: lab.realm, runId: 'run-1', epoch: admission.epoch, leaseId: 'lease-1', leaseEpoch: 4,
+      fixtureId: 'fixture-1', isolated: true, foreground: true, fixtureWindow: true,
+    }) });
+    assert.equal(arm.status, 202);
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0].name, 'lab-controlled-input-arm');
+    const armId = (await arm.json()).armId;
+    const pending = await fetch(`${lab.origin}/api/lab-controlled-input/arm-status`, { method: 'POST', headers,
+      body: JSON.stringify({ realm: lab.realm, runId: 'run-1', epoch: admission.epoch, armId }) });
+    assert.deepEqual((await pending.json()).arm, { armId, status: 'pending' });
   } finally { await lab.close(); }
 });

@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping, Protocol
 from turn_controlled_scene import BLOCKED, FAIL, NOT_RUN, PASS, ProducerProof
 from turn_controlled_scene_runtime import (MarkerLayout, aggregate_action_evidence,
                                            FixtureBroker, exact_workload, run_automatic_scene,
-                                           static_text_evidence, workload_failures,
+                                           static_text_evidence, work_steps, workload_failures,
                                            workload_record)
 
 
@@ -101,40 +101,56 @@ class ExecutableLabDriver:
         receipts: list[dict[str, Any]] = []
         failures: list[str] = []
         workload = list(exact_workload())
+        completed_workload: list[dict[str, Any]] = []
         for item in workload:
+            drag_started = False
             try:
-                reservation = self.viewer.prepare_lab_input(item)
-                if not isinstance(reservation, Mapping):
-                    raise RuntimeError("viewer-lab-input-not-prepared")
-                input_id, lease_id, lease_epoch = reservation.get("inputId"), reservation.get("leaseId"), reservation.get("leaseEpoch")
-                action = {key: reservation.get(key) for key in ("type", "action", "payload")}
-                if (not isinstance(input_id, str) or not input_id or not isinstance(lease_id, str) or not lease_id
-                        or not isinstance(lease_epoch, int) or isinstance(lease_epoch, bool) or lease_epoch < 0
-                        or not isinstance(action["type"], str) or not isinstance(action["action"], str)
-                        or not isinstance(action["payload"], Mapping)):
-                    raise RuntimeError("viewer-lab-input-metadata-invalid")
-                self.broker.reserve(input_id=input_id, action_id=item.action_id)
-                self.lab_run.bind_controlled_input(input_id=input_id, lease_id=lease_id, lease_epoch=lease_epoch,
-                                                    fixture_id=self.fixture_id, action=action)
-                self.producer.prepare_native_action(item.action_id)
-                dispatched = self.viewer.dispatch_prepared_lab_input(reservation)
-                if dispatched != input_id:
-                    raise RuntimeError("viewer-lab-input-dispatch-refused")
-                ack = self.viewer.wait_for_applied_ack(input_id)
-                receipt = self.broker.wait_for_receipt(input_id)
-                visual = self.viewer.wait_for_decoded_visual(input_id, item.action_id)
-                result = aggregate_action_evidence(reservation=reservation, ack=ack, receipt=receipt, visual=visual)
-                if result["status"] != PASS:
-                    raise RuntimeError(str(result.get("failure") or "four-way-evidence-failed"))
-                receipts.append({"inputId": input_id, "actionId": item.action_id, "kind": item.kind,
-                                 **({"text": item.text} if item.kind == "text" else {}),
-                                 "ack": dict(ack), "receipt": dict(receipt), "visual": dict(visual)})
+                for step in work_steps(item):
+                    reservation = self.viewer.prepare_lab_input(step)
+                    if not isinstance(reservation, Mapping):
+                        raise RuntimeError("viewer-lab-input-not-prepared")
+                    input_id, lease_id, lease_epoch = reservation.get("inputId"), reservation.get("leaseId"), reservation.get("leaseEpoch")
+                    action = {key: reservation.get(key) for key in ("type", "action", "payload")}
+                    if (not isinstance(input_id, str) or not input_id or not isinstance(lease_id, str) or not lease_id
+                            or not isinstance(lease_epoch, int) or isinstance(lease_epoch, bool) or lease_epoch < 0
+                            or not isinstance(action["type"], str) or not isinstance(action["action"], str)
+                            or not isinstance(action["payload"], Mapping)):
+                        raise RuntimeError("viewer-lab-input-metadata-invalid")
+                    self.broker.reserve(input_id=input_id, action_id=step.action_id)
+                    self.lab_run.bind_controlled_input(input_id=input_id, lease_id=lease_id, lease_epoch=lease_epoch,
+                                                        fixture_id=self.fixture_id, action=action)
+                    self.producer.prepare_native_action(step.action_id)
+                    dispatched = self.viewer.dispatch_prepared_lab_input(reservation)
+                    if dispatched != input_id:
+                        raise RuntimeError("viewer-lab-input-dispatch-refused")
+                    if step.kind == "drag" and step.phase == "down":
+                        drag_started = True
+                    ack = self.viewer.wait_for_applied_ack(input_id)
+                    claim = self.lab_run.wait_for_controlled_claim(input_id)
+                    receipt = self.broker.wait_for_receipt(input_id)
+                    visual = self.viewer.wait_for_decoded_visual(input_id, step.action_id)
+                    result = aggregate_action_evidence(reservation=reservation, ack=ack, claim=claim, receipt=receipt, visual=visual)
+                    if result["status"] != PASS:
+                        raise RuntimeError(str(result.get("failure") or "five-way-evidence-failed"))
+                    receipts.append({"inputId": input_id, "actionId": item.action_id, "markerActionId": step.action_id,
+                                     "kind": item.kind, "phase": step.phase,
+                                     **({"text": item.text} if item.kind == "text" else {}),
+                                     "ack": dict(ack), "claim": dict(claim), "receipt": dict(receipt), "visual": dict(visual)})
+                    if step.kind == "drag" and step.phase == "up":
+                        drag_started = False
+                completed_workload.append(workload_record(item))
             except Exception as error:
                 failures.append(f"action-{item.action_id}:{type(error).__name__}:{error}")
                 break
+            finally:
+                if drag_started:
+                    try:
+                        self.viewer.dispatch_safety_release()
+                    except Exception:
+                        failures.append(f"action-{item.action_id}:safety-release-failed")
         workload_rows = [{"kind": row["kind"], "actionId": row["actionId"],
                           **({"text": row["text"]} if "text" in row else {})}
-                         for row in receipts]
+                         for row in completed_workload]
         failures.extend(workload_failures(workload_rows))
         return {"status": PASS if not failures else FAIL, "executionMode": "automatic-isolated",
                 "workload": [workload_record(item) for item in workload], "receipts": receipts,
@@ -261,19 +277,24 @@ class PlaywrightLabViewerAdapter:
     @staticmethod
     def _input_spec(item: Any) -> dict[str, Any]:
         """Map the immutable work declaration to the existing v2 input API."""
-        if item.kind == "scroll":
+        if item.kind == "scroll" and item.phase == "wheel":
             return {"type": "mouse", "action": "wheel",
                     "payload": {"relX": .5, "relY": .5, "deltaX": 0, "deltaY": 80}}
-        if item.kind == "drag":
+        if item.kind == "drag" and item.phase == "down":
             # The Host's normal mouse down path is the causal start of every
             # drag.  Dedicated-fixture runs retain the pending button state
             # only on their disposable desktop; a no-input rehearsal never
             # reaches this method.
             return {"type": "mouse", "action": "down",
                     "payload": {"relX": .5, "relY": .5, "button": "left", "buttons": 1, "clickCount": 1}}
-        if item.kind == "text":
-            return {"type": "keyboard", "action": "keydown",
-                    "payload": {"code": "KeyT", "key": item.text, "modifiers": {}}}
+        if item.kind == "drag" and item.phase == "move":
+            return {"type": "mouse", "action": "move",
+                    "payload": {"relX": .62, "relY": .58, "buttons": 1}}
+        if item.kind == "drag" and item.phase == "up":
+            return {"type": "mouse", "action": "up",
+                    "payload": {"relX": .62, "relY": .58, "button": "left", "buttons": 0}}
+        if item.kind == "text" and item.phase == "text":
+            return {"type": "keyboard", "action": "text", "payload": {"text": item.text}}
         raise ValueError("unknown controlled workload item")
 
     def prepare_lab_input(self, item: Any) -> dict[str, Any] | None:
@@ -300,6 +321,28 @@ class PlaywrightLabViewerAdapter:
           pending.delete(inputId);
           return window.Input.dispatchPreparedLabInput(reservation);
         }""", input_id)
+
+    def dispatch_safety_release(self) -> str | None:
+        """Use the normal Viewer safety-release path after an incomplete drag."""
+        return self.viewer_page.evaluate("""() =>
+          window.Input?.sendInput?.('mouse', 'up', { relX: .62, relY: .58, button: 'left', buttons: 0 }) || null
+        """)
+
+    def acquire_controlled_lease(self, *, timeout_seconds: float = 15) -> dict[str, Any] | None:
+        """Request the normal Viewer lease only in the dedicated input branch."""
+        if not self.viewer_page.evaluate("() => !!window.WebRTC?.hasActiveControl?.()"):
+            self.viewer_page.locator("#requestControlBtn").click()
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            lease = self.viewer_page.evaluate("""() => {
+              const lease = window.Input?.activeControlLease;
+              return lease && typeof lease.leaseId === 'string' && Number.isInteger(lease.leaseEpoch)
+                ? { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch } : null;
+            }""")
+            if isinstance(lease, dict) and isinstance(lease.get("leaseId"), str) and lease["leaseId"] and isinstance(lease.get("leaseEpoch"), int):
+                return lease
+            self.viewer_page.wait_for_timeout(100)
+        return None
 
     def install_input_ack_observer(self) -> None:
         self.viewer_page.evaluate("""() => {
@@ -529,10 +572,19 @@ def main(argv: list[str] | None = None) -> int:
             # never gets here, so the run cannot emit Quartz events there.
             broker = FixtureBroker(proof, layout)
             with LoopbackFixtureReceiver(broker) as receiver:
+                # Independent Signal control-plane arming must complete before
+                # any prepared input is bound or dispatched. The Host reports
+                # its applied secret-free TURN digest first.
+                lab.wait_host_turn_applied()
+                lease = adapter.acquire_controlled_lease()
+                if lease is None:
+                    raise RuntimeError("Viewer did not receive a controlled lease")
+                fixture_id = f"fixture-{identity.run_id}"
+                lab.arm_controlled_input(lease_id=lease["leaseId"], lease_epoch=lease["leaseEpoch"], fixture_id=fixture_id)
                 adapter.install_input_ack_observer()
                 adapter.configure_loopback_producer(endpoint=receiver.endpoint, proof=proof, layout=layout)
                 automatic = ExecutableLabDriver(lab_run=lab, viewer=adapter, producer=adapter,
-                                                 broker=receiver, fixture_id=f"fixture-{identity.run_id}").run()
+                                                 broker=receiver, fixture_id=fixture_id).run()
         transcript = LabTranscript.create(verifier=lab.transcript_verifier(), identity=identity_record,
             static=static, automatic=automatic,
             receipts=automatic.get("receipts", []) if isinstance(automatic.get("receipts"), list) else [])

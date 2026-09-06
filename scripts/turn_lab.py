@@ -80,6 +80,13 @@ class LabTurnBootstrap:
             "turnCredential": self.turn_credential,
         }
 
+    def applied_digest(self) -> str:
+        """Stable, secret-free proof of the one selected Host/Viewer path."""
+        body = {"schemaVersion": 1, "selectedTurnServerId": self.selected_turn_server_id,
+                "turnFingerprint": self.turn_fingerprint, "turnUrls": list(self.turn_urls),
+                "turnUsername": self.turn_username}
+        return hashlib.sha256(json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
 
 class ProductionAdmissionClient:
     """Final client: admits once, then offers read-only status observation."""
@@ -271,6 +278,7 @@ class LabRun:
         self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch: int | None = None
         self._transcript_secret = ""
         self._production_proof: ProductionProof | None = None; self._expected_identity: LabIdentity | None = None
+        self._expected_turn_applied_digest = ""
         self.closed = True; self._lock = threading.RLock(); self._state_changed = threading.Condition(self._lock)
         self._watch_stop: threading.Event | None = None
         self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
@@ -352,6 +360,7 @@ class LabRun:
             # launched.  ``turn_bootstrap`` remains a local until its one
             # write to the Signal stdin pipe below.
             turn_bootstrap = self._production_client.lab_turn_bootstrap(proof)
+            expected_turn_applied_digest = turn_bootstrap.applied_digest()
             self._require_owner(token, generation)
             parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
             runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
@@ -383,6 +392,7 @@ class LabRun:
                 self.identity, self._context = identity, context
                 self._host_secret, self._viewer_password, self._context_secret, self._transcript_secret = lab.host_secret, lab.viewer_password, lab.context_secret, lab.transcript_secret
                 self._production_epoch, self._production_proof, self._expected_identity = proof.epoch, proof, identity
+                self._expected_turn_applied_digest = expected_turn_applied_digest
                 self._last_status = "running"
                 watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-lab-watch-{run_id}", daemon=True)
                 self._watch_thread = watch
@@ -522,6 +532,84 @@ class LabRun:
         if not isinstance(payload, Mapping) or payload.get("binding", {}).get("inputId") != input_id:
             raise RuntimeError("lab controlled input binding response was invalid")
 
+    def _controlled_request(self, path: str, body: Mapping[str, Any]) -> tuple[int, Mapping[str, Any]]:
+        with self._lock:
+            identity, secret = self.identity, self._host_secret
+            if self.closed or identity is None or not secret:
+                raise RuntimeError("running lab identity is required")
+        request = Request(f"{identity.origin}{path}", method="POST", data=json.dumps(dict(body), separators=(",", ":")).encode(),
+                          headers={"Content-Type": "application/json", "x-wrd-lab-host-secret": secret,
+                                   "x-wrd-lab-proof-token": identity._proof_token})
+        try:
+            with urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode())
+                return response.status, payload if isinstance(payload, Mapping) else {}
+        except HTTPError as error:
+            try:
+                payload = json.loads(error.read().decode())
+            except Exception:
+                payload = {}
+            return error.code, payload if isinstance(payload, Mapping) else {}
+
+    def wait_host_turn_applied(self, *, timeout_seconds: float = 10) -> str:
+        with self._lock:
+            identity, expected = self.identity, self._expected_turn_applied_digest
+            if self.closed or identity is None or not expected:
+                raise RuntimeError("running lab TURN identity is required")
+            body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            code, payload = self._controlled_request("/api/lab-host-turn-status", body)
+            digest = payload.get("turnAppliedDigest") if isinstance(payload, Mapping) else None
+            if code == 200 and isinstance(digest, str) and hmac.compare_digest(digest, expected):
+                return digest
+            time.sleep(.1)
+        raise RuntimeError("Lab Host did not apply the injected TURN path")
+
+    def arm_controlled_input(self, *, lease_id: str, lease_epoch: int, fixture_id: str) -> Mapping[str, Any]:
+        with self._lock:
+            identity, expected = self.identity, self._expected_turn_applied_digest
+            if self.closed or identity is None or not expected:
+                raise RuntimeError("running lab guard identity is required")
+            body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
+                    "leaseId": lease_id, "leaseEpoch": lease_epoch, "fixtureId": fixture_id,
+                    "isolated": True, "foreground": True, "fixtureWindow": True}
+        if (not isinstance(lease_id, str) or not lease_id or not isinstance(lease_epoch, int)
+                or isinstance(lease_epoch, bool) or lease_epoch < 0 or not isinstance(fixture_id, str) or not fixture_id):
+            raise ValueError("controlled guard arm requires a current lease and fixture")
+        code, payload = self._controlled_request("/api/lab-controlled-input/arm", body)
+        arm_id = payload.get("armId") if isinstance(payload, Mapping) else None
+        if code != 202 or not isinstance(arm_id, str) or not arm_id:
+            raise RuntimeError("Lab Host guard arm was refused")
+        status_body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch, "armId": arm_id}
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            code, status = self._controlled_request("/api/lab-controlled-input/arm-status", status_body)
+            arm = status.get("arm") if isinstance(status, Mapping) else None
+            if (code == 200 and isinstance(arm, Mapping) and arm.get("status") == "armed"
+                    and isinstance(arm.get("turnAppliedDigest"), str)
+                    and hmac.compare_digest(arm["turnAppliedDigest"], expected)):
+                return {"armId": arm_id, "status": "armed", "turnAppliedDigest": expected}
+            if code == 200 and isinstance(arm, Mapping) and arm.get("status") == "rejected":
+                break
+            time.sleep(.1)
+        raise RuntimeError("Lab Host guard arm was not acknowledged")
+
+    def wait_for_controlled_claim(self, input_id: str, *, timeout_seconds: float = 10) -> Mapping[str, Any] | None:
+        with self._lock:
+            identity = self.identity
+            if self.closed or identity is None:
+                raise RuntimeError("running lab identity is required")
+            body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch, "inputId": input_id}
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            code, payload = self._controlled_request("/api/lab-controlled-input/claim-receipt", body)
+            claim = payload.get("claim") if isinstance(payload, Mapping) else None
+            if code == 200 and isinstance(claim, Mapping) and claim.get("inputId") == input_id and claim.get("status") == "claimed":
+                return dict(claim)
+            time.sleep(.05)
+        return None
+
     def start_host(self) -> subprocess.Popen[Any]:
         # Snapshot under lock, make all HTTP calls without it, then claim the
         # exact generation again.  A close racing Popen leaves at most a child
@@ -629,7 +717,7 @@ class LabRun:
                     self._last_status = "closed"
                 proof = self._production_proof
                 admission_pending = self._admission_token is token
-                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._production_epoch = None; self._production_proof = None
+                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._expected_turn_applied_digest = ""; self._production_epoch = None; self._production_proof = None
                 self._run_token = None; self._watch_stop = None; self._watch_thread = None
         for child in children:
             self._terminate_child(child)

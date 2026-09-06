@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import asyncio
 import signal
 import subprocess
 import sys
@@ -239,6 +240,33 @@ def test_lab_host_installs_the_guard_only_after_the_real_fixture_lease_arms_it(m
     host.bind_controlled_input({"inputId": "input-1", "leaseId": "lease-1",
                                 "proofToken": _context().proof_token, "fixtureId": "fixture-1"})
     assert host.controlled_input_guard.is_input_bound("input-1")
+
+
+def test_lab_host_control_plane_arm_installs_the_real_adapter_guard_and_reports_the_applied_turn_digest(monkeypatch):
+    class Adapter:
+        async def apply_keyboard(self, *_args, **_kwargs): return {"status": "applied"}
+        async def handle_input(self, *_args, **_kwargs): return {"status": "applied"}
+    class Sio:
+        def __init__(self): self.events = []
+        async def emit(self, name, payload): self.events.append((name, payload))
+    monkeypatch.setattr(turn_lab_host_module.WebRemoteHost, "__init__", lambda self: setattr(self, "input_adapter", Adapter()))
+    context = _context()
+    host = LabWebRemoteHost(context)
+    host.sio = Sio()
+    digest = turn_lab_host_module._turn_applied_digest(
+        selected_id="fixture-turn", fingerprint="fixture-fp",
+        urls=["turn:relay.fixture.invalid:3478"], username="fixture-user",
+    )
+    host._session_turn_override = {"selectedTurnServerId": "fixture-turn", "turnFingerprint": "fixture-fp",
+                                   "urls": ["turn:relay.fixture.invalid:3478"], "username": "fixture-user",
+                                   "credential": "not-persisted", "appliedDigest": digest}
+    asyncio.run(host.on_lab_controlled_input_arm({
+        "armId": "arm-1", "realm": context.realm, "runId": context.run_id, "epoch": context.epoch,
+        "leaseId": "lease-1", "leaseEpoch": 2, "fixtureId": "fixture-1",
+        "isolated": True, "foreground": True, "fixtureWindow": True,
+    }))
+    assert host.controlled_input_guard is not None and host.controlled_input_guard.installed
+    assert host.sio.events == [("lab-controlled-input-arm-ack", {"armId": "arm-1", "status": "armed", "turnAppliedDigest": digest})]
 
 
 def test_lab_selection_uses_exact_experiment_policy_for_publish_refresh_and_rebuild():

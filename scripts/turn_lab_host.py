@@ -67,6 +67,13 @@ def _controlled_action_digest(envelope: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
 
+def _turn_applied_digest(*, selected_id: str, fingerprint: str, urls: list[str], username: str) -> str:
+    """Secret-free digest reported by the Host after applying Lab TURN state."""
+    body = {"schemaVersion": 1, "selectedTurnServerId": selected_id,
+            "turnFingerprint": fingerprint, "turnUrls": urls, "turnUsername": username}
+    return hashlib.sha256(json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
 def _experiment_resolver(policy_id: str, parameter_digest: str) -> Callable[[MediaSessionIntent, str], H264SessionPolicy]:
     def resolve(intent: MediaSessionIntent, received_policy_id: str) -> H264SessionPolicy:
         if received_policy_id != policy_id:
@@ -169,6 +176,84 @@ class LabWebRemoteHost(WebRemoteHost):
         # Idle labs must retain the real Host adapter.  The guard is installed
         # only once a lifecycle-owned Viewer lease and fixture probe exist.
         self.controlled_input_guard: LabInputGuard | None = None
+        self._session_turn_override: dict[str, Any] | None = None
+
+    def _build_socket_client(self):
+        sio = super()._build_socket_client()
+        sio.on("lab-controlled-input-arm", self.on_lab_controlled_input_arm)
+        return sio
+
+    async def authenticate(self):
+        if not await super().authenticate():
+            return False
+        # The Host reads exactly the selected lab Signal catalogue with its
+        # authenticated Host bearer. Credentials stay in this process memory;
+        # no environment or artifact is used as a transport.
+        token = str(getattr(self, "token", "") or "")
+        origin = self._verified_lab_context.origin
+        def fetch_turn() -> dict[str, Any]:
+            request = Request(f"{origin}/api/webrtc-config", headers={"Authorization": f"Bearer {token}"})
+            with urlopen(request, timeout=5) as response:
+                if response.status != 200:
+                    raise ValueError("Lab TURN config unavailable")
+                payload = json.loads(response.read().decode())
+            selected = payload.get("selectedTurnServerId")
+            fingerprint = payload.get("turnFingerprint")
+            entries = [entry for entry in payload.get("iceServers", []) if isinstance(entry, dict)
+                       and isinstance(entry.get("urls"), list)
+                       and entry["urls"] and all(isinstance(url, str) and url.startswith(("turn:", "turns:")) for url in entry["urls"])]
+            if (not isinstance(selected, str) or not selected or not isinstance(fingerprint, str) or not fingerprint
+                    or len(entries) != 1):
+                raise ValueError("Lab TURN config is invalid")
+            entry = entries[0]
+            urls, username, credential = entry.get("urls"), entry.get("username"), entry.get("credential")
+            if (not all(isinstance(value, str) and value for value in (username, credential))
+                    or payload.get("turnUrls") != urls):
+                raise ValueError("Lab TURN credentials are invalid")
+            applied = _turn_applied_digest(selected_id=selected, fingerprint=fingerprint, urls=urls, username=username)
+            return {"selectedTurnServerId": selected, "turnFingerprint": fingerprint,
+                    "urls": list(urls), "username": username, "credential": credential, "appliedDigest": applied}
+        try:
+            self._session_turn_override = await asyncio.to_thread(fetch_turn)
+        except Exception:
+            self._session_turn_override = None
+            return False
+        return True
+
+    def _host_turn_capability(self, selected_turn_server_id=None):
+        from host import get_host_turn_capability
+        override = self._session_turn_override
+        if not isinstance(override, dict):
+            return get_host_turn_capability(selected_turn_server_id)
+        if selected_turn_server_id not in (None, "", override["selectedTurnServerId"]):
+            return get_host_turn_capability(selected_turn_server_id)
+        return get_host_turn_capability(override["selectedTurnServerId"], turn_override=override)
+
+    async def on_lab_controlled_input_arm(self, data):
+        """Install the guard only after independent Signal control-plane arm."""
+        context = self._verified_lab_context
+        receipt = {"armId": data.get("armId") if isinstance(data, dict) else None, "status": "rejected"}
+        try:
+            allowed = {"armId", "realm", "runId", "epoch", "leaseId", "leaseEpoch", "fixtureId",
+                       "isolated", "foreground", "fixtureWindow"}
+            if (not isinstance(data, dict) or set(data) != allowed
+                    or data["realm"] != context.realm or data["runId"] != context.run_id
+                    or data["epoch"] != context.epoch or not isinstance(data["armId"], str) or not data["armId"]
+                    or not isinstance(data["leaseId"], str) or not data["leaseId"]
+                    or not isinstance(data["leaseEpoch"], int) or isinstance(data["leaseEpoch"], bool)
+                    or data["leaseEpoch"] < 0 or not isinstance(data["fixtureId"], str) or not data["fixtureId"]
+                    or data["isolated"] is not True or data["foreground"] is not True or data["fixtureWindow"] is not True):
+                raise ValueError("invalid arm")
+            proof = lambda: {"leaseId": data["leaseId"], "proofToken": context.proof_token,
+                             "fixtureId": data["fixtureId"], "isolated": True,
+                             "foreground": True, "fixtureWindow": True}
+            self.arm_controlled_input(lease_id=data["leaseId"], fixture_id=data["fixtureId"], fixture_proof=proof)
+            receipt = {"armId": data["armId"], "status": "armed",
+                       "turnAppliedDigest": str((self._session_turn_override or {}).get("appliedDigest") or "")}
+        except Exception:
+            pass
+        if self.sio is not None:
+            await self.sio.emit("lab-controlled-input-arm-ack", receipt)
 
     def _install_controlled_input_guard(self, *, lease_id: str, fixture_id: str,
                                         fixture_proof: Callable[[], dict[str, Any]]) -> None:

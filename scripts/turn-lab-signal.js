@@ -32,6 +32,14 @@ const TURN_BOOTSTRAP_KEYS = new Set([
 ]);
 const MAX_TURN_BOOTSTRAP_BYTES = 16 * 1024;
 
+function labTurnAppliedDigest(bootstrap) {
+  if (!bootstrap) return '';
+  const body = { schemaVersion: 1, selectedTurnServerId: bootstrap.selectedTurnServerId,
+    turnFingerprint: bootstrap.turnFingerprint, turnUrls: bootstrap.turnUrls,
+    turnUsername: bootstrap.turnUsername };
+  return crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
 function validateLabTurnBootstrap(value) {
   // Do not include ``value`` or its fields in errors: this object contains a
   // production-derived TURN credential and errors go to the lab stderr log.
@@ -129,6 +137,7 @@ async function createLabRuntime(options = {}) {
   // of re-checking an admission that must no longer exist.
   const labSessions = new Map();
   const turnBootstrap = options.turnBootstrap === undefined ? null : validateLabTurnBootstrap(options.turnBootstrap);
+  const turnAppliedDigest = labTurnAppliedDigest(turnBootstrap);
   const runtime = createServerApp({
     config: labConfig(credentials, options.runtimeDir || '', turnBootstrap),
     // Lab must serve the checked-out source so its Viewer adapter and the
@@ -213,7 +222,8 @@ async function createLabRuntime(options = {}) {
     labSessions.set(sessionKey, {
       realm: context.realm, runId: context.runId, proofToken: context.proofToken,
       admissionEpoch: context.epoch, phase: 'host-attached', viewerSocketId: null,
-      viewerEpoch: null, bindings: new Map(),
+      viewerEpoch: null, bindings: new Map(), claims: new Map(), arms: new Map(),
+      armedLeaseId: null, armedLeaseEpoch: null, armedFixtureId: null,
     });
     return res.status(200).json({ context });
   });
@@ -228,6 +238,8 @@ async function createLabRuntime(options = {}) {
       || typeof body.actionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(body.actionDigest)) {
       return res.status(400).json({ error: 'invalid controlled binding' });
     }
+    if (session.armedLeaseId !== body.leaseId || session.armedLeaseEpoch !== body.leaseEpoch
+      || session.armedFixtureId !== body.fixtureId) return res.status(409).json({ error: 'controlled Host guard is not armed for this lease' });
     const key = body.inputId;
     if (session.bindings.has(key)) return res.status(409).json({ error: 'controlled input already bound' });
     session.bindings.set(key, { ...body, proofToken: session.proofToken, viewerSocketId: session.viewerSocketId,
@@ -248,9 +260,72 @@ async function createLabRuntime(options = {}) {
       || binding.viewerSocketId !== session.viewerSocketId || binding.viewerEpoch !== session.viewerEpoch
       || binding.leaseId !== body.leaseId || binding.leaseEpoch !== body.leaseEpoch
       || binding.actionDigest !== body.actionDigest) return res.status(409).json({ error: 'controlled binding absent' });
+    session.claims.set(body.inputId, { inputId: body.inputId, status: 'claimed',
+      actionDigest: body.actionDigest, viewerSocketId: session.viewerSocketId, claimedAt: Date.now() });
     return res.status(200).json({ binding });
   });
+  runtime.app.post('/api/lab-controlled-input/arm', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'runId', 'epoch', 'leaseId', 'leaseEpoch', 'fixtureId', 'isolated', 'foreground', 'fixtureWindow']);
+    const session = checkControlledBindingAuth(req, res, body);
+    if (!session) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || ![body.leaseId, body.fixtureId].every((value) => typeof value === 'string' && value)
+      || !Number.isSafeInteger(body.leaseEpoch) || body.leaseEpoch < 0
+      || body.isolated !== true || body.foreground !== true || body.fixtureWindow !== true
+      || !runtime.signalingRuntime.connections.host) return res.status(409).json({ error: 'lab Host guard cannot arm' });
+    const armId = crypto.randomUUID();
+    session.arms.set(armId, { armId, status: 'pending', leaseId: body.leaseId, leaseEpoch: body.leaseEpoch,
+      fixtureId: body.fixtureId, expiresAt: Date.now() + 10_000 });
+    runtime.signalingRuntime.connections.host.emit('lab-controlled-input-arm', { armId, ...body });
+    return res.status(202).json({ armId });
+  });
+  runtime.app.post('/api/lab-controlled-input/arm-status', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'runId', 'epoch', 'armId']);
+    const session = checkControlledBindingAuth(req, res, body);
+    if (!session) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || typeof body.armId !== 'string' || !body.armId) return res.status(400).json({ error: 'invalid arm receipt request' });
+    const arm = session.arms.get(body.armId);
+    if (!arm || arm.expiresAt < Date.now()) return res.status(404).json({ error: 'lab arm absent' });
+    return res.status(200).json({ arm: { armId: arm.armId, status: arm.status,
+      ...(arm.turnAppliedDigest ? { turnAppliedDigest: arm.turnAppliedDigest } : {}) } });
+  });
+  runtime.app.post('/api/lab-controlled-input/claim-receipt', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'runId', 'epoch', 'inputId']);
+    const session = checkControlledBindingAuth(req, res, body);
+    if (!session) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || typeof body.inputId !== 'string' || !body.inputId) return res.status(400).json({ error: 'invalid claim receipt request' });
+    const claim = session.claims.get(body.inputId);
+    if (!claim) return res.status(404).json({ error: 'controlled claim absent' });
+    return res.status(200).json({ claim });
+  });
+  runtime.app.post('/api/lab-host-turn-status', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'runId', 'epoch']);
+    const session = checkControlledBindingAuth(req, res, body);
+    if (!session) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))) return res.status(400).json({ error: 'invalid lab Host TURN status request' });
+    const caps = runtime.signalingRuntime.getHostCapabilities();
+    if (!turnAppliedDigest || caps.turnReady !== true || caps.turnServerId !== turnBootstrap.selectedTurnServerId
+      || caps.turnFingerprint !== turnBootstrap.turnFingerprint || caps.labTurnAppliedDigest !== turnAppliedDigest) return res.status(409).json({ error: 'Lab Host has not applied injected TURN path' });
+    return res.status(200).json({ turnAppliedDigest });
+  });
   runtime.io.on('connection', (socket) => {
+    socket.on('lab-controlled-input-arm-ack', (body = {}) => {
+      if (socket !== runtime.signalingRuntime.connections.host || !body || typeof body.armId !== 'string') return;
+      for (const session of labSessions.values()) {
+        const arm = session.arms.get(body.armId);
+        if (!arm || arm.expiresAt < Date.now()) continue;
+        if (body.status !== 'armed' || body.turnAppliedDigest !== turnAppliedDigest) { arm.status = 'rejected'; return; }
+        arm.status = 'armed'; arm.turnAppliedDigest = body.turnAppliedDigest;
+        session.armedLeaseId = arm.leaseId; session.armedLeaseEpoch = arm.leaseEpoch; session.armedFixtureId = arm.fixtureId;
+        return;
+      }
+    });
     socket.on('disconnect', () => {
       for (const session of labSessions.values()) {
         if (session.viewerSocketId === socket.id) {
@@ -261,7 +336,7 @@ async function createLabRuntime(options = {}) {
     });
   });
   return {
-    runtime, origin, credentials, realm, contextSecret, transcriptSecret,
+    runtime, origin, credentials, realm, contextSecret, transcriptSecret, turnAppliedDigest,
     async close() {
       for (const session of labSessions.values()) session.bindings.clear();
       labSessions.clear();

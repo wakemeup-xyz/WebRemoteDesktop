@@ -147,6 +147,7 @@ function normalizeCapabilities(payload = {}, timestamped) {
     supportsSessionTurn: Boolean(payload.supportsSessionTurn),
     supportsMultiTurn: Boolean(payload.supportsMultiTurn),
     turnServerId: String(payload.turnServerId || payload.selectedTurnServerId || '').trim(),
+    labTurnAppliedDigest: String(payload.labTurnAppliedDigest || '').trim(),
     defaultTurnServerId: String(payload.defaultTurnServerId || '').trim(),
     turnServerIds: normalizeTurnServerIds(payload.turnServerIds),
     updatedAt: timestamped ? new Date().toISOString() : (payload.updatedAt || null),

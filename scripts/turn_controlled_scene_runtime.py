@@ -11,11 +11,31 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from turn_controlled_scene import BLOCKED, FAIL, NOT_RUN, PASS, ProducerProof, proof_matches_verified_lab_context
+
+
+_CANONICAL_NONCE = re.compile(r"(?:0|[1-9][0-9]{0,19})\Z")
+
+
+def canonical_run_nonce(value: Any) -> str | None:
+    """Return the one decimal nonce wire representation, or reject it.
+
+    Marker decoders and browser-native events cross JSON, where an uint64
+    cannot safely be represented as a JavaScript Number. The proof remains
+    an integer in Python, while all external evidence is compared as this
+    exact decimal spelling. Signs, whitespace, leading zeroes and values
+    outside uint64 are never silently normalised.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value) if 0 <= value < 2**64 else None
+    if not isinstance(value, str) or not _CANONICAL_NONCE.fullmatch(value):
+        return None
+    return value if int(value) < 2**64 else None
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -57,6 +77,16 @@ class WorkItem:
     text: str = ""
 
 
+@dataclass(frozen=True)
+class WorkStep:
+    """One normal Viewer input in a logical controlled transaction."""
+    action_id: int
+    logical_action_id: int
+    kind: str
+    phase: str
+    text: str = ""
+
+
 def exact_workload() -> tuple[WorkItem, ...]:
     """The declared sequence is part of acceptance, never a best-effort loop."""
     actions = [WorkItem("scroll", 1)]
@@ -66,7 +96,24 @@ def exact_workload() -> tuple[WorkItem, ...]:
 
 
 def workload_record(item: WorkItem) -> dict[str, Any]:
-    return {"kind": item.kind, "actionId": item.action_id, **({"text": item.text} if item.kind == "text" else {})}
+    return {"kind": item.kind, "actionId": item.action_id,
+            "transaction": [step.phase for step in work_steps(item)],
+            **({"text": item.text} if item.kind == "text" else {})}
+
+
+def work_steps(item: WorkItem) -> tuple[WorkStep, ...]:
+    """Expand each declared workload operation into leak-safe real inputs."""
+    base = item.action_id * 100
+    if item.kind == "scroll":
+        return (WorkStep(base + 1, item.action_id, item.kind, "wheel"),)
+    if item.kind == "drag":
+        return (WorkStep(base + 1, item.action_id, item.kind, "down"),
+                WorkStep(base + 2, item.action_id, item.kind, "move"),
+                WorkStep(base + 3, item.action_id, item.kind, "up"))
+    if item.kind == "text":
+        # keyboard/text is the project's normal keyboard-submission protocol.
+        return (WorkStep(base + 1, item.action_id, item.kind, "text", item.text),)
+    raise ValueError("unknown controlled workload item")
 
 
 def workload_failures(rows: list[Mapping[str, Any]]) -> list[str]:
@@ -106,7 +153,8 @@ class FixtureBroker:
         input_id = self._pending.pop(action_id, None) if isinstance(action_id, int) else None
         if input_id is None:
             return None
-        if (event.get("runNonce") != self.proof.run_nonce or event.get("sceneId") != self.proof.scene_id
+        if (canonical_run_nonce(event.get("runNonce")) != canonical_run_nonce(self.proof.run_nonce)
+                or event.get("sceneId") != self.proof.scene_id
                 or event.get("attemptId") != self.proof.attempt_id or event.get("generation") != self.proof.generation
                 or event.get("realm") != self.proof.realm or event.get("runId") != self.proof.run_id
                 or event.get("focused") is not True or not self.layout.matches(event)):
@@ -120,13 +168,16 @@ class FixtureBroker:
 
 
 def aggregate_action_evidence(*, reservation: Mapping[str, Any] | None, ack: Mapping[str, Any] | None,
-                              receipt: Mapping[str, Any] | None, visual: Mapping[str, Any] | None) -> dict[str, Any]:
-    """One action passes only with all four real causal boundaries."""
+                              claim: Mapping[str, Any] | None, receipt: Mapping[str, Any] | None,
+                              visual: Mapping[str, Any] | None) -> dict[str, Any]:
+    """One step passes only with all five real causal boundaries."""
     input_id = reservation.get("inputId") if isinstance(reservation, Mapping) else None
     if not isinstance(input_id, str) or not input_id:
         return {"status": FAIL, "failure": "missing-reservation"}
     if not isinstance(ack, Mapping) or ack.get("inputId") != input_id or ack.get("status") != "applied":
         return {"status": FAIL, "failure": "missing-applied-ack"}
+    if not isinstance(claim, Mapping) or claim.get("inputId") != input_id or claim.get("status") != "claimed":
+        return {"status": FAIL, "failure": "missing-host-guard-claim"}
     if not isinstance(receipt, Mapping) or receipt.get("inputId") != input_id:
         return {"status": FAIL, "failure": "missing-broker-receipt"}
     if not isinstance(visual, Mapping) or visual.get("inputId") != input_id or visual.get("traceStatus") != "matched" or not visual.get("rtpTimestamp") or not visual.get("wireTimestamp"):
@@ -141,7 +192,8 @@ def static_text_evidence(proof: ProducerProof, layout: MarkerLayout, frames: lis
     baseline: tuple[Any, ...] | None = None
     for frame in frames:
         identity = (frame.get("runNonce"), frame.get("sceneId"), frame.get("tick"), frame.get("actionId"))
-        if (identity[0] != proof.run_nonce or identity[1] != proof.scene_id or not layout.matches(frame)
+        if (canonical_run_nonce(identity[0]) != canonical_run_nonce(proof.run_nonce)
+                or identity[1] != proof.scene_id or not layout.matches(frame)
                 or frame.get("attemptId") != proof.attempt_id or frame.get("generation") != proof.generation):
             return {"status": FAIL, "failures": ["static-text-identity"]}
         if baseline is None:
