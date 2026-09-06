@@ -32,7 +32,10 @@ function makeElement(id, onFocus = () => {}) {
       contains(name) { return classes.has(name); },
     },
     contains(node) { return node === this; },
-    focus() { onFocus(this); },
+    focus() {
+      onFocus(this);
+      this.dispatchEvent('focus', makeEvent(this));
+    },
     blur() { onFocus(null, this); },
     addEventListener(type, handler) {
       let dispatcher = listeners.get(type);
@@ -333,6 +336,23 @@ test('fullscreen edge reveal uses an isolated four second panel lifecycle', asyn
   assert.equal(click.stopped, true);
   assert.equal(panel.hidden, false);
   assert.equal(h.videoFocusCount, 0);
+});
+
+test('fullscreen reveal handle focus reopens the hidden exit panel', () => {
+  const h = makeHarness();
+  h.context.__UI.setupControlButtons();
+  h.document.fullscreenElement = h.document.documentElement;
+  h.dispatchDocument('fullscreenchange');
+  h.flushTimers();
+
+  const panel = h.elements.get('fullscreenExitPanel');
+  const revealButton = h.elements.get('fullscreenExitRevealBtn');
+  revealButton.focus();
+
+  assert.equal(h.document.activeElement, revealButton);
+  assert.equal(panel.hidden, false);
+  assert.equal(revealButton.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(h.timerDelays, [4000]);
 });
 
 test('fullscreen reveal exit preserves Terminal, mobile editor, and lease-loss focus', async () => {

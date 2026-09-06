@@ -190,6 +190,7 @@ const UI = {
     if (fullscreenExitRevealBtn) {
       fullscreenExitRevealBtn.addEventListener('pointerdown', consumeFullscreenOverlayEvent);
       fullscreenExitRevealBtn.addEventListener('click', consumeFullscreenOverlayEvent);
+      fullscreenExitRevealBtn.addEventListener('focus', revealFullscreenExit);
     }
 
     if (exitFullscreenBtn) {
