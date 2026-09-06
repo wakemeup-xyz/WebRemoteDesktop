@@ -1,12 +1,16 @@
+import asyncio
+import json
+import logging
 from unittest.mock import MagicMock
+
+import host as host_module
 
 from h264_videotoolbox_encoder import (
     bitstream_contains_idr,
     set_session_gop_size,
     get_session_gop_size,
-    codec_name_for_gop,
-    min_bitrate_bps,
     libx264_zerolatency_options,
+    periodic_idr_due,
     H264VideoToolboxEncoder,
     IDR_WAIT_FRAMES,
 )
@@ -62,6 +66,93 @@ def test_set_session_gop_clamps():
     assert get_session_gop_size() == 20
     assert set_session_gop_size(1) == 10
     set_session_gop_size(40)
+
+
+def test_on_demand_policy_schedules_no_application_periodic_idr_in_a_sixty_second_window():
+    assert not any(periodic_idr_due(frame_index, 0) for frame_index in range(1, 1_201))
+    assert periodic_idr_due(40, 40) is True
+
+
+def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields(caplog):
+    """Encoder observability is bounded and only reports locally measured work."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-observe", 7, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    with caplog.at_level(logging.INFO, logger="h264_videotoolbox_encoder"):
+        enc._record_encoder_sample(
+            elapsed_ms=12.5,
+            encoded_bytes=400,
+            idr_bytes=400,
+            keyframe_kind="forced",
+            now=100.0,
+        )
+        enc._record_encoder_sample(
+            elapsed_ms=7.5,
+            encoded_bytes=200,
+            idr_bytes=0,
+            keyframe_kind=None,
+            now=104.9,
+        )
+        enc._record_encoder_sample(
+            elapsed_ms=10.0,
+            encoded_bytes=300,
+            idr_bytes=0,
+            keyframe_kind="periodic",
+            now=105.0,
+        )
+
+    samples = [record.message for record in caplog.records if record.message.startswith("WRD_ENCODER_SAMPLE ")]
+    assert len(samples) == 1
+    sample = json.loads(samples[0].removeprefix("WRD_ENCODER_SAMPLE "))
+    assert sample["connectionAttemptId"] == "attempt-observe"
+    assert sample["generation"] == 7
+    assert sample["policyId"] == "relay-legacy-v1"
+    assert sample["encode"] == {"count": 3, "avgMs": 10.0, "p95Ms": 12.5, "maxMs": 12.5}
+    assert sample["bytes"] == {"total": 900, "idrCount": 1, "idrAvg": 400.0, "idrMax": 400}
+    assert sample["keyframes"] == {"forced": 1, "periodic": 1, "pli": 0}
+
+
+def test_encoder_discards_partial_aggregate_when_policy_identity_changes(caplog):
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    first = resolve_h264_policy(MediaSessionIntent("attempt-a", 1, "relay", 1280, 720, 20, 0), "relay-legacy-v1")
+    second = replace(first, connection_attempt_id="attempt-b", generation=2)
+    enc = H264VideoToolboxEncoder(policy=first)
+    enc._record_encoder_sample(elapsed_ms=5, encoded_bytes=10, idr_bytes=0, keyframe_kind=None, now=100)
+    enc.stage_policy_update(second)
+    enc._adopt_pending_policy()
+    with caplog.at_level(logging.INFO, logger="h264_videotoolbox_encoder"):
+        enc._record_encoder_sample(elapsed_ms=6, encoded_bytes=20, idr_bytes=0, keyframe_kind=None, now=105)
+        enc._record_encoder_sample(elapsed_ms=7, encoded_bytes=30, idr_bytes=0, keyframe_kind=None, now=110)
+    sample = json.loads(next(record.message.removeprefix("WRD_ENCODER_SAMPLE ") for record in caplog.records if record.message.startswith("WRD_ENCODER_SAMPLE ")))
+    assert sample["connectionAttemptId"] == "attempt-b"
+    assert sample["generation"] == 2
+    assert sample["encode"]["count"] == 2
+
+
+def test_waited_and_recreated_idr_keep_the_application_request_reason(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codecs = [FakeCodec([p_slice], repeat=True), FakeCodec([idr])]
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", lambda self, frame, codec_name: codecs.pop(0))
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    # The request arrives while VideoToolbox still waits for an earlier I-frame.
+    # It must own the actual delayed/recreated IDR rather than a synthetic log.
+    enc.note_keyframe_request("paint-stall", "attempt-a", 2, 9)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+        if enc.last_requested_keyframe_emitted:
+            break
+    assert enc.last_requested_keyframe_emitted is True
+    assert enc._last_encoded_keyframe_kind == "forced"
+    assert enc._last_encoded_keyframe_reason == "paint-stall"
 
 
 class FakePacket:
@@ -228,8 +319,16 @@ def test_force_keyframe_recreates_at_most_once(monkeypatch):
 
 
 def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     p_slice = bytes([0, 0, 0, 1, 0x41, 0])
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     calls = {"create": 0}
@@ -249,8 +348,16 @@ def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
 
 def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
     """Cadence is encode-count, not bitstream scan; false IDRs must not skip I."""
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     codec = FakeCodec([idr], repeat=True)
     monkeypatch.setattr(
@@ -267,8 +374,16 @@ def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
 
 
 def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
-    enc = H264VideoToolboxEncoder()
-    enc.gop_size = 3
+    from dataclasses import replace
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    enc = H264VideoToolboxEncoder(policy=replace(
+        resolve_h264_policy(
+            MediaSessionIntent("attempt-1", 1, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        periodic_idr_frames=3,
+    ))
     p_slice = bytes([0, 0, 0, 1, 0x41, 0, 0, 0, 5, 0x65, 0, 0, 0])
     idr = bytes([0, 0, 0, 1, 0x65, 0])
     codec = FakeCodec([p_slice, p_slice, p_slice, idr])
@@ -285,13 +400,16 @@ def test_p_slice_payload_does_not_reset_gop_counter(monkeypatch):
     assert enc.last_force_emitted_idr is True
 
 
-def test_relay_gop_uses_libx264_and_vbv_cap():
-    assert codec_name_for_gop(20) == "libx264"
-    assert codec_name_for_gop(40) == "h264_videotoolbox"
-    assert min_bitrate_bps(20, 1280, 720) == 1_800_000
-    assert min_bitrate_bps(20, 1152, 720) == 1_800_000
-    assert min_bitrate_bps(20, 1920, 1080) == 2_500_000
-    assert min_bitrate_bps(40, 1280, 720) == 500_000
+def test_relay_policy_uses_libx264_and_vbv_cap():
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    assert policy.codec_name == "libx264"
+    assert policy.min_bitrate_bps == 1_800_000
+    assert policy.max_bitrate_bps == 2_500_000
     opts = libx264_zerolatency_options(1_800_000, 20)
     assert opts["tune"] == "zerolatency"
     params = opts["x264-params"]
@@ -306,18 +424,155 @@ def test_relay_gop_uses_libx264_and_vbv_cap():
     assert "forced-idr=1" in params
     assert "open-gop=0" in params
     assert "intra-refresh=0" in params
-    set_session_gop_size(20)
+    enc = H264VideoToolboxEncoder(policy=policy)
+    assert enc.codec_name == "libx264"
+
+
+def test_encoder_does_not_change_codec_when_legacy_gop_changes():
+    """Codec comes from the session policy rather than the mutable GOP setting."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    set_session_gop_size(80)
     try:
-        enc = H264VideoToolboxEncoder()
         assert enc.codec_name == "libx264"
+        assert enc.gop_size == policy.periodic_idr_frames
     finally:
         set_session_gop_size(40)
 
 
-def test_encoder_adopts_relay_gop_from_session(monkeypatch):
-    set_session_gop_size(40)
-    enc = H264VideoToolboxEncoder()
-    assert enc.codec_name == "h264_videotoolbox"
+def test_open_libx264_bitrate_update_reports_reopen_required():
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    enc.codec = type("Codec", (), {"width": 1280, "height": 720})()
+
+    result = enc.set_target_bitrate(9_000_000)
+
+    assert result == {
+        "requested": 9_000_000,
+        "clamped": 2_500_000,
+        "effective": 0,
+        "applied": False,
+        "applyMode": "reopen-required",
+        "reopenRequired": True,
+    }
+
+
+def test_encoder_captures_attempt_policy_and_ignores_later_provider_attempt(monkeypatch):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider = H264SessionPolicyProvider()
+    provider.bind_attempt("attempt-old")
+    provider.publish(
+        MediaSessionIntent("attempt-old", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=provider.current_policy())
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    created = []
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: (created.append(codec_name) or FakeCodec([p_slice], repeat=True)),
+    )
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    provider.bind_attempt("attempt-new")
+    provider.publish(
+        MediaSessionIntent("attempt-new", 2, "direct", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert enc.codec_name == "libx264"
+    assert created == ["libx264"]
+
+
+def test_sender_factory_keeps_attempt_policy_when_encoder_is_created_after_new_attempt(monkeypatch):
+    """Delayed creation/rebuild resolves the sender's frozen policy, never global state."""
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider_a = H264SessionPolicyProvider()
+    provider_a.bind_attempt("attempt-a")
+    policy_a = provider_a.publish(
+        MediaSessionIntent("attempt-a", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    ).policy
+    provider_b = H264SessionPolicyProvider()
+    provider_b.bind_attempt("attempt-b")
+    provider_b.publish(
+        MediaSessionIntent("attempt-b", 2, "direct", 1920, 1080, 20, 0),
+        "relay-balanced-v2",
+    )
+    # Attempt B publishes before A's sender first asks aiortc to create an
+    # encoder. The patched sender boundary is the actual factory call path.
+    sender = type("Sender", (), {"_wrd_h264_policy": policy_a})()
+    codec = type("Codec", (), {"mimeType": "video/H264"})()
+
+    async def delayed_factory(_sender, _codec):
+        return host_module._patched_get_encoder(_codec)
+
+    monkeypatch.setattr(host_module, "_original_next_encoded_frame", delayed_factory)
+    loop = asyncio.new_event_loop()
+    try:
+        encoder = loop.run_until_complete(host_module._patched_next_encoded_frame(sender, codec))
+        rebuilt = loop.run_until_complete(host_module._patched_next_encoded_frame(sender, codec))
+    finally:
+        loop.close()
+
+    assert encoder._policy is policy_a
+    assert encoder._policy.target_bitrate_bps == 1_800_000
+    assert rebuilt._policy is policy_a
+
+
+def test_staged_policy_update_reopens_once_at_the_next_frame_boundary(monkeypatch):
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    legacy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    balanced = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1920, 1080, 20, 4_000_000),
+        "relay-balanced-v2",
+    )
+    enc = H264VideoToolboxEncoder(policy=legacy)
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    opened = []
+
+    def fake_create(self, frame, codec_name):
+        opened.append((codec_name, self._policy.target_bitrate_bps))
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.stage_policy_update(balanced) is True
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert opened == [("libx264", 1_800_000), ("libx264", 4_000_000)]
+
+
+def test_encoder_adopts_published_relay_policy(monkeypatch):
+    from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
+
+    provider = H264SessionPolicyProvider()
+    provider.bind_attempt("attempt-1")
+    provider.publish(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=provider.current_policy())
+    assert enc.codec_name == "libx264"
     created = []
 
     def fake_create(self, frame, codec_name):
@@ -325,58 +580,102 @@ def test_encoder_adopts_relay_gop_from_session(monkeypatch):
         return FakeCodec([bytes([0, 0, 0, 1, 0x65, 0])])
 
     monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-    set_session_gop_size(20)
-    try:
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        assert enc.gop_size == 20
-        assert enc.codec_name == "libx264"
-        assert created[-1] == "libx264"
-    finally:
-        set_session_gop_size(40)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.gop_size == 20
+    assert enc.codec_name == "libx264"
+    assert created[-1] == "libx264"
 
 
 def test_libx264_wait_does_not_recreate_codec(monkeypatch):
     """VT wait-window recreate is for delayed IDR; libx264 must keep one codec."""
-    set_session_gop_size(20)
-    try:
-        enc = H264VideoToolboxEncoder()
-        assert enc.codec_name == "libx264"
-        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-        calls = {"create": 0}
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
 
-        def fake_create(self, frame, codec_name):
-            calls["create"] += 1
-            return FakeCodec([p_slice], repeat=True)
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    assert enc.codec_name == "libx264"
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    calls = {"create": 0}
 
-        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        for _ in range(IDR_WAIT_FRAMES + 4):
-            list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 1
-        assert enc.last_idr_recreated is False
-    finally:
-        set_session_gop_size(40)
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    for _ in range(IDR_WAIT_FRAMES + 4):
+        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 1
+    assert enc.last_idr_recreated is False
 
 
 def test_request_decoder_refresh_reopens_same_size(monkeypatch):
-    set_session_gop_size(20)
-    try:
-        enc = H264VideoToolboxEncoder()
-        p_slice = bytes([0, 0, 0, 1, 0x41, 0])
-        calls = {"create": 0}
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
 
-        def fake_create(self, frame, codec_name):
-            calls["create"] += 1
-            return FakeCodec([p_slice], repeat=True)
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    calls = {"create": 0}
 
-        monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
-        list(enc._encode_frame(_fake_frame(), force_keyframe=True))
-        assert calls["create"] == 1
-        assert enc.request_decoder_refresh() is True
-        assert enc.codec is None
-        list(enc._encode_frame(_fake_frame(), force_keyframe=False))
-        assert calls["create"] == 2
-        assert enc.request_decoder_refresh() is True
-        assert enc.request_decoder_refresh() is False
-    finally:
-        set_session_gop_size(40)
+    def fake_create(self, frame, codec_name):
+        calls["create"] += 1
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert calls["create"] == 1
+    assert enc.request_decoder_refresh() is True
+    assert enc.codec is None
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert calls["create"] == 2
+    assert enc.request_decoder_refresh() is True
+    assert enc.request_decoder_refresh() is False
+
+
+def test_application_keyframe_request_tracks_reason_and_generation_until_an_idr_is_emitted(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([p_slice, idr])
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: codec,
+    )
+
+    enc.note_keyframe_request("decoder-stalled", "attempt-7", 7, 11)
+    assert enc.last_requested_keyframe_emitted is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_requested_keyframe_emitted is False
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_keyframe_request_ack == ("attempt-7", 7, 11)
+    assert enc.keyframe_reason_counts["decoder-stalled"] == 1
+    assert enc.last_keyframe_request_generation == ("attempt-7", 7)
+
+
+def test_periodic_or_old_force_idr_cannot_ack_a_newer_application_request(monkeypatch):
+    enc = H264VideoToolboxEncoder()
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    codec = FakeCodec([idr, p_slice, p_slice, idr, idr])
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", lambda self, frame, codec_name: codec)
+
+    enc.note_keyframe_request("decoder-stalled", "attempt-1", 1, 1)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_keyframe_request_ack is None
+
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    enc.note_keyframe_request("decoder-stalled", "attempt-2", 2, 2)
+    # The second force arrives while VideoToolbox still awaits attempt-1's
+    # IDR. It must not transfer attempt-2's token to that old submission.
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_keyframe_request_ack is None
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.last_keyframe_request_ack == ("attempt-1", 1, 1)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=True))
+    assert enc.last_keyframe_request_ack == ("attempt-2", 2, 2)

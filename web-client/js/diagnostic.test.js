@@ -197,6 +197,22 @@ test('sendLogs includes paint continuity fields from the live WebRTC session', (
   assert.equal(emitted[0].payload.logs.length, 1);
 });
 
+test('connection diagnostics include only the aggregated paint observation', () => {
+  const { context } = createDiagnosticContext();
+  context.WebRTC._lastPaintObservation = {
+    intervalMs: { p50: 16, p95: 34, max: 40 },
+    maxGapMs: 40,
+    presentedFramesDelta: 5,
+    video: { width: 1280, height: 720 },
+    geometry: { x: 0, y: 0, width: 960, height: 540, changes: 0 },
+  };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual' });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.traceSummary.paintObservation)), context.WebRTC._lastPaintObservation);
+  assert.equal(JSON.stringify(payload).includes('presentedFrames: 1'), false);
+});
+
 test('keyboard diagnostics expose lease metadata only and never raw key labels', () => {
   const { context } = createDiagnosticContext();
   const Input = loadScript('input.js', context, 'Input');
@@ -358,19 +374,19 @@ test('buildConnectionDiagnostic includes paint continuity fields', () => {
   context.WebRTC.hasPaintedFrame = true;
   context.WebRTC._lastInboundFramesDecoded = 0;
   context.WebRTC._lastPaintStats = {
-    framesReceived: 19,
-    framesDecoded: 0,
-    fps: 0,
+    receivedDelta: 19,
+    decodedDelta: 0,
+    derivedFps: 0,
     jitterBufferMs: 40,
-    bytesReceived: 1234,
+    bytesDelta: 1234,
     videoWidth: 1280,
     videoHeight: 720,
-    framesDropped: 3,
-    packetsReceived: 40,
-    nackCount: 2,
-    pliCount: 1,
-    firCount: 0,
-    freezeCount: 1,
+    framesDroppedDelta: 3,
+    packetsReceivedDelta: 40,
+    nackCountDelta: 2,
+    pliCountDelta: 1,
+    firCountDelta: 0,
+    freezeDelta: 1,
   };
   context.WebRTC._lastKeyframeRequestAt = 1;
   context.WebRTC._keyframeEmitted = false;
@@ -386,17 +402,20 @@ test('buildConnectionDiagnostic includes paint continuity fields', () => {
   assert.equal(payload.traceSummary.videoWidth, 1280);
   assert.equal(payload.traceSummary.videoHeight, 720);
   assert.equal(payload.traceSummary.readyState, 2);
+  assert.equal(payload.traceSummary.receivedDelta, 19);
+  assert.equal(payload.traceSummary.decodedDelta, 0);
+  assert.equal(payload.traceSummary.derivedFps, 0);
+  assert.equal(payload.traceSummary.jitterBufferMs, 40);
+  assert.equal(payload.traceSummary.bytesDelta, 1234);
+  assert.equal(payload.traceSummary.framesDroppedDelta, 3);
+  assert.equal(payload.traceSummary.packetsReceivedDelta, 40);
+  assert.equal(payload.traceSummary.nackCountDelta, 2);
+  assert.equal(payload.traceSummary.pliCountDelta, 1);
+  assert.equal(payload.traceSummary.firCountDelta, 0);
+  assert.equal(payload.traceSummary.freezeDelta, 1);
   assert.equal(payload.traceSummary.framesReceived, 19);
   assert.equal(payload.traceSummary.framesDecoded, 0);
   assert.equal(payload.traceSummary.fps, 0);
-  assert.equal(payload.traceSummary.jitterBufferMs, 40);
-  assert.equal(payload.traceSummary.bytesReceived, 1234);
-  assert.equal(payload.traceSummary.framesDropped, 3);
-  assert.equal(payload.traceSummary.packetsReceived, 40);
-  assert.equal(payload.traceSummary.nackCount, 2);
-  assert.equal(payload.traceSummary.pliCount, 1);
-  assert.equal(payload.traceSummary.firCount, 0);
-  assert.equal(payload.traceSummary.freezeCount, 1);
   assert.equal(payload.traceSummary.keyframeRequested, true);
   assert.equal(payload.traceSummary.keyframeEmitted, false);
 });
@@ -595,8 +614,8 @@ test('autoSendFailure includes the current network snapshot for candidate diagno
       localType: 'srflx',
       remoteType: 'host',
       protocol: 'udp',
-      localAddress: '203.0.113.1:5000',
-      remoteAddress: '2001:db8::1:6000',
+      localAddress: 'redacted-local-address',
+      remoteAddress: 'redacted-remote-address',
       localAddressFamily: 'ipv4',
       remoteAddressFamily: 'ipv6',
       rttMs: 88,
@@ -688,8 +707,8 @@ test('sendLogs includes network snapshot and failure reason metadata', () => {
             localType: 'srflx',
             remoteType: 'host',
             protocol: 'udp',
-            localAddress: '203.0.113.1:5000',
-            remoteAddress: '2001:db8::1:6000',
+            localAddress: 'redacted-local-address',
+            remoteAddress: 'redacted-remote-address',
             localAddressFamily: 'ipv4',
             remoteAddressFamily: 'ipv6',
             rttMs: 88,

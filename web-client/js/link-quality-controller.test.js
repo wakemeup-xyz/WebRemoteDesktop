@@ -47,6 +47,68 @@ test('lock mode: high jitter with fps>0 does not degrade profile', () => {
   assert.equal(c.degradedCount, 0);
 });
 
+test('canonical decoded delta remains progress when the next interval is smaller', () => {
+  const c = LinkQualityController.create({ path: 'relay', qualityLock: true });
+  c.beginConnection(0);
+  const first = c.observe({
+    derivedFps: 10,
+    decodedDelta: 10,
+    receivedDelta: 10,
+    packetsLostDelta: 0,
+    rttMs: 20,
+    jitterBufferMs: 0,
+    selectedCandidateType: 'relay',
+  });
+  const second = c.observe({
+    derivedFps: 1,
+    decodedDelta: 1,
+    receivedDelta: 1,
+    packetsLostDelta: 0,
+    rttMs: 20,
+    jitterBufferMs: 0,
+    selectedCandidateType: 'relay',
+  });
+
+  assert.equal(first.reason, 'good');
+  assert.equal(first.decodedDelta, 10);
+  assert.equal(second.reason, 'good');
+  assert.equal(second.decodedDelta, 1);
+});
+
+test('canonical RTP progress without decoded output requests decoder-stalled recovery', () => {
+  const c = LinkQualityController.create({ path: 'relay', qualityLock: true });
+  c.beginConnection(0);
+
+  const result = c.observe({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 19,
+    packetsLostDelta: 0,
+    rttMs: 40,
+    jitterBufferMs: 0,
+    selectedCandidateType: 'relay',
+  });
+
+  assert.equal(result.action, 'recover');
+  assert.equal(result.reason, 'decoder-stalled');
+  assert.equal(result.shouldRequestKeyframe, true);
+});
+
+test('unchanged legacy cumulative received count is not a second decoder stall', () => {
+  const c = LinkQualityController.create({ path: 'relay', qualityLock: true });
+  c.beginConnection(0);
+  c.observe({
+    fps: 0, framesDecoded: 0, framesReceived: 19, packetsLost: 0,
+    rttMs: 40, jitterBufferMs: 0, selectedCandidateType: 'relay',
+  });
+  const second = c.observe({
+    fps: 0, framesDecoded: 0, framesReceived: 19, packetsLost: 0,
+    rttMs: 40, jitterBufferMs: 0, selectedCandidateType: 'relay',
+  });
+  assert.notEqual(second.reason, 'decoder-stalled');
+  assert.equal(second.receivedDelta, 0);
+});
+
 test('lock mode: brief zero fps requests recovery not survival size', () => {
   const c = LinkQualityController.create({
     path: 'relay',

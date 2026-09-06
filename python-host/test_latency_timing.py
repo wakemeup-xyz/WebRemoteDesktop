@@ -7,6 +7,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from host import ScreenCaptureTrack
+from media_timing import RtpFrameClock
 
 
 class TestFrameTiming(unittest.TestCase):
@@ -34,6 +35,7 @@ class TestFrameTiming(unittest.TestCase):
         self.assertTrue(hasattr(track, '_pending_input_lock'))
         self.assertTrue(hasattr(track, '_timing_seq'))
         self.assertTrue(hasattr(track, '_host_ref'))
+        self.assertIsInstance(track._frame_clock, RtpFrameClock)
         self.assertEqual(track._pending_input_ids, set())
         self.assertEqual(track._timing_seq, 0)
         track.sct.close()  # Clean up MSS resources

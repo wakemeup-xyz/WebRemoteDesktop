@@ -27,6 +27,7 @@ const {
   setupSignaling,
   connections,
   getConnectionStatus,
+  issueProofAdmission,
   getHostCapabilities,
   createRuntimeContext,
   runtimeContext: defaultSignalingRuntime,
@@ -207,6 +208,14 @@ function createServerApp(options = {}) {
       timestamp: new Date().toISOString(),
       ...getConnectionStatus(signalingRuntime)
     });
+  });
+
+  app.post('/api/proof-admission', requireAccessToken, (req, res) => {
+    if (req.user.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
+    const admission = issueProofAdmission(signalingRuntime);
+    if (!admission) return res.status(409).json({ error: 'Active Viewer present' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(201).json({ admission });
   });
 
   function buildSnapshotForRequest(req) {

@@ -58,7 +58,10 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **屏幕捕获**：使用 MSS 库实时捕获 macOS 屏幕
 - [x] **视频编码**：aiortc 使用 H.264 VideoToolbox 硬件编码（monkey-patch 替换默认编码器）
 - [x] **帧率控制**：默认 30fps，带帧间隔 sleep 控制
-- [x] **延迟优化**：浏览器端 `jitterBufferTarget = 0`，编码器 GOP 1 秒、禁用 B 帧
+- [x] **媒体时钟与延迟基础**：浏览器端继续使用 `jitterBufferTarget = 0`；Host 视频帧使用单调的 90kHz RTP 时钟，避免 wall-clock 调整造成异常 PTS 跳跃。历史的「GOP 1 秒即延迟优化」不是完成结论。
+- [x] **Canonical 统计与恢复身份**：Viewer 以区间 `decodedDelta` 计算 `derivedFps`，浏览器报告的 FPS 只作诊断；恢复请求携带当前 connection attempt 与 generation，旧会话事件不得影响当前会话。
+- [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。`relay-balanced-v2` 离线矩阵没有合格候选，默认仍为 `relay-legacy-v1`；约一秒周期清晰度脉冲尚未宣称修复。
+- [x] **捕获节奏边界**：离线采集实验没有通过浏览器 paint 门禁，生产捕获仍保持 target FPS 的 2 倍；不得把离线采集结果当成真实 relay 画面验收。
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
 - [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
@@ -424,6 +427,7 @@ WebRemoteDesktop/
 - **辅助功能权限**：Host 需要 macOS 辅助功能权限才能执行输入
 - **浏览器限制**：某些系统级快捷键（如 Command+Tab）无法被浏览器捕获
 - **视频延迟**：WebRTC 浏览器端 jitter buffer 默认较大，已通过 `jitterBufferTarget = 0` 优化
+- **Relay 画质闭环**：RTP 时钟、canonical FPS、恢复身份和 paint/编码观测已落地；`relay-balanced-v2` 没有离线合格参数，默认仍为 `relay-legacy-v1`。因此约一秒周期清晰度脉冲、真实 TURN 连续播放、正式公网和物理设备均未标记通过，分别等待 Task 9 与外部端验收。
 - **跨网络访问**：Cloudflare Tunnel 只承载网页和信令，WebRTC 媒体默认仍尝试直连；跨 NAT/防火墙环境需要配置 TURN 并**手动**选择外网中继才能稳定投屏
 - **当前部署策略**：正式公网入口为 `https://link.stockhub.wiki`。公网媒体默认 Strict STUN；自动恢复有界耗尽后明确失败。用户可手动：① 外网中继（TURN，须 Viewer+Host 双边配置）② JPEG tunnel fallback ③ `auto`/`stun` 下「搜索端口」最多 500 轮。固定域名与媒体是否直连/是否走 TURN 无关。TURN 全链路设计见 `docs/superpowers/specs/2026-07-20-turn-integration-design.md`
 - **系统分配端口**：浏览器没有选择本地 ICE UDP 端口的 API；Host `aiortc`/`aioice` 绑定端口 `0` 由 OS 分配。手动端口搜索不保证唯一端口，也不能替代可控的 Host UDP 端口范围与路由器转发方案
@@ -475,3 +479,4 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-09-02 | 增加移动远程控制跨层回归与浏览器验收 harness：触控/软键盘复用 v2 lease 和 reset barrier，验收 artifact 原子写入并在最终 rename 后生成 SHA-256；真实 Android/iPhone/iPad、实体键盘与 tunnel/public-path 仍需独立实测 |
 | 2026-09-02 | 统一移动端公网入口口径：手机、Pad 与桌面均使用 `https://link.stockhub.wiki`；`trycloudflare.com` 和 `/tmp/wrd-safe-current-url.txt` 明确限定为临时排障链路，不作为长期访问地址 |
 | 2026-09-03 | 修复生产 desktop bundle 未装配触控适配器、断连态网络模式入口被隐藏、延迟诊断 unavailable/0ms 混淆和状态栏指标宽度抖动；自动化验证与未执行的真实设备/公网验收见 `docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md` |
+| 2026-09-06 | TURN 媒体时钟、canonical FPS、恢复 identity 与 paint/编码观测完成自动化覆盖。离线 `relay-balanced-v2` 矩阵没有合格候选，默认保留 `relay-legacy-v1`，生产捕获仍为 target FPS 的 2 倍；周期清晰度脉冲、真实 TURN、正式公网和物理设备验收保持未关闭。|

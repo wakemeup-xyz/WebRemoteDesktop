@@ -99,6 +99,9 @@ function setupSignaling(io, options = {}) {
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
   const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket;
+  const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
+  const admitProofViewer = (admission) => instanceRuntime.admitProofViewer(admission);
+  const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
   const emitViewerStatus = (reason, viewerSocket = null) => {
     const payload = {
       reason,
@@ -485,6 +488,8 @@ function setupSignaling(io, options = {}) {
       connectionAttemptId,
       connectionAttemptSequence: sequence,
       generation: 0,
+      profileSequence: 0,
+      profileFingerprint: null,
     });
     return {
       ok: true,
@@ -500,6 +505,86 @@ function setupSignaling(io, options = {}) {
     return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
       ? prior.connectionAttemptId
       : null;
+  }
+
+  function resolveViewerRecoveryKey(viewerId, data = {}) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior
+      || !isValidConnectionAttemptId(prior.connectionAttemptId)
+      || !isValidConnectionAttemptSequence(prior.connectionAttemptSequence)) {
+      return null;
+    }
+    // Recovery telemetry is an epoch-scoped envelope. Never infer a missing
+    // correlation from the socket's latest binding: a delayed legacy event
+    // from A could otherwise be relabeled as the current B episode.
+    if (!isValidConnectionAttemptId(data.connectionAttemptId)
+      || !isValidConnectionAttemptSequence(data.connectionAttemptSequence)
+      || !isValidConnectionAttemptSequence(data.generation)) {
+      return null;
+    }
+    if (data.connectionAttemptId !== prior.connectionAttemptId
+      || data.connectionAttemptSequence !== prior.connectionAttemptSequence
+      || data.generation !== prior.connectionAttemptSequence) {
+      return null;
+    }
+    return {
+      connectionAttemptId: prior.connectionAttemptId,
+      connectionAttemptSequence: prior.connectionAttemptSequence,
+      generation: prior.connectionAttemptSequence,
+    };
+  }
+
+  function resolveProfileWrite(viewerId, data, sanitized) {
+    const prior = mediaActivityProgress.get(viewerId);
+    if (!prior || !isValidConnectionAttemptId(prior.connectionAttemptId)) {
+      return { ok: false, reason: 'no-active-attempt' };
+    }
+    // The client can only assert that it still believes this is current. Signal
+    // remains the authority and derives the identity forwarded to Host.
+    if (data.connectionAttemptId !== undefined && data.connectionAttemptId !== prior.connectionAttemptId) {
+      return { ok: false, reason: 'wrong-attempt' };
+    }
+    const suppliedSequence = data.profileSequence;
+    if (suppliedSequence !== undefined
+      && (!Number.isSafeInteger(suppliedSequence) || suppliedSequence < 1)) {
+      return { ok: false, reason: 'invalid-profile-sequence' };
+    }
+    const fingerprint = JSON.stringify(sanitized);
+    const priorSequence = Number.isSafeInteger(prior.profileSequence) ? prior.profileSequence : 0;
+    // Legacy payloads carry neither field. Signal derives a strictly advancing
+    // profile generation from the current authoritative attempt binding.
+    const sequence = suppliedSequence === undefined ? priorSequence + 1 : suppliedSequence;
+    if (!Number.isSafeInteger(sequence)) {
+      return {
+        ok: false,
+        reason: suppliedSequence === undefined ? 'profile-sequence-exhausted' : 'invalid-profile-sequence',
+      };
+    }
+    if (sequence < priorSequence) {
+      return { ok: false, reason: 'stale-profile-sequence' };
+    }
+    if (sequence === priorSequence) {
+      return prior.profileFingerprint === fingerprint
+        ? {
+            ok: true,
+            idempotent: true,
+            connectionAttemptId: prior.connectionAttemptId,
+            generation: prior.connectionAttemptSequence,
+            profileSequence: sequence,
+            profileGeneration: sequence,
+          }
+        : { ok: false, reason: 'conflicting-profile-sequence' };
+    }
+    prior.profileSequence = sequence;
+    prior.profileFingerprint = fingerprint;
+    return {
+      ok: true,
+      idempotent: false,
+      connectionAttemptId: prior.connectionAttemptId,
+      generation: prior.connectionAttemptSequence,
+      profileSequence: sequence,
+      profileGeneration: sequence,
+    };
   }
 
   function releaseRejectedMediaProgress(viewerId, data = {}) {
@@ -641,6 +726,15 @@ function setupSignaling(io, options = {}) {
         });
       });
     } else if (role === 'viewer') {
+      const proofAdmission = socket.handshake.auth?.proofAdmission;
+      const isProofViewer = Boolean(proofAdmission);
+      if (isProofViewer && !admitProofViewer(proofAdmission)) {
+        socket.emit('proof-admission-rejected', { reason: 'viewer-epoch-changed' });
+        socket.disconnect(true);
+        return;
+      }
+      if (!isProofViewer) noteHumanViewerAdmission();
+      socket._wrdProofViewer = isProofViewer;
       // Hard order: claim map slot → supersede others → only then welcome incoming.
       // New desktop viewers never auto-acquire control.
       connections.viewers.set(socket.id, socket);
@@ -1024,7 +1118,7 @@ function setupSignaling(io, options = {}) {
       }
     });
 
-    socket.on('viewer-stats', (data) => {
+    socket.on('viewer-stats', (data = {}) => {
       if (role !== 'viewer') {
         console.warn(`Viewer stats rejected: role=${role} from ${socket.id}`);
         return;
@@ -1033,10 +1127,13 @@ function setupSignaling(io, options = {}) {
         console.warn(`Viewer stats rejected: disconnected viewer ${socket.id}`);
         return;
       }
+      const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
+      if (!recoveryKey) return;
       if (connections.host) {
         connections.host.emit('viewer-stats', {
           ...data,
-          viewerId: socket.id
+          ...recoveryKey,
+          viewerId: socket.id,
         });
       }
     });
@@ -1068,6 +1165,22 @@ function setupSignaling(io, options = {}) {
         adaptiveResolution: data.adaptiveResolution === true,
         continuityAction: data.continuityAction === 'keyframe' ? 'keyframe' : 'none',
       };
+      // Every profile write derives its identity at Signal. Legacy payloads
+      // receive the current binding and next profile generation; no binding is
+      // rejected before anything reaches Host.
+      const resolved = resolveProfileWrite(socket.id, data, sanitized);
+      if (!resolved.ok) {
+        emitControlEvent('media_profile_rejected', {
+          viewerId: socket.id,
+          reason: resolved.reason || 'profile-rejected',
+        });
+        socket.emit('media-profile-rejected', { reason: resolved.reason });
+        return;
+      }
+      sanitized.connectionAttemptId = resolved.connectionAttemptId;
+      sanitized.generation = resolved.generation;
+      sanitized.profileSequence = resolved.profileSequence;
+      sanitized.profileGeneration = resolved.profileGeneration;
       if (connections.host) {
         connections.host.emit('media-profile-change', sanitized);
       }
@@ -1081,6 +1194,9 @@ function setupSignaling(io, options = {}) {
       } else if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) {
         return;
       }
+      const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
+      if (!recoveryKey) return;
+      if (!Number.isSafeInteger(data.requestSequence) || data.requestSequence < 1) return;
       if (!connections.host) return;
       connections.host.emit('request-keyframe', {
         viewerId: socket.id,
@@ -1088,6 +1204,8 @@ function setupSignaling(io, options = {}) {
         schemaVersion: data.schemaVersion === 2 ? 2 : undefined,
         leaseId: typeof data.leaseId === 'string' ? data.leaseId : undefined,
         leaseEpoch: Number.isSafeInteger(data.leaseEpoch) ? data.leaseEpoch : undefined,
+        ...recoveryKey,
+        requestSequence: data.requestSequence,
       });
     });
 
@@ -1411,7 +1529,12 @@ function getConnectionStatus(context = runtime) {
     viewerCount: context.connections.viewers.size,
     relayViewerCount: context.connections.relayViewers.size,
     viewers: getViewerSnapshot(context),
+    viewerEpoch: context.viewerEpoch(),
   };
+}
+
+function issueProofAdmission(context = runtime) {
+  return context.issueProofAdmission();
 }
 
 module.exports = {
@@ -1424,4 +1547,5 @@ module.exports = {
   setHostCapabilities,
   clearHostCapabilities,
   ingestDiagnosticPayload,
+  issueProofAdmission,
 };

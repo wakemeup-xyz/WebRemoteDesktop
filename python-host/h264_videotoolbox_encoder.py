@@ -1,6 +1,8 @@
 import fractions
+import json
 import logging
 import math
+import time
 from collections.abc import Iterable, Iterator
 from itertools import tee
 from struct import pack, unpack_from
@@ -13,6 +15,7 @@ from av.video.codeccontext import VideoCodecContext
 
 from aiortc.codecs import Encoder
 from aiortc.mediastreams import VIDEO_TIME_BASE, convert_timebase
+from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, resolve_h264_policy
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ PACKET_MAX = 1300
 # VideoToolbox buffers 4–6 frames; force_keyframe must wait for that IDR
 # instead of reopening the codec (which discards the in-flight IDR).
 IDR_WAIT_FRAMES = 8
+ON_DEMAND_ONLY_KEYINT_FRAMES = 1_201
 
 NAL_TYPE_IDR = 5
 NAL_TYPE_FU_A = 28
@@ -43,31 +47,23 @@ def get_session_gop_size() -> int:
     return _session_gop_size
 
 
-def codec_name_for_gop(gop: int) -> str:
-    """Relay GOP (~1s) uses libx264+VBV; VideoToolbox IDRs are too large for TURN."""
-    return "libx264" if int(gop or 0) <= 20 else "h264_videotoolbox"
+def periodic_idr_due(encoded_frame_count: int, periodic_idr_frames: int) -> bool:
+    """Return whether policy, rather than an explicit request, schedules this IDR."""
+    return (
+        int(periodic_idr_frames) > 0
+        and int(encoded_frame_count) > 0
+        and int(encoded_frame_count) % int(periodic_idr_frames) == 0
+    )
 
 
-def min_bitrate_bps(gop: int, width: int, height: int) -> int:
-    width = int(width or 0)
-    height = int(height or 0)
-    pixels = max(1, width * height)
-    if int(gop or 0) <= 20:
-        # Capture may be 1152x720 under a 1280x720 session cap.
-        if height >= 1000 or pixels >= 1920 * 1080:
-            return 2_500_000
-        if height >= 700 or pixels >= 1152 * 720:
-            return 1_800_000
-        return 1_200_000
-    return MIN_BITRATE
-
-
-def libx264_zerolatency_options(bitrate_bps: int, gop: int) -> dict:
+def libx264_zerolatency_options(bitrate_bps: int, gop: int, vbv_buffer_ms: int = 100) -> dict:
     kbps = max(1, int(bitrate_bps) // 1000)
     # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
     # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
-    bufsize = max(120, int(bitrate_bps) // 10000)
-    gop_s = str(max(1, int(gop or 20)))
+    bufsize = max(120, int(bitrate_bps) * max(1, int(vbv_buffer_ms)) // 1_000_000)
+    gop_s = str(
+        int(gop) if int(gop) > 0 else ON_DEMAND_ONLY_KEYINT_FRAMES
+    )
     return {
         "preset": "ultrafast",
         "tune": "zerolatency",
@@ -212,18 +208,171 @@ _preferred_h264_codec = "h264_videotoolbox"
 
 
 class H264VideoToolboxEncoder(Encoder):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        policy: H264SessionPolicy | None = None,
+    ) -> None:
         self.buffer_data = b""
         self.buffer_pts: Optional[int] = None
         self.codec: Optional[VideoCodecContext] = None
-        self.gop_size = get_session_gop_size()
-        self.codec_name = codec_name_for_gop(self.gop_size)
-        self.__target_bitrate = 0
+        self._policy = policy or resolve_h264_policy(
+            MediaSessionIntent("legacy-local", 0, "direct", 1280, 720, 20, 0),
+            "relay-legacy-v1",
+        )
+        self._pending_policy: H264SessionPolicy | None = None
+        self.gop_size = self._policy.periodic_idr_frames
+        self.codec_name = self._policy.codec_name
+        self.__target_bitrate = self._policy.target_bitrate_bps
         self.last_force_emitted_idr = False
         self.last_idr_recreated = False
         self._idr_wait_remaining = 0
         self._frames_since_idr = 0
         self._frames_encoded = 0
+        self.last_requested_keyframe_emitted = False
+        self.last_keyframe_request_generation = None
+        self.last_keyframe_request_ack = None
+        self.keyframe_reason_counts = {}
+        self._queued_force_tokens = []
+        self._active_force_token = None
+        self._last_encoded_keyframe_kind = None
+        self._last_encoded_keyframe_reason = None
+        self._last_encoded_size = {"width": 0, "height": 0}
+        self._encoder_sample_started_at = None
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
+
+    @staticmethod
+    def _sample_percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = max(0, min(len(ordered) - 1, math.ceil(len(ordered) * percentile) - 1))
+        return round(float(ordered[index]), 3)
+
+    def _reset_encoder_sample(self, now: float) -> None:
+        self._encoder_sample_started_at = now
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
+
+    def _clear_encoder_sample(self) -> None:
+        self._encoder_sample_started_at = None
+        self._encoder_sample_durations_ms = []
+        self._encoder_sample_total_bytes = 0
+        self._encoder_sample_idr_bytes = []
+        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframe_reasons = {}
+
+    def _record_encoder_sample(
+        self,
+        *,
+        elapsed_ms: float,
+        encoded_bytes: int,
+        idr_bytes: int,
+        keyframe_kind: str | None,
+        keyframe_reason: str | None = None,
+        now: float | None = None,
+    ) -> None:
+        """Aggregate local encode measurements; never infer cross-machine latency."""
+        sample_now = time.monotonic() if now is None else float(now)
+        if self._encoder_sample_started_at is None:
+            self._reset_encoder_sample(sample_now)
+        elapsed = float(elapsed_ms)
+        if math.isfinite(elapsed) and elapsed >= 0:
+            self._encoder_sample_durations_ms.append(elapsed)
+        self._encoder_sample_total_bytes += max(0, int(encoded_bytes))
+        if int(idr_bytes) > 0:
+            self._encoder_sample_idr_bytes.append(int(idr_bytes))
+        if keyframe_kind in self._encoder_sample_keyframes:
+            self._encoder_sample_keyframes[keyframe_kind] += 1
+        if keyframe_kind and keyframe_reason:
+            self._encoder_sample_keyframe_reasons[keyframe_reason] = (
+                self._encoder_sample_keyframe_reasons.get(keyframe_reason, 0) + 1
+            )
+        if sample_now - self._encoder_sample_started_at < 5.0:
+            return
+
+        durations = self._encoder_sample_durations_ms
+        idr_sizes = self._encoder_sample_idr_bytes
+        codec = self.codec
+        sample = {
+            "connectionAttemptId": str(getattr(self._policy, "connection_attempt_id", "legacy-local")),
+            "generation": int(getattr(self._policy, "generation", 0) or 0),
+            "policyId": self._policy.policy_id,
+            "size": dict(self._last_encoded_size),
+            "codec": self.codec_name,
+            "bitrate": {
+                "target": int(self.target_bitrate),
+                "effective": int(getattr(codec, "bit_rate", 0) or 0),
+            },
+            "targetFps": int(self._policy.target_fps),
+            "encode": {
+                "count": len(durations),
+                "avgMs": round(sum(durations) / len(durations), 3) if durations else 0.0,
+                "p95Ms": self._sample_percentile(durations, 0.95),
+                "maxMs": round(max(durations), 3) if durations else 0.0,
+            },
+            "bytes": {
+                "total": self._encoder_sample_total_bytes,
+                "idrCount": len(idr_sizes),
+                "idrAvg": round(sum(idr_sizes) / len(idr_sizes), 3) if idr_sizes else 0.0,
+                "idrMax": max(idr_sizes) if idr_sizes else 0,
+            },
+            "keyframes": dict(self._encoder_sample_keyframes),
+            "keyframeReasons": dict(self._encoder_sample_keyframe_reasons),
+        }
+        logger.info("WRD_ENCODER_SAMPLE %s", json.dumps(sample, separators=(",", ":"), sort_keys=True))
+        self._reset_encoder_sample(sample_now)
+
+    def note_keyframe_request(self, reason: str, connection_attempt_id: str, generation: int, request_sequence: int) -> None:
+        """Queue one causal token for its matching force-keyframe submission."""
+        reason_s = str(reason or "rtcp-or-unknown")[:80]
+        key = (str(connection_attempt_id or ""), int(generation or 0))
+        self.keyframe_reason_counts[reason_s] = self.keyframe_reason_counts.get(reason_s, 0) + 1
+        self.last_keyframe_request_generation = key
+        self._queued_force_tokens.append({
+            "attempt": key[0], "generation": key[1], "sequence": int(request_sequence), "reason": reason_s,
+        })
+        self.last_requested_keyframe_emitted = False
+
+    @staticmethod
+    def _clamp_bitrate(policy: H264SessionPolicy, requested_bitrate: int) -> int:
+        return max(
+            policy.min_bitrate_bps,
+            min(int(requested_bitrate), policy.max_bitrate_bps),
+        )
+
+    def stage_policy_update(self, policy: H264SessionPolicy) -> bool:
+        """Queue one verified policy replacement for the next encoded frame."""
+        if policy == self._policy or policy == self._pending_policy:
+            return False
+        self._pending_policy = policy
+        return True
+
+    def _adopt_pending_policy(self) -> None:
+        policy = self._pending_policy
+        if policy is None:
+            return
+        self._pending_policy = None
+        self._policy = policy
+        self.gop_size = policy.periodic_idr_frames
+        self.codec_name = policy.codec_name
+        self.__target_bitrate = self._clamp_bitrate(policy, policy.target_bitrate_bps)
+        if self.codec is not None:
+            self.codec = None
+            self.last_idr_recreated = False
+            self._idr_wait_remaining = 0
+            self._frames_since_idr = 0
+            self._frames_encoded = 0
+        self._queued_force_tokens.clear()
+        self._active_force_token = None
+        self._clear_encoder_sample()
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> list[bytes]:
@@ -355,6 +504,10 @@ class H264VideoToolboxEncoder(Encoder):
     def _encode_frame(
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
+        self._adopt_pending_policy()
+        self._last_encoded_keyframe_kind = None
+        self._last_encoded_keyframe_reason = None
+        self._last_encoded_size = {"width": int(frame.width), "height": int(frame.height)}
         if self.codec and (
             frame.width != self.codec.width
             or frame.height != self.codec.height
@@ -367,21 +520,7 @@ class H264VideoToolboxEncoder(Encoder):
             self._frames_since_idr = 0
             self._frames_encoded = 0
 
-        session_gop = get_session_gop_size()
-        wanted_codec = codec_name_for_gop(session_gop)
-        if self.gop_size in (20, 40) and (
-            self.gop_size != session_gop or self.codec_name != wanted_codec
-        ):
-            self.gop_size = session_gop
-            self.codec_name = wanted_codec
-            if self.codec is not None:
-                self.codec = None
-                self.last_idr_recreated = False
-                self._idr_wait_remaining = 0
-                self._frames_since_idr = 0
-                self._frames_encoded = 0
-
-        gop = int(getattr(self, "gop_size", None) or session_gop)
+        gop = int(self._policy.periodic_idr_frames)
         # libx264 already emits IDR without a wait-window; waiting would
         # block GOP cadence and then miss delayed type-5 NALs.
         use_wait = self.codec_name != "libx264"
@@ -389,9 +528,14 @@ class H264VideoToolboxEncoder(Encoder):
         # Cadence is encode-count. Bitstream IDR scans can false-positive on
         # P-slice payload and must not skip the 1s relay keyframe.
         due = (not waiting) and (
-            bool(force_keyframe)
-            or (self._frames_encoded > 0 and self._frames_encoded % max(1, gop) == 0)
+            bool(force_keyframe) or periodic_idr_due(self._frames_encoded, gop)
         )
+        # A request owns a token only after this call actually submits its I
+        # frame. A force signal received during VideoToolbox's IDR wait still
+        # belongs to a later submission; the old asynchronous IDR must not
+        # acknowledge it.
+        if force_keyframe and (due or waiting) and self._queued_force_tokens and self._active_force_token is None:
+            self._active_force_token = self._queued_force_tokens.pop(0)
         # VideoToolbox ignores codec.gop_size. Submit one I, then wait for
         # the delayed IDR instead of stuffing I-frames every follow-up tick.
         if due:
@@ -435,11 +579,25 @@ class H264VideoToolboxEncoder(Encoder):
             _nal_is_idr(packet) for packet in encoded_packets
         )
         if has_idr:
+            active_reason = self._active_force_token["reason"] if self._active_force_token else None
+            self._last_encoded_keyframe_kind = (
+                "pli" if active_reason == "rtcp-or-unknown"
+                else "forced" if self._active_force_token is not None
+                else "pli" if force_keyframe
+                else "periodic"
+            )
+            self._last_encoded_keyframe_reason = active_reason or ("rtcp-or-unknown" if force_keyframe else "periodic")
             self._frames_since_idr = 0
             self._idr_wait_remaining = 0
             if waiting or want_idr:
                 self.last_force_emitted_idr = True
                 self.last_idr_recreated = False
+            if self._active_force_token is not None:
+                self.last_requested_keyframe_emitted = True
+                self.last_keyframe_request_ack = (
+                    self._active_force_token["attempt"], self._active_force_token["generation"], self._active_force_token["sequence"],
+                )
+                self._active_force_token = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s encoded=%s",
                     True,
@@ -462,14 +620,24 @@ class H264VideoToolboxEncoder(Encoder):
                 self.codec = self._create_codec(frame, self.codec_name)
                 recreated_this_call = True
                 self.last_idr_recreated = True
-                data_to_send = b""
-                for package in self.codec.encode(frame):
-                    data_to_send += bytes(package)
-                self.last_force_emitted_idr = bitstream_contains_idr(data_to_send)
+                recreated_packets = list(self.codec.encode(frame))
+                data_to_send = b"".join(bytes(package) for package in recreated_packets)
+                self.last_force_emitted_idr = bitstream_contains_idr(data_to_send) or any(
+                    _nal_is_idr(bytes(package)) for package in recreated_packets
+                )
                 self._idr_wait_remaining = 0 if self.last_force_emitted_idr else IDR_WAIT_FRAMES
                 if self.last_force_emitted_idr:
                     self.last_idr_recreated = False
                     self._frames_since_idr = 0
+                    active_reason = self._active_force_token["reason"] if self._active_force_token else None
+                    self._last_encoded_keyframe_kind = "pli" if active_reason == "rtcp-or-unknown" else "forced" if active_reason else "periodic"
+                    self._last_encoded_keyframe_reason = active_reason or "periodic"
+                    if self._active_force_token is not None:
+                        self.last_requested_keyframe_emitted = True
+                        self.last_keyframe_request_ack = (
+                            self._active_force_token["attempt"], self._active_force_token["generation"], self._active_force_token["sequence"],
+                        )
+                        self._active_force_token = None
                 logger.info(
                     "WRD_KEYFRAME requested=true emitted=%s recreated=%s gop=%s size=%dx%d bytes=%s",
                     self.last_force_emitted_idr,
@@ -522,24 +690,9 @@ class H264VideoToolboxEncoder(Encoder):
         return True
 
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
-        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
-        if codec_name_for_gop(gop) == "libx264":
-            codec_name = "libx264"
-            self.codec_name = "libx264"
-        floor = min_bitrate_bps(gop, frame.width, frame.height)
-        if self.__target_bitrate and self.__target_bitrate > 0:
-            bitrate = int(self.__target_bitrate)
-        elif gop <= 20:
-            bitrate = floor
-        elif frame.width * frame.height <= 1280 * 720:
-            bitrate = 2_500_000
-        elif frame.width * frame.height <= 1920 * 1080:
-            bitrate = 4_000_000
-        else:
-            bitrate = 6_000_000
-        if gop <= 20:
-            bitrate = min(bitrate, 2_500_000)
-        bitrate = max(floor, min(bitrate, MAX_BITRATE))
+        gop = int(self._policy.periodic_idr_frames)
+        codec_name = self._policy.codec_name
+        bitrate = self._clamp_bitrate(self._policy, self.__target_bitrate)
         self.__target_bitrate = bitrate
 
         logger.info(
@@ -556,13 +709,14 @@ class H264VideoToolboxEncoder(Encoder):
         codec.bit_rate = bitrate
         try:
             codec.rc_max_rate = bitrate
-            codec.rc_buffer_size = max(120_000, bitrate // 10)
+            codec.rc_buffer_size = max(120_000, bitrate * self._policy.vbv_buffer_ms // 1000)
         except Exception:
             pass
         codec.pix_fmt = "yuv420p"
-        codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
-        codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
-        codec.profile = "Baseline"
+        frame_rate = max(1, min(int(self._policy.target_fps), MAX_FRAME_RATE))
+        codec.framerate = fractions.Fraction(frame_rate, 1)
+        codec.time_base = fractions.Fraction(1, frame_rate)
+        codec.profile = self._policy.profile
         codec.gop_size = gop
         try:
             codec.max_b_frames = 0
@@ -578,7 +732,7 @@ class H264VideoToolboxEncoder(Encoder):
         except Exception:
             pass
         if codec_name == "libx264":
-            codec.options = libx264_zerolatency_options(bitrate, gop)
+            codec.options = libx264_zerolatency_options(bitrate, gop, self._policy.vbv_buffer_ms)
             logger.info(
                 "WRD_ENCODER_X264 params=%s",
                 (codec.options or {}).get("x264-params", "-"),
@@ -589,9 +743,20 @@ class H264VideoToolboxEncoder(Encoder):
         self, frame: Frame, force_keyframe: bool = False
     ) -> tuple[list[bytes], int]:
         assert isinstance(frame, av.VideoFrame)
+        started_at = time.monotonic()
         packages = self._encode_frame(frame, force_keyframe)
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
-        return self._packetize(packages), timestamp
+        packetized = self._packetize(packages)
+        encoded_bytes = sum(len(packet) for packet in packetized)
+        idr_bytes = encoded_bytes if self._last_encoded_keyframe_kind is not None else 0
+        self._record_encoder_sample(
+            elapsed_ms=(time.monotonic() - started_at) * 1000,
+            encoded_bytes=encoded_bytes,
+            idr_bytes=idr_bytes,
+            keyframe_kind=self._last_encoded_keyframe_kind,
+            keyframe_reason=self._last_encoded_keyframe_reason,
+        )
+        return packetized, timestamp
 
     def pack(self, packet: Packet) -> tuple[list[bytes], int]:
         assert isinstance(packet, av.Packet)
@@ -608,20 +773,46 @@ class H264VideoToolboxEncoder(Encoder):
 
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
-        gop = int(getattr(self, "gop_size", None) or get_session_gop_size())
-        width = getattr(self.codec, "width", 1280) if self.codec is not None else 1280
-        height = getattr(self.codec, "height", 720) if self.codec is not None else 720
-        bitrate = min(int(bitrate), MAX_BITRATE)
-        if gop <= 20:
-            bitrate = min(bitrate, 2_500_000)
-        bitrate = max(min_bitrate_bps(gop, width, height), bitrate)
-        self.__target_bitrate = bitrate
-        # Hot-update without reopening the codec when size is unchanged.
-        if self.codec is not None:
-            try:
-                self.codec.bit_rate = bitrate
-            except Exception as exc:
-                logger.debug("hot bitrate update failed: %s", type(exc).__name__)
+        self.set_target_bitrate(bitrate)
+
+    def set_target_bitrate(self, bitrate: int) -> dict:
+        """Set bitrate only when the active codec can prove the update applied."""
+        requested = int(bitrate)
+        clamped = self._clamp_bitrate(self._policy, requested)
+        self.__target_bitrate = clamped
+        if self.codec is None:
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "deferred",
+                "reopenRequired": False,
+            }
+        elif self.codec_name == "libx264":
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": int(getattr(self.codec, "bit_rate", 0) or 0),
+                "applied": False,
+                "applyMode": "reopen-required",
+                "reopenRequired": True,
+            }
+        else:
+            # PyAV property assignment is not proof that VideoToolbox accepted
+            # an in-flight rate-control change. Reopen on a safe frame instead.
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": int(getattr(self.codec, "bit_rate", 0) or 0),
+                "applied": False,
+                "applyMode": "reopen-required",
+                "reopenRequired": True,
+            }
+        logger.info("WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s", *(
+            result["requested"], result["clamped"], result["effective"], result["applied"], result["applyMode"], result["reopenRequired"],
+        ))
+        return result
 
 
 def h264_depayload(payload: bytes) -> bytes:

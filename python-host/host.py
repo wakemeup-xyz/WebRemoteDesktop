@@ -5,6 +5,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import socketio
@@ -36,9 +37,13 @@ import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import (
     H264VideoToolboxEncoder,
-    get_session_gop_size,
-    set_session_gop_size,
 )
+from h264_encoder_policy import (
+    H264SessionPolicyProvider,
+    MediaSessionIntent,
+    policy_version_from_environment,
+)
+from media_timing import RtpFrameClock
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
@@ -64,21 +69,39 @@ V2_INPUT_ACK_STATUSES = frozenset({
     "execution-failed",
 })
 
+# aiortc's encoder factory has no sender parameter. Its sender coroutine
+# supplies the immutable policy snapshot for just that PeerConnection.
+_sender_h264_policy = contextvars.ContextVar("wrd_sender_h264_policy", default=None)
+
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
     import aiortc.codecs as _aiortc_codecs
     import aiortc.rtcrtpsender as _aiortc_rtcrtpsender
     _original_get_encoder = _aiortc_codecs.get_encoder
+    _original_next_encoded_frame = _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame
+
+    async def _patched_next_encoded_frame(sender, codec):
+        token = _sender_h264_policy.set(getattr(sender, "_wrd_h264_policy", None))
+        try:
+            return await _original_next_encoded_frame(sender, codec)
+        finally:
+            _sender_h264_policy.reset(token)
 
     def _patched_get_encoder(codec):
         if codec.mimeType.lower() == "video/h264":
-            logger.info("Using custom H.264 encoder for negotiated codec: %s", codec)
-            return H264VideoToolboxEncoder()
+            policy = _sender_h264_policy.get()
+            if policy is not None:
+                logger.info("Using session-bound custom H.264 encoder for negotiated codec: %s", codec)
+                return H264VideoToolboxEncoder(policy=policy)
+            # Never source a policy from process-global state for an arbitrary
+            # aiortc sender outside this Host session.
+            return _original_get_encoder(codec)
         logger.info("Using aiortc default encoder for negotiated codec: %s", codec)
         return _original_get_encoder(codec)
 
     _aiortc_codecs.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
+    _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -970,7 +993,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
         self.last_time = time.time()
-        self._start = time.time()
+        self._frame_clock = RtpFrameClock()
         self._last_frame_time = 0
         self._target_fps = target_fps
         self._frame_interval = 1.0 / target_fps
@@ -1107,8 +1130,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 pass
 
     async def next_timestamp(self):
-        pts = int((time.time() - self._start) * 90000)
-        return pts, 90000
+        return self._frame_clock.next_timestamp()
 
     async def recv(self):
         loop = asyncio.get_event_loop()
@@ -1334,6 +1356,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     @staticmethod
     def capture_fps_for_target(target_fps):
+        """Preserve legacy 2x headroom until selected-relay paint evidence exists."""
         target_fps = max(1, int(target_fps))
         return min(60, max(target_fps * 2, target_fps + 5))
 
@@ -1393,6 +1416,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
 class WebRemoteHost:
     def __init__(self):
+        # Resolve this Host-local enum at startup. Unknown values fail before a
+        # media session or PeerConnection is created.
+        self._h264_policy_version = policy_version_from_environment()
+        self._h264_policy_provider = H264SessionPolicyProvider()
         self.sio = None
         self.pc = None
         self.token = None
@@ -1434,6 +1461,7 @@ class WebRemoteHost:
             "height": MEDIA_PROFILE_DEFAULT["height"],
         }
         self._last_keyframe_request_at = 0.0
+        self._keyframe_recovery_state = {}
         self._stall_sample_count = 0
         self._input_event_count = 0
         self._last_input_at_monotonic = None
@@ -2175,11 +2203,7 @@ class WebRemoteHost:
                 except (TypeError, ValueError):
                     offer_width = 0
                     offer_height = 0
-                if offer_width > 0 and offer_height > 0:
-                    self._bind_session_presentation(data)
-                else:
-                    gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
-                    set_session_gop_size(gop)
+                self._bind_session_presentation(data)
 
                 # Create peer connection with session-scoped ICE (relay always allows TURN)
                 network_mode = data.get("networkMode") or data.get("iceMode") or "auto"
@@ -2308,6 +2332,7 @@ class WebRemoteHost:
                 self.capture_adapter = CaptureAdapter(track=self.screen_track)
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)
+                self.video_sender._wrd_h264_policy = self._h264_policy_provider.current_policy()
                 self.media_sender = MediaSenderAdapter()
                 self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
                 self._prefer_h264_transceivers()
@@ -2537,10 +2562,19 @@ class WebRemoteHost:
                 (self._last_diag_network or {}).get("turnConfigured", False),
                 (self._last_diag_network or {}).get("turnStatus", "unknown"),
             )
-            fps = float(data.get("fps") or 0)
-            received = int(data.get("framesReceived") or 0)
-            decoded = int(data.get("framesDecoded") or 0)
-            if fps == 0 and received > 0:
+            fps = float(data.get("derivedFps", data.get("fps")) or 0)
+            received = int(data.get("receivedDelta", data.get("framesReceived")) or 0)
+            decoded = int(data.get("decodedDelta", data.get("framesDecoded")) or 0)
+            warmup = data.get("warmup") is True
+            suppressed = data.get("mediaHealthSuppressed") is True
+            recovery_admitted = self._has_exact_recovery_identity(data)
+            # A live media session has a policy intent. Do not allow a
+            # legacy/unbound telemetry envelope to advance its stall counter
+            # or recovery state: Signal cannot safely distinguish delayed A
+            # telemetry from B after a rebind without this correlation.
+            if getattr(self, "_h264_policy_provider", None) is not None and not recovery_admitted:
+                return
+            if not warmup and not suppressed and decoded == 0 and received > 0:
                 count = int(getattr(self, "_stall_sample_count", 0) or 0) + 1
                 self._stall_sample_count = count
                 if count % 5 == 0:
@@ -2559,7 +2593,8 @@ class WebRemoteHost:
                     )
             else:
                 self._stall_sample_count = 0
-            self._refresh_decoder_on_stall(data)
+            if not warmup and not suppressed and recovery_admitted:
+                self._observe_decoder_stall(data, received=received, decoded=decoded)
         except Exception as e:
             logger.error(f"Error handling viewer stats: {e}")
 
@@ -2591,8 +2626,31 @@ class WebRemoteHost:
         height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
         prev = dict(getattr(self, "_user_resolution", None) or {})
         adopted = self._set_user_resolution(width, height)
-        gop = 20 if (data.get("networkMode") or data.get("iceMode")) == "relay" else 40
-        set_session_gop_size(gop)
+        attempt_id = data.get("connectionAttemptId")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("connectionAttemptId is required before binding H.264 session policy")
+        provider = getattr(self, "_h264_policy_provider", None)
+        if provider is None:
+            provider = H264SessionPolicyProvider()
+            self._h264_policy_provider = provider
+        provider.bind_attempt(attempt_id)
+        generation = int(data.get("connectionAttemptSequence") or getattr(self, "_connection_generation", 0) or 0)
+        policy_update = provider.publish(
+            MediaSessionIntent(
+                connection_attempt_id=attempt_id,
+                generation=generation,
+                path=data.get("networkMode") or data.get("iceMode") or "auto",
+                width=adopted[0],
+                height=adopted[1],
+                target_fps=int((getattr(self, "media_profile", None) or {}).get("target_fps") or 20),
+                requested_bitrate_bps=0,
+                profile_sequence=0,
+            ),
+            getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+        )
+        if not policy_update.accepted or policy_update.policy is None:
+            raise ValueError(f"failed to publish H.264 policy: {policy_update.reason}")
+        policy = policy_update.policy
         emit_host_event(
             logger,
             event="host_session_presentation",
@@ -2605,22 +2663,70 @@ class WebRemoteHost:
                 "previousUserResolution": prev,
                 "adopted": True,
                 "path": data.get("networkMode") or data.get("iceMode"),
+                "policyId": policy.policy_id,
+                "codec": policy.codec_name,
             },
         )
         logger.info(
-            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s gop=%s",
+            "WRD_SESSION_PRESENTATION size=%sx%s path=%s previous=%s adopted=true attempt=%s policy=%s codec=%s periodicIdrFrames=%s",
             adopted[0], adopted[1],
             data.get("networkMode") or "-",
             prev,
-            data.get("connectionAttemptId") or "-",
-            get_session_gop_size(),
+            attempt_id,
+            policy.policy_id,
+            policy.codec_name,
+            policy.periodic_idr_frames,
         )
         return adopted
 
-    def _request_keyframe(self, reason="media-stalled", viewer_id="-"):
-        """Request encoder keyframe with a 1/s host-wide rate limit."""
+    def _keyframe_recovery_key(self, connection_attempt_id=None, generation=None):
+        current = getattr(getattr(self, "_h264_policy_provider", None), "current", lambda: None)()
+        intent = getattr(current, "intent", None)
+        attempt = connection_attempt_id or getattr(intent, "connection_attempt_id", "") or "-"
+        resolved_generation = generation if isinstance(generation, int) and generation >= 0 else getattr(intent, "generation", 0)
+        return str(attempt), int(resolved_generation or 0)
+
+    def _has_exact_recovery_identity(self, data):
+        if not isinstance(data, dict):
+            return False
+        current = getattr(getattr(self, "_h264_policy_provider", None), "current", lambda: None)()
+        intent = getattr(current, "intent", None)
+        attempt = data.get("connectionAttemptId")
+        generation = data.get("generation")
+        sequence = data.get("connectionAttemptSequence")
+        return bool(
+            intent is not None
+            and isinstance(attempt, str)
+            and attempt
+            and isinstance(generation, int)
+            and generation >= 1
+            and isinstance(sequence, int)
+            and sequence == generation
+            and attempt == intent.connection_attempt_id
+            and generation == intent.generation
+        )
+
+    def _keyframe_state(self, connection_attempt_id=None, generation=None):
+        key = self._keyframe_recovery_key(connection_attempt_id, generation)
+        states = getattr(self, "_keyframe_recovery_state", None)
+        if not isinstance(states, dict):
+            states = {}
+            self._keyframe_recovery_state = states
+        return key, states.setdefault(key, {
+            "last_request_at": 0.0,
+            "idr_requested": False,
+            "post_idr_stall_samples": 0,
+            "decoder_refresh_used": False,
+            "next_request_sequence": 0,
+            "active_request_sequence": None,
+            "ack_consumed": False,
+        })
+
+    def _request_keyframe(self, reason="media-stalled", viewer_id="-", connection_attempt_id=None, generation=None, request_sequence=None):
+        """Request one keyframe per current attempt/generation cooldown."""
         now = time.monotonic()
-        last = float(getattr(self, "_last_keyframe_request_at", 0.0) or 0.0)
+        key, state = self._keyframe_state(connection_attempt_id, generation)
+        last = float(state.get("last_request_at", 0.0) or 0.0)
         reason_s = str(reason or "media-stalled")[:80]
         viewer_s = str(viewer_id or "-")[:64]
         if now - last < 1.0:
@@ -2630,6 +2736,14 @@ class WebRemoteHost:
                 viewer_s,
             )
             return False
+        state["last_request_at"] = now
+        state["idr_requested"] = False
+        state["post_idr_stall_samples"] = 0
+        if not isinstance(request_sequence, int) or request_sequence < 1:
+            request_sequence = int(state.get("next_request_sequence", 0) or 0) + 1
+        state["next_request_sequence"] = max(int(state.get("next_request_sequence", 0) or 0), request_sequence)
+        state["active_request_sequence"] = request_sequence
+        state["ack_consumed"] = False
         self._last_keyframe_request_at = now
         ok = False
         media_sender = getattr(self, "media_sender", None)
@@ -2645,13 +2759,27 @@ class WebRemoteHost:
             except Exception as exc:
                 logger.debug("video_sender keyframe failed: %s", type(exc).__name__)
                 ok = False
+        if ok:
+            encoder = self._video_encoder()
+            note = getattr(encoder, "note_keyframe_request", None)
+            if callable(note):
+                note(reason_s, key[0], key[1], request_sequence)
+            state["idr_requested"] = True
         logger.info(
-            "WRD_KEYFRAME requested=true emitted=%s reason=%s viewer=%s codec=%s gop=%s size=%sx%s",
+            "WRD_KEYFRAME requested=true emitted=%s reason=%s viewer=%s attempt=%s generation=%s codec=%s gop=%s size=%sx%s",
             "pending" if ok else "false",
             reason_s,
             viewer_s,
+            key[0],
+            key[1],
             getattr(getattr(self, "media_sender", None), "codec_name", "-"),
-            get_session_gop_size(),
+            (
+                getattr(
+                    (getattr(self, "_h264_policy_provider", None) or H264SessionPolicyProvider()).current_policy(),
+                    "periodic_idr_frames",
+                    "-",
+                )
+            ),
             (self._user_resolution or {}).get("width"),
             (self._user_resolution or {}).get("height"),
         )
@@ -2663,7 +2791,34 @@ class WebRemoteHost:
             payload = data if isinstance(data, dict) else {}
             reason = payload.get("reason", "media-stalled")
             viewer_id = payload.get("viewerId", "-")
-            self._request_keyframe(reason=reason, viewer_id=viewer_id)
+            current = getattr(getattr(self, "_h264_policy_provider", None), "current", lambda: None)()
+            intent = getattr(current, "intent", None)
+            attempt = payload.get("connectionAttemptId")
+            generation = payload.get("generation")
+            connection_attempt_sequence = payload.get("connectionAttemptSequence")
+            request_sequence = payload.get("requestSequence")
+            if (
+                intent is None
+                or not isinstance(attempt, str)
+                or not attempt
+                or not isinstance(generation, int)
+                or generation < 1
+                or not isinstance(connection_attempt_sequence, int)
+                or connection_attempt_sequence != generation
+                or not isinstance(request_sequence, int)
+                or request_sequence < 1
+                or attempt != intent.connection_attempt_id
+                or generation != intent.generation
+            ):
+                logger.info("Ignoring stale keyframe request attempt=%s generation=%s", attempt, generation)
+                return
+            self._request_keyframe(
+                reason=reason,
+                viewer_id=viewer_id,
+                connection_attempt_id=attempt,
+                generation=generation,
+                request_sequence=request_sequence,
+            )
         except Exception as e:
             logger.error(f"Error handling request-keyframe: {e}")
 
@@ -2684,10 +2839,53 @@ class WebRemoteHost:
         except Exception as e:
             logger.error(f"Error handling resolution change: {e}")
 
+    def _admit_media_profile_change(self, payload, candidate_intent, next_profile):
+        """Fail closed before any profile, capture, or encoder mutation."""
+        provider = getattr(self, "_h264_policy_provider", None)
+        current = provider.current() if provider is not None else None
+        if current is None or current.intent is None or not current.accepted:
+            logger.info("Ignoring media profile without a published H.264 policy")
+            return None
+        intent = current.intent
+        sequence = payload.get("profileSequence")
+        if (
+            payload.get("connectionAttemptId") != intent.connection_attempt_id
+            or payload.get("generation") != intent.generation
+            or type(sequence) is not int
+            or sequence < 1
+            or sequence > 9007199254740991
+        ):
+            logger.info("Ignoring media profile with invalid session identity")
+            return None
+        binding = getattr(self, "_active_input_binding", None)
+        bound_viewer = binding.get("viewerId") if isinstance(binding, dict) else None
+        expected_viewer = bound_viewer if isinstance(bound_viewer, str) else getattr(self, "current_viewer_id", None)
+        if isinstance(expected_viewer, str) and expected_viewer and payload.get("viewerId") != expected_viewer:
+            logger.info("Ignoring media profile from non-active viewer")
+            return None
+        if isinstance(binding, dict):
+            bound_attempt = binding.get("connectionAttemptId")
+            if not isinstance(bound_attempt, str) or bound_attempt != intent.connection_attempt_id:
+                logger.info("Ignoring media profile with inactive attempt binding")
+                return None
+        if sequence < intent.profile_sequence:
+            logger.info("Ignoring media profile with stale profile sequence")
+            return None
+        if sequence == intent.profile_sequence:
+            profile_same = all(
+                (getattr(self, "media_profile", None) or {}).get(key) == next_profile.get(key)
+                for key in ("profile", "width", "height", "target_fps", "video_bitrate_kbps")
+            )
+            if candidate_intent != intent or not profile_same:
+                logger.info("Ignoring conflicting media profile replay")
+                return None
+        return current
+
     def on_media_profile_change(self, data):
         """Apply adaptive media profile requested by the active viewer."""
         try:
             payload = data if isinstance(data, dict) else {}
+            policy_provider = getattr(self, "_h264_policy_provider", None)
             allowed_profiles = {"high", "medium", "low", "survival"}
             profile = payload.get("profile") if payload.get("profile") in allowed_profiles else "medium"
             # Quality Lock default: missing adaptiveResolution means false.
@@ -2697,7 +2895,6 @@ class WebRemoteHost:
             current = dict(getattr(self, "media_profile", None) or {})
             if adaptive_resolution:
                 width, height = requested_width, requested_height
-                self._set_user_resolution(width, height)
             else:
                 if is_lock_rejected_size(requested_width, requested_height):
                     width, height = self._locked_user_size()
@@ -2711,7 +2908,7 @@ class WebRemoteHost:
                         adaptive_resolution,
                     )
                 elif (requested_width, requested_height) in PRESENTATION_RUNGS:
-                    width, height = self._set_user_resolution(requested_width, requested_height)
+                    width, height = requested_width, requested_height
                 else:
                     width, height = self._locked_user_size()
                     if requested_width != width or requested_height != height:
@@ -2731,6 +2928,28 @@ class WebRemoteHost:
                 "target_fps": clamp_int(payload.get("targetFps"), 5, 30, 15),
                 "video_bitrate_kbps": clamp_int(payload.get("videoBitrateKbps"), 250, 5000, 1400),
             }
+            current_policy = policy_provider.current() if policy_provider is not None else None
+            current_intent = current_policy.intent if current_policy is not None else None
+            candidate_intent = MediaSessionIntent(
+                connection_attempt_id=current_intent.connection_attempt_id if current_intent else "",
+                generation=current_intent.generation if current_intent else -1,
+                path=current_intent.path if current_intent else "",
+                width=width,
+                height=height,
+                target_fps=next_profile["target_fps"],
+                requested_bitrate_bps=next_profile["video_bitrate_kbps"] * 1000,
+                profile_sequence=payload.get("profileSequence", 0),
+            )
+            current_policy = self._admit_media_profile_change(payload, candidate_intent, next_profile)
+            if current_policy is None:
+                return
+            refreshed = policy_provider.refresh_profile(
+                candidate_intent,
+                getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+            )
+            if not refreshed.accepted:
+                logger.info("Ignoring media profile rejected by H.264 policy: %s", refreshed.reason)
+                return
             same = (
                 current.get("profile") == next_profile["profile"]
                 and int(current.get("width") or 0) == next_profile["width"]
@@ -2751,6 +2970,8 @@ class WebRemoteHost:
                 if continuity_action == "keyframe":
                     self._request_keyframe(reason=reason or "keyframe", viewer_id=viewer_id)
                 return
+            if adaptive_resolution or (requested_width, requested_height) in PRESENTATION_RUNGS:
+                self._set_user_resolution(width, height)
             self.media_profile = next_profile
             logger.info(
                 "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s adaptiveResolution=%s",
@@ -2769,11 +2990,18 @@ class WebRemoteHost:
                 apply_result = {}
             bitrate_kbps = int(next_profile["video_bitrate_kbps"])
             encoder_reopen = bool(apply_result.get("sizeChanged"))
-            hot_ok = self._apply_encoder_bitrate_kbps(bitrate_kbps)
-            logger.info(
-                "WRD_ENCODER_RATE bitrate_kbps=%s hot=%s encoderReopen=%s size=%sx%s",
+            bitrate_result = self._apply_encoder_bitrate_kbps(
                 bitrate_kbps,
-                hot_ok,
+                policy=refreshed.policy if current_policy is not None else None,
+            )
+            logger.info(
+                "WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s encoderReopen=%s size=%sx%s",
+                bitrate_kbps,
+                bitrate_result["clamped"] // 1000,
+                bitrate_result["effective"],
+                bitrate_result["applied"],
+                bitrate_result["applyMode"],
+                bitrate_result["reopenRequired"],
                 encoder_reopen,
                 next_profile["width"],
                 next_profile["height"],
@@ -2792,62 +3020,103 @@ class WebRemoteHost:
             encoder = getattr(sender, "_RTCRtpSender__encoder", None)
         return encoder
 
-    def _refresh_decoder_on_stall(self, data):
-        """Same-size SPS refresh on the freeze second. GOP IDRs do not unstick Chrome.
-
-        Re-arm only after 12s and a healthy 8-25 FPS sample. Recover spikes
-        (fps=50-160, jitter 400ms) used to re-arm immediately and cycle.
-        """
-        try:
-            fps = float(data.get("fps") or 0)
-            received = int(data.get("framesReceived") or 0)
-        except (TypeError, ValueError):
+    def _observe_decoder_stall(self, data, *, received, decoded):
+        """Escalate an admitted decoder stall only after an IDR has been observed."""
+        if not self._has_exact_recovery_identity(data):
             return False
-        now = time.monotonic()
-        last = float(getattr(self, "_stall_decoder_refresh_at", 0.0) or 0.0)
-        if 8.0 <= fps <= 25.0 and (now - last) >= 12.0:
-            self._stall_decoder_refresh_armed = True
-        if fps > 0:
+        if decoded > 0:
+            _key, state = self._keyframe_state(
+                data.get("connectionAttemptId"), data.get("connectionAttemptSequence"),
+            )
+            state["idr_requested"] = False
+            state["post_idr_stall_samples"] = 0
+            state["decoder_refresh_used"] = False
             return False
         if received <= 0:
             return False
-        if not getattr(self, "_stall_decoder_refresh_armed", False):
-            return False
-        if last and (now - last) < 12.0:
+        key, state = self._keyframe_state(
+            data.get("connectionAttemptId"), data.get("connectionAttemptSequence"),
+        )
+        if not state.get("idr_requested"):
+            self._request_keyframe(
+                reason="decoder-stalled",
+                viewer_id=data.get("viewerId", "-"),
+                connection_attempt_id=key[0],
+                generation=key[1],
+            )
             return False
         encoder = self._video_encoder()
-        refresh = getattr(encoder, "request_decoder_refresh", None)
-        if not callable(refresh):
+        expected_ack = (key[0], key[1], state.get("active_request_sequence"))
+        if getattr(encoder, "last_keyframe_request_ack", None) != expected_ack or state.get("decoder_refresh_used"):
             return False
-        try:
-            if refresh():
-                self._stall_decoder_refresh_armed = False
-                self._stall_decoder_refresh_at = now
-                return True
-        except Exception as exc:
-            logger.debug("decoder refresh failed: %s", type(exc).__name__)
+        state["ack_consumed"] = True
+        state["post_idr_stall_samples"] = int(state.get("post_idr_stall_samples", 0) or 0) + 1
+        if state["post_idr_stall_samples"] < 2:
+            return False
+        refresh = getattr(encoder, "request_decoder_refresh", None)
+        if callable(refresh) and refresh():
+            state["decoder_refresh_used"] = True
+            return True
         return False
 
-    def _apply_encoder_bitrate_kbps(self, bitrate_kbps):
-        """Hot-update encoder target bitrate when possible (no codec reopen)."""
+    def _refresh_decoder_on_stall(self, data):
+        """Compatibility entrypoint for the IDR-gated decoder-stall state machine."""
+        try:
+            received = int(data.get("receivedDelta", data.get("framesReceived")) or 0)
+            decoded = int(data.get("decodedDelta", data.get("framesDecoded")) or 0)
+        except (TypeError, ValueError):
+            return False
+        if data.get("warmup") is True or data.get("mediaHealthSuppressed") is True:
+            return False
+        if not self._has_exact_recovery_identity(data):
+            return False
+        return self._observe_decoder_stall(data, received=received, decoded=decoded)
+
+    def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
+        """Return an honest bitrate-application result for the current encoder."""
         try:
             bitrate_bps = max(250_000, min(int(bitrate_kbps) * 1000, 8_000_000))
         except (TypeError, ValueError):
-            return False
+            return {
+                "requested": 0,
+                "clamped": 0,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "invalid",
+                "reopenRequired": False,
+            }
+        sender = getattr(self, "video_sender", None)
+        if policy is not None and sender is not None:
+            # Lazy creation/rebuild uses the policy owned by this sender.
+            sender._wrd_h264_policy = policy
         encoder = self._video_encoder()
         if encoder is None:
-            return False
+            return {
+                "requested": bitrate_bps,
+                "clamped": bitrate_bps,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "no-encoder",
+                "reopenRequired": False,
+            }
         try:
-            if hasattr(encoder, "target_bitrate"):
-                encoder.target_bitrate = bitrate_bps
-                return True
-            codec = getattr(encoder, "codec", None)
-            if codec is not None and hasattr(codec, "bit_rate"):
-                codec.bit_rate = bitrate_bps
-                return True
+            setter = getattr(encoder, "set_target_bitrate", None)
+            if callable(setter):
+                result = setter(bitrate_bps)
+                stage = getattr(encoder, "stage_policy_update", None)
+                if policy is not None and callable(stage):
+                    stage(policy)
+                return result
         except Exception as exc:
             logger.debug("encoder bitrate hot-update failed: %s", type(exc).__name__)
-        return False
+        return {
+            "requested": bitrate_bps,
+            "clamped": bitrate_bps,
+            "effective": int(getattr(getattr(encoder, "codec", None), "bit_rate", 0) or 0),
+            "applied": False,
+            "applyMode": "reopen-required",
+            "reopenRequired": True,
+        }
 
     def _validate_media_activity_request(self, data):
         """Pure validation for Signal-forwarded media-activity-change (no side effects)."""

@@ -3,6 +3,7 @@ const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { setupTerminal } = require('./terminal');
+const { createRuntimeContext } = require('./runtime-context');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
@@ -13,6 +14,7 @@ const {
   connections,
   clearHostCapabilities,
   getHostCapabilities,
+  issueProofAdmission,
 } = require('./signaling');
 
 function v2Key(overrides = {}) {
@@ -120,6 +122,24 @@ function resetConnections() {
   clearHostCapabilities();
 }
 
+test('proof admissions expire, enforce capacity, and cannot be replayed', () => {
+  let now = 1000;
+  const context = createRuntimeContext({
+    now: () => now,
+    proofAdmissionTtlMs: 1000,
+    maxProofAdmissions: 1,
+  });
+  const first = context.issueProofAdmission();
+  assert.ok(first?.token);
+  assert.equal(context.issueProofAdmission(), null);
+  now += 1001;
+  assert.equal(context.admitProofViewer(first), false);
+  const fresh = context.issueProofAdmission();
+  assert.ok(fresh?.token);
+  assert.equal(context.admitProofViewer(fresh), true);
+  assert.equal(context.admitProofViewer(fresh), false);
+});
+
 test('standalone relay-viewer cannot stop host tunnel relay stream', () => {
   resetConnections();
   const io = makeIo();
@@ -134,6 +154,37 @@ test('standalone relay-viewer cannot stop host tunnel relay stream', () => {
 
   assert.equal(connections.relayViewers.has('relay-1'), false);
   assert.equal(host.sent.some((message) => message.event === 'relay-stream-control'), false);
+});
+
+test('human viewer arriving after proof admission issuance rejects proof without eviction', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const admission = issueProofAdmission();
+  const human = new FakeSocket('human-viewer', 'viewer');
+  io.connect(human);
+  const proof = new FakeSocket('proof-viewer', 'viewer');
+  proof.handshake.auth.proofAdmission = admission;
+  io.connect(proof);
+
+  assert.equal(connections.viewers.get('human-viewer'), human);
+  assert.equal(human.disconnected, false);
+  assert.equal(proof.disconnected, true);
+  assert.equal(proof.sent.some((entry) => entry.event === 'proof-admission-rejected'), true);
+});
+
+test('human viewer supersedes an admitted proof viewer under the existing user-priority rule', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const proof = new FakeSocket('proof-viewer', 'viewer');
+  proof.handshake.auth.proofAdmission = issueProofAdmission();
+  io.connect(proof);
+  const human = new FakeSocket('human-viewer', 'viewer');
+  io.connect(human);
+
+  assert.equal(proof.disconnected, true);
+  assert.equal(connections.viewers.get('human-viewer'), human);
 });
 
 test('terminal namespace wiring does not break viewer and host signaling', () => {
@@ -202,7 +253,7 @@ test('terminal namespace wiring does not break viewer and host signaling', () =>
   assert.equal(connections.viewers.has('viewer-1'), true);
 });
 
-test('viewer media-profile-change is sanitized and forwarded to host', () => {
+test('viewer media-profile-change is sanitized and forwarded with a Signal-bound attempt', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io);
@@ -212,6 +263,20 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   io.connect(host);
   io.connect(viewer);
 
+  viewer.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-sanitized',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  // A legacy wire payload has no attempt or profile sequence. Signal must
+  // derive both from the authoritative binding before it reaches Host.
   viewer.trigger('media-profile-change', {
     profile: 'medium',
     width: 960,
@@ -234,6 +299,10 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   assert.equal(message.data.adaptiveResolution, false);
   assert.equal(message.data.continuityAction, 'none');
   assert.equal(message.data.extra, undefined);
+  assert.deepEqual(
+    [message.data.connectionAttemptId, message.data.generation, message.data.profileSequence],
+    ['attempt-sanitized', 1, 1],
+  );
 
   viewer.trigger('media-profile-change', {
     profile: 'low',
@@ -248,6 +317,124 @@ test('viewer media-profile-change is sanitized and forwarded to host', () => {
   const locked = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
   assert.equal(locked.adaptiveResolution, true);
   assert.equal(locked.continuityAction, 'keyframe');
+  assert.equal(locked.profileSequence, 2);
+});
+
+test('media profile without an authoritative attempt binding is rejected', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-no-attempt', 'host');
+  const viewer = new FakeSocket('viewer-no-attempt', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('media-profile-change', { profile: 'high' });
+
+  assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'no-active-attempt',
+  );
+});
+
+test('media profile rejects a derived sequence beyond Number.MAX_SAFE_INTEGER', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-profile-overflow', 'host');
+  const viewer = new FakeSocket('viewer-profile-overflow', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'profile-overflow' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', {
+    ...lease, connectionAttemptId: 'attempt-overflow', connectionAttemptSequence: 1,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease, connectionAttemptId: 'attempt-overflow',
+    profileSequence: Number.MAX_SAFE_INTEGER, profile: 'high',
+  });
+  const forwarded = host.sent.filter((entry) => entry.event === 'media-profile-change').length;
+
+  // A legacy-shaped follow-up would derive MAX_SAFE_INTEGER + 1 and must fail.
+  viewer.trigger('media-profile-change', { ...lease, profile: 'low' });
+
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, forwarded);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'profile-sequence-exhausted',
+  );
+});
+
+test('profile writes derive bound attempt identity and reject stale sequence or old attempt', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-profile', 'host');
+  const viewer = new FakeSocket('viewer-profile', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'profile-control' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    connectionAttemptSequence: 1,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 1,
+    profile: 'high',
+    width: 1280,
+    height: 720,
+    targetFps: 20,
+    videoBitrateKbps: 2500,
+  });
+  const current = host.sent.filter((entry) => entry.event === 'media-profile-change').at(-1).data;
+  assert.deepEqual(
+    [current.connectionAttemptId, current.generation, current.profileSequence],
+    ['attempt-current', 1, 1],
+  );
+
+  const countAfterCurrent = host.sent.filter((entry) => entry.event === 'media-profile-change').length;
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 0,
+    profile: 'low',
+  });
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, countAfterCurrent);
+
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-new',
+    connectionAttemptSequence: 2,
+  });
+  viewer.trigger('media-profile-change', {
+    ...lease,
+    connectionAttemptId: 'attempt-current',
+    profileSequence: 99,
+    profile: 'low',
+  });
+  assert.equal(host.sent.filter((entry) => entry.event === 'media-profile-change').length, countAfterCurrent);
+  assert.equal(
+    viewer.sent.filter((entry) => entry.event === 'media-profile-rejected').at(-1).data.reason,
+    'wrong-attempt',
+  );
 });
 
 test('v2 viewers cannot forward unleased media writes and active media writes are bounded', () => {
@@ -270,6 +457,11 @@ test('v2 viewers cannot forward unleased media writes and active media writes ar
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
   const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', {
+    ...lease,
+    connectionAttemptId: 'attempt-v2-media',
+    connectionAttemptSequence: 1,
+  });
   viewer.trigger('media-profile-change', { ...lease, profile: 'high', width: 99999, height: 99999, targetFps: 99, videoBitrateKbps: 99999 });
   viewer.trigger('resolution-change', { ...lease, width: 99999, height: 99999 });
 
@@ -292,26 +484,104 @@ test('non-viewer media-profile-change is ignored', () => {
   assert.equal(host.sent.some((entry) => entry.event === 'media-profile-change'), false);
 });
 
-test('viewer request-keyframe is sanitized and forwarded to host', () => {
+test('viewer request-keyframe derives the active recovery identity before forwarding', () => {
   resetConnections();
   const io = makeIo();
-  setupSignaling(io);
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
 
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
   io.connect(host);
   io.connect(viewer);
-
-  viewer.trigger('request-keyframe', {
-    reason: 'media-stalled',
-    secret: 'drop-me',
+  const grant = grantActiveLease(io, host, viewer, 'keyframe-binding');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-keyframe',
+    connectionAttemptSequence: 4,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
   });
 
-  const message = host.sent.find((entry) => entry.event === 'request-keyframe');
+  viewer.trigger('request-keyframe', {
+    schemaVersion: 2,
+    reason: 'media-stalled',
+    secret: 'drop-me',
+    connectionAttemptId: 'attempt-keyframe',
+    connectionAttemptSequence: 4,
+    generation: 4,
+    requestSequence: 9,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  const message = host.sent.filter((entry) => entry.event === 'request-keyframe').at(-1);
   assert.equal(Boolean(message), true);
   assert.equal(message.data.viewerId, 'viewer-1');
   assert.equal(message.data.reason, 'media-stalled');
+  assert.equal(message.data.connectionAttemptId, 'attempt-keyframe');
+  assert.equal(message.data.connectionAttemptSequence, 4);
+  assert.equal(message.data.generation, 4);
+  assert.equal(message.data.requestSequence, 9);
   assert.equal(message.data.secret, undefined);
+});
+
+test('only current fully correlated recovery envelopes cross an A to B rebind', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'keyframe-rebind');
+  for (const [connectionAttemptId, connectionAttemptSequence] of [['attempt-A', 1], ['attempt-B', 2]]) {
+    viewer.trigger('connection-attempt-bind', {
+      schemaVersion: 1,
+      connectionAttemptId,
+      connectionAttemptSequence,
+      leaseId: grant.leaseId,
+      leaseEpoch: grant.leaseEpoch,
+    });
+  }
+  const keyframesBefore = host.sent.filter((entry) => entry.event === 'request-keyframe').length;
+  const statsBefore = host.sent.filter((entry) => entry.event === 'viewer-stats').length;
+  const oldIdentity = {
+    schemaVersion: 2,
+    connectionAttemptId: 'attempt-A',
+    connectionAttemptSequence: 1,
+    generation: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  };
+  // A late legacy Viewer has no current recovery key. Signal must not assign
+  // B's key merely because this socket is now bound to B.
+  viewer.trigger('request-keyframe', {
+    schemaVersion: 2,
+    requestSequence: 1,
+    reason: 'decoder-stalled',
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('viewer-stats', { decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
+  viewer.trigger('request-keyframe', { ...oldIdentity, requestSequence: 1, reason: 'decoder-stalled' });
+  viewer.trigger('viewer-stats', { ...oldIdentity, decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
+  assert.equal(host.sent.filter((entry) => entry.event === 'request-keyframe').length, keyframesBefore);
+  assert.equal(host.sent.filter((entry) => entry.event === 'viewer-stats').length, statsBefore);
+
+  const currentIdentity = {
+    ...oldIdentity,
+    connectionAttemptId: 'attempt-B',
+    connectionAttemptSequence: 2,
+    generation: 2,
+  };
+  viewer.trigger('request-keyframe', { ...currentIdentity, requestSequence: 2, reason: 'decoder-stalled' });
+  viewer.trigger('viewer-stats', { ...currentIdentity, decodedDelta: 0, receivedDelta: 19, derivedFps: 0 });
+  assert.equal(host.sent.filter((entry) => entry.event === 'request-keyframe').length, keyframesBefore + 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'viewer-stats').length, statsBefore + 1);
 });
 
 test('non-viewer request-keyframe is ignored', () => {

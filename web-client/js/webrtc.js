@@ -110,8 +110,12 @@ const WebRTC = {
   _paintStalled6sTimer: null,
   _paintIssueKind: null,
   _lastPaintStats: null,
+  _paintObservationWindow: null,
+  _lastPaintObservation: null,
   _keyframeRequested: false,
   _keyframeEmitted: false,
+  _keyframeRequestGeneration: '',
+  _keyframeRequestSequence: 0,
   _hostCaptureFps: 0,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -131,6 +135,7 @@ const WebRTC = {
   _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
+  _mediaProfileSequence: 0,
   desktopSessionState: null,
   selectedCandidatePair: null,
   candidateSummary: {
@@ -818,6 +823,7 @@ const WebRTC = {
     this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this._mediaProfileSequence = 0;
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
       socket: this.socket?.connected ? 'online' : 'connecting',
     });
@@ -831,7 +837,12 @@ const WebRTC = {
     this._lastInboundFramesDecoded = 0;
     this._lastInboundFramesDecodedAt = 0;
     this._paintDecodedBaseline = 0;
+    this._paintObservationWindow = null;
+    this._lastPaintObservation = null;
     this._stallSince = null;
+    this._keyframeRequestGeneration = '';
+    this._keyframeRequestSequence = 0;
+    this._lastKeyframeRequestAt = 0;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
 
@@ -1421,29 +1432,37 @@ const WebRTC = {
   },
 
   notePaintStats(stats = {}) {
+    const canonical = this.canonicalMediaStats(stats);
     const videoWidth = Number(stats.videoWidth || 0);
-    const framesDecoded = Number(stats.framesDecoded || 0);
-    const framesReceived = Number(stats.framesReceived || 0);
-    const fps = Number(stats.fps || 0);
-    const baseline = Number(this._paintDecodedBaseline) || 0;
+    const decodedDelta = canonical.decodedDelta;
+    const receivedDelta = canonical.receivedDelta;
+    const derivedFps = canonical.derivedFps;
     this._lastPaintStats = {
       videoWidth,
       videoHeight: Number(stats.videoHeight || 0),
-      framesDecoded,
-      framesReceived,
-      fps,
+      decodedDelta,
+      receivedDelta,
+      derivedFps,
+      warmup: canonical.warmup,
       jitterBufferMs: Number(stats.jitterBufferMs || 0),
-      bytesReceived: Number(stats.bytesReceived || 0),
-      framesDropped: Number(stats.framesDropped || 0),
-      packetsReceived: Number(stats.packetsReceived || 0),
-      nackCount: Number(stats.nackCount || 0),
-      pliCount: Number(stats.pliCount || 0),
-      firCount: Number(stats.firCount || 0),
-      freezeCount: Number(stats.freezeCount || 0),
+      bytesDelta: canonical.bytesDelta,
+      framesDroppedDelta: canonical.framesDroppedDelta,
+      packetsReceivedDelta: canonical.packetsReceivedDelta,
+      nackCountDelta: canonical.nackCountDelta,
+      pliCountDelta: canonical.pliCountDelta,
+      firCountDelta: canonical.firCountDelta,
+      freezeDelta: canonical.freezeDelta,
     };
 
+    // Intentional suspension and warmup are not media-health samples. Clear any
+    // prior stall and leave the paint state untouched while delayed stats arrive.
+    if (canonical.warmup || this.isMediaHealthSuppressed()) {
+      this._stallSince = null;
+      return this.uiPhase;
+    }
+
     if (!this.hasPaintedFrame) {
-      if (videoWidth > 0 && framesDecoded > baseline) {
+      if (videoWidth > 0 && decodedDelta > 0) {
         this.hasPaintedFrame = true;
         this.ensureDesktopSessionState()?.applyMedia({
           attemptId: this.currentConnectionAttemptId,
@@ -1461,7 +1480,7 @@ const WebRTC = {
       return this.uiPhase;
     }
 
-    if (fps === 0 && framesReceived > 0) {
+    if (derivedFps === 0 && receivedDelta > 0) {
       this.ensureDesktopSessionState()?.applyMedia({ attemptId: this.currentConnectionAttemptId, state: 'stalled' });
       if (!this._stallSince) this._stallSince = Date.now();
       const stallMs = this.paintStallThresholdMs();
@@ -1509,7 +1528,13 @@ const WebRTC = {
   },
 
   requestKeyframe(reason = 'media-stalled') {
+    if (this.isMediaHealthSuppressed()) return false;
     const now = Date.now();
+    const generation = `${this.currentConnectionAttemptId || ''}|${Number(this.connectionAttemptSequence) || 0}`;
+    if (this._keyframeRequestGeneration !== generation) {
+      this._keyframeRequestGeneration = generation;
+      this._lastKeyframeRequestAt = 0;
+    }
     if (this._lastKeyframeRequestAt && now - this._lastKeyframeRequestAt < 1000) {
       return false;
     }
@@ -1522,13 +1547,19 @@ const WebRTC = {
       ...lease,
       schemaVersion: 2,
       reason: String(reason || 'media-stalled').slice(0, 80),
+      connectionAttemptId: this.currentConnectionAttemptId || '',
+      connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
+      generation: Number(this.connectionAttemptSequence) || 0,
+      requestSequence: (Number(this._keyframeRequestSequence) || 0) + 1,
     });
+    this._keyframeRequestSequence += 1;
     console.warn(`[MEDIA] request-keyframe reason=${reason}`);
     return true;
   },
 
   handleReceiverStats(stats) {
     if (this.isMediaHealthSuppressed()) return;
+    const canonical = this.canonicalMediaStats(stats);
     const controller = this.ensureLinkQualityController();
     if (!controller || !this.adaptiveMediaEnabled) return;
     // Tunnel JPEG has its own backpressure/profile path; WebRTC adaptive stays off.
@@ -1546,18 +1577,22 @@ const WebRTC = {
     }
 
     const result = controller.observe({
-      ...stats,
+      ...canonical,
       selectedCandidatePair: this.selectedCandidatePair,
     });
-    if (!result || result.action === 'hold') return;
+    if (!result) return;
 
-    if (result.shouldRequestKeyframe || result.action === 'recover') {
-      const inboundStillFlowing = Number(stats.framesReceived || 0) > 0
-        && Number(stats.fps || 0) === 0;
-      if (!(this.networkMode === 'relay' && inboundStillFlowing)) {
-        this.requestKeyframe(result.reason || 'media-stalled');
-      }
+    const feedbackRequested = canonical.pliCountDelta > 0 || canonical.firCountDelta > 0;
+    const applicationReason = (result.shouldRequestKeyframe || result.action === 'recover')
+      ? result.reason || 'media-stalled'
+      : '';
+    if (applicationReason || feedbackRequested) {
+      // Browser PLI/FIR counters have no stable causal attribution in aiortc;
+      // retain an application reason when one is pending, otherwise record unknown.
+      this.requestKeyframe(applicationReason || 'rtcp-or-unknown');
     }
+
+    if (result.action === 'hold') return;
 
     if (result.profileConfig) {
       this.applyMediaProfile(result.profileConfig, result.reason);
@@ -1649,8 +1684,11 @@ const WebRTC = {
       + ` adaptiveRes=${allowResolutionChange ? 'on' : 'off'} reason=${reason}`,
     );
     if (this.socket && this.socket.connected) {
+      this._mediaProfileSequence = (Number(this._mediaProfileSequence) || 0) + 1;
       this.socket.emit('media-profile-change', {
         ...lease,
+        connectionAttemptId: this.currentConnectionAttemptId,
+        profileSequence: this._mediaProfileSequence,
         profile: profile.name,
         width,
         height,
@@ -1967,7 +2005,17 @@ const WebRTC = {
       ? Number(this.signalingConnectBudgetMs)
       : 5000;
     return {
-      auth: { token, role: 'viewer', inputProtocolVersion: 2 },
+      auth: {
+        token,
+        role: 'viewer',
+        inputProtocolVersion: 2,
+        proofAdmission: (() => {
+          try {
+            if (typeof sessionStorage === 'undefined') return null;
+            return JSON.parse(sessionStorage.getItem('wrdProofAdmission') || 'null');
+          } catch (_err) { return null; }
+        })(),
+      },
       reconnection: Boolean(reconnection),
       // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
       transports,
@@ -3447,11 +3495,8 @@ const WebRTC = {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
       });
 
-      // Ask Host for an IDR ASAP so formal cold first-frame is not stuck on an inter-frame.
-      if (event.track?.kind === 'video') {
-        this.requestKeyframe('ontrack-first-video');
-        setTimeout(() => this.requestKeyframe('ontrack-first-video-retry'), 700);
-      }
+      // First-frame warmup is admission-controlled by the canonical stats path;
+      // do not schedule an extra request before that path has a health sample.
 
       // Last-resort fallback: stay media-pending unless a decoded frame actually landed.
       setTimeout(() => {
@@ -4394,6 +4439,8 @@ if (this.tunnelLastObjectUrl) {
     }
     this._videoFrameCallbackId = null;
     this._videoFrameElement = null;
+    this._paintObservationWindow = null;
+    this._lastPaintObservation = null;
   },
 
   startVideoFrameTracking() {
@@ -4421,6 +4468,7 @@ if (this.tunnelLastObjectUrl) {
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
+      this.observePaintFrame(now, metadata, video);
       if (this._mediaResumeFramePending) {
         this.observeFreshResumeFrame({
           source: 'video-callback',
@@ -4434,6 +4482,82 @@ if (this.tunnelLastObjectUrl) {
     this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
   },
 
+  observePaintFrame(now, metadata = {}, video) {
+    const paintAt = Number(now);
+    if (!Number.isFinite(paintAt)) return null;
+    const rect = typeof video?.getBoundingClientRect === 'function'
+      ? video.getBoundingClientRect()
+      : {};
+    const geometry = {
+      x: Number(rect?.x ?? rect?.left ?? 0),
+      y: Number(rect?.y ?? rect?.top ?? 0),
+      width: Number(rect?.width ?? 0),
+      height: Number(rect?.height ?? 0),
+    };
+    let window = this._paintObservationWindow;
+    if (!window) {
+      window = {
+        connectionAttemptId: this.currentConnectionAttemptId || null,
+        startedAt: paintAt,
+        lastPaintAt: paintAt,
+        intervals: [],
+        maxGapMs: 0,
+        firstPresentedFrames: Number(metadata.presentedFrames),
+        lastPresentedFrames: Number(metadata.presentedFrames),
+        video: { width: Number(video?.videoWidth || 0), height: Number(video?.videoHeight || 0) },
+        geometry,
+        geometryChanges: 0,
+      };
+      this._paintObservationWindow = window;
+      return null;
+    }
+    const gap = Math.max(0, paintAt - window.lastPaintAt);
+    window.intervals.push(gap);
+    window.maxGapMs = Math.max(window.maxGapMs, gap);
+    window.lastPaintAt = paintAt;
+    const presentedFrames = Number(metadata.presentedFrames);
+    if (Number.isFinite(presentedFrames)) window.lastPresentedFrames = presentedFrames;
+    window.video = { width: Number(video?.videoWidth || 0), height: Number(video?.videoHeight || 0) };
+    if (["x", "y", "width", "height"].some((key) => geometry[key] !== window.geometry[key])) {
+      window.geometry = geometry;
+      window.geometryChanges += 1;
+    }
+    if (paintAt - window.startedAt < 5000) return null;
+    const intervals = window.intervals.slice().sort((a, b) => a - b);
+    const percentile = (fraction) => intervals.length
+      ? intervals[Math.max(0, Math.min(intervals.length - 1, Math.ceil(intervals.length * fraction) - 1))]
+      : 0;
+    const firstPresented = Number(window.firstPresentedFrames);
+    const lastPresented = Number(window.lastPresentedFrames);
+    this._lastPaintObservation = {
+      connectionAttemptId: window.connectionAttemptId,
+      intervalMs: {
+        p50: percentile(0.5),
+        p95: percentile(0.95),
+        max: intervals.length ? intervals.at(-1) : 0,
+      },
+      maxGapMs: window.maxGapMs,
+      presentedFramesDelta: Number.isFinite(firstPresented) && Number.isFinite(lastPresented)
+        ? Math.max(0, lastPresented - firstPresented) : 0,
+      video: window.video,
+      geometry: { ...window.geometry, changes: window.geometryChanges },
+    };
+    console.info('[WRD_PAINT_SAMPLE]', this._lastPaintObservation);
+    this._paintObservationWindow = {
+      connectionAttemptId: window.connectionAttemptId,
+      startedAt: paintAt,
+      lastPaintAt: paintAt,
+      intervals: [],
+      maxGapMs: 0,
+      firstPresentedFrames: lastPresented,
+      lastPresentedFrames: lastPresented,
+      video: window.video,
+      geometry: window.geometry,
+      geometryChanges: 0,
+    };
+    return this._lastPaintObservation;
+  },
+
   stopMediaTelemetry() {
     if (this._statsSampler) this._statsSampler.stop();
     this._statsSampler = null;
@@ -4445,31 +4569,49 @@ if (this.tunnelLastObjectUrl) {
     this.stopVideoFrameTracking();
   },
 
+  canonicalMediaStats(stats = {}) {
+      const number = (canonical, legacy) => Number(stats[canonical] ?? stats[legacy] ?? 0) || 0;
+      return {
+        ...stats,
+        derivedFps: number('derivedFps', 'fps'),
+        receivedDelta: number('receivedDelta', 'framesReceived'),
+        decodedDelta: number('decodedDelta', 'framesDecoded'),
+        packetsLostDelta: number('packetsLostDelta', 'packetsLost'),
+        bytesDelta: number('bytesDelta', 'bytesReceived'),
+        framesDroppedDelta: number('framesDroppedDelta', 'framesDropped'),
+        packetsReceivedDelta: number('packetsReceivedDelta', 'packetsReceived'),
+        nackCountDelta: number('nackCountDelta', 'nackCount'),
+        pliCountDelta: number('pliCountDelta', 'pliCount'),
+        firCountDelta: number('firCountDelta', 'firCount'),
+        freezeDelta: number('freezeDelta', 'freezeCount'),
+        warmup: stats.warmup === true,
+      };
+  },
+
   processStatsSnapshot(stats = {}) {
-      const fps = Number(stats.fps || 0);
+      const canonical = this.canonicalMediaStats(stats);
+      const fps = canonical.derivedFps;
       const latencyMs = Number(stats.rttMs || 0);
       const jitterBufferDelay = Number(stats.jitterBufferMs || 0);
-      const framesReceived = Number(stats.framesReceived || 0);
-      const framesDecoded = Number(stats.framesDecoded || 0);
-      const packetsLost = Number(stats.packetsLost || 0);
-      const bytesReceived = Number(stats.bytesReceived || 0);
-      const framesDropped = Number(stats.framesDropped || 0);
-      const packetsReceived = Number(stats.packetsReceived || 0);
-      const nackCount = Number(stats.nackCount || 0);
-      const pliCount = Number(stats.pliCount || 0);
-      const firCount = Number(stats.firCount || 0);
-      const freezeCount = Number(stats.freezeCount || 0);
+      const framesReceived = canonical.receivedDelta;
+      const framesDecoded = canonical.decodedDelta;
+      const packetsLost = canonical.packetsLostDelta;
+      const bytesReceived = canonical.bytesDelta;
+      const framesDropped = canonical.framesDroppedDelta;
+      const packetsReceived = canonical.packetsReceivedDelta;
+      const nackCount = canonical.nackCountDelta;
+      const pliCount = canonical.pliCountDelta;
+      const firCount = canonical.firCountDelta;
+      const freezeCount = canonical.freezeDelta;
       const codec = String(stats.codec || '');
       const selectedCandidateType = String(stats.selectedCandidateType || '');
-      if (Number.isFinite(framesDecoded)) {
-        const prevDecoded = Number(this._lastInboundFramesDecoded) || 0;
-        // Health timestamp only advances on real frame growth; flat/frozen stats age out.
-        if (framesDecoded > prevDecoded) {
-          this._lastInboundFramesDecoded = framesDecoded;
-          this._lastInboundFramesDecodedAt = Date.now();
-        } else {
-          this._lastInboundFramesDecoded = framesDecoded;
-        }
+      if (framesDecoded > 0) {
+        const totalsDecoded = Number(stats.totals?.framesDecoded);
+        this._lastInboundFramesDecoded = Number.isFinite(totalsDecoded)
+          ? totalsDecoded
+          : Number(stats.framesDecoded ?? framesDecoded) || 0;
+        // Each positive delta is progress, even when smaller than the prior interval.
+        this._lastInboundFramesDecodedAt = Date.now();
       }
       this.selectedCandidatePair = stats.selectedCandidatePair || {
         localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
@@ -4515,7 +4657,7 @@ if (this.tunnelLastObjectUrl) {
         fps,
       });
 
-      if (this.isMediaHealthSuppressed()) {
+      if (canonical.warmup || this.isMediaHealthSuppressed()) {
         this.noMediaTicks = 0;
       } else if (framesReceived === 0 && framesDecoded === 0 && !selectedCandidateType) {
         this.noMediaTicks += 1;
@@ -4527,13 +4669,13 @@ if (this.tunnelLastObjectUrl) {
       if (this._mediaResumeFramePending) {
         this.observeFreshResumeFrame({
           source: 'stats',
-          framesDecoded,
+          framesDecoded: Number(stats.totals?.framesDecoded ?? this._lastInboundFramesDecoded),
           connectionAttemptId: this.currentConnectionAttemptId || null,
           pc: this.pc || null,
         });
       }
 
-      if (this.isMediaHealthSuppressed()) {
+      if (canonical.warmup || this.isMediaHealthSuppressed()) {
         // Intentional suspension must not trigger degraded quality recovery.
       } else if (selectedCandidateType === 'relay') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
@@ -4587,12 +4729,12 @@ if (this.tunnelLastObjectUrl) {
         );
       }
 
-      console.log(`[STATS] FPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
+      console.log(`[STATS] DerivedFPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
-                  `Recv=${framesReceived}, Decoded=${framesDecoded}, Lost=${packetsLost}, ` +
+                  `RecvDelta=${framesReceived}, DecodedDelta=${framesDecoded}, LostDelta=${packetsLost}, ` +
                   `Dropped=${framesDropped}, Packets=${packetsReceived}, NACK=${nackCount}, ` +
                   `PLI=${pliCount}, FIR=${firCount}, Freeze=${freezeCount}, ` +
-                  `IntervalBytes=${(bytesReceived/1024).toFixed(1)}KiB`);
+                  `BytesDelta=${(bytesReceived/1024).toFixed(1)}KiB`);
       if (this.selectedCandidatePair?.localType || this.selectedCandidatePair?.remoteType) {
         console.log('[NETWORK] Selected candidate pair:', this.selectedCandidatePair);
       }
@@ -4601,24 +4743,43 @@ if (this.tunnelLastObjectUrl) {
         LatencyMonitor.onMediaStats(stats);
       }
 
-      this.handleReceiverStats({
-        interval: true,
-        fps,
-        rttMs: latencyMs,
-        jitterBufferMs: Number(jitterBufferDelay) || 0,
-        framesReceived,
-        framesDecoded,
-        packetsLost,
-        bytesReceived,
-        codec,
-        selectedCandidateType,
-      });
+      if (!canonical.warmup && !this.isMediaHealthSuppressed()) {
+        this.handleReceiverStats({
+          ...canonical,
+          interval: true,
+          rttMs: latencyMs,
+          jitterBufferMs: Number(jitterBufferDelay) || 0,
+          codec,
+          selectedCandidateType,
+        });
+      }
 
       if (this.socket && this.socket.connected) {
         this.socket.emit('viewer-stats', {
-          fps,
+          derivedFps: fps,
+          browserReportedFps: Number(stats.browserReportedFps || 0),
           rttMs: latencyMs,
           jitterBufferMs: Number(jitterBufferDelay) || 0,
+          receivedDelta: framesReceived,
+          decodedDelta: framesDecoded,
+          packetsLostDelta: packetsLost,
+          bytesDelta: bytesReceived,
+          framesDroppedDelta: framesDropped,
+          packetsReceivedDelta: packetsReceived,
+          nackCountDelta: nackCount,
+          pliCountDelta: pliCount,
+          firCountDelta: firCount,
+          freezeDelta: freezeCount,
+          warmup: canonical.warmup,
+          mediaHealthSuppressed: this.isMediaHealthSuppressed(),
+          connectionAttemptId: this.currentConnectionAttemptId || '',
+          connectionAttemptSequence: Number(this.connectionAttemptSequence) || 0,
+          generation: Number(this.connectionAttemptSequence) || 0,
+          codec,
+          selectedCandidateType,
+          // Host log parsing still expects the pre-canonical keys. Keep aliases
+          // only at this outbound boundary and bind them to the derived deltas.
+          fps,
           framesReceived,
           framesDecoded,
           packetsLost,
@@ -4629,17 +4790,12 @@ if (this.tunnelLastObjectUrl) {
           pliCount,
           firCount,
           freezeCount,
-          codec,
-          selectedCandidateType
         });
       }
 
       const videoEl = document.getElementById('remoteVideo');
       this.notePaintStats({
-        ...stats,
-        fps,
-        framesReceived,
-        framesDecoded,
+        ...canonical,
         videoWidth: Number(stats.videoWidth || videoEl?.videoWidth || 0),
         videoHeight: Number(stats.videoHeight || videoEl?.videoHeight || 0),
         source: 'stats',

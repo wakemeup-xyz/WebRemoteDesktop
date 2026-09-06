@@ -1,0 +1,184 @@
+# Task 5 report: encoder and paint observability
+
+## Red phase
+
+The new encoder aggregation test initially failed with missing
+`H264VideoToolboxEncoder._record_encoder_sample`. The new Viewer and diagnostic
+tests initially failed because no five-second paint aggregate or diagnostic
+field existed. The new proof-tool tests initially failed because the CLI had no
+parameter parser or exported selected-pair redaction helper.
+
+## Delivered schema
+
+`WRD_ENCODER_SAMPLE` is emitted once per five-second local encode window. It
+contains `connectionAttemptId`, `generation`, `policyId`, `size`, `codec`,
+target/effective bitrate, target FPS, encode count/avg/p95/max, total bytes,
+IDR count/avg/max, and forced/periodic/PLI keyframe counts. Session identity is
+carried by `H264SessionPolicy` so it stays bound to the encoder's policy.
+
+`requestVideoFrameCallback` now aggregates `intervalMs.p50/p95/max`,
+`maxGapMs`, `presentedFramesDelta`, video dimensions, and current CSS geometry
+plus geometry-change count. It logs a single `WRD_PAINT_SAMPLE` per window and
+adds the latest aggregate to `connection-diagnostic.traceSummary.paintObservation`.
+
+The timing contract was preserved: `encoderMs`, `rtpSendMs`, and
+`endToEndVideoMs` remain `null` where no direct measurement exists. No
+cross-machine value is introduced or labeled as measured.
+
+`prove-turn-relay.mjs` accepts `--duration-seconds` (1..600) and `--output`.
+It checks `/api/status` and refuses to open headless Chromium while a Viewer is
+active. Its browser snapshot reads the current `fpsDisplay`, `candidateDisplay`,
+and `connectionStatus` DOM fields. Success requires FPS above zero and the
+actual selected pair's local type to be `relay`; `networkMode=relay` is not
+proof. Candidate output is restricted to type, protocol, and RTT, with no
+address or port fields.
+
+## Verification
+
+- RED: targeted Python/Node tests failed for the missing methods and exports.
+- GREEN: `python3 -m pytest -q python-host/test_h264_idr.py` — 29 passed.
+- GREEN: `node --test web-client/js/diagnostic.test.js web-client/js/webrtc.test.js scripts/prove-turn-relay.test.mjs` — 229 passed.
+- GREEN: `cd signal-server && npm run build:web`.
+- GREEN: `node scripts/prove-turn-relay.mjs --help`; invalid zero duration exits non-zero without network access.
+- GREEN: `node --check scripts/prove-turn-relay.mjs`; `git diff --check`.
+
+## Commit
+
+Conventional commit: `feat(observability): add encoder and paint aggregates`.
+
+## Self-check and concerns
+
+The proof runner and its guards are covered only through no-network fixture and
+parameter tests in this task. No local service, real browser, TURN allocation,
+or manual Viewer session was started. Real cross-machine end-to-end validation
+therefore remains `NOT RUN`; any later estimate must be explicitly labeled
+`estimate`.
+
+## Review-fix round 1
+
+### Red phase
+
+The review tests first failed because the runner returned partial success when
+Playwright was absent, the Signal module had no proof-admission primitive, the
+paint schema assertion lacked attempt identity, and neither delayed IDR nor
+codec recreation retained a causal keyframe reason.
+
+### Admission and proof schema
+
+Signal now owns a monotonic `viewerEpoch` and one-time proof admissions.
+`POST /api/proof-admission` returns a token and epoch only while no desktop
+Viewer is present. The proof Viewer passes that admission in Socket.IO auth;
+Signal atomically checks the token, epoch, and empty Viewer map before adding
+the socket. A normal Viewer increments the epoch and invalidates outstanding
+proof admissions, so a human arriving between precheck and proof join remains
+connected while the proof is rejected. A later normal Viewer keeps the existing
+user-priority supersede behavior, and the proof's live socket/PC snapshot then
+fails.
+
+Every proof result is structured. Playwright/Chromium absence, pre-browser
+failures, browser launch failures, timeouts, and CLI parsing failures produce
+`ok:false` and `proofComplete:false` and exit non-zero. `--output` writes the
+structured result through a same-directory temporary file, file `fsync`, and
+atomic rename. Candidate evidence contains only selected-pair `type`,
+`protocol`, and `rttMs`; DOM candidate text is not emitted. Success requires a
+single current snapshot with DOM `已连接`, Socket.IO connected, RTCPeerConnection
+`connected`, FPS above zero, and a selected local relay pair.
+
+Encoder aggregates reset on policy identity replacement. Actual confirmed IDR
+output records its causal reason and bytes, including a request received during
+an existing wait and a successful recreation IDR; unmeasured end-to-end timing
+fields remain null. Paint start/stop/attempt transitions clear both active and
+last windows, and a logged paint aggregate carries its attempt ID.
+
+### Verification
+
+- RED: targeted Python and Node suites failed for the new causal-IDR, proof
+  helper, Signal admission, and paint identity expectations.
+- GREEN: `python -m pytest python-host/test_h264_idr.py -q` — 31 passed.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs signal-server/websocket/signaling.test.js web-client/js/webrtc.test.js` — 281 passed.
+- GREEN: `cd signal-server && npm run build:web`.
+- GREEN: proof CLI invalid-duration/no-network output test verifies non-zero and
+  `ok:false, proofComplete:false`; atomic write and rename error fixtures pass.
+- GREEN: `git diff --check`.
+
+### Commit and self-check
+
+This round is committed as `fix(observability): harden relay proof admission`.
+No service, browser, tunnel, or live Viewer was started. The only outstanding
+limitation is the intentionally absent real TURN/browser run; cross-machine
+values remain `NOT RUN` and any future cross-machine value must be marked
+`estimate`.
+
+## Review-fix round 2
+
+### Red phase
+
+The review exposed that an output write or rename failure could leave a prior
+successful proof at the requested output pathname, and that one-time proof
+admissions had neither expiry nor bounded storage.
+
+### Output and admission hardening
+
+Before parsing can enter network or browser work, the runner atomically renames
+an existing `--output` target into a same-directory private stale file. A new
+success or failure then uses the existing temp-file, `fsync`, and rename path;
+the stale file is removed only after the replacement succeeds. Therefore a
+write/rename failure leaves the requested target absent rather than retaining
+an old `ok:true` result, reports the write error to stderr, and exits non-zero.
+
+Proof admissions now use a 30-second default TTL, lazy expiry cleanup, a
+global bounded capacity of 32, and delete-on-first-attempt semantics. Expired,
+over-capacity, invalidated, and replayed admissions are rejected. Tokens remain
+only in the in-memory admission map and are absent from status, logs, and proof
+result output.
+
+### Verification
+
+- RED: stale-target write/rename and expiry/capacity/replay fixtures initially
+  lacked the required helpers and admission controls.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs` — 6 passed.
+- GREEN: `node --test signal-server/websocket/signaling.test.js` — 70 passed,
+  including expiry, capacity, consume, and replay coverage.
+
+### Commit and concerns
+
+This round is committed as `fix(observability): expire relay proof admissions`.
+No service, tunnel, browser, or real TURN path was started; live proof remains
+`NOT RUN`.
+
+## Review-fix round 3
+
+### Red phase
+
+An injected non-ENOENT failure from output isolation previously stopped proof
+work but could still leave the old successful JSON at the requested pathname.
+
+### Fail-closed output isolation
+
+Each CLI invocation creates a run ID before it touches the output or begins
+proof work. If the stale-target rename fails, the runner does not call the
+network/browser proof path. It immediately opens the original target through a
+file descriptor, truncates it, writes and fsyncs a structured failure record
+with `ok:false`, `proofComplete:false`, `stage:"output-isolation"`, and that
+run ID. stderr and stdout both include the same run ID.
+
+If the filesystem rejects both isolation and the in-place failure write, the
+runner exits non-zero, writes `OUTPUT_UNTRUSTED runId=<id> path=<path>` to
+stderr, emits only a matching non-success stdout marker, and never emits a
+success marker. CLI help now states that consumers may trust `--output` only
+when its run ID matches the invocation and both `ok` and `proofComplete` are
+true.
+
+### Verification
+
+- RED: helper fixtures first failed because no in-place fallback, untrusted
+  marker, or run ID existed.
+- GREEN: `node --test scripts/prove-turn-relay.test.mjs` — 7 passed, including
+  stale success plus injected isolation failure with overwrite and untrusted
+  filesystem branches.
+
+### Commit and concerns
+
+This round is committed as `fix(observability): fail closed on output isolation`.
+No service, tunnel, browser, or real TURN path was started; live proof remains
+`NOT RUN`.

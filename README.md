@@ -460,6 +460,16 @@ WebRemoteDesktop/
 5. 如果 Host 日志出现 `No usable monitor reported by MSS`，说明这次失败是 Host 屏幕枚举异常，不是公网入口异常；当前 Host 会优先用 `MSS`，若只拿到 `0x0` monitor 再回退到 `screeninfo`
 6. 2026-07-09 已验证：`https://link.stockhub.wiki` 下手动切到 `隧道中继` 可以真实出画，Viewer 状态会显示 `已连接 / 链路 tunnel / Tunnel relay stream`
 
+### TURN 媒体时钟、策略和观测（2026-09-06）
+
+- Host 已使用单调 90kHz RTP 时钟；Viewer 的 canonical FPS 是区间解码增量推导的 `derivedFps`，浏览器瞬时 FPS 只保留在诊断字段。
+- 关键帧恢复以当前 connection attempt 与 generation 作为 identity。`decodedDelta=0` 而 `receivedDelta>0` 是解码 stall 信号；同一恢复 episode 的请求受合并和冷却限制，暂停期间不触发。
+- 诊断按五秒聚合编码耗时、关键帧原因和字节数，以及 paint interval、最大 paint gap、presented-frame delta 与视频几何。没有直接实测边界的编码、RTP 发送和端到端视频耗时仍显示为 `null`，不能由 RTT 推算。
+- `WRD_RELAY_ENCODER_POLICY` 当前只接受生产策略 `relay-legacy-v1`。离线矩阵的结论为 `no-offline-winner`，所以 Host 会在启动时拒绝 `relay-balanced-v2`；后者只可由 resolver/evaluator 作为候选数据使用。只有更新单一生产门禁常量并有版本化的离线及运行时通过记录后，才可开放该环境值。约一秒周期清晰度脉冲尚未修复。
+- 采集倍率的离线结果未通过浏览器 paint 门禁，生产仍保持 target FPS 的 2 倍。真实 relay、正式公网与物理设备结果不由本节或自动化推断，保持 `NOT RUN`，等待 Task 9 和外部端验收。
+
+详细门禁和离线证据见 `docs/superpowers/reports/2026-09-05-turn-quality-latency-acceptance.md`。
+
 #### 已连接但黑屏
 
 信令已通、ICE 已 connected，但画面仍黑或周期性 0 FPS。这不是公网入口故障，也不要把「已连接」当成已经出画。

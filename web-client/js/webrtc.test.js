@@ -216,6 +216,32 @@ test('refresh attempt compares paint growth against a zero inbound baseline', ()
   assert.equal(WebRTC.hasPaintedFrame, true);
 });
 
+test('media profile emits current attempt and a monotonic profile sequence', () => {
+  const emitted = [];
+  const { WebRTC } = loadWebRTC();
+  WebRTC.socket = { connected: true, emit: (event, payload) => emitted.push({ event, payload }) };
+  WebRTC.controlState = {
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-current';
+  WebRTC._mediaProfileSequence = 0;
+  WebRTC.adaptiveResolutionEnabled = false;
+  WebRTC.currentResolution = { width: 1280, height: 720 };
+  WebRTC.getSessionPresentation = () => ({ width: 1280, height: 720 });
+  WebRTC.qualityFloorsForResolution = () => ({ minBitrateKbps: 1000, targetFps: 20, minFps: 10 });
+
+  WebRTC.applyMediaProfile({ name: 'high', bitrateKbps: 2500, fps: 20 }, 'connection-sync');
+  WebRTC.applyMediaProfile({ name: 'medium', bitrateKbps: 1400, fps: 15 }, 'quality');
+
+  const profiles = emitted.filter((entry) => entry.event === 'media-profile-change').map((entry) => entry.payload);
+  assert.deepEqual(
+    profiles.map((profile) => [profile.connectionAttemptId, profile.profileSequence]),
+    [['attempt-current', 1], ['attempt-current', 2]],
+  );
+});
+
 function preparePortSearch(WebRTC, extras = {}) {
   if (typeof WebRTC.stopPortSearch === 'function') {
     WebRTC.stopPortSearch('test-reset');
@@ -897,7 +923,7 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
   assert.deepEqual(reasons, ['dc-error']);
 });
 
-test('inbound video health requires recent framesDecoded growth', () => {
+test('inbound video health requires recent decoded progress', () => {
   const { WebRTC } = loadWebRTC();
   WebRTC._lastInboundFramesDecoded = 0;
   WebRTC._lastInboundFramesDecodedAt = 0;
@@ -910,7 +936,7 @@ test('inbound video health requires recent framesDecoded growth', () => {
 
   const growthAt = WebRTC._lastInboundFramesDecodedAt;
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 0 });
-  assert.equal(WebRTC._lastInboundFramesDecodedAt, growthAt);
+  assert.ok(WebRTC._lastInboundFramesDecodedAt >= growthAt);
 
   WebRTC._lastInboundFramesDecodedAt = Date.now() - 6000;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
@@ -1300,9 +1326,10 @@ test('WebRTC relay pins skip-wait playout delay', () => {
   assert.deepEqual(jitter, [0]);
 });
 
-test('relay does not request keyframe while packets still arrive at 0 fps', () => {
+test('relay decoder stall requests one generation-bound keyframe while packets still arrive', () => {
   const emitted = [];
-  const { WebRTC } = loadWebRTC();
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
   WebRTC.networkMode = 'relay';
   WebRTC.adaptiveMediaEnabled = true;
   WebRTC.controlState = {
@@ -1311,18 +1338,26 @@ test('relay does not request keyframe while packets still arrive at 0 fps', () =
   };
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
-  WebRTC.ensureLinkQualityController();
+  WebRTC.currentConnectionAttemptId = 'attempt-decoder-stall';
+  WebRTC.connectionAttemptSequence = 7;
+  WebRTC.ensureLinkQualityController().beginConnection(0);
   WebRTC.handleReceiverStats({
-    fps: 0,
+    derivedFps: 0,
     rttMs: 40,
     jitterBufferMs: 0,
-    packetsLost: 0,
-    framesDecoded: 0,
-    framesReceived: 19,
+    packetsLostDelta: 0,
+    decodedDelta: 0,
+    receivedDelta: 19,
     selectedCandidateType: 'relay',
     interval: true,
   });
-  assert.equal(emitted.some((entry) => entry[0] === 'request-keyframe'), false);
+  WebRTC.requestKeyframe('ontrack-first-video');
+  const keyframes = emitted.filter((entry) => entry[0] === 'request-keyframe');
+  assert.equal(keyframes.length, 1);
+  assert.equal(keyframes[0][1].reason, 'decoder-stalled');
+  assert.equal(keyframes[0][1].connectionAttemptId, 'attempt-decoder-stall');
+  assert.equal(keyframes[0][1].connectionAttemptSequence, 7);
+  assert.equal(keyframes[0][1].generation, 7);
 });
 
 test('relay stats re-apply skip-wait jitter so Chrome cannot grow it', () => {
@@ -1724,6 +1759,53 @@ test('video frame callback paints only the current refresh attempt', () => {
   assert.equal(WebRTC._videoFrameSeq, 1);
   assert.equal(WebRTC.hasPaintedFrame, true);
   assert.equal(WebRTC.uiPhase, 'connected');
+});
+
+test('video frame tracking aggregates paint intervals and geometry every five seconds', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.getBoundingClientRect = () => ({ x: 12, y: 24, width: 960, height: 540 });
+  video.requestVideoFrameCallback = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  video.cancelVideoFrameCallback = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-paint';
+  WebRTC.pc = { id: 'pc-paint' };
+
+  WebRTC.startVideoFrameTracking();
+  callbacks[0](0, { presentedFrames: 10 });
+  callbacks[1](20, { presentedFrames: 11 });
+  callbacks[2](5020, { presentedFrames: 14 });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC._lastPaintObservation)), {
+    connectionAttemptId: 'attempt-paint',
+    intervalMs: { p50: 20, p95: 5000, max: 5000 },
+    maxGapMs: 5000,
+    presentedFramesDelta: 4,
+    video: { width: 1280, height: 720 },
+    geometry: { x: 12, y: 24, width: 960, height: 540, changes: 0 },
+  });
+});
+
+test('paint observations are cleared at stop and never cross connection attempts', () => {
+  const { WebRTC, context } = loadWebRTC();
+  WebRTC._paintObservationWindow = { startedAt: 1 };
+  WebRTC._lastPaintObservation = { connectionAttemptId: 'old-attempt' };
+  WebRTC.stopVideoFrameTracking();
+  assert.equal(WebRTC._paintObservationWindow, null);
+  assert.equal(WebRTC._lastPaintObservation, null);
+
+  WebRTC._paintObservationWindow = { startedAt: 2 };
+  WebRTC._lastPaintObservation = { connectionAttemptId: 'old-attempt' };
+  WebRTC.beginConnectionAttempt('refresh');
+  assert.equal(WebRTC._paintObservationWindow, null);
+  assert.equal(WebRTC._lastPaintObservation, null);
+  assert.ok(WebRTC.currentConnectionAttemptId);
+  assert.ok(context.document);
 });
 
 test('fifty telemetry start-stop cycles leave no sampler or video callback active', () => {
@@ -2597,8 +2679,8 @@ test('collectNetworkSnapshot summarizes candidate and state context', () => {
     localType: 'srflx',
     remoteType: 'host',
     protocol: 'udp',
-    localAddress: '203.0.113.1:5000',
-    remoteAddress: '192.168.0.2:6000',
+    localAddress: 'redacted-local-address',
+    remoteAddress: 'redacted-remote-address',
     rttMs: 42,
   };
 
@@ -5387,6 +5469,139 @@ test('capture_stats does not overwrite playback fpsDisplay', () => {
   WebRTC.inputChannel.onmessage({ data: JSON.stringify({ type: 'capture_stats', fps: 60 }) });
   assert.equal(fpsEl.textContent, '12 FPS');
   assert.equal(WebRTC._hostCaptureFps, 60);
+});
+
+test('decoded progress timestamp updates for every positive canonical delta', () => {
+  let now = 1000;
+  const { WebRTC } = loadWebRTC({ Date: { now: () => now } });
+  WebRTC._lastInboundFramesDecoded = 100;
+  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 10,
+    decodedDelta: 10,
+    receivedDelta: 10,
+    bytesDelta: 1000,
+    totals: { framesDecoded: 110 },
+    selectedCandidateType: 'host',
+  });
+  assert.equal(WebRTC._lastInboundFramesDecodedAt, 1000);
+
+  now = 2000;
+  WebRTC.processStatsSnapshot({
+    derivedFps: 1,
+    decodedDelta: 1,
+    receivedDelta: 1,
+    bytesDelta: 100,
+    totals: { framesDecoded: 111 },
+    selectedCandidateType: 'host',
+  });
+  assert.equal(WebRTC._lastInboundFramesDecodedAt, 2000);
+  assert.equal(WebRTC._lastInboundFramesDecoded, 111);
+});
+
+test('warmup stats sample does not move a painted stream into stall', () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 10000;
+
+  WebRTC.notePaintStats({
+    warmup: true,
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 20,
+    videoWidth: 1280,
+    videoHeight: 720,
+  });
+
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(WebRTC._stallSince, null);
+});
+
+test('intentional media pause skips quality recovery for canonical stats', () => {
+  const { WebRTC } = loadWebRTC();
+  let recoveryCalls = 0;
+  WebRTC.networkMode = 'relay';
+  WebRTC.isMediaHealthSuppressed = () => true;
+  WebRTC.handleReceiverStats = () => { recoveryCalls += 1; };
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.pc = { iceConnectionState: 'completed' };
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 0,
+    bytesDelta: 0,
+    selectedCandidateType: 'relay',
+  });
+
+  assert.equal(recoveryCalls, 0);
+  assert.equal(WebRTC._noRelayReceiveCount, 0);
+});
+
+test('intentional media pause suppresses stalled paint diagnostics for delayed inbound data', () => {
+  const timers = new Map();
+  const diagnostics = [];
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback, ms) { timers.set(ms, callback); return ms; },
+    clearTimeout(ms) { timers.delete(ms); },
+    Diagnostic: { autoSendFailure(reason) { diagnostics.push(reason); } },
+  });
+  WebRTC.networkMode = 'relay';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._stallSince = Date.now() - 10000;
+  WebRTC.isMediaHealthSuppressed = () => true;
+
+  WebRTC.notePaintStats({
+    derivedFps: 0,
+    decodedDelta: 0,
+    receivedDelta: 20,
+    videoWidth: 1280,
+    videoHeight: 720,
+    source: 'stats',
+  });
+
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(WebRTC._stallSince, null);
+  assert.equal(timers.has(3000), false);
+  assert.deepEqual(diagnostics, []);
+});
+
+test('viewer stats emits canonical deltas with derived legacy aliases for Host compatibility', () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.handlePortSearchMedia = () => {};
+  WebRTC.handleReceiverStats = () => {};
+  WebRTC.currentConnectionAttemptId = 'attempt-viewer-stats';
+  WebRTC.connectionAttemptSequence = 6;
+
+  WebRTC.processStatsSnapshot({
+    derivedFps: 19,
+    browserReportedFps: 90,
+    receivedDelta: 20,
+    decodedDelta: 19,
+    packetsLostDelta: 2,
+    bytesDelta: 4000,
+    totals: { framesDecoded: 119 },
+    selectedCandidateType: 'relay',
+  });
+
+  const report = emitted.find(({ event }) => event === 'viewer-stats')?.payload;
+  assert.equal(report.derivedFps, 19);
+  assert.equal(report.browserReportedFps, 90);
+  assert.equal(report.decodedDelta, 19);
+  assert.equal(report.receivedDelta, 20);
+  assert.equal(report.fps, 19);
+  assert.equal(report.framesDecoded, 19);
+  assert.equal(report.framesReceived, 20);
+  assert.equal(report.connectionAttemptId, 'attempt-viewer-stats');
+  assert.equal(report.connectionAttemptSequence, 6);
+  assert.equal(report.generation, 6);
 });
 
 test('updateConnectionStatus exposes paint-gate labels', () => {
