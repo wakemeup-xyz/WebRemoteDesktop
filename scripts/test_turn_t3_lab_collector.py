@@ -11,6 +11,7 @@ SPEC.loader.exec_module(collector)
 
 
 SCOPE = {"attemptId": "attempt", "generation": 2, "streamId": "video"}
+VIEWER_SESSION = {**SCOPE, "sourceWidth": 1280, "sourceHeight": 720}
 
 
 class Clock:
@@ -23,6 +24,7 @@ def sample(index):
     return {
         "sampleIndex": index,
         "scope": SCOPE,
+        "viewerSession": VIEWER_SESSION,
         "hostSummaries": ([{"alignmentState": "OBSERVED", "counts": {"outputs": 5},
                             "coverage": {"sourceToWire": 1.0},
                             "traces": {"sourceOutputFrameCount": 5, "wireBoundCount": 5,
@@ -81,7 +83,7 @@ def test_sixty_second_artifact_rejects_a_first_sample_only_run_and_a_nonadvancin
     assert artifact["status"] == "UNALIGNED"
     assert "window-5-raw-batch-missing" in artifact["failures"]
     assert "final-elapsed-under-60s" in artifact["failures"]
-    assert "sample-cadence-under-1s" in artifact["failures"]
+    assert "sample-cadence-too-early" in artifact["failures"]
     assert "window-5-host-summary-missing" in artifact["failures"]
 
 
@@ -92,6 +94,8 @@ def test_sixty_second_artifact_rejects_wrong_scope_diagnostic_loss_and_host_alig
         row = sample(index)
         if index == 17:
             row["frameTraceBatches"][0]["traces"][0]["generation"] = 1
+        if index == 16:
+            row["viewerSession"] = {**VIEWER_SESSION, "sourceWidth": 1920}
         if index == 18:
             row["viewerDiagnostics"] = {**row["viewerDiagnostics"], "droppedTraceCount": 1}
         if index == 19:
@@ -108,7 +112,46 @@ def test_sixty_second_artifact_rejects_wrong_scope_diagnostic_loss_and_host_alig
 
     assert artifact["status"] == "UNALIGNED"
     assert "batch-scope-mismatch" in artifact["failures"]
+    assert "viewer-session-changed" in artifact["failures"]
     assert "viewer-diagnostics-droppedTraceCount" in artifact["failures"]
     assert "raw-batch-diagnostic-drop" in artifact["failures"]
     assert "host-alignment-failure" in artifact["failures"]
     assert "observer-origin-missing-or-invalid" in artifact["failures"]
+
+
+def test_sixty_second_artifact_rejects_both_early_and_late_sampling_offsets():
+    """A 60-second total cannot conceal a sample more than the 250ms cadence bound from schedule."""
+    class OffsetClock:
+        def __init__(self, factor): self.factor, self.value = factor, 0.0
+        def now(self): return self.value
+        def wait(self, seconds): self.value += seconds * self.factor
+
+    late_clock, early_clock = OffsetClock(3), OffsetClock(.5)
+    late = collector.collect_fixed_60_seconds(
+        identity={"runId": "late", "realm": "lab", "origin": "http://127.0.0.1:49999", "epoch": 2},
+        sample=sample, verifier=b"per-run-secret", now=late_clock.now, wait=late_clock.wait,
+    )
+    early = collector.collect_fixed_60_seconds(
+        identity={"runId": "early", "realm": "lab", "origin": "http://127.0.0.1:49999", "epoch": 2},
+        sample=sample, verifier=b"per-run-secret", now=early_clock.now, wait=early_clock.wait,
+    )
+
+    assert late["status"] == early["status"] == "UNALIGNED"
+    assert "sample-cadence-too-late" in late["failures"]
+    assert "sample-cadence-too-early" in early["failures"]
+
+
+def test_live_viewer_session_reader_rejects_a_presentation_and_rvfc_scope_split():
+    """The live collector never repairs a changed Viewer identity with startup metadata."""
+    class Page:
+        def __init__(self): self.scope = SCOPE
+        def evaluate(self, _script): return self.scope
+
+    class Adapter:
+        def __init__(self): self.viewer_page = Page()
+        def viewer_session_identity(self): return {**VIEWER_SESSION}
+
+    adapter = Adapter()
+    assert collector._read_live_viewer_session(adapter) == VIEWER_SESSION
+    adapter.viewer_page.scope = {**SCOPE, "generation": 3}
+    assert collector._read_live_viewer_session(adapter) is None

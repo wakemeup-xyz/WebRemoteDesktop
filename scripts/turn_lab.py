@@ -629,7 +629,7 @@ class LabRun:
                     self._last_status = "closed"
                 proof = self._production_proof
                 admission_pending = self._admission_token is token
-                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
+                self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._production_epoch = None; self._production_proof = None
                 self._run_token = None; self._watch_stop = None; self._watch_thread = None
         for child in children:
             self._terminate_child(child)

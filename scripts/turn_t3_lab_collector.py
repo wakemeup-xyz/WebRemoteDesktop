@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping
 
 
 RUN_SECONDS = 60
+CADENCE_TOLERANCE_MS = 250
 
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
@@ -77,6 +78,17 @@ def _valid_scope(value: Any) -> dict[str, Any] | None:
     return {"attemptId": attempt, "generation": generation, "streamId": stream}
 
 
+def _valid_viewer_session(value: Any) -> dict[str, Any] | None:
+    scope = _valid_scope(value)
+    if scope is None or not isinstance(value, Mapping):
+        return None
+    width, height = value.get("sourceWidth"), value.get("sourceHeight")
+    if (not isinstance(width, int) or isinstance(width, bool) or width <= 0
+            or not isinstance(height, int) or isinstance(height, bool) or height <= 0):
+        return None
+    return {**scope, "sourceWidth": width, "sourceHeight": height}
+
+
 def _matches_scope(value: Mapping[str, Any], scope: Mapping[str, Any]) -> bool:
     return all(value.get(key) == scope[key] for key in ("attemptId", "generation", "streamId"))
 
@@ -113,7 +125,8 @@ def _diagnostics_failures(value: Any) -> set[str]:
 
 def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[int], Mapping[str, Any]],
                              verifier: bytes, now: Callable[[], float] = time.monotonic,
-                             wait: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+                             wait: Callable[[float], None] = time.sleep,
+                             expected_viewer_session: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Capture 0..60 inclusive samples and seal all T3 evidence classes.
 
     There are 61 observations so the final sample proves the wall-clock end of
@@ -129,6 +142,9 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
     windows: list[dict[str, Any]] = []
     failures: set[str] = set()
     expected_scope: dict[str, Any] | None = None
+    expected_viewer = _valid_viewer_session(expected_viewer_session) if expected_viewer_session is not None else None
+    if expected_viewer_session is not None and expected_viewer is None:
+        failures.add("viewer-session-invalid")
     samples_by_index: dict[int, dict[str, Any]] = {}
     started = now()
     for index in range(RUN_SECONDS + 1):
@@ -142,13 +158,22 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
         trace_batches = raw.get("frameTraceBatches")
         rvfc_joins = raw.get("rvfcJoins")
         viewer_diagnostics = raw.get("viewerDiagnostics")
+        viewer_session = _valid_viewer_session(raw.get("viewerSession"))
         current_scope = _valid_scope(raw.get("scope"))
+        if viewer_session is None:
+            failures.add("viewer-session-invalid")
+        elif expected_viewer is None:
+            expected_viewer = viewer_session
+        elif viewer_session != expected_viewer:
+            failures.add("viewer-session-changed")
         if current_scope is None:
             failures.add("sample-scope-invalid")
         elif expected_scope is None:
             expected_scope = current_scope
         elif current_scope != expected_scope:
             failures.add("sample-scope-mismatch")
+        if viewer_session is not None and current_scope is not None and _valid_scope(viewer_session) != current_scope:
+            failures.add("viewer-session-scope-mismatch")
         if not isinstance(host_summaries, list):
             failures.add("malformed-host-summary")
             host_summaries = []
@@ -205,11 +230,17 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
             failures.add("rvfc-join-scope-or-status-mismatch")
         failures.update(_diagnostics_failures(viewer_diagnostics))
         elapsed_ms = max(0, round((now() - started) * 1000))
-        if elapsed_ms < index * 1000:
-            failures.add("sample-cadence-under-1s")
+        scheduled_elapsed_ms = index * 1000
+        cadence_offset_ms = elapsed_ms - scheduled_elapsed_ms
+        if cadence_offset_ms < -CADENCE_TOLERANCE_MS:
+            failures.add("sample-cadence-too-early")
+        elif cadence_offset_ms > CADENCE_TOLERANCE_MS:
+            failures.add("sample-cadence-too-late")
         sample_row = {"sampleIndex": index, "elapsedMs": elapsed_ms,
+                      "scheduledElapsedMs": scheduled_elapsed_ms, "cadenceOffsetMs": cadence_offset_ms,
                       "hostSummaryCount": len(host_rows), "frameTraceBatchCount": len(batch_rows),
-                      "rvfcJoinCount": len(join_rows), "viewerDiagnostics": dict(viewer_diagnostics) if isinstance(viewer_diagnostics, Mapping) else None}
+                      "rvfcJoinCount": len(join_rows), "viewerSession": viewer_session,
+                      "viewerDiagnostics": dict(viewer_diagnostics) if isinstance(viewer_diagnostics, Mapping) else None}
         samples.append(sample_row); samples_by_index[index] = {**sample_row, "hostSummaries": host_rows,
                                                                  "frameTraceBatches": batch_rows, "rvfcJoins": join_rows}
         summaries.extend(host_rows); batches.extend(batch_rows); joins.extend(join_rows)
@@ -253,6 +284,7 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
         "rvfcJoins": joins,
         "viewerDiagnostics": diagnostics,
         "scope": expected_scope,
+        "viewerSession": expected_viewer,
         "windows": windows,
         "observer": observer,
         # The existing encoder cannot independently delimit a reformat stage.
@@ -331,6 +363,23 @@ def _drain_viewer_trace_tap(page: Any) -> tuple[list[dict[str, Any]], list[dict[
             dict(diagnostics) if isinstance(diagnostics, Mapping) else {})
 
 
+def _read_live_viewer_session(adapter: Any) -> dict[str, Any] | None:
+    """Read the live rVFC scope and resolution together for every collector tick."""
+    presentation = adapter.viewer_session_identity()
+    trace_scope = adapter.viewer_page.evaluate("""() => (
+      typeof WebRTC === 'object' && typeof WebRTC.currentFrameTraceIdentity === 'function'
+        ? WebRTC.currentFrameTraceIdentity() : null
+    )""")
+    session = _valid_viewer_session({**presentation, **trace_scope}) if isinstance(presentation, Mapping) and isinstance(trace_scope, Mapping) else None
+    if session is None:
+        return None
+    # A stale presentation layer and rVFC identity must not be reconciled by
+    # the collector; they are independently observed identities.
+    presentation_scope = _valid_scope(presentation)
+    trace_scope = _valid_scope(trace_scope)
+    return session if presentation_scope == trace_scope else None
+
+
 def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
     """Run the isolated Lab route when the headed fixture is available.
 
@@ -358,14 +407,8 @@ def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
             artifact = _seal_artifact(artifact, lab.transcript_verifier())
             write_artifact(output, artifact)
             return 2
-        # Query the actual identity consumed by rVFC rather than reconstructing
-        # it from the adapter's presentation-only session metadata.
-        session = adapter.viewer_page.evaluate("""() => (
-          typeof WebRTC === 'object' && typeof WebRTC.currentFrameTraceIdentity === 'function'
-            ? WebRTC.currentFrameTraceIdentity() : null
-        )""")
-        scope = _valid_scope(session)
-        if scope is None:
+        initial_viewer_session = _read_live_viewer_session(adapter)
+        if initial_viewer_session is None:
             raise RuntimeError("Lab Viewer did not expose a stable trace scope")
         _install_viewer_trace_tap(adapter.viewer_page)
         log_path = lab.runtime_dir() / "host.stderr.log"
@@ -375,13 +418,16 @@ def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
             nonlocal offset
             offset, summaries = _drain_host_summaries(log_path, offset)
             batches, joins, diagnostics = _drain_viewer_trace_tap(adapter.viewer_page)
-            return {"scope": scope, "hostSummaries": summaries, "frameTraceBatches": batches,
+            viewer_session = _read_live_viewer_session(adapter)
+            scope = _valid_scope(viewer_session)
+            return {"scope": scope, "viewerSession": viewer_session, "hostSummaries": summaries, "frameTraceBatches": batches,
                     "rvfcJoins": joins, "viewerDiagnostics": diagnostics}
 
         captured_verifier = lab.transcript_verifier()
         artifact = collect_fixed_60_seconds(
             identity={"runId": identity.run_id, "realm": identity.realm, "origin": identity.origin, "epoch": identity.epoch},
             sample=one_sample, verifier=captured_verifier, wait=lambda seconds: adapter.viewer_page.wait_for_timeout(seconds * 1000),
+            expected_viewer_session=initial_viewer_session,
         )
         if not verify_artifact(artifact, captured_verifier) or artifact.get("verification", {}).get("selfVerified") is not True:
             raise RuntimeError("Lab artifact did not verify before close")

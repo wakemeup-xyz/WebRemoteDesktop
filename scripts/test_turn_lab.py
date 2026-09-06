@@ -538,6 +538,20 @@ def test_manual_close_reports_closed_and_preserves_stop_reason(tmp_path, proof_f
     assert run.monitor() == "stopped:lab-identity-changed"
 
 
+def test_manual_close_erases_the_per_run_transcript_verifier(tmp_path, proof_fixture):
+    """The collector may retain a captured local verifier, but LabRun must not retain it after close."""
+    run = _run(tmp_path, proof_fixture)
+    run.start("legacy")
+    verifier = run.transcript_verifier()
+
+    run.close()
+
+    assert verifier
+    assert run._transcript_secret == ""
+    with pytest.raises(RuntimeError, match="transcript verifier"):
+        run.transcript_verifier()
+
+
 def test_lab_viewer_credentials_publish_the_web_client_proof_admission_shape(tmp_path, proof_fixture):
     run = _run(tmp_path, proof_fixture)
     identity = run.start("legacy")
