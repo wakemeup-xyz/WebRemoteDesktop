@@ -400,7 +400,7 @@ class PlaywrightLabViewerAdapter:
     def viewer_session_identity(self) -> dict[str, Any] | None:
         row = self.viewer_page.evaluate("""() => ({
           attemptId: WebRTC?.currentConnectionAttemptId || '',
-          generation: Number(WebRTC?.frameTraceCollector?.currentGeneration || 0),
+          generation: Number(WebRTC?.connectionAttemptSequence || 0),
           sourceWidth: Number(document.getElementById('remoteVideo')?.videoWidth || 0),
           sourceHeight: Number(document.getElementById('remoteVideo')?.videoHeight || 0),
         })""")

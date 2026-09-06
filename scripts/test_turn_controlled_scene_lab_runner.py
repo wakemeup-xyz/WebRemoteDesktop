@@ -68,6 +68,15 @@ def test_viewer_session_identity_rejects_pending_attempt_zero_generation_or_unkn
     assert adapter.viewer_session_identity() is None
 
 
+def test_viewer_session_identity_uses_the_live_webrtc_connection_sequence_for_generation():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    class Page:
+        def evaluate(self, _script):
+            return {"attemptId": "runtime-attempt", "generation": 7, "sourceWidth": 1920, "sourceHeight": 1080}
+    adapter.viewer_page = Page()
+    assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "sourceWidth": 1920, "sourceHeight": 1080}
+
+
 def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dispatch_and_four_way_evidence():
     rows = []
 
