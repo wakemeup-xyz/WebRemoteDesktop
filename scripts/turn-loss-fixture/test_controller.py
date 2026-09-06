@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,7 @@ class RecordingBackend:
     def __init__(self):
         self.added: list[list[str]] = []
         self.removed: list[list[str]] = []
+        self._probe_counts: dict[tuple[str, ...], int] = {}
 
     def add_rule(self, argv):
         self.added.append(list(argv))
@@ -57,6 +59,11 @@ class RecordingBackend:
         self.removed.append(list(argv))
 
     def read_rule_counter(self, _argv):
+        if any(part.startswith("wrd-baseline:") for part in _argv):
+            key = tuple(_argv)
+            value = self._probe_counts.get(key, 0)
+            self._probe_counts[key] = value + 1
+            return value
         return getattr(self, "counter", 0)
 
 
@@ -66,7 +73,7 @@ class FailingRemovalBackend(RecordingBackend):
         self.failures = 1
 
     def remove_rule(self, argv):
-        if self.failures:
+        if self.failures and any(part.startswith("wrd-loss:") for part in argv):
             self.failures -= 1
             raise RuntimeError("iptables delete failed")
         super().remove_rule(argv)
@@ -96,6 +103,99 @@ class StaticReceiver:
         return self.sequences
 
 
+class ProbeCounterBackend(RecordingBackend):
+    def __init__(self, probe_counts):
+        super().__init__()
+        self.probe_counts = iter(probe_counts)
+
+    def read_rule_counter(self, argv):
+        if any(part.startswith("wrd-baseline:") for part in argv):
+            return next(self.probe_counts)
+        return super().read_rule_counter(argv)
+
+
+class BlockingAddBackend(ProbeCounterBackend):
+    def __init__(self):
+        super().__init__([0, 1])
+        self.added_event = threading.Event()
+        self.resume_add = threading.Event()
+
+    def add_rule(self, argv):
+        super().add_rule(argv)
+        if any(part.startswith("wrd-loss:") for part in argv):
+            self.added_event.set()
+            assert self.resume_add.wait(2)
+
+
+def test_baseline_is_kernel_counter_probe_not_control_caller_packet_count():
+    backend = ProbeCounterBackend([17, 20])
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, probe_sleep=lambda _seconds: None)
+    session = _session(fixture)
+    session.confirm_selected_leg()
+    baseline_rule = backend.added[0]
+    assert any(part.startswith("wrd-baseline:") for part in baseline_rule)
+    assert baseline_rule[-1] == "RETURN"
+    assert backend.removed == [baseline_rule]
+    assert fixture._baselines[session.session_id]["packetCount"] == 3
+
+
+def test_zero_kernel_probe_delta_refuses_loss_without_arming_rule():
+    backend = ProbeCounterBackend([9, 9])
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, probe_sleep=lambda _seconds: None)
+    with pytest.raises(RuntimeError, match="kernel counter"):
+        _session(fixture).confirm_selected_leg()
+    assert backend.added == backend.removed
+
+
+def test_watchdog_cannot_observe_installing_state_until_atomic_install_transaction_releases_lock(tmp_path):
+    store = controller.DeadlineStateStore(tmp_path / "state.json")
+    backend = BlockingAddBackend()
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, state_store=store, probe_sleep=lambda _seconds: None)
+    session = _session(fixture)
+    session.confirm_selected_leg()
+    apply_done = threading.Event()
+    watchdog_done = threading.Event()
+    errors = []
+
+    def apply():
+        try:
+            session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            apply_done.set()
+
+    def watchdog():
+        controller.recover_deadline_state(store, backend, now_ns=0)
+        watchdog_done.set()
+
+    installer = threading.Thread(target=apply)
+    installer.start()
+    assert backend.added_event.wait(1)
+    reaper = threading.Thread(target=watchdog)
+    reaper.start()
+    time.sleep(.05)
+    assert not watchdog_done.is_set()
+    backend.resume_add.set()
+    installer.join(1)
+    reaper.join(1)
+    assert not errors and apply_done.is_set() and watchdog_done.is_set()
+    assert not any(any(part.startswith("wrd-loss:") for part in rule) for rule in backend.removed)
+
+
+def test_persisted_installing_state_after_simulated_sigkill_removes_the_actual_rule(tmp_path):
+    store = controller.DeadlineStateStore(tmp_path / "state.json")
+    backend = RecordingBackend()
+    rule = ["-m", "comment", "--comment", "wrd-loss:crash", "-j", "DROP"]
+    event = {"schemaVersion": 1, "state": "installing", "comment": "wrd-loss:crash", "runId": manifest()["runId"], "rule": rule, "deadlineMonotonicNs": 999}
+    # This is the process-death point: kernel rule added, then no controller
+    # code runs. The persisted install intent must remain recoverable.
+    store.save(event)
+    backend.add_rule(rule)
+    assert controller.recover_deadline_state(store, backend, now_ns=0)["status"] == "CLEARED"
+    assert backend.removed == [rule]
+
+
 def test_fixture_manifest_is_strict_and_rejects_production_or_host_targets():
     parsed = controller.LossFixtureManifest.parse(manifest())
     assert parsed.realm.startswith("turn-loss-lab-")
@@ -123,11 +223,7 @@ def test_apply_requires_matching_run_selector_and_observed_nonzero_baseline():
     session = _session(fixture)
     with pytest.raises(RuntimeError, match="baseline"):
         session.apply_loss("6ed74e8f-0d87-4c3a-8675-b3834de2db01", "all_for_200ms", 200)
-    with pytest.raises(ValueError, match="selector"):
-        session.confirm_selected_leg({"protocol": "udp"}, 1)
-    with pytest.raises(ValueError, match="nonzero"):
-        session.confirm_selected_leg(manifest()["udpLegSelector"], 0)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 17)
+    session.confirm_selected_leg()
     with pytest.raises(ValueError, match="runId"):
         session.apply_loss("wrong-run", "all_for_200ms", 200)
 
@@ -139,7 +235,7 @@ def test_apply_requires_matching_run_selector_and_observed_nonzero_baseline():
 def test_apply_rejects_unapproved_patterns_and_duration(pattern, duration):
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend())
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    session.confirm_selected_leg()
     with pytest.raises(ValueError):
         session.apply_loss(manifest()["runId"], pattern, duration)
 
@@ -148,9 +244,9 @@ def test_apply_generates_udp_media_rule_excluding_control_and_records_evidence()
     backend = RecordingBackend()
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=StaticReceiver([3, 4, 6, 7]))
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 117)
+    session.confirm_selected_leg()
     event = session.apply_loss(manifest()["runId"], "every_100th_for_30s", 30_000)
-    rule = backend.added[0]
+    rule = next(rule for rule in backend.added if any(part.startswith("wrd-loss:") for part in rule))
     assert "--every" in rule and "100" in rule and "19091" not in rule
     assert event["selector"] == manifest()["udpLegSelector"]
     assert event["startedMonotonicNs"] > 0
@@ -160,14 +256,14 @@ def test_apply_generates_udp_media_rule_excluding_control_and_records_evidence()
     assert cleared["actualDropCount"] == 1
     assert cleared["receiverSequenceGaps"] == [5]
     assert cleared["endedMonotonicNs"] >= event["startedMonotonicNs"]
-    assert backend.removed == [rule]
+    assert backend.removed[-1] == rule
 
 
 def test_connection_close_always_clears_active_loss():
     backend = RecordingBackend()
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend)
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 2)
+    session.confirm_selected_leg()
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     assert session.close()["cleared"] is True
     assert backend.removed and fixture.active_event is None
@@ -223,7 +319,7 @@ def test_apply_rolls_back_installed_rule_when_deadline_state_cannot_be_persisted
         state_store=FailingStateStore(),
     )
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    session.confirm_selected_leg()
     with pytest.raises(OSError, match="state volume"):
         session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     assert backend.removed == backend.added
@@ -234,7 +330,7 @@ def test_remove_failure_stays_cleanup_pending_and_a_retry_keeps_the_rule_handle(
     backend = FailingRemovalBackend()
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend)
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    session.confirm_selected_leg()
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     pending = fixture.clear_loss(manifest()["runId"])
     assert pending["cleared"] is False and pending["state"] == "cleanupPending"
@@ -285,16 +381,16 @@ def test_reverse_selected_leg_is_canonicalized_to_egress_relay_port():
 
 
 def test_baseline_is_bound_to_session_generation_and_time_then_consumed():
-    clock = iter([103, 103])
+    clock = iter([100, 103, 102, 103])
     fixture = controller.LossController(
         controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend(),
         baseline_ttl_ns=2, monotonic_ns=lambda: next(clock),
     )
     session = _session(fixture, generation=8)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 9, observed_monotonic_ns=100)
+    session.confirm_selected_leg()
     with pytest.raises(RuntimeError, match="expired"):
         session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 9, observed_monotonic_ns=102)
+    session.confirm_selected_leg()
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     with pytest.raises(RuntimeError, match="baseline"):
         session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
@@ -306,7 +402,7 @@ def test_final_evidence_requires_nonzero_drop_and_strict_receiver_sequence_gaps(
     backend = RecordingBackend()
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, receiver_source=StaticReceiver([65534, 65535, 1]))
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    session.confirm_selected_leg()
     session.apply_loss(manifest()["runId"], "all_for_200ms", 200)
     fixture.clear_loss(manifest()["runId"])
     assert fixture.verify_final_evidence(manifest()["runId"])["status"] == "FAIL"
@@ -404,7 +500,7 @@ def test_installing_state_is_persisted_before_rule_and_watchdog_cleans_it(tmp_pa
     backend = RecordingBackend()
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=backend, state_store=store)
     session = _session(fixture)
-    session.confirm_selected_leg(manifest()["udpLegSelector"], 1)
+    session.confirm_selected_leg()
     # The explicit state contract lets a process that starts later clean an
     # interrupted installation without consulting controller memory.
     event = {"schemaVersion": 1, "state": "installing", "runId": manifest()["runId"], "rule": ["-j", "DROP"], "deadlineMonotonicNs": 999, "comment": "wrd-loss-test"}
@@ -419,6 +515,9 @@ def test_control_rejects_extra_fields_and_self_reported_drop_counts():
         router.validate_request({"operation": "health", "controlToken": "token", "extra": True})
     with pytest.raises(ValueError, match="actualDropCount"):
         router.validate_request({"operation": "delivery", "controlToken": "token", "actualDropCount": 1})
+    router.validate_request({"operation": "confirm", "controlToken": "token"})
+    with pytest.raises(ValueError, match="fields"):
+        router.validate_request({"operation": "confirm", "controlToken": "token", "packetCount": 1})
 
 
 def test_manifest_distinguishes_remote_turn_digest_from_local_controller_oci_id():

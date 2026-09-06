@@ -186,7 +186,7 @@ class IptablesRuleBackend:
 
     def read_rule_counter(self, argv: list[str]) -> int:
         completed = subprocess.run(["iptables-save", "-c", "-t", "mangle"], check=True, capture_output=True, text=True)
-        marker = next((part for part in argv if part.startswith("wrd-loss:")), None)
+        marker = next((part for part in argv if part.startswith(("wrd-loss:", "wrd-baseline:"))), None)
         if marker is None:
             raise RuntimeError("fixture rule has no unique counter marker")
         for line in completed.stdout.splitlines():
@@ -308,6 +308,44 @@ class DeadlineStateStore:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             handle.close()
 
+    def install_rule(self, event: dict[str, Any], backend: RuleBackend) -> dict[str, Any]:
+        """Persist and arm one rule while holding the watchdog's same lock.
+
+        If this process is killed after ``add_rule``, the durable ``installing``
+        intent remains for the next watchdog. A concurrent watchdog cannot
+        clear that intent while this method is still adding or arming it.
+        """
+        handle = self._with_lock()
+        installed = False
+        try:
+            self._save_unlocked(event)
+            backend.add_rule(list(event["rule"]))
+            installed = True
+            event["dropCounterAtInstall"] = backend.read_rule_counter(list(event["rule"]))
+            event["state"] = "armed"
+            self._save_unlocked(event)
+            return event
+        except Exception:
+            if installed:
+                try:
+                    backend.remove_rule(list(event["rule"]))
+                except Exception as rollback_error:
+                    event["state"] = "cleanupPending"
+                    event["cleanupError"] = str(rollback_error)
+                    self._save_unlocked(event)
+                    raise RuntimeError("atomic rule installation rollback failed") from rollback_error
+                try:
+                    self.path.unlink()
+                except FileNotFoundError:
+                    pass
+            # An add failure can occur after the kernel accepted a rule but
+            # before a process receives its result. Keep installing intent so
+            # the independent watchdog performs the idempotent delete.
+            raise
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
     def recover(self, backend: RuleBackend, now_ns: int | None) -> dict[str, Any]:
         handle = self._with_lock()
         try:
@@ -363,8 +401,8 @@ class LossControlSession:
         self.generation = generation
         self.closed = False
 
-    def confirm_selected_leg(self, selector: Mapping[str, Any], packet_count: int, *, observed_monotonic_ns: int | None = None) -> None:
-        self._controller._confirm_selected_leg(self, selector, packet_count, observed_monotonic_ns)
+    def confirm_selected_leg(self) -> None:
+        self._controller._confirm_selected_leg(self)
 
     def apply_loss(self, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
         return self._controller._apply_loss(self, run_id, pattern, duration_ms)
@@ -400,13 +438,15 @@ class FileReceiverEvidenceSource:
 
 class LossController:
     """Manifest-bound controller. Deadline removal belongs to another process."""
-    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns) -> None:
+    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns, probe_window_s: float = 0.25, probe_sleep: Callable[[float], None] = time.sleep) -> None:
         self.manifest = manifest
         self._backend = backend
         self._state_store = state_store or MemoryDeadlineState()
         self._receiver_source = receiver_source
         self._baseline_ttl_ns = baseline_ttl_ns
         self._monotonic_ns = monotonic_ns
+        self._probe_window_s = probe_window_s
+        self._probe_sleep = probe_sleep
         self._lock = threading.RLock()
         self._baselines: dict[str, dict[str, Any]] = {}
         self._session_generations: dict[str, int] = {}
@@ -428,18 +468,32 @@ class LossController:
             self._session_generations[session_id] = generation
         return LossControlSession(self, run_id, session_id, generation)
 
-    def _confirm_selected_leg(self, session: LossControlSession, selector: Mapping[str, Any], packet_count: int, observed_monotonic_ns: int | None) -> None:
+    def _confirm_selected_leg(self, session: LossControlSession) -> None:
         if session.closed:
             raise RuntimeError("control session is closed")
-        if dict(selector) != self.manifest.selector:
-            raise ValueError("selected-leg selector does not exactly match the fixture manifest")
-        if not isinstance(packet_count, int) or isinstance(packet_count, bool) or packet_count <= 0:
-            raise ValueError("selected-leg dry-run requires a nonzero packet baseline")
-        observed = self._monotonic_ns() if observed_monotonic_ns is None else observed_monotonic_ns
-        if not isinstance(observed, int) or observed < 0:
-            raise ValueError("dry-run observation time is invalid")
+        comment = f"wrd-baseline:{self.manifest.run_id[:8]}:{session.session_id}:{session.generation}"
+        selector = self.manifest.egress_selector
+        probe_rule = [
+            "-o", self.manifest.interface, "-p", "udp",
+            "-s", selector["source"], "--sport", str(selector["sourcePort"]),
+            "-d", selector["destination"], "--dport", str(selector["destinationPort"]),
+            "-m", "comment", "--comment", comment, "-j", "RETURN",
+        ]
+        installed = False
+        try:
+            self._backend.add_rule(probe_rule)
+            installed = True
+            before = self._backend.read_rule_counter(probe_rule)
+            self._probe_sleep(self._probe_window_s)
+            after = self._backend.read_rule_counter(probe_rule)
+        finally:
+            if installed:
+                self._backend.remove_rule(probe_rule)
+        if not isinstance(before, int) or not isinstance(after, int) or after <= before:
+            raise RuntimeError("selected-leg kernel counter probe observed no matching UDP traffic")
+        observed = self._monotonic_ns()
         with self._lock:
-            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "packetCount": packet_count, "observedMonotonicNs": observed}
+            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(self.manifest.selector), "packetCount": after - before, "observedMonotonicNs": observed}
 
     def _rule_for(self, pattern: str, comment: str) -> list[str]:
         selector = self.manifest.egress_selector
@@ -482,12 +536,17 @@ class LossController:
                 "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,
             }
             try:
-                self._state_store.save(event)
-                self._backend.add_rule(rule)
-                event["dropCounterAtInstall"] = self._backend.read_rule_counter(rule)
-                event["state"] = "armed"
-                self._state_store.save(event)
+                if isinstance(self._state_store, DeadlineStateStore):
+                    event = self._state_store.install_rule(event, self._backend)
+                else:
+                    self._state_store.save(event)
+                    self._backend.add_rule(rule)
+                    event["dropCounterAtInstall"] = self._backend.read_rule_counter(rule)
+                    event["state"] = "armed"
+                    self._state_store.save(event)
             except Exception:
+                if isinstance(self._state_store, DeadlineStateStore):
+                    raise
                 try:
                     self._backend.remove_rule(rule)
                 except Exception as rollback_error:
@@ -586,7 +645,7 @@ class ControlRequestRouter:
         expected = {
             "health": {"operation", "controlToken"},
             "open": {"operation", "controlToken", "runId", "sessionId", "generation"},
-            "confirm": {"operation", "controlToken", "selector", "packetCount", "observedMonotonicNs"},
+            "confirm": {"operation", "controlToken"},
             "apply": {"operation", "controlToken", "runId", "pattern", "durationMs"},
             "collect": {"operation", "controlToken"},
             "clear": {"operation", "controlToken"},
@@ -595,7 +654,7 @@ class ControlRequestRouter:
             if "actualDropCount" in request:
                 raise ValueError("actualDropCount is not accepted from the control caller")
             raise ValueError("control request fields are invalid")
-        for field in ("generation", "packetCount", "observedMonotonicNs", "durationMs"):
+        for field in ("generation", "durationMs"):
             if field in request and (not isinstance(request[field], int) or isinstance(request[field], bool)):
                 raise ValueError(f"control field {field} must be an integer")
 
@@ -620,7 +679,7 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                 elif session is None:
                     raise RuntimeError("open a control session before this command")
                 elif operation == "confirm":
-                    session.confirm_selected_leg(request["selector"], request["packetCount"], observed_monotonic_ns=request.get("observedMonotonicNs"))
+                    session.confirm_selected_leg()
                     response = {"status": "BASELINE_CONFIRMED"}
                 elif operation == "apply":
                     response = session.apply_loss(request["runId"], request["pattern"], request["durationMs"])

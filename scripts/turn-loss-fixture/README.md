@@ -53,10 +53,13 @@ its local OCI image ID and provenance labels from `image-evidence.json`. A
 mutable tag is never a Compose runtime value.
 
 The T4 driver connects to the generated loopback control endpoint with the
-generated control token, opens a session/generation, and confirms the exact
-manifest selector with a real, nonzero dry-run packet count.  That baseline is
-bound to the control session, generation, selector, and monotonic time; it is
-consumed by one `apply_loss(run_id, pattern, duration_ms)` call.  The controller
+generated control token, opens a session/generation, and requests a baseline.
+The controller installs a short-lived `RETURN` counter rule for the exact
+manifest leg in the TURN namespace, reads the kernel counter before and after,
+then removes it. Only a positive kernel delta grants a baseline; the control
+caller cannot submit packet counts, selectors, or observation times. That
+baseline is bound to the control session, generation, selector, and monotonic
+time; it is consumed by one `apply_loss(run_id, pattern, duration_ms)` call. The controller
 refuses production realms, host interfaces, mismatched run IDs/selectors,
 control ports, stale/zero baselines, extra patterns, and durations over 35
 seconds.  It persists a deadline state before declaring the rule active.  If
@@ -65,7 +68,11 @@ keeps the rule handle in `cleanupPending` state for retry.
 
 The independent watchdog reads the shared state at startup and continually
 removes expired or `cleanupPending` rules, so controller process loss cannot
-leave an accepted rule indefinitely.  It reports `IDLE`, `ARMED`, `CLEARED`, or
+leave an accepted rule indefinitely. The controller holds the state store's
+cross-process lock across persisted `installing`, kernel rule addition, counter
+read, and persisted `armed`; a watchdog therefore cannot clear intent in the
+middle of an install. A process death after addition leaves recoverable
+`installing` intent. It reports `IDLE`, `ARMED`, `CLEARED`, or
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
 is present.  The final evidence verifier records monotonic start/end, actual
 drop count from the exact iptables rule counter and strict ordered RTP sequence
