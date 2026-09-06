@@ -32,6 +32,8 @@
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
+      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
+      <span id="fullscreenStatus" class="fullscreen-status" role="status" aria-live="polite" hidden></span>
       <button id="toggleControlsBtn" class="control-btn" type="button" data-core-control>隐藏控件</button>
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
       <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
@@ -44,7 +46,6 @@
   <main id="desktopPanel" role="tabpanel" aria-labelledby="desktopTabBtn">
     <div class="viewer-container">
       <video id="remoteVideo" autoplay playsinline></video>
-      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
       <canvas id="lastFrameHold" class="last-frame-hold hidden" aria-hidden="true"></canvas>
       <div id="reconnectHud" class="reconnect-hud hidden" role="status" aria-live="polite">
         <span class="reconnect-hud-dot"></span>
@@ -120,7 +121,7 @@
         <button id="resolutionBtn" class="control-btn" data-core-control>
           分辨率设置
         </button>
-        <button id="fullscreenBtn" class="control-btn" data-core-control>
+        <button id="fullscreenBtn" class="control-btn" data-core-control aria-pressed="false">
           全屏
         </button>
         <button id="networkModeBtn" class="control-btn" data-core-control>

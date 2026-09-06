@@ -295,6 +295,28 @@ test('placeholder spinner is opt-in via is-connecting', () => {
   assert.match(html, /id="exitFullscreenBtn"/);
 });
 
+test('fullscreen owns the document root while the exit control stays in global status chrome', () => {
+  assert.doesNotMatch(css, /\.viewer-container:fullscreen/);
+  assert.match(css, /html:fullscreen\s+\.viewer-container/);
+  assert.match(css, /html:fullscreen\s+\.fullscreen-exit-btn/);
+  const fullscreenMedia = css.match(/html:fullscreen\s+\.viewer-container #remoteVideo,[\s\S]*?\}/)?.[0] || '';
+  assert.match(fullscreenMedia, /width:\s*100%;/);
+  assert.match(fullscreenMedia, /height:\s*100%;/);
+  const fullscreenViewer = css.match(/html:fullscreen\s+\.viewer-container\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(fullscreenViewer, /height:\s*calc\(100dvh\s*-\s*var\(--chrome-top\)\)/);
+  assert.equal((html.match(/id="exitFullscreenBtn"/g) || []).length, 1);
+  const statusStart = html.indexOf('class="status-actions"');
+  const statusEnd = html.indexOf('</div>', statusStart);
+  assert.ok(statusStart >= 0 && statusEnd > statusStart);
+  assert.match(html.slice(statusStart, statusEnd), /id="exitFullscreenBtn"/);
+  const viewerStart = html.indexOf('<div class="viewer-container">');
+  const viewerEnd = html.indexOf('\n    </div>\n\n    <div id="chromeDocks"', viewerStart);
+  assert.ok(viewerStart >= 0 && viewerEnd > viewerStart);
+  assert.doesNotMatch(html.slice(viewerStart, viewerEnd), /id="exitFullscreenBtn"/);
+  assert.match(html, /id="fullscreenStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
+  assert.match(html, /id="fullscreenBtn"[^>]*data-core-control/);
+});
+
 test('workspace tabs expose tab semantics', () => {
   assert.match(html, /id="desktopTabBtn"[^>]*role="tab"[^>]*aria-controls="desktopPanel"/);
   assert.match(html, /id="terminalTabBtn"[^>]*role="tab"[^>]*aria-controls="terminalPanel"/);
