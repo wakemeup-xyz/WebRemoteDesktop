@@ -261,6 +261,11 @@ healthy; no process action was taken to reconcile that discrepancy.
 changed and is intentionally not written to this versioned report. Because no
 restart occurred, this record does not make a before/after URL-stability claim.
 
+The only `.env` inspection was the single `WRD_RELAY_ENCODER_POLICY` field.
+Its non-sensitive rollback baseline is `unset` (the file or field had no
+recognized explicit policy value). No `.env` content was changed. This does not
+identify the policy of the already-running Host process.
+
 | Spec §11 gate | Status | Reason / evidence boundary |
 |---|---|---|
 | 11.1 automated regression | PASS (Task 8 evidence) | Full Python, Viewer, and Signal Server suites passed; this is not a live relay result. |

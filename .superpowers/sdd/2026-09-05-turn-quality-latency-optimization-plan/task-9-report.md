@@ -28,6 +28,11 @@ These observations are **pre-existing runtime observed**. They do not prove
 that the long-running service has loaded this worktree's code, `de8edb0`, or
 any branch policy.
 
+The sole `.env` check extracted `WRD_RELAY_ENCODER_POLICY`; the non-sensitive
+rollback baseline is `unset` because the file or field had no recognized
+explicit policy value. No other `.env` content was read or written, and this
+does not establish the policy of the already-running Host process.
+
 ## Acceptance record
 
 | Item | Status | Why it is not a result |
@@ -49,8 +54,9 @@ assertion about product behavior.
 1. The helper's missing signal PID conflicts with a healthy local HTTP origin.
    It needs a later read-only ownership review; it was not treated as restart
    authority in this task.
-2. The current service revision and encoder policy are unknown because the
-   task deliberately did not restart services or read `.env`.
+2. The current service revision and running encoder policy are unknown because
+   the task deliberately did not restart services; the checked `.env` rollback
+   baseline is `unset` and does not prove the existing process environment.
 3. The one-second quality/clarity pulse remains unclosed. `no-offline-winner`
    means no v2 A/B should be presented as an attempted or successful fix.
 4. A future runtime run needs an operator-scheduled idle Viewer window and an
