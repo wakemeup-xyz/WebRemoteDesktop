@@ -207,10 +207,14 @@ class LabRun:
         return {"origin": self.identity.origin, "password": self._viewer_password, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
 
     def start_host(self) -> subprocess.Popen[Any]:
-        if self.closed or self.identity is None or self._runtime_dir is None or self._context is None: raise RuntimeError("lab identity is required before starting a Host")
-        env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": self.identity.origin, "HOST_SHARED_SECRET": self._host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(self._context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1"})
-        log = (self._runtime_dir / "host.stderr.log").open("wb"); self._handles.append(log)
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name("turn_lab_host.py"))], cwd=Path(__file__).resolve().parents[1], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True); self._children.append(proc); return proc
+        # Keep check, spawn, and registration under one lock.  A concurrent
+        # close then either rejects this call before spawn or observes and
+        # reaps the newly registered child process group.
+        with self._lock:
+            if self.closed or self.identity is None or self._runtime_dir is None or self._context is None: raise RuntimeError("lab identity is required before starting a Host")
+            env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": self.identity.origin, "HOST_SHARED_SECRET": self._host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(self._context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1"})
+            log = (self._runtime_dir / "host.stderr.log").open("wb"); self._handles.append(log)
+            proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name("turn_lab_host.py"))], cwd=Path(__file__).resolve().parents[1], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True); self._children.append(proc); return proc
 
     def monitor(self, *, lab_identity: LabIdentity | None = None) -> str: return self._last_status
 

@@ -102,6 +102,8 @@ test('/api/auth/login/admin emits audit events for success and rejection outcome
       body: JSON.stringify({ password: 'test-terminal-admin-password' }),
     });
     assert.equal(success.status, 200);
+    const successBody = await success.json();
+    assert.doesNotThrow(() => jwt.verify(successBody.token, process.env.JWT_SECRET));
 
     const rejected = await fetch(baseUrl + '/api/auth/login/admin', {
       method: 'POST',
@@ -119,6 +121,17 @@ test('/api/auth/login/admin emits audit events for success and rejection outcome
 
   assert.equal(events.some((entry) => entry.event === 'terminal_admin_authorized'), true);
   assert.equal(events.some((entry) => entry.event === 'terminal_admin_auth_failed'), true);
+  const privateConfig = {
+    jwtSecret: 'lab-private-jwt-secret', viewerAccessPassword: 'lab-viewer-password',
+    hostSharedSecret: 'lab-host-secret', enableTerminal: false, terminalAdminPassword: '',
+  };
+  await withServer(async (baseUrl) => {
+    const response = await requestJson(baseUrl, '/api/auth/login', { password: 'lab-viewer-password' });
+    assert.equal(response.status, 200);
+    const token = (await response.json()).token;
+    assert.doesNotThrow(() => jwt.verify(token, privateConfig.jwtSecret));
+    assert.throws(() => jwt.verify(token, process.env.JWT_SECRET));
+  }, { router: createAuthRouter({ config: privateConfig, configMode: 'exact' }) });
 });
 
 test('/api/auth/login/admin emits audit events when terminal login is disabled or misconfigured', async () => {

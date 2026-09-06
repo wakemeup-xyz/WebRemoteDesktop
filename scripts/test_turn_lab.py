@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -16,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts")]
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent  # noqa: E402
 from turn_lab import (LabIdentity, LabRun, ProductionAdmissionClient, ProductionProof, _make_test_lab_run, _make_test_production_client, validate_lab_origin)  # noqa: E402
+import turn_lab as turn_lab_module  # noqa: E402
 from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _context_from_verified_binding, _test_verified_context, verify_candidate_manifest  # noqa: E402
 
 
@@ -163,10 +166,43 @@ def test_lab_host_launcher_has_no_arbitrary_command_escape_hatch(tmp_path, proof
     run.close()
 
 
+def test_close_and_start_host_race_cannot_leave_an_unregistered_child(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    entered, release, spawned = threading.Event(), threading.Event(), []
+    original = turn_lab_module.subprocess.Popen
+    def blocked_host_spawn(*_args, **kwargs):
+        entered.set(); assert release.wait(2)
+        proc = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        spawned.append(proc); return proc
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", blocked_host_spawn)
+    launcher = threading.Thread(target=run.start_host)
+    launcher.start(); _wait(entered.is_set)
+    closer = threading.Thread(target=run.close); closer.start()
+    release.set(); launcher.join(timeout=3); closer.join(timeout=3)
+    assert not launcher.is_alive() and not closer.is_alive() and run.closed
+    assert spawned and spawned[0].poll() is not None
+
+
+def _reap_group_and_close_stdout(proc):
+    try: os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError: pass
+    proc.wait(timeout=2)
+    if proc.stdout is not None: proc.stdout.close()
+
+
 def test_partial_startup_output_hits_bounded_timeout():
     proc = subprocess.Popen([sys.executable, "-c", "import sys,time;sys.stdout.write('{');sys.stdout.flush();time.sleep(2)"], stdout=subprocess.PIPE, start_new_session=True)
     try:
         assert proc.stdout is not None
         with pytest.raises(RuntimeError, match="timed out"): LabRun._read_startup_json(proc, proc.stdout, timeout_seconds=.1)
     finally:
-        proc.terminate(); proc.wait(timeout=2)
+        _reap_group_and_close_stdout(proc)
+
+
+def test_oversize_startup_output_is_rejected_and_reaped():
+    proc = subprocess.Popen([sys.executable, "-c", "import sys,time;sys.stdout.write('x'*9000);sys.stdout.flush();time.sleep(2)"], stdout=subprocess.PIPE, start_new_session=True)
+    try:
+        assert proc.stdout is not None
+        with pytest.raises(RuntimeError, match="exceeded limit"): LabRun._read_startup_json(proc, proc.stdout, timeout_seconds=1)
+    finally:
+        _reap_group_and_close_stdout(proc)

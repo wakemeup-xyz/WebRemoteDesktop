@@ -59,10 +59,11 @@ function createAuthRouter(options = {}) {
   const limiters = options.authLimiters || createAuthLimiters({ terminalMetrics });
 
   function getConfig() {
-    // An embedded lab supplies a complete private configuration. Do not read
-    // process configuration first: that could both fail on absent production
-    // env and accidentally make a lab token depend on production secrets.
-    return options.config ? { ...options.config } : loadConfig();
+    // The application passes a complete, private config (including the lab).
+    // Direct router users retain the historical loadConfig-plus-partial-overlay
+    // contract needed by isolated route tests and legacy embedders.
+    if (options.configMode === 'exact') return { ...(options.config || {}) };
+    return { ...loadConfig(), ...(options.config || {}) };
   }
 
   async function loginViewer(req, res) {

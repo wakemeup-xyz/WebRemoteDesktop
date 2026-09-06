@@ -136,6 +136,7 @@ function createServerApp(options = {}) {
   app.use(express.json({ limit: '200kb' }));
   app.use('/api/auth', createAuthRouter({
     config,
+    configMode: 'exact',
     logger,
     terminalAudit,
     terminalMetrics,
