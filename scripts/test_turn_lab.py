@@ -26,6 +26,11 @@ class _ProofFixture:
     """Real loopback HTTP fixture; never points at the production port."""
     def __init__(self):
         self.epoch, self.viewers, self.proofs, self.fail_status, self.leases = 0, 0, 0, False, {}
+        self.fail_proof_status_once = False
+        self.block_next_status = False
+        self.status_block_entered = threading.Event()
+        self.status_block_release = threading.Event()
+        self._fixture_lock = threading.Lock()
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args): pass
@@ -34,6 +39,12 @@ class _ProofFixture:
             def do_GET(self):
                 if self.path == "/api/status":
                     if fixture.fail_status: return self._json(503, {})
+                    with fixture._fixture_lock:
+                        block = fixture.block_next_status
+                        fixture.block_next_status = False
+                    if block:
+                        fixture.status_block_entered.set()
+                        fixture.status_block_release.wait(3)
                     return self._json(200, {"viewerEpoch": fixture.epoch, "viewerCount": fixture.viewers})
                 return self._json(404, {})
             def do_POST(self):
@@ -43,6 +54,9 @@ class _ProofFixture:
                     fixture.leases[token] = {"token": token, "epoch": fixture.epoch, "realm": "production"}
                     return self._json(201, {"admission": fixture.leases[token]})
                 if self.path in {"/api/proof-admission/status", "/api/proof-admission/release"} and self.headers.get("Authorization") == "Bearer fixture-token":
+                    if self.path.endswith("status") and fixture.fail_proof_status_once:
+                        fixture.fail_proof_status_once = False
+                        return self._json(503, {})
                     length = int(self.headers.get("content-length", "0")); body = json.loads(self.rfile.read(length))
                     active = fixture.leases.get(body.get("token")) == body
                     if self.path.endswith("release") and active: fixture.leases.pop(body["token"])
@@ -157,6 +171,37 @@ def test_admission_rejects_second_active_proof_without_leaking_first(proof_fixtu
     assert client.release(first) and not proof_fixture.leases
 
 
+def test_transient_proof_status_failure_keeps_the_only_tracked_lease(proof_fixture):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    first = client.admit()
+    proof_fixture.fail_proof_status_once = True
+    with pytest.raises(RuntimeError, match="proof status"):
+        client.admit()
+    assert client.proof_active(first)
+    assert proof_fixture.proofs == 1 and len(proof_fixture.leases) == 1
+
+
+def test_concurrent_admit_has_exactly_one_success_and_one_active_lease(proof_fixture):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    proof_fixture.block_next_status = True
+    outcomes = []
+
+    def admit():
+        try:
+            outcomes.append(("proof", client.admit()))
+        except RuntimeError as exc:
+            outcomes.append(("error", str(exc)))
+
+    first = threading.Thread(target=admit); second = threading.Thread(target=admit)
+    first.start(); _wait(proof_fixture.status_block_entered.is_set); second.start()
+    proof_fixture.status_block_release.set()
+    first.join(timeout=3); second.join(timeout=3)
+    assert not first.is_alive() and not second.is_alive()
+    assert [kind for kind, _ in outcomes].count("proof") == 1
+    assert [kind for kind, _ in outcomes].count("error") == 1
+    assert proof_fixture.proofs == 1 and len(proof_fixture.leases) == 1
+
+
 def test_start_filesystem_failure_releases_owned_proof(tmp_path, proof_fixture, monkeypatch):
     run = _run(tmp_path / "blocked-parent", proof_fixture)
     original = Path.mkdir
@@ -174,6 +219,70 @@ def test_start_signal_handshake_failure_releases_owned_proof_and_runtime(tmp_pat
     with pytest.raises(RuntimeError, match="signal failure"): run.start("legacy")
     assert run.closed and not proof_fixture.leases and not run._children
     assert not list(tmp_path.glob("wrd-turn-lab-*"))
+
+
+@pytest.mark.parametrize("change", ["viewer", "epoch", "proof"])
+def test_start_rechecks_production_before_announcing_running(tmp_path, proof_fixture, monkeypatch, change):
+    run = _run(tmp_path, proof_fixture)
+    original = run._issue_host_context
+
+    def mutate_after_context(*args):
+        result = original(*args)
+        if change == "viewer": proof_fixture.viewers = 1
+        elif change == "epoch": proof_fixture.epoch += 1
+        else: proof_fixture.leases.clear()
+        return result
+
+    monkeypatch.setattr(run, "_issue_host_context", mutate_after_context)
+    with pytest.raises(RuntimeError, match="production"):
+        run.start("legacy")
+    assert run.closed and run.monitor() == "closed" and not proof_fixture.leases
+
+
+@pytest.mark.parametrize("change", ["viewer", "epoch", "proof"])
+def test_start_host_rechecks_production_before_spawning(tmp_path, proof_fixture, monkeypatch, change):
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    if change == "viewer": proof_fixture.viewers = 1
+    elif change == "epoch": proof_fixture.epoch += 1
+    else: proof_fixture.leases.clear()
+    calls = []
+    original = turn_lab_module.subprocess.Popen
+
+    def fail_if_called(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", fail_if_called)
+    with pytest.raises(RuntimeError, match="production"):
+        run.start_host()
+    assert not calls and run.closed and not proof_fixture.leases
+
+
+def test_host_spawn_failure_closes_run_releases_lease_and_reaps_signal(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    signal_child, runtime_dir = run._children[0], run._runtime_dir
+
+    def fail_host_spawn(*_args, **_kwargs):
+        raise OSError("fixture Host spawn failure")
+
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", fail_host_spawn)
+    with pytest.raises(OSError, match="Host spawn failure"):
+        run.start_host()
+    assert run.closed and not proof_fixture.leases
+    assert signal_child.poll() is not None
+    assert runtime_dir is not None and not runtime_dir.exists()
+
+
+def test_stale_watchdog_cannot_close_or_rewrite_a_restarted_run(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    proof_fixture.block_next_status = True
+    _wait(proof_fixture.status_block_entered.is_set)
+    run.close()
+    current = run.start("legacy")
+    proof_fixture.status_block_release.set()
+    time.sleep(.35)
+    assert not run.closed and run.identity == current and run.monitor() == "running"
+    run.close()
 
 
 def test_manual_close_reports_closed_and_preserves_stop_reason(tmp_path, proof_fixture):
@@ -246,18 +355,22 @@ def test_lab_host_launcher_has_no_arbitrary_command_escape_hatch(tmp_path, proof
 
 def test_close_and_start_host_race_cannot_leave_an_unregistered_child(tmp_path, proof_fixture, monkeypatch):
     run = _run(tmp_path, proof_fixture); run.start("legacy")
-    entered, release, spawned = threading.Event(), threading.Event(), []
+    entered, release, spawned, errors = threading.Event(), threading.Event(), [], []
     original = turn_lab_module.subprocess.Popen
     def blocked_host_spawn(*_args, **kwargs):
         entered.set(); assert release.wait(2)
         proc = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
         spawned.append(proc); return proc
     monkeypatch.setattr(turn_lab_module.subprocess, "Popen", blocked_host_spawn)
-    launcher = threading.Thread(target=run.start_host)
+    def launch():
+        try: run.start_host()
+        except RuntimeError as exc: errors.append(str(exc))
+    launcher = threading.Thread(target=launch)
     launcher.start(); _wait(entered.is_set)
     closer = threading.Thread(target=run.close); closer.start()
     release.set(); launcher.join(timeout=3); closer.join(timeout=3)
     assert not launcher.is_alive() and not closer.is_alive() and run.closed
+    assert errors == ["lab run was closed or replaced during Host startup"]
     assert spawned and spawned[0].poll() is not None
 
 
