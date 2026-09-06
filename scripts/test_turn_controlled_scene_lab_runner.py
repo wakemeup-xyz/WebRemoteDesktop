@@ -56,3 +56,11 @@ def test_transcript_signature_rejects_a_receipt_forgery_even_when_attacker_recom
 def test_headless_producer_adapter_requires_an_mss_visible_fixture_window_before_static_or_input_evidence():
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
     assert adapter.producer_window_precondition() == (False, "producer-window-is-not-visible-to-host-capture")
+
+
+def test_viewer_session_identity_rejects_pending_attempt_zero_generation_or_unknown_resolution_without_hardcoded_defaults():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    class Page:
+        def evaluate(self, _script): return {"attemptId": "", "generation": 0, "sourceWidth": 0, "sourceHeight": 720}
+    adapter.viewer_page = Page()
+    assert adapter.viewer_session_identity() is None

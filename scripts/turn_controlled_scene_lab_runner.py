@@ -67,12 +67,13 @@ class PlaywrightLabViewerAdapter:
     frames can pass; this adapter reports the missing visual evidence instead
     of fabricating it.
     """
-    def __init__(self, *, playwright: Any, browser: Any, context: Any, viewer_page: Any, producer_page: Any) -> None:
+    def __init__(self, *, playwright: Any, browser: Any, context: Any, viewer_page: Any, producer_page: Any, headed_producer: bool) -> None:
         self._playwright, self._browser, self._context = playwright, browser, context
         self.viewer_page, self.producer_page = viewer_page, producer_page
+        self._headed_producer = headed_producer
 
     @classmethod
-    def open(cls, lab_run: Any, proof: ProducerProof) -> "PlaywrightLabViewerAdapter":
+    def open(cls, lab_run: Any, proof: ProducerProof, *, headed_producer: bool = False) -> "PlaywrightLabViewerAdapter":
         from turn_runtime_collector import _json_request, seed_viewer_storage, start_viewer, wait_for_healthy_relay
         from playwright.sync_api import sync_playwright
         credentials = lab_run.viewer_credentials()
@@ -80,7 +81,9 @@ class PlaywrightLabViewerAdapter:
         if status != 200 or not isinstance(login.get("token"), str):
             raise RuntimeError("isolated Lab Viewer login failed")
         playwright = sync_playwright().start()
-        browser = playwright.chromium.launch(headless=True)
+        # A headed browser is the minimum producer fixture that can be seen by
+        # MSS on a disposable desktop.  Headless remains diagnostic-only.
+        browser = playwright.chromium.launch(headless=not headed_producer)
         context = browser.new_context(viewport={"width": 1440, "height": 960})
         try:
             seed_viewer_storage(context, login["token"], credentials["proofAdmission"])
@@ -89,7 +92,7 @@ class PlaywrightLabViewerAdapter:
             producer_url = Path(__file__).with_name("turn-runtime-controlled-producer.html").as_uri()
             producer_url += f"?runNonce={proof.run_nonce}&sceneId={proof.scene_id}"
             producer = context.new_page(); producer.goto(producer_url, wait_until="domcontentloaded")
-            return cls(playwright=playwright, browser=browser, context=context, viewer_page=viewer, producer_page=producer)
+            return cls(playwright=playwright, browser=browser, context=context, viewer_page=viewer, producer_page=producer, headed_producer=headed_producer)
         except Exception:
             browser.close(); playwright.stop(); raise
 
@@ -102,6 +105,20 @@ class PlaywrightLabViewerAdapter:
             self.viewer_page.wait_for_timeout(1000)
         return rows
 
+    def viewer_session_identity(self) -> dict[str, Any] | None:
+        row = self.viewer_page.evaluate("""() => ({
+          attemptId: WebRTC?.currentConnectionAttemptId || '',
+          generation: Number(WebRTC?.frameTraceCollector?.currentGeneration || 0),
+          sourceWidth: Number(document.getElementById('remoteVideo')?.videoWidth || 0),
+          sourceHeight: Number(document.getElementById('remoteVideo')?.videoHeight || 0),
+        })""")
+        if (not isinstance(row, dict) or not isinstance(row.get("attemptId"), str) or not row["attemptId"]
+                or not isinstance(row.get("generation"), int) or row["generation"] <= 0
+                or not isinstance(row.get("sourceWidth"), int) or row["sourceWidth"] <= 0
+                or not isinstance(row.get("sourceHeight"), int) or row["sourceHeight"] <= 0):
+            return None
+        return row
+
     def close(self) -> None:
         self._browser.close(); self._playwright.stop()
 
@@ -109,7 +126,10 @@ class PlaywrightLabViewerAdapter:
         # A headless browser page is not an MSS-captured fixture window.  This
         # is intentionally stricter than DOM visibility: a separate browser
         # tab cannot prove that the Lab Host captured this producer.
-        return False, "producer-window-is-not-visible-to-host-capture"
+        if not getattr(self, "_headed_producer", False):
+            return False, "producer-window-is-not-visible-to-host-capture"
+        visible = bool(self.producer_page.evaluate("() => document.visibilityState === 'visible' && !document.hidden"))
+        return (visible, "headed-producer-window-visible" if visible else "producer-window-is-not-visible-to-host-capture")
 
 
 class LabLifecycleCollector:
@@ -149,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--dedicated-desktop", action="store_true")
     parser.add_argument("--fixture-window", action="store_true")
+    parser.add_argument("--headed-producer", action="store_true", help="Open the producer in a visible disposable-desktop browser window.")
     args = parser.parse_args(argv)
     from turn_lab import LabRun
     lab = LabRun(viewer_token=args.viewer_token)
@@ -159,7 +180,13 @@ def main(argv: list[str] | None = None) -> int:
         proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending-viewer-attempt", 0, identity.realm, identity.run_id)
         layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
                                      source_width=1280, source_height=720, roi=(64, 48, 256, 128))
-        adapter = PlaywrightLabViewerAdapter.open(lab, proof)
+        adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=args.headed_producer)
+        session = adapter.viewer_session_identity()
+        if session is None:
+            raise RuntimeError("viewer session has no stable attempt/generation/resolution")
+        proof = ProducerProof(proof.run_nonce, proof.scene_id, identity.origin, session["attemptId"], session["generation"], identity.realm, identity.run_id)
+        layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
+                                     source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=(64, 48, 256, 128))
         visible, reason = adapter.producer_window_precondition()
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
         if not visible:
