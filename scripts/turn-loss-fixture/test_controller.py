@@ -508,18 +508,17 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
         "verification": {"algorithm": "HMAC-SHA256", "verifierSource": "lab-transcript-verifier/sha256:" + hashlib.sha256(verifier).hexdigest(), "selfVerified": True, "verifiedBeforeLabClose": True},
     }
     t3["signature"] = controller.sign_t3_artifact(t3, verifier)
-    t5 = {"identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1},
-          "static": {"status": "PASS"}, "automatic": {"status": "PASS"},
-          "receipts": [{"ack": {"status": "applied"}, "claim": {"status": "claimed"}, "receipt": {"status": "received"}, "visual": {"status": "PASS"}}]}
+    t5 = {"identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1, "scope": scope, "selectedTurn": raw_manifest["selectedTurn"]},
+          "static": {"status": "PASS"}, "automatic": {"status": "PASS", "workload": [{"actionId": 1}]},
+          "receipts": [{"inputId": "input-1", "actionId": 1, "reservation": {"inputId": "input-1"}, "ack": {"inputId": "input-1", "status": "applied"}, "claim": {"inputId": "input-1", "status": "claimed"}, "receipt": {"inputId": "input-1"}, "visual": {"inputId": "input-1", "status": "PASS"}}]}
     t5["signature"] = controller.sign_t5_transcript(t5, verifier)
     bridge = {
         "schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
         "loss": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "sessionId": event["sessionId"],
                  **scope, "selectedTurn": raw_manifest["selectedTurn"], "eventHandle": event["comment"],
                  "startedMonotonicNs": event["startedMonotonicNs"], "endedMonotonicNs": event["endedMonotonicNs"],
-                 "sequences": {"before": [10, 11], "during": [13, 14], "after": [15, 16]}},
-        "recovery": {"pliOrFirAfterLoss": True, "idrAfterFeedback": True, "newPaintAfterIdr": True,
-                     "recoveryMs": 1999, "peerConnectionRebuilt": False, "resolutionChanged": False},
+                 "sequences": {"before": [{"sequence": 10, "rtpTimestamp": 1}, {"sequence": 11, "rtpTimestamp": 2}], "during": [{"sequence": 13, "rtpTimestamp": 4}, {"sequence": 14, "rtpTimestamp": 5}], "after": [{"sequence": 15, "rtpTimestamp": 6}, {"sequence": 16, "rtpTimestamp": 7}]}},
+        "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameId": "f-1", "wireTimestamp": 8, "monotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameId": "f-1", "wireTimestamp": 8, "rvfcMonotonicNs": event["endedMonotonicNs"] + 2}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}]},
     }
     bridge.update(changes)
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
@@ -551,8 +550,8 @@ def test_authenticated_t3_t5_bridge_requires_live_verifier_and_all_recovery_link
     lambda bridge: bridge["t3"].__setitem__("runId", "other-run"),
     lambda bridge: bridge["loss"].__setitem__("attemptId", "other-attempt"),
     lambda bridge: bridge["loss"].__setitem__("selectedTurn", {"id": "other", "fingerprint": "sha256:" + "e" * 64}),
-    lambda bridge: bridge["recovery"].__setitem__("idrAfterFeedback", False),
-    lambda bridge: bridge["recovery"].__setitem__("resolutionChanged", True),
+    lambda bridge: bridge["timeline"].__setitem__("idr", {}),
+    lambda bridge: bridge["timeline"]["pc"].append({"id": "pc-2", "state": "connected", "resolution": {"width": 1280, "height": 720}}),
 ])
 def test_authenticated_bridge_rejects_forgery_replay_cross_attempt_and_partial_recovery(mutation):
     raw, backend = manifest(), RecordingBackend()
@@ -592,6 +591,28 @@ def test_authenticated_bridge_rejects_a_validly_signed_cross_attempt_replay():
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
     assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_compose_controller_uses_per_run_unix_authority_without_receiving_the_lab_verifier(tmp_path):
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    socket_path = Path("/tmp") / f"wrd-t6-{__import__('os').getpid()}.sock"
+    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=verifier, socket_path=socket_path)
+    authority.start()
+    try:
+        sealed = authority.seal(_signed_receiver_bridge(raw, event, verifier=verifier), event)
+        seal_path = tmp_path / "bridge.json"
+        seal_path.write_text(__import__("json").dumps({"sealId": sealed["sealId"], "signature": sealed["signature"]}))
+        fixture._receiver_source = controller.UnixSealedReceiverEvidenceSource(socket_path, seal_path)
+        assert fixture.verify_final_evidence(raw["runId"])["status"] == "PASS"
+        forged = __import__("json").loads(seal_path.read_text()); forged["sealId"] = "other"
+        seal_path.write_text(__import__("json").dumps(forged))
+        assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+    finally:
+        authority.close()
 
 
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):
@@ -649,7 +670,9 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     override = (tmp_path / "compose.generated.yaml").read_text()
     assert f"{tmp_path}:/runtime:ro" in override
     assert f"{tmp_path / 'turn.env'}" in override
+    assert ":/lab-bridge:rw" in override
     assert generated["controlEndpoint"].startswith("127.0.0.1:")
+    assert generated["bridgeSocket"].endswith("/authority.sock")
     assert generated["turnEndpoint"].startswith("127.0.0.1:")
     assert generated["projectName"] in generated["networkName"]
     assert (tmp_path / "credentials" / "turn.json").stat().st_mode & 0o777 == 0o600
@@ -731,6 +754,8 @@ def test_controller_build_entrypoint_has_no_mutable_runtime_tag():
     assert '"--iidfile"' in source
     assert '"--build-arg", f"CONTROLLER_BASE_IMAGE={base_digest}"' in source
     assert '"org.wrd.turn-loss.base-repodigest"' in source
+    assert 'add_parser("bridge-authority")' in source and 'add_parser("seal-bridge")' in source
+    assert 'Path("/lab-bridge/authority.sock")' in source
 
 
 def test_runtime_probe_verifies_local_controller_id_labels_and_network_none_contents():

@@ -78,10 +78,15 @@ recoverable exact handles, including the probe's user chain. It reports `IDLE`, 
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
 is present. The final evidence verifier records monotonic start/end, actual
 drop count from the exact iptables rule counter and strict ordered RTP sequence
-gaps. A `receiver/bridge.json` can close this gate only through
-`SignedT3T5ReceiverEvidenceSource`, constructed by the live Lab while it still
-holds `LabRun.transcript_verifier()`. It verifies the sealed 60-second T3
-artifact and T5 five-way transcript with that non-persisted verifier, then
+gaps. The live Lab parent starts `bridge-authority` with its inherited
+`LabRun.transcript_verifier()` and the generated short `bridgeSocket` path;
+that per-run mode-0600 Unix socket alone is bind-mounted at `/lab-bridge` for
+the controller. After `clear`, the T4/T5 runner invokes `seal-bridge` on the
+host with raw evidence. The authority validates and retains the HMAC seal; the
+container receives only the seal id/signature and calls the socket to verify it.
+Neither a verifier nor a secret is placed in Compose argv, environment, or an
+artifact. The authority verifies the sealed 60-second T3 artifact and T5
+five-way transcript, then binds
 binds run/realm/session/attempt/generation/stream, selected TURN id and
 fingerprint, event handle/timestamps, RTP before/during/after sequences, and
 PLI/FIR -> IDR -> new paint recovery within two seconds without a PC rebuild or
