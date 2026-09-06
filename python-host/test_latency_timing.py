@@ -100,6 +100,26 @@ class TestFrameTiming(unittest.TestCase):
         self.assertIsNone(second["coverage"]["sourceToWire"])
         self.assertEqual(second["alignmentState"], "UNALIGNED")
 
+    def test_frame_trace_summary_fails_closed_after_a_registration_conflict_even_if_one_wire_joined(self):
+        """The summary must use every emitted output, not successful registrations only."""
+        registry = FrameTraceRegistry()
+        metrics = StageMetrics(registry=registry)
+        context = SenderFrameTraceContext(registry, metrics, "attempt", 1)
+        first = FrameKey("attempt", 1, "video", 1, 9000)
+        assert registry.register_capture(first, 100)
+        assert not registry.register_capture(FrameKey("attempt", 1, "video", 2, 9000), 101)
+        assert registry.bind_wire(first, 7, 77)
+        track = object.__new__(ScreenCaptureTrack)
+        track._trace_interval = {"captures": 2, "outputs": 2, "outputsWithCapture": 2, "reusedOutputs": 0,
+                                 "cpuStartedNs": time.process_time_ns()}
+        track._trace_interval_lock = __import__("threading").Lock()
+
+        summary = track._frame_trace_summary(context)
+
+        self.assertIsNone(summary["coverage"]["sourceToWire"])
+        self.assertEqual(summary["alignmentState"], "UNALIGNED")
+        self.assertGreater(summary["traces"]["alignmentFailureCount"], 0)
+
     def test_trace_interval_lock_serializes_a_capture_increment_before_snapshot_reset(self):
         class GateLock:
             def __init__(self):
@@ -155,6 +175,7 @@ class TestFrameTiming(unittest.TestCase):
         host = object.__new__(WebRemoteHost)
         host._frame_trace_registry = registry
         host._stage_metrics = StageMetrics(registry=registry)
+        host._frame_trace_detail_enabled = True
         host.media_profile = {"width": 1280, "height": 720, "target_fps": 20}
         host._user_resolution = {"width": 1280, "height": 720}
         host._h264_policy_version = "relay-legacy-v1"

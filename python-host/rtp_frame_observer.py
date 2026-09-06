@@ -56,6 +56,7 @@ class _Pending:
     registry: FrameTraceRegistry
     key: object
     ssrc: int
+    stream_scope: tuple[str, int, str]
 
 
 class RtpFrameObserver:
@@ -65,6 +66,12 @@ class RtpFrameObserver:
         self._pending_by_task: dict[asyncio.Task, _Pending] = {}
         self.enabled = True
         self.unmatched_count = 0
+        self.origin_mismatch_count = 0
+        self.zero_origin_count = 0
+        self.ignored_rtcp_count = 0
+        self.ignored_empty_count = 0
+        self.ignored_rtx_count = 0
+        self._origin_by_stream: dict[tuple[str, int, str, int], int] = {}
 
     def observe_encoded_frame(self, sender, *, encoder_timestamp: int, ssrc: int | None = None) -> bool:
         if not self.enabled:
@@ -84,7 +91,14 @@ class RtpFrameObserver:
         if key is None or task is None:
             self.unmatched_count += 1
             return False
-        self._pending_by_task[task] = _Pending(registry=registry, key=key, ssrc=int(ssrc if ssrc is not None else getattr(sender, "_ssrc", 0)))
+        rtx_payload_type = getattr(sender, "_RTCRtpSender__rtx_payload_type", None)
+        if isinstance(rtx_payload_type, int) and 0 <= rtx_payload_type <= 127:
+            self.rtx_payload_types.add(rtx_payload_type)
+        self._pending_by_task[task] = _Pending(
+            registry=registry, key=key,
+            ssrc=int(ssrc if ssrc is not None else getattr(sender, "_ssrc", 0)),
+            stream_scope=(str(key.attempt_id), int(key.generation), str(key.stream_id)),
+        )
         return True
 
     def observe_outgoing_rtp(self, data: bytes, *, ssrc: int | None = None) -> bool:
@@ -92,22 +106,63 @@ class RtpFrameObserver:
             return False
         task = asyncio.current_task()
         pending = self._pending_by_task.get(task) if task is not None else None
-        timestamp = parse_rtp_timestamp(data)
-        payload_type = data[1] & 0x7F if isinstance(data, (bytes, bytearray, memoryview)) and len(data) >= 2 else -1
-        if pending is None or timestamp is None or payload_type in self.rtx_payload_types:
+        raw = bytes(data) if isinstance(data, (bytes, bytearray, memoryview)) else b""
+        payload_type = raw[1] & 0x7F if len(raw) >= 2 else -1
+        if len(raw) >= 2 and raw[0] >> 6 == 2 and 192 <= raw[1] <= 223:
+            self.ignored_rtcp_count += 1
+            return False
+        timestamp = parse_rtp_timestamp(raw)
+        if timestamp is None:
+            self.ignored_empty_count += 1
+            return False
+        if payload_type in self.rtx_payload_types:
+            self.ignored_rtx_count += 1
+            return False
+        if pending is None:
             self.unmatched_count += 1
-            target_registry = pending.registry if pending is not None else self.registry
+            target_registry = self.registry
             if target_registry is not None:
                 target_registry.note_unmatched_wire()
             return False
-        packet_ssrc = int.from_bytes(bytes(data)[8:12], "big") if ssrc is None else int(ssrc)
+        packet_ssrc = int.from_bytes(raw[8:12], "big") if ssrc is None else int(ssrc)
         if packet_ssrc != pending.ssrc:
+            self.unmatched_count += 1
+            pending.registry.note_unmatched_wire()
+            return False
+        origin = (int(timestamp) - int(pending.key.encoder_timestamp)) & 0xFFFFFFFF
+        origin_key = (*pending.stream_scope, packet_ssrc)
+        expected_origin = self._origin_by_stream.get(origin_key)
+        if origin == 0:
+            self.zero_origin_count += 1
+            self.unmatched_count += 1
+            pending.registry.note_unmatched_wire()
+            return False
+        if expected_origin is None:
+            self._origin_by_stream[origin_key] = origin
+        elif expected_origin != origin:
+            self.origin_mismatch_count += 1
             self.unmatched_count += 1
             pending.registry.note_unmatched_wire()
             return False
         # Only the first new RTP packet for this encoded frame owns the wire ID.
         self._pending_by_task.pop(task, None)
         return pending.registry.bind_wire(pending.key, packet_ssrc, timestamp)
+
+    def snapshot(self) -> dict:
+        return {
+            "enabled": bool(self.enabled),
+            "unmatchedCount": self.unmatched_count,
+            "originMismatchCount": self.origin_mismatch_count,
+            "zeroOriginCount": self.zero_origin_count,
+            "ignoredRtcpCount": self.ignored_rtcp_count,
+            "ignoredEmptyCount": self.ignored_empty_count,
+            "ignoredRtxCount": self.ignored_rtx_count,
+            "rtxPayloadTypes": sorted(self.rtx_payload_types),
+            "originByStream": {
+                "|".join((attempt, str(generation), stream, str(ssrc))): origin
+                for (attempt, generation, stream, ssrc), origin in self._origin_by_stream.items()
+            },
+        }
 
 
 def install_aiortc_observer(observer: RtpFrameObserver):

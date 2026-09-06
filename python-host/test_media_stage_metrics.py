@@ -151,6 +151,24 @@ def test_source_to_wire_uses_registered_output_denominator_and_rejects_cross_win
     assert complete.snapshot()["sourceToWireCoverage"] == 1.0
 
 
+def test_source_to_wire_fails_closed_when_any_output_registration_or_trace_delivery_is_invalid():
+    """A partial join must never turn a five-second output window OBSERVED."""
+    registry = FrameTraceRegistry()
+    first = FrameKey("attempt", 1, "video", 1, 90)
+    assert registry.register_capture(first, 1)
+    # Same encoder timestamp is an output registration conflict.  The caller
+    # still emitted an output, so it must count in the coverage denominator.
+    assert not registry.register_capture(FrameKey("attempt", 1, "video", 2, 90), 2)
+    assert registry.bind_wire(first, 7, 123)
+    registry.note_dropped_trace()
+
+    snapshot = registry.snapshot()
+    assert snapshot["registeredOutputFrameCount"] == 1
+    assert snapshot["sourceOutputFrameCount"] == 2
+    assert snapshot["sourceToWireCoverage"] is None
+    assert snapshot["alignmentFailureCount"] >= 2
+
+
 def test_registry_binds_wire_identity_per_reused_capture_and_batches_bounded_entries():
     """Matching by capture sequence would merge two encoded copies into one rVFC row."""
     registry = FrameTraceRegistry()

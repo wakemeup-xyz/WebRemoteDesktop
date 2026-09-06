@@ -483,6 +483,13 @@ class LabRun:
                 raise RuntimeError("running lab transcript verifier is required")
             return self._transcript_secret.encode("utf-8")
 
+    def runtime_dir(self) -> Path:
+        """Expose the current Lab-owned log directory for read-only collectors."""
+        with self._lock:
+            if self.closed or self._runtime_dir is None:
+                raise RuntimeError("running lab runtime directory is required")
+            return self._runtime_dir
+
     def bind_controlled_input(self, *, input_id: str, lease_id: str, lease_epoch: int, fixture_id: str,
                                action: Mapping[str, Any]) -> None:
         """Reserve one existing Viewer inputId for the isolated Lab Host.
@@ -526,7 +533,7 @@ class LabRun:
         if token is None or proof is None: raise RuntimeError("lab identity is required before starting a Host")
         try:
             self._production_preflight(proof, proof.epoch)
-            env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1"})
+            env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1", "WRD_FRAME_TRACE_DETAIL": "1"})
             with self._spawn_lock:
                 with self._lock:
                     if not self._owns_locked(token, generation):

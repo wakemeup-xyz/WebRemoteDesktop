@@ -79,6 +79,12 @@ V2_INPUT_ACK_STATUSES = frozenset({
 _sender_h264_policy = contextvars.ContextVar("wrd_sender_h264_policy", default=None)
 _sender_frame_trace_context = contextvars.ContextVar("wrd_sender_frame_trace_context", default=None)
 
+
+def detailed_frame_trace_enabled(environ=None):
+    """Detailed per-frame evidence is opt-in; normal Hosts keep counter-only media."""
+    source = os.environ if environ is None else environ
+    return source.get("WRD_FRAME_TRACE_DETAIL") == "1"
+
 # Monkey-patch aiortc to use VideoToolbox hardware encoder for H.264
 try:
     import aiortc.codecs as _aiortc_codecs
@@ -115,12 +121,14 @@ try:
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
 
-    # This is an observer only: unsupported aiortc ABI disables trace evidence
-    # and leaves the pre-existing media path untouched.
-    _rtp_frame_observer = RtpFrameObserver()
-    _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
-    if not _rtp_observer_ready:
-        logger.warning("RTP frame trace observer unavailable: %s", _rtp_observer_reason)
+    # Detailed trace is an explicit Lab opt-in. Production's counter-only
+    # media path does not install private aiortc wrappers at all.
+    _rtp_frame_observer = None
+    if os.environ.get("WRD_FRAME_TRACE_DETAIL") == "1":
+        _rtp_frame_observer = RtpFrameObserver()
+        _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
+        if not _rtp_observer_ready:
+            logger.warning("RTP frame trace observer unavailable: %s", _rtp_observer_reason)
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -1109,7 +1117,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     captured = True
                     while len(self._capture_bounds_ns) > 2048:
                         self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
-                if captured:
+                if captured and self._frame_trace_context is not None:
                     self._increment_trace_interval(captures=1)
                 with self._activity_condition:
                     self._activity_condition.notify_all()
@@ -1443,7 +1451,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             for name, stage in metrics["stages"].items()
         }
         source_to_wire = traces["sourceToWireCoverage"]
-        alignment_state = "OBSERVED" if source_to_wire == 1.0 else "UNALIGNED"
+        alignment_state = "OBSERVED" if source_to_wire == 1.0 and not traces["alignmentFailureCount"] else "UNALIGNED"
         summary = {
             "counts": {
                 "captures": int(interval.get("captures", 0) or 0),
@@ -1465,6 +1473,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "alignmentState": alignment_state,
             "stages": metrics,
             "traces": traces,
+            "observer": _rtp_frame_observer.snapshot() if globals().get("_rtp_frame_observer") is not None else {"enabled": False},
         }
         return summary
 
@@ -1650,8 +1659,9 @@ class WebRemoteHost:
         self._policy_selection = self._create_policy_selection()
         self._h264_policy_version = self._policy_selection.policy_id
         self._h264_policy_provider = H264SessionPolicyProvider(resolver=self._policy_selection.resolver)
-        self._frame_trace_registry = FrameTraceRegistry()
-        self._stage_metrics = StageMetrics(registry=self._frame_trace_registry)
+        self._frame_trace_detail_enabled = detailed_frame_trace_enabled()
+        self._frame_trace_registry = FrameTraceRegistry() if self._frame_trace_detail_enabled else None
+        self._stage_metrics = StageMetrics(registry=self._frame_trace_registry) if self._frame_trace_detail_enabled else None
         self._frame_trace_context = None
         self.sio = None
         self.pc = None
@@ -1712,6 +1722,8 @@ class WebRemoteHost:
         )
 
     def _frame_trace_context_for_policy(self, policy):
+        if not self._frame_trace_detail_enabled or self._frame_trace_registry is None or self._stage_metrics is None:
+            return None
         return SenderFrameTraceContext(
             registry=self._frame_trace_registry,
             metrics=self._stage_metrics,

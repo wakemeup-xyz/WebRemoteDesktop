@@ -12,6 +12,7 @@ from aiortc.mediastreams import MediaStreamError
 import host
 from host import ScreenCaptureTrack
 from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
+from host import detailed_frame_trace_enabled
 
 
 class Screenshot:
@@ -98,6 +99,32 @@ async def test_same_frame_stage_hooks_preserve_worker_pixels_and_loop_owned_pts(
     stages = metrics.snapshot()["stages"]
     assert all(stages[name]["count"] == 1 for name in ("grab", "age_at_recv", "worker_queue", "prepare", "build"))
     assert stages["reformat"]["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_detailed_trace_on_off_preserves_media_pixels_pts_and_capture_lifecycle():
+    """Turning evidence on must only add sidecars, never change the media frame."""
+    pixels = np.array([[[7, 8, 9, 255]]], dtype=np.uint8)
+    off, on = bare_track(max_width=1, max_height=1), bare_track(max_width=1, max_height=1)
+    registry = FrameTraceRegistry()
+    on._frame_trace_context = SenderFrameTraceContext(registry, StageMetrics(registry=registry), "attempt", 1)
+    for track in (off, on):
+        track._capture_buffer = Screenshot(pixels)
+        track._capture_seq = 1
+        now_ns = time.monotonic_ns()
+        track._capture_bounds_ns[1] = (now_ns - 1_000_000, now_ns)
+    try:
+        off_frame, on_frame = await off.recv(), await on.recv()
+    finally:
+        off._process_executor.shutdown(wait=True)
+        on._process_executor.shutdown(wait=True)
+
+    assert detailed_frame_trace_enabled({}) is False
+    assert detailed_frame_trace_enabled({"WRD_FRAME_TRACE_DETAIL": "1"}) is True
+    assert off_frame.pts == on_frame.pts == 9000
+    assert np.array_equal(off_frame.to_ndarray(format="bgra"), on_frame.to_ndarray(format="bgra"))
+    assert off._capture_running is on._capture_running is True
+    assert registry.snapshot()["sourceOutputFrameCount"] == 1
 
 
 @pytest.mark.asyncio

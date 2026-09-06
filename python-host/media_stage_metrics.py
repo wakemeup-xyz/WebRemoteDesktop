@@ -104,6 +104,10 @@ class FrameTraceRegistry:
         self.active_scope_eviction_count = 0
         # Every successful registration is one encoded output identity, not a
         # raw MSS capture. Raw capture count lives on ScreenCaptureTrack.
+        # ``source`` counts every output presented for registration, including
+        # a rejected conflict or stale-generation output. It is the only safe
+        # coverage denominator.
+        self._interval_source_output_count = 0
         self._interval_registered_output_count = 0
         self._interval_wire_count = 0
 
@@ -162,6 +166,7 @@ class FrameTraceRegistry:
     def _register_capture(self, key: FrameKey, frame_pts: int) -> bool:
         now = int(self._clock_ns())
         self._purge(now)
+        self._interval_source_output_count += 1
         stream_scope = self._generation_scope(key)
         active_entry = self._active_generation.get(stream_scope)
         active = active_entry[0] if active_entry is not None else None
@@ -301,16 +306,29 @@ class FrameTraceRegistry:
     def snapshot(self, reset: bool = False) -> dict:
         with self._lock:
             self._purge(int(self._clock_ns()))
+            alignment_failures = sum((
+                self.expired_count,
+                self.expired_pending_count,
+                self.evicted_count,
+                self.active_scope_eviction_count,
+                self.conflict_count,
+                self.cross_generation_count,
+                self.unmatched_encoder_count,
+                self.unmatched_wire_count,
+                self.dropped_trace_count,
+            ))
             source_to_wire = (
-                round(self._interval_wire_count / self._interval_registered_output_count, 3)
+                round(self._interval_wire_count / self._interval_source_output_count, 3)
                 if self._interval_wire_count
-                and self._interval_registered_output_count
-                and self._interval_wire_count <= self._interval_registered_output_count else None
+                and self._interval_source_output_count
+                and self._interval_wire_count <= self._interval_source_output_count
+                and not alignment_failures else None
             )
             snapshot = {
                 "traceCount": sum(len(values) for values in self._traces.values()),
                 "activeScopeCount": len(self._active_generation),
                 "pendingCount": len(self._pending),
+                "sourceOutputFrameCount": self._interval_source_output_count,
                 "registeredOutputFrameCount": self._interval_registered_output_count,
                 # Kept for diagnostic consumers that shipped in the first T3
                 # commit; its meaning is registered output frames, never MSS grabs.
@@ -326,8 +344,10 @@ class FrameTraceRegistry:
                 "unmatchedEncoderCount": self.unmatched_encoder_count,
                 "unmatchedWireCount": self.unmatched_wire_count,
                 "droppedTraceCount": self.dropped_trace_count,
+                "alignmentFailureCount": alignment_failures,
             }
             if reset:
+                self._interval_source_output_count = 0
                 self._interval_registered_output_count = 0
                 self._interval_wire_count = 0
                 self.expired_count = 0
