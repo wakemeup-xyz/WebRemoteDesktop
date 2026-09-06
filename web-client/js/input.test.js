@@ -132,6 +132,111 @@ function activate(Input, context) {
   Input.setActive(true);
 }
 
+function createRemoteTextModel() {
+  let value = '';
+  let cursor = 0;
+  const modifiers = new Set();
+  const insert = (text) => {
+    const points = Array.from(String(text || ''));
+    value = `${Array.from(value).slice(0, cursor).join('')}${points.join('')}${Array.from(value).slice(cursor).join('')}`;
+    cursor += points.length;
+  };
+  const applyStep = (step) => {
+    if (!step || step.phase !== 'down') return;
+    if (/^(Control|Shift|Alt|Meta)(Left|Right)$/.test(step.code || '')) {
+      modifiers.add(step.code);
+      return;
+    }
+    if (step.code === 'ArrowLeft') {
+      cursor = Math.max(0, cursor - 1);
+      return;
+    }
+    if (step.code === 'ArrowRight') {
+      cursor = Math.min(Array.from(value).length, cursor + 1);
+      return;
+    }
+    if (/^Key[A-Z]$/.test(step.code || '')
+      && !step.modifiers?.ctrlKey && !step.modifiers?.metaKey && !step.modifiers?.altKey) {
+      const letter = step.code.slice(-1);
+      insert(step.modifiers?.shiftKey ? letter : letter.toLowerCase());
+    }
+  };
+  return {
+    apply(payload) {
+      if (payload?.action === 'text') insert(payload.payload?.text);
+      if (payload?.action === 'key') applyStep(payload.payload);
+      if (payload?.action === 'batch') payload.payload?.steps?.forEach(applyStep);
+      if (payload?.action === 'key' && payload.payload?.phase === 'up') {
+        modifiers.delete(payload.payload.code);
+      }
+    },
+    snapshot() { return { value, cursor, modifiers: [...modifiers].sort() }; },
+  };
+}
+
+function settleKeyboardWrites(Input, socketEvents, model, from = 0) {
+  const entries = socketEvents.slice(from).filter(({ event, payload }) => event === 'input'
+    && payload?.type === 'keyboard');
+  for (const { payload } of entries) {
+    model.apply(payload);
+    Input.acceptKeyboardAck({
+      schemaVersion: 2,
+      leaseEpoch: payload.leaseEpoch,
+      status: 'applied',
+      appliedSeq: payload.seq,
+      inputIds: payload.inputIds,
+    });
+  }
+  return socketEvents.length;
+}
+
+function toggleMobileInput(Input, elements, shown) {
+  const button = elements.get('mobileTextInputBtn');
+  button.focus();
+  button.listeners.get('click')({ preventDefault() {} });
+  return elements.get('mobileTextInput');
+}
+
+function setupCrossModeHarness() {
+  const loaded = loadInput();
+  const { Input, context, elements, documentListeners, socketEvents } = loaded;
+  const model = createRemoteTextModel();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const mobileInput = toggleMobileInput(Input, elements, false);
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  let eventIndex = settleKeyboardWrites(Input, socketEvents, model);
+  toggleMobileInput(Input, elements, true);
+  return {
+    Input,
+    context,
+    elements,
+    documentListeners,
+    socketEvents,
+    model,
+    mobileInput,
+    get eventIndex() { return eventIndex; },
+    settle() { eventIndex = settleKeyboardWrites(Input, socketEvents, model, eventIndex); },
+  };
+}
+
+function appendMobileText(harness, text) {
+  const input = harness.mobileInput;
+  const sentinel = '\u200b';
+  const raw = String(input.value || '').endsWith(sentinel)
+    ? String(input.value).slice(0, -sentinel.length) : String(input.value || '');
+  const start = Number.isInteger(input.selectionStart) ? input.selectionStart : raw.length;
+  const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+  input.value = `${raw.slice(0, start)}${text}${raw.slice(end)}${sentinel}`;
+  input.selectionStart = start + text.length;
+  input.selectionEnd = start + text.length;
+  input.listeners.get('input')({ target: input });
+  harness.settle();
+}
+
 function withFakeTimers(run) {
   const nativeSetTimeout = global.setTimeout;
   const nativeClearTimeout = global.clearTimeout;
@@ -933,6 +1038,157 @@ test('mobile textarea Shift plus ArrowLeft sends one balanced chord without a se
     ['ShiftLeft', 'down'], ['ArrowLeft', 'down'], ['ArrowLeft', 'up'], ['ShiftLeft', 'up'],
   ]));
   assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
+test('accepted physical navigation resets the hidden mobile cursor before reopen', () => {
+  const h = setupCrossModeHarness();
+  assert.equal(h.context.document.activeElement, h.Input.videoElement);
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 2, modifiers: [] });
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abXc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 3).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ArrowLeft'], ['up', 'ArrowLeft'],
+  ]);
+});
+
+test('accepted physical printable input resets the hidden mobile baseline before reopen', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'KeyB', key: 'b' }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', { code: 'KeyB', key: 'b' }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abcb', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abcbX', cursor: 5, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.equal(writes[1].payload.code, 'KeyB');
+});
+
+test('accepted physical chord resets mobile history once while modifier keyup still releases', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  h.settle();
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ArrowLeft', key: 'ArrowLeft', shiftKey: true,
+  }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ArrowLeft', key: 'ArrowLeft', shiftKey: true,
+  }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: false,
+  }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 2, modifiers: [] });
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abXc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 5).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ShiftLeft'], ['down', 'ArrowLeft'], ['up', 'ArrowLeft'], ['up', 'ShiftLeft'],
+  ]);
+});
+
+test('ignored physical input on a local modal preserves the mobile baseline', () => {
+  const h = setupCrossModeHarness();
+  const modal = h.elements.get('textInputModal');
+  const localInput = h.elements.get('remoteTextInput');
+  localInput.tagName = 'INPUT';
+  localInput.closest = () => modal;
+  const before = h.socketEvents.length;
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ArrowLeft', key: 'ArrowLeft', target: localInput,
+  }));
+  h.settle();
+
+  assert.equal(h.socketEvents.length, before);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+});
+
+test('rejected physical input preserves the mobile baseline and sends no duplicate', () => {
+  const h = setupCrossModeHarness();
+  h.context.WebRTC.socket.connected = false;
+  const before = h.socketEvents.length;
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+
+  assert.equal(h.socketEvents.length, before);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.context.WebRTC.socket.connected = true;
+  h.Input.keyboardTransport.markAdapterAvailable('socket');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+});
+
+test('modifier-only physical input preserves mobile history and document keyup releases it', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  h.settle();
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: false,
+  }));
+  h.settle();
+
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 3).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ShiftLeft'], ['up', 'ShiftLeft'],
+  ]);
 });
 
 test('mobile editing action gates ordinary modal open and commits through one external-action path', () => {

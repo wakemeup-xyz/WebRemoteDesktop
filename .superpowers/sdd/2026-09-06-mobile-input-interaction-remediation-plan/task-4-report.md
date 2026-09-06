@@ -70,3 +70,29 @@ Base `b75a284`; clarification commit `5ffdab8`.
 
 - Independent probes on `b527ba6` passed: reverse successful surface ACKs settle; document physical keydown during surface pending emits no new write; unchanged composition rejects public navigation. Each uses the real Input/controller/transport fixture, not a controller stub.
 - Luna/max scoped re-review approved all six fixes with no open Critical/Important findings. The virtual-modifier test's direct invocation of a disabled button handler proves handler logic only; native release-button reachability through capability rendering remains a Task5/7 browser check, not a claimed PASS here.
+
+## Review fix round 2 — cross-input context transaction
+
+Base `48030d7` (including immutable Task5 viewport/layout commit `40e3804`).
+
+### Scope and implementation
+
+- Document-level physical keydowns that are not standalone modifier keys now run through the existing `runMobileEditingAction('context-change', send)` transaction. The real controller send is invoked once; only an accepted remote-changing keydown clears the mobile accepted-history baseline.
+- Standalone physical modifier keydowns retain the existing direct controller path so local history is not cleared before a later chord; document keyup remains unconditional and continues the existing tracked-key release path.
+- No protocol field, lease, queue, duplicate send, transport, viewport, layout, Host, Terminal, or service behavior was added or changed.
+
+### RED evidence
+
+- `node --test --test-name-pattern='(accepted physical navigation|accepted physical printable|accepted physical chord|ignored physical input|rejected physical input|modifier-only physical)' web-client/js/input.test.js` — **3 pass, 3 fail** before the production change. The three accepted physical context cases retained `abc` instead of invalidating the hidden mobile baseline; ignored-local, rejected-send, and modifier-only/key-up cases passed.
+
+### GREEN verification
+
+- `node --test --test-name-pattern='(accepted physical navigation|accepted physical printable|accepted physical chord|ignored physical input|rejected physical input|modifier-only physical)' web-client/js/input.test.js` — **6 pass, 0 fail**.
+- `node --test web-client/js/input.test.js` — **95 pass, 0 fail**.
+- `node --test web-client/js/input.test.js web-client/js/mobile-text-input.test.js web-client/js/remote-keyboard-controller.test.js web-client/js/keyboard-transport.test.js` — **167 pass, 0 fail**.
+
+### Review-round concerns and not-run evidence
+
+- Android/iPhone/iPad, system IME, Quartz/native Host, public URL, tunnel, and live watcher acceptance remain **NOT RUN**. Parent-owned native Chromium focus verification remains separate evidence.
+- New regressions use the real `RemoteKeyboardController` and `KeyboardTransport` loaded by `loadInput`, ACK each emitted envelope, and apply an ephemeral in-memory remote text/cursor model; no service or browser session was started.
+- This appendix and the implementation remain metadata-only regarding user data: no user text, key, coordinate, clipboard, password, token, or payload is persisted.

@@ -527,9 +527,16 @@ const Input = {
       this.bindTouchAdapter(relayImage);
     }
     const isMobileTextEvent = (event) => event?.target === document.getElementById('mobileTextInput');
+    const isPhysicalModifierKey = (event) => /^(Control|Shift|Alt|Meta)(Left|Right)$/.test(event?.code || '');
     document.addEventListener('keydown', (event) => {
       if (!isMobileTextEvent(event) && this._isMobileEditingActionAllowed()) {
-        this.keyboardController?.handleDomEvent(event);
+        if (isPhysicalModifierKey(event)) {
+          this.keyboardController?.handleDomEvent(event);
+          return;
+        }
+        this.runMobileEditingAction('context-change', () => (
+          this.keyboardController?.handleDomEvent(event) === true
+        ));
       }
     });
     document.addEventListener('keyup', (event) => {
