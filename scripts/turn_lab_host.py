@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+import asyncio
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from dataclasses import dataclass, replace
@@ -174,6 +175,7 @@ class LabWebRemoteHost(WebRemoteHost):
             # GuardedLabInputAdapter delegates to the existing adapter; this
             # callable cannot send an event and exists only for direct tests.
             input_handler=lambda _action: None,
+            binding_resolver=self._claim_controlled_binding,
         )
         self.input_adapter = self.controlled_input_guard.install_at_lab_host(self._lab_input_adapter)
 
@@ -199,6 +201,29 @@ class LabWebRemoteHost(WebRemoteHost):
         existing lease and before it sends that same inputId through Input.
         """
         self.controlled_input_guard.bind_controlled_input(dict(action))
+
+    async def _claim_controlled_binding(self, input_id: str) -> dict[str, Any] | None:
+        """Claim a one-use Driver binding over the isolated Signal loopback."""
+        context = self._verified_lab_context
+        secret = os.environ.get("HOST_SHARED_SECRET", "")
+        if not secret or not isinstance(input_id, str) or not input_id:
+            return None
+        body = {"realm": context.realm, "epoch": context.epoch, "inputId": input_id}
+        request = Request(
+            f"{context.origin}/api/lab-controlled-input/claim", method="POST",
+            data=json.dumps(body, separators=(",", ":")).encode(),
+            headers={"Content-Type": "application/json", "x-wrd-lab-host-secret": secret,
+                     "x-wrd-lab-proof-token": context.proof_token},
+        )
+        def claim() -> dict[str, Any] | None:
+            try:
+                with urlopen(request, timeout=2) as response:
+                    payload = json.loads(response.read().decode())
+                binding = payload.get("binding") if isinstance(payload, dict) else None
+                return binding if isinstance(binding, dict) else None
+            except Exception:
+                return None
+        return await asyncio.to_thread(claim)
 
     def _create_policy_selection(self) -> PolicySelection:
         context = getattr(self, "_verified_lab_context", None)

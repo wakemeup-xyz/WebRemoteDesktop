@@ -49,6 +49,7 @@ async function createLabRuntime(options = {}) {
   const realm = options.realm || `lab-${crypto.randomUUID()}`;
   const contextSecret = randomSecret();
   const issuedContexts = new Map();
+  const controlledInputBindings = new Map();
   const runtime = createServerApp({
     config: labConfig(credentials, options.runtimeDir || ''),
     signalingRuntimeContext: createRuntimeContext({
@@ -68,6 +69,19 @@ async function createLabRuntime(options = {}) {
   function checkContextSecret(req, res) {
     if (req.get('x-wrd-lab-context-secret') !== contextSecret) { res.status(403).json({ error: 'lab context denied' }); return false; }
     return true;
+  }
+  function checkControlledBindingAuth(req, res, body) {
+    const remote = req.socket.remoteAddress;
+    if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') {
+      res.status(403).json({ error: 'lab binding denied' }); return false;
+    }
+    const token = String(req.get('x-wrd-lab-proof-token') || '');
+    if (req.get('x-wrd-lab-host-secret') !== credentials.hostSecret
+      || !body || body.realm !== realm || !Number.isInteger(body.epoch) || body.epoch < 0
+      || !token || !runtime.signalingRuntime.hasProofAdmission({ token, epoch: body.epoch, realm })) {
+      res.status(403).json({ error: 'lab binding denied' }); return false;
+    }
+    return token;
   }
   runtime.app.post('/api/lab-context/issue', (req, res) => {
     if (!checkContextSecret(req, res)) return;
@@ -94,6 +108,33 @@ async function createLabRuntime(options = {}) {
       token: context.proofToken, epoch: context.epoch, realm: context.realm,
     })) return res.status(409).json({ error: 'lab context proof is no longer active' });
     return res.status(200).json({ context });
+  });
+  runtime.app.post('/api/lab-controlled-input/bind', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'epoch', 'inputId', 'leaseId', 'fixtureId']);
+    const token = checkControlledBindingAuth(req, res, body);
+    if (!token) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || ![body.inputId, body.leaseId, body.fixtureId].every((value) => typeof value === 'string' && value.length > 0)) {
+      return res.status(400).json({ error: 'invalid controlled binding' });
+    }
+    const key = `${realm}|${body.inputId}`;
+    if (controlledInputBindings.has(key)) return res.status(409).json({ error: 'controlled input already bound' });
+    controlledInputBindings.set(key, { ...body, proofToken: token });
+    return res.status(201).json({ binding: { inputId: body.inputId } });
+  });
+  runtime.app.post('/api/lab-controlled-input/claim', (req, res) => {
+    const body = req.body || {};
+    const allowed = new Set(['realm', 'epoch', 'inputId']);
+    const token = checkControlledBindingAuth(req, res, body);
+    if (!token) return;
+    if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
+      || typeof body.inputId !== 'string' || !body.inputId) return res.status(400).json({ error: 'invalid controlled claim' });
+    const key = `${realm}|${body.inputId}`;
+    const binding = controlledInputBindings.get(key);
+    controlledInputBindings.delete(key);
+    if (!binding || binding.proofToken !== token) return res.status(409).json({ error: 'controlled binding absent' });
+    return res.status(200).json({ binding });
   });
   return {
     runtime, origin, credentials, realm, contextSecret,

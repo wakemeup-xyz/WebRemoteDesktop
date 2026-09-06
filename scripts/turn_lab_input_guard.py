@@ -19,7 +19,7 @@ class LabInputGuard:
 
     def __init__(self, *, desktop_proof: Callable[[], dict[str, Any]], input_handler: Callable[[dict[str, Any]], Any],
                  expected_lease_id: str | None = None, expected_proof_token: str | None = None,
-                 expected_fixture_id: str | None = None) -> None:
+                 expected_fixture_id: str | None = None, binding_resolver: Callable[[str], Any] | None = None) -> None:
         if not all(isinstance(value, str) and value for value in (expected_lease_id, expected_proof_token, expected_fixture_id)):
             raise ValueError("expected lab lease, proof and fixture identities are required")
         self._desktop_proof = desktop_proof
@@ -29,6 +29,7 @@ class LabInputGuard:
         self._expected_fixture_id = expected_fixture_id
         self._installed = False
         self._bound_actions: dict[str, dict[str, Any]] = {}
+        self._binding_resolver = binding_resolver
 
     @property
     def installed(self) -> bool:
@@ -50,7 +51,7 @@ class LabInputGuard:
         This is deliberately not a Viewer envelope extension: production's
         strict input schema continues to see its original data unchanged.
         """
-        self._verify(action)
+        self._verify_action(action)
         input_id = action["inputId"]
         if input_id in self._bound_actions:
             raise InputGuardRejected("controlled inputId is already bound")
@@ -67,10 +68,24 @@ class LabInputGuard:
             raise InputGuardRejected("controlled input envelope must contain one bound inputId")
         return matches[0]
 
+    async def resolve_action_for_envelope(self, envelope: Any) -> dict[str, Any] | None:
+        action = self.action_for_envelope(envelope)
+        if action is not None or self._binding_resolver is None:
+            return action
+        ids = envelope.get("inputIds") if isinstance(envelope, dict) else None
+        if not isinstance(ids, list) or len(ids) != 1 or not isinstance(ids[0], str) or not ids[0]:
+            return None
+        candidate = self._binding_resolver(ids[0])
+        candidate = await candidate if inspect.isawaitable(candidate) else candidate
+        if candidate is None:
+            return None
+        self.bind_controlled_input(candidate)
+        return self.action_for_envelope(envelope)
+
     def is_input_bound(self, input_id: Any) -> bool:
         return isinstance(input_id, str) and input_id in self._bound_actions
 
-    def _verify(self, action: dict[str, Any], *, execution_mode: str = "automatic-isolated") -> None:
+    def _verify_action(self, action: dict[str, Any], *, execution_mode: str = "automatic-isolated") -> None:
         if execution_mode != "automatic-isolated":
             raise InputGuardRejected("execution mode is not automatic-isolated")
         if not isinstance(action, dict) or not isinstance(action.get("inputId"), str) or not action["inputId"]:
@@ -78,6 +93,8 @@ class LabInputGuard:
         if (action.get("leaseId") != self._expected_lease_id or action.get("proofToken") != self._expected_proof_token
                 or action.get("fixtureId") != self._expected_fixture_id):
             raise InputGuardRejected("action lease/proof/fixture identity mismatch")
+    def _verify(self, action: dict[str, Any], *, execution_mode: str = "automatic-isolated") -> None:
+        self._verify_action(action, execution_mode=execution_mode)
         proof = self._desktop_proof()
         if not isinstance(proof, dict):
             raise InputGuardRejected("fixture identity probe is invalid")
@@ -115,13 +132,13 @@ class GuardedLabInputAdapter:
         self._guard, self._delegate = guard, delegate
 
     async def apply_keyboard(self, envelope: dict[str, Any], *, transport: Any = None) -> Any:
-        action = self._guard.action_for_envelope(envelope)
+        action = await self._guard.resolve_action_for_envelope(envelope)
         if action is None:
             raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
         return await self._guard.execute_async(action, lambda: self._delegate.apply_keyboard(envelope, transport=transport))
 
     async def handle_input(self, envelope: dict[str, Any]) -> Any:
-        action = self._guard.action_for_envelope(envelope)
+        action = await self._guard.resolve_action_for_envelope(envelope)
         if action is None:
             raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
         return await self._guard.execute_async(action, lambda: self._delegate.handle_input(envelope))

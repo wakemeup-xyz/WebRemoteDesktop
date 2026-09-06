@@ -183,6 +183,15 @@ def test_real_loopback_proof_fixture_admits_once_and_watchdog_stops_on_epoch(tmp
     assert run.monitor() == "stopped:production-epoch-changed"
 
 
+def test_lab_run_binds_one_input_through_proof_and_host_secret_loopback_ipc(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture)
+    run.start("legacy")
+    run.bind_controlled_input(input_id="input-1", lease_id="lease-1", fixture_id="fixture-1")
+    with pytest.raises(RuntimeError, match="refused"):
+        run.bind_controlled_input(input_id="input-1", lease_id="lease-1", fixture_id="fixture-1")
+    run.close()
+
+
 def test_production_proof_lease_is_readable_released_and_loss_stops_watchdog(tmp_path, proof_fixture):
     client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
     proof = client.admit(); assert client.proof_active(proof)

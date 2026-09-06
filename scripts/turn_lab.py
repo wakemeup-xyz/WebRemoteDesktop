@@ -353,6 +353,34 @@ class LabRun:
         proof_admission = {"token": self.identity._proof_token, "epoch": self.identity.epoch, "realm": self.identity.realm}
         return {"origin": self.identity.origin, "password": self._viewer_password, "proofAdmission": proof_admission, "proofToken": self.identity._proof_token, "realm": self.identity.realm}
 
+    def bind_controlled_input(self, *, input_id: str, lease_id: str, fixture_id: str) -> None:
+        """Reserve one existing Viewer inputId for the isolated Lab Host.
+
+        This is a proof-and-host-secret authenticated loopback control call;
+        it neither opens a listener nor sends an input event.
+        """
+        with self._lock:
+            identity, secret = self.identity, self._host_secret
+            if self.closed or identity is None or not secret:
+                raise RuntimeError("running lab identity is required")
+        if not all(isinstance(value, str) and value for value in (input_id, lease_id, fixture_id)):
+            raise ValueError("controlled binding requires input, lease and fixture identities")
+        body = {"realm": identity.realm, "epoch": identity.epoch, "inputId": input_id,
+                "leaseId": lease_id, "fixtureId": fixture_id}
+        request = Request(
+            f"{identity.origin}/api/lab-controlled-input/bind", method="POST",
+            data=json.dumps(body, separators=(",", ":")).encode(),
+            headers={"Content-Type": "application/json", "x-wrd-lab-host-secret": secret,
+                     "x-wrd-lab-proof-token": identity._proof_token},
+        )
+        try:
+            with urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode())
+        except Exception as error:
+            raise RuntimeError("lab controlled input binding was refused") from error
+        if not isinstance(payload, Mapping) or payload.get("binding", {}).get("inputId") != input_id:
+            raise RuntimeError("lab controlled input binding response was invalid")
+
     def start_host(self) -> subprocess.Popen[Any]:
         # Snapshot under lock, make all HTTP calls without it, then claim the
         # exact generation again.  A close racing Popen leaves at most a child

@@ -134,3 +134,23 @@ test('lab context credential burns when its proof was consumed before host start
     await lab.close();
   }
 });
+
+test('controlled input binding is loopback proof-and-host-secret bound and one-use', async () => {
+  const lab = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    const login = await fetch(`${lab.origin}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: lab.credentials.viewerPassword }) });
+    const token = (await login.json()).token;
+    const proof = await fetch(`${lab.origin}/api/proof-admission`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    const admission = (await proof.json()).admission;
+    const headers = { 'content-type': 'application/json', 'x-wrd-lab-host-secret': lab.credentials.hostSecret, 'x-wrd-lab-proof-token': admission.token };
+    const binding = { realm: lab.realm, epoch: admission.epoch, inputId: 'input-1', leaseId: 'lease-1', fixtureId: 'fixture-1' };
+    const denied = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers: { ...headers, 'x-wrd-lab-host-secret': 'wrong' }, body: JSON.stringify(binding) });
+    assert.equal(denied.status, 403);
+    const bound = await fetch(`${lab.origin}/api/lab-controlled-input/bind`, { method: 'POST', headers, body: JSON.stringify(binding) });
+    assert.equal(bound.status, 201);
+    const claim = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify({ realm: lab.realm, epoch: admission.epoch, inputId: 'input-1' }) });
+    assert.deepEqual((await claim.json()).binding, { ...binding, proofToken: admission.token });
+    const replay = await fetch(`${lab.origin}/api/lab-controlled-input/claim`, { method: 'POST', headers, body: JSON.stringify({ realm: lab.realm, epoch: admission.epoch, inputId: 'input-1' }) });
+    assert.equal(replay.status, 409);
+  } finally { await lab.close(); }
+});
