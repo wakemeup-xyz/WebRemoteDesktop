@@ -690,8 +690,7 @@ const Input = {
     };
     const hasDraft = Boolean(state.hasPending);
     const hasRecovery = Boolean(state.deliveryUncertain);
-    const showStatus = viewportUnsupported || hasDraft || hasRecovery
-      || state.status === 'pending' || state.status === 'composing';
+    const showStatus = viewportUnsupported || hasDraft || hasRecovery || state.status === 'composing';
     if (status) {
       const labelsForState = labels[state.status] || '';
       const label = [labelsForState, viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '']

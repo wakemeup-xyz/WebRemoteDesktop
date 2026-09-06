@@ -1434,6 +1434,31 @@ test('surface confirmation stays pending until the ended gesture has matching do
   assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
 });
 
+test('surface pending without draft does not render an unsent-text status', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const status = elements.get('mobileInputStatus');
+  const adapter = Input.mobileTextInputAdapter;
+
+  Input._mobileSurfaceState = 'pending';
+  adapter.refreshDeliveryState();
+  const emptyPending = adapter.getSnapshot();
+  assert.equal(emptyPending.status, 'pending');
+  assert.equal(emptyPending.hasPending, false);
+  assert.equal(emptyPending.composing, false);
+  assert.equal(emptyPending.deliveryUncertain, false);
+  assert.equal(status.hidden, true);
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '有未发送内容');
+});
+
 test('surface confirmation correlates a late down ACK after cumulative up cleanup', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   loadTouchAdapter(context);
