@@ -348,6 +348,13 @@ UI、健康判断和 Host `viewer-stats` 使用 `derivedFps / decodedDelta`。`b
 
 ## 12. 文档同步
 
+### 2026-09-06 复核修正：呈现测量与事件循环隔离
+
+- 连续性验收必须来自逐帧回调间隔和当前尚未结束的无帧时长；1Hz 采样时距上一帧的帧龄不能称为最大帧间隔。采集器应使用 `paintAgeMs` 与 `maxPaintGapMs` 区分两者；phase 开始建立新基线，窗口内 tracker/attempt/video 变更、缺测及非有限值不能通过门槛。
+- 同时记录并验证呈现帧尺寸与 CSS x/y/width/height 的完整变化范围；快照首尾相同不能排除中途跳动。周期清晰度验收仍需受控文字与 IDR 关联，不由 FPS 或间隔单独推断。
+- `ScreenCaptureTrack.recv()` 中复用帧复制和 PyAV 帧构造与缩放共用现有单线程 `imgproc` 池；事件循环只在 await 后接受结果并设置本 track 的 PTS/time_base。每个输出独占 VideoFrame；暂停/停止/profile 改变后的旧处理结果不得作为当前有效帧泄漏。线程池保持有界，每个 recv 至多一个在途处理任务。
+- 该隔离修复不改变编码参数、捕获倍率或分辨率，不自动构成性能通过；必须以实际负载下 Host loop lag、输入 ack、FPS、逐帧画质及恢复验收判定收益。
+
 实施完成后同步：
 
 - `docs/需求文档/WebRemoteDesktop-需求文档.md`：将“GOP 1秒即延迟优化”的绝对表述改为“策略化按需恢复 + 已验收的长周期安全网”，记录正确RTP时间线和canonical FPS。

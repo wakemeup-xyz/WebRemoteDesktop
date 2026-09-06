@@ -55,6 +55,8 @@ class TestFrameTiming(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], 2)
         self.assertEqual(payload["timings"]["capturePrepareMs"], 3.5)
         self.assertEqual(payload["timings"]["frameConvertMs"], 1.25)
+        self.assertIsNone(payload["timings"]["imgprocQueueMs"])
+        self.assertIsNone(payload["timings"]["imgprocBuildMs"])
         self.assertIsNone(payload["timings"]["encoderMs"])
         self.assertIsNone(payload["timings"]["rtpSendMs"])
         self.assertIsNone(payload["timings"]["endToEndVideoMs"])
