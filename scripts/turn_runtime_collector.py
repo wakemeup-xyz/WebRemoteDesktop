@@ -80,7 +80,9 @@ def collect_phase_samples(
     wait_ms = wait_ms or (lambda milliseconds: time.sleep(milliseconds / 1000))
     started = now_ms()
     records: list[dict[str, Any]] = []
-    for index in range(duration_seconds):
+    # The final boundary sample proves the requested wall-clock window ended
+    # healthy; 600 interval slots therefore produce 601 snapshots.
+    for index in range(duration_seconds + 1):
         target = started + index * 1000
         remaining = target - now_ms()
         if remaining > 0:
@@ -88,24 +90,39 @@ def collect_phase_samples(
         record = dict(sample(index) or {})
         record["sampleIndex"] = index
         record["elapsedMs"] = max(0, now_ms() - started)
+        record["scheduledElapsedMs"] = index * 1000
+        record["cadenceLateMs"] = max(0, record["elapsedMs"] - record["scheduledElapsedMs"])
         records.append(redact_runtime_sample(record))
     return records
 
 
-def summarize_phase(phase: str, samples: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_phase(phase: str, samples: list[dict[str, Any]], duration_seconds: int | None = None) -> dict[str, Any]:
     """Evaluate every sample.  A good final sample cannot hide an earlier outage."""
     failures: set[str] = set()
     fps = [sample.get("derivedFps") for sample in samples[1:]]
     buffers = [sample.get("jitterBufferMs") for sample in samples[1:]]
+    required_duration = duration_seconds if duration_seconds is not None else PHASE_DURATIONS[phase]
     for sample in samples:
         selected = sample.get("selectedPair") or {}
         if str(selected.get("type") or "").lower() != "relay":
             failures.add("non-relay-sample")
         if sample.get("pcConnectionState") != "connected":
             failures.add("pc-not-connected")
+        if sample.get("socketConnected") is not True:
+            failures.add("socket-not-connected")
+        resolution = sample.get("resolution") or {}
+        height = float(resolution.get("height") or 0)
+        if not ((600 <= height <= 800) if phase == "720p" else (900 <= height <= 1100)):
+            failures.add("resolution-class")
+        if sample.get("paintGapMs") is None:
+            failures.add("missing-paint-gap")
     for sample in samples[1:]:
-        if float(sample.get("paintGapMs") or 0) > 1000:
+        if sample.get("paintGapMs") is not None and float(sample.get("paintGapMs")) > 1000:
             failures.add("post-warmup-paint-gap")
+    if len(samples) != required_duration + 1 or not samples or samples[-1].get("elapsedMs", -1) < required_duration * 1000:
+        failures.add("incomplete-wall-clock-duration")
+    if any(float(sample.get("cadenceLateMs") or 0) > 250 for sample in samples):
+        failures.add("sample-cadence")
     fps_p50 = percentile(fps, 0.5)
     jitter_p95 = percentile(buffers, 0.95)
     jitter_max = max((float(value) for value in buffers if value is not None), default=None)
@@ -119,7 +136,8 @@ def summarize_phase(phase: str, samples: list[dict[str, Any]]) -> dict[str, Any]
     return {
         "phase": phase,
         "sampleCount": len(samples),
-        "requiredSampleCount": PHASE_DURATIONS[phase],
+        "requiredSampleCount": required_duration + 1,
+        "requiredDurationSeconds": required_duration,
         "derivedFpsP50": fps_p50,
         "jitterBufferMsP95": jitter_p95,
         "jitterBufferMsMax": jitter_max,
@@ -157,6 +175,21 @@ def load_viewer_password(project_root: Path) -> str:
 def start_viewer(page: Any) -> None:
     """The viewer does not connect merely from seeded storage; start it explicitly."""
     page.locator("#startBtn").click()
+
+
+def seed_viewer_storage(context: Any, token: str, admission: dict[str, Any]) -> None:
+    """Python Playwright accepts a script only; encode data before the call."""
+    script = (
+        f"localStorage.setItem('wrd_token', {json.dumps(token)});"
+        "localStorage.setItem('wrdNetworkMode', 'relay');"
+        f"sessionStorage.setItem('wrdProofAdmission', {json.dumps(json.dumps(admission))});"
+    )
+    context.add_init_script(script=script)
+
+
+def proof_admission_accepted(status: int, body: dict[str, Any]) -> bool:
+    """The proof endpoint creates a reservation and correctly returns 201."""
+    return status in {200, 201} and bool((body.get("admission") or {}).get("token"))
 
 
 def wait_for_healthy_relay(page: Any, timeout_seconds: int = 45) -> dict[str, Any]:
@@ -216,7 +249,7 @@ SAMPLE_JS = r"""async () => {
     framesDroppedDelta: delta('framesDropped'), packetsReceivedDelta: delta('packetsReceived'), nackCountDelta: delta('nackCount'), pliCountDelta: delta('pliCount'), firCountDelta: delta('firCount'), freezeDelta: delta('freezeCount'),
     paintGapMs: state.lastPaintAt === null ? null : Math.round(now - state.lastPaintAt), paint: { ...paint },
     latency, input, policy: { networkMode: WebRTC?.networkMode || null, profile: controller?.currentProfile || null, profileChanges: controller?.profileChanges || [], keyframeRequested: WebRTC?._keyframeRequested === true, keyframeEmitted: WebRTC?._keyframeEmitted === true, keyframeRequestSequence: Number(WebRTC?._keyframeRequestSequence || 0) },
-    inputAcks: state.inputAcks.splice(0), mediaPhase: WebRTC?.getMediaAppliedPhase?.() || null,
+    inputAcks: [...state.inputAcks], mediaPhase: WebRTC?.getMediaAppliedPhase?.() || null,
   };
   state.previous = { now, framesReceived: total('framesReceived'), framesDecoded: total('framesDecoded'), packetsLost: total('packetsLost'), bytesReceived: total('bytesReceived'), jitterBufferDelay: total('jitterBufferDelay'), jitterBufferEmittedCount: total('jitterBufferEmittedCount'), framesDropped: total('framesDropped'), packetsReceived: total('packetsReceived'), nackCount: total('nackCount'), pliCount: total('pliCount'), firCount: total('firCount'), freezeCount: total('freezeCount') };
   return sample;
@@ -232,11 +265,26 @@ def _install_input_ack_observer(page: Any) -> None:
     }""")
 
 
-def select_resolution(page: Any, phase: str) -> None:
-    page.locator("#resolutionBtn").click()
-    page.locator("#adaptiveResolutionToggle").uncheck()
-    page.locator(f'input[name="resolution"][value="{phase}"]').check()
-    page.locator("#applyResolution").click()
+def ensure_control_lease(page: Any, timeout_seconds: int = 15) -> bool:
+    if page.evaluate("() => !!WebRTC?.hasActiveControl?.()"):
+        return True
+    page.locator("#requestControlBtn").click()
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if page.evaluate("() => !!WebRTC?.hasActiveControl?.()"):
+            return True
+        page.wait_for_timeout(100)
+    return False
+
+
+def select_resolution(page: Any, phase: str) -> bool:
+    if not ensure_control_lease(page):
+        return False
+    dimensions = {"720p": (1280, 720), "1080p": (1920, 1080)}[phase]
+    return bool(page.evaluate("""async ({ width, height }) => {
+      WebRTC.setAdaptiveResolutionEnabled(false);
+      return await WebRTC.requestResolution(width, height);
+    }""", {"width": dimensions[0], "height": dimensions[1]}))
 
 
 def _wait_for_phase(page: Any, expected: str, timeout_seconds: int = 15) -> bool:
@@ -249,25 +297,10 @@ def _wait_for_phase(page: Any, expected: str, timeout_seconds: int = 15) -> bool
 
 
 def record_interactions(page: Any, enabled: bool) -> dict[str, Any]:
+    reason = "controlled producer identity cannot be verified from a Viewer-only session"
     if not enabled:
-        return {"status": "NOT_RUN", "reason": "requires --controlled-producer-id; collector never sends desktop input to an uncontrolled host"}
-    page.locator("#requestControlBtn").click()
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        active = page.evaluate("() => !!(WebRTC?.canEnableDesktopInput?.() && Input?.isActive)")
-        if active:
-            break
-        page.wait_for_timeout(100)
-    box = page.locator("#remoteVideo").bounding_box()
-    if not box:
-        return {"status": "FAIL", "reason": "remote video has no bounding box"}
-    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-    page.mouse.move(x, y)
-    page.mouse.wheel(0, 120)
-    page.mouse.move(x - 20, y - 20); page.mouse.down(); page.mouse.move(x + 20, y + 20, steps=4); page.mouse.up()
-    page.locator("#remoteVideo").focus(); page.keyboard.press("Tab")
-    page.wait_for_timeout(1000)
-    return {"status": "RECORDED", "input": redact_runtime_sample(page.evaluate(SAMPLE_JS)).get("input"), "acks": redact_runtime_sample(page.evaluate(SAMPLE_JS)).get("inputAcks")}
+        reason = "requires a controlled producer and host-side event correlation"
+    return {"status": "NOT_RUN", "reason": reason}
 
 
 def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
@@ -285,9 +318,29 @@ def record_pause_resume_refresh(page: Any) -> dict[str, Any]:
         page.wait_for_timeout(100)
     before_refresh = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
     page.locator("#refreshBtn").click()
-    page.wait_for_timeout(1000)
+    refresh_healthy = False
+    try:
+        wait_for_healthy_relay(page, timeout_seconds=15)
+        refresh_healthy = True
+    except RuntimeError:
+        pass
     after_refresh = page.evaluate("() => ({ attempt: WebRTC?.currentConnectionAttemptId || null, frame: Number(WebRTC?._videoFrameSeq || 0) })")
-    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh}}
+    refresh_fresh = after_refresh["frame"] > before_refresh["frame"]
+    return {"pauseResume": {"suspended": suspended, "active": active, "freshFrame": resumed, "baseline": baseline}, "refresh": {"before": before_refresh, "after": after_refresh, "healthyRelay": refresh_healthy, "freshFrame": refresh_fresh}}
+
+
+def marker_failures(marker: dict[str, Any]) -> list[str]:
+    failures = []
+    pause = marker.get("pauseResumeRefresh", {}).get("pauseResume", {})
+    refresh = marker.get("pauseResumeRefresh", {}).get("refresh", {})
+    if not (pause.get("suspended") and pause.get("active") and pause.get("freshFrame")):
+        failures.append("pause-resume")
+    if not (refresh.get("healthyRelay") and refresh.get("freshFrame")):
+        failures.append("refresh")
+    # A controlled producer cannot be authenticated through only a captured
+    # video stream, so product interaction/static-text gates stay NOT RUN.
+    failures.append("static-text-and-input-not-run")
+    return failures
 
 
 def write_json_atomically(output: Path, artifact: dict[str, Any]) -> None:
@@ -315,7 +368,7 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         raise RuntimeError(f"active Viewer present (viewerCount={status_body.get('viewerCount')}); refusing headless collector")
     admission_code, admission_body = _json_request(f"{args.base_url}/api/proof-admission", method="POST", headers=headers)
     admission = admission_body.get("admission") or {}
-    if admission_code != 200 or not admission.get("token"):
+    if not proof_admission_accepted(admission_code, admission_body):
         raise RuntimeError(f"proof admission failed: HTTP {admission_code}")
     cfg_code, cfg = _json_request(f"{args.base_url}/api/webrtc-config", headers=headers)
     if cfg_code != 200 or not cfg.get("turnConfigured") or not cfg.get("hostTurnReady") or cfg.get("turnFingerprint") != cfg.get("hostTurnFingerprint"):
@@ -330,19 +383,24 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context(viewport={"width": 1440, "height": 960})
+            seed_viewer_storage(context, token, admission)
             page = context.new_page()
-            page.add_init_script("""({ token, admission }) => { localStorage.setItem('wrd_token', token); localStorage.setItem('wrdNetworkMode', 'relay'); sessionStorage.setItem('wrdProofAdmission', JSON.stringify(admission)); }""", {"token": token, "admission": admission})
             page.goto(f"{args.base_url}/viewer.html", wait_until="domcontentloaded", timeout=45000)
             page.locator("#startBtn").wait_for(timeout=20000)
             start_viewer(page)
             artifact["startedRelay"] = wait_for_healthy_relay(page)
             _install_input_ack_observer(page)
             for phase in phases:
-                select_resolution(page, phase)
+                if not select_resolution(page, phase):
+                    raise RuntimeError(f"could not acquire control lease or apply {phase} resolution")
                 page.wait_for_timeout(1500)
+                # A resolution request may recreate media state; require the
+                # selected relay predicate again before taking evidence.
+                wait_for_healthy_relay(page)
                 duration = phase_duration_seconds(phase, args.duration_seconds)
-                marker = {"staticText": "RECORDED", "scrollDragKeyboard": record_interactions(page, bool(args.controlled_producer_id)), "pauseResumeRefresh": record_pause_resume_refresh(page)}
+                marker = {"staticText": {"status": "NOT_RUN", "reason": "Viewer screenshots cannot authenticate a controlled Host page"}, "scrollDragKeyboard": record_interactions(page, bool(args.controlled_producer_id)), "pauseResumeRefresh": record_pause_resume_refresh(page)}
                 screenshots = []
+                screenshot_errors = []
                 output_path = Path(args.output)
                 screenshot_dir = output_path.with_suffix(output_path.suffix + ".screens")
                 screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -352,15 +410,21 @@ def run(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
                     label = screenshot_marks.get(index)
                     if label:
                         target = screenshot_dir / f"{artifact['runId']}-{phase}-{label}.png"
-                        page.locator("#remoteVideo").screenshot(path=str(target))
-                        screenshots.append(str(target))
+                        try:
+                            page.locator("#remoteVideo").screenshot(path=str(target))
+                            screenshots.append(str(target))
+                        except Exception as error:
+                            screenshot_errors.append({"label": label, "message": str(error)})
                     return page.evaluate(SAMPLE_JS)
 
                 samples = collect_phase_samples(duration, sample=sample, wait_ms=page.wait_for_timeout)
-                summary = summarize_phase(phase, samples)
-                summary["requiredSampleCount"] = duration
-                summary["ok"] = summary["ok"] and len(samples) == duration
-                artifact["phases"].append({"phase": phase, "durationSeconds": duration, "markers": marker, "screenshots": screenshots, "samples": samples, "summary": summary})
+                summary = summarize_phase(phase, samples, duration_seconds=duration)
+                summary["markerFailures"] = marker_failures(marker)
+                if screenshot_errors or len(screenshots) != 3:
+                    summary["failures"] = sorted(set(summary["failures"] + ["screenshot-sidecar-incomplete"]))
+                summary["failures"] = sorted(set(summary["failures"] + summary["markerFailures"]))
+                summary["ok"] = not summary["failures"]
+                artifact["phases"].append({"phase": phase, "durationSeconds": duration, "markers": marker, "screenshots": {"status": "COMPLETE" if not screenshot_errors and len(screenshots) == 3 else "INCOMPLETE", "paths": screenshots, "errors": screenshot_errors}, "samples": samples, "summary": summary})
         finally:
             browser.close()
     artifact["ok"] = bool(artifact["phases"]) and all(phase["summary"]["ok"] for phase in artifact["phases"])

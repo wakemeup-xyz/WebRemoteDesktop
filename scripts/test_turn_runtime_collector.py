@@ -39,16 +39,28 @@ def test_continuous_collector_retains_each_one_hertz_sample_after_first_healthy_
         now_ms=lambda: now[0],
         wait_ms=wait,
     )
-    assert len(samples) == 3
-    assert [sample["sampleIndex"] for sample in samples] == [0, 1, 2]
-    assert [sample["elapsedMs"] for sample in samples] == [0, 1000, 2000]
+    assert len(samples) == 4
+    assert [sample["sampleIndex"] for sample in samples] == [0, 1, 2, 3]
+    assert [sample["elapsedMs"] for sample in samples] == [0, 1000, 2000, 3000]
+
+
+def test_continuous_collector_marks_slow_samples_and_summary_fails_cadence():
+    now = [0]
+    def slow_sample(_index):
+        now[0] += 2500
+        return {"selectedPair": {"type": "relay"}, "pcConnectionState": "connected", "socketConnected": True,
+                "resolution": {"width": 1280, "height": 720}, "derivedFps": 20, "paintGapMs": 10, "jitterBufferMs": 20}
+    samples = collector.collect_phase_samples(2, sample=slow_sample, now_ms=lambda: now[0], wait_ms=lambda ms: now.__setitem__(0, now[0] + ms))
+    assert samples[-1]["elapsedMs"] >= 2000
+    assert any(sample["cadenceLateMs"] > 250 for sample in samples)
+    assert "sample-cadence" in collector.summarize_phase("720p", samples)["failures"]
 
 
 def test_phase_summary_rejects_later_disconnected_or_non_relay_sample():
     summary = collector.summarize_phase("720p", [
-        {"selectedPair": {"type": "relay"}, "pcConnectionState": "connected", "decodedDelta": 20, "derivedFps": 20, "paintGapMs": 50, "jitterBufferMs": 20},
-        {"selectedPair": {"type": "host"}, "pcConnectionState": "disconnected", "decodedDelta": 0, "derivedFps": 0, "paintGapMs": 1200, "jitterBufferMs": 20},
-    ])
+        {"elapsedMs": 0, "cadenceLateMs": 0, "selectedPair": {"type": "relay"}, "pcConnectionState": "connected", "socketConnected": True, "resolution": {"height": 720}, "decodedDelta": 20, "derivedFps": 20, "paintGapMs": 50, "jitterBufferMs": 20},
+        {"elapsedMs": 1000, "cadenceLateMs": 0, "selectedPair": {"type": "host"}, "pcConnectionState": "disconnected", "socketConnected": True, "resolution": {"height": 720}, "decodedDelta": 0, "derivedFps": 0, "paintGapMs": 1200, "jitterBufferMs": 20},
+    ], duration_seconds=1)
     assert summary["ok"] is False
     assert sorted(summary["failures"]) == ["fps-p50", "non-relay-sample", "pc-not-connected", "post-warmup-paint-gap"]
 
@@ -60,6 +72,29 @@ def test_runtime_sample_redacts_candidate_addresses_and_credentials():
         "turnCredential": "secret-password",
     })
     assert sample == {"selectedPair": {"type": "relay", "protocol": "udp"}}
+
+
+def test_summary_fails_closed_for_missing_paint_socket_or_wrong_resolution():
+    samples = [{"elapsedMs": 0, "cadenceLateMs": 0, "selectedPair": {"type": "relay"}, "pcConnectionState": "connected", "socketConnected": False,
+                "resolution": {"width": 0, "height": 0}, "derivedFps": 20, "paintGapMs": None, "jitterBufferMs": 20} for _ in range(601)]
+    summary = collector.summarize_phase("720p", samples)
+    assert {"socket-not-connected", "resolution-class", "missing-paint-gap"}.issubset(summary["failures"])
+
+
+def test_seeded_storage_uses_python_playwright_single_script_argument():
+    calls = []
+    class Context:
+        def add_init_script(self, script=None, *, path=None):
+            calls.append((script, path))
+    collector.seed_viewer_storage(Context(), "token-value", {"token": "admission-value"})
+    assert len(calls) == 1
+    assert "token-value" in calls[0][0]
+    assert "admission-value" in calls[0][0]
+
+
+def test_proof_admission_accepts_server_created_status():
+    assert collector.proof_admission_accepted(201, {"admission": {"token": "one-time"}})
+    assert not collector.proof_admission_accepted(200, {"admission": {}})
 
 
 def test_viewer_bootstrap_clicks_start_after_admission_storage_is_seeded():
