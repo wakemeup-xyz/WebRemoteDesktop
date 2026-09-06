@@ -38,6 +38,20 @@ def verify_artifact(artifact: Mapping[str, Any], verifier: bytes) -> bool:
     return isinstance(signature, str) and hmac.compare_digest(signature, sign_artifact(artifact, verifier))
 
 
+def _seal_artifact(artifact: dict[str, Any], verifier: bytes) -> dict[str, Any]:
+    """Record an in-Lab self-verification without ever serializing its secret."""
+    artifact["verification"] = {
+        "algorithm": "HMAC-SHA256",
+        "verifierSource": "lab-transcript-verifier/sha256:" + hashlib.sha256(verifier).hexdigest(),
+        "selfVerified": True,
+        "verifiedBeforeLabClose": True,
+    }
+    artifact["signature"] = sign_artifact(artifact, verifier)
+    if not verify_artifact(artifact, verifier):
+        raise RuntimeError("Lab artifact self-verification failed")
+    return artifact
+
+
 def _identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     required = ("runId", "realm", "origin", "epoch")
     if not all(isinstance(identity.get(key), str) and identity[key] for key in required[:-1]) or not isinstance(identity.get("epoch"), int):
@@ -54,8 +68,52 @@ def _observer_state(summaries: list[Mapping[str, Any]]) -> dict[str, Any]:
     return observer
 
 
+def _valid_scope(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    attempt, generation, stream = value.get("attemptId"), value.get("generation"), value.get("streamId")
+    if not isinstance(attempt, str) or not attempt or not isinstance(generation, int) or isinstance(generation, bool) or generation < 0 or not isinstance(stream, str) or not stream:
+        return None
+    return {"attemptId": attempt, "generation": generation, "streamId": stream}
+
+
+def _matches_scope(value: Mapping[str, Any], scope: Mapping[str, Any]) -> bool:
+    return all(value.get(key) == scope[key] for key in ("attemptId", "generation", "streamId"))
+
+
+def _has_valid_observer_origin(observer: Mapping[str, Any], scope: Mapping[str, Any] | None) -> bool:
+    """Require the Host snapshot to preserve a nonzero uint32 mapping for this Viewer stream."""
+    if scope is None:
+        return False
+    origins = observer.get("originByStream")
+    if not isinstance(origins, Mapping):
+        return False
+    prefix = "|".join((scope["attemptId"], str(scope["generation"]), scope["streamId"])) + "|"
+    return any(
+        isinstance(key, str) and key.startswith(prefix)
+        and isinstance(origin, int) and not isinstance(origin, bool) and 0 < origin <= 0xFFFFFFFF
+        for key, origin in origins.items()
+    )
+
+
+def _diagnostics_failures(value: Any) -> set[str]:
+    if not isinstance(value, Mapping):
+        return {"viewer-diagnostics-missing"}
+    failures: set[str] = set()
+    if value.get("acceptanceState") == "UNALIGNED":
+        failures.add("viewer-diagnostics-unaligned")
+    for field in ("droppedTraceCount", "invalidBatchCount", "staleTraceCount", "conflictingTraceCount"):
+        count = value.get(field)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            failures.add(f"viewer-diagnostics-{field}-invalid")
+        elif count:
+            failures.add(f"viewer-diagnostics-{field}")
+    return failures
+
+
 def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[int], Mapping[str, Any]],
-                             verifier: bytes, wait: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+                             verifier: bytes, now: Callable[[], float] = time.monotonic,
+                             wait: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     """Capture 0..60 inclusive samples and seal all T3 evidence classes.
 
     There are 61 observations so the final sample proves the wall-clock end of
@@ -67,10 +125,14 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
     summaries: list[dict[str, Any]] = []
     batches: list[dict[str, Any]] = []
     joins: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
+    windows: list[dict[str, Any]] = []
     failures: set[str] = set()
-    started = time.monotonic()
+    expected_scope: dict[str, Any] | None = None
+    samples_by_index: dict[int, dict[str, Any]] = {}
+    started = now()
     for index in range(RUN_SECONDS + 1):
-        delay = started + index - time.monotonic()
+        delay = started + index - now()
         if delay > 0:
             wait(delay)
         raw = sample(index)
@@ -79,6 +141,14 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
         host_summaries = raw.get("hostSummaries")
         trace_batches = raw.get("frameTraceBatches")
         rvfc_joins = raw.get("rvfcJoins")
+        viewer_diagnostics = raw.get("viewerDiagnostics")
+        current_scope = _valid_scope(raw.get("scope"))
+        if current_scope is None:
+            failures.add("sample-scope-invalid")
+        elif expected_scope is None:
+            expected_scope = current_scope
+        elif current_scope != expected_scope:
+            failures.add("sample-scope-mismatch")
         if not isinstance(host_summaries, list):
             failures.add("malformed-host-summary")
             host_summaries = []
@@ -97,20 +167,77 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
             observer = summary.get("observer")
             if not isinstance(observer, Mapping) or observer.get("enabled") is not True:
                 failures.add("observer-incompatible")
+            elif not _has_valid_observer_origin(observer, expected_scope):
+                failures.add("observer-origin-missing-or-invalid")
             if summary.get("alignmentState") != "OBSERVED":
                 failures.add("host-summary-unaligned")
+            counts = summary.get("counts")
+            coverage = summary.get("coverage")
+            trace_state = summary.get("traces")
+            output_count = counts.get("outputs") if isinstance(counts, Mapping) else None
+            source_output_count = trace_state.get("sourceOutputFrameCount") if isinstance(trace_state, Mapping) else None
+            wire_bound_count = trace_state.get("wireBoundCount") if isinstance(trace_state, Mapping) else None
+            if (not isinstance(output_count, int) or isinstance(output_count, bool) or output_count <= 0
+                    or not isinstance(source_output_count, int) or isinstance(source_output_count, bool)
+                    or not isinstance(wire_bound_count, int) or isinstance(wire_bound_count, bool)
+                    or source_output_count != output_count or wire_bound_count != output_count):
+                failures.add("host-output-count-mismatch")
+            if not isinstance(coverage, Mapping) or coverage.get("sourceToWire") != 1.0:
+                failures.add("host-source-to-wire-incomplete")
+            if not isinstance(trace_state, Mapping) or trace_state.get("alignmentFailureCount") != 0:
+                failures.add("host-alignment-failure")
+            if not isinstance(trace_state, Mapping) or trace_state.get("droppedTraceCount") != 0:
+                failures.add("host-diagnostic-drop")
         for batch in batch_rows:
-            if batch.get("type") != "frame_trace_batch" or batch.get("schemaVersion") != 1:
+            traces = batch.get("traces")
+            if batch.get("type") != "frame_trace_batch" or batch.get("schemaVersion") != 1 or not isinstance(traces, list) or not traces:
                 failures.add("invalid-raw-frame-trace-batch")
-        elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
-        samples.append({"sampleIndex": index, "elapsedMs": elapsed_ms,
-                        "hostSummaryCount": len(host_rows), "frameTraceBatchCount": len(batch_rows),
-                        "rvfcJoinCount": len(join_rows)})
+            elif (batch.get("droppedTraceCount") is not None
+                  and (not isinstance(batch.get("droppedTraceCount"), int)
+                       or isinstance(batch.get("droppedTraceCount"), bool)
+                       or batch["droppedTraceCount"] < 0)):
+                failures.add("invalid-raw-frame-trace-batch")
+            elif batch.get("droppedTraceCount", 0) != 0:
+                failures.add("raw-batch-diagnostic-drop")
+            elif expected_scope is not None and any(not isinstance(trace, Mapping) or not _matches_scope(trace, expected_scope) for trace in traces):
+                failures.add("batch-scope-mismatch")
+        if expected_scope is not None and any(not _matches_scope(join, expected_scope) or join.get("traceStatus") != "matched" for join in join_rows):
+            failures.add("rvfc-join-scope-or-status-mismatch")
+        failures.update(_diagnostics_failures(viewer_diagnostics))
+        elapsed_ms = max(0, round((now() - started) * 1000))
+        if elapsed_ms < index * 1000:
+            failures.add("sample-cadence-under-1s")
+        sample_row = {"sampleIndex": index, "elapsedMs": elapsed_ms,
+                      "hostSummaryCount": len(host_rows), "frameTraceBatchCount": len(batch_rows),
+                      "rvfcJoinCount": len(join_rows), "viewerDiagnostics": dict(viewer_diagnostics) if isinstance(viewer_diagnostics, Mapping) else None}
+        samples.append(sample_row); samples_by_index[index] = {**sample_row, "hostSummaries": host_rows,
+                                                                 "frameTraceBatches": batch_rows, "rvfcJoins": join_rows}
         summaries.extend(host_rows); batches.extend(batch_rows); joins.extend(join_rows)
+        if isinstance(viewer_diagnostics, Mapping):
+            diagnostics.append(dict(viewer_diagnostics))
     if not summaries:
         failures.add("missing-host-summary")
     if not batches:
         failures.add("missing-raw-frame-trace-batch")
+    if expected_scope is None:
+        failures.add("sample-scope-invalid")
+        expected_scope = {}
+    for end in range(5, RUN_SECONDS + 1, 5):
+        rows = [samples_by_index[index] for index in range(end - 4, end + 1)]
+        host_count = sum(len(row["hostSummaries"]) for row in rows)
+        batch_count = sum(len(row["frameTraceBatches"]) for row in rows)
+        join_count = sum(len(row["rvfcJoins"]) for row in rows)
+        window = {"startSecond": end - 4, "endSecond": end, "hostSummaryCount": host_count,
+                  "frameTraceBatchCount": batch_count, "rvfcJoinCount": join_count}
+        windows.append(window)
+        if not host_count:
+            failures.add(f"window-{end}-host-summary-missing")
+        if not batch_count:
+            failures.add(f"window-{end}-raw-batch-missing")
+        if not join_count:
+            failures.add(f"window-{end}-rvfc-join-missing")
+    if samples[-1]["elapsedMs"] < RUN_SECONDS * 1000:
+        failures.add("final-elapsed-under-60s")
     observer = _observer_state(summaries)
     if not observer or observer.get("enabled") is not True:
         failures.add("observer-incompatible")
@@ -124,6 +251,9 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
         "hostSummaries": summaries,
         "frameTraceBatches": batches,
         "rvfcJoins": joins,
+        "viewerDiagnostics": diagnostics,
+        "scope": expected_scope,
+        "windows": windows,
         "observer": observer,
         # The existing encoder cannot independently delimit a reformat stage.
         # Leave it explicit instead of converting an absent boundary into 0ms.
@@ -131,8 +261,7 @@ def collect_fixed_60_seconds(*, identity: Mapping[str, Any], sample: Callable[[i
         "failures": sorted(failures),
         "status": "OBSERVED" if not failures else "UNALIGNED",
     }
-    artifact["signature"] = sign_artifact(artifact, verifier)
-    return artifact
+    return _seal_artifact(artifact, verifier)
 
 
 def write_artifact(path: Path, artifact: Mapping[str, Any]) -> None:
@@ -170,21 +299,36 @@ def _install_viewer_trace_tap(page: Any) -> None:
       window.__wrdT3TraceBatches = [];
       const prior = WebRTC.acceptFrameTraceBatch.bind(WebRTC);
       WebRTC.acceptFrameTraceBatch = (batch) => {
-        try { window.__wrdT3TraceBatches.push(JSON.parse(JSON.stringify(batch))); } catch (_) {}
-        return prior(batch);
+        const before = WebRTC.getFrameTraceDiagnostics();
+        const result = prior(batch);
+        const after = WebRTC.getFrameTraceDiagnostics();
+        // The raw batch is evidence only after the real Viewer collector has
+        // accepted it.  A rejected, stale, conflicting, or dropped batch must
+        // not become archival evidence merely because it reached this hook.
+        const accepted = after.acceptanceState !== 'UNALIGNED'
+          && after.droppedTraceCount === before.droppedTraceCount
+          && after.invalidBatchCount === before.invalidBatchCount
+          && after.staleTraceCount === before.staleTraceCount
+          && after.conflictingTraceCount === before.conflictingTraceCount;
+        if (accepted) {
+          try { window.__wrdT3TraceBatches.push(JSON.parse(JSON.stringify(batch))); } catch (_) {}
+        }
+        return result;
       };
     }""")
 
 
-def _drain_viewer_trace_tap(page: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _drain_viewer_trace_tap(page: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     value = page.evaluate("""() => {
       const batches = Array.isArray(window.__wrdT3TraceBatches) ? window.__wrdT3TraceBatches.splice(0) : [];
       const joins = WebRTC.frameTraceCollector?.takeMatched?.() || [];
-      return { batches, joins };
+      return { batches, joins, diagnostics: WebRTC.getFrameTraceDiagnostics?.() || null };
     }""")
     if not isinstance(value, Mapping):
-        return [], []
-    return (list(value.get("batches") or []), list(value.get("joins") or []))
+        return [], [], {}
+    diagnostics = value.get("diagnostics")
+    return (list(value.get("batches") or []), list(value.get("joins") or []),
+            dict(diagnostics) if isinstance(diagnostics, Mapping) else {})
 
 
 def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
@@ -211,9 +355,18 @@ def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
                         "identity": {"runId": identity.run_id, "realm": identity.realm, "origin": identity.origin, "epoch": identity.epoch},
                         "durationSeconds": RUN_SECONDS, "status": "BLOCKED", "failures": [reason, "headed-fixture-required"],
                         "reformat": {"status": "UNAVAILABLE", "reason": "no-independent-reformat-boundary"}}
-            artifact["signature"] = sign_artifact(artifact, lab.transcript_verifier())
+            artifact = _seal_artifact(artifact, lab.transcript_verifier())
             write_artifact(output, artifact)
             return 2
+        # Query the actual identity consumed by rVFC rather than reconstructing
+        # it from the adapter's presentation-only session metadata.
+        session = adapter.viewer_page.evaluate("""() => (
+          typeof WebRTC === 'object' && typeof WebRTC.currentFrameTraceIdentity === 'function'
+            ? WebRTC.currentFrameTraceIdentity() : null
+        )""")
+        scope = _valid_scope(session)
+        if scope is None:
+            raise RuntimeError("Lab Viewer did not expose a stable trace scope")
         _install_viewer_trace_tap(adapter.viewer_page)
         log_path = lab.runtime_dir() / "host.stderr.log"
         offset = 0
@@ -221,13 +374,17 @@ def run_live(*, viewer_token: str, output: Path, headed_producer: bool) -> int:
         def one_sample(_index: int) -> dict[str, Any]:
             nonlocal offset
             offset, summaries = _drain_host_summaries(log_path, offset)
-            batches, joins = _drain_viewer_trace_tap(adapter.viewer_page)
-            return {"hostSummaries": summaries, "frameTraceBatches": batches, "rvfcJoins": joins}
+            batches, joins, diagnostics = _drain_viewer_trace_tap(adapter.viewer_page)
+            return {"scope": scope, "hostSummaries": summaries, "frameTraceBatches": batches,
+                    "rvfcJoins": joins, "viewerDiagnostics": diagnostics}
 
+        captured_verifier = lab.transcript_verifier()
         artifact = collect_fixed_60_seconds(
             identity={"runId": identity.run_id, "realm": identity.realm, "origin": identity.origin, "epoch": identity.epoch},
-            sample=one_sample, verifier=lab.transcript_verifier(), wait=lambda seconds: adapter.viewer_page.wait_for_timeout(seconds * 1000),
+            sample=one_sample, verifier=captured_verifier, wait=lambda seconds: adapter.viewer_page.wait_for_timeout(seconds * 1000),
         )
+        if not verify_artifact(artifact, captured_verifier) or artifact.get("verification", {}).get("selfVerified") is not True:
+            raise RuntimeError("Lab artifact did not verify before close")
         write_artifact(output, artifact)
         return 0 if artifact["status"] == "OBSERVED" else 1
     finally:
