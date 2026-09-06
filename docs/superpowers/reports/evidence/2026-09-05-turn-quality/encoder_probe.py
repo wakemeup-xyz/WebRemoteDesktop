@@ -76,16 +76,21 @@ def make_static_text_frame(width: int, height: int, font: ImageFont.ImageFont) -
 
 
 def legacy_encoder_settings(bitrate_bps: int, policy) -> dict[str, Any]:
-    """Report the current code's x264 settings without changing them."""
-    x264_params = libx264_zerolatency_options(
+    """Report the encoder settings configured by the probe without changing them."""
+    x264_options = libx264_zerolatency_options(
         bitrate_bps,
         policy.periodic_idr_frames,
         policy.vbv_buffer_ms,
-    )["x264-params"]
+    )
+    x264_params = x264_options["x264-params"]
     match = re.search(r"vbv-bufsize=(\d+)", x264_params)
     vbv_kbits = int(match.group(1)) if match else 0
     return {
         "codec": policy.codec_name,
+        "preset": x264_options["preset"],
+        "tune": x264_options["tune"],
+        "profile": policy.profile,
+        "targetFps": policy.target_fps,
         "bitrateBps": bitrate_bps,
         "gopFrames": policy.periodic_idr_frames,
         "vbvKbits": vbv_kbits,

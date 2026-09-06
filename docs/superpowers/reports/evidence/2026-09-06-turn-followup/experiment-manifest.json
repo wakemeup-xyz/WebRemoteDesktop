@@ -1,0 +1,9 @@
+{
+  "scope": "Fresh VBV refinement and encoder-window evidence; runtime raw artifact digests are in runtime-manifest.json.",
+  "files": {
+    "scripts/eval-turn-encoder-quality.py": "b29fe60dd9893d91f9ca72922e08c1f71bead0ce0e4d6960e980cc8e1fa8790f",
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "f336c8978e68db6c1381b712e3b867bba08704a849168403189bfc68356af1fd",
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/vbv-refinement.json": "04a17824ea01799ab768e3b8a9630e27b7e2654fef30526d0bd2656b4a04c565",
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/endurance-encoder-windows.json": "1ed9cc2bfecfb70bc5d43cad1dd207736f4389da32c953ecfe641bb32b7f9c3e"
+  }
+}
