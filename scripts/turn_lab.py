@@ -68,12 +68,13 @@ class ProductionAdmissionClient:
         if not isinstance(viewer_token, str) or not viewer_token:
             raise ValueError("a Viewer access token is required for production admission")
         self._viewer_token = viewer_token
+        self._proof: ProductionProof | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         raise TypeError("ProductionAdmissionClient is final")
 
-    def _request_json(self, path: str, *, method: str = "GET", headers: Mapping[str, str] | None = None) -> tuple[int, Mapping[str, Any]]:
-        request = Request(f"{self.origin}{path}", method=method, headers=dict(headers or {}))
+    def _request_json(self, path: str, *, method: str = "GET", headers: Mapping[str, str] | None = None, body: Mapping[str, Any] | None = None) -> tuple[int, Mapping[str, Any]]:
+        request = Request(f"{self.origin}{path}", method=method, headers=dict(headers or {}), data=json.dumps(body).encode() if body is not None else None)
         with urlopen(request, timeout=5) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
 
@@ -89,7 +90,8 @@ class ProductionAdmissionClient:
         if (code != 201 or not isinstance(admission, Mapping) or admission.get("realm") != "production"
                 or not isinstance(admission.get("token"), str) or not admission["token"] or admission.get("epoch") != epoch):
             raise RuntimeError("production proof admission was not granted for the observed epoch")
-        return _seal_production_proof(admission["token"], epoch)
+        self._proof = _seal_production_proof(admission["token"], epoch)
+        return self._proof
 
     def status(self) -> tuple[int, int]:
         code, status = self._request_json("/api/status")
@@ -97,6 +99,28 @@ class ProductionAdmissionClient:
         if code != 200 or not isinstance(epoch, int) or not isinstance(viewers, int):
             raise RuntimeError("production status missing viewer epoch/count")
         return epoch, viewers
+
+    def proof_active(self, proof: ProductionProof) -> bool:
+        if proof is not self._proof:
+            return False
+        try:
+            code, payload = self._request_json("/api/proof-admission/status", method="POST", headers={"Authorization": f"Bearer {self._viewer_token}", "Content-Type": "application/json"}, body={"token": proof.token, "epoch": proof.epoch, "realm": proof.realm})
+            return code == 200 and payload.get("active") is True
+        except Exception:
+            return False
+
+    def release(self, proof: ProductionProof | None = None) -> bool:
+        target = proof or self._proof
+        if target is None or target is not self._proof:
+            return False
+        try:
+            code, payload = self._request_json("/api/proof-admission/release", method="POST", headers={"Authorization": f"Bearer {self._viewer_token}", "Content-Type": "application/json"}, body={"token": target.token, "epoch": target.epoch, "realm": target.realm})
+            released = code == 200 and payload.get("released") is True
+        except Exception:
+            released = False
+        if released:
+            self._proof = None
+        return released
 
 
 @dataclass(frozen=True)
@@ -119,6 +143,7 @@ class LabRun:
         self._runtime_dir: Path | None = None; self._children: list[subprocess.Popen[Any]] = []; self._handles: list[Any] = []
         self._stop_signal: Callable[[], None] | None = None; self.identity: LabIdentity | None = None; self._context: dict[str, Any] | None = None
         self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch: int | None = None
+        self._production_proof: ProductionProof | None = None; self._expected_identity: LabIdentity | None = None
         self.closed = True; self._lock = threading.RLock(); self._watch_stop = threading.Event(); self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
 
     def start(self, mode: str, manifest: Mapping[str, Any] | None = None) -> LabIdentity:
@@ -128,9 +153,9 @@ class LabRun:
             if manifest is None: raise ValueError("candidate manifest is required")
             from turn_lab_host import verify_candidate_manifest
             verify_candidate_manifest(manifest)
+        self.close()
         proof = self._production_client.admit()
         if not isinstance(proof, ProductionProof): raise RuntimeError("production admission did not return a sealed proof")
-        self.close()
         parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
         self._runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
         with self._lock:
@@ -148,7 +173,8 @@ class LabRun:
             self._context["credential"] = self._issue_host_context(lab, self._context)
             with self._lock:
                 self._host_secret, self._viewer_password, self._context_secret = lab.host_secret, lab.viewer_password, lab.context_secret
-                self._production_epoch, self.closed, self._last_status = proof.epoch, False, "running"; self._watch_stop.clear()
+                self._production_epoch, self._production_proof, self._expected_identity = proof.epoch, proof, self.identity
+                self.closed, self._last_status = False, "running"; self._watch_stop.clear()
                 self._watch_thread = threading.Thread(target=self._watchdog, name=f"wrd-lab-watch-{run_id}", daemon=True); self._watch_thread.start()
             return self.identity
         except Exception:
@@ -216,17 +242,27 @@ class LabRun:
             log = (self._runtime_dir / "host.stderr.log").open("wb"); self._handles.append(log)
             proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name("turn_lab_host.py"))], cwd=Path(__file__).resolve().parents[1], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True); self._children.append(proc); return proc
 
-    def monitor(self, *, lab_identity: LabIdentity | None = None) -> str: return self._last_status
+    def monitor(self, *, lab_identity: LabIdentity | None = None) -> str:
+        with self._lock:
+            mismatch = not self.closed and lab_identity is not None and lab_identity != self._expected_identity
+            if mismatch:
+                self._last_status = "stopped:lab-identity-changed"
+        if mismatch:
+            self.close()
+        return self._last_status
 
     def _watchdog(self) -> None:
         while not self._watch_stop.wait(0.2):
             with self._lock:
                 if self.closed: return
-                epoch, children = self._production_epoch, tuple(self._children)
+                epoch, proof, expected, current, children = self._production_epoch, self._production_proof, self._expected_identity, self.identity, tuple(self._children)
+            if current != expected:
+                self._stop_from_watchdog("stopped:lab-identity-changed"); return
             try: current_epoch, viewers = self._production_client.status() if self._production_client else (-1, 1)
             except Exception: self._stop_from_watchdog("stopped:production-status-failed"); return
             if viewers > 0: self._stop_from_watchdog("stopped:human-viewer"); return
             if current_epoch != epoch: self._stop_from_watchdog("stopped:production-epoch-changed"); return
+            if proof is None or not self._production_client.proof_active(proof): self._stop_from_watchdog("stopped:production-proof-lost"); return
             if any(child.poll() is not None for child in children): self._stop_from_watchdog("stopped:lab-child-exited"); return
 
     def _stop_from_watchdog(self, status: str) -> None:
@@ -248,7 +284,8 @@ class LabRun:
         with self._lock:
             if self.closed: return
             self.closed = True; self._watch_stop.set(); watch, children, stop = self._watch_thread, tuple(self._children), self._stop_signal; handles, runtime_dir = tuple(self._handles), self._runtime_dir
-            self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None
+            proof = self._production_proof
+            self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
         for child in children:
             self._terminate_child(child)
             for stream in (child.stdout, child.stderr):
@@ -262,6 +299,8 @@ class LabRun:
             try: handle.close()
             except Exception: pass
         if runtime_dir: shutil.rmtree(runtime_dir, ignore_errors=True)
+        if proof is not None and self._production_client is not None:
+            self._production_client.release(proof)
         if watch is not None and watch is not threading.current_thread(): watch.join(timeout=1)
         with self._lock:
             if self._watch_thread is watch: self._watch_thread = None

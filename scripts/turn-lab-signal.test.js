@@ -34,16 +34,39 @@ test('lab signal creates a private runtime with random temporary authentication'
     assert.equal(proof.status, 201);
     const admission = (await proof.json()).admission;
     assert.equal(admission.realm, lab.realm);
+    const leaseStatus = await fetch(`${lab.origin}/api/proof-admission/status`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(admission),
+    });
+    assert.deepEqual(await leaseStatus.json(), { active: true });
+    const malformedLease = await fetch(`${lab.origin}/api/proof-admission/status`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...admission, extra: true }),
+    });
+    assert.equal(malformedLease.status, 400);
+    const mismatchedRelease = await fetch(`${lab.origin}/api/proof-admission/release`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...admission, realm: 'production' }),
+    });
+    assert.deepEqual(await mismatchedRelease.json(), { released: false });
     const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
       body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
     });
     const credential = (await issue.json()).context.credential;
+    const secondIssue = await fetch(`${lab.origin}/api/lab-context/issue`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+    });
+    assert.equal(secondIssue.status, 201);
+    const secondCredential = (await secondIssue.json()).context.credential;
+    assert.notEqual(credential, secondCredential);
     const consume = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ credential }),
     });
     assert.equal(consume.status, 200);
+    const secondConsume = await fetch(`${lab.origin}/api/lab-context/consume`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ credential: secondCredential }),
+    });
+    assert.equal(secondConsume.status, 200);
     const replay = await fetch(`${lab.origin}/api/lab-context/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ credential }),
@@ -68,6 +91,14 @@ test('lab signal creates a private runtime with random temporary authentication'
       body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', extra: true }),
     });
     assert.equal(unknown.status, 400);
+    const released = await fetch(`${lab.origin}/api/proof-admission/release`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(admission),
+    });
+    assert.deepEqual(await released.json(), { released: true });
+    const replayedRelease = await fetch(`${lab.origin}/api/proof-admission/release`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(admission),
+    });
+    assert.deepEqual(await replayedRelease.json(), { released: false });
   } finally {
     await lab.close();
   }

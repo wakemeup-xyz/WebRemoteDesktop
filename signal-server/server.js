@@ -227,6 +227,35 @@ function createServerApp(options = {}) {
     return res.status(201).json({ admission });
   });
 
+  function parseProofLease(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 3 || !['token', 'epoch', 'realm'].every((key) => Object.hasOwn(body, key))
+      || typeof body.token !== 'string' || body.token.length < 16 || body.token.length > 128
+      || !/^[A-Za-z0-9-]+$/.test(body.token) || !Number.isSafeInteger(body.epoch) || body.epoch < 0
+      || typeof body.realm !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(body.realm)) return null;
+    return body;
+  }
+
+  function requireViewerProofLease(req, res, next) {
+    if (req.user.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
+    const lease = parseProofLease(req.body);
+    if (!lease) return res.status(400).json({ error: 'Invalid proof lease body' });
+    req.proofLease = lease;
+    return next();
+  }
+
+  const proofLeaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
+
+  app.post('/api/proof-admission/status', proofLeaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ active: Boolean(signalingRuntime.hasProofAdmission(req.proofLease)) });
+  });
+
+  app.post('/api/proof-admission/release', proofLeaseLimiter, requireConfiguredAccessToken, requireViewerProofLease, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ released: Boolean(signalingRuntime.releaseProofAdmission(req.proofLease)) });
+  });
+
   function buildSnapshotForRequest(req) {
     const requestedTurnServerId = String(
       req.query.turnServerId

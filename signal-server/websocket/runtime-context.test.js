@@ -77,6 +77,19 @@ test('lab can bind only an unconsumed realm-bound proof admission', () => {
   assert.equal(context.hasProofAdmission(admission), false);
 });
 
+test('proof lease status and release require the exact token epoch and realm', () => {
+  const context = createRuntimeContext({ realm: 'production' });
+  const first = context.issueProofAdmission();
+  assert.equal(context.hasProofAdmission(first), true);
+  assert.equal(context.releaseProofAdmission({ ...first, realm: 'lab-other' }), false);
+  assert.equal(context.releaseProofAdmission({ ...first, epoch: first.epoch + 1 }), false);
+  assert.equal(context.releaseProofAdmission({ ...first, token: 'other-token' }), false);
+  assert.equal(context.hasProofAdmission(first), true);
+  assert.equal(context.releaseProofAdmission(first), true);
+  assert.equal(context.hasProofAdmission(first), false);
+  assert.equal(context.releaseProofAdmission(first), false);
+});
+
 test('setupSignaling accepts isolated contexts without cross-instance viewers', () => {
   const first = createRuntimeContext();
   const second = createRuntimeContext();

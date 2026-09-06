@@ -25,7 +25,7 @@ from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _context_from_ve
 class _ProofFixture:
     """Real loopback HTTP fixture; never points at the production port."""
     def __init__(self):
-        self.epoch, self.viewers, self.proofs, self.fail_status = 0, 0, 0, False
+        self.epoch, self.viewers, self.proofs, self.fail_status, self.leases = 0, 0, 0, False, {}
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args): pass
@@ -39,7 +39,14 @@ class _ProofFixture:
             def do_POST(self):
                 if self.path == "/api/proof-admission" and self.headers.get("Authorization") == "Bearer fixture-token":
                     fixture.proofs += 1
-                    return self._json(201, {"admission": {"realm": "production", "token": f"proof-{fixture.proofs}", "epoch": fixture.epoch}})
+                    token = f"proof-token-{fixture.proofs}-long"
+                    fixture.leases[token] = {"token": token, "epoch": fixture.epoch, "realm": "production"}
+                    return self._json(201, {"admission": fixture.leases[token]})
+                if self.path in {"/api/proof-admission/status", "/api/proof-admission/release"} and self.headers.get("Authorization") == "Bearer fixture-token":
+                    length = int(self.headers.get("content-length", "0")); body = json.loads(self.rfile.read(length))
+                    active = fixture.leases.get(body.get("token")) == body
+                    if self.path.endswith("release") and active: fixture.leases.pop(body["token"])
+                    return self._json(200, {"active" if self.path.endswith("status") else "released": active})
                 return self._json(401, {})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
@@ -131,6 +138,42 @@ def test_real_loopback_proof_fixture_admits_once_and_watchdog_stops_on_epoch(tmp
     proof_fixture.epoch = 1
     _wait(lambda: run.closed)
     assert run.monitor() == "stopped:production-epoch-changed"
+
+
+def test_production_proof_lease_is_readable_released_and_loss_stops_watchdog(tmp_path, proof_fixture):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    proof = client.admit(); assert client.proof_active(proof)
+    assert client.release(proof) and not client.proof_active(proof) and not client.release(proof)
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    proof_fixture.leases.clear()
+    _wait(lambda: run.closed); assert run.monitor() == "stopped:production-proof-lost"
+
+
+def test_monitor_identity_gate_and_watchdog_internal_identity_check_fail_closed(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture); identity = run.start("legacy")
+    forged = LabIdentity("other", identity.origin, identity.epoch, identity.realm, "other")
+    assert run.monitor(lab_identity=forged) == "stopped:lab-identity-changed"
+    assert run.closed and run.monitor() == "stopped:lab-identity-changed"
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    run.identity = forged
+    _wait(lambda: run.closed); assert run.monitor() == "stopped:lab-identity-changed"
+
+
+def test_old_identity_cannot_impersonate_restarted_run(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture); old = run.start("legacy"); run.close()
+    assert not proof_fixture.leases
+    current = run.start("legacy")
+    assert old != current
+    assert run.monitor(lab_identity=old) == "stopped:lab-identity-changed"
+    assert run.closed
+
+
+def test_identity_mismatch_reason_survives_concurrent_close(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture); identity = run.start("legacy")
+    forged = LabIdentity("other", identity.origin, identity.epoch, identity.realm, "other")
+    monitor = threading.Thread(target=lambda: run.monitor(lab_identity=forged)); monitor.start(); monitor.join(timeout=2)
+    closer = threading.Thread(target=run.close); closer.start(); closer.join(timeout=2)
+    assert run.monitor() == "stopped:lab-identity-changed" and run.closed
 
 
 def test_watchdog_stops_on_human_viewer_and_child_exit(tmp_path, proof_fixture):

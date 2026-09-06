@@ -28,6 +28,14 @@ function createRuntimeContext(options = {}) {
     }
   }
 
+  function matchesProofAdmission(admission = {}) {
+    const token = typeof admission.token === 'string' ? admission.token : '';
+    const epoch = Number(admission.epoch);
+    const issued = proofAdmissions.get(token);
+    return Boolean(issued && Number.isSafeInteger(epoch) && epoch >= 0
+      && issued.epoch === epoch && admission.realm === realm);
+  }
+
   return {
     connections,
     getHostCapabilities() {
@@ -51,11 +59,13 @@ function createRuntimeContext(options = {}) {
     },
     hasProofAdmission(admission = {}) {
       cleanupExpiredProofAdmissions();
-      const token = String(admission.token || '');
-      const issued = proofAdmissions.get(token);
-      return Boolean(issued
-        && issued.epoch === Number(admission.epoch)
-        && (!requireProofRealm || admission.realm === realm));
+      return matchesProofAdmission(admission);
+    },
+    releaseProofAdmission(admission = {}) {
+      cleanupExpiredProofAdmissions();
+      if (!matchesProofAdmission(admission)) return false;
+      proofAdmissions.delete(admission.token);
+      return true;
     },
     admitProofViewer(admission = {}) {
       cleanupExpiredProofAdmissions();
