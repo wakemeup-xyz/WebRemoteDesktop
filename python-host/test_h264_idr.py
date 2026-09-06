@@ -470,6 +470,9 @@ def test_real_codec_creation_submits_policy_preset_and_preserves_frozen_legacy_o
     assert record.creation_index == 1
     assert record.requested_preset == "superfast"
     assert dict(record.submitted_codec_options)["preset"] == "superfast"
+    assert record.configured_profile == "Baseline"
+    assert record.configured_fps == 20
+    assert record.configured_bitrate_bps == 1_800_000
     assert record.generation == 1
     assert record.reopen_reason == "initial"
     with pytest.raises(TypeError):

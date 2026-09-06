@@ -24,6 +24,7 @@ def finite_frame(index: int, *, idr_kind: str | None = None, token: str | None =
         "phaseIndex": index,
         "inputHash": f"input-{index}",
         "pts": index * 4500,
+        "timeBase": "1/90000",
         "requestToken": token,
         "idr": idr_kind is not None,
         "bitstreamIdrKind": idr_kind,
@@ -68,12 +69,15 @@ def scenario(config, scenario_id: str, start: int, count: int, requests: tuple[i
             "submittedCodecOptions": MODULE.submitted_options(config, resolution),
             "generation": 1,
             "reopenReason": "initial",
+            "configuredProfile": config.profile,
+            "configuredFps": config.fps,
+            "configuredBitrateBps": config.bitrate_by_resolution[f"{resolution[0]}x{resolution[1]}"],
         }],
         "configuredOptions": MODULE.submitted_options(config, resolution),
         "frames": frames,
         "quality": {"status": "PASS"},
         "cost": {"status": "PASS", "encodeMsP95": 1.0},
-        "burst": {"status": "PASS", "idrBytes": [100]},
+        "burst": {"status": "PASS", "idrBytes": [frame["idrBytes"] for frame in frames if frame["idr"]]},
     }
 
 
@@ -161,6 +165,45 @@ class PresetExperimentContractTest(unittest.TestCase):
                 mutate(broken)
                 errors = MODULE.validate_comparison(self.base_run, broken)
                 self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_comparison_rejects_input_hash_or_pts_identity_drift(self):
+        for mutate, expected in (
+            (lambda run: run["runs"][0]["scenarios"][0]["frames"][3].update(inputHash="other"), "input hash drift"),
+            (lambda run: run["runs"][0]["scenarios"][0]["frames"][3].update(pts=999), "PTS drift"),
+            (lambda run: run["runs"][0]["scenarios"][0]["frames"][3].update(timeBase="1/20"), "time base drift"),
+        ):
+            with self.subTest(expected=expected):
+                broken = copy.deepcopy(self.candidate_run)
+                mutate(broken)
+                errors = MODULE.validate_comparison(self.base_run, broken)
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_comparison_recomputes_cost_and_idr_byte_aggregates(self):
+        broken = copy.deepcopy(self.candidate_run)
+        for frame in broken["runs"][0]["scenarios"][0]["frames"]:
+            frame["encodeMs"] = 100.0
+        errors = MODULE.validate_comparison(self.base_run, broken)
+        self.assertTrue(any("scenario cost aggregate drift" in error for error in errors), errors)
+
+        broken = copy.deepcopy(self.candidate_run)
+        safety = broken["runs"][0]["scenarios"][4]
+        safety["frames"][1201]["idrBytes"] = 0
+        safety["burst"]["idrBytes"] = [100, 0]
+        errors = MODULE.validate_comparison(self.base_run, broken)
+        self.assertTrue(any("IDR byte evidence" in error for error in errors), errors)
+
+    def test_comparison_rejects_actual_profile_fps_bitrate_and_parameter_digest_drift(self):
+        broken = copy.deepcopy(self.candidate_run)
+        record = broken["runs"][1]["scenarios"][0]["codecCreationRecords"][0]
+        record["configuredProfile"] = "High"
+        record["configuredFps"] = 60
+        record["configuredBitrateBps"] = 1
+        broken["config"]["encoderParameterDigest"] = "wrong"
+        errors = MODULE.validate_comparison(self.base_run, broken)
+        self.assertTrue(any("configured profile drift" in error for error in errors), errors)
+        self.assertTrue(any("configured fps drift" in error for error in errors), errors)
+        self.assertTrue(any("configured bitrate drift" in error for error in errors), errors)
+        self.assertTrue(any("encoder parameter digest drift" in error for error in errors), errors)
 
 
 if __name__ == "__main__":

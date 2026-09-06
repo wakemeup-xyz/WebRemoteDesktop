@@ -61,6 +61,7 @@ class ExperimentConfig:
             "periodicIdrFrames": self.periodic_idr_frames,
             "options": dict(self.options),
             "optionsDigest": self.options_digest,
+            "encoderParameterDigest": self.options_digest,
         }
 
 
@@ -70,7 +71,15 @@ def _config(config_id: str, preset: str) -> ExperimentConfig:
         "tune": "zerolatency",
         "otherOptionsDigest": "threads=1;zerolatency;baseline;on-demand-cap",
     })
-    canonical = json.dumps(dict(options), sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps({
+        "codec": "libx264", "preset": preset, "profile": "Baseline", "fps": 20,
+        "bitrateByResolution": dict(CAP_BITRATES_BPS), "vbvMs": 200,
+        "periodicIdrFrames": 0,
+        "submittedOptionsByResolution": {
+            key: {"preset": preset, "tune": "zerolatency", "x264-params": _x264_params(bitrate, 200, 0)}
+            for key, bitrate in sorted(CAP_BITRATES_BPS.items())
+        },
+    }, sort_keys=True, separators=(",", ":"))
     return ExperimentConfig(
         id=config_id,
         preset=preset,
@@ -144,6 +153,12 @@ def _record_errors(
             errors.append(f"{scenario_id}: requested preset drift")
         if dict(record.get("submittedCodecOptions", {})) != submitted_options(config, resolution):
             errors.append(f"{scenario_id}: submitted codec options drift")
+        if record.get("configuredProfile") != config.profile:
+            errors.append(f"{scenario_id}: configured profile drift")
+        if record.get("configuredFps") != config.fps:
+            errors.append(f"{scenario_id}: configured fps drift")
+        if record.get("configuredBitrateBps") != config.bitrate_by_resolution[f"{resolution[0]}x{resolution[1]}"]:
+            errors.append(f"{scenario_id}: configured bitrate drift")
         if record.get("reopenReason") != "initial":
             errors.append(f"{scenario_id}: unexpected codec reopen")
     if len(records) != 1:
@@ -176,6 +191,10 @@ def _scenario_errors(
             errors.append(f"{expected_id}: phase index drift")
         if not isinstance(frame.get("inputHash"), str) or not frame["inputHash"]:
             errors.append(f"{expected_id}: incomplete input hash")
+        if frame.get("pts") != frame.get("index") * 4500:
+            errors.append(f"{expected_id}: PTS drift")
+        if frame.get("timeBase") != "1/90000":
+            errors.append(f"{expected_id}: time base drift")
         if any(not _finite(frame.get(key)) for key in ("pts", "bytes", "psnr", "changeMAE", "encodeMs", "decodeMs")):
             errors.append(f"{expected_id}: non-finite frame result")
             break
@@ -221,11 +240,16 @@ def _scenario_errors(
     errors.extend(_record_errors(scenario, config, resolution))
     cost = scenario.get("cost")
     budget = 25.0 if resolution == (1152, 720) else 45.0
-    if not isinstance(cost, Mapping) or cost.get("status") != "PASS" or not _finite(cost.get("encodeMsP95")) or cost["encodeMsP95"] > budget:
+    actual_p95 = sorted(float(frame["encodeMs"]) for frame in frames)[math.ceil(len(frames) * .95) - 1]
+    if not isinstance(cost, Mapping) or cost.get("status") != "PASS" or not _finite(cost.get("encodeMsP95")) or abs(cost["encodeMsP95"] - round(actual_p95, 3)) > 1e-9 or actual_p95 > budget:
         errors.append(f"{expected_id}: scenario cost failure")
+        if isinstance(cost, Mapping) and _finite(cost.get("encodeMsP95")) and abs(cost["encodeMsP95"] - round(actual_p95, 3)) > 1e-9:
+            errors.append(f"{expected_id}: scenario cost aggregate drift")
     if not isinstance(scenario.get("quality"), Mapping):
         errors.append(f"{expected_id}: missing scenario quality")
-    if not isinstance(scenario.get("burst"), Mapping) or not scenario["burst"].get("idrBytes"):
+    actual_idr_bytes = [frame.get("idrBytes") for frame in actual_idrs]
+    if (not isinstance(scenario.get("burst"), Mapping) or scenario["burst"].get("idrBytes") != actual_idr_bytes
+            or not actual_idr_bytes or any(not _finite(value) or value <= 0 for value in actual_idr_bytes)):
         errors.append(f"{expected_id}: missing IDR byte evidence")
     return errors
 
@@ -261,7 +285,10 @@ def validate_comparison(base: Mapping[str, Any], candidate: Mapping[str, Any]) -
     errors: list[str] = []
     for label, run, config in (("base", base, control), ("candidate", candidate, proposed)):
         actual_config = _config_from_run(run)
-        if actual_config != _expected_config(config):
+        if not isinstance(actual_config, Mapping) or actual_config.get("encoderParameterDigest") != config.options_digest:
+            errors.append(f"{label}: encoder parameter digest drift")
+        expected_config = _expected_config(config)
+        if actual_config != expected_config:
             errors.append(f"{label}: immutable config drift")
         runs = run.get("runs") if isinstance(run, Mapping) else None
         if not isinstance(runs, list) or len(runs) != len(RELAY_RESOLUTIONS):
@@ -281,4 +308,17 @@ def validate_comparison(base: Mapping[str, Any], candidate: Mapping[str, Any]) -
     for key in ("input",):
         if base.get(key) != candidate.get(key):
             errors.append(f"candidate: {key} drift")
+    for resolution in RELAY_RESOLUTIONS:
+        base_resolution = next(run for run in base["runs"] if tuple(run["resolution"]) == resolution)
+        candidate_resolution = next(run for run in candidate["runs"] if tuple(run["resolution"]) == resolution)
+        base_scenarios = {scenario["scenarioId"]: scenario for scenario in base_resolution["scenarios"]}
+        candidate_scenarios = {scenario["scenarioId"]: scenario for scenario in candidate_resolution["scenarios"]}
+        for scenario_id, base_scenario in base_scenarios.items():
+            for base_frame, candidate_frame in zip(
+                base_scenario["frames"], candidate_scenarios[scenario_id]["frames"]
+            ):
+                if base_frame["inputHash"] != candidate_frame["inputHash"]:
+                    errors.append(f"candidate: {scenario_id}: input hash drift")
+                if base_frame["pts"] != candidate_frame["pts"]:
+                    errors.append(f"candidate: {scenario_id}: PTS drift")
     return errors

@@ -83,6 +83,9 @@ def serialize_codec_creation_record(record: CodecCreationRecord) -> dict[str, An
         "creationIndex": record.creation_index,
         "requestedPreset": record.requested_preset,
         "submittedCodecOptions": dict(record.submitted_codec_options),
+        "configuredProfile": record.configured_profile,
+        "configuredFps": record.configured_fps,
+        "configuredBitrateBps": record.configured_bitrate_bps,
         "generation": record.generation,
         "reopenReason": record.reopen_reason,
     }
@@ -110,6 +113,12 @@ def encoder_settings_from_creation_records(
             raise RuntimeError("codec creation index mismatch")
         if record.requested_preset != policy.preset:
             raise RuntimeError("codec creation requested preset mismatch")
+        if record.configured_profile != policy.profile:
+            raise RuntimeError("codec creation configured profile mismatch")
+        if record.configured_fps != policy.target_fps:
+            raise RuntimeError("codec creation configured fps mismatch")
+        if record.configured_bitrate_bps != bitrate_bps:
+            raise RuntimeError("codec creation configured bitrate mismatch")
         if record.generation != policy.generation:
             raise RuntimeError("codec creation generation mismatch")
         if record.reopen_reason != "initial":
@@ -399,6 +408,7 @@ def _scenario_run(
             "phaseIndex": phase_index,
             "inputHash": source_hash,
             "pts": int(frame.pts),
+            "timeBase": "1/90000",
             "requestToken": request_token,
             "idr": idr,
             "bitstreamIdrKind": idr_kind,

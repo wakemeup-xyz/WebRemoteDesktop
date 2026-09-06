@@ -58,6 +58,9 @@ class CodecCreationRecord:
     creation_index: int
     requested_preset: str
     submitted_codec_options: Mapping[str, str]
+    configured_profile: str
+    configured_fps: int
+    configured_bitrate_bps: int
     generation: int
     reopen_reason: str
 
@@ -828,6 +831,9 @@ class H264VideoToolboxEncoder(Encoder):
                 creation_index=len(self._codec_creation_records) + 1,
                 requested_preset=str(self._policy.preset),
                 submitted_codec_options=MappingProxyType(dict(codec.options or {})),
+                configured_profile=str(codec.profile),
+                configured_fps=frame_rate,
+                configured_bitrate_bps=int(codec.bit_rate),
                 generation=int(self._policy.generation),
                 reopen_reason=reopen_reason,
             )
