@@ -12,17 +12,29 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from turn_controlled_scene import BLOCKED, FAIL, NOT_RUN, PASS, ProducerProof
-from turn_controlled_scene_runtime import MarkerLayout, exact_workload, run_automatic_scene, static_text_evidence, workload_record
+from turn_controlled_scene_runtime import (MarkerLayout, aggregate_action_evidence,
+                                           FixtureBroker, exact_workload, run_automatic_scene,
+                                           static_text_evidence, workload_failures,
+                                           workload_record)
 
 
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def lifecycle_failure(error: Exception) -> str:
+    """Persist one known actionable Lab boundary without persisting secrets."""
+    if str(error) == "production proof admission was not granted for the observed epoch":
+        return f"lifecycle:{type(error).__name__}:production-proof-admission-epoch-mismatch"
+    return f"lifecycle:{type(error).__name__}"
 
 
 @dataclass(frozen=True)
@@ -57,6 +69,137 @@ def verify_transcript(raw: Mapping[str, Any], *, identity: Mapping[str, Any], ve
 
 class StaticViewer(Protocol):
     def static_frames(self, layout: MarkerLayout) -> list[dict[str, Any]]: ...
+
+
+class ExecutableLabDriver:
+    """Dispatch the declared controlled workload through the existing Viewer path.
+
+    This driver deliberately has no input-emission implementation of its own.
+    The Viewer adapter must call ``Input.prepareLabInput`` and
+    ``Input.dispatchPreparedLabInput``; the Lab Host claims the resulting
+    normal v2 envelope through its existing binding guard.  A failed evidence
+    boundary makes the complete workload fail -- receipts are never invented.
+    """
+
+    def __init__(self, *, lab_run: Any, viewer: Any, producer: Any, broker: Any, fixture_id: str) -> None:
+        if not isinstance(fixture_id, str) or not fixture_id:
+            raise ValueError("a fixture id is required for controlled dispatch")
+        self.lab_run, self.viewer, self.producer, self.broker = lab_run, viewer, producer, broker
+        self.fixture_id = fixture_id
+
+    def run(self) -> dict[str, Any]:
+        receipts: list[dict[str, Any]] = []
+        failures: list[str] = []
+        workload = list(exact_workload())
+        for item in workload:
+            try:
+                reservation = self.viewer.prepare_lab_input(item)
+                if not isinstance(reservation, Mapping):
+                    raise RuntimeError("viewer-lab-input-not-prepared")
+                input_id, lease_id, lease_epoch = reservation.get("inputId"), reservation.get("leaseId"), reservation.get("leaseEpoch")
+                action = {key: reservation.get(key) for key in ("type", "action", "payload")}
+                if (not isinstance(input_id, str) or not input_id or not isinstance(lease_id, str) or not lease_id
+                        or not isinstance(lease_epoch, int) or isinstance(lease_epoch, bool) or lease_epoch < 0
+                        or not isinstance(action["type"], str) or not isinstance(action["action"], str)
+                        or not isinstance(action["payload"], Mapping)):
+                    raise RuntimeError("viewer-lab-input-metadata-invalid")
+                self.broker.reserve(input_id=input_id, action_id=item.action_id)
+                self.lab_run.bind_controlled_input(input_id=input_id, lease_id=lease_id, lease_epoch=lease_epoch,
+                                                    fixture_id=self.fixture_id, action=action)
+                self.producer.prepare_native_action(item.action_id)
+                dispatched = self.viewer.dispatch_prepared_lab_input(reservation)
+                if dispatched != input_id:
+                    raise RuntimeError("viewer-lab-input-dispatch-refused")
+                ack = self.viewer.wait_for_applied_ack(input_id)
+                receipt = self.broker.wait_for_receipt(input_id)
+                visual = self.viewer.wait_for_decoded_visual(input_id, item.action_id)
+                result = aggregate_action_evidence(reservation=reservation, ack=ack, receipt=receipt, visual=visual)
+                if result["status"] != PASS:
+                    raise RuntimeError(str(result.get("failure") or "four-way-evidence-failed"))
+                receipts.append({"inputId": input_id, "actionId": item.action_id, "kind": item.kind,
+                                 **({"text": item.text} if item.kind == "text" else {}),
+                                 "ack": dict(ack), "receipt": dict(receipt), "visual": dict(visual)})
+            except Exception as error:
+                failures.append(f"action-{item.action_id}:{type(error).__name__}:{error}")
+                break
+        workload_rows = [{"kind": row["kind"], "actionId": row["actionId"],
+                          **({"text": row["text"]} if "text" in row else {})}
+                         for row in receipts]
+        failures.extend(workload_failures(workload_rows))
+        return {"status": PASS if not failures else FAIL, "executionMode": "automatic-isolated",
+                "workload": [workload_record(item) for item in workload], "receipts": receipts,
+                "failures": failures}
+
+
+class LoopbackFixtureReceiver:
+    """Receive browser-native fixture events on a per-run loopback listener.
+
+    The receiver carries no Viewer input id in its request contract.  It gives
+    an id to the event only by asking the proof-bound ``FixtureBroker`` for a
+    matching pending action.  CORS is limited to the disposable local producer
+    page's opaque origin; the socket itself is loopback-only.
+    """
+
+    def __init__(self, broker: FixtureBroker) -> None:
+        self.broker = broker
+        self._condition = threading.Condition()
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: Any) -> None: pass
+
+            def _headers(self, status: int) -> None:
+                self.send_response(status)
+                self.send_header("Access-Control-Allow-Origin", "null")
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.end_headers()
+
+            def do_OPTIONS(self) -> None: self._headers(204)
+
+            def do_POST(self) -> None:
+                if self.path != "/native-event":
+                    self._headers(404); return
+                try:
+                    length = int(self.headers.get("Content-Length", "-1"))
+                    if length < 2 or length > 8192:
+                        raise ValueError("invalid body size")
+                    raw = json.loads(self.rfile.read(length).decode("utf-8"))
+                    if not isinstance(raw, Mapping):
+                        raise ValueError("event must be an object")
+                    receipt = owner.broker.record_native_event(raw)
+                except Exception:
+                    self._headers(400); return
+                with owner._condition:
+                    owner._condition.notify_all()
+                self._headers(202 if receipt is not None else 409)
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port = int(self._server.server_address[1])
+        self.endpoint = f"http://127.0.0.1:{port}/native-event"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "LoopbackFixtureReceiver":
+        self._thread.start()
+        return self
+
+    def reserve(self, *, input_id: str, action_id: int) -> None:
+        self.broker.reserve(input_id=input_id, action_id=action_id)
+
+    def __exit__(self, *_args: Any) -> None:
+        self._server.shutdown(); self._server.server_close(); self._thread.join(timeout=2)
+
+    def wait_for_receipt(self, input_id: str, *, timeout_seconds: float = 10) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout_seconds
+        with self._condition:
+            while True:
+                receipt = self.broker.receipt_for(input_id)
+                if receipt is not None:
+                    return receipt
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._condition.wait(remaining)
 
 
 class PlaywrightLabViewerAdapter:
@@ -104,6 +247,145 @@ class PlaywrightLabViewerAdapter:
                 rows.append(row)
             self.viewer_page.wait_for_timeout(1000)
         return rows
+
+    @staticmethod
+    def _input_spec(item: Any) -> dict[str, Any]:
+        """Map the immutable work declaration to the existing v2 input API."""
+        if item.kind == "scroll":
+            return {"type": "mouse", "action": "wheel",
+                    "payload": {"relX": .5, "relY": .5, "deltaX": 0, "deltaY": 80}}
+        if item.kind == "drag":
+            # The Host's normal mouse down path is the causal start of every
+            # drag.  Dedicated-fixture runs retain the pending button state
+            # only on their disposable desktop; a no-input rehearsal never
+            # reaches this method.
+            return {"type": "mouse", "action": "down",
+                    "payload": {"relX": .5, "relY": .5, "button": "left", "buttons": 1, "clickCount": 1}}
+        if item.kind == "text":
+            return {"type": "keyboard", "action": "keydown",
+                    "payload": {"code": "KeyT", "key": item.text, "modifiers": {}}}
+        raise ValueError("unknown controlled workload item")
+
+    def prepare_lab_input(self, item: Any) -> dict[str, Any] | None:
+        spec = self._input_spec(item)
+        return self.viewer_page.evaluate("""(spec) => {
+          if (!window.Input?.prepareLabInput || !window.Input?.activeControlLease) return null;
+          const reservation = window.Input.prepareLabInput(spec.type, spec.action, spec.payload);
+          const lease = window.Input.activeControlLease;
+          if (!reservation || !lease?.leaseId || !Number.isInteger(lease.leaseEpoch)) return null;
+          const pending = window.__wrdLabPreparedInputs || (window.__wrdLabPreparedInputs = new Map());
+          pending.set(reservation.inputId, reservation);
+          return { inputId: reservation.inputId, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,
+                   type: spec.type, action: spec.action, payload: spec.payload };
+        }""", spec)
+
+    def dispatch_prepared_lab_input(self, reservation: Mapping[str, Any]) -> str | None:
+        input_id = reservation.get("inputId") if isinstance(reservation, Mapping) else None
+        if not isinstance(input_id, str) or not input_id:
+            return None
+        return self.viewer_page.evaluate("""(inputId) => {
+          const pending = window.__wrdLabPreparedInputs;
+          const reservation = pending?.get(inputId);
+          if (!reservation || !window.Input?.dispatchPreparedLabInput) return null;
+          pending.delete(inputId);
+          return window.Input.dispatchPreparedLabInput(reservation);
+        }""", input_id)
+
+    def install_input_ack_observer(self) -> None:
+        self.viewer_page.evaluate("""() => {
+          const state = window.__wrdLabInputEvidence || (window.__wrdLabInputEvidence = { acks: [], bound: false });
+          if (state.bound || !window.Input) return;
+          state.bound = true;
+          for (const name of ['acceptMouseAck', 'acceptKeyboardAck']) {
+            const original = window.Input[name];
+            if (typeof original !== 'function') continue;
+            window.Input[name] = function(ack) {
+              const ids = Array.isArray(ack?.inputIds) ? ack.inputIds : [];
+              for (const inputId of ids) state.acks.push({ inputId, status: ack?.status || null });
+              return original.call(this, ack);
+            };
+          }
+        }""")
+
+    def wait_for_applied_ack(self, input_id: str, *, timeout_seconds: float = 10) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            row = self.viewer_page.evaluate("""(inputId) => {
+              const rows = window.__wrdLabInputEvidence?.acks || [];
+              const index = rows.findIndex((row) => row?.inputId === inputId);
+              return index < 0 ? null : rows.splice(index, 1)[0];
+            }""", input_id)
+            if isinstance(row, dict) and row.get("status") == "applied":
+                return row
+            self.viewer_page.wait_for_timeout(100)
+        return None
+
+    def wait_for_decoded_visual(self, input_id: str, action_id: int, *, timeout_seconds: float = 10) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            rows = self.viewer_page.evaluate("() => WebRTC.frameTraceCollector?.takeControlledVisualEvidence?.() || []")
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict) and row.get("marker", {}).get("actionId") == action_id:
+                        return {"inputId": input_id, **row}
+            self.viewer_page.wait_for_timeout(100)
+        return None
+
+    def configure_loopback_producer(self, *, endpoint: str, proof: ProducerProof, layout: MarkerLayout) -> None:
+        identity = {"runNonce": str(proof.run_nonce), "sceneId": proof.scene_id, "attemptId": proof.attempt_id,
+                    "generation": proof.generation, "realm": proof.realm, "runId": proof.run_id,
+                    "sourceWidth": layout.source_width, "sourceHeight": layout.source_height,
+                    "roi": list(layout.roi), "layoutDigest": layout.layout_digest}
+        configured = self.producer_page.evaluate("""({ endpoint, identity }) => {
+          const api = window.WRDTurnControlledProducer;
+          if (!api?.configureLoopbackProducer) return false;
+          api.configureLoopbackProducer({ endpoint, identity });
+          return true;
+        }""", {"endpoint": endpoint, "identity": identity})
+        if configured is not True:
+            raise RuntimeError("producer-loopback-configuration-refused")
+
+    def calibrate_marker_roi(self, *, source_width: int, source_height: int) -> tuple[int, int, int, int]:
+        """Project the runtime producer canvas into encoded-video pixels.
+
+        This is an estimate from the actual browser-window and canvas geometry,
+        never the old fixed 64x48 test ROI.  The subsequent independent marker
+        decode remains authoritative and turns a bad projection into FAIL.
+        """
+        raw = self.producer_page.evaluate("""() => {
+          const marker = document.getElementById('marker');
+          if (!marker) return null;
+          const box = marker.getBoundingClientRect();
+          return { left: box.left, top: box.top, width: box.width, height: box.height,
+                   screenX: window.screenX, screenY: window.screenY,
+                   outerWidth: window.outerWidth, outerHeight: window.outerHeight,
+                   innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+                   screenWidth: window.screen.width, screenHeight: window.screen.height,
+                   dpr: window.devicePixelRatio };
+        }""")
+        required = ("left", "top", "width", "height", "screenX", "screenY", "outerWidth", "outerHeight",
+                    "innerWidth", "innerHeight", "screenWidth", "screenHeight", "dpr")
+        if not isinstance(raw, Mapping) or not all(isinstance(raw.get(key), (int, float)) for key in required):
+            raise RuntimeError("producer-marker-runtime-geometry-unavailable")
+        if raw["width"] != 256 or raw["height"] != 128 or raw["screenWidth"] <= 0 or raw["screenHeight"] <= 0:
+            raise RuntimeError("producer-marker-runtime-geometry-invalid")
+        border_x = max(0.0, (float(raw["outerWidth"]) - float(raw["innerWidth"])) / 2)
+        chrome_y = max(0.0, float(raw["outerHeight"]) - float(raw["innerHeight"]) - border_x)
+        x_css = float(raw["screenX"]) + border_x + float(raw["left"])
+        y_css = float(raw["screenY"]) + chrome_y + float(raw["top"])
+        x = round(x_css * source_width / float(raw["screenWidth"]))
+        y = round(y_css * source_height / float(raw["screenHeight"]))
+        return MarkerLayout.create(attempt_id="calibration", generation=0, source_width=source_width,
+                                   source_height=source_height, roi=(x, y, 256, 128)).roi
+
+    def prepare_native_action(self, action_id: int) -> None:
+        result = self.producer_page.evaluate("""(actionId) => {
+          if (!window.WRDTurnControlledProducer?.prepareNativeAction) return false;
+          window.WRDTurnControlledProducer.prepareNativeAction(actionId);
+          return true;
+        }""", action_id)
+        if result is not True:
+            raise RuntimeError("producer-native-action-preparation-refused")
 
     def viewer_session_identity(self) -> dict[str, Any] | None:
         row = self.viewer_page.evaluate("""() => ({
@@ -185,8 +467,9 @@ def main(argv: list[str] | None = None) -> int:
         if session is None:
             raise RuntimeError("viewer session has no stable attempt/generation/resolution")
         proof = ProducerProof(proof.run_nonce, proof.scene_id, identity.origin, session["attemptId"], session["generation"], identity.realm, identity.run_id)
+        roi = adapter.calibrate_marker_roi(source_width=session["sourceWidth"], source_height=session["sourceHeight"])
         layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
-                                     source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=(64, 48, 256, 128))
+                                     source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=roi)
         visible, reason = adapter.producer_window_precondition()
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
         if not visible:
@@ -198,13 +481,31 @@ def main(argv: list[str] | None = None) -> int:
         # A visible producer fixture reaches this path; decoded static evidence
         # must pass before automatic dispatch is even considered.
         static = static_text_evidence(proof, layout, adapter.static_frames(layout))
-        automatic = run_automatic_scene(proof=proof, verified_context=identity, layout=layout,
-                                         dedicated_desktop=args.dedicated_desktop, fixture_window=args.fixture_window)
+        preflight = run_automatic_scene(proof=proof, verified_context=identity, layout=layout,
+                                        dedicated_desktop=args.dedicated_desktop, fixture_window=args.fixture_window)
+        if static["status"] != PASS:
+            automatic = {"status": BLOCKED, "executionMode": "automatic-isolated",
+                         "failures": ["decoded-static-fixture-evidence-required"],
+                         "workload": [workload_record(item) for item in exact_workload()]}
+        elif preflight["status"] == BLOCKED:
+            automatic = preflight
+        else:
+            # This branch is reachable only when the caller explicitly proves
+            # an isolated desktop and fixture window.  The normal Viewer input
+            # transport remains the sole injection path; a shared desktop
+            # never gets here, so the run cannot emit Quartz events there.
+            broker = FixtureBroker(proof, layout)
+            with LoopbackFixtureReceiver(broker) as receiver:
+                adapter.install_input_ack_observer()
+                adapter.configure_loopback_producer(endpoint=receiver.endpoint, proof=proof, layout=layout)
+                automatic = ExecutableLabDriver(lab_run=lab, viewer=adapter, producer=adapter,
+                                                 broker=receiver, fixture_id=f"fixture-{identity.run_id}").run()
         transcript = LabTranscript.create(verifier=lab.transcript_verifier(), identity=identity_record,
-            static=static, automatic=automatic, receipts=[])
+            static=static, automatic=automatic,
+            receipts=automatic.get("receipts", []) if isinstance(automatic.get("receipts"), list) else [])
         write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 0 if static["status"] == PASS and automatic["status"] == PASS else 1
     except Exception as exc:
-        transcript = LabTranscript.create(verifier=b"lab-start-failed", identity={}, static={"status": NOT_RUN, "failures": [f"lifecycle:{type(exc).__name__}"]},
+        transcript = LabTranscript.create(verifier=b"lab-start-failed", identity={}, static={"status": NOT_RUN, "failures": [lifecycle_failure(exc)]},
             automatic={"status": BLOCKED, "failures": ["lab-lifecycle-unavailable"]}, receipts=[])
         write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 2
     finally:

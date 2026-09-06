@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import sys
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 SCRIPT = Path(__file__).with_name("turn_controlled_scene_lab_runner.py")
 SPEC = importlib.util.spec_from_file_location("turn_controlled_scene_lab_runner", SCRIPT)
@@ -64,3 +66,77 @@ def test_viewer_session_identity_rejects_pending_attempt_zero_generation_or_unkn
         def evaluate(self, _script): return {"attemptId": "", "generation": 0, "sourceWidth": 0, "sourceHeight": 720}
     adapter.viewer_page = Page()
     assert adapter.viewer_session_identity() is None
+
+
+def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dispatch_and_four_way_evidence():
+    rows = []
+
+    class Adapter:
+        def prepare_lab_input(self, item):
+            return {"inputId": f"i-{item.action_id}", "leaseId": "lease", "leaseEpoch": 4,
+                    "type": "mouse", "action": "wheel", "payload": {"relX": .5, "relY": .5}}
+        def dispatch_prepared_lab_input(self, reservation):
+            rows.append(("dispatch", reservation["inputId"]))
+            return reservation["inputId"]
+        def wait_for_applied_ack(self, input_id):
+            return {"inputId": input_id, "status": "applied"}
+        def wait_for_decoded_visual(self, input_id, action_id):
+            return {"inputId": input_id, "traceStatus": "matched", "rtpTimestamp": action_id, "wireTimestamp": action_id}
+
+    class Run:
+        def bind_controlled_input(self, **kwargs):
+            rows.append(("bind", kwargs["input_id"], kwargs["action"]))
+
+    class Producer:
+        def prepare_native_action(self, action_id): rows.append(("native", action_id))
+
+    class Broker:
+        def reserve(self, *, input_id, action_id): rows.append(("reserve", input_id, action_id))
+        def wait_for_receipt(self, input_id): return {"inputId": input_id}
+
+    result = runner.ExecutableLabDriver(lab_run=Run(), viewer=Adapter(), producer=Producer(), broker=Broker(), fixture_id="fixture").run()
+
+    assert result["status"] == runner.PASS
+    assert result["failures"] == []
+    assert len(result["receipts"]) == 31
+    assert result["workload"] == [runner.workload_record(item) for item in runner.exact_workload()]
+    assert [row for row in rows if row[0] == "dispatch"] == [("dispatch", f"i-{item.action_id}") for item in runner.exact_workload()]
+
+
+def test_loopback_fixture_receiver_merges_only_a_native_event_with_its_reserved_input_id():
+    proof = runner.ProducerProof(7, 3, Identity.origin, "attempt", 2, Identity.realm, Identity.run_id)
+    layout = runner.MarkerLayout.create(attempt_id="attempt", generation=2, source_width=1280, source_height=720, roi=(64, 48, 256, 128))
+    broker = runner.FixtureBroker(proof, layout)
+    broker.reserve(input_id="i-12", action_id=12)
+    with runner.LoopbackFixtureReceiver(broker) as receiver:
+        body = {"runNonce": 7, "sceneId": 3, "tick": 1, "actionId": 12, "attemptId": "attempt", "generation": 2,
+                "realm": Identity.realm, "runId": Identity.run_id, "focused": True,
+                "sourceWidth": 1280, "sourceHeight": 720, "roi": [64, 48, 256, 128], "layoutDigest": layout.layout_digest}
+        request = Request(receiver.endpoint, method="POST", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=2) as response:
+            assert response.status == 202
+        assert receiver.wait_for_receipt("i-12", timeout_seconds=.2)["inputId"] == "i-12"
+
+
+def test_playwright_adapter_prepares_then_dispatches_the_same_page_owned_reservation_through_input_api():
+    calls = []
+    class Page:
+        def evaluate(self, script, value=None):
+            calls.append((script, value))
+            if "prepareLabInput" in script:
+                return {"inputId": "i-1", "leaseId": "lease", "leaseEpoch": 2,
+                        "type": "mouse", "action": "wheel", "payload": {"relX": .5, "relY": .5, "deltaY": 80}}
+            if "dispatchPreparedLabInput" in script:
+                return "i-1"
+            return True
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    adapter.viewer_page = Page()
+    reservation = adapter.prepare_lab_input(runner.exact_workload()[0])
+    assert adapter.dispatch_prepared_lab_input(reservation) == "i-1"
+    assert "Input.prepareLabInput" in calls[0][0]
+    assert "Input.dispatchPreparedLabInput" in calls[1][0]
+
+
+def test_lifecycle_failure_keeps_the_known_admission_contract_error_but_redacts_unknown_exception_text():
+    assert runner.lifecycle_failure(RuntimeError("production proof admission was not granted for the observed epoch")) == "lifecycle:RuntimeError:production-proof-admission-epoch-mismatch"
+    assert runner.lifecycle_failure(RuntimeError("secret=must-not-persist")) == "lifecycle:RuntimeError"
