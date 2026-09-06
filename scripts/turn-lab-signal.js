@@ -266,13 +266,12 @@ async function createLabRuntime(options = {}) {
   });
   runtime.app.post('/api/lab-controlled-input/arm', (req, res) => {
     const body = req.body || {};
-    const allowed = new Set(['realm', 'runId', 'epoch', 'leaseId', 'leaseEpoch', 'fixtureId', 'isolated', 'foreground', 'fixtureWindow']);
+    const allowed = new Set(['realm', 'runId', 'epoch', 'leaseId', 'leaseEpoch', 'fixtureId']);
     const session = checkControlledBindingAuth(req, res, body);
     if (!session) return;
     if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
       || ![body.leaseId, body.fixtureId].every((value) => typeof value === 'string' && value)
       || !Number.isSafeInteger(body.leaseEpoch) || body.leaseEpoch < 0
-      || body.isolated !== true || body.foreground !== true || body.fixtureWindow !== true
       || !runtime.signalingRuntime.connections.host) return res.status(409).json({ error: 'lab Host guard cannot arm' });
     const armId = crypto.randomUUID();
     session.arms.set(armId, { armId, status: 'pending', leaseId: body.leaseId, leaseEpoch: body.leaseEpoch,

@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import pytest
+
 SCRIPT = Path(__file__).with_name("turn_controlled_scene_lab_runner.py")
 SPEC = importlib.util.spec_from_file_location("turn_controlled_scene_lab_runner", SCRIPT)
 runner = importlib.util.module_from_spec(SPEC)
@@ -134,7 +136,7 @@ def test_executable_driver_runs_each_declared_work_item_through_prepare_bind_dis
 
     assert result["status"] == runner.PASS
     assert result["failures"] == []
-    assert len(result["receipts"]) == 51
+    assert len(result["receipts"]) == 91
     assert result["workload"] == [runner.workload_record(item) for item in runner.exact_workload()]
     assert [row for row in rows if row[0] == "dispatch"] == [
         ("dispatch", f"i-{step.action_id}") for item in runner.exact_workload() for step in runner.work_steps(item)
@@ -145,7 +147,7 @@ def test_workload_expands_drag_transactions_and_keyboard_submission_without_leav
     drag = next(item for item in runner.exact_workload() if item.kind == "drag")
     text = next(item for item in runner.exact_workload() if item.kind == "text")
     assert [step.phase for step in runner.work_steps(drag)] == ["down", "move", "up"]
-    assert [step.phase for step in runner.work_steps(text)] == ["text"]
+    assert [step.phase for step in runner.work_steps(text)] == ["focus-down", "focus-up", "text"]
 
 
 def test_driver_sends_a_normal_safety_release_when_a_drag_fails_before_up():
@@ -228,10 +230,44 @@ def test_playwright_adapter_prepares_then_dispatches_the_same_page_owned_reserva
             return True
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
     adapter.viewer_page = Page()
+    adapter._fixture_geometry = {"scroll": {"relX": .5, "relY": .5}, "dragStart": {"relX": .4, "relY": .5},
+                                 "dragEnd": {"relX": .6, "relY": .5}, "text": {"relX": .5, "relY": .4}}
     reservation = adapter.prepare_lab_input(runner.work_steps(runner.exact_workload()[0])[0])
     assert adapter.dispatch_prepared_lab_input(reservation) == "i-1"
     assert "Input.prepareLabInput" in calls[0][0]
     assert "Input.dispatchPreparedLabInput" in calls[1][0]
+
+
+def test_fixture_input_geometry_maps_actual_scroll_drag_and_text_boxes_through_window_to_host_capture():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    class Page:
+        def evaluate(self, _script):
+            return {"scroll": {"left": 100, "top": 200, "width": 200, "height": 160},
+                    "drag": {"left": 400, "top": 300, "width": 80, "height": 48},
+                    "text": {"left": 200, "top": 100, "width": 240, "height": 32},
+                    "screenX": 10, "screenY": 30, "outerWidth": 1004, "outerHeight": 824,
+                    "innerWidth": 1000, "innerHeight": 800, "screenWidth": 1000, "screenHeight": 800, "dpr": 1}
+    adapter.producer_page = Page()
+    geometry = adapter.calibrate_fixture_input_geometry(source_width=500, source_height=400)
+    assert geometry["scroll"]["sourceX"] == 106
+    assert geometry["scroll"]["sourceY"] == 166
+    assert geometry["dragStart"]["relX"] < geometry["dragEnd"]["relX"]
+    adapter._fixture_geometry = geometry
+    focus = adapter._input_spec(runner.work_steps(next(item for item in runner.exact_workload() if item.kind == "text"))[0])
+    assert focus["action"] == "down" and focus["payload"]["relX"] == geometry["text"]["relX"]
+
+
+def test_fixture_input_geometry_rejects_a_dom_box_that_cannot_be_mapped_inside_host_capture():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    class Page:
+        def evaluate(self, _script):
+            box = {"left": 999, "top": 999, "width": 20, "height": 20}
+            return {"scroll": box, "drag": box, "text": box, "screenX": 0, "screenY": 0,
+                    "outerWidth": 1004, "outerHeight": 824, "innerWidth": 1000, "innerHeight": 800,
+                    "screenWidth": 1000, "screenHeight": 800, "dpr": 1}
+    adapter.producer_page = Page()
+    with pytest.raises(RuntimeError, match="outside-window-content"):
+        adapter.calibrate_fixture_input_geometry(source_width=500, source_height=400)
 
 
 def test_viewer_token_can_be_loaded_from_a_named_environment_variable_without_putting_it_in_argv():

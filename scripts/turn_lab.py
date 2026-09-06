@@ -572,8 +572,7 @@ class LabRun:
             if self.closed or identity is None or not expected:
                 raise RuntimeError("running lab guard identity is required")
             body = {"realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
-                    "leaseId": lease_id, "leaseEpoch": lease_epoch, "fixtureId": fixture_id,
-                    "isolated": True, "foreground": True, "fixtureWindow": True}
+                    "leaseId": lease_id, "leaseEpoch": lease_epoch, "fixtureId": fixture_id}
         if (not isinstance(lease_id, str) or not lease_id or not isinstance(lease_epoch, int)
                 or isinstance(lease_epoch, bool) or lease_epoch < 0 or not isinstance(fixture_id, str) or not fixture_id):
             raise ValueError("controlled guard arm requires a current lease and fixture")

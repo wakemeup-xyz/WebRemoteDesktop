@@ -178,6 +178,18 @@ class LabWebRemoteHost(WebRemoteHost):
         self.controlled_input_guard: LabInputGuard | None = None
         self._session_turn_override: dict[str, Any] | None = None
 
+    def _local_fixture_probe(self, *, lease_id: str, fixture_id: str) -> dict[str, Any]:
+        """Native-only proof seam; shared macOS sessions fail closed.
+
+        The current Host has no API that atomically binds a separate macOS
+        desktop, an MSS capture target and a foreground fixture window. The
+        Viewer and CLI therefore cannot opt into automatic Quartz writes by
+        passing booleans. A future dedicated-desktop implementation must
+        replace this Host-private probe with one native atomic observation.
+        """
+        return {"leaseId": lease_id, "fixtureId": fixture_id,
+                "isolated": False, "foreground": False, "fixtureWindow": False}
+
     def _build_socket_client(self):
         sio = super()._build_socket_client()
         sio.on("lab-controlled-input-arm", self.on_lab_controlled_input_arm)
@@ -234,16 +246,19 @@ class LabWebRemoteHost(WebRemoteHost):
         context = self._verified_lab_context
         receipt = {"armId": data.get("armId") if isinstance(data, dict) else None, "status": "rejected"}
         try:
-            allowed = {"armId", "realm", "runId", "epoch", "leaseId", "leaseEpoch", "fixtureId",
-                       "isolated", "foreground", "fixtureWindow"}
+            allowed = {"armId", "realm", "runId", "epoch", "leaseId", "leaseEpoch", "fixtureId"}
             if (not isinstance(data, dict) or set(data) != allowed
                     or data["realm"] != context.realm or data["runId"] != context.run_id
                     or data["epoch"] != context.epoch or not isinstance(data["armId"], str) or not data["armId"]
                     or not isinstance(data["leaseId"], str) or not data["leaseId"]
                     or not isinstance(data["leaseEpoch"], int) or isinstance(data["leaseEpoch"], bool)
-                    or data["leaseEpoch"] < 0 or not isinstance(data["fixtureId"], str) or not data["fixtureId"]
-                    or data["isolated"] is not True or data["foreground"] is not True or data["fixtureWindow"] is not True):
+                    or data["leaseEpoch"] < 0 or not isinstance(data["fixtureId"], str) or not data["fixtureId"]):
                 raise ValueError("invalid arm")
+            observed = self._local_fixture_probe(lease_id=data["leaseId"], fixture_id=data["fixtureId"])
+            if (not isinstance(observed, dict) or observed.get("leaseId") != data["leaseId"]
+                    or observed.get("fixtureId") != data["fixtureId"] or observed.get("isolated") is not True
+                    or observed.get("foreground") is not True or observed.get("fixtureWindow") is not True):
+                raise ValueError("dedicated fixture probe rejected")
             proof = lambda: {"leaseId": data["leaseId"], "proofToken": context.proof_token,
                              "fixtureId": data["fixtureId"], "isolated": True,
                              "foreground": True, "fixtureWindow": True}

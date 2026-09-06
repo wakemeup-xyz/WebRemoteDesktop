@@ -234,7 +234,7 @@ test('controlled input binding stays fail-closed until an independent Host guard
     lab.runtime.signalingRuntime.connections.host = { emit: (name, body) => emitted.push({ name, body }) };
     const arm = await fetch(`${lab.origin}/api/lab-controlled-input/arm`, { method: 'POST', headers, body: JSON.stringify({
       realm: lab.realm, runId: 'run-1', epoch: admission.epoch, leaseId: 'lease-1', leaseEpoch: 4,
-      fixtureId: 'fixture-1', isolated: true, foreground: true, fixtureWindow: true,
+      fixtureId: 'fixture-1',
     }) });
     assert.equal(arm.status, 202);
     assert.equal(emitted.length, 1);
@@ -243,5 +243,10 @@ test('controlled input binding stays fail-closed until an independent Host guard
     const pending = await fetch(`${lab.origin}/api/lab-controlled-input/arm-status`, { method: 'POST', headers,
       body: JSON.stringify({ realm: lab.realm, runId: 'run-1', epoch: admission.epoch, armId }) });
     assert.deepEqual((await pending.json()).arm, { armId, status: 'pending' });
+    const forgedFlags = await fetch(`${lab.origin}/api/lab-controlled-input/arm`, { method: 'POST', headers, body: JSON.stringify({
+      realm: lab.realm, runId: 'run-1', epoch: admission.epoch, leaseId: 'lease-1', leaseEpoch: 4,
+      fixtureId: 'fixture-1', isolated: true, foreground: true, fixtureWindow: true,
+    }) });
+    assert.notEqual(forgedFlags.status, 202);
   } finally { await lab.close(); }
 });

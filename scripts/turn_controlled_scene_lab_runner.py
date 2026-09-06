@@ -240,6 +240,7 @@ class PlaywrightLabViewerAdapter:
         self._playwright, self._browser, self._context = playwright, browser, context
         self.viewer_page, self.producer_page = viewer_page, producer_page
         self._headed_producer = headed_producer
+        self._fixture_geometry: dict[str, dict[str, float]] | None = None
 
     @classmethod
     def open(cls, lab_run: Any, proof: ProducerProof, *, headed_producer: bool = False) -> "PlaywrightLabViewerAdapter":
@@ -274,25 +275,38 @@ class PlaywrightLabViewerAdapter:
             self.viewer_page.wait_for_timeout(1000)
         return rows
 
-    @staticmethod
-    def _input_spec(item: Any) -> dict[str, Any]:
+    def _input_spec(self, item: Any) -> dict[str, Any]:
         """Map the immutable work declaration to the existing v2 input API."""
+        geometry = self._fixture_geometry
+        if not isinstance(geometry, Mapping):
+            raise RuntimeError("producer-fixture-geometry-is-not-proven")
+        def payload(name: str, **extra: Any) -> dict[str, Any]:
+            point = geometry.get(name)
+            if not isinstance(point, Mapping):
+                raise RuntimeError("producer-fixture-geometry-is-not-proven")
+            return {"relX": point["relX"], "relY": point["relY"], **extra}
         if item.kind == "scroll" and item.phase == "wheel":
             return {"type": "mouse", "action": "wheel",
-                    "payload": {"relX": .5, "relY": .5, "deltaX": 0, "deltaY": 80}}
+                    "payload": payload("scroll", deltaX=0, deltaY=80)}
         if item.kind == "drag" and item.phase == "down":
             # The Host's normal mouse down path is the causal start of every
             # drag.  Dedicated-fixture runs retain the pending button state
             # only on their disposable desktop; a no-input rehearsal never
             # reaches this method.
             return {"type": "mouse", "action": "down",
-                    "payload": {"relX": .5, "relY": .5, "button": "left", "buttons": 1, "clickCount": 1}}
+                    "payload": payload("dragStart", button="left", buttons=1, clickCount=1)}
         if item.kind == "drag" and item.phase == "move":
             return {"type": "mouse", "action": "move",
-                    "payload": {"relX": .62, "relY": .58, "buttons": 1}}
+                    "payload": payload("dragEnd", buttons=1)}
         if item.kind == "drag" and item.phase == "up":
             return {"type": "mouse", "action": "up",
-                    "payload": {"relX": .62, "relY": .58, "button": "left", "buttons": 0}}
+                    "payload": payload("dragEnd", button="left", buttons=0)}
+        if item.kind == "text" and item.phase == "focus-down":
+            return {"type": "mouse", "action": "down",
+                    "payload": payload("text", button="left", buttons=1, clickCount=1)}
+        if item.kind == "text" and item.phase == "focus-up":
+            return {"type": "mouse", "action": "up",
+                    "payload": payload("text", button="left", buttons=0)}
         if item.kind == "text" and item.phase == "text":
             return {"type": "keyboard", "action": "text", "payload": {"text": item.text}}
         raise ValueError("unknown controlled workload item")
@@ -324,9 +338,13 @@ class PlaywrightLabViewerAdapter:
 
     def dispatch_safety_release(self) -> str | None:
         """Use the normal Viewer safety-release path after an incomplete drag."""
-        return self.viewer_page.evaluate("""() =>
-          window.Input?.sendInput?.('mouse', 'up', { relX: .62, relY: .58, button: 'left', buttons: 0 }) || null
-        """)
+        geometry = self._fixture_geometry
+        if not isinstance(geometry, Mapping) or not isinstance(geometry.get("dragEnd"), Mapping):
+            return None
+        point = geometry["dragEnd"]
+        return self.viewer_page.evaluate("""(point) =>
+          window.Input?.sendInput?.('mouse', 'up', { relX: point.relX, relY: point.relY, button: 'left', buttons: 0 }) || null
+        """, point)
 
     def acquire_controlled_lease(self, *, timeout_seconds: float = 15) -> dict[str, Any] | None:
         """Request the normal Viewer lease only in the dedicated input branch."""
@@ -438,6 +456,51 @@ class PlaywrightLabViewerAdapter:
         y = round(y_css * source_height / float(raw["screenHeight"]))
         return MarkerLayout.create(attempt_id="calibration", generation=0, source_width=source_width,
                                    source_height=source_height, roi=(x, y, 256, 128)).roi
+
+    def calibrate_fixture_input_geometry(self, *, source_width: int, source_height: int) -> dict[str, dict[str, float]]:
+        """Map actual fixture DOM points through window content and Host capture.
+
+        The mapping is explicit: CSS element coordinates are shifted by the
+        observed browser chrome/content origin into screen CSS coordinates,
+        then scaled into the current decoded Host source. It is rejected if
+        any point falls outside the measured window/screen/source bounds.
+        """
+        raw = self.producer_page.evaluate("""() => {
+          const box = (id) => {
+            const element = document.getElementById(id);
+            if (!element) return null;
+            const rect = element.getBoundingClientRect();
+            return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+          };
+          return { scroll: box('scroll'), drag: box('drag'), text: box('text'),
+            screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+            screenWidth: window.screen.width, screenHeight: window.screen.height, dpr: window.devicePixelRatio };
+        }""")
+        scalar = ("screenX", "screenY", "outerWidth", "outerHeight", "innerWidth", "innerHeight", "screenWidth", "screenHeight", "dpr")
+        if (not isinstance(raw, Mapping) or source_width <= 0 or source_height <= 0
+                or not all(isinstance(raw.get(key), (int, float)) for key in scalar)
+                or any(float(raw[key]) <= 0 for key in ("outerWidth", "outerHeight", "innerWidth", "innerHeight", "screenWidth", "screenHeight", "dpr"))):
+            raise RuntimeError("producer-fixture-geometry-unavailable")
+        boxes = {name: raw.get(name) for name in ("scroll", "drag", "text")}
+        if not all(isinstance(box, Mapping) and all(isinstance(box.get(key), (int, float)) and float(box[key]) > 0 for key in ("width", "height")) for box in boxes.values()):
+            raise RuntimeError("producer-fixture-geometry-invalid")
+        border_x = max(0.0, (float(raw["outerWidth"]) - float(raw["innerWidth"])) / 2)
+        chrome_y = max(0.0, float(raw["outerHeight"]) - float(raw["innerHeight"]) - border_x)
+        def project(box: Mapping[str, Any], x_fraction: float, y_fraction: float) -> dict[str, float]:
+            css_x, css_y = float(box["left"]) + float(box["width"]) * x_fraction, float(box["top"]) + float(box["height"]) * y_fraction
+            if not (0 <= css_x <= float(raw["innerWidth"]) and 0 <= css_y <= float(raw["innerHeight"])):
+                raise RuntimeError("producer-fixture-geometry-outside-window-content")
+            screen_x, screen_y = float(raw["screenX"]) + border_x + css_x, float(raw["screenY"]) + chrome_y + css_y
+            source_x = screen_x * source_width / float(raw["screenWidth"]); source_y = screen_y * source_height / float(raw["screenHeight"])
+            if not (0 <= source_x < source_width and 0 <= source_y < source_height):
+                raise RuntimeError("producer-fixture-geometry-outside-host-capture")
+            return {"relX": source_x / source_width, "relY": source_y / source_height,
+                    "sourceX": source_x, "sourceY": source_y, "dpr": float(raw["dpr"])}
+        geometry = {"scroll": project(boxes["scroll"], .5, .5), "dragStart": project(boxes["drag"], .25, .5),
+                    "dragEnd": project(boxes["drag"], .75, .5), "text": project(boxes["text"], .5, .5)}
+        self._fixture_geometry = geometry
+        return geometry
 
     def configure_marker_roi(self, layout: MarkerLayout) -> None:
         x, y, width, height = layout.roi
@@ -566,10 +629,13 @@ def main(argv: list[str] | None = None) -> int:
         elif preflight["status"] == BLOCKED:
             automatic = preflight
         else:
-            # This branch is reachable only when the caller explicitly proves
-            # an isolated desktop and fixture window.  The normal Viewer input
-            # transport remains the sole injection path; a shared desktop
-            # never gets here, so the run cannot emit Quartz events there.
+            # This branch is unreachable on the shared desktop: only a future
+            # Host-native atomic probe can make the preflight non-BLOCKED.
+            # This remains unreachable until the Host-native probe is
+            # implemented. Keep the future automatic branch strict: no
+            # dispatch is possible without independently calibrated element
+            # targets in the current Host-captured source coordinates.
+            adapter.calibrate_fixture_input_geometry(source_width=session["sourceWidth"], source_height=session["sourceHeight"])
             broker = FixtureBroker(proof, layout)
             with LoopbackFixtureReceiver(broker) as receiver:
                 # Independent Signal control-plane arming must complete before

@@ -112,7 +112,9 @@ def work_steps(item: WorkItem) -> tuple[WorkStep, ...]:
                 WorkStep(base + 3, item.action_id, item.kind, "up"))
     if item.kind == "text":
         # keyboard/text is the project's normal keyboard-submission protocol.
-        return (WorkStep(base + 1, item.action_id, item.kind, "text", item.text),)
+        return (WorkStep(base + 1, item.action_id, item.kind, "focus-down"),
+                WorkStep(base + 2, item.action_id, item.kind, "focus-up"),
+                WorkStep(base + 3, item.action_id, item.kind, "text", item.text),)
     raise ValueError("unknown controlled workload item")
 
 
@@ -204,17 +206,16 @@ def static_text_evidence(proof: ProducerProof, layout: MarkerLayout, frames: lis
 
 
 def run_automatic_scene(*, proof: ProducerProof, verified_context: Any, layout: MarkerLayout,
-                        dedicated_desktop: bool, fixture_window: bool) -> dict[str, Any]:
+                        dedicated_desktop: bool = False, fixture_window: bool = False) -> dict[str, Any]:
     if not proof_matches_verified_lab_context(proof, verified_context):
         return {"status": BLOCKED, "failures": ["producer-proof-context-mismatch"]}
-    if not dedicated_desktop or not fixture_window:
-        return {"status": BLOCKED, "executionMode": "automatic-isolated",
-                "failures": ["dedicated-desktop-and-fixture-window-required"],
-                "workload": [workload_record(item) for item in exact_workload()]}
-    # A concrete Viewer/Host/producer adapter is deliberately required here;
-    # this function never falls back to Quartz or page-script input.
-    return {"status": NOT_RUN, "executionMode": "automatic-isolated",
-            "failures": ["real-lab-adapter-required"], "workload": [workload_record(item) for item in exact_workload()]}
+    # CLI/Viewer declarations cannot establish the local desktop identity that
+    # protects Quartz. Only the Lab Host's private native probe may arm it.
+    reason = ("cli-dedicated-desktop-flags-are-not-a-host-probe"
+              if dedicated_desktop or fixture_window
+              else "host-dedicated-desktop-atomic-probe-required")
+    return {"status": BLOCKED, "executionMode": "automatic-isolated",
+            "failures": [reason], "workload": [workload_record(item) for item in exact_workload()]}
 
 
 def main(argv: list[str] | None = None) -> int:

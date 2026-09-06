@@ -49,15 +49,15 @@ def test_fixture_broker_adds_only_reserved_input_id_to_a_matching_native_produce
     assert broker.record_native_event({**native, "actionId": 13, "generation": 1}) is None
 
 
-def test_automatic_scene_is_blocked_without_a_dedicated_fixture_desktop_and_never_falls_back_to_local_input():
+def test_automatic_scene_rejects_cli_flags_because_only_the_host_native_probe_may_authorize_quartz():
     context = type("Context", (), {"origin": "http://127.0.0.1:49999", "realm": "lab-run", "run_id": "run-1"})()
-    result = runtime.run_automatic_scene(proof=proof(), verified_context=context, layout=layout(), dedicated_desktop=False, fixture_window=False)
+    result = runtime.run_automatic_scene(proof=proof(), verified_context=context, layout=layout(), dedicated_desktop=True, fixture_window=True)
     assert result["status"] == runtime.BLOCKED
-    assert result["failures"] == ["dedicated-desktop-and-fixture-window-required"]
+    assert result["failures"] == ["cli-dedicated-desktop-flags-are-not-a-host-probe"]
 
 
-def test_action_aggregate_requires_reservation_ack_broker_receipt_and_matched_rtp_visual():
-    rows = dict(reservation={"inputId": "i"}, ack={"inputId": "i", "status": "applied"}, receipt={"inputId": "i"}, visual={"inputId": "i", "traceStatus": "matched", "rtpTimestamp": 1, "wireTimestamp": 1})
+def test_action_aggregate_requires_reservation_ack_host_claim_broker_receipt_and_matched_rtp_visual():
+    rows = dict(reservation={"inputId": "i"}, ack={"inputId": "i", "status": "applied"}, claim={"inputId": "i", "status": "claimed"}, receipt={"inputId": "i"}, visual={"inputId": "i", "traceStatus": "matched", "rtpTimestamp": 1, "wireTimestamp": 1})
     assert runtime.aggregate_action_evidence(**rows)["status"] == runtime.PASS
     for key in rows:
         broken = dict(rows); broken[key] = None
