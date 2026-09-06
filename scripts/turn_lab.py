@@ -164,9 +164,11 @@ class LabRun:
         self._stop_signal: Callable[[], None] | None = None; self.identity: LabIdentity | None = None; self._context: dict[str, Any] | None = None
         self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch: int | None = None
         self._production_proof: ProductionProof | None = None; self._expected_identity: LabIdentity | None = None
-        self.closed = True; self._lock = threading.RLock(); self._watch_stop: threading.Event | None = None
+        self.closed = True; self._lock = threading.RLock(); self._state_changed = threading.Condition(self._lock)
+        self._watch_stop: threading.Event | None = None
         self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
         self._generation = 0; self._run_token: object | None = None
+        self._admission_token: object | None = None
 
     def _owns_locked(self, token: object, generation: int) -> bool:
         return not self.closed and self._run_token is token and self._generation == generation
@@ -196,16 +198,45 @@ class LabRun:
             from turn_lab_host import verify_candidate_manifest
             verify_candidate_manifest(manifest)
         self.close()
-        proof = self._production_client.admit()
-        if not isinstance(proof, ProductionProof):
-            raise RuntimeError("production admission did not return a sealed proof")
         with self._lock:
             self._generation += 1
             generation, token, cancel = self._generation, object(), threading.Event()
             self._run_token, self._watch_stop = token, cancel
+            self._admission_token = token
             # Own the lease before any filesystem, child or handshake work.
-            self._production_proof = proof; self._production_epoch = proof.epoch
             self.closed = False; self._last_status = "starting"
+        try:
+            proof = self._production_client.admit()
+        except Exception:
+            with self._state_changed:
+                if self._admission_token is token:
+                    self._admission_token = None
+                    self._state_changed.notify_all()
+            self._close_generation(token, generation)
+            raise
+        if not isinstance(proof, ProductionProof):
+            with self._state_changed:
+                if self._admission_token is token:
+                    self._admission_token = None
+                    self._state_changed.notify_all()
+            self._close_generation(token, generation)
+            raise RuntimeError("production admission did not return a sealed proof")
+        with self._state_changed:
+            owns_admission = self._owns_locked(token, generation)
+            if owns_admission:
+                self._production_proof = proof; self._production_epoch = proof.epoch
+                self._admission_token = None
+                self._state_changed.notify_all()
+            else:
+                # Hold the lifecycle condition until release completes so a
+                # concurrent close cannot return while a late admission lease
+                # is briefly live remotely.
+                self._production_client.release(proof)
+                if self._admission_token is token:
+                    self._admission_token = None
+                    self._state_changed.notify_all()
+        if not owns_admission:
+            raise RuntimeError("lab run was closed or replaced during production admission")
         try:
             parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
             runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
@@ -216,17 +247,9 @@ class LabRun:
                 shutil.rmtree(runtime_dir, ignore_errors=True)
                 raise RuntimeError("lab run was closed or replaced during runtime setup")
             self._require_owner(token, generation)
-            lab, signal_proc, signal_log = self._spawn_signal(runtime_dir, realm)
+            lab = self._spawn_signal(runtime_dir, realm, token, generation)
             if lab.realm != realm or validate_lab_origin(lab.origin) != lab.origin:
-                self._terminate_child(signal_proc); signal_log.close()
                 raise RuntimeError("lab Signal did not publish a canonical isolated identity")
-            with self._lock:
-                attached = self._owns_locked(token, generation)
-                if attached:
-                    self._children.append(signal_proc); self._handles.append(signal_log); self._stop_signal = lab.stop
-            if not attached:
-                self._terminate_child(signal_proc); signal_log.close()
-                raise RuntimeError("lab run was closed or replaced during Signal startup")
             lab_proof = self._issue_lab_proof(lab)
             self._require_owner(token, generation)
             if lab_proof.get("realm") != realm or not isinstance(lab_proof.get("epoch"), int) or not lab_proof.get("token"): raise RuntimeError("lab Signal did not issue a realm-bound proof")
@@ -253,7 +276,7 @@ class LabRun:
         except Exception:
             self._close_generation(token, generation); raise
 
-    def _spawn_signal(self, runtime_dir: Path, realm: str) -> tuple[LabSignal, subprocess.Popen[Any], Any]:
+    def _spawn_signal(self, runtime_dir: Path, realm: str, token: object, generation: int) -> LabSignal:
         script = Path(__file__).with_name("turn-lab-signal.js"); env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
         stderr_log = (runtime_dir / "signal.stderr.log").open("wb")
         try:
@@ -263,11 +286,24 @@ class LabRun:
             raise
         if proc.stdout is None:
             self._terminate_child(proc); stderr_log.close(); raise RuntimeError("lab Signal did not expose stdout")
+        with self._lock:
+            attached = self._owns_locked(token, generation)
+            if attached:
+                self._children.append(proc)
+                self._handles.append(stderr_log)
+                self._stop_signal = lambda: self._terminate_child(proc)
+        if not attached:
+            self._terminate_child(proc); stderr_log.close()
+            raise RuntimeError("lab run was closed or replaced during Signal startup")
         try:
             payload = self._read_startup_json(proc, proc.stdout)
-            return (LabSignal(str(payload["origin"]), str(payload["realm"]), str(payload["hostSecret"]), str(payload["viewerPassword"]), str(payload["contextSecret"]), lambda: self._terminate_child(proc)), proc, stderr_log)
+            self._require_owner(token, generation)
+            return LabSignal(str(payload["origin"]), str(payload["realm"]), str(payload["hostSecret"]), str(payload["viewerPassword"]), str(payload["contextSecret"]), lambda: self._terminate_child(proc))
         except Exception:
-            self._terminate_child(proc); stderr_log.close(); raise
+            # If attached, the generation's one cleanup path owns the child
+            # and descriptor.  If close won the race, it has already reaped
+            # them; if this startup error won, start() invokes that same path.
+            raise
 
     @staticmethod
     def _read_startup_json(proc: subprocess.Popen[Any], output: Any, *, timeout_seconds: float = 10) -> Mapping[str, Any]:
@@ -412,6 +448,7 @@ class LabRun:
             if not self._last_status.startswith("stopped:"):
                 self._last_status = "closed"
             proof = self._production_proof
+            admission_pending = self._admission_token is token
             self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
             self._run_token = None; self._watch_stop = None; self._watch_thread = None
         for child in children:
@@ -429,6 +466,13 @@ class LabRun:
         if runtime_dir: shutil.rmtree(runtime_dir, ignore_errors=True)
         if proof is not None and self._production_client is not None:
             self._production_client.release(proof)
+        if admission_pending:
+            # Admission has a bounded HTTP timeout.  Waiting here makes close
+            # linearizable with respect to a late successful admission: its
+            # starter releases the lease before signalling this condition.
+            with self._state_changed:
+                while self._admission_token is token:
+                    self._state_changed.wait()
         if watch is not None and watch is not threading.current_thread(): watch.join(timeout=1)
 
     def close(self) -> None:

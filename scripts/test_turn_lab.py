@@ -30,6 +30,9 @@ class _ProofFixture:
         self.block_next_status = False
         self.status_block_entered = threading.Event()
         self.status_block_release = threading.Event()
+        self.block_next_admission = False
+        self.admission_block_entered = threading.Event()
+        self.admission_block_release = threading.Event()
         self._fixture_lock = threading.Lock()
         fixture = self
         class Handler(BaseHTTPRequestHandler):
@@ -49,6 +52,12 @@ class _ProofFixture:
                 return self._json(404, {})
             def do_POST(self):
                 if self.path == "/api/proof-admission" and self.headers.get("Authorization") == "Bearer fixture-token":
+                    with fixture._fixture_lock:
+                        block_admission = fixture.block_next_admission
+                        fixture.block_next_admission = False
+                    if block_admission:
+                        fixture.admission_block_entered.set()
+                        fixture.admission_block_release.wait(3)
                     fixture.proofs += 1
                     token = f"proof-token-{fixture.proofs}-long"
                     fixture.leases[token] = {"token": token, "epoch": fixture.epoch, "realm": "production"}
@@ -202,6 +211,29 @@ def test_concurrent_admit_has_exactly_one_success_and_one_active_lease(proof_fix
     assert proof_fixture.proofs == 1 and len(proof_fixture.leases) == 1
 
 
+def test_close_cancels_a_blocked_admission_before_it_can_publish_a_run(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture)
+    proof_fixture.block_next_admission = True
+    start_errors = []
+
+    def start():
+        try: run.start("legacy")
+        except RuntimeError as exc: start_errors.append(str(exc))
+
+    starter = threading.Thread(target=start); starter.start()
+    _wait(proof_fixture.admission_block_entered.is_set)
+    closer = threading.Thread(target=run.close); closer.start()
+    time.sleep(.05)
+    assert closer.is_alive()
+    proof_fixture.admission_block_release.set()
+    starter.join(timeout=3); closer.join(timeout=3)
+    assert not starter.is_alive() and not closer.is_alive()
+    assert start_errors == ["lab run was closed or replaced during production admission"]
+    assert run.closed and run.monitor() == "closed"
+    assert not proof_fixture.leases and not run._children
+    assert not list(tmp_path.glob("wrd-turn-lab-*"))
+
+
 def test_start_filesystem_failure_releases_owned_proof(tmp_path, proof_fixture, monkeypatch):
     run = _run(tmp_path / "blocked-parent", proof_fixture)
     original = Path.mkdir
@@ -258,6 +290,45 @@ def test_start_host_rechecks_production_before_spawning(tmp_path, proof_fixture,
     assert not calls and run.closed and not proof_fixture.leases
 
 
+def test_human_arrival_after_host_preflight_is_reaped_by_watchdog(tmp_path, proof_fixture, monkeypatch):
+    watchdog_ready, release_watchdog = threading.Event(), threading.Event()
+    original_watchdog = LabRun._watchdog
+
+    def delayed_watchdog(*args):
+        watchdog_ready.set()
+        assert release_watchdog.wait(3)
+        return original_watchdog(*args)
+
+    monkeypatch.setattr(LabRun, "_watchdog", delayed_watchdog)
+    run = _run(tmp_path, proof_fixture); run.start("legacy")
+    _wait(watchdog_ready.is_set)
+    preflight_done, allow_spawn, spawned = threading.Event(), threading.Event(), []
+    original_preflight = run._production_preflight
+    original_popen = turn_lab_module.subprocess.Popen
+
+    def pause_after_preflight(*args):
+        original_preflight(*args)
+        preflight_done.set()
+        assert allow_spawn.wait(3)
+
+    def long_lived_host(*_args, **kwargs):
+        proc = original_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(run, "_production_preflight", pause_after_preflight)
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", long_lived_host)
+    launcher = threading.Thread(target=run.start_host); launcher.start(); _wait(preflight_done.is_set)
+    proof_fixture.viewers = 1
+    allow_spawn.set(); launcher.join(timeout=3)
+    assert not launcher.is_alive() and spawned
+    release_watchdog.set()
+    _wait(lambda: run.closed)
+    assert run.monitor() == "stopped:human-viewer"
+    _wait(lambda: spawned[0].poll() is not None)
+    _wait(lambda: not proof_fixture.leases)
+
+
 def test_host_spawn_failure_closes_run_releases_lease_and_reaps_signal(tmp_path, proof_fixture, monkeypatch):
     run = _run(tmp_path, proof_fixture); run.start("legacy")
     signal_child, runtime_dir = run._children[0], run._runtime_dir
@@ -271,6 +342,35 @@ def test_host_spawn_failure_closes_run_releases_lease_and_reaps_signal(tmp_path,
     assert run.closed and not proof_fixture.leases
     assert signal_child.poll() is not None
     assert runtime_dir is not None and not runtime_dir.exists()
+
+
+def test_close_reaps_signal_while_startup_json_read_is_blocked(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture)
+    entered, release, captured, errors = threading.Event(), threading.Event(), [], []
+    original = LabRun._read_startup_json
+
+    def blocked_read(proc, output, **kwargs):
+        captured.append(proc); entered.set()
+        assert release.wait(3)
+        return original(proc, output, **kwargs)
+
+    monkeypatch.setattr(LabRun, "_read_startup_json", staticmethod(blocked_read))
+
+    def start():
+        try: run.start("legacy")
+        except Exception as exc: errors.append(str(exc))
+
+    starter = threading.Thread(target=start); starter.start(); _wait(entered.is_set)
+    try:
+        runtime_dir = run._runtime_dir
+        close_started = time.monotonic()
+        run.close()
+        assert time.monotonic() - close_started < 2
+        assert captured and captured[0].poll() is not None
+        assert not run._children and runtime_dir is not None and not runtime_dir.exists()
+    finally:
+        release.set(); starter.join(timeout=3)
+    assert not starter.is_alive() and errors
 
 
 def test_stale_watchdog_cannot_close_or_rewrite_a_restarted_run(tmp_path, proof_fixture):
