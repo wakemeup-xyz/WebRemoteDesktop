@@ -117,13 +117,13 @@ class GuardedLabInputAdapter:
     async def apply_keyboard(self, envelope: dict[str, Any], *, transport: Any = None) -> Any:
         action = self._guard.action_for_envelope(envelope)
         if action is None:
-            return await self._delegate.apply_keyboard(envelope, transport=transport)
+            raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
         return await self._guard.execute_async(action, lambda: self._delegate.apply_keyboard(envelope, transport=transport))
 
     async def handle_input(self, envelope: dict[str, Any]) -> Any:
         action = self._guard.action_for_envelope(envelope)
         if action is None:
-            return await self._delegate.handle_input(envelope)
+            raise InputGuardRejected("unbound inputId rejected by automatic laboratory")
         return await self._guard.execute_async(action, lambda: self._delegate.handle_input(envelope))
 
     def __getattr__(self, name: str) -> Any:

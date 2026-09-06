@@ -245,6 +245,23 @@ def test_automatic_orchestration_rejects_an_arbitrary_guard_object():
     assert "lab-input-guard-required" in result.failures
 
 
+def test_automatic_orchestration_never_sends_an_unbound_declared_input_id():
+    class Viewer:
+        sends = 0
+        def send_input(self, *_args, **_kwargs): self.sends += 1
+    guard = LabInputGuard(
+        expected_lease_id="lease", expected_proof_token="proof", expected_fixture_id="fixture",
+        desktop_proof=lambda: {"leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture", "isolated": True, "foreground": True, "fixtureWindow": True},
+        input_handler=lambda _action: None,
+    )
+    guard.install_at_lab_host(object())
+    viewer = Viewer()
+    result = scene.run_controlled_scenes(viewer, object(), proof(), guard=guard,
+                                         actions=[{"inputId": "unbound", "actionId": 1, "leaseId": "lease", "proofToken": "proof", "fixtureId": "fixture"}])
+    assert result.status == scene.FAIL
+    assert viewer.sends == 0
+
+
 def test_controlled_producer_records_immutable_input_bound_event_and_freezes_for_sixty_seconds():
     producer = scene.ControlledProducer(proof(), clock=lambda: 0)
     marker = producer.render_marker()

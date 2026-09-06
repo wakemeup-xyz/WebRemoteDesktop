@@ -93,3 +93,5 @@ async def test_installed_adapter_verifies_one_controlled_viewer_envelope_then_de
     envelope = {"schemaVersion": 2, "type": "keyboard", "action": "down", "inputIds": ["i"], "payload": {}}
     assert await boundary.apply_keyboard(envelope, transport="datachannel") == {"status": "applied", "inputIds": ["i"]}
     assert calls == [(envelope, "datachannel")]
+    with pytest.raises(guard_module.InputGuardRejected, match="unbound"):
+        await boundary.apply_keyboard({"schemaVersion": 2, "type": "keyboard", "inputIds": ["other"], "payload": {}})

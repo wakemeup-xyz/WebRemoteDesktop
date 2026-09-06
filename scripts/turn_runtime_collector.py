@@ -25,6 +25,18 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 PHASE_DURATIONS = {"720p": 600, "1080p": 300}
 
 
+class _TrustedSceneEvidence(dict[str, Any]):
+    """In-process-only SceneResult binding; JSON persists only mapping keys."""
+
+    def __init__(self, result: Any) -> None:
+        super().__init__(result.as_dict())
+        self._result = result
+
+    @property
+    def result(self) -> Any:
+        return self._result
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect continuous selected-TURN relay evidence. Does not inject loss or restart services."
@@ -588,10 +600,9 @@ def record_interactions(page: Any, enabled: bool, *, scene_driver: Any | None = 
             if not isinstance(scene_driver, ControlledSceneDriver):
                 raise TypeError("unregistered controlled scene driver")
             result = scene_driver.run()
-            evidence = result.as_dict()
-            # Kept in-process only; JSON artifacts cannot self-certify a PASS.
-            evidence["_trustedSceneResult"] = result
-            return evidence
+            # The private attribute is not a mapping key, therefore JSON
+            # artifacts retain evidence fields but cannot self-certify PASS.
+            return _TrustedSceneEvidence(result)
         except Exception as error:
             return {"status": "FAIL", "executionMode": "automatic-isolated",
                     "reason": f"controlled-driver-failed:{type(error).__name__}", "inputIds": [],
@@ -668,7 +679,7 @@ def marker_failures(marker: dict[str, Any]) -> list[str]:
     try:
         from turn_controlled_scene import (AUTOMATIC_ISOLATED, OPERATOR_REMOTE, PASS,
                                            ProducerProof, evaluate_scene_result)
-        trusted_result = scene.get("_trustedSceneResult") if isinstance(scene, dict) else None
+        trusted_result = scene.result if isinstance(scene, _TrustedSceneEvidence) else None
         # A persisted artifact is untrusted input.  Only an in-process result
         # sealed by the registered driver can remove the fixed-input gate.
         if trusted_result is None or not getattr(trusted_result, "driver_generated", False):

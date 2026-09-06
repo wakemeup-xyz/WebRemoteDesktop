@@ -268,6 +268,23 @@ class FrameTraceCollector {
     return matched;
   }
 
+  takeControlledVisualEvidence() {
+    // Convert only actual decoded-video marker pixels plus an already matched
+    // T3 row into the strict SceneResult visual schema.  Diagnostics with an
+    // absent/invalid marker never become scene evidence.
+    return this.takeMatched().flatMap((row) => {
+      const marker = row?.roi?.marker;
+      if (!marker || row.traceStatus !== 'matched') return [];
+      return [{
+        marker, viewerClockMs: row.viewerClockMs, attemptId: row.attemptId,
+        generation: row.generation, streamId: row.streamId,
+        rtpTimestamp: row.rtpTimestamp, wireTimestamp: row.wireTimestamp,
+        captureSeq: row.captureSeq, rtpOrigin: row.rtpOrigin,
+        traceStatus: row.traceStatus,
+      }];
+    });
+  }
+
   diagnostics() {
     this.expire();
     return {
@@ -287,6 +304,43 @@ class FrameTraceCollector {
     this.expire();
     return this.unaligned ? 'UNALIGNED' : 'PENDING';
   }
+}
+
+function controlledCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function decodeControlledMarkerRgba(data, width, height) {
+  if (!(data instanceof Uint8ClampedArray) || width !== 256 || height !== 128 || data.length !== width * height * 4) return null;
+  const grid = [];
+  for (let gy = 0; gy < 16; gy += 1) {
+    const row = [];
+    for (let gx = 0; gx < 32; gx += 1) {
+      const centre = [];
+      for (let y = gy * 8 + 2; y < gy * 8 + 6; y += 1) for (let x = gx * 8 + 2; x < gx * 8 + 6; x += 1) centre.push(data[(y * width + x) * 4]);
+      const value = centre.sort((a, b) => a - b)[8];
+      if (value > 96 && value < 160) return null;
+      row.push(value >= 160 ? 1 : 0);
+    }
+    grid.push(row);
+  }
+  if (grid[0][0] !== 0 || grid[0][31] !== 1 || grid[15][0] !== 1 || grid[15][31] !== 1) return null;
+  const interior = grid.slice(1, 15).flatMap((row) => row.slice(1, 31));
+  const a = interior.slice(0, 192), b = interior.slice(192, 384);
+  if (a.length !== 192 || a.some((value, index) => value !== b[index])) return null;
+  const bytes = new Uint8Array(24);
+  a.forEach((value, index) => { bytes[Math.floor(index / 8)] |= value << (7 - (index % 8)); });
+  const view = new DataView(bytes.buffer);
+  if (bytes[0] !== 1 || bytes[1] !== 0 || controlledCrc32(bytes.slice(0, 20)) !== view.getUint32(20)) return null;
+  // JSON cannot safely transport every uint64 as a Number.  Preserve the
+  // decoded nonce canonically; the Python evidence validator accepts this
+  // exact decimal representation alongside in-process integer fixtures.
+  return { runNonce: view.getBigUint64(2).toString(), sceneId: view.getUint16(10), tick: view.getUint32(12), actionId: view.getUint32(16) };
 }
 
 const WebRTC = {
@@ -4744,7 +4798,7 @@ if (this.tunnelLastObjectUrl) {
         generation: Number(this.connectionAttemptSequence) || 0,
         streamId: 'video',
         rtpTimestamp: metadata?.rtpTimestamp,
-      }, { metadata });
+      }, { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
       this.observePaintFrame(now, metadata, video);
       if (this._mediaResumeFramePending) {
         this.observeFreshResumeFrame({
@@ -4765,6 +4819,35 @@ if (this.tunnelLastObjectUrl) {
       generation: Number(this.connectionAttemptSequence) || 0,
       streamId: 'video',
     };
+  },
+
+  configureControlledSceneMarkerRoi(roi) {
+    const fields = ['x', 'y', 'width', 'height'];
+    if (!roi || fields.some((field) => !Number.isSafeInteger(roi[field]))
+        || roi.x <= 0 || roi.y <= 0 || roi.width !== 256 || roi.height !== 128) {
+      this._controlledSceneMarkerRoi = null;
+      return false;
+    }
+    this._controlledSceneMarkerRoi = { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
+    return true;
+  },
+
+  decodeControlledMarkerFromVideo(video) {
+    const roi = this._controlledSceneMarkerRoi;
+    const width = Number(video?.videoWidth || 0), height = Number(video?.videoHeight || 0);
+    if (!roi || !Number.isSafeInteger(width) || !Number.isSafeInteger(height)
+        || roi.x + roi.width > width || roi.y + roi.height > height) return null;
+    try {
+      const canvas = this._controlledMarkerCanvas || document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return null;
+      context.drawImage(video, 0, 0, width, height);
+      this._controlledMarkerCanvas = canvas;
+      return decodeControlledMarkerRgba(context.getImageData(roi.x, roi.y, roi.width, roi.height).data, roi.width, roi.height);
+    } catch (_error) {
+      return null;
+    }
   },
 
   ensureFrameTraceCollector(scope = this.currentFrameTraceIdentity()) {

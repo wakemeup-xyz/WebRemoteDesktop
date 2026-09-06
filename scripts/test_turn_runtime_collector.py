@@ -247,7 +247,9 @@ def test_registered_lab_driver_can_supply_a_sealed_remote_scene_to_the_collector
     guard.bind_controlled_input({key: action[key] for key in ("inputId", "leaseId", "proofToken", "fixtureId")})
     guard.install_at_lab_host(object())
     evidence = collector.record_interactions(None, True, scene_driver=ControlledSceneDriver(viewer=Viewer(), producer=Producer(), proof=proof, execution_mode=AUTOMATIC_ISOLATED, guard=guard, actions=[action]))
-    assert evidence["status"] == "PASS" and evidence["_trustedSceneResult"].driver_generated
+    assert evidence["status"] == "PASS" and evidence.result.driver_generated
+    assert "_trustedSceneResult" not in evidence
+    assert "_trustedSceneResult" not in __import__("json").dumps(evidence)
     marker = {"pauseResumeRefresh": {"pauseResume": {"suspended": True, "active": True, "freshFrame": True, "resumeAfterMs": 2000}, "refresh": {"healthyRelay": True, "freshFrame": True}}, "sceneResult": evidence}
     assert "static-text-and-input-not-run" not in collector.marker_failures(marker)
 

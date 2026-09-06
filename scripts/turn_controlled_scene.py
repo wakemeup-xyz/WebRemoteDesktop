@@ -370,6 +370,15 @@ def _uint(value: Any, *, minimum: int = 0, maximum: int = 0xFFFFFFFF) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and minimum <= value <= maximum
 
 
+def _nonce(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**64:
+        return value
+    if isinstance(value, str) and value and value.isascii() and value.isdecimal() and str(int(value)) == value:
+        parsed = int(value)
+        return parsed if parsed < 2**64 else None
+    return None
+
+
 def _finite_clock(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
@@ -463,9 +472,10 @@ def evaluate_scene_result(
             failures.add("invalid-producer-samples"); continue
         if producer.get("focused") is not True:
             failures.add("producer-focus")
-        if not _uint(producer.get("runNonce"), maximum=2**64 - 1):
+        producer_nonce = _nonce(producer.get("runNonce"))
+        if producer_nonce is None:
             failures.add("invalid-producer-nonce")
-        elif producer["runNonce"] != proof.run_nonce:
+        elif producer_nonce != proof.run_nonce:
             failures.add("nonce-mismatch")
         if (not _uint(producer.get("sceneId"), maximum=2**16 - 1)
                 or not _uint(producer.get("actionId")) or not _uint(producer.get("tick"))):
@@ -480,11 +490,12 @@ def evaluate_scene_result(
         marker = visual.get("marker")
         if not isinstance(marker, dict) or set(marker) != {"runNonce", "sceneId", "tick", "actionId"}:
             failures.add("invalid-marker-payload"); continue
-        if (not _uint(marker.get("runNonce"), maximum=2**64 - 1)
+        marker_nonce = _nonce(marker.get("runNonce"))
+        if (marker_nonce is None
                 or not _uint(marker.get("sceneId"), maximum=2**16 - 1)
                 or not _uint(marker.get("tick")) or not _uint(marker.get("actionId"))):
             failures.add("invalid-marker-payload"); continue
-        if (marker.get("runNonce") != proof.run_nonce or marker.get("sceneId") != proof.scene_id
+        if (marker_nonce != proof.run_nonce or marker.get("sceneId") != proof.scene_id
                 or marker.get("tick") != producer.get("tick") or marker.get("actionId") != producer.get("actionId")):
             failures.add("nonce-mismatch")
         if not _valid_identity(visual, proof, stream_id):
@@ -533,11 +544,15 @@ def run_controlled_scenes(
         for action in actions:
             if not isinstance(action, dict):
                 raise ValueError("invalid-action")
+            if execution_mode == AUTOMATIC_ISOLATED:
+                declared_input_id = action.get("inputId")
+                if not isinstance(declared_input_id, str) or not guard.is_input_bound(declared_input_id):
+                    raise ValueError("unbound-lab-input")
             sent = viewer.send_input(action, operator_endpoint=operator_endpoint)
             if not isinstance(sent, dict) or not isinstance(sent.get("inputId"), str) or not sent["inputId"]:
                 raise ValueError("invalid-send-result")
             input_id = sent["inputId"]; input_ids.append(input_id); sends.append(sent)
-            if execution_mode == AUTOMATIC_ISOLATED and not guard.is_input_bound(input_id):
+            if execution_mode == AUTOMATIC_ISOLATED and input_id != action["inputId"]:
                 raise ValueError("unbound-lab-input")
             # Viewer send is the sole input dispatch.  The automatic guard is
             # already installed around Lab Host's InputAdapter; both remote
