@@ -149,6 +149,41 @@ def test_production_proof_lease_is_readable_released_and_loss_stops_watchdog(tmp
     _wait(lambda: run.closed); assert run.monitor() == "stopped:production-proof-lost"
 
 
+def test_admission_rejects_second_active_proof_without_leaking_first(proof_fixture):
+    client = _make_test_production_client(origin=proof_fixture.origin, viewer_token="fixture-token")
+    first = client.admit()
+    with pytest.raises(RuntimeError, match="active proof"): client.admit()
+    assert client.proof_active(first) and len(proof_fixture.leases) == 1
+    assert client.release(first) and not proof_fixture.leases
+
+
+def test_start_filesystem_failure_releases_owned_proof(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path / "blocked-parent", proof_fixture)
+    original = Path.mkdir
+    def fail_runtime_parent(path, *args, **kwargs):
+        if path == run._runtime_root: raise OSError("fixture mkdir failure")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(turn_lab_module.Path, "mkdir", fail_runtime_parent)
+    with pytest.raises(OSError, match="mkdir failure"): run.start("legacy")
+    assert run.closed and not proof_fixture.leases and not run._children
+
+
+def test_start_signal_handshake_failure_releases_owned_proof_and_runtime(tmp_path, proof_fixture, monkeypatch):
+    run = _run(tmp_path, proof_fixture)
+    monkeypatch.setattr(run, "_spawn_signal", lambda *_args: (_ for _ in ()).throw(RuntimeError("fixture signal failure")))
+    with pytest.raises(RuntimeError, match="signal failure"): run.start("legacy")
+    assert run.closed and not proof_fixture.leases and not run._children
+    assert not list(tmp_path.glob("wrd-turn-lab-*"))
+
+
+def test_manual_close_reports_closed_and_preserves_stop_reason(tmp_path, proof_fixture):
+    run = _run(tmp_path, proof_fixture); run.start("legacy"); run.close(); run.close()
+    assert run.monitor() == "closed"
+    run = _run(tmp_path, proof_fixture); identity = run.start("legacy")
+    run.monitor(lab_identity=LabIdentity("other", identity.origin, identity.epoch, identity.realm, "other")); run.close()
+    assert run.monitor() == "stopped:lab-identity-changed"
+
+
 def test_monitor_identity_gate_and_watchdog_internal_identity_check_fail_closed(tmp_path, proof_fixture):
     run = _run(tmp_path, proof_fixture); identity = run.start("legacy")
     forged = LabIdentity("other", identity.origin, identity.epoch, identity.realm, "other")

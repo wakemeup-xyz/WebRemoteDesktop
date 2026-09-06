@@ -79,6 +79,9 @@ class ProductionAdmissionClient:
             return response.status, json.loads(response.read().decode("utf-8"))
 
     def admit(self) -> ProductionProof:
+        if self._proof is not None and self.proof_active(self._proof):
+            raise RuntimeError("active proof lease must be released before another admission")
+        self._proof = None
         code, status = self._request_json("/api/status")
         epoch, viewers = status.get("viewerEpoch"), status.get("viewerCount")
         if code != 200 or not isinstance(epoch, int) or not isinstance(viewers, int):
@@ -155,12 +158,16 @@ class LabRun:
             verify_candidate_manifest(manifest)
         self.close()
         proof = self._production_client.admit()
-        if not isinstance(proof, ProductionProof): raise RuntimeError("production admission did not return a sealed proof")
-        parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
-        self._runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
+        if not isinstance(proof, ProductionProof):
+            raise RuntimeError("production admission did not return a sealed proof")
         with self._lock:
+            # Own the lease before any filesystem, child or handshake work so
+            # every exception below follows the one cleanup path.
+            self._production_proof = proof; self._production_epoch = proof.epoch
             self.closed = False; self._last_status = "starting"
         try:
+            parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
+            self._runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
             lab = self._spawn_signal(self._runtime_dir, realm)
             if lab.realm != realm or validate_lab_origin(lab.origin) != lab.origin: raise RuntimeError("lab Signal did not publish a canonical isolated identity")
             self._stop_signal = lab.stop
@@ -284,6 +291,8 @@ class LabRun:
         with self._lock:
             if self.closed: return
             self.closed = True; self._watch_stop.set(); watch, children, stop = self._watch_thread, tuple(self._children), self._stop_signal; handles, runtime_dir = tuple(self._handles), self._runtime_dir
+            if not self._last_status.startswith("stopped:"):
+                self._last_status = "closed"
             proof = self._production_proof
             self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = ""; self._production_epoch = None; self._production_proof = None
         for child in children:
