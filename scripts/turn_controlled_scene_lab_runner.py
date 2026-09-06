@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -71,7 +72,7 @@ class PlaywrightLabViewerAdapter:
         self.viewer_page, self.producer_page = viewer_page, producer_page
 
     @classmethod
-    def open(cls, lab_run: Any) -> "PlaywrightLabViewerAdapter":
+    def open(cls, lab_run: Any, proof: ProducerProof) -> "PlaywrightLabViewerAdapter":
         from turn_runtime_collector import _json_request, seed_viewer_storage, start_viewer, wait_for_healthy_relay
         from playwright.sync_api import sync_playwright
         credentials = lab_run.viewer_credentials()
@@ -85,7 +86,9 @@ class PlaywrightLabViewerAdapter:
             seed_viewer_storage(context, login["token"], credentials["proofAdmission"])
             viewer = context.new_page(); viewer.goto(f"{credentials['origin']}/viewer.html", wait_until="domcontentloaded", timeout=45000)
             start_viewer(viewer); wait_for_healthy_relay(viewer)
-            producer = context.new_page(); producer.goto(Path(__file__).with_name("turn-runtime-controlled-producer.html").as_uri(), wait_until="domcontentloaded")
+            producer_url = Path(__file__).with_name("turn-runtime-controlled-producer.html").as_uri()
+            producer_url += f"?runNonce={proof.run_nonce}&sceneId={proof.scene_id}"
+            producer = context.new_page(); producer.goto(producer_url, wait_until="domcontentloaded")
             return cls(playwright=playwright, browser=browser, context=context, viewer_page=viewer, producer_page=producer)
         except Exception:
             browser.close(); playwright.stop(); raise
@@ -101,6 +104,12 @@ class PlaywrightLabViewerAdapter:
 
     def close(self) -> None:
         self._browser.close(); self._playwright.stop()
+
+    def producer_window_precondition(self) -> tuple[bool, str]:
+        # A headless browser page is not an MSS-captured fixture window.  This
+        # is intentionally stricter than DOM visibility: a separate browser
+        # tab cannot prove that the Lab Host captured this producer.
+        return False, "producer-window-is-not-visible-to-host-capture"
 
 
 class LabLifecycleCollector:
@@ -141,14 +150,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dedicated-desktop", action="store_true")
     parser.add_argument("--fixture-window", action="store_true")
     args = parser.parse_args(argv)
-    # Browser/producer adapters are intentionally required rather than guessed
-    # from a personal desktop.  The lifecycle executable remains reviewable and
-    # emits a durable BLOCKED artifact when no adapter was supplied.
-    blocked = LabTranscript.create(verifier=b"unstarted-lab", identity={}, static={"status": NOT_RUN, "failures": ["real-lab-viewer-adapter-required"]},
-                                    automatic={"status": BLOCKED, "failures": ["real-lab-viewer-adapter-required"]}, receipts=[])
-    write_artifact(args.output, blocked)
-    print(json.dumps(blocked.as_dict()))
-    return 2
+    from turn_lab import LabRun
+    lab = LabRun(viewer_token=args.viewer_token)
+    adapter = None
+    try:
+        identity = lab.start("legacy")
+        lab.start_host()
+        proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending-viewer-attempt", 0, identity.realm, identity.run_id)
+        layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
+                                     source_width=1280, source_height=720, roi=(64, 48, 256, 128))
+        adapter = PlaywrightLabViewerAdapter.open(lab, proof)
+        visible, reason = adapter.producer_window_precondition()
+        identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch}
+        if not visible:
+            transcript = LabTranscript.create(verifier=lab.transcript_verifier(), identity=identity_record,
+                static={"status": NOT_RUN, "failures": [reason], "layout": asdict(layout)},
+                automatic={"status": BLOCKED, "executionMode": "automatic-isolated", "failures": [reason],
+                           "workload": [workload_record(item) for item in exact_workload()]}, receipts=[])
+            write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 2
+        # A visible producer fixture reaches this path; decoded static evidence
+        # must pass before automatic dispatch is even considered.
+        static = static_text_evidence(proof, layout, adapter.static_frames(layout))
+        automatic = run_automatic_scene(proof=proof, verified_context=identity, layout=layout,
+                                         dedicated_desktop=args.dedicated_desktop, fixture_window=args.fixture_window)
+        transcript = LabTranscript.create(verifier=lab.transcript_verifier(), identity=identity_record,
+            static=static, automatic=automatic, receipts=[])
+        write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 0 if static["status"] == PASS and automatic["status"] == PASS else 1
+    except Exception as exc:
+        transcript = LabTranscript.create(verifier=b"lab-start-failed", identity={}, static={"status": NOT_RUN, "failures": [f"lifecycle:{type(exc).__name__}"]},
+            automatic={"status": BLOCKED, "failures": ["lab-lifecycle-unavailable"]}, receipts=[])
+        write_artifact(args.output, transcript); print(json.dumps(transcript.as_dict())); return 2
+    finally:
+        if adapter is not None: adapter.close()
+        lab.close()
 
 
 if __name__ == "__main__":

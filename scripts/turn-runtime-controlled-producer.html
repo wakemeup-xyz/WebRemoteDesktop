@@ -42,8 +42,10 @@
   };
   window.WRDTurnControlledProducer={markerGrid,createState,applyAction,crc32,configureLoopbackProducer};
   if(typeof document==='undefined')return;
-  const nonce=BigInt('0x'+crypto.getRandomValues(new Uint32Array(2)).reduce((s,x)=>s+x.toString(16).padStart(8,'0'),''));
-  const state=createState({runNonce:nonce,sceneId:1}); const canvas=document.querySelector('#marker'), ctx=canvas.getContext('2d');
+  const query=new URLSearchParams(location.search); const suppliedNonce=query.get('runNonce'), suppliedScene=query.get('sceneId');
+  const nonce=suppliedNonce&&/^\d+$/.test(suppliedNonce)?BigInt(suppliedNonce):BigInt('0x'+crypto.getRandomValues(new Uint32Array(2)).reduce((s,x)=>s+x.toString(16).padStart(8,'0'),''));
+  const sceneId=suppliedScene&&/^\d+$/.test(suppliedScene)?Number(suppliedScene):1;
+  const state=createState({runNonce:nonce,sceneId}); const canvas=document.querySelector('#marker'), ctx=canvas.getContext('2d');
   const draw=()=>{const image=ctx.createImageData(256,128), grid=markerGrid(state);for(let y=0;y<128;y++)for(let x=0;x<256;x++){const v=grid[Math.floor(y/8)][Math.floor(x/8)]?WHITE:BLACK,i=(y*256+x)*4;image.data[i]=image.data[i+1]=image.data[i+2]=v;image.data[i+3]=255}ctx.putImageData(image,0,0)};
   const log=document.querySelector('#log'); let action=0; let nextActionId=null;
   // The laboratory driver assigns an action id before dispatching its prepared

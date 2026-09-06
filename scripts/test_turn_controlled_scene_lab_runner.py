@@ -51,3 +51,8 @@ def test_transcript_signature_rejects_a_receipt_forgery_even_when_attacker_recom
     # run verifier, which is not present in the durable artifact.
     result["signature"] = __import__("hashlib").sha256(__import__("json").dumps({key: result[key] for key in ("identity", "static", "automatic", "receipts")}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert not runner.verify_transcript(result, identity={"runId": "r"}, verifier=b"captured")
+
+
+def test_headless_producer_adapter_requires_an_mss_visible_fixture_window_before_static_or_input_evidence():
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
+    assert adapter.producer_window_precondition() == (False, "producer-window-is-not-visible-to-host-capture")
