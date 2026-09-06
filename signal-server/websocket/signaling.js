@@ -116,6 +116,7 @@ function setupSignaling(io, options = {}) {
     if (connections.host) connections.host.emit('viewer-status', payload);
   };
   const config = options.config || loadConfig();
+  const verifyRuntimeToken = options.verifyAccessToken || verifyAccessToken;
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
   const structuredLogger = options.structuredLogger || null;
@@ -668,7 +669,8 @@ function setupSignaling(io, options = {}) {
     if (!token) {
       return next(new Error('Authentication required'));
     }
-    const decoded = verifyToken(token);
+    let decoded = null;
+    try { decoded = verifyRuntimeToken(token); } catch (_error) { decoded = null; }
     if (!decoded) {
       return next(new Error('Invalid token'));
     }

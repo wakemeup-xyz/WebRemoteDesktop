@@ -42,7 +42,9 @@ from h264_videotoolbox_encoder import (
 from h264_encoder_policy import (
     H264SessionPolicyProvider,
     MediaSessionIntent,
+    PolicySelection,
     policy_version_from_environment,
+    resolve_h264_policy,
 )
 from media_timing import RtpFrameClock
 from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
@@ -1645,10 +1647,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
 class WebRemoteHost:
     def __init__(self):
-        # Resolve this Host-local enum at startup. Unknown values fail before a
-        # media session or PeerConnection is created.
-        self._h264_policy_version = policy_version_from_environment()
-        self._h264_policy_provider = H264SessionPolicyProvider()
+        self._policy_selection = self._create_policy_selection()
+        self._h264_policy_version = self._policy_selection.policy_id
+        self._h264_policy_provider = H264SessionPolicyProvider(resolver=self._policy_selection.resolver)
         self._frame_trace_registry = FrameTraceRegistry()
         self._stage_metrics = StageMetrics(registry=self._frame_trace_registry)
         self._frame_trace_context = None
@@ -1701,6 +1702,14 @@ class WebRemoteHost:
         self._media_activity_binding = None
         self._media_activity_suspended = False
         self._session_turn_server_id = None
+
+    def _create_policy_selection(self):
+        """The only production selection path: its parser remains fail-closed."""
+        return PolicySelection(
+            policy_id=policy_version_from_environment(),
+            resolver=resolve_h264_policy,
+            manifest_digest=None,
+        )
 
     def _frame_trace_context_for_policy(self, policy):
         return SenderFrameTraceContext(
@@ -2877,7 +2886,10 @@ class WebRemoteHost:
             raise ValueError("connectionAttemptId is required before binding H.264 session policy")
         provider = getattr(self, "_h264_policy_provider", None)
         if provider is None:
-            provider = H264SessionPolicyProvider()
+            selection = getattr(self, "_policy_selection", None)
+            provider = H264SessionPolicyProvider(
+                resolver=selection.resolver if selection is not None else resolve_h264_policy
+            )
             self._h264_policy_provider = provider
         provider.bind_attempt(attempt_id)
         generation = int(data.get("connectionAttemptSequence") or getattr(self, "_connection_generation", 0) or 0)
@@ -2892,7 +2904,9 @@ class WebRemoteHost:
                 requested_bitrate_bps=0,
                 profile_sequence=0,
             ),
-            getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+            getattr(getattr(self, "_policy_selection", None), "policy_id", None)
+            or getattr(self, "_h264_policy_version", None)
+            or policy_version_from_environment(),
         )
         if not policy_update.accepted or policy_update.policy is None:
             raise ValueError(f"failed to publish H.264 policy: {policy_update.reason}")
@@ -3191,7 +3205,9 @@ class WebRemoteHost:
                 return
             refreshed = policy_provider.refresh_profile(
                 candidate_intent,
-                getattr(self, "_h264_policy_version", None) or policy_version_from_environment(),
+                getattr(getattr(self, "_policy_selection", None), "policy_id", None)
+                or getattr(self, "_h264_policy_version", None)
+                or policy_version_from_environment(),
             )
             if not refreshed.accepted:
                 logger.info("Ignoring media profile rejected by H.264 policy: %s", refreshed.reason)

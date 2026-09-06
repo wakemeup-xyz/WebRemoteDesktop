@@ -11,6 +11,8 @@ function createRuntimeContext(options = {}) {
   const now = options.now || Date.now;
   const proofAdmissionTtlMs = clampProofAdmissionTtl(options.proofAdmissionTtlMs);
   const maxProofAdmissions = clampProofAdmissionCapacity(options.maxProofAdmissions);
+  const realm = String(options.realm || 'production');
+  const requireProofRealm = options.requireProofRealm === true;
   let hostCapabilities = normalizeCapabilities(initialCapabilities, false);
   let viewerEpoch = 0;
   const proofAdmissions = new Map();
@@ -45,7 +47,7 @@ function createRuntimeContext(options = {}) {
       if (proofAdmissions.size >= maxProofAdmissions) return null;
       const admission = { token: randomUUID(), epoch: viewerEpoch, expiresAt: now() + proofAdmissionTtlMs };
       proofAdmissions.set(admission.token, admission);
-      return { token: admission.token, epoch: admission.epoch };
+      return { token: admission.token, epoch: admission.epoch, realm };
     },
     admitProofViewer(admission = {}) {
       cleanupExpiredProofAdmissions();
@@ -55,7 +57,8 @@ function createRuntimeContext(options = {}) {
       // Consume before checking current state so a token has exactly one use,
       // including an attempted admission rejected by a later human Viewer.
       if (token) proofAdmissions.delete(token);
-      if (!issued || issued.epoch !== epoch || epoch !== viewerEpoch || connections.viewers.size > 0) {
+      if (!issued || issued.epoch !== epoch || epoch !== viewerEpoch || connections.viewers.size > 0
+        || (requireProofRealm && admission.realm !== realm)) {
         return false;
       }
       viewerEpoch += 1;

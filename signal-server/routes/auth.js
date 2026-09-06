@@ -59,10 +59,10 @@ function createAuthRouter(options = {}) {
   const limiters = options.authLimiters || createAuthLimiters({ terminalMetrics });
 
   function getConfig() {
-    return {
-      ...loadConfig(),
-      ...(options.config || {}),
-    };
+    // An embedded lab supplies a complete private configuration. Do not read
+    // process configuration first: that could both fail on absent production
+    // env and accidentally make a lab token depend on production secrets.
+    return options.config ? { ...options.config } : loadConfig();
   }
 
   async function loginViewer(req, res) {
@@ -78,7 +78,7 @@ function createAuthRouter(options = {}) {
     }
 
     return res.json({
-      token: signAccessToken('viewer', 'viewer-password-login'),
+      token: signAccessToken('viewer', 'viewer-password-login', getConfig()),
       role: 'viewer',
       expiresIn: '24h',
     });
@@ -99,7 +99,7 @@ function createAuthRouter(options = {}) {
     }
 
     return res.json({
-      token: signAccessToken('host', 'host-daemon'),
+      token: signAccessToken('host', 'host-daemon', getConfig()),
       role: 'host',
       expiresIn: '15m',
     });
@@ -146,7 +146,7 @@ function createAuthRouter(options = {}) {
       subject: 'terminal-admin-login',
     });
     return res.json({
-      token: signAccessToken('admin', 'terminal-admin-login'),
+      token: signAccessToken('admin', 'terminal-admin-login', getConfig()),
       role: 'admin',
       expiresIn: '2h',
     });
@@ -158,7 +158,7 @@ function createAuthRouter(options = {}) {
       if (!token) {
         return res.status(401).json({ valid: false, error: 'No token provided' });
       }
-      const decoded = verifyAccessToken(token);
+      const decoded = verifyAccessToken(token, getConfig());
       return res.json({ valid: true, role: decoded.role });
     } catch (_err) {
       return res.status(401).json({ valid: false, error: 'Invalid token' });

@@ -1,8 +1,8 @@
 const jwt = require('jsonwebtoken');
 const { loadConfig } = require('./config');
 
-function signAccessToken(role, subject) {
-  const config = loadConfig();
+function signAccessToken(role, subject, configOverride = null) {
+  const config = configOverride || loadConfig();
   const expiresIn = role === 'host' ? '15m' : role === 'admin' ? '2h' : '24h';
   return jwt.sign(
     {
@@ -15,8 +15,8 @@ function signAccessToken(role, subject) {
   );
 }
 
-function verifyAccessToken(token) {
-  const config = loadConfig();
+function verifyAccessToken(token, configOverride = null) {
+  const config = configOverride || loadConfig();
   return jwt.verify(token, config.jwtSecret, { audience: 'web-remote-desktop' });
 }
 

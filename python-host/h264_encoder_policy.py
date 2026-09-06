@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 RELAY_LEGACY_V1 = "relay-legacy-v1"
@@ -45,6 +45,15 @@ class H264SessionPolicy:
     profile: str
     connection_attempt_id: str = "legacy-local"
     generation: int = 0
+
+
+@dataclass(frozen=True)
+class PolicySelection:
+    """Immutable authority for one Host's encoder policy resolver."""
+
+    policy_id: str
+    resolver: Callable[["MediaSessionIntent", str], "H264SessionPolicy"]
+    manifest_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,8 +178,11 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
 class H264SessionPolicyProvider:
     """Thread-safe current-policy provider bound to one authoritative attempt."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, resolver: Callable[[MediaSessionIntent, str], H264SessionPolicy] = resolve_h264_policy) -> None:
+        if not callable(resolver):
+            raise TypeError("resolver must be callable")
         self._lock = threading.RLock()
+        self._resolver = resolver
         self._active_attempt_id: str | None = None
         self._current: PublishedH264Policy | None = None
 
@@ -194,7 +206,7 @@ class H264SessionPolicyProvider:
                 and intent.generation <= current.intent.generation
             ):
                 return PublishedH264Policy(False, "stale-generation", current.intent, current.policy)
-            policy = resolve_h264_policy(intent, policy_version)
+            policy = self._resolver(intent, policy_version)
             published = PublishedH264Policy(True, None, intent, policy)
             self._current = published
             return published
@@ -213,7 +225,7 @@ class H264SessionPolicyProvider:
                 if intent == current.intent:
                     return PublishedH264Policy(True, "idempotent-replay", current.intent, current.policy)
                 return PublishedH264Policy(False, "conflicting-profile-sequence", current.intent, current.policy)
-            policy = resolve_h264_policy(intent, policy_version)
+            policy = self._resolver(intent, policy_version)
             published = PublishedH264Policy(True, None, intent, policy)
             self._current = published
             return published

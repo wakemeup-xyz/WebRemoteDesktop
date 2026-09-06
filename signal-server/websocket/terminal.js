@@ -40,12 +40,12 @@ function buildOperationCorrelation(action, payload = {}) {
   return correlation;
 }
 
-function authenticate(socket) {
+function authenticate(socket, verify = verifyAccessToken) {
   const token = getToken(socket);
   if (!token) {
     throw Object.assign(new Error('Authentication required'), { code: 'auth_required' });
   }
-  const decoded = verifyAccessToken(token);
+  const decoded = verify(token);
   if (decoded.role !== 'admin') {
     throw Object.assign(new Error('Admin role required'), { code: 'admin_required' });
   }
@@ -55,6 +55,7 @@ function authenticate(socket) {
 
 function setupTerminal(io, options = {}) {
   const config = options.config || loadConfig();
+  const verify = options.verifyAccessToken || verifyAccessToken;
   const audit = options.audit || createTerminalAudit(options.logger || console);
   const managerMetrics = options.sessionManager?.metrics || null;
   if (options.metrics && managerMetrics && options.metrics !== managerMetrics) {
@@ -134,7 +135,7 @@ function setupTerminal(io, options = {}) {
 
   terminalNamespace.use((socket, next) => {
     try {
-      authenticate(socket);
+      authenticate(socket, verify);
       if (!config.enableTerminal) {
         throw Object.assign(new Error('Terminal disabled'), { code: 'terminal_disabled' });
       }

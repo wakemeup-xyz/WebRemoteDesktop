@@ -50,20 +50,27 @@ const { createTurnSelfTestRunner } = require('./lib/turn-selftest');
 const trustLoopbackProxy = proxyaddr.compile('loopback');
 
 function requireAccessToken(req, res, next) {
+  return requireAccessTokenForConfig(null)(req, res, next);
+}
+
+function requireAccessTokenForConfig(config) {
+  return (req, res, next) => {
   try {
     const token = readBearerToken(req.headers.authorization);
     if (!token) {
       return res.status(401).json({ error: 'Missing bearer token' });
     }
-    req.user = verifyAccessToken(token);
+    req.user = verifyAccessToken(token, config);
     return next();
   } catch (_err) {
     return res.status(401).json({ error: 'Invalid token' });
   }
+  };
 }
 
 function createServerApp(options = {}) {
   const config = options.config || loadConfig();
+  const requireConfiguredAccessToken = requireAccessTokenForConfig(config);
   // Keep the historical process-wide context for the default server. Tests and
   // embedders may inject an isolated context explicitly.
   const signalingRuntime = options.signalingRuntimeContext || defaultSignalingRuntime;
@@ -183,13 +190,14 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, runtimeContext: signalingRuntime });
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
   const terminal = setupTerminal(io, {
     config,
     logger,
     audit: terminalAudit,
     ...terminalOptions,
     metrics: terminalMetrics,
+    verifyAccessToken: (token) => verifyAccessToken(token, config),
   });
   // Legacy websocket/input.js is deliberately not mounted. Assert this when
   // Socket.IO exposes its namespace registry so accidental reintroduction
@@ -210,7 +218,7 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.post('/api/proof-admission', requireAccessToken, (req, res) => {
+  app.post('/api/proof-admission', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
     const admission = issueProofAdmission(signalingRuntime);
     if (!admission) return res.status(409).json({ error: 'Active Viewer present' });
@@ -233,12 +241,12 @@ function createServerApp(options = {}) {
     });
   }
 
-  app.get('/api/webrtc-config', requireAccessToken, (req, res) => {
+  app.get('/api/webrtc-config', requireConfiguredAccessToken, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json(projectLegacyWebrtcConfig(buildSnapshotForRequest(req)));
   });
 
-  app.get('/api/viewer-bootstrap', requireAccessToken, (req, res) => {
+  app.get('/api/viewer-bootstrap', requireConfiguredAccessToken, (req, res) => {
     const startedAt = performance.now();
     const snapshot = buildSnapshotForRequest(req);
     res.setHeader('Cache-Control', 'no-store');
@@ -263,7 +271,7 @@ function createServerApp(options = {}) {
     message: { ok: false, error: 'turn-selftest-rate-limited' },
   });
 
-  app.post('/api/turn-selftest', requireAccessToken, turnSelfTestLimiter, async (req, res) => {
+  app.post('/api/turn-selftest', requireConfiguredAccessToken, turnSelfTestLimiter, async (req, res) => {
     try {
       const timeoutMs = Math.min(15000, Math.max(1000, Number(req.body?.timeoutMs) || 10000));
       const turnServerId = String(req.body?.turnServerId || '').trim();
@@ -302,7 +310,7 @@ function createServerApp(options = {}) {
     }
   });
 
-  app.post('/api/diagnostics', requireAccessToken, (req, res) => {
+  app.post('/api/diagnostics', requireConfiguredAccessToken, (req, res) => {
     const result = ingestDiagnosticPayload({
       role: req.user.role,
       viewerId: `http-${req.user.sub}`,
@@ -331,7 +339,7 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/admin/connection-summary', requireAccessToken, (req, res) => {
+  app.get('/api/admin/connection-summary', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
@@ -344,7 +352,7 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/admin/connection-attempts', requireAccessToken, (req, res) => {
+  app.get('/api/admin/connection-attempts', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
@@ -359,14 +367,14 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/admin/observability/summary', requireAccessToken, (req, res) => {
+  app.get('/api/admin/observability/summary', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
     return res.json(recentEventStore.summary());
   });
 
-  app.get('/api/admin/observability/recent', requireAccessToken, (req, res) => {
+  app.get('/api/admin/observability/recent', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
@@ -380,7 +388,7 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/terminal/bootstrap', requireAccessToken, (req, res) => {
+  app.get('/api/terminal/bootstrap', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
@@ -392,7 +400,7 @@ function createServerApp(options = {}) {
     });
   });
 
-  app.get('/api/admin/terminal/metrics', requireAccessToken, (req, res) => {
+  app.get('/api/admin/terminal/metrics', requireConfiguredAccessToken, (req, res) => {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
