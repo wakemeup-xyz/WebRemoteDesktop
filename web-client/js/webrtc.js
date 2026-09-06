@@ -1283,9 +1283,15 @@ const WebRTC = {
       || this.socket?.connected === true;
     const mobileInputSnapshot = typeof Input !== 'undefined'
       ? Input.mobileTextInputAdapter?.getSnapshot?.() : null;
-    const mobileInputMode = mobileInputSnapshot?.shown
-      ? 'visible'
-      : (streamReady && this.hasActiveControl() && transportReady ? 'armed' : 'off');
+    const mobileInputStatus = String(mobileInputSnapshot?.status || '').toLowerCase();
+    const mobileInputBlocked = mobileInputStatus === 'blocked'
+      || mobileInputStatus === 'uncertain'
+      || mobileInputSnapshot?.deliveryUncertain === true;
+    const mobileInputMode = mobileInputBlocked
+      ? 'blocked'
+      : mobileInputSnapshot?.shown
+        ? 'visible'
+        : (streamReady && this.hasActiveControl() && transportReady ? 'armed' : 'off');
     return {
       uiPhase: this.uiPhase,
       streamReady,

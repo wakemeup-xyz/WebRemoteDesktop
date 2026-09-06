@@ -16,6 +16,7 @@
   <!-- WRD_BUILD_HEAD_END -->
 </head>
 <body>
+  <div id="mobileSafeAreaProbe" aria-hidden="true"></div>
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
       <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
@@ -31,6 +32,8 @@
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
+      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
+      <span id="fullscreenStatus" class="fullscreen-status" role="status" aria-live="polite" hidden></span>
       <button id="toggleControlsBtn" class="control-btn" type="button" data-core-control>隐藏控件</button>
       <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
       <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
@@ -43,7 +46,6 @@
   <main id="desktopPanel" role="tabpanel" aria-labelledby="desktopTabBtn">
     <div class="viewer-container">
       <video id="remoteVideo" autoplay playsinline></video>
-      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
       <canvas id="lastFrameHold" class="last-frame-hold hidden" aria-hidden="true"></canvas>
       <div id="reconnectHud" class="reconnect-hud hidden" role="status" aria-live="polite">
         <span class="reconnect-hud-dot"></span>
@@ -119,7 +121,7 @@
         <button id="resolutionBtn" class="control-btn" data-core-control>
           分辨率设置
         </button>
-        <button id="fullscreenBtn" class="control-btn" data-core-control>
+        <button id="fullscreenBtn" class="control-btn" data-core-control aria-pressed="false">
           全屏
         </button>
         <button id="networkModeBtn" class="control-btn" data-core-control>
@@ -324,6 +326,11 @@
 
   <div id="mobileInputDock" hidden>
     <textarea id="mobileTextInput" maxlength="4096" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="远程文本输入"></textarea>
+    <div id="mobileInputStatus" role="status" aria-live="polite" hidden></div>
+    <div class="mobile-input-actions">
+      <button id="mobileInputRetryBtn" class="control-btn" type="button" hidden>重试</button>
+      <button id="mobileInputDiscardBtn" class="control-btn" type="button" hidden>放弃</button>
+    </div>
   </div>
 
   <div id="viewerSupersededOverlay" class="viewer-superseded-overlay hidden" hidden role="dialog" aria-modal="true" aria-labelledby="viewerSupersededTitle">

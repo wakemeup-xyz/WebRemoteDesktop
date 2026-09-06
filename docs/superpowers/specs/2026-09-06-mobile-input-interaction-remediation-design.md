@@ -1,6 +1,6 @@
 # 手机 / iPad 输入交互整改设计
 
-日期：2026-09-06。状态：设计与实施计划已完成独立复审（规划层面PASS）；未实施。见[审查记录](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。
+日期：2026-09-06。状态：Task1–7及主审追加拖拽提示修复已提交、完成自动化并通过限定复审；主线程本人最终审查无未解决P1/P2。严格离线Chromium通过，真机/系统IME/Quartz/公网仍NOT RUN。开发分支`codex/mobile-input-interaction-remediation`，未合main、未push、未重启服务。见[当前验收](../reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)与[历史方案审查](../reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md)。执行subagent使用gpt-5.6-luna/max，最终review由主线程完成。
 
 基线：`main@000547ff37dc1a05c3b5b953954af81e9ed7d43a`。输入依据：[F1–F7 问题报告](../reports/2026-09-05-mobile-touch-keyboard-logic-review.md)、[既有移动设计](2026-08-30-mobile-remote-control-design.md)。
 
@@ -46,7 +46,7 @@ retryPending(): boolean
 discardPending(): void
 sendControlKey(code: string, modifiers?: {shiftKey:boolean,ctrlKey:boolean,altKey:boolean,metaKey:boolean}): boolean
 runExternalAction(kind: 'navigation' | 'context-change', send: () => boolean): boolean
-onTransportState(state: 'ready' | 'blocked' | 'revoked' | 'reacquire-required'): void
+onTransportState(state: 'ready' | 'blocked' | 'revoked' | 'reacquire-required', options?: {resetAcknowledged?: boolean}): void
 refreshDeliveryState(): void
 ```
 
@@ -75,6 +75,8 @@ Input是唯一新增桥接所有者：直接订阅KeyboardTransport小写state�
 - `Input.setControlLease()` 比较leaseId和leaseEpoch；任何身份变化（包括非空直接替换、撤销、重新授予）必须在controller.setLease之前调用adapter.reset('lease-changed')，递增generation、清草稿与drain并隐藏Dock。相同lease幂等调用不清草稿。不能靠transport的ready通知判断上下文连续；新lease只能由下一次用户明确show/input建立文本上下文。
 - UI 同一 Dock 加 status 区和“重试 / 放弃”按钮，失败不能只在 console 里出现。按钮不是 Host ACK 确认器。
 
+主动复位的生命周期例外：`Input.resetKeyboard()` 入口立即清旧草稿/Dock，使用现有 controller/transport 发起复位屏障。只有 Input 确认本次 owned reset 的 applied/duplicate ACK 已让现有 transport 返回 ready，才调用 `onTransportState('ready', {resetAcknowledged:true})` 建立清空后的新输入上下文；普通 ready、旧/失败 ACK、无关 blocked/reacquire 不得走此入口。该通知不发送、不再次reset，不清掉 reset 后 ACK 前新编辑的草稿；新草稿只通过显式重试发送。lease变更、park及无关上下文失效须取消旧 owned-reset 关联；park仍只清本地状态，不新增复位报文。Task4的surface不确定状态具有独立否决权，键盘owned-reset ACK不能解除鼠标目标不确定性。此关联只复用现有 ACK 处理，不新增可靠队列或wire字段。
+
 ### 4.3 Unicode 与缓存范围
 
 DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增 pending 缓冲不得超过 4096 Unicode scalar，计数使用 `Array.from`；原 DOM maxlength 仍生效，不能因新缓冲放大到无限内存。缓存不持久化，已接受历史仍以现有哨兵模式保存。复杂 grapheme 的远端 Backspace 单位与本地 code point 不一定相同，回归覆盖 ZWJ/组合附加符的保留与发送，精确远端删除效果保持设备验收项；不承诺远端文档镜像。
@@ -84,12 +86,33 @@ DOM `maxlength` 与 Host scalar 限额分别测试，不把两者混同。新增
 新增 `Input.runMobileEditingAction(action, send) -> boolean` 作为编排接口，由 `setupActionButtons` 和画面 pointerdown 共用。`send` 是已有发送函数的回调，不允许 adapter 直接拿 WebRTC。
 
 - 无修饰的 Backspace、Enter、Escape、ArrowUp/Down/Left/Right 从 textarea 和导航按钮均调用公开 `MobileTextInput.sendControlKey(code)`；该函数只在发送被接受后更新本地 cursor/history。
-- textarea onKeydown把event的四个modifier布尔值快照传给sendControlKey(code,modifiers)，config.sendKey同步扩展为sendKey(code,modifiers)。Input转换为既有sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})的布尔对象，不传数组；controller原有pressed集合已负责合并虚拟modifier，Input不另造pressed状态。编排判断是否有修饰时同时读取flags与controller snapshot。含modifier时通过runExternalAction('context-change',callback)发送完整平衡chord，不做cursor±1；不将textarea modifier单独keydown/up转发远端，避免和chord重复。keyup继续只本地去重；composition拒绝，普通可打印键仍走DOM input，不扩展任意快捷键识别范围。
+- textarea onKeydown把event的四个modifier布尔值快照传给sendControlKey(code,modifiers)，config.sendKey同步扩展为sendKey(code,modifiers)。Input转换为既有sendChord({code,modifiers:{shift:Boolean(flags.shiftKey),ctrl:Boolean(flags.ctrlKey),alt:Boolean(flags.altKey),meta:Boolean(flags.metaKey)}})的布尔对象，不传数组；controller原有pressed集合负责合并虚拟modifier。含modifier时经runExternalAction发送平衡chord，不做cursor±1；textarea内新modifier keydown不单独转发。**安全keyup例外（R9）：**config新增releaseTrackedKey(event):boolean，Input注入controller.handleDomEvent；adapter.onKeyup必须先调用它再stopPropagation，controller既有trackedKeyup只释放已跟踪code，未跟踪keyup不发送。composition/pending/unsupported/isActive=false均不得截断该释放，不重复经document listener发送。测试画面Shift/普通键down→show移动框→textarea keyup，pressed归零且恢复文本；新textarea Shift+Arrow chord后keyup无额外up。普通可打印键仍走DOM input。
 - 带任意物理/虚拟 modifier 的导航不当作简单 cursor±1；与 Tab、全选、粘贴、剪切、撤销、查找、切输入法、右键和画面点击一并进入 context-change。复制/保存也采用保守 context-change，避免臆测远端焦点是否变化。
 - `runExternalAction` 在 composition、有 pending 或 deliveryUncertain 时返回 false，显示解决草稿提示，不调用 send。Mouse up/reset、keyboard reset 等安全释放永远不受草稿拦截。
 - 允许的动作仅执行 send 一次；true 后清理已接受历史为哨兵、cursor=0，建立新 generation。false 不推进历史，不偷删草稿；随后 transport 状态若异常按 §4.2 处理。
+- document层实体键盘同样属于外部编辑入口：移动框收起后，真正被controller接受的导航、可打印键或组合键必须同步本地cursor，或保守地通过上述context-change事务失效已接受历史；不能只检查门禁后直发，使重新打开的IME沿用旧cursor。未发送的本地输入框事件、controller拒绝及单独modifier按下不误清历史；tracked keyup始终走原安全释放。测试移动输入→收起→实体导航/输入→重新打开→继续输入，远端模型与新的本地基线一致，无重复报文。
 - 新touch option `beforeGesture: () => boolean` 只做首个pointerdown的只读预检，不清历史。另加`commitGesture: (send:()=>boolean)=>boolean`，默认直接调用send；adapter把每个真实首down（tap/drag/long-press）的sendMouse封在此callback中，Input用runExternalAction('context-change',send)重新核对草稿并只在down接受后提交基线失效化。接受后同一手势move/up不重复门禁；若等待long-press期间出现composition/pending，拒绝down并结束该手势。mouse/pen的实际down也用同一事务包装，up/reset始终原释放流程。two-finger从未发down的纯滚动不虚构context提交；上下文真正改变的down才清历史。
 - 导航/重试按钮 pointerdown 对移动文本焦点使用 preventDefault，click 处理后如同一 textarea 仍 shown、控制有效、无 modal，再在用户手势内恢复该 textarea；composition 时禁止通过按钮强制 blur。
+
+虚拟modifier判定接口（R12）：Input向MobileTextInput额外注入只读 `hasVirtualModifiers():boolean`，默认false，读取既有controller snapshot的`virtualModifiers.length > 0`。`sendControlKey`以事件四flags或该查询为true判定context-change，不仅依据DOM事件；toolbar也传入click事件的物理flags。查询只用于决定本地历史是否失效，不合成modifier down/up，不替代controller pressed truth，不修改sendKey的boolean返回。测试virtual Shift锁定→textarea ArrowLeft四flags全false：远端仍是带Shift且无多余modifier步骤的chord，移动历史失效而不是cursor--，virtual Shift保持原pressed状态直到既有显式释放。
+
+### 5.1 远端目标确认门禁（R10）
+
+sendMouse返回inputId只是传输接受，不能证明目标已切换。Input增加本地surface context状态settled/pending/uncertain和generation，复用_desktopWritePending及acceptMouseAck，不新增wire/ACK队列。首down接受后进入pending；gesture仍按原流程move/up/reset，文本和新的上下文动作暂不发送，用户新文本只保留本页草稿。必须手势已经结束且该手势可靠down/up对应的ACK已applied/duplicate，才进入settled；拖拽不能因down ACK先到就提前允许文本。Input中统一跟踪touch、mouse/pen、toolbar rightClick；不要让每个adapter各建一套确认状态。
+
+对相关inputId/lease/generation匹配的execution-failed、sequence-gap、invalid-input、stale-lease、resync-required等非成功终态，或3000ms确认超时：进入uncertain，调用adapter.onTransportState('reacquire-required')使文本contextValid=false（这只是本地adapter通知，不擅改控制租约），保留草稿、不自动重发；迟到ACK不得解锁。reset/park/lease变化取消timer并失效旧generation。显式放弃操作清本地surface等待与草稿，提示用户核对远端；下一次明确操作重新建立上下文，不向远端补发任何内容。
+
+Input新增getMobileSurfaceContextSnapshot()只返回state/generation，不输出inputId/坐标；isDeliverySettled额外要求surface settled。新写入门禁与retry读取该状态，但安全keyup/up/reset始终放行。目标确认成功只刷新UI，不自动发送期间积累的草稿，必须显式retry。正常键盘连续输入本身不按每条ACK串行节流；只有已存在待重试草稿或surface pending时才保留追加编辑，避免把每次打字变成手动重试。
+
+surface pending本身不等于存在未发送文本。没有草稿、composition或不确定性时，不得仅因首down进入pending而撑高文本Dock；否则提示引发viewer几何变化，会把刚开始的真实拖拽取消。保持确认门禁和外部几何变化的安全reset，不能在测试中固定假高度或关闭几何检查绕过。浏览器验证移动输入框已显示、无草稿时的真实mouse/touch拖拽跨多个rAF，down后布局稳定、正常up且无自触发reset；up后ACK前输入仍留草稿，ACK不自动发送，显式retry只发送一次。
+
+确认超时以已发送但未确认的可靠down/up为对象，各自最多等待3000ms，不是整个手势的最长时长。down已确认而用户仍拖动时维持pending、暂停无待确认边的计时；发送up后重新等待其确认。ACK乱序与既有_desktopWritePending累计清理不能丢失当前gesture的down/up关联；只保留该gesture的id/seq/lease/generation和确认元数据，不建立第二条发送或重试队列。旧代/旧lease及uncertain后的迟到ACK仍不得解锁。
+
+门禁同样覆盖document层新增实体keydown；不能因外接键盘走controller直达路径而绕过未确认目标。既有实体keyup与已锁定虚拟modifier的关闭仍走原controller释放路径；虚拟pressed真相读取controller snapshot，不从aria反推，不手工清pressed或合成新modifier down。关闭所需的原有keyup报文不是新增协议。public sendControlKey在composition刚开始、draft尚未变化时也必须拒绝；surface-user焦点预检见§3，拒绝的pointer/click默认行为同样不能先blur文本框。
+
+### 5.2 普通文本弹窗（R11）
+
+setupTextInput的普通文本modal也属于外部写入：打开前检查移动composition/pending/uncertain及surface确认门禁，不通过则不打开/抢焦点，显示既有状态提示；打开本身和取消不清移动已接受历史。点击提交、compositionend自动提交共用同一个runMobileEditingAction('context-change',()=>controller.sendText(text))，只有接受后才清移动历史再关闭modal；false时保留两个入口各自草稿、不关闭。新布局不支持时也不能绕过门禁。测试移动abc→modal X→移动left/Y，不沿用旧abc cursor；以及pending拒绝打开、取消不清历史、失败提交保留、compositionend与click去重。
 
 ## 6. 手势起点（F4）
 
@@ -128,6 +151,7 @@ viewerHeight = max(0, availableHeight - chromeTop - safeBottom - textReserve - d
 - `availableHeight < 360px` 时进入 ultraCompact：压缩为顶部一行44px、文本/重试一行44px、导航一行44px；正文预览可折叠，真正textarea保留可聚焦且不以display:none隐藏composition。该极限状态允许画面小于120px；空间足够时必需按钮必须可达，不通过CSS min-height把控件顶出屏幕。
 - 375×812/768×1024/1024×1366、300px inset 下以compact策略保证viewerHeight≥120px；568×320/inset160使用ultraCompact。`availableHeight < 140 + safeBottom`时设置unsupportedViewport=true，暂停新增文本与桌面写入、保留草稿与安全释放，提示收起系统键盘/旋转；此几何条件无法容纳三个44px行及8px间距，不要求假造全控件可达。恢复到支持尺寸只恢复输入门禁，不自动发送草稿，也不打断当前composition去强制blur。
 - ChromeLayout把该结果单向传给`Input.setViewportInputSupported(supported: boolean)`，只保存派生门禁，不重写lease/isActive、不reset草稿。文本isEnabled、新touch/mouse down、toolbar动作、物理keydown读取此门禁；keyup/mouse up/reset始终保持现有释放路径。缺少布局计算时默认true，避免桌面无touch退化。
+- unsupported暂停的是新的手势/上下文入口；已被接受且尚未结束的touch/mouse手势move保留原通路，但仍受几何失效/reset检查。普通hover或仅带buttons字段的未接受动作不得据此绕过门禁。既有mobileInputStatus须明确提示收起键盘或旋转，包括空草稿；恢复尺寸移除该提示，不清草稿或覆盖仍存在的不确定性。
 - `compact=touchSupported && textVisible`；`ultraCompact=compact && availableHeight<360`；`unsupportedViewport=ultraCompact && availableHeight<140+safeBottom`。模式选择不依赖自己改变后的DOM高度；先定模式再测量，不能按viewerHeight反向切换造成振荡。无touch桌面保持原布局和可输入门禁。ResizeObserver测量真实Dock内容；一次rAF批量写CSS，值不变不重写，同尺寸20帧不得抖动。
 - 所有键保持至少44×44 CSS px，溢出水平滚动；mobileInputMode 显式从适配器状态派生，不再永远默认 off；软键盘开时暂停 chrome auto-idle。
 
@@ -145,6 +169,7 @@ safeBottom来自静态无交互`#mobileSafeAreaProbe`的computed padding-bottom�
 
 - `.viewer-container:fullscreen` CSS 改为 `html:fullscreen .viewer-container` 与全屏退出按钮规则；已有顶部高度、contain/cover/fill 和新布局算法继续生效。
 - 全屏内切 Terminal 使用已有 tab 生命周期，Terminal/PTY 代码不改。静态 HTML 将唯一的 `exitFullscreenBtn` 从 `.viewer-container` 移入 `#statusBar .status-actions`，保留现有 ID 和监听器；`fullscreenBtn` 保留原启动入口。退出按钮仅在 documentElement 全屏时显示，任何 tab 和 compact/idle 状态下均可见、可点击，不依赖桌面 ACTIVE 租约。
+- 可达性区分：全局`exitFullscreenBtn`须在任何自动滚动前满足完整视口边界（≤1px误差）、44px目标和hittest；位于“更多”可滚动菜单内的`fullscreenBtn`入口允许用户主动滚动菜单，滚动后、点击前再测完整边界和hittest。不得让locator.click的隐式滚动替代此证据，也不得把入口初始未滚动位置误判为全局退出缺失。
 - 不支持 requestFullscreen、未允许或 promise reject 时，保留普通视图、草稿和焦点，显示可见“不支持全屏，可继续操作”；按钮 aria-pressed/文案不得假成功。不增加 iOS 私有 video-only fullscreen fallback。
 
 ## 9. 验证与交付状态

@@ -27,7 +27,7 @@
 
 ## 复审结论
 
-最终独立复审结论：**PASS（规划层面）**，8项均闭环，无剩余P1/P2方案阻断。
+此前独立复审结论：**PASS（规划层面）**，针对当时R1–R8。下述主线程复审已推翻其作为整份方案最终结论的效力，不应据此直接宣称全部边界闭环。
 
 修订后首轮复审确认7项闭环，仅R2的modifier表示仍不符合现有controller接口。主线程检查remote-keyboard-controller.js的chordModifiers(value)后，将两文档同步为布尔对象，保留现有pressed合并；同时统一布局示例的clamp与归一化。最后一轮独立复审确认这两处已解决，才给出上述PASS。该PASS不表示生产代码或真机验收完成。
 
@@ -38,3 +38,33 @@
 本轮没有修改生产JS/CSS/HTML，没有运行实现后的测试，也没有启动/重启服务、操作tunnel、merge或push。原报告151项单测及离线缺陷复现是带日期的历史基线，不是新方案已经实现的证据。
 
 交付分层：设计/计划可审查；代码整改仍待实施；真实手机/iPad、系统键盘、Quartz、公网、live watcher仍为NOT RUN。后续必须按Task1–7逐项red→green和独立代码审查，不得把本报告当作产品验收PASS。
+
+## 主线程追加复审与修订（2026-09-06）
+
+主线程本人对照代码重新审查，运行隔离Node夹具确认3个遗漏，原结论改为NEEDS REVISION。用户随后授权修订文档并由luna/max实施测试，最终review仍由主线程本人完成。
+
+| 编号 | 级别 | 证据与遗漏 | 已并入的实施契约 |
+|---|---|---|---|
+| R9 | P1 | 画面Shift down→移动框keyup被stopPropagation且document路径跳过，pressed=1、sendText=false；直接交还trackedKeyup后恢复 | spec§5 / Task4：releaseTrackedKey callback先释放已跟踪键，再去重，保留所有安全释放；新textarea chord不多发up |
+| R10 | P1 | sendMouse down返回id后收到execution-failed，keyboard仍ready并接受文本；原计划只认传输接受 | spec§5.1 / Task4：Input surface确认门禁，手势结束且down/up成功ACK才settled；失败/超时uncertain、迟到无效，不跨系统混建队列 |
+| R11 | P2 | 普通modal送X但mobile仍留abc基线，后续left/Y导致游标不一致 | spec§5.2 / Task4：modal开/提交接统一门禁，接受后失效历史，取消/失败保留 |
+
+追加发现已写成具体接口、状态、超时与测试要求，尚须通过实施证据闭环；不再给仅文档修改标新的最终PASS。该复现只证明现有模块行为与计划遗漏，不是实机/Quartz/公网验证。
+
+## 实施阶段接口细化（主线程）
+
+- **R12 / P2：虚拟modifier的本地判定缺少接线。** 现有controller.sendChord会合并pressed中的虚拟modifier，但textarea事件四flags可能全false，单靠事件会误按无修饰导航推进本地cursor。spec§5/Task4补只读hasVirtualModifiers查询及virtual Shift+Arrow回归；查询不创建modifier状态或报文，不改变boolean发送接口。此项在Task4前补入，不把它计作已实现。
+- **主动reset确认接口回填：** Task3实现审查发现“reset清空后，自己的blocked屏障再次失效新基线”的交互。已审查实现使用Input所拥有复位的成功ACK，明确调用onTransportState('ready',{resetAcknowledged:true})；普通ready不得恢复不确定上下文，ACK期间的新草稿不得被清空或自动发送。spec§4.2/Task3回填接口与测试，Task4增加鼠标uncertain不能被键盘reset ACK解除的约束。
+- **输入连续性裁定：** ready状态下仅有普通ACK在途不阻断正常连续输入；只有已有被拒绝草稿才等待确认后显式重试。blocked是复位/恢复屏障，不是普通ACK等待，必须失效上下文。此前实现审查把二者混同的建议未采纳，另加连续输入回归保护。
+
+这些是实施中的契约细化与审查纠偏，不改变以上规划阶段历史记录。代码及浏览器最终验收另记Task7报告；实机、系统键盘、Quartz、公网与live watcher尚未验证。
+
+### Task4实现审查后的边界细化
+
+针对实现b75a284，主线程复现ACK乱序仍pending、document实体keydown绕过surface等待、composition起始导航被接受、surface click抢焦点四项；Luna/max复核同意，并确认虚拟modifier关闭被误阻和长拖拽误超时。结论为Needs fixes，不覆盖前述规划历史结论。
+
+主线程裁定3000ms是可靠输入确认超时，不是手势时长上限；同一gesture保留最少确认元数据以抵抗累计pending清理，不新增发送/重试队列。虚拟modifier关闭必须沿用controller原有释放和keyup，review中“不要发新modifier报文”不能被理解为只清本地pressed。spec§5.1及Task4增加具体回归；这些裁定仍须实现和测试证明。
+
+## 实施后续状态（2026-09-06）
+
+以上章节保留各轮审查发生时的原义。Task1–6已完成实施和限定复审；Task4上述六项在`b527ba6`解决，移动框收起→实体键→重新打开的基线问题在`cd9c671`解决。主线程随后用离线真实DOM复现“空草稿surface pending提示增高Dock，导致拖拽被几何reset自取消”；`bfc886d`的最小状态显示修复与独立复审已通过，原生鼠标事件probe由FAIL转PASS。Task7严格离线集成与主线程最终review现已完成，四项验收缺口及恢复的textarea组合键检查通过两轮修正/复审，无未解决P1/P2；非阻塞维护项和证据边界见[当前验收报告](2026-09-06-mobile-input-interaction-remediation-acceptance.md)。这些开发分支结果没有改写main/运行服务或真机验收状态。

@@ -148,29 +148,54 @@ test('viewer geometry has a dvh fallback and safe-area-aware dock', () => {
   assert.match(css, /\.chrome-docks[^}]*flex-direction:\s*column/);
 });
 
-test('mobile viewport geometry consumes the single keyboard bottom variable', () => {
+test('managed mobile geometry does not compound legacy flow or keyboard padding', () => {
+  const managedViewer = getBlock('body.mobile-layout-managed .viewer-container');
+  const keySurface = getBlock('#mobileKeySurface');
+  assert.doesNotMatch(managedViewer, /100dvh|mobile-dock-height|mobile-keyboard-bottom|text-dock-reserve/);
+  assert.doesNotMatch(keySurface, /padding-bottom\s*:/);
+  assert.match(css, /body:not\(\.mobile-layout-managed\) \.viewer-container/);
   assert.match(css, /--mobile-keyboard-bottom/);
-  assert.match(css, /bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
-  assert.match(css, /padding-bottom:\s*max\([^;]*var\(--mobile-keyboard-bottom/);
 });
 
-test('mobile media geometry reserves dock and keyboard occupancy outside the remote surface', () => {
-  assert.match(css, /--mobile-dock-height/);
-  assert.match(css, /--mobile-text-dock-reserve\s*:/);
-  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
-  assert.match(mobileViewer, /var\(--mobile-dock-height(?:,\s*0px)?\)/);
-  assert.match(mobileViewer, /var\(--mobile-keyboard-bottom/);
-  const mobileDocks = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.chrome-docks\s*\{([^}]*)\}/)?.[1] || '';
-  assert.match(mobileDocks, /var\(--mobile-text-dock-reserve\)/);
-  assert.match(mobileDocks, /var\(--mobile-keyboard-bottom/);
+test('managed mobile layout owns one fixed coordinate set and a non-interactive safe-area probe', () => {
+  assert.match(html, /id="mobileSafeAreaProbe"[^>]*aria-hidden="true"/);
+  const probe = getBlock('#mobileSafeAreaProbe');
+  assert.match(probe, /padding-bottom\s*:\s*env\(safe-area-inset-bottom,\s*0px\)/);
+  assert.match(probe, /position\s*:\s*fixed/);
+  assert.match(probe, /pointer-events\s*:\s*none/);
+  assert.match(probe, /visibility\s*:\s*hidden/);
+  assert.match(css, /body\.mobile-layout-managed\s*\{[^}]*padding-top\s*:\s*0/);
+  assert.match(css, /body\.mobile-layout-managed\s+\.viewer-container\s*\{[^}]*position\s*:\s*fixed/);
+  assert.match(css, /body\.mobile-layout-managed\s+\.viewer-container\s*\{[^}]*top\s*:\s*var\(--mobile-viewer-top\)/);
+  assert.match(css, /body\.mobile-layout-managed\s+\.viewer-container\s*\{[^}]*height\s*:\s*var\(--mobile-viewer-height\)/);
+  assert.match(css, /body\.mobile-layout-managed\s+#statusBar\s*\{[^}]*top\s*:\s*var\(--mobile-visible-top\)/);
+  assert.match(css, /body\.mobile-layout-managed\s+\.chrome-docks\s*\{[^}]*bottom\s*:\s*var\(--mobile-dock-bottom\)/);
+  assert.match(css, /body\.mobile-layout-managed\.chrome-idle\s+\.chrome-docks\s*\{[^}]*transform\s*:/);
+  assert.match(css, /body\.mobile-layout-managed\s+#mobileInputDock\s*\{[^}]*bottom\s*:\s*var\(--mobile-text-bottom\)/);
 });
 
-test('mobile media reserves the fixed Dock coordinate envelope', () => {
-  const mobileViewer = css.match(/@media\s*\(max-width:\s*899px\)[\s\S]*?\.viewer-container\s*\{([^}]*)\}/)?.[1] || '';
-  const completeDockEnvelope = /var\(--mobile-dock-height(?:,\s*0px)?\)\s*-\s*12px\s*-\s*env\(safe-area-inset-bottom,\s*0px\)\s*-\s*var\(--mobile-text-dock-reserve\)\s*-\s*var\(--mobile-keyboard-bottom,\s*0px\)/;
-  assert.match(mobileViewer, completeDockEnvelope, 'remote surface must reserve the Dock height and its fixed bottom offset');
-  assert.match(mobileViewer, /height\s*:\s*calc\(100vh/);
-  assert.match(mobileViewer, /height\s*:\s*calc\(100dvh/);
+test('compact mobile keys stay a single horizontal 44px strip with both existing role rows', () => {
+  const surface = getBlock('body.mobile-layout-managed #mobileKeySurface');
+  const row = getBlock('body.mobile-layout-managed #mobileKeySurface .mobile-key-row');
+  assert.match(surface, /height\s*:\s*44px/);
+  assert.match(surface, /display\s*:\s*flex/);
+  assert.match(surface, /flex-wrap\s*:\s*nowrap/);
+  assert.match(surface, /overflow-x\s*:\s*auto/);
+  assert.match(row, /flex\s*:\s*0\s+0\s+auto/);
+  assert.match(row, /flex-wrap\s*:\s*nowrap/);
+  assert.match(row, /height\s*:\s*44px/);
+  assert.equal((html.match(/class="mobile-key-row"/g) || []).length, 2);
+  assert.equal((html.match(/data-mobile-action="right"/g) || []).length, 1);
+  assert.equal((html.match(/data-mobile-action="switchInputMethod"/g) || []).length, 1);
+});
+
+test('managed compact controls remain an overlay outside the navigation row', () => {
+  assert.match(css, /body\.mobile-layout-managed\.mobile-layout-compact[\s\S]*?\.control-bar\s*\{[^}]*display:\s*none/);
+  assert.match(css, /body\.mobile-layout-managed #moreActionsMenu \.control-btn\s*\{[^}]*min-height:\s*var\(--touch-min\)/);
+  assert.match(css, /body\.mobile-layout-managed \.chrome-docks > \.action-bar\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /body\.mobile-layout-managed \.chrome-docks > \.action-bar\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /body\.mobile-layout-managed\.mobile-layout-ultra \.chrome-docks > \.action-bar\s*\{[^}]*top:\s*calc\(/);
+  assert.match(css, /body\.mobile-layout-managed\.mobile-layout-ultra \.chrome-docks > \.action-bar > \.more-actions-menu\s*\{[^}]*top:\s*0/);
 });
 
 test('narrow action row remains one line with stable touch widths', () => {
@@ -203,9 +228,12 @@ test('mobile virtual key surface exposes accessible navigation, modifiers, short
   const keySurface = getBlock('#mobileKeySurface');
   const keyRow = getBlock('.mobile-key-row');
   const keyButtons = getBlock('#mobileKeySurface .mobile-key-btn');
-  assert.match(keySurface, /env\(safe-area-inset-bottom/);
-  assert.match(keySurface, /env\(keyboard-inset-height/);
-  assert.match(keyRow, /overflow-x\s*:\s*auto/);
+  assert.doesNotMatch(keySurface, /padding-bottom\s*:/);
+  assert.match(keySurface, /height\s*:\s*44px/);
+  assert.match(keySurface, /overflow-x\s*:\s*auto/);
+  assert.match(keyRow, /flex\s*:\s*0\s+0\s+auto/);
+  assert.match(keyRow, /flex-wrap\s*:\s*nowrap/);
+  assert.match(keyRow, /height\s*:\s*44px/);
   assert.match(keyButtons, /min-width\s*:\s*var\(--touch-min\)/);
   assert.match(keyButtons, /min-height\s*:\s*var\(--touch-min\)/);
   assert.match(keyButtons, /touch-action\s*:\s*manipulation/);
@@ -265,6 +293,28 @@ test('narrow advisor cannot stretch to half the viewport', () => {
 test('placeholder spinner is opt-in via is-connecting', () => {
   assert.match(css, /\.stream-placeholder:not\(\.is-connecting\)\s+\.spinner/);
   assert.match(html, /id="exitFullscreenBtn"/);
+});
+
+test('fullscreen owns the document root while the exit control stays in global status chrome', () => {
+  assert.doesNotMatch(css, /\.viewer-container:fullscreen/);
+  assert.match(css, /html:fullscreen\s+\.viewer-container/);
+  assert.match(css, /html:fullscreen\s+\.fullscreen-exit-btn/);
+  const fullscreenMedia = css.match(/html:fullscreen\s+\.viewer-container #remoteVideo,[\s\S]*?\}/)?.[0] || '';
+  assert.match(fullscreenMedia, /width:\s*100%;/);
+  assert.match(fullscreenMedia, /height:\s*100%;/);
+  const fullscreenViewer = css.match(/html:fullscreen\s+\.viewer-container\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(fullscreenViewer, /height:\s*calc\(100dvh\s*-\s*var\(--chrome-top\)\)/);
+  assert.equal((html.match(/id="exitFullscreenBtn"/g) || []).length, 1);
+  const statusStart = html.indexOf('class="status-actions"');
+  const statusEnd = html.indexOf('</div>', statusStart);
+  assert.ok(statusStart >= 0 && statusEnd > statusStart);
+  assert.match(html.slice(statusStart, statusEnd), /id="exitFullscreenBtn"/);
+  const viewerStart = html.indexOf('<div class="viewer-container">');
+  const viewerEnd = html.indexOf('\n    </div>\n\n    <div id="chromeDocks"', viewerStart);
+  assert.ok(viewerStart >= 0 && viewerEnd > viewerStart);
+  assert.doesNotMatch(html.slice(viewerStart, viewerEnd), /id="exitFullscreenBtn"/);
+  assert.match(html, /id="fullscreenStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
+  assert.match(html, /id="fullscreenBtn"[^>]*data-core-control/);
 });
 
 test('workspace tabs expose tab semantics', () => {

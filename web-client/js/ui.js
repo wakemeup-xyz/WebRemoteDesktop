@@ -39,9 +39,10 @@ const UI = {
     const scaleBtn = document.getElementById('scaleBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const exitFullscreenBtn = document.getElementById('exitFullscreenBtn');
+    const fullscreenStatus = document.getElementById('fullscreenStatus');
     const video = document.getElementById('remoteVideo');
     const relayImage = document.getElementById('relayImage');
-    const viewerContainer = document.querySelector('.viewer-container');
+    const fullscreenTarget = document.documentElement;
 
     const scaleModes = ['contain', 'cover', 'fill'];
     const scaleLabels = ['自适应', '填充', '拉伸'];
@@ -79,35 +80,80 @@ const UI = {
       });
     }
 
+    const setFullscreenStatus = (message) => {
+      if (fullscreenStatus) {
+        fullscreenStatus.textContent = message;
+        fullscreenStatus.hidden = !message;
+      }
+    };
+
+    const preserveEditingFocusOnPointerDown = (event) => {
+      const active = document.activeElement;
+      const isEditing = active?.isContentEditable === true
+        || active?.matches?.('input,textarea,select,[contenteditable="true"]')
+        || ['INPUT', 'TEXTAREA', 'SELECT'].includes(active?.tagName);
+      if (isEditing) event.preventDefault?.();
+    };
+
+    const isDocumentFullscreen = () => fullscreenTarget
+      ? document.fullscreenElement === fullscreenTarget
+      : Boolean(document.fullscreenElement);
+
+    const exitFullscreen = async () => {
+      if (typeof document.exitFullscreen !== 'function') {
+        setFullscreenStatus('不支持全屏，可继续操作');
+        return false;
+      }
+      try {
+        await document.exitFullscreen();
+        return true;
+      } catch (err) {
+        setFullscreenStatus('不支持全屏，可继续操作');
+        return false;
+      }
+    };
+
     if (exitFullscreenBtn) {
-      exitFullscreenBtn.addEventListener('click', () => {
-        if (document.fullscreenElement) {
-          document.exitFullscreen();
-        }
+      exitFullscreenBtn.addEventListener('pointerdown', preserveEditingFocusOnPointerDown);
+      exitFullscreenBtn.addEventListener('click', (event) => {
+        event.preventDefault?.();
+        if (isDocumentFullscreen()) void exitFullscreen();
       });
     }
 
-    if (fullscreenBtn && viewerContainer) {
+    const updateFullscreenState = () => {
+      const isFullscreen = isDocumentFullscreen();
+      if (fullscreenBtn) {
+        fullscreenBtn.textContent = isFullscreen ? '退出全屏' : '全屏';
+        fullscreenBtn.setAttribute?.('aria-pressed', String(isFullscreen));
+      }
+      document.body.classList.toggle('fullscreen-active', isFullscreen);
+      if (isFullscreen) setFullscreenStatus('');
+      if (typeof ChromeLayout !== 'undefined' && typeof ChromeLayout.recalculate === 'function') {
+        ChromeLayout.recalculate();
+      }
+    };
+
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener('pointerdown', preserveEditingFocusOnPointerDown);
       fullscreenBtn.addEventListener('click', async () => {
         try {
-          if (!document.fullscreenElement) {
-            await viewerContainer.requestFullscreen();
-          } else {
-            await document.exitFullscreen();
+          if (isDocumentFullscreen()) {
+            await exitFullscreen();
+            return;
           }
+          if (typeof fullscreenTarget?.requestFullscreen !== 'function') {
+            setFullscreenStatus('不支持全屏，可继续操作');
+            return;
+          }
+          await fullscreenTarget.requestFullscreen();
         } catch (err) {
-          console.error('Fullscreen toggle failed:', err);
+          setFullscreenStatus('不支持全屏，可继续操作');
         }
       });
 
-      document.addEventListener('fullscreenchange', () => {
-        const isFullscreen = document.fullscreenElement === viewerContainer;
-        fullscreenBtn.textContent = isFullscreen ? '退出全屏' : '全屏';
-        document.body.classList.toggle('fullscreen-active', isFullscreen);
-        if (isFullscreen) {
-          video.focus();
-        }
-      });
+      document.addEventListener('fullscreenchange', updateFullscreenState);
+      updateFullscreenState();
     }
 
     const toggleControlsBtn = document.getElementById('toggleControlsBtn');

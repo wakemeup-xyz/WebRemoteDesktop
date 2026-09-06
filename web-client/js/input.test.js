@@ -5,14 +5,17 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function makeElement() {
+function makeElement(onFocus = () => {}) {
   const listeners = new Map();
   const captured = new Set();
   return {
     value: '', textContent: '', style: {}, dataset: {}, listeners, captured,
+    hidden: false, disabled: false, isConnected: true,
     videoWidth: 100, videoHeight: 100,
-    classList: { add() {}, remove() {} },
-    focus() {}, setAttribute() {}, removeAttribute() {},
+    classList: { add() {}, remove() {}, contains() { return false; } },
+    focus() { onFocus(this); },
+    blur() { onFocus(null, this); },
+    setAttribute() {}, removeAttribute() {},
     getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
     addEventListener(type, handler) { listeners.set(type, handler); },
     setPointerCapture(id) { captured.add(id); },
@@ -27,6 +30,17 @@ function loadInput() {
   const windowListeners = new Map();
   const socketEvents = [];
   const bodyClasses = new Set();
+  const addDocumentListener = (type, handler) => {
+    let dispatcher = documentListeners.get(type);
+    if (!dispatcher) {
+      dispatcher = (event) => {
+        for (const listener of [...dispatcher.listeners]) listener(event);
+      };
+      dispatcher.listeners = [];
+      documentListeners.set(type, dispatcher);
+    }
+    dispatcher.listeners.push(handler);
+  };
   const context = {
     console, setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
@@ -40,11 +54,33 @@ function loadInput() {
           add(name) { bodyClasses.add(name); },
           remove(name) { bodyClasses.delete(name); },
           contains(name) { return bodyClasses.has(name); },
+          toggle(name, force) {
+            const next = force === undefined ? !bodyClasses.has(name) : Boolean(force);
+            if (next) bodyClasses.add(name);
+            else bodyClasses.delete(name);
+            return next;
+          },
         },
       },
-      addEventListener(type, handler) { documentListeners.set(type, handler); },
+      activeElement: null,
+      fullscreenElement: null,
+      addEventListener: addDocumentListener,
       querySelectorAll: () => [],
-      getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); },
+      querySelector(selector) {
+        if (selector !== '.viewer-container') return null;
+        if (!elements.has('__viewerContainer')) elements.set('__viewerContainer', makeElement());
+        return elements.get('__viewerContainer');
+      },
+      getElementById(id) {
+        if (!elements.has(id)) {
+          elements.set(id, makeElement((element, blurred) => {
+            if (element) context.document.activeElement = element;
+            else if (context.document.activeElement === blurred) context.document.activeElement = null;
+          }));
+          if (id === 'terminalPanel') elements.get(id).hidden = true;
+        }
+        return elements.get(id);
+      },
     },
     WebRTC: {
       socket: { connected: true, emit(event, payload) { socketEvents.push({ event, payload }); } },
@@ -60,6 +96,12 @@ function loadInput() {
     vm.runInContext(filename === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, context);
   }
   return { Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents };
+}
+
+function loadUi(context) {
+  const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+  vm.runInContext(`${source}\nglobalThis.__UI = UI;`, context);
+  return context.__UI;
 }
 
 function loadTouchAdapter(context) {
@@ -90,6 +132,309 @@ function activate(Input, context) {
   Input.setActive(true);
 }
 
+function createRemoteTextModel() {
+  let value = '';
+  let cursor = 0;
+  const modifiers = new Set();
+  const insert = (text) => {
+    const points = Array.from(String(text || ''));
+    value = `${Array.from(value).slice(0, cursor).join('')}${points.join('')}${Array.from(value).slice(cursor).join('')}`;
+    cursor += points.length;
+  };
+  const applyStep = (step) => {
+    if (!step || step.phase !== 'down') return;
+    if (/^(Control|Shift|Alt|Meta)(Left|Right)$/.test(step.code || '')) {
+      modifiers.add(step.code);
+      return;
+    }
+    if (step.code === 'ArrowLeft') {
+      cursor = Math.max(0, cursor - 1);
+      return;
+    }
+    if (step.code === 'ArrowRight') {
+      cursor = Math.min(Array.from(value).length, cursor + 1);
+      return;
+    }
+    if (/^Key[A-Z]$/.test(step.code || '')
+      && !step.modifiers?.ctrlKey && !step.modifiers?.metaKey && !step.modifiers?.altKey) {
+      const letter = step.code.slice(-1);
+      insert(step.modifiers?.shiftKey ? letter : letter.toLowerCase());
+    }
+  };
+  return {
+    apply(payload) {
+      if (payload?.action === 'text') insert(payload.payload?.text);
+      if (payload?.action === 'key') applyStep(payload.payload);
+      if (payload?.action === 'batch') payload.payload?.steps?.forEach(applyStep);
+      if (payload?.action === 'key' && payload.payload?.phase === 'up') {
+        modifiers.delete(payload.payload.code);
+      }
+    },
+    snapshot() { return { value, cursor, modifiers: [...modifiers].sort() }; },
+  };
+}
+
+function settleKeyboardWrites(Input, socketEvents, model, from = 0) {
+  const entries = socketEvents.slice(from).filter(({ event, payload }) => event === 'input'
+    && payload?.type === 'keyboard');
+  for (const { payload } of entries) {
+    model.apply(payload);
+    Input.acceptKeyboardAck({
+      schemaVersion: 2,
+      leaseEpoch: payload.leaseEpoch,
+      status: 'applied',
+      appliedSeq: payload.seq,
+      inputIds: payload.inputIds,
+    });
+  }
+  return socketEvents.length;
+}
+
+function toggleMobileInput(Input, elements, shown) {
+  const button = elements.get('mobileTextInputBtn');
+  button.focus();
+  button.listeners.get('click')({ preventDefault() {} });
+  return elements.get('mobileTextInput');
+}
+
+function setupCrossModeHarness() {
+  const loaded = loadInput();
+  const { Input, context, elements, documentListeners, socketEvents } = loaded;
+  const model = createRemoteTextModel();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const mobileInput = toggleMobileInput(Input, elements, false);
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  let eventIndex = settleKeyboardWrites(Input, socketEvents, model);
+  toggleMobileInput(Input, elements, true);
+  return {
+    Input,
+    context,
+    elements,
+    documentListeners,
+    socketEvents,
+    model,
+    mobileInput,
+    get eventIndex() { return eventIndex; },
+    settle() { eventIndex = settleKeyboardWrites(Input, socketEvents, model, eventIndex); },
+  };
+}
+
+function appendMobileText(harness, text) {
+  const input = harness.mobileInput;
+  const sentinel = '\u200b';
+  const raw = String(input.value || '').endsWith(sentinel)
+    ? String(input.value).slice(0, -sentinel.length) : String(input.value || '');
+  const start = Number.isInteger(input.selectionStart) ? input.selectionStart : raw.length;
+  const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+  input.value = `${raw.slice(0, start)}${text}${raw.slice(end)}${sentinel}`;
+  input.selectionStart = start + text.length;
+  input.selectionEnd = start + text.length;
+  input.listeners.get('input')({ target: input });
+  harness.settle();
+}
+
+function withFakeTimers(run) {
+  const nativeSetTimeout = global.setTimeout;
+  const nativeClearTimeout = global.clearTimeout;
+  const callbacks = [];
+  global.setTimeout = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  global.clearTimeout = (id) => { callbacks[id - 1] = null; };
+  try {
+    return run(callbacks);
+  } finally {
+    global.setTimeout = nativeSetTimeout;
+    global.clearTimeout = nativeClearTimeout;
+  }
+}
+
+test('repeated active gate preserves the mobile textarea focus', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  for (let i = 0; i < 120; i += 1) Input.setActive(true);
+  assert.equal(context.document.activeElement, field);
+});
+
+test('playing callback does not steal focus from the mobile textarea', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  video.listeners.get('playing')?.();
+  assert.equal(context.document.activeElement, field);
+});
+
+test('surface interactions dispatch focus through the guarded helper', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  const video = elements.get('remoteVideo');
+  const calls = [];
+  Input.focusDesktopSurface = (element, reason) => {
+    calls.push([element, reason]);
+    return true;
+  };
+  video.listeners.get('click')({});
+  video.listeners.get('pointerdown')({
+    pointerType: 'mouse', pointerId: 1, clientX: 40, clientY: 40, button: 0, buttons: 1,
+    currentTarget: video, preventDefault() {},
+  });
+  assert.deepEqual(calls, [[video, 'surface-user'], [video, 'surface-user']]);
+});
+
+test('fullscreenchange preserves mobile text focus while updating fullscreen state', () => {
+  const { Input, context, elements, documentListeners } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  const field = elements.get('mobileTextInput');
+  video.focus = () => { context.document.activeElement = video; };
+  field.focus = () => { context.document.activeElement = field; };
+  Input.mobileTextInputAdapter.show();
+  field.focus();
+
+  const UI = loadUi(context);
+  UI.setupControlButtons();
+  const viewerContainer = context.document.querySelector('.viewer-container');
+  context.document.fullscreenElement = viewerContainer;
+  documentListeners.get('fullscreenchange')();
+
+  assert.equal(context.document.activeElement, field);
+  assert.equal(context.document.body.classList.contains('fullscreen-active'), true);
+});
+
+test('initial-ready focus does not steal modal or visible terminal focus', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  let focusCalls = 0;
+  video.focus = () => {
+    focusCalls += 1;
+    context.document.activeElement = video;
+  };
+
+  const modalInput = context.document.getElementById('remoteTextInput');
+  modalInput.closest = (selector) => selector === '.modal' ? {} : null;
+  context.document.activeElement = modalInput;
+  assert.equal(Input.focusDesktopSurface(video, 'initial-ready'), false);
+  assert.equal(focusCalls, 0);
+
+  const terminalPanel = elements.get('terminalPanel');
+  terminalPanel.hidden = false;
+  const terminalInput = elements.get('terminalComposer');
+  context.document.activeElement = terminalInput;
+  assert.equal(Input.focusDesktopSurface(video, 'initial-ready'), false);
+  assert.equal(focusCalls, 0);
+
+  assert.equal(Input.focusDesktopSurface(video, 'surface-user'), true);
+  assert.equal(focusCalls, 1);
+  video.isConnected = false;
+  assert.equal(Input.focusDesktopSurface(video, 'surface-user'), false);
+});
+
+test('mobile input restores its opener only on an ordinary close', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = elements.get('remoteVideo');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const mobileInput = elements.get('mobileTextInput');
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(context.document.activeElement, mobileInput);
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 1);
+  assert.equal(context.document.activeElement, opener);
+
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  Input.resetKeyboard('reset');
+  assert.equal(openerFocuses, 1, 'reset must not restore the mobile opener');
+});
+
+test('mobile input does not restore a disconnected or newly focused opener', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = elements.get('remoteVideo');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const mobileInput = elements.get('mobileTextInput');
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  opener.isConnected = false;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0);
+
+  opener.isConnected = true;
+  context.document.activeElement = opener;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  const anotherTarget = elements.get('textInputBtn');
+  context.document.activeElement = anotherTarget;
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0, 'a new user focus must not be overridden');
+});
+
+test('ordinary text modal does not restore an opener hidden by an ancestor', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const opener = context.document.getElementById('desktopOpener');
+  const hiddenPanel = context.document.getElementById('desktopPanel');
+  hiddenPanel.hidden = true;
+  hiddenPanel.classList = { add() {}, remove() {}, contains: (name) => name === 'hidden' };
+  opener.parentElement = hiddenPanel;
+  let openerFocuses = 0;
+  opener.focus = () => {
+    openerFocuses += 1;
+    context.document.activeElement = opener;
+  };
+
+  context.document.activeElement = opener;
+  elements.get('textInputBtn').listeners.get('click')({ preventDefault() {} });
+  elements.get('textInputCancelBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 0);
+
+  hiddenPanel.hidden = false;
+  hiddenPanel.classList.contains = () => false;
+  context.document.activeElement = opener;
+  elements.get('textInputBtn').listeners.get('click')({ preventDefault() {} });
+  elements.get('textInputCancelBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(openerFocuses, 1, 'visible opener remains eligible for ordinary modal restore');
+});
+
 test('mobile viewer acceptance CLI exposes the required operator-supplied arguments without reading a password', () => {
   const result = childProcess.spawnSync('python3', [
     path.join(__dirname, '../../scripts/mobile_viewer_acceptance.py'), '--help',
@@ -99,6 +444,171 @@ test('mobile viewer acceptance CLI exposes the required operator-supplied argume
   assert.match(result.stdout, /--base-url/);
   assert.match(result.stdout, /--password-env/);
   assert.match(result.stdout, /--out/);
+});
+
+test('viewport support is a derived gate for new writes while safe releases and local drafts remain available', () => {
+  const { Input, context, elements, socketEvents, documentListeners } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  Input.setViewportInputSupported(false);
+  const keyboardCountBeforeDraft = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length;
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length, keyboardCountBeforeDraft);
+
+  const keydown = keyboard('keydown', { code: 'KeyA', key: 'a' });
+  documentListeners.get('keydown')(keydown);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'keyboard').length, keyboardCountBeforeDraft);
+
+  const release = keyboard('keyup', { code: 'ShiftLeft', key: 'Shift' });
+  documentListeners.get('keyup')(release);
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
+test('unsupported viewport announces a recoverable hint without replacing pending or uncertain status', () => {
+  const { Input, context, elements } = loadInput();
+  const status = context.document.getElementById('mobileInputStatus');
+
+  Input.setViewportInputSupported(false);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.match(status.textContent, /未发送/);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+
+  Input.setViewportInputSupported(true);
+  assert.match(status.textContent, /未发送/);
+  assert.doesNotMatch(status.textContent, /收起.*键盘|旋转/);
+
+  Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+  Input.setViewportInputSupported(false);
+  assert.match(status.textContent, /连接|位置/);
+  assert.match(status.textContent, /收起.*键盘|旋转/);
+  Input.setViewportInputSupported(true);
+  assert.match(status.textContent, /连接|位置/);
+  assert.doesNotMatch(status.textContent, /收起.*键盘|旋转/);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+});
+
+test('unsupported viewport preserves accepted touch and mouse moves until release or geometry reset', () => {
+  const touchCase = loadInput();
+  loadTouchAdapter(touchCase.context);
+  touchCase.context.requestAnimationFrame = (callback) => {
+    callback();
+    return null;
+  };
+  touchCase.context.navigator.maxTouchPoints = 1;
+  activate(touchCase.Input, touchCase.context);
+  touchCase.Input.setupEventListeners();
+  const touchSurface = touchCase.elements.get('remoteVideo');
+  const touch = (type, clientX, overrides = {}) => touchSurface.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: touchSurface, timeStamp: 10, preventDefault() {}, ...overrides,
+  });
+
+  touch('pointerdown', 20);
+  touch('pointermove', 40);
+  assert.equal(touchCase.Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  touchCase.Input.setViewportInputSupported(false);
+  const touchWritesBeforeMove = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  assert.equal(touchCase.Input.sendInput('mouse', 'move', { relX: 0.7, relY: 0.4, buttons: 0 }), null);
+  touch('pointermove', 56);
+  const touchWritesAfterMove = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(touchWritesAfterMove.length, touchWritesBeforeMove + 1);
+  assert.equal(touchWritesAfterMove.at(-1).payload.action, 'move');
+  touch('pointerup', 56);
+  const touchWritesAfterUp = touchCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(touchWritesAfterUp.at(-1).payload.action, 'up');
+  assert.equal(touchWritesAfterUp.filter(({ payload }) => payload.action === 'up').length, 1);
+  assert.equal(touchCase.Input.sendInput('mouse', 'move', { relX: 0.7, relY: 0.4, buttons: 0 }), null);
+
+  const mouseCase = loadInput();
+  activate(mouseCase.Input, mouseCase.context);
+  mouseCase.Input.setupEventListeners();
+  const mouseSurface = mouseCase.elements.get('remoteVideo');
+  const mouse = (type, clientX, overrides = {}) => mouseSurface.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 8, button: 0, detail: 1,
+    clientX, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: mouseSurface, timeStamp: 10, preventDefault() {}, ...overrides,
+  });
+
+  mouse('pointerdown', 20);
+  assert.ok(mouseCase.Input._mobileSurfaceGesture);
+  mouseCase.Input.setViewportInputSupported(false);
+  const mouseWritesBeforeMove = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  mouse('pointermove', 44);
+  const mouseWritesAfterMove = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(mouseWritesAfterMove.length, mouseWritesBeforeMove + 1);
+  assert.equal(mouseWritesAfterMove.at(-1).payload.action, 'move');
+  mouseSurface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 80, height: 100 });
+  const writesBeforeGeometry = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse').length;
+  mouse('pointermove', 50);
+  const writesAfterGeometry = mouseCase.socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  assert.equal(writesAfterGeometry.length, writesBeforeGeometry + 1);
+  assert.deepEqual(writesAfterGeometry.slice(writesBeforeGeometry).map(({ payload }) => payload.action), ['reset']);
+});
+
+test('unsupported viewport rejects new touch/context actions while up and reset remain safety releases', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const adapter = Input.bindTouchAdapter(surface);
+  Input._lastTouchAdapter = adapter;
+  Input.setViewportInputSupported(false);
+
+  assert.equal(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }), null);
+  assert.equal(Input.sendInput('mouse', 'down', { relX: 0.4, relY: 0.4, button: 'left' }), null);
+  assert.equal(Input.sendInput('mouse', 'move', { relX: 0.4, relY: 0.4, buttons: 0 }), null);
+  assert.equal(Input.sendInput('mouse', 'wheel', { relX: 0.4, relY: 0.4, deltaY: 1 }), null);
+
+  const rightClick = makeElement();
+  rightClick.dataset.mobileAction = 'rightClick';
+  const navigation = makeElement();
+  navigation.dataset.action = 'left';
+  const showDock = makeElement();
+  showDock.dataset.mobileAction = 'showDock';
+  context.document.querySelectorAll = (selector) => selector === '.action-btn, [data-mobile-action]'
+    ? [rightClick, navigation, showDock] : [];
+  Input.setupActionButtons();
+  rightClick.listeners.get('click')({ preventDefault() {} });
+  navigation.listeners.get('click')({ preventDefault() {} });
+  showDock.listeners.get('click')({ preventDefault() {} });
+  assert.equal(socketEvents.length, 0);
+
+  const upId = Input.sendInput('mouse', 'up', { relX: 0.4, relY: 0.4, button: 'left' });
+  const resetId = Input.sendInput('mouse', 'reset', { reason: 'unsupported-viewport' });
+  assert.ok(upId);
+  assert.ok(resetId);
+  assert.deepEqual(socketEvents.map(({ payload }) => payload.action), ['up', 'reset']);
 });
 
 test('touch click, touch wheel, and mobile text retain the active v2 lease envelope', () => {
@@ -117,6 +627,12 @@ test('touch click, touch wheel, and mobile text retain the active v2 lease envel
 
   touch('pointerdown', 1, 40, 40);
   touch('pointerup', 1, 40, 40);
+  for (const { payload } of socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse')) {
+    Input.acceptMouseAck({
+      inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+      appliedSeq: payload.seq, inputIds: payload.inputIds,
+    });
+  }
   touch('pointerdown', 1, 40, 40);
   touch('pointerdown', 2, 60, 40);
   touch('pointermove', 2, 60, 60);
@@ -162,6 +678,154 @@ test('touch mapPoint keeps PointerEvent prototype geometry', () => {
   assert.deepEqual(inputs.map(({ action }) => action), ['down', 'up']);
   assert.equal(Number.isFinite(inputs[0].payload.relX), true);
   assert.equal(Number.isFinite(inputs[0].payload.relY), true);
+});
+
+test('touch geometry change releases a drag before stale coordinates are sent', () => {
+  const { Input, context, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = context.document.getElementById('remoteVideo');
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  video.getBoundingClientRect = () => ({ ...rect });
+  video.videoWidth = 100;
+  video.videoHeight = 100;
+  context.requestAnimationFrame = () => 1;
+  const adapter = Input.bindTouchAdapter(video);
+  const touch = (type, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 20, clientY: 20, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown');
+  touch('pointermove', { clientX: 40 });
+  rect = { ...rect, width: 120 };
+  touch('pointermove', { clientX: 60 });
+  touch('pointerup', { clientX: 60 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'reset']);
+  assert.equal(adapter.getSnapshot().state, 'IDLE');
+  assert.equal(Input._pendingMouseReset, true);
+});
+
+test('touch geometry signature aborts contain-to-cover and source-size changes', () => {
+  const run = (mutate) => {
+    const { Input, context, socketEvents } = loadInput();
+    loadTouchAdapter(context);
+    activate(Input, context);
+    const video = context.document.getElementById('remoteVideo');
+    let rect = { left: 0, top: 0, width: 100, height: 100 };
+    video.getBoundingClientRect = () => ({ ...rect });
+    video.videoWidth = 100;
+    video.videoHeight = 100;
+    video.style.objectFit = 'contain';
+    context.requestAnimationFrame = () => 1;
+    const adapter = Input.bindTouchAdapter(video);
+    const touch = (type, overrides = {}) => video.listeners.get(type)({
+      pointerType: 'touch', pointerId: 1, isPrimary: true,
+      clientX: 20, clientY: 20, buttons: type === 'pointerup' ? 0 : 1,
+      currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+    });
+    touch('pointerdown');
+    touch('pointermove', { clientX: 40 });
+    mutate({ video, setRect: (next) => { rect = { ...rect, ...next }; } });
+    touch('pointerup', { clientX: 40 });
+    return {
+      actions: socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action),
+      state: adapter.getSnapshot().state,
+    };
+  };
+
+  assert.deepEqual(run(({ video }) => { video.style.objectFit = 'cover'; }), { actions: ['down', 'reset'], state: 'IDLE' });
+  assert.deepEqual(run(({ video }) => { video.videoWidth = 120; }), { actions: ['down', 'reset'], state: 'IDLE' });
+});
+
+test('touch wheel queued past the final pointerup is cancelled by a geometry change', async () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  const video = elements.get('remoteVideo');
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  let frame = null;
+  video.getBoundingClientRect = () => ({ ...rect });
+  video.videoWidth = 100;
+  video.videoHeight = 100;
+  context.requestAnimationFrame = (callback) => { frame = callback; return 1; };
+  Input.setupEventListeners();
+  const touch = (type, pointerId, clientX, clientY, overrides = {}) => video.listeners.get(type)({
+    pointerType: 'touch', pointerId, isPrimary: pointerId === 1,
+    clientX, clientY, buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: video, preventDefault() {}, timeStamp: 10, ...overrides,
+  });
+
+  touch('pointerdown', 1, 20, 20);
+  touch('pointerdown', 2, 40, 40, { isPrimary: false });
+  touch('pointermove', 2, 40, 60, { isPrimary: false });
+  touch('pointerup', 1, 20, 20);
+  touch('pointerup', 2, 40, 60, { isPrimary: false });
+  assert.equal(Input._lastTouchAdapter.getSnapshot().wheelPending, true);
+  assert.equal(typeof frame, 'function');
+  rect = { ...rect, width: 120 };
+  frame?.();
+  await Promise.resolve();
+
+  const wheels = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'wheel');
+  assert.equal(wheels.length, 0);
+  assert.equal(Input._lastTouchAdapter.getSnapshot().wheelPending, false);
+});
+
+test('mouse geometry changes abort before mapping the next point', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const element = makeElement();
+  let rect = { left: 0, top: 0, width: 100, height: 100 };
+  element.getBoundingClientRect = () => ({ ...rect });
+  element.videoWidth = 100;
+  element.videoHeight = 100;
+  context.requestAnimationFrame = () => 1;
+  Input.bindMouseEvents(element);
+
+  const pointer = (type, overrides = {}) => element.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 8, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+    clientX: 20, clientY: 20, currentTarget: element, preventDefault() {}, ...overrides,
+  });
+  pointer('pointerdown');
+  rect = { ...rect, height: 120 };
+  pointer('pointermove', { clientX: 40 });
+  pointer('pointerup', { clientX: 40, buttons: 0 });
+
+  const actions = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  assert.deepEqual(actions, ['down', 'reset']);
+});
+
+test('queued mouse and pen moves revalidate source geometry before rAF', () => {
+  const run = ({ pointerType = 'mouse', resize = false, press = false } = {}) => {
+    const { Input, context, socketEvents } = loadInput();
+    activate(Input, context);
+    const element = makeElement();
+    let rect = { left: 0, top: 0, width: 100, height: 100 };
+    let frame = null;
+    element.getBoundingClientRect = () => ({ ...rect });
+    element.videoWidth = 100;
+    element.videoHeight = 100;
+    context.requestAnimationFrame = (callback) => { frame = callback; return 1; };
+    Input.bindMouseEvents(element);
+
+    const pointer = (type, overrides = {}) => element.listeners.get(type)({
+      pointerType, pointerId: 8, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      clientX: 20, clientY: 20, currentTarget: element, preventDefault() {}, ...overrides,
+    });
+    if (press) pointer('pointerdown');
+    pointer('pointermove', { clientX: 40, buttons: press ? 1 : 0 });
+    if (resize) rect = { ...rect, width: 120 };
+    frame?.();
+    return socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload.action);
+  };
+
+  assert.deepEqual(run({ press: true }), ['down', 'move']);
+  assert.deepEqual(run({ press: true, resize: true }), ['down', 'reset']);
+  assert.deepEqual(run({ pointerType: 'pen', resize: true }), []);
 });
 
 test('failed touch reset is rearmed by a new lease and allows a real touch click', () => {
@@ -332,6 +996,20 @@ test('tracked keyup from a text modal releases the controller key state', () => 
   assert.deepEqual(socketEvents.map(({ payload }) => [payload.action, payload.payload.phase]), [['key', 'down'], ['key', 'up']]);
 });
 
+test('screen-tracked modifier is safely released by mobile textarea keyup', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  Input.setupEventListeners();
+  documentListeners.get('keydown')(keyboard('keydown', { code: 'ShiftLeft', key: 'Shift', shiftKey: true }));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.listeners.get('keyup')({ type: 'keyup', target: mobileInput, code: 'ShiftLeft', key: 'Shift', stopPropagation() {} });
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'key')
+    .map(({ payload }) => payload.payload.phase), ['down', 'up']);
+});
+
 test('composition submit sends one text, cancel sends none, and actions use one batch', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   activate(Input, context);
@@ -416,6 +1094,1017 @@ test('mobile text adapter routes text and control keys through the keyboard cont
   assert.deepEqual(keyboardPayloads.map(({ action }) => action), ['text', 'batch']);
   assert.equal(keyboardPayloads[0].payload.text, '\u4e2d\u6587');
   assert.equal(keyboardPayloads[1].payload.steps.map(({ code }) => code).join(','), 'Enter,Enter');
+});
+
+test('mobile toolbar navigation shares the textarea cursor and accepts duplicate insertions', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const leftButton = makeElement();
+  leftButton.dataset.action = 'left';
+  context.document.querySelectorAll = () => [leftButton];
+  Input.setupActionButtons();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  leftButton.listeners.get('click')({ preventDefault() {} });
+  leftButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'abbc\u200b';
+  mobileInput.selectionStart = 2;
+  mobileInput.selectionEnd = 2;
+  mobileInput.listeners.get('input')({ target: mobileInput });
+
+  assert.equal(mobileInput.value, 'abbc\u200b');
+  const payloads = socketEvents.filter(({ event }) => event === 'input').map(({ payload }) => payload);
+  assert.deepEqual(payloads.map(({ action }) => action), ['text', 'batch', 'batch', 'text']);
+  assert.deepEqual(payloads.slice(1, 3).map(({ payload }) => payload.steps[1].code), ['ArrowLeft', 'ArrowLeft']);
+  assert.equal(payloads.at(-1).payload.text, 'b');
+});
+
+test('mobile toolbar modifier navigation uses a context-change chord and preserves virtual modifier truth', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const shiftButton = makeElement();
+  shiftButton.dataset.mobileAction = 'shift';
+  const leftButton = makeElement();
+  leftButton.dataset.action = 'left';
+  const attrs = new Map([['aria-pressed', 'false']]);
+  shiftButton.setAttribute = (name, value) => attrs.set(name, String(value));
+  shiftButton.getAttribute = (name) => attrs.get(name) || null;
+  context.document.querySelectorAll = () => [shiftButton, leftButton];
+  Input.setupActionButtons();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  shiftButton.listeners.get('click')({ preventDefault() {} });
+  leftButton.listeners.get('click')({ preventDefault() {} });
+
+  const batch = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'batch').at(-1).payload;
+  assert.equal(batch.payload.steps[0].code, 'ArrowLeft');
+  assert.equal(batch.payload.steps.at(-1).code, 'ArrowLeft');
+  assert.equal(batch.payload.steps[0].modifiers.shiftKey, true);
+  assert.equal(Array.from(Input.keyboardController.getSnapshot().virtualModifiers).join(','), 'shift');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().status, 'idle');
+});
+
+test('mobile textarea Shift plus ArrowLeft sends one balanced chord without a second keyup', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  mobileInput.listeners.get('keydown')({
+    type: 'keydown', target: mobileInput, key: 'ArrowLeft', code: 'ArrowLeft',
+    shiftKey: true, ctrlKey: false, altKey: false, metaKey: false,
+    preventDefault() {}, stopPropagation() {},
+  });
+  mobileInput.listeners.get('keyup')({
+    type: 'keyup', target: mobileInput, key: 'ArrowLeft', code: 'ArrowLeft',
+    shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+    stopPropagation() {},
+  });
+  const batches = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'batch');
+  assert.equal(batches.length, 1);
+  assert.equal(JSON.stringify(batches[0].payload.payload.steps.map(({ code, phase }) => [code, phase])), JSON.stringify([
+    ['ShiftLeft', 'down'], ['ArrowLeft', 'down'], ['ArrowLeft', 'up'], ['ShiftLeft', 'up'],
+  ]));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
+test('accepted physical navigation resets the hidden mobile cursor before reopen', () => {
+  const h = setupCrossModeHarness();
+  assert.equal(h.context.document.activeElement, h.Input.videoElement);
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 2, modifiers: [] });
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abXc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 3).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ArrowLeft'], ['up', 'ArrowLeft'],
+  ]);
+});
+
+test('accepted physical printable input resets the hidden mobile baseline before reopen', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'KeyB', key: 'b' }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', { code: 'KeyB', key: 'b' }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abcb', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abcbX', cursor: 5, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.equal(writes[1].payload.code, 'KeyB');
+});
+
+test('accepted physical chord resets mobile history once while modifier keyup still releases', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  h.settle();
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ArrowLeft', key: 'ArrowLeft', shiftKey: true,
+  }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ArrowLeft', key: 'ArrowLeft', shiftKey: true,
+  }));
+  h.settle();
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: false,
+  }));
+  h.settle();
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 2, modifiers: [] });
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.equal(h.mobileInput.value, '\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+
+  assert.deepEqual(h.model.snapshot(), { value: 'abXc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'X\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 5).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ShiftLeft'], ['down', 'ArrowLeft'], ['up', 'ArrowLeft'], ['up', 'ShiftLeft'],
+  ]);
+});
+
+test('ignored physical input on a local modal preserves the mobile baseline', () => {
+  const h = setupCrossModeHarness();
+  const modal = h.elements.get('textInputModal');
+  const localInput = h.elements.get('remoteTextInput');
+  localInput.tagName = 'INPUT';
+  localInput.closest = () => modal;
+  const before = h.socketEvents.length;
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ArrowLeft', key: 'ArrowLeft', target: localInput,
+  }));
+  h.settle();
+
+  assert.equal(h.socketEvents.length, before);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+});
+
+test('rejected physical input preserves the mobile baseline and sends no duplicate', () => {
+  const h = setupCrossModeHarness();
+  h.context.WebRTC.socket.connected = false;
+  const before = h.socketEvents.length;
+
+  h.documentListeners.get('keydown')(keyboard('keydown', { code: 'ArrowLeft', key: 'ArrowLeft' }));
+  h.settle();
+
+  assert.equal(h.socketEvents.length, before);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.context.WebRTC.socket.connected = true;
+  h.Input.keyboardTransport.markAdapterAvailable('socket');
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+});
+
+test('modifier-only physical input preserves mobile history and document keyup releases it', () => {
+  const h = setupCrossModeHarness();
+
+  h.documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+  }));
+  h.settle();
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  assert.equal(h.mobileInput.value, 'abc\u200b');
+  h.documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: false,
+  }));
+  h.settle();
+
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.deepEqual(h.model.snapshot(), { value: 'abc', cursor: 3, modifiers: [] });
+  toggleMobileInput(h.Input, h.elements, false);
+  appendMobileText(h, 'X');
+  assert.deepEqual(h.model.snapshot(), { value: 'abcX', cursor: 4, modifiers: [] });
+  assert.equal(h.mobileInput.value, 'abcX\u200b');
+  const writes = h.socketEvents.filter(({ event, payload }) => event === 'input' && payload?.type === 'keyboard')
+    .map(({ payload }) => payload);
+  assert.deepEqual(writes.map(({ action }) => action), ['text', 'key', 'key', 'text']);
+  assert.deepEqual(writes.slice(1, 3).map(({ payload }) => [payload.phase, payload.code]), [
+    ['down', 'ShiftLeft'], ['up', 'ShiftLeft'],
+  ]);
+});
+
+test('mobile editing action gates ordinary modal open and commits through one external-action path', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  modalInput.value = 'X';
+  elements.get('textInputSubmitBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(elements.get('textInputModal').hidden, true);
+
+  mobileInput.value = 'Y';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const textPayloads = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textPayloads, ['abc', 'X', 'Y']);
+});
+
+test('mobile modal submit failure keeps it open and does not clear mobile history', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  Input.keyboardController.sendText = () => false;
+  modalInput.value = 'X';
+  elements.get('textInputSubmitBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(elements.get('textInputModal').hidden, false);
+  assert.equal(mobileInput.value, 'abc\u200b');
+});
+
+test('ordinary text modal does not open while a mobile draft needs recovery', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  elements.get('textInputModal').hidden = true;
+  Input.mobileTextInputAdapter.onTransportState('blocked');
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  elements.get('textInputBtn').listeners.get('click')({ preventDefault() {} });
+  assert.equal(elements.get('textInputModal').hidden, true);
+});
+
+test('repeated mobile setup does not duplicate modal or action listeners', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  context.document.getElementById('textInputBtn');
+  const modalButton = elements.get('textInputBtn');
+  const actionButton = makeElement();
+  actionButton.dataset.action = 'copy';
+  let modalClicks = 0;
+  let actionClicks = 0;
+  const modalAdd = modalButton.addEventListener.bind(modalButton);
+  modalButton.addEventListener = (type, handler, options) => {
+    if (type === 'click') modalClicks += 1;
+    modalAdd(type, handler, options);
+  };
+  const actionAdd = actionButton.addEventListener.bind(actionButton);
+  actionButton.addEventListener = (type, handler, options) => {
+    if (type === 'click') actionClicks += 1;
+    actionAdd(type, handler, options);
+  };
+  context.document.querySelectorAll = () => [actionButton];
+  Input.setupTextInput();
+  Input.setupTextInput();
+  Input.setupActionButtons();
+  Input.setupActionButtons();
+  assert.equal(modalClicks, 1);
+  assert.equal(actionClicks, 1);
+});
+
+test('surface confirmation stays pending until the ended gesture has matching down and up ACKs', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const adapter = Input.bindTouchAdapter(surface);
+  Input._lastTouchAdapter = adapter;
+  const down = adapter.clickButton;
+  surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+  Input._lastPointerCoords = { relX: 0.4, relY: 0.4 };
+  const id = down.call(adapter, 'left', { relX: 0.4, relY: 0.4 });
+  assert.ok(id);
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+  const downPayload = writes.find(({ payload }) => payload.action === 'down').payload;
+  const upPayload = writes.find(({ payload }) => payload.action === 'up').payload;
+  Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: downPayload.seq, inputIds: downPayload.inputIds });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: upPayload.seq, inputIds: upPayload.inputIds });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+});
+
+test('surface pending without draft does not render an unsent-text status', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const status = elements.get('mobileInputStatus');
+  const adapter = Input.mobileTextInputAdapter;
+
+  Input._mobileSurfaceState = 'pending';
+  adapter.refreshDeliveryState();
+  const emptyPending = adapter.getSnapshot();
+  assert.equal(emptyPending.status, 'pending');
+  assert.equal(emptyPending.hasPending, false);
+  assert.equal(emptyPending.composing, false);
+  assert.equal(emptyPending.deliveryUncertain, false);
+  assert.equal(status.hidden, true);
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '有未发送内容');
+});
+
+test('surface confirmation correlates a late down ACK after cumulative up cleanup', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  const id = adapter.clickButton('left', { relX: 0.4, relY: 0.4 });
+  assert.ok(id);
+  const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+  const down = writes.find(({ payload }) => payload.action === 'down').payload;
+  const up = writes.find(({ payload }) => payload.action === 'up').payload;
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: up.seq, inputIds: up.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: up.seq, inputIds: down.inputIds,
+  });
+
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+});
+
+test('surface confirmation ignores stale generation and lease acknowledgements', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+  const firstWrites = socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  const oldDown = firstWrites.find(({ payload }) => payload.action === 'down').payload;
+  const oldUp = firstWrites.find(({ payload }) => payload.action === 'up').payload;
+  Input._resetMobileSurfaceContext();
+  assert.ok(adapter.clickButton('left', { relX: 0.5, relY: 0.5 }));
+  const currentWrites = socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'mouse');
+  const currentDown = currentWrites.at(-2).payload;
+  const currentUp = currentWrites.at(-1).payload;
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 2, status: 'applied',
+    appliedSeq: oldUp.seq, inputIds: oldUp.inputIds,
+  });
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: oldUp.seq, inputIds: oldDown.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: currentDown.seq, inputIds: currentDown.inputIds,
+  });
+  Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+    appliedSeq: currentUp.seq, inputIds: currentUp.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+});
+
+test('document physical keydown uses the pending mobile surface gate', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+  const before = socketEvents.length;
+
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'KeyA', key: 'a',
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+
+  assert.equal(socketEvents.slice(before).some(({ event, payload }) => event === 'input'
+    && (payload.action === 'key' || payload.action === 'batch')), false);
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+});
+
+test('document tracked keyup remains a safety release while the surface is pending', () => {
+  const { Input, context, elements, documentListeners, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const video = elements.get('remoteVideo');
+  documentListeners.get('keydown')(keyboard('keydown', {
+    code: 'ShiftLeft', key: 'Shift', shiftKey: true,
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  assert.ok(Input.bindTouchAdapter(video).clickButton('left', { relX: 0.4, relY: 0.4 }));
+
+  documentListeners.get('keyup')(keyboard('keyup', {
+    code: 'ShiftLeft', key: 'Shift',
+    target: { tagName: 'VIDEO', isContentEditable: false, closest: () => null },
+  }));
+
+  assert.equal(Input.keyboardController.getSnapshot().pressedKeyCount, 0);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard' && payload.action === 'key')
+    .map(({ payload }) => payload.payload.phase), ['down', 'up']);
+});
+
+test('surface-user focus preflight preserves composing mobile text and prevents click default', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const mobileInput = elements.get('mobileTextInput');
+  surface.focus = () => { context.document.activeElement = surface; };
+  mobileInput.focus = () => { context.document.activeElement = mobileInput; };
+  Input.mobileTextInputAdapter.show();
+  mobileInput.listeners.get('compositionstart')({ target: mobileInput });
+
+  let clickPrevented = false;
+  surface.listeners.get('click')({ preventDefault() { clickPrevented = true; } });
+  assert.equal(clickPrevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+
+  let pointerPrevented = false;
+  surface.listeners.get('pointerdown')({
+    pointerType: 'mouse', pointerId: 1, clientX: 40, clientY: 40, button: 0, buttons: 1,
+    currentTarget: surface, preventDefault() { pointerPrevented = true; },
+  });
+  assert.equal(pointerPrevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+});
+
+test('touch surface preflight prevents default before a composing gesture is consumed', () => {
+  const { Input, context, elements } = loadInput();
+  loadTouchAdapter(context);
+  activate(Input, context);
+  Input.setupEventListeners();
+  Input.setupTextInput();
+  const surface = elements.get('remoteVideo');
+  const mobileInput = elements.get('mobileTextInput');
+  Input.mobileTextInputAdapter.show();
+  mobileInput.listeners.get('compositionstart')({ target: mobileInput });
+
+  let prevented = false;
+  surface.listeners.get('pointerdown')({
+    pointerType: 'touch', pointerId: 1, isPrimary: true, clientX: 40, clientY: 40,
+    buttons: 1, preventDefault() { prevented = true; },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(context.document.activeElement, mobileInput);
+});
+
+test('virtual modifier off uses controller truth through pending and disabled gates', () => {
+  for (const gate of ['pending', 'composing', 'uncertain']) {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const button = makeElement();
+    button.dataset.mobileAction = 'shift';
+    button.disabled = true;
+    const aria = new Map([['aria-pressed', 'false']]);
+    button.setAttribute = (name, value) => aria.set(name, String(value));
+    button.getAttribute = (name) => aria.get(name) || null;
+    context.document.querySelectorAll = () => [button];
+    Input.setupActionButtons();
+    assert.equal(Input.keyboardController.setVirtualModifier('shift', true), true, gate);
+    if (gate === 'pending') Input._mobileSurfaceState = 'pending';
+    if (gate === 'composing') elements.get('mobileTextInput').listeners.get('compositionstart')({
+      target: elements.get('mobileTextInput'),
+    });
+    if (gate === 'uncertain') Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+
+    button.listeners.get('click')({ preventDefault() {} });
+
+    assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0, gate);
+    assert.equal(socketEvents.filter(({ event, payload }) => event === 'input'
+      && payload.type === 'keyboard' && payload.action === 'key'
+      && payload.payload.phase === 'up').length, 1, gate);
+  }
+});
+
+test('new virtual modifier remains denied while the surface is pending', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const button = makeElement();
+  button.dataset.mobileAction = 'shift';
+  context.document.querySelectorAll = () => [button];
+  Input.setupActionButtons();
+  Input._mobileSurfaceState = 'pending';
+  button.listeners.get('click')({ preventDefault() {} });
+
+  assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0);
+  assert.equal(socketEvents.some(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard'), false);
+});
+
+test('new virtual modifier remains denied when the desktop capability is inactive', () => {
+  const { Input, context, socketEvents } = loadInput();
+  activate(Input, context);
+  const button = makeElement();
+  button.dataset.mobileAction = 'shift';
+  context.document.querySelectorAll = () => [button];
+  Input.setupActionButtons();
+  Input.setActive(false, { resetKeyboard: false });
+  button.listeners.get('click')({ preventDefault() {} });
+
+  assert.equal(Input.keyboardController.getSnapshot().virtualModifiers.length, 0);
+  assert.equal(socketEvents.some(({ event, payload }) => event === 'input'
+    && payload.type === 'keyboard'), false);
+});
+
+test('surface failure blocks text and keeps a keyboard reset ACK from clearing the veto', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  const id = adapter.clickButton('right', { relX: 0.4, relY: 0.4 });
+  assert.ok(id);
+  const down = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse' && payload.action === 'down').at(-1).payload;
+  const surfaceAck = Input.acceptMouseAck({
+    inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'execution-failed', appliedSeq: 0,
+    inputIds: down.inputIds,
+  });
+  assert.equal(surfaceAck.status, 'execution-failed');
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 0);
+
+  Input.resetKeyboard('cross-ack');
+  const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+  Input.acceptKeyboardAck({
+    schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: reset.seq, inputIds: reset.inputIds,
+  });
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+});
+
+test('surface ACK timeout remains uncertain after a late matching ACK', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    loadTouchAdapter(context);
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+    const id = adapter.clickButton('left', { relX: 0.4, relY: 0.4 });
+    assert.ok(id);
+    const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+    const down = writes.find(({ payload }) => payload.action === 'down').payload;
+    const up = writes.find(({ payload }) => payload.action === 'up').payload;
+    callbacks.at(-1)?.();
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+    Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: down.seq, inputIds: down.inputIds });
+    Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: up.seq, inputIds: up.inputIds });
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+  });
+});
+
+test('surface confirmation does not timeout a long drag after down ACK', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    activate(Input, context);
+    Input.setupTextInput();
+    const surface = elements.get('remoteVideo');
+    Input.bindMouseEvents(surface);
+    surface.listeners.get('pointerdown')({
+      pointerType: 'mouse', pointerId: 9, clientX: 40, clientY: 40, button: 0, buttons: 1,
+      currentTarget: surface, preventDefault() {}, timeStamp: 1,
+    });
+    const down = socketEvents.filter(({ event, payload }) => event === 'input'
+      && payload.type === 'mouse' && payload.action === 'down').at(-1).payload;
+    Input.acceptMouseAck({
+      inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+      appliedSeq: down.seq, inputIds: down.inputIds,
+    });
+
+    callbacks[0]?.();
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+  });
+});
+
+test('surface confirmation starts a fresh up timeout after down ACK', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    loadTouchAdapter(context);
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+    assert.ok(adapter.clickButton('left', { relX: 0.4, relY: 0.4 }));
+    const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+    const down = writes.find(({ payload }) => payload.action === 'down').payload;
+
+    Input.acceptMouseAck({
+      inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied',
+      appliedSeq: down.seq, inputIds: down.inputIds,
+    });
+    assert.equal(callbacks[0], null);
+    assert.equal(callbacks[1], null);
+    assert.equal(typeof callbacks.at(-1), 'function');
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+    callbacks.at(-1)?.();
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+  });
+});
+
+test('mouse reset during surface confirmation cancels the generation without rearming draft', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    activate(Input, context);
+    Input.setupTextInput();
+    const surface = elements.get('remoteVideo');
+    Input.bindMouseEvents(surface);
+    surface.listeners.get('pointerdown')({
+      pointerType: 'mouse', pointerId: 9, clientX: 40, clientY: 40, button: 0, buttons: 1,
+      currentTarget: surface, preventDefault() {}, timeStamp: 1,
+    });
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending');
+    const mobileInput = elements.get('mobileTextInput');
+    mobileInput.value = 'draft';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    const generation = Input.getMobileSurfaceContextSnapshot().generation;
+
+    Input.releasePointer('reset-while-pending');
+
+    const surfaceSnapshot = Input.getMobileSurfaceContextSnapshot();
+    assert.equal(surfaceSnapshot.state, 'uncertain');
+    assert.notEqual(surfaceSnapshot.generation, generation);
+    assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
+    assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+    callbacks.at(-1)?.();
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'uncertain');
+    assert.equal(socketEvents.filter(({ payload }) => payload.action === 'text').length, 0);
+  });
+});
+
+test('text entered during surface confirmation waits for explicit retry after settlement', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  loadTouchAdapter(context);
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const adapter = Input.bindTouchAdapter(elements.get('remoteVideo'));
+  const id = adapter.clickButton('left', { relX: 0.4, relY: 0.4 });
+  assert.ok(id);
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 0);
+  const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+  for (const { payload } of writes) {
+    Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds });
+  }
+  assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload.payload.text, 'draft');
+});
+
+test('mouse and pen surface downs use the same pending ACK gate', () => {
+  for (const pointerType of ['mouse', 'pen']) {
+    const { Input, context, elements, socketEvents } = loadInput();
+    activate(Input, context);
+    const surface = elements.get('remoteVideo');
+    Input.bindMouseEvents(surface);
+    const pointer = (type, buttons) => surface.listeners.get(type)({
+      pointerType, pointerId: 7, clientX: 40, clientY: 40, button: 0, buttons,
+      currentTarget: surface, preventDefault() {}, timeStamp: 1,
+    });
+    pointer('pointerdown', 1);
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'pending', pointerType);
+    pointer('pointerup', 0);
+    const writes = socketEvents.filter(({ event, payload }) => event === 'input' && payload.type === 'mouse');
+    for (const { payload } of writes) {
+      Input.acceptMouseAck({ inputType: 'mouse', schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds });
+    }
+    assert.equal(Input.getMobileSurfaceContextSnapshot().state, 'settled', pointerType);
+  }
+});
+
+test('ordinary ACK-pending typing remains continuous instead of serializing each character', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const textPayloads = socketEvents
+    .filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textPayloads, ['a', 'b']);
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 2);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+});
+
+test('mobile draft retry waits for the keyboard ACK and only resends unsent text', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const first = socketEvents.filter(({ event }) => event === 'input').at(-1).payload;
+  assert.equal(first.action, 'text');
+  assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
+
+  // With the socket adapter unavailable, the next edit is retained locally;
+  // the adapter must not turn a transport rejection into an automatic retry.
+  Input.keyboardTransport.markAdapterUnavailable('socket');
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  let snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.retryable, false);
+  assert.equal(socketEvents.filter(({ event }) => event === 'input').length, 1);
+
+  Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: first.seq,
+    inputIds: first.inputIds,
+  });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.retryable, true, 'ACK settles delivery and unlocks explicit retry');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+
+  Input.keyboardTransport.markAdapterAvailable('socket');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  const textPayloads = socketEvents
+    .filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textPayloads, ['a', 'b']);
+});
+
+test('mobile transport state bridge is single-owner and lifecycle lease changes clear drafts', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const adapter = Input.mobileTextInputAdapter;
+  const firstUnsubscribe = Input._mobileTextTransportUnsubscribe;
+  Input.initKeyboardController();
+  assert.equal(Input._mobileTextTransportUnsubscribe, firstUnsubscribe);
+
+  adapter.onTransportState('blocked');
+  assert.equal(adapter.getSnapshot().status, 'blocked');
+  adapter.onTransportState('reacquire-required');
+  assert.equal(adapter.getSnapshot().deliveryUncertain, true);
+  assert.equal(adapter.getSnapshot().retryable, false);
+
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(adapter.getSnapshot().hasPending, false);
+  assert.equal(adapter.getSnapshot().shown, false);
+
+  // Same identity is idempotent and must not clear a new local draft.
+  Input.setupTextInput();
+  adapter.onTransportState('blocked');
+  mobileInput.value = 'new';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(adapter.getSnapshot().hasPending, true);
+  Input.setControlLease(null);
+  assert.equal(adapter.getSnapshot().hasPending, false);
+  assert.equal(adapter.getSnapshot().status, 'uncertain');
+});
+
+test('mobile draft status and retry/discard controls stay metadata-only and bounded', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const status = elements.get('mobileInputStatus');
+  const retry = elements.get('mobileInputRetryBtn');
+  const discard = elements.get('mobileInputDiscardBtn');
+  Input.mobileTextInputAdapter.onTransportState('blocked');
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '暂不可输入');
+  assert.equal(retry.hidden, false);
+  assert.equal(retry.disabled, true);
+  assert.equal(discard.hidden, false);
+  discard.listeners.get('click')({ preventDefault() {} });
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+  assert.equal(status.hidden, true);
+  assert.equal(retry.hidden, true);
+  assert.equal(discard.hidden, true);
+});
+
+test('lease replacement clears the mobile dock DOM before controller lease mutation', () => {
+  const { Input, context, elements } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileDock = elements.get('mobileInputDock');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  const aria = new Map();
+  mobileButton.setAttribute = (name, value) => aria.set(name, String(value));
+  mobileButton.getAttribute = (name) => aria.get(name) || null;
+  mobileInput.value = 'draft';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  mobileDock.hidden = false;
+  context.document.body.classList.add('mobile-input-visible');
+  mobileButton.setAttribute('aria-pressed', 'true');
+  Input._mobileTextReturnFocus = elements.get('remoteVideo');
+
+  Input.setControlLease({ leaseId: 'lease-000000000009', leaseEpoch: 9 });
+  assert.equal(mobileDock.hidden, true);
+  assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
+  assert.equal(mobileButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(Input._mobileTextReturnFocus, null);
+  assert.equal(mobileInput.value, '\u200b');
+});
+
+test('lease epoch change and revoke/regrant cannot resume an old scheduled draft drain', () => {
+  withFakeTimers((callbacks) => {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const mobileInput = elements.get('mobileTextInput');
+    const mobileDock = elements.get('mobileInputDock');
+    const mobileButton = elements.get('mobileTextInputBtn');
+    const aria = new Map();
+    mobileButton.setAttribute = (name, value) => aria.set(name, String(value));
+    mobileButton.getAttribute = (name) => aria.get(name) || null;
+    mobileInput.value = 'abcdefghijklmnopqr';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    mobileDock.hidden = false;
+    context.document.body.classList.add('mobile-input-visible');
+    mobileButton.setAttribute('aria-pressed', 'true');
+    mobileInput.value = '\u200b';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    const oldCallback = callbacks[0];
+    assert.equal(typeof oldCallback, 'function');
+    const sentBeforeLeaseChange = socketEvents.length;
+
+    Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 4 });
+    assert.equal(mobileDock.hidden, true);
+    assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
+    assert.equal(mobileButton.getAttribute('aria-pressed'), 'false');
+    oldCallback?.();
+    assert.equal(socketEvents.length, sentBeforeLeaseChange);
+
+    Input.setControlLease(null);
+    Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 5 });
+    oldCallback?.();
+    assert.equal(socketEvents.length, sentBeforeLeaseChange);
+    assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+  });
+});
+
+test('context uncertainty cancels retries, blocks reacquire sends, and exposes discard recovery UI', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const status = elements.get('mobileInputStatus');
+  const retry = elements.get('mobileInputRetryBtn');
+  const discard = elements.get('mobileInputDiscardBtn');
+
+  mobileInput.value = 'a';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const first = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload;
+  Input.acceptKeyboardAck({ schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: first.seq, inputIds: first.inputIds });
+  const beforeBlocked = socketEvents.length;
+  Input.mobileTextInputAdapter.onTransportState('blocked');
+  mobileInput.value = 'ab';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeBlocked, 'blocked context retains the local draft');
+  let snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(snapshot.deliveryUncertain, true);
+
+  Input.mobileTextInputAdapter.onTransportState('ready');
+  assert.equal(socketEvents.length, beforeBlocked, 'ready does not implicitly retry a rejected draft');
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
+  assert.equal(socketEvents.length, beforeBlocked, 'ready does not restore a blocked context');
+
+  discard.listeners.get('click')({ preventDefault() {} });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(snapshot.deliveryUncertain, false);
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeBlocked + 1, 'discard permits a new explicit input');
+
+  const second = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').at(-1).payload;
+  Input.acceptKeyboardAck({ schemaVersion: 2, leaseEpoch: 3, status: 'applied', appliedSeq: second.seq, inputIds: second.inputIds });
+  const beforeUncertain = socketEvents.length;
+  Input.mobileTextInputAdapter.onTransportState('reacquire-required');
+  Input.mobileTextInputAdapter.onTransportState('ready');
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(snapshot.deliveryUncertain, true);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /连接/);
+  assert.equal(retry.hidden, true);
+  assert.equal(discard.hidden, false);
+  mobileInput.value = 'abc';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.equal(socketEvents.length, beforeUncertain);
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.deliveryUncertain, true);
+  assert.equal(snapshot.hasPending, true);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /连接/);
+  assert.equal(retry.hidden, false);
+  assert.equal(retry.disabled, true);
+  assert.equal(discard.hidden, false);
+
+  discard.listeners.get('click')({ preventDefault() {} });
+  snapshot = Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(snapshot.deliveryUncertain, false);
+  assert.equal(snapshot.hasPending, false);
+  assert.equal(status.hidden, true);
 });
 
 test('mobile textarea stops control and hardware text events before document keyboard handling', () => {
@@ -522,6 +2211,124 @@ test('mobile input reset clears the reserved Dock state', () => {
   Input.resetKeyboard('control-lost');
 
   assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
+});
+
+test('owned keyboard reset ACK reopens mobile text only for the next explicit input', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.resetKeyboard('owned-reset');
+
+  const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+  assert.ok(reset);
+  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old']);
+
+  const ackResult = Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: reset.seq,
+    inputIds: reset.inputIds,
+  });
+  assert.equal(ackResult.status, 'applied');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
+});
+
+test('owned reset ACK preserves a new draft entered while the barrier is pending', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  Input.resetKeyboard('owned-reset-with-draft');
+  const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+
+  mobileInput.value = 'during-reset';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const textBeforeAck = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text);
+  assert.deepEqual(textBeforeAck, ['old']);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+
+  Input.acceptKeyboardAck({
+    schemaVersion: 2,
+    leaseEpoch: 3,
+    status: 'applied',
+    appliedSeq: reset.seq,
+    inputIds: reset.inputIds,
+  });
+  assert.equal(mobileInput.value, 'during-reset');
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1);
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'during-reset']);
+});
+
+test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
+  for (const status of ['stale', 'execution-failed']) {
+    const { Input, context, elements, socketEvents } = loadInput();
+    context.navigator.maxTouchPoints = 1;
+    activate(Input, context);
+    Input.setupTextInput();
+    const mobileInput = elements.get('mobileTextInput');
+    mobileInput.value = 'old';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    Input.resetKeyboard(`owned-reset-${status}`);
+    const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
+    const ack = {
+      schemaVersion: 2,
+      leaseEpoch: status === 'stale' ? 999 : 3,
+      status,
+      appliedSeq: reset.seq,
+      inputIds: reset.inputIds,
+    };
+    const result = Input.acceptKeyboardAck(ack);
+    assert.equal(result.status, status === 'stale' ? 'stale' : 'reacquire-required', status);
+    Input.mobileTextInputAdapter.onTransportState('ready');
+    mobileInput.value = 'after-failure';
+    mobileInput.listeners.get('input')({ target: mobileInput });
+    assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1, status);
+    assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true, status);
+    assert.equal(Input.mobileTextInputAdapter.retryPending(), false, status);
+  }
+});
+
+test('park clears mobile draft without a reset barrier and permits later explicit input', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  context.navigator.maxTouchPoints = 1;
+  activate(Input, context);
+  Input.setupTextInput();
+  const mobileInput = elements.get('mobileTextInput');
+  const mobileButton = elements.get('mobileTextInputBtn');
+  mobileInput.value = 'old';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  const eventsBeforePark = socketEvents.length;
+  Input.parkKeyboard('visibility-hidden');
+  assert.equal(socketEvents.length, eventsBeforePark);
+  assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').length, 0);
+  assert.equal(mobileInput.value, '\u200b');
+
+  mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
 });
 
 test('mouse pointer cancel releases capture and sends one reset', () => {

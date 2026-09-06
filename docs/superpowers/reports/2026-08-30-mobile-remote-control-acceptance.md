@@ -1,5 +1,9 @@
 # Mobile Remote-Control Acceptance
 
+## 2026-09-06 Remediation Follow-up
+
+Task1–7 and the additional drag-status/layout feedback fix have been implemented and reviewed on `codex/mobile-input-interaction-remediation` (production through `bfc886d`, acceptance through `f2e694a`). The offline Chromium suite and primary whole-branch review are complete with no unresolved P1/P2 findings. See [current remediation acceptance](2026-09-06-mobile-input-interaction-remediation-acceptance.md). This branch has not been merged/pushed or deployed; physical devices, system IME, Quartz, public entry and live watcher remain NOT RUN. All dated evidence below retains its historical meaning.
+
 ## 2026-09-05 Current-Code Review Addendum
 
 The original evidence below is historical. Review of `main` at `000547f` found seven open interaction defects: repeated video-focus stealing, duplicate keyboard-inset layout accounting, toolbar/text cursor divergence, displaced drag-down coordinates, loss of unsent drafts, missing wide-iPad keyboard avoidance, and input controls outside the fullscreen target. See [current logic and review](2026-09-05-mobile-touch-keyboard-logic-review.md) for locations and reproductions.

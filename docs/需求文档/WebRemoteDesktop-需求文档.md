@@ -138,37 +138,44 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
-- [x] **离线浏览器验收 harness**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 仅连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。
+- [x] **既有origin浏览器验收 harness（非离线）**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 会认证并连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。本轮没有运行此脚本或连接实际origin。
+- [x] **严格离线整改验收**：新 `scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`。最终结果见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
-#### 3.4.1 当前操作与实现边界（2026-09-05）
+#### 3.4.1 整改分支当前操作与实现边界（2026-09-06）
+
+以下描述整改分支已提交的代码，不表示main或运行服务已经更新；离线集成与最终主审已通过；真机、公网及与新main的组合结果仍未验证。
 
 | 用户操作 | 当前行为 |
 |---|---|
 | 单指点 / 双点 | 抬手发左键 down/up；500ms、6px 范围内计算双击 |
-| 拖动 / 长按 | 位移超过 8 CSS px 后左键拖拽；550ms 长按触发右键，抬手释放 |
+| 拖动 / 长按 | 位移超过 8 CSS px 后在最初接触点down，再发当前位置move；550ms长按右键，抬手释放。外部几何变化取消旧手势并reset；空草稿的surface待确认提示不会撑高Dock、自取消拖拽 |
 | 双指滚动 | 使用触点质心位移发送远端滚轮；不提供双指缩放；留下一指时仍保持滚动态 |
-| 移动键盘 | 在有触控能力的浏览器中显示入口；点击打开底部文本框并聚焦系统键盘，非组合输入即时发送，IME 在组合结束后提交 |
-| 虚拟修饰键 | Shift/Ctrl/Alt/Cmd 点击保持、再次点击释放；文本提交前自动释放；快捷操作应使用显式复制/粘贴等按钮 |
+| 移动键盘 / 焦点 | 按触控能力显示入口；明确打开时聚焦textarea，连续帧/门禁同步不抢焦点。普通收起保留同一上下文草稿，只有原焦点仍有效且用户未另选焦点时恢复 |
+| 草稿 / 重试 | 非组合input、compositionend走已有Unicode发送；拒绝的未发草稿留在当前页。已接受前缀不重发；普通ACK在途不限制正常连续输入。已有拒绝草稿需确认稳定后显式重试，不确定投递只能核对远端后放弃；每轮至多16个Backspace并可取消 |
+| 导航 / 切换输入入口 | textarea和工具栏共用游标接口；被接受的外部实体键、带modifier导航、普通modal提交等失效旧基线，拒绝/取消不清历史。surface down/up均确认且手势结束前，不向不确定目标发文本；ACK仅刷新，不自动补发草稿 |
+| 虚拟修饰键 / 安全释放 | Shift/Ctrl/Alt/Cmd点击保持、再次点击沿原controller释放；pressed真相不由DOM替代。组合输入、pending或不确定状态不拦截已跟踪keyup/虚拟modifier OFF；文本提交前自动释放虚拟modifier |
 | 剪贴板与输入法 | 复制/粘贴使用远端 Mac 剪贴板；“输入法”按钮切换远端输入法，不切换手机系统输入法 |
 | 软键盘以外的文本入口 | 普通“文本输入”modal 可点发送，compositionend 也会自动提交并关闭；不是移动持续输入框 |
 | 失焦 / 隐藏 / 断连 | 立即清理指针；按 DC 状态 reset 或 park 键盘及移动文本框；页面后台持续 5 分钟才停止媒体采集 |
+| 手机 / 宽屏iPad布局 | ChromeLayout统一计算viewport、safe-area和Dock高度；触控且文本框可见时单行横滚键栏、普通控件收入更多。极小可用高度显示收起键盘/旋转提示，暂停新输入但保留安全释放和草稿；恢复尺寸不自动发草稿 |
+| 全屏 | 以documentElement容纳状态栏、文本Dock、键栏和modal；全局退出不依赖桌面控制租约。API缺失/拒绝保留普通视图及编辑焦点并显示提示，不使用iOS video-only回退 |
 
 触控最终转换为鼠标输入；软键盘最终发送 Unicode 文本；虚拟键/实体键发送物理键 code 或组合 batch。它们共享控制租约，鼠标与键盘各有自己的 seq、ACK 和 reset 状态。移动文本框的缓存不是远端文档或光标镜像。
 
-#### 3.4.2 当前复审未闭环项
+#### 3.4.2 历史发现与整改状态
 
-2026-09-05 基于 `000547f` 复核：相关自动化 **151/151** 通过，但隔离代码复现及离线 Chromium 已确认以下缺陷，不能仅标为“待真机验收”：
+2026-09-05基于`000547f`的复核曾在相关单测151/151通过时确认七项实际缺陷。历史定位和红态复现保留在[原问题报告](../superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)，不改写为旧版本已通过。
 
-- [ ] 连续出画同步 `Input.setActive(true)` 会把焦点从文本框抢回视频（P1）。
-- [ ] 键盘 inset 重复计入窄屏布局，挤压画面并把工具栏推出可视区（P1）。
-- [ ] 发送拒绝后的未发送草稿可被下一次 beforeinput 还原丢失，缺少明确重试状态（P1）。
-- [ ] 虚拟方向/退格等工具栏动作绕过移动文本的游标基线，造成后续文本不一致（P2）。
-- [ ] 拖动首次 down 使用越过阈值时的位置，可能错过原始小目标（P2）。
-- [ ] 宽于 899px 的 iPad 布局隐藏移动专用键栏、底栏未避让系统键盘（P2）。
-- [ ] 元素全屏只包含画面，移动键盘入口与输入 Dock 不在全屏容器内（P2）。
+- [x] F1 连续帧抢焦点：已实现焦点/门禁分离并有回归。
+- [x] F2/F6 键盘占高重复、宽屏键栏缺失：已实现单点布局与触控能力派生，离线浏览器44组合、913项布局检查通过。
+- [x] F5 失败草稿丢失：已实现本页草稿、有限删除事务、显式重试/放弃与lease隔离。
+- [x] F3 导航/实体键/modal基线：已接统一事务及独立surface确认门禁。
+- [x] F4 拖拽起点：已保留初始坐标、取消旧几何工作；主审追加修复提示引起的自取消。
+- [x] F7 全屏控件缺失：已切换完整documentElement目标及全局退出，保留失败提示和焦点。
+- [x] Task7严格离线浏览器集成与最终主审：已完成；四项覆盖缺口及恢复的组合键检查通过复审，无未解决P1/P2。以上勾选表示分支代码/离线验收，不等于真机或公网全链路验收。
 
-完整逻辑、定位、建议和证据见 [手机 / iPad 触控与软键盘复审](../superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)。离线浏览器使用人工键盘 inset，没有连接真实 Viewer/Host，不计入真实设备、Quartz 或公网 PASS。
+按F编号的当前证据和剩余门槛见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。离线浏览器使用人工键盘inset和内存远端模型，没有连接真实Viewer/Host，不计入真实设备、Quartz或公网PASS。
 
 **验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、安全布局摘要、状态和无敏感原因；不得记录文本、按键、剪贴板、密码、token、URL、事件坐标或原始 bounding box。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
 
@@ -183,9 +190,9 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复；会取消进行中的手动端口搜索
 - [x] **搜索端口**：仅在 `auto` / `stun`、信令与 Host 在线，且当前 Viewer 为 ACTIVE controller 时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）；失去控制立即停止
 - [x] **全屏控制**：网页端提供全屏按钮，全屏元素内提供退出按钮，Esc 仍可用
-- [x] **顶栏与底部工具条**：顶栏高度与内容区起点绑定；底部工具条单列堆叠
+- [x] **顶栏与底部工具条**：顶栏高度与内容区起点绑定；非compact底栏保持既有布局，触控文本compact模式使用单行横滚键栏与更多浮层
 - [x] **Viewer Chrome 门禁**：连接前仅保留“开始学习助手”CTA；signaling、媒体待出画、已连接、媒体卡顿和断开阶段按 capability 门禁刷新、暂停、断开、分辨率、网络、Terminal 与桌面输入动作。控制租约仍由 WebRTC 真相维护，控制切换中 fail-closed。
-- [x] **Viewer 几何与空闲退避**：顶栏实际高度通过 `--chrome-top` 驱动画面和 Terminal 起点，支持 `dvh`/`vh` 回退与底部 safe-area；底部 action/control Dock 固定为垂直堆叠，已连接且无菜单/弹窗时 2.5 秒无底部活动自动退避，触屏仅由底部边缘或显式控件唤回。
+- [x] **Viewer 几何与空闲退避**：顶栏实际高度与画面/Terminal起点关联，非managed布局保留`dvh`/`vh`回退；touch桌面managed模式统一计算五个定位属性，不重复扣键盘占高。已连接且无菜单/弹窗/移动编辑状态时2.5秒无底部活动自动退避；移动文本visible/composing/pending/blocked暂停退避。
 - [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，自动恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel，也**不**自动启动 500 轮端口搜索
 - [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
 - [x] **网络模式**：控制栏提供网络模式按钮，切换后自动重连并更新浮窗说明；切换模式会取消手动端口搜索
