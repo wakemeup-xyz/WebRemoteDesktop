@@ -50,6 +50,7 @@ class _PeakAmbientSampler:
         "lab": ("/lab", " lab"),
         "docker": ("docker compose", "docker-compose"),
     }
+    _SYSTEM_EXECUTABLE_ROOTS = ("/System/Library/", "/usr/lib/", "/usr/sbin/", "/sbin/")
 
     def __init__(self, *, snapshot_reader=None, interval_seconds: float = 1.0):
         self._snapshot_reader = snapshot_reader or self._read_snapshot
@@ -162,6 +163,10 @@ class _PeakAmbientSampler:
         result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
         return result
 
+    @classmethod
+    def _is_system_process(cls, process: dict) -> bool:
+        return os.path.realpath(str(process["command"])).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
+
     def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
         """Capture one snapshot.  The worker is the sole normal caller."""
         tick_ns = time.monotonic_ns()
@@ -179,8 +184,11 @@ class _PeakAmbientSampler:
                 forbidden = []
                 for process in processes:
                     process_class = self._forbidden_class(str(process["command"]), str(process.get("argv", "")))
-                    if process_class is not None and process["pid"] not in mysql_pids | sync_pids:
-                        forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
+                    if process["pid"] in mysql_pids | sync_pids | {os.getpid()}:
+                        continue
+                    if process_class is None and self._is_system_process(process):
+                        continue
+                    forbidden.append({"class": process_class or "external", "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 external_cpu = sum(item["cpuPercent"] for item in forbidden)
                 for offender in forbidden:
                     if offender["cpuPercent"] > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
@@ -357,11 +365,7 @@ class _PeakAmbientSampler:
             "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
             "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT, "aggregateCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
-            "quiescentExternalProcesses": [
-                {key: reason[key] for key in ("class", "pid", "cpuPercent")}
-                for reason in self.abort_reasons
-                if reason["category"] == "CONTAMINATED" and "class" in reason
-            ],
+            "quiescentExternalProcesses": [item for sample in self.samples for item in sample.get("quiescentExternalProcesses", [])],
             "abortReasons": list(self.abort_reasons), "samples": list(self.samples),
             "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
         }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -237,6 +238,15 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         evidence = sampler.evidence()
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
         self.assertEqual(evidence["externalProcessPolicy"]["aggregateCpuPercentMaximum"], 1.0)
+
+    def test_generic_node_aggregate_system_and_own_process_classification(self):
+        node = self._snapshot(); node["processes"].append({"pid": 66, "rssKiB": 1, "cpuPercent": 99.0, "command": "/usr/local/bin/node", "argv": "node"})
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: node); sampler._sample_once(phase="RUNNING")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 67, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/a", "argv": "a"}, {"pid": 68, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/b", "argv": "b"}, {"pid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/opt/matrix", "argv": "matrix"}, {"pid": 69, "rssKiB": 1, "cpuPercent": 99.0, "command": "/System/Library/x", "argv": "x"}]
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        self.assertEqual(len(sampler.evidence()["quiescentExternalProcesses"]), 2)
         aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 43, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}, {"pid": 44, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")

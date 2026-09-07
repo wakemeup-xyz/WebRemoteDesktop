@@ -173,6 +173,7 @@ sync_worker、Lab 或 docker compose 等非 allowlisted 干扰进程只要出现
 本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。缺失、重启、漂移或 argv spoof 都中止；此授权不泛化到其他 Python/pytest 进程。
 
 非 allowlisted 外部进程采用 `quiescent-external-v1`：每样本单进程与总 CPU 都必须≤1.0%，可作为脱敏 `quiescentExternalProcesses` 记录；任一 spike 超过预算即 `ABORTED_CONTAMINATED`。此规则不调整 raw P95 或资格，sentinel 仍仅 relative telemetry。
+受管集合包含所有非系统根（`/System/Library`、`/usr/lib`、`/usr/sbin`、`/sbin`）、非 matrix 自身且非精确 mysqld/sync 的进程；node、Host 与第三方 GUI 均受管。
 
 边界 sentinel 请求排入同一 sampler，不能从调用线程并发读取 `ps`。每个
 分辨率/场景前后使用相同静态输入和冻结 candidate，记录单调窗口、输入与配置
