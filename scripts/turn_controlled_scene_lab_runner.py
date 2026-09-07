@@ -708,6 +708,11 @@ class RawLossTimelineCollector:
         inbound, relay = stats.get("inbound"), stats.get("selectedRelay")
         if (not isinstance(inbound, Mapping) or not isinstance(relay, Mapping) or not isinstance(inbound.get("packetsReceived"), (int, float)) or not isinstance(inbound.get("packetsLost"), (int, float))):
             raise ValueError("viewer loss tap lacks selected relay/inbound stats")
+        raw_epoch = raw.get("tapEpoch")
+        if not isinstance(raw_epoch, int) or raw_epoch < self.tap_epoch: raise ValueError("viewer loss tap is missing current barrier epoch")
+        self.tap_epoch = raw_epoch
+        flush = raw.get("flushAck")
+        if not isinstance(flush, Mapping) or flush.get("epoch") != raw_epoch or flush.get("accepted") is not True: raise ValueError("viewer loss tap has no flush acknowledgement")
         self.arrival_seq += 1
         for event in raw.get("host", []):
             if not isinstance(event, Mapping): raise ValueError("invalid Host loss tap event")

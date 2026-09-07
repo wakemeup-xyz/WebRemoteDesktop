@@ -4891,7 +4891,8 @@ if (this.tunnelLastObjectUrl) {
   beginLossLabTrace() {
     // Only an isolated Lab origin may enable detailed packet diagnostics.
     if (!/^http:\/\/(127\.0\.0\.1|\[::1\]):\d+$/.test(String(window?.location?.origin || ''))) return false;
-    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0 };
+    const epoch = Number(this._lossLabTrace?.tapEpoch || 0) + 1;
+    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, tapEpoch: epoch, sourceSeq: 0, flushAck: { epoch, accepted: true } };
     return true;
   },
 
@@ -4901,7 +4902,8 @@ if (this.tunnelLastObjectUrl) {
     const entries = trace[kind];
     if (!Array.isArray(entries)) return false;
     if (entries.length >= 512) entries.shift();
-    entries.push(row);
+    trace.sourceSeq += 1;
+    entries.push({ ...row, sourceSeq: trace.sourceSeq, barrierEpoch: trace.tapEpoch });
     return true;
   },
 
@@ -4946,7 +4948,7 @@ if (this.tunnelLastObjectUrl) {
     const local = pair ? rows.find((row) => row?.id === pair.localCandidateId && row.type === 'local-candidate') : null;
     const inbound = rows.find((row) => row?.type === 'inbound-rtp' && (row.kind === 'video' || row.mediaType === 'video'));
     if (!pair || !local || local.candidateType !== 'relay' || !inbound) return null;
-    const result = { host: trace.host.splice(0), rvfc: trace.rvfc.splice(0), droppedHostEvents: trace.droppedHostEvents,
+    const result = { host: trace.host.splice(0), rvfc: trace.rvfc.splice(0), droppedHostEvents: trace.droppedHostEvents, tapEpoch: trace.tapEpoch, flushAck: trace.flushAck,
       stats: { pcId: `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}`,
         state: String(this.pc.connectionState || ''), selectedRelay: { address: local.address, port: local.port, protocol: local.protocol },
         inbound: { packetsReceived: Number(inbound.packetsReceived) || 0, packetsLost: Number(inbound.packetsLost) || 0,

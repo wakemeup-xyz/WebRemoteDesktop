@@ -308,7 +308,7 @@ def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api(
             if "beginLossLabTrace" in script:
                 return True
             key = {"attemptId": "attempt", "generation": 1, "streamId": "video", "captureSeq": 4, "wireTimestamp": 9}
-            return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3},
+            return {"tapEpoch": 0, "flushAck": {"epoch": 0, "accepted": True}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3},
                              {"type": "encoder_idr", "monotonicNs": 4, "frameKey": key, "requestToken": "token"},
                              {"type": "rtp_send", "monotonicNs": 5, "frameKey": key, "sequence": 1, "rtpTimestamp": 9}],
                     "rvfc": [{**key, "rtpTimestamp": 9, "viewerAcceptedMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
