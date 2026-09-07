@@ -1711,9 +1711,15 @@ const Input = {
     const recovery = gate.recovery || {};
     const waiting = recovery.state === 'waiting';
     const failed = recovery.state === 'failed';
-    const draftBlocked = Boolean(mobile.hasPending || mobile.deliveryUncertain);
+    // A pending/composing value is routine while an edit or reliable surface
+    // ACK is in flight. The recovery overlay is for a retained draft whose
+    // context is actually blocked/uncertain; the mobile status/retry controls
+    // continue to describe ordinary pending work in the dock.
+    const contextBlocked = mobile.deliveryUncertain === true
+      || ['blocked', 'uncertain'].includes(mobile.status);
+    const draftBlocked = Boolean(mobile.hasPending && contextBlocked);
     const surfaceBlocked = gate.blockedReasons.includes('surface-uncertain');
-    const show = waiting || failed || draftBlocked || surfaceBlocked;
+    const show = waiting || failed || contextBlocked || surfaceBlocked;
     const message = waiting
       ? '正在安全复位输入，请稍候…'
       : failed

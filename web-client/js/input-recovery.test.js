@@ -816,6 +816,49 @@ test('ordinary surface pending, IME composing, and healthy blur do not spend rec
   assert.equal(healthyBlur.Input.getDiagnosticState().recovery.state, 'idle');
 });
 
+test('recovery notice distinguishes normal composition and ACK-pending drafts from invalidated drafts', () => {
+  const composing = loadRecoveryFixture({ touchPoints: 5 });
+  const composingInput = composing.elements.get('mobileTextInput');
+  composingInput.dispatch('compositionstart');
+  composingInput.value = 'normal-composition\u200b';
+  composingInput.dispatch('compositionupdate');
+  composingInput.dispatch('input');
+  assert.equal(composing.Input.mobileTextInputAdapter.getSnapshot().composing, true);
+  assert.equal(composing.Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.equal(composing.Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  assert.equal(composing.elements.get('inputRecoveryNotice').hidden, true);
+  assert.equal(composing.elements.get('inputRecoveryDraftBtn').hidden, true);
+  composingInput.dispatch('compositionend');
+  assert.equal(composing.elements.get('inputRecoveryNotice').hidden, true);
+
+  const ackPending = loadRecoveryFixture({ touchPoints: 5 });
+  ackPending.pointer('pointerdown');
+  const ackPendingInput = ackPending.elements.get('mobileTextInput');
+  ackPendingInput.value = 'ordinary-ack-pending\u200b';
+  ackPendingInput.dispatch('input');
+  const pendingSnapshot = ackPending.Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(pendingSnapshot.hasPending, true);
+  assert.equal(pendingSnapshot.deliveryUncertain, false);
+  assert.equal(pendingSnapshot.status, 'pending');
+  assert.equal(ackPending.elements.get('inputRecoveryNotice').hidden, true);
+  assert.equal(ackPending.elements.get('inputRecoveryDraftBtn').hidden, true);
+
+  const invalidated = loadRecoveryFixture({ touchPoints: 5 });
+  invalidated.pointer('pointerdown');
+  const invalidatedInput = invalidated.elements.get('mobileTextInput');
+  invalidatedInput.value = 'retained-invalidated-draft\u200b';
+  invalidatedInput.dispatch('input');
+  invalidated.Input.mobileTextInputAdapter.invalidateContext('visibility-hidden');
+  const invalidatedSnapshot = invalidated.Input.mobileTextInputAdapter.getSnapshot();
+  assert.equal(invalidatedSnapshot.hasPending, true);
+  assert.equal(invalidatedSnapshot.deliveryUncertain, true);
+  assert.equal(invalidated.elements.get('inputRecoveryNotice').hidden, false);
+  assert.equal(invalidated.elements.get('inputRecoveryDraftBtn').hidden, false);
+  const beforeRetry = invalidated.inputs().length;
+  assert.equal(invalidated.Input.mobileTextInputAdapter.retryPending(), false);
+  assert.equal(invalidated.inputs().length, beforeRetry);
+});
+
 test('keyboard UI reflects effective vetoes instead of reporting raw READY', () => {
   const uncertain = loadRecoveryFixture();
   const uncertainDisplay = uncertain.elements.get('keyInputDisplay');
