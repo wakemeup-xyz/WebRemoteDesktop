@@ -14,29 +14,25 @@ services:
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
     labels:
       com.wrd.turn-loss-fixture: "true"
-    network_mode: service:turn
-    command: ["python", "/fixture/controller.py", "serve", "--manifest", "/runtime/manifest.json", "--credentials", "/runtime/credentials/turn.json", "--state", "/state/active-loss.json", "--relay-binding", "/runtime/actual-relay.json"]
+    networks: [turn-loss]
+    command: ["python", "/fixture/controller.py", "serve", "--manifest", "/runtime/manifest.json", "--credentials", "/runtime/credentials/turn.json", "--state", "/state/active-loss.json", "--relay-binding", "/runtime/actual-relay.json", "--gateway-counters", "/state/gateway-counters.json"]
     cap_drop: [ALL]
-    cap_add: [NET_ADMIN]
     security_opt: [no-new-privileges:true]
     volumes:
       - turn-loss-state:/state
 
-  receiver-capture:
-    # Header-only AF_PACKET observer.  It shares only the isolated TURN
-    # namespace and cannot access Host, production TURN, or Viewer state.
+  turn-gateway:
+    # The public Lab TURN address terminates here.  All UDP bytes are relayed
+    # inline; only sealed ChannelData RTP is eligible for the finite fault.
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
     labels:
       com.wrd.turn-loss-fixture: "true"
-    network_mode: service:turn
-    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-capture/authority.sock", "--capture-capability", "/lab-capture/capability", "--relay-binding", "/runtime/actual-relay.json"]
+    networks: [turn-loss]
+    command: ["python", "/fixture/turn_gateway.py", "--turn-host", "turn", "--turn-port", "3478", "--state", "/state/active-loss.json", "--relay-binding", "/runtime/actual-relay.json", "--counters", "/state/gateway-counters.json"]
     cap_drop: [ALL]
-    cap_add: [NET_RAW]
     security_opt: [no-new-privileges:true]
     volumes:
-      - turn-loss-receiver:/receiver
-      - turn-loss-state:/state:ro
-      - turn-loss-bridge:/lab-capture:ro
+      - turn-loss-state:/state
 
   udp-echo-peer:
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -47,23 +43,8 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
-
-  loss-watchdog:
-    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
-    labels:
-      com.wrd.turn-loss-fixture: "true"
-    network_mode: service:turn
-    command: ["python", "/fixture/controller.py", "watchdog", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json"]
-    cap_drop: [ALL]
-    cap_add: [NET_ADMIN]
-    security_opt: [no-new-privileges:true]
-    volumes:
-      - turn-loss-state:/state
-
 networks:
   turn-loss: {}
 
 volumes:
   turn-loss-state:
-  turn-loss-receiver:
-  turn-loss-bridge:

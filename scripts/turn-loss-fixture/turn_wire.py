@@ -68,7 +68,11 @@ def parse_channel_data_video(packet: bytes, *, channel_number: int, payload_type
     parsed = parse_channel_data(packet)
     if parsed is None or parsed[0] != channel_number:
         return None
-    payload = parsed[1]
+    return parse_rtp(parsed[1], payload_type=payload_type, ssrc=ssrc)
+
+
+def parse_rtp(payload: bytes, *, payload_type: int | None = None, ssrc: int | None = None) -> VideoRtp | None:
+    """Parse an RTP header without interpreting or retaining its media body."""
     if len(payload) < 12 or payload[0] >> 6 != 2:
         return None
     csrc_count = payload[0] & 0x0F
@@ -76,6 +80,6 @@ def parse_channel_data_video(packet: bytes, *, channel_number: int, payload_type
         return None
     actual_payload_type = payload[1] & 0x7F
     sequence, timestamp, actual_ssrc = struct.unpack("!HII", payload[2:12])
-    if actual_payload_type != payload_type or actual_ssrc != ssrc:
+    if (payload_type is not None and actual_payload_type != payload_type) or (ssrc is not None and actual_ssrc != ssrc):
         return None
     return VideoRtp(sequence, timestamp, actual_ssrc, actual_payload_type, payload)

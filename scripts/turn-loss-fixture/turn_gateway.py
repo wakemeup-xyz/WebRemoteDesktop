@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import argparse
+import json
+from pathlib import Path
 import selectors
 import socket
 import time
 
-from gateway_evidence import GatewayLossCounter
-from turn_wire import COOKIE, WireProtocolError, parse_channel_data_video, parse_stun
+from gateway_evidence import GatewayCounterStore, GatewayLossCounter
+from turn_wire import COOKIE, WireProtocolError, parse_channel_data, parse_channel_data_video, parse_rtp, parse_stun
 
 
 class GatewayBlocked(RuntimeError):
@@ -129,11 +132,13 @@ class GatewayMediaState:
 
     def decide(self, *, client_id: str, payload: bytes, now_ns: int | None = None) -> GatewayDecision:
         target, armed = self._target, self.armed
-        if target is None or armed is None or target[0] != client_id:
+        if target is None or target[0] != client_id:
             return GatewayDecision(False, payload)
         video = parse_channel_data_video(payload, channel_number=target[1], payload_type=target[2], ssrc=target[3])
         if video is None:
             return GatewayDecision(False, payload)
+        if armed is None:
+            return GatewayDecision(False, payload, video.sequence)
         forward = armed.observe(sequence=video.sequence, now_ns=time.monotonic_ns() if now_ns is None else int(now_ns))
         if armed.deadline_expired:
             self.armed = None
@@ -161,6 +166,121 @@ class InlineTurnGateway:
         self._selector = selectors.DefaultSelector(); self._front: dict[int, socket.socket] = {}
         self._runtime: dict[int, tuple[socket.socket, TurnAssociation]] = {}
         self._relay_runtime: dict[tuple[int, tuple[str, int]], socket.socket] = {}
+        # coturn's ``external-ip`` may be a loopback fixture address while
+        # its control listener remains on the private Compose network.
+        self._allowed_turn_hosts = {host, "127.0.0.1"}
+        try:
+            self._allowed_turn_hosts.update(row[4][0] for row in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM))
+        except socket.gaierror:
+            pass
+        self._state_path: Path | None = None
+        self._relay_binding_path: Path | None = None
+        self._counter_store: GatewayCounterStore | None = None
+        self._active_event_id: str | None = None
+        self._completed_event_ids: set[str] = set()
+        self._capture_socket_path: Path | None = None
+        self._capture_capability_path: Path | None = None
+        self._run_id: str | None = None
+        self._observed_media: set[tuple[int, int, int]] = set()
+
+    def configure_control_bridge(self, *, state_path: Path, relay_binding_path: Path, counter_path: Path) -> None:
+        """Attach the Lab-only file bridge after all paths have been fixed.
+
+        The controller owns the control state.  This gateway only reads the
+        selected, sealed binding and records header counters under `/state`.
+        """
+        self._state_path = Path(state_path)
+        self._relay_binding_path = Path(relay_binding_path)
+        self._counter_store = GatewayCounterStore(counter_path)
+
+    def configure_observation_bridge(self, *, capture_socket_path: Path, capture_capability_path: Path, run_id: str) -> None:
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("gateway observation run id is invalid")
+        self._capture_socket_path, self._capture_capability_path, self._run_id = Path(capture_socket_path), Path(capture_capability_path), run_id
+
+    def _record_media_observation(self, *, upstream_id: int, association: TurnAssociation, payload: bytes, source: tuple[str, int], upstream: socket.socket) -> None:
+        """Offer one passive header-only ChannelData observation to authority."""
+        if self._capture_socket_path is None or self._capture_capability_path is None or self._run_id is None:
+            return
+        parsed = parse_channel_data(payload)
+        if parsed is None or parsed[0] not in association.confirmed_channels:
+            return
+        rtp = parse_rtp(parsed[1], payload_type=96)
+        if rtp is None or association.relay is None:
+            return
+        key = (upstream_id, parsed[0], rtp.ssrc)
+        if key in self._observed_media:
+            return
+        try:
+            capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
+            local = upstream.getsockname()
+            observation = {"outerEgress": {"protocol": "udp", "source": str(source[0]), "sourcePort": int(source[1]),
+                                             "destination": str(local[0]), "destinationPort": int(local[1])},
+                           "allocationRelay": {"address": association.relay[0], "port": association.relay[1]},
+                           "peer": {"address": association.confirmed_channels[parsed[0]][0], "port": association.confirmed_channels[parsed[0]][1]},
+                           "channelNumber": parsed[0], "encapsulation": "channel-data", "rtpSsrc": rtp.ssrc, "payloadType": rtp.payload_type}
+            request = {"operation": "media-observation", "runId": self._run_id, "observation": observation, "captureCapability": capability}
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(.25); client.connect(str(self._capture_socket_path)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode())
+                reply = json.loads(client.makefile("rb").readline(65536))
+            if isinstance(reply, dict) and reply.get("status") == "OBSERVED":
+                self._observed_media.add(key)
+        except (OSError, ValueError, json.JSONDecodeError):
+            # The authority may start after Compose or the one-shot capability
+            # may already be consumed.  Do not affect TURN byte forwarding.
+            return
+
+    @staticmethod
+    def _read_json(path: Path) -> dict | None:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def _target_from_binding(self, binding: dict) -> tuple[str, int, int, int] | None:
+        media = binding.get("mediaBinding")
+        if not isinstance(media, dict):
+            return None
+        channel, payload_type, ssrc = media.get("channelNumber"), media.get("payloadType"), media.get("rtpSsrc")
+        allocation, peer = media.get("allocationRelay"), media.get("peer")
+        if (not isinstance(channel, int) or not isinstance(payload_type, int) or not isinstance(ssrc, int)
+                or not isinstance(allocation, dict) or not isinstance(peer, dict)):
+            return None
+        relay = (allocation.get("address"), allocation.get("port")); peer_tuple = (peer.get("address"), peer.get("port"))
+        if not all(isinstance(value, (str, int)) for value in (*relay, *peer_tuple)):
+            return None
+        for mapping in self._table.values():
+            _upstream, association = self._runtime.get(mapping.upstream_id, (None, None))
+            if association is None or association.relay != relay or association.confirmed_channels.get(channel) != peer_tuple:
+                continue
+            self.media.confirm_channel(client_id=str(mapping.upstream_id), channel_number=channel, peer=peer_tuple)
+            self.media.seal_target(client_id=str(mapping.upstream_id), channel_number=channel, payload_type=payload_type, ssrc=ssrc)
+            return self.media._target
+        return None
+
+    def sync_control_state(self) -> None:
+        if self._state_path is None or self._relay_binding_path is None:
+            return
+        event = self._read_json(self._state_path)
+        if event is None or event.get("state") not in {"probing", "armed"}:
+            self.media.clear_on_control_disconnect(); self._active_event_id = None
+            return
+        event_id, pattern = event.get("comment"), event.get("pattern")
+        if not isinstance(event_id, str) or not event_id:
+            self.media.clear_on_control_disconnect(); return
+        binding = self._read_json(self._relay_binding_path)
+        if binding is None or self._target_from_binding(binding) is None:
+            return
+        if event.get("state") == "probing":
+            self.media.clear_on_control_disconnect(); self._active_event_id = event_id
+            return
+        if event_id in self._completed_event_ids:
+            self.media.clear_on_control_disconnect(); return
+        if self._active_event_id != event_id:
+            if not isinstance(pattern, str): return
+            self.media.arm(pattern)
+            self._active_event_id = event_id
 
     @property
     def control_endpoint(self) -> tuple[str, int]:
@@ -220,13 +340,18 @@ class InlineTurnGateway:
     def _from_upstream(self, upstream_id: int) -> None:
         upstream, association = self._runtime[upstream_id]
         payload, source = upstream.recvfrom(65535)
-        if source[0] != self.turn_endpoint[0] or source[1] not in {self.turn_endpoint[1], *self.relay_ports}:
+        if source[0] not in self._allowed_turn_hosts or source[1] not in {self.turn_endpoint[1], *self.relay_ports}:
             return
         association.observe_server(payload)
         mapping = next((item for item in self._table.values() if item.upstream_id == upstream_id), None)
         if mapping is None:
             return
+        self._record_media_observation(upstream_id=upstream_id, association=association, payload=payload, source=source, upstream=upstream)
         decision = self.media.decide(client_id=str(upstream_id), payload=payload)
+        if decision.sequence is not None and self._counter_store is not None and self._active_event_id is not None:
+            self._counter_store.record(self._active_event_id, eligible=True, dropped=decision.drop, sequence=decision.sequence)
+        if self.media.armed is None and self._active_event_id is not None:
+            self._completed_event_ids.add(self._active_event_id)
         if decision.drop:
             return
         self._front.get(int(source[1]), self._front[self.control_port]).sendto(decision.payload, mapping.client_endpoint)
@@ -241,6 +366,7 @@ class InlineTurnGateway:
         self._front[port].sendto(payload, peer)
 
     def poll(self, *, timeout_s: float = .1) -> None:
+        self.sync_control_state()
         for key, _ in self._selector.select(timeout_s):
             kind, value = key.data
             if kind == "front":
@@ -267,3 +393,38 @@ class InlineTurnGateway:
             except Exception: pass
             sock.close()
         self._front.clear(); self._selector.close()
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser(description="Lab-only inline UDP TURN gateway")
+    parser.add_argument("--turn-host", required=True)
+    parser.add_argument("--turn-port", type=int, default=3478)
+    parser.add_argument("--bind-host", default="0.0.0.0")
+    parser.add_argument("--control-port", type=int, default=3478)
+    parser.add_argument("--relay-start", type=int, default=51000)
+    parser.add_argument("--relay-end", type=int, default=51009)
+    parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--relay-binding", type=Path, required=True)
+    parser.add_argument("--counters", type=Path, required=True)
+    parser.add_argument("--capture-authority", type=Path)
+    parser.add_argument("--capture-capability", type=Path)
+    parser.add_argument("--run-id")
+    arguments = parser.parse_args()
+    gateway = InlineTurnGateway(turn_endpoint=(arguments.turn_host, arguments.turn_port), bind_host=arguments.bind_host,
+                                control_port=arguments.control_port, relay_ports=tuple(range(arguments.relay_start, arguments.relay_end + 1)))
+    gateway.configure_control_bridge(state_path=arguments.state, relay_binding_path=arguments.relay_binding, counter_path=arguments.counters)
+    if any(value is not None for value in (arguments.capture_authority, arguments.capture_capability, arguments.run_id)):
+        if arguments.capture_authority is None or arguments.capture_capability is None or arguments.run_id is None:
+            raise SystemExit("gateway observation bridge arguments must be supplied together")
+        gateway.configure_observation_bridge(capture_socket_path=arguments.capture_authority, capture_capability_path=arguments.capture_capability, run_id=arguments.run_id)
+    gateway.start()
+    try:
+        while True: gateway.poll(timeout_s=.1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        gateway.close()
+
+
+if __name__ == "__main__":
+    _main()

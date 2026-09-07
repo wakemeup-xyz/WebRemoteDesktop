@@ -356,11 +356,12 @@ def test_runtime_probe_requires_resolved_repo_digests_for_fixture_metadata():
     }
 
 
-def test_compose_keeps_host_namespaces_out_and_grants_net_admin_only_to_controller():
+def test_compose_keeps_host_namespaces_out_and_grants_no_packet_filter_capability():
     compose = (HERE / "compose.yaml").read_text()
     assert "network_mode: host" not in compose and "pid: host" not in compose
-    assert compose.count("NET_ADMIN") == 2
-    assert "network_mode: service:turn" in compose
+    assert "NET_ADMIN" not in compose and "NET_RAW" not in compose
+    assert "network_mode: service:turn" not in compose
+    assert "turn-gateway" in compose and "networks: [turn-loss]" in compose
     # A dedicated bridge must permit the fixture's explicitly loopback-bound
     # relay/control ports. Docker Desktop suppresses those mappings for an
     # `internal` bridge.
@@ -423,7 +424,7 @@ def test_control_service_and_compose_expose_real_loopback_endpoint_and_temporary
     compose = (HERE / "compose.yaml").read_text()
     entrypoint = (HERE / "turn-entrypoint.sh").read_text()
     assert "controller.py" in compose and "serve" in compose
-    assert "loss-watchdog" in compose and "watchdog" in compose
+    assert "turn-gateway" in compose and "turn_gateway.py" in compose
     assert "RUN_ID" not in compose and "TURN_REALM" not in compose
     assert "./runtime" not in compose and "ports:" not in compose
     assert "TURN_USERNAME" in entrypoint and "TURN_PASSWORD" in entrypoint and "--user" in entrypoint
@@ -784,10 +785,12 @@ def test_generated_compose_is_syntactically_valid_without_user_environment(tmp_p
     assert completed.returncode == 0, completed.stderr
 
 
-def test_controller_image_contains_the_fixture_udp_echo_peer_source():
+def test_controller_image_contains_inline_gateway_and_udp_echo_sources():
     dockerfile = (HERE / "Dockerfile").read_text()
     assert "COPY udp_echo_peer.py /fixture/udp_echo_peer.py" in dockerfile
-    assert "COPY receiver_capture.py /fixture/receiver_capture.py" in dockerfile
+    assert "COPY turn_gateway.py /fixture/turn_gateway.py" in dockerfile
+    assert "COPY turn_wire.py /fixture/turn_wire.py" in dockerfile
+    assert "iptables" not in dockerfile
 
 
 def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_path):
@@ -809,7 +812,7 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
     command = ["docker", "compose", "--project-name", prepared["projectName"], "-f", str(compose), "-f", prepared["composeOverride"]]
     try:
         assert subprocess.run([*command, "up", "-d"], text=True, capture_output=True, check=False).returncode == 0
-        expected = {"turn", "loss-controller", "receiver-capture", "udp-echo-peer", "loss-watchdog"}
+        expected = {"turn", "turn-gateway", "loss-controller", "udp-echo-peer"}
         deadline = time.monotonic() + 12
         running: set[str | None] = set()
         while time.monotonic() < deadline:
@@ -827,7 +830,15 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
         module = importlib.util.module_from_spec(probe_spec); probe_spec.loader.exec_module(module)
         host, port = prepared["turnEndpoint"].rsplit(":", 1)
         credentials = controller.load_fixture_credentials(tmp_path / "runtime" / raw["credentialsFile"], raw["realm"])
-        assert module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)["peer"].endswith(":59000")
+        reply = None
+        ready_deadline = time.monotonic() + 12
+        while time.monotonic() < ready_deadline:
+            try:
+                reply = module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=1)
+                break
+            except RuntimeError:
+                time.sleep(.25)
+        assert isinstance(reply, dict) and reply["peer"].endswith(":59000")
         binding = module.channel_media_binding_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, rtp_ssrc=0x10203040, timeout=3)
         assert binding["encapsulation"] == "channel-data" and binding["rtpSsrc"] == 0x10203040
         assert binding["outerEgress"]["destinationPort"] > 0 and binding["allocationRelay"]["port"] >= 51000
@@ -891,7 +902,7 @@ def test_started_fixture_layout_verifies_the_manifest_derived_host_ports_and_net
         return next(replies)
     assert controller.verify_started_fixture(generated, run=run)["status"] == "READY"
     assert calls[0][:3] == ["docker", "inspect", "--format"]
-    assert calls[0][-1] == generated["projectName"] + "-turn-1"
+    assert calls[0][-1] == generated["projectName"] + "-turn-gateway-1"
 
 
 def test_installing_state_is_persisted_before_rule_and_watchdog_cleans_it(tmp_path):
@@ -935,11 +946,12 @@ def test_manifest_distinguishes_remote_turn_digest_from_local_controller_oci_id(
         controller.LossFixtureManifest.parse(bad_controller)
 
 
-def test_controller_dockerfile_uses_a_digest_pinned_base_and_installs_iptables():
+def test_controller_dockerfile_uses_a_digest_pinned_base_and_inline_gateway():
     source = (HERE / "Dockerfile").read_text(encoding="utf-8")
     assert "ARG CONTROLLER_BASE_IMAGE" in source
     assert "FROM ${CONTROLLER_BASE_IMAGE}" in source
-    assert "iptables" in source
+    assert "iptables" not in source
+    assert "COPY turn_gateway.py /fixture/turn_gateway.py" in source
     assert "COPY controller.py /fixture/controller.py" in source
 
 

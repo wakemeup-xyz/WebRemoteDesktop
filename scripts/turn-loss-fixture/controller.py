@@ -24,7 +24,7 @@ import fcntl
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
-from gateway_evidence import ReceiverCapabilityIssuer
+from gateway_evidence import GatewayCounterStore, ReceiverCapabilityIssuer
 
 
 _SCHEMA_FIELDS = frozenset({
@@ -331,6 +331,42 @@ class IptablesRuleBackend:
 
     def read_probe_counter(self, counter_rule: list[str]) -> int:
         return self.read_rule_counter(counter_rule)
+
+
+class GatewayCounterBackend:
+    """Controller adapter for the inline Lab gateway's header-only counters.
+
+    It deliberately has the existing ``RuleBackend`` shape so the fixed
+    controller protocol and final causal verifier remain unchanged.  No
+    network namespace capability or packet-filter operation is involved.
+    """
+    def __init__(self, counter_path: Path) -> None:
+        self._store = GatewayCounterStore(counter_path)
+
+    @staticmethod
+    def _marker(argv: list[str]) -> str:
+        marker = next((part for part in argv if isinstance(part, str) and part.startswith(("wrd-loss:", "wrd-baseline:"))), None)
+        if marker is None:
+            raise RuntimeError("gateway counter request lacks an event marker")
+        return marker
+
+    def add_rule(self, argv: list[str]) -> None:
+        self._marker(argv)
+
+    def remove_rule(self, argv: list[str]) -> None:
+        self._marker(argv)
+
+    def read_rule_counter(self, argv: list[str]) -> int:
+        return int(self._store.count(self._marker(argv))["droppedCount"])
+
+    def add_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
+        self._marker(counter_rule)
+
+    def remove_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
+        self._marker(counter_rule)
+
+    def read_probe_counter(self, counter_rule: list[str]) -> int:
+        return int(self._store.count(self._marker(counter_rule))["eligibleCount"])
 
 
 class RuntimeBlocked(RuntimeError):
@@ -972,6 +1008,8 @@ class LabReceiverBridgeAuthority:
                         result = owner.verify(raw["seal"], raw["event"])
                     elif raw["operation"] == "select-media-binding" and set(raw) == {"operation", "runId", "expected"} and raw["runId"] == owner.manifest.run_id:
                         result = {"status": "SEALED", "mediaBinding": owner.select_media_binding(raw["expected"])}
+                    elif raw["operation"] == "seal-gateway-media" and set(raw) == {"operation", "runId", "viewerPair", "hostPair", "expected"} and raw["runId"] == owner.manifest.run_id:
+                        result = {"status": "SEALED", "mediaBinding": owner.seal_gateway_media_binding(viewer_pair=raw["viewerPair"], host_pair=raw["hostPair"], expected=raw["expected"])}
                     else:
                         raise ValueError("bridge request schema is invalid")
                 except Exception as exc:
@@ -1464,11 +1502,10 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     turn_port, control_port = _derived_ports(manifest)
     (runtime_dir / "compose.generated.yaml").write_text(
         "services:\n"
-        f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n      - {capture_dir}:/lab-capture:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
+        f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  turn-gateway:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/turn_gateway.py\", \"--turn-host\", \"turn\", \"--turn-port\", \"3478\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--counters\", \"/state/gateway-counters.json\", \"--capture-authority\", \"/lab-capture/authority.sock\", \"--capture-capability\", \"/lab-capture/capability\", \"--run-id\", \"{manifest.run_id}\"]\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {capture_dir}:/lab-capture:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
     project = f"turn-loss-{manifest.run_id[:8]}"
@@ -1480,10 +1517,10 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     required = {"projectName", "networkName", "composeOverride", "turnEndpoint", "controlEndpoint"}
     if set(prepared) < required:
         raise ValueError("prepared fixture layout is incomplete")
-    turn_container = f"{prepared['projectName']}-turn-1"
-    for target, expected in (("3478/udp", prepared["turnEndpoint"]), ("19091/tcp", prepared["controlEndpoint"])):
+    for service, target, expected in (("turn-gateway", "3478/udp", prepared["turnEndpoint"]), ("loss-controller", "19091/tcp", prepared["controlEndpoint"])):
+        container = f"{prepared['projectName']}-{service}-1"
         template = f'{{{{with index .NetworkSettings.Ports "{target}"}}}}{{{{(index . 0).HostIp}}}}:{{{{(index . 0).HostPort}}}}{{{{end}}}}'
-        code, stdout, stderr = run(["docker", "inspect", "--format", template, turn_container])
+        code, stdout, stderr = run(["docker", "inspect", "--format", template, container])
         if code != 0 or stdout.strip() != expected:
             raise RuntimeBlocked(f"fixture {target} mapping does not match prepared manifest layout: {stderr}")
     code, stdout, stderr = run(["docker", "network", "inspect", "--format", "{{.Name}}", prepared["networkName"]])
@@ -1552,6 +1589,7 @@ def _main() -> None:
     subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
     subcommands.choices["serve"].add_argument("--relay-binding", type=Path, required=True)
+    subcommands.choices["serve"].add_argument("--gateway-counters", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
                                                 help="inherited live-Lab verifier descriptor; never a path, argv secret, or environment variable")
     prepare = subcommands.add_parser("prepare")
@@ -1612,7 +1650,7 @@ def _main() -> None:
         print(json.dumps({"status": "SEALED"}, sort_keys=True)); return
     manifest = LossFixtureManifest.parse(json.loads(arguments.manifest.read_text(encoding="utf-8")))
     store = DeadlineStateStore(arguments.state)
-    backend = IptablesRuleBackend()
+    backend: RuleBackend = GatewayCounterBackend(arguments.gateway_counters) if arguments.command == "serve" else IptablesRuleBackend()
     if arguments.command == "watchdog":
         while True:
             recover_deadline_state(store, backend)
@@ -1749,9 +1787,9 @@ class DockerRuntimeProbe:
                            for item in (source_digest, dockerfile_digest))
                 or source_digest != expected_source_digest or dockerfile_digest != expected_dockerfile_digest):
             raise RuntimeBlocked("controller build provenance labels are incomplete")
-        code, _stdout, stderr = self._run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh", controller_image, "-c", "test -f /fixture/controller.py && command -v iptables"])
+        code, _stdout, stderr = self._run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh", controller_image, "-c", "test -f /fixture/controller.py && test -f /fixture/turn_gateway.py && test -f /fixture/turn_wire.py"])
         if code != 0:
-            raise RuntimeBlocked(f"controller image lacks controller.py or iptables: {stderr}")
+            raise RuntimeBlocked(f"controller image lacks inline gateway sources: {stderr}")
         return ResolvedImageEvidence(images, controller_base_digest=base_digest, controller_source_sha256=source_digest,
                                      controller_dockerfile_sha256=dockerfile_digest, _seal=_RESOLVED_IMAGES_SEAL)
 
