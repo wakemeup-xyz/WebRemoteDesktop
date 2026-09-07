@@ -4892,7 +4892,10 @@ if (this.tunnelLastObjectUrl) {
     // Only an isolated Lab origin may enable detailed packet diagnostics.
     if (!/^http:\/\/(127\.0\.0\.1|\[::1\]):\d+$/.test(String(window?.location?.origin || ''))) return false;
     const epoch = Number(this._lossLabTrace?.tapEpoch || 0) + 1;
-    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, tapEpoch: epoch, sourceSeq: 0, flushAck: { epoch, accepted: true } };
+    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, tapEpoch: epoch, sourceSeq: 0,
+      // `sourceWatermark` is the last accepted source sequence before this
+      // epoch.  A zero value proves both queues were newly created.
+      flushAck: { epoch, accepted: true, sourceWatermark: 0 } };
     return true;
   },
 

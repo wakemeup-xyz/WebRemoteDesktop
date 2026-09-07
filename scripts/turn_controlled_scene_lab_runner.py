@@ -712,7 +712,9 @@ class RawLossTimelineCollector:
         if not isinstance(raw_epoch, int) or raw_epoch < self.tap_epoch: raise ValueError("viewer loss tap is missing current barrier epoch")
         self.tap_epoch = raw_epoch
         flush = raw.get("flushAck")
-        if not isinstance(flush, Mapping) or flush.get("epoch") != raw_epoch or flush.get("accepted") is not True: raise ValueError("viewer loss tap has no flush acknowledgement")
+        if (not isinstance(flush, Mapping) or flush.get("epoch") != raw_epoch or flush.get("accepted") is not True
+                or not isinstance(flush.get("sourceWatermark"), int) or flush["sourceWatermark"] < 0):
+            raise ValueError("viewer loss tap has no flush acknowledgement")
         self.arrival_seq += 1
         for event in raw.get("host", []):
             if not isinstance(event, Mapping): raise ValueError("invalid Host loss tap event")

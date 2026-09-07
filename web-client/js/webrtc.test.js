@@ -40,6 +40,9 @@ test('Lab-only loss taps retain rVFC and Host data-channel events with real getS
   assert.equal(snapshot.host[0].kind, 'PLI');
   assert.equal(snapshot.stats.inbound.packetsLost, 1);
   assert.equal(snapshot.stats.selectedRelay.address, '127.0.0.1');
+  assert.equal(snapshot.flushAck.epoch, 1);
+  assert.equal(snapshot.flushAck.accepted, true);
+  assert.equal(snapshot.flushAck.sourceWatermark, 0);
 });
 
 function makeElement() {

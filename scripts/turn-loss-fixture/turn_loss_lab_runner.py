@@ -209,6 +209,11 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
                     or not isinstance(cleared.get("actualDropCount"), int) or cleared["actualDropCount"] <= 0):
                 raise RuntimeBlocked("fixture loss rule did not clear")
             events.append({**cleared, "clearReplyObservedNs": clear_observed_ns})
+            # Clear Viewer and Host-facing tap queues before accepting the next
+            # recovery chain.  The adapter maps this to WebRTC.beginLossLabTrace
+            # and returns a new epoch/flush acknowledgement on the next read.
+            if adapter.arm_loss_lab_taps() is not True:
+                raise RuntimeBlocked("Lab Viewer loss taps did not begin a fresh clear epoch")
             timeline.clear_barrier(event_handle=str(cleared.get("comment")), observed_ns=clear_observed_ns)
             # Sample each clear's 10s health window.  Keep the first window
             # distinct from the final after segment so a later loss cannot

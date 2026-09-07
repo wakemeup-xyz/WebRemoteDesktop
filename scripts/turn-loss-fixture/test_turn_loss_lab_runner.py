@@ -53,7 +53,7 @@ class Adapter:
         sequence = self.samples if self.samples == 1 else self.samples + 10
         host_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "encoderTimestamp": self.samples}
         viewer_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "wireTimestamp": self.samples}
-        return {"tapEpoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "flushAck": {"epoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "accepted": True}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request"}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
+        return {"tapEpoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "flushAck": {"epoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request"}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
 
 
     def read_receiver_capture(self, *, manifest, event):
@@ -73,7 +73,9 @@ def test_runner_drives_loopback_controller_and_its_adapter_taps():
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=2)
     assert len(result["events"]) == 2
-    assert adapter.armed == 1 and adapter.samples == 52
+    # Each clear begins a new Viewer/Host trace epoch.  A local collector
+    # increment alone would allow stale callbacks from the prior loss.
+    assert adapter.armed == 3 and adapter.samples == 52
     assert sum(waits) == 50.2 and waits.count(1.0) == 50 and waits.count(0.2) == 1
     assert len(timeline.recovery) == 2
     assert timeline.feedback and timeline.paint and timeline.pc
