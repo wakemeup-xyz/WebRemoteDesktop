@@ -317,6 +317,77 @@ test('recovery API unlocks a click and key only after both owned reset ACKs', ()
   ]);
 });
 
+test('both recovery ACK orders restore mobile transport before fresh textarea input', () => {
+  for (const order of [['mouse', 'keyboard'], ['keyboard', 'mouse']]) {
+    const h = loadRecoveryFixture({ touchPoints: 5 });
+    h.setDataChannelOpen(false);
+    // Mirror the real DataChannel onclose seam so the transport selects the
+    // connected Socket for fresh text after recovery.
+    h.Input.setKeyboardDataChannelAvailable(false);
+    h.blur();
+    h.window.dispatch('focus');
+
+    const resets = h.inputs().filter((payload) => payload.action === 'reset');
+    const byType = Object.fromEntries(resets.map((payload) => [payload.type, payload]));
+    assert.equal(resets.length, 2);
+    for (const type of order) h.ack(byType[type]);
+
+    assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered', order.join(' then '));
+    assert.equal(h.Input.getEffectiveInputGate().allowed, true, order.join(' then '));
+    assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().status, 'idle', order.join(' then '));
+
+    h.elements.get('mobileTextInputBtn').dispatch('click');
+    const mobile = h.elements.get('mobileTextInput');
+    const before = h.inputs().length;
+    mobile.value = 'fresh-mobile-text\u200b';
+    mobile.dispatch('input');
+    const fresh = h.inputs().slice(before).filter((payload) => payload.type === 'keyboard');
+    assert.deepEqual(fresh.map((payload) => payload.action), ['text'], order.join(' then '));
+  }
+});
+
+test('owned execution-failed reset ACK with the applied prefix fails recovery immediately', () => {
+  for (const type of ['mouse', 'keyboard']) {
+    const h = loadRecoveryFixture();
+    h.Input._markMobileSurfaceUncertain(`negative-${type}`);
+    assert.equal(h.Input.requestInputRecovery({ source: 'auto' }), true);
+    const reset = h.inputs().filter((payload) => payload.action === 'reset')
+      .find((payload) => payload.type === type);
+    const ack = {
+      schemaVersion: 2,
+      inputType: type,
+      inputIds: reset.inputIds,
+      leaseEpoch: reset.leaseEpoch,
+      appliedSeq: reset.seq - 1,
+      status: 'execution-failed',
+    };
+    const result = type === 'mouse'
+      ? h.Input.acceptMouseAck(ack)
+      : h.Input.acceptKeyboardAck(ack);
+    assert.ok(['execution-failed', 'reacquire-required'].includes(result.status), type);
+    assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed', type);
+    assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true, type);
+  }
+});
+
+test('automatic and user recovery reset messages pass the Signal v2 wire contract', () => {
+  const { validateRemoteInput } = require(path.resolve(
+    __dirname, '../../signal-server/lib/remote-input-contract.js',
+  ));
+  for (const source of ['auto', 'user']) {
+    const h = loadRecoveryFixture();
+    h.setDataChannelOpen(false);
+    h.blur();
+    h.Input._markMobileSurfaceUncertain(`wire-${source}`);
+    assert.equal(h.Input.requestInputRecovery({ source }), true, source);
+    const resets = h.inputs().filter((payload) => payload.action === 'reset');
+    assert.equal(resets.length, 2, source);
+    assert.deepEqual(new Set(resets.map((payload) => payload.payload.reason)),
+      new Set([source === 'auto' ? 'transport-change' : 'manual']), source);
+    resets.forEach((payload) => assert.equal(validateRemoteInput(payload).ok, true, source));
+  }
+});
+
 test('reset confirmation rejects wrong identity and expires after the bounded deadline', () => {
   const h = loadRecoveryFixture();
   h.pointer('pointerdown');
@@ -571,6 +642,7 @@ test('a keyboard reset from an old attempt cannot unlock, while the new attempt 
   const newResets = currentResets.slice(oldResets.length);
   const currentKeyboard = newResets.find((payload) => payload.type === 'keyboard');
   assert.notEqual(currentKeyboard.inputIds[0], oldKeyboard.inputIds[0]);
+  assert.equal(currentKeyboard.payload.reason, 'transport-change');
   assert.equal(h.Input.keyboardTransport.getPendingReset().connectionAttemptId, 'recovery-attempt-2');
   assert.equal(h.Input.acceptKeyboardAck({
     schemaVersion: 2,
@@ -632,6 +704,7 @@ test('automatic timeout/negative ACK stops, then a user retry starts one bounded
   assert.equal(retryResets.length, 1, 'the still-pending keyboard reset is claimed, not duplicated');
   const retryMouse = retryResets.find((payload) => payload.type === 'mouse');
   const retryKeyboard = firstKeyboard;
+  assert.equal(retryMouse.payload.reason, 'manual');
   assert.notEqual(retryMouse.inputIds[0], firstMouse.inputIds[0]);
   h.ack(retryKeyboard);
   assert.equal(h.Input.getEffectiveInputGate().allowed, false);
