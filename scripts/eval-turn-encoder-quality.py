@@ -116,15 +116,11 @@ class _PeakAmbientSampler:
                 })
             except ValueError:
                 continue
-        mysql = [item for item in processes if "mysqld" in item["command"].lower()]
-        for item in mysql:
-            item["binaryPath"] = item["command"]
-            item["startEpoch"] = self._mysql_start_epoch(item["pid"])
         with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
             status = json.load(response)
         return {
             "processes": processes,
-            "mysqld": mysql,
+            "mysqld": [],
             "viewerStatus": {
                 "viewerCount": status.get("viewerCount"),
                 "relayViewerCount": status.get("relayViewerCount"),
@@ -136,6 +132,19 @@ class _PeakAmbientSampler:
         if entry not in self.abort_reasons:
             self.abort_reasons.append(entry)
 
+    def _exact_mysqld(self, process: dict) -> dict | None:
+        """Accept only the real absolute mysqld executable, never an argv substring."""
+        command = str(process["command"])
+        if not command.startswith("/") or Path(command).name != "mysqld":
+            return None
+        canonical_path = os.path.realpath(command)
+        if Path(canonical_path).name != "mysqld":
+            return None
+        result = dict(process)
+        result["binaryPath"] = canonical_path
+        result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
+        return result
+
     def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
         """Capture one snapshot.  The worker is the sole normal caller."""
         tick_ns = time.monotonic_ns()
@@ -145,12 +154,12 @@ class _PeakAmbientSampler:
                     self._abort("INCONCLUSIVE", "ambient monotonic sequence regression")
                 snapshot = self._snapshot_reader()
                 processes = list(snapshot["processes"])
-                mysql = list(snapshot["mysqld"])
+                mysql = [entry for process in processes if (entry := self._exact_mysqld(process)) is not None]
                 viewers = dict(snapshot["viewerStatus"])
                 forbidden = []
                 for process in processes:
                     process_class = self._forbidden_class(str(process["command"]))
-                    if process_class is not None and "mysqld" not in str(process["command"]).lower():
+                    if process_class is not None and self._exact_mysqld(process) is None:
                         forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 for offender in forbidden:
                     self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
@@ -324,6 +333,15 @@ class _PeakAmbientSampler:
             "abortReasons": list(self.abort_reasons), "samples": list(self.samples),
             "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
         }
+
+
+class _PeakEvaluationAbort(RuntimeError):
+    """Carry the observed peak matrix state across the CLI atomic-write boundary."""
+
+    def __init__(self, cause: Exception, evidence: dict):
+        super().__init__(str(cause))
+        self.cause = cause
+        self.evidence = evidence
 
 
 def _execution_source_revision() -> str:
@@ -1289,7 +1307,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         candidate_row["execution"]["fullMatrix"] = "ABORTED"
         return {
             "kind": "relay-peak-headroom-v1", "status": status,
-            "scope": "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
+            "scope": "matrix exception retained partial offline evidence but cannot qualify a candidate" if error else "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
             "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
             "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
             "ambientTelemetry": {**ambient.evidence(), "sentinels": sentinels},
@@ -1359,7 +1377,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         if ambient.abort_status():
             return aborted_result(error=matrix_error)
         if matrix_error is not None:
-            raise matrix_error
+            raise _PeakEvaluationAbort(matrix_error, aborted_result(error=matrix_error)) from matrix_error
         assert full is not None
         full["ambientTelemetry"] = {**ambient.evidence(), "sentinels": sentinels}
         full_errors = validate_full_matrix(full)
@@ -1376,6 +1394,13 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
             "ambientTelemetry": {**ambient.evidence(), "sentinels": sentinels},
             "selection": select_relay_candidate([candidate_row] if not full_errors else []),
         }
+    except _PeakEvaluationAbort:
+        raise
+    except Exception as exc:
+        # Preserve the already observed environment and partial matrix instead of
+        # letting the CLI replace it with an empty setup-failure schema.
+        ambient.stop()
+        raise _PeakEvaluationAbort(exc, aborted_result(error=exc)) from exc
     finally:
         ambient.stop()
 
@@ -1458,6 +1483,8 @@ def main() -> None:
             if args.matrix == "relay-veryfast-refinement"
             else evaluate_peak_headroom_matrix(probe)
         )
+    except _PeakEvaluationAbort as exc:
+        evidence = exc.evidence
     except Exception as exc:
         evidence = _peak_atomic_abort_artifact(exc) if args.matrix == "relay-peak-headroom-v1" else {
             "kind": args.matrix or args.policy,
