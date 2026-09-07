@@ -508,9 +508,14 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
         "verification": {"algorithm": "HMAC-SHA256", "verifierSource": "lab-transcript-verifier/sha256:" + hashlib.sha256(verifier).hexdigest(), "selfVerified": True, "verifiedBeforeLabClose": True},
     }
     t3["signature"] = controller.sign_t3_artifact(t3, verifier)
+    segments = controller._canonical_t5_segments()
+    receipts = [{"inputId": f"input-{action}", "actionId": action, "logicalActionId": action // 100,
+                 "kind": kind, "phase": phase, **({"text": text} if text else {}),
+                 "reservation": {"inputId": f"input-{action}"}, "binding": {"fixtureId": "fixture", "leaseId": "lease", "leaseEpoch": 1, "action": {}},
+                 "ack": {"inputId": f"input-{action}", "status": "applied"}, "claim": {"inputId": f"input-{action}", "status": "claimed"}, "native": {"inputId": f"input-{action}"}, "visual": {"inputId": f"input-{action}", "status": "PASS"}}
+                for action, kind, phase, text in segments]
     t5 = {"identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1, "scope": scope, "selectedTurn": raw_manifest["selectedTurn"]},
-          "static": {"status": "PASS"}, "automatic": {"status": "PASS", "workload": [{"actionId": 1}]},
-          "receipts": [{"inputId": "input-1", "actionId": 101, "logicalActionId": 1, "reservation": {"inputId": "input-1"}, "binding": {"fixtureId": "fixture", "leaseId": "lease", "leaseEpoch": 1, "action": {}}, "ack": {"inputId": "input-1", "status": "applied"}, "claim": {"inputId": "input-1", "status": "claimed"}, "native": {"inputId": "input-1"}, "visual": {"inputId": "input-1", "status": "PASS"}}]}
+          "static": {"status": "PASS"}, "automatic": {"status": "PASS", "workload": [{"actionId": action} for action in range(1, 32)]}, "receipts": receipts}
     t5["signature"] = controller.sign_t5_transcript(t5, verifier)
     bridge = {
         "schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
@@ -685,7 +690,7 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     override = (tmp_path / "compose.generated.yaml").read_text()
     assert f"{tmp_path}:/runtime:ro" in override
     assert f"{tmp_path / 'turn.env'}" in override
-    assert ":/lab-bridge:rw" in override
+    assert ":/lab-bridge:ro" in override
     assert generated["controlEndpoint"].startswith("127.0.0.1:")
     assert generated["bridgeSocket"].endswith("/authority.sock")
     assert generated["turnEndpoint"].startswith("127.0.0.1:")

@@ -551,6 +551,15 @@ def sign_receiver_bridge(bridge: Mapping[str, Any], verifier: bytes) -> str:
     return hmac.new(bytes(verifier), _canonical_evidence(_without_signature(bridge)), hashlib.sha256).hexdigest()
 
 
+def _canonical_t5_segments() -> list[tuple[int, str, str, str]]:
+    rows = [(101, "scroll", "wheel", "")]
+    for logical in range(2, 12):
+        rows.extend((logical * 100 + offset, "drag", phase, "") for offset, phase in ((1, "down"), (2, "move"), (3, "up")))
+    for logical in range(12, 32):
+        rows.extend((logical * 100 + offset, "text", phase, f"t{logical - 11:02d}" if phase == "text" else "") for offset, phase in ((1, "focus-down"), (2, "focus-up"), (3, "text")))
+    return rows
+
+
 class SignedT3T5ReceiverEvidenceSource:
     """A live-Lab-only receiver bridge, not a persisted JSON assertion.
 
@@ -614,8 +623,10 @@ class SignedT3T5ReceiverEvidenceSource:
             logical_ids.add(receipt["logicalActionId"])
             if any(receipt[key].get("inputId") != input_id for key in ("reservation", "ack", "claim", "native", "visual")):
                 raise RuntimeError("T5 five-way receipt has mismatched input identity")
+        expected = _canonical_t5_segments()
+        observed = [(row.get("actionId"), row.get("kind"), row.get("phase"), row.get("text", "")) for row in receipts]
         workload_ids = {row.get("actionId") for row in workload if isinstance(row, Mapping)}
-        if len(workload_ids) != len(workload) or workload_ids != logical_ids:
+        if observed != expected or workload_ids != set(range(1, 32)) or logical_ids != set(range(1, 32)):
             raise RuntimeError("T5 exact workload does not match five-way receipts")
 
     def sequences_for(self, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
@@ -702,7 +713,7 @@ class LabReceiverBridgeAuthority:
         if not isinstance(seal_id, str) or not isinstance(signature, str):
             raise RuntimeError("receiver seal is invalid")
         with self._lock:
-            receipt = self._receipts.get(seal_id)
+            receipt = self._receipts.pop(seal_id, None)
         if receipt is None or receipt["event"] != _event_binding(event):
             raise RuntimeError("receiver seal does not bind this loss event")
         expected = hmac.new(self._verifier, _canonical_evidence({key: receipt[key] for key in ("runId", "sealId", "event", "sequences")}), hashlib.sha256).hexdigest()
@@ -1132,7 +1143,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     (runtime_dir / "compose.generated.yaml").write_text(
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {bridge_dir}:/lab-bridge:rw\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
