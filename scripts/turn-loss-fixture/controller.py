@@ -547,7 +547,7 @@ class DeadlineStateStore:
             if event is None:
                 return {"status": "IDLE"}
             current = time.monotonic_ns() if now_ns is None else now_ns
-            if event["state"] == "armed" and current < event["deadlineMonotonicNs"]:
+            if event["state"] == "armed" and event.get("mode") != "baseline" and current < event["deadlineMonotonicNs"]:
                 return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
             try:
                 if "probe" in event:
@@ -578,7 +578,7 @@ def recover_deadline_state(state_store: DeadlineState, backend: RuleBackend, *, 
     if event is None:
         return {"status": "IDLE"}
     current = time.monotonic_ns() if now_ns is None else now_ns
-    if event["state"] == "armed" and current < event["deadlineMonotonicNs"]:
+    if event["state"] == "armed" and event.get("mode") != "baseline" and current < event["deadlineMonotonicNs"]:
         return {"status": "ARMED", "deadlineMonotonicNs": event["deadlineMonotonicNs"]}
     try:
         backend.remove_rule(list(event["rule"]))
@@ -987,11 +987,21 @@ class LabReceiverBridgeAuthority:
         self.capture_socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
         self.capture_socket_path.unlink(missing_ok=True)
-        if not self._capture_capability_path.exists():
-            self._capture_capability_path.write_text(self._capture_issuer.issue(
-                run_id=self.manifest.run_id, realm=self.manifest.realm, gateway_id=self._gateway_id,
-                operation="media-observation", ttl_ns=120_000_000_000), encoding="utf-8")
+        # ``prepare_runtime`` deliberately leaves this path absent.  The live
+        # Lab authority atomically replaces any stale or malformed artifact
+        # with its own scoped, one-shot capability immediately before serving.
+        capability = self._capture_issuer.issue(run_id=self.manifest.run_id, realm=self.manifest.realm,
+                                                 gateway_id=self._gateway_id, operation="media-observation",
+                                                 ttl_ns=120_000_000_000)
+        temporary = self._capture_capability_path.with_name(f".{self._capture_capability_path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(capability, encoding="utf-8")
+            temporary.chmod(0o600)
+            os.replace(temporary, self._capture_capability_path)
             self._capture_capability_path.chmod(0o600)
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("receiver capture capability cannot be installed") from exc
         try:
             capture_capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
         except OSError as exc:
@@ -1170,7 +1180,7 @@ class LossController:
         counter_rule = ["-m", "comment", "--comment", comment, "-j", "RETURN"]
         started = self._monotonic_ns()
         event = {
-            "schemaVersion": 1, "state": "probing", "runId": self.manifest.run_id,
+            "schemaVersion": 1, "state": "armed", "mode": "baseline", "runId": self.manifest.run_id,
             "comment": comment, "startedMonotonicNs": started,
             "deadlineMonotonicNs": started + 2_000_000_000,
             "mediaBinding": dict(media),
@@ -1227,7 +1237,7 @@ class LossController:
             comment = f"wrd-loss:{run_id[:8]}:{session.session_id}:{session.generation}:{secrets.token_hex(6)}"
             rule = self._rule_for(pattern, comment)
             event = {
-                "schemaVersion": 1, "state": "installing", "comment": comment,
+                "schemaVersion": 1, "state": "installing", "mode": "loss", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
                 "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "mediaBinding": self._active_media_binding(), "expectedEgressSelector": dict(self.manifest.egress_selector),
                 "sessionId": session.session_id, "attemptId": session.attempt_id, "streamId": session.stream_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
@@ -1477,8 +1487,6 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     capture_dir, verify_dir = bridge_dir / "capture", bridge_dir / "verify"
     capture_dir.mkdir(mode=0o700)
     verify_dir.mkdir(mode=0o700)
-    (capture_dir / "capability").write_text(secrets.token_urlsafe(32), encoding="utf-8")
-    (capture_dir / "capability").chmod(0o600)
     credentials_dir = runtime_dir / "credentials"
     credentials_dir.mkdir(parents=True, exist_ok=False)
     (runtime_dir / "receiver").mkdir(mode=0o700)

@@ -192,7 +192,7 @@ def test_sigkill_after_probe_install_leaves_durable_handles_for_watchdog_cleanup
     with pytest.raises(KeyboardInterrupt, match="SIGKILL"):
         _session(fixture).confirm_selected_leg()
     event = store.load()
-    assert event and event["state"] == "probing" and event["probe"]["chain"].startswith("WRDB")
+    assert event and event["state"] == "armed" and event["mode"] == "baseline" and event["probe"]["chain"].startswith("WRDB")
     assert controller.recover_deadline_state(store, backend, now_ns=0)["status"] == "CLEARED"
     assert backend.removed_probes == backend.probes
 
@@ -1127,3 +1127,20 @@ def test_lifecycle_cleanup_removes_precreated_capture_capability_when_factory_ne
             fixture_probe=lambda: (_ for _ in ()).throw(controller.RuntimeBlocked("probe refused")),
             run=lambda command: (0, prepared["turnEndpoint"] if "3478/udp" in " ".join(command) else (prepared["controlEndpoint"] if "19091/tcp" in " ".join(command) else (prepared["networkName"] if "network" in command else "")), ""), drive=lambda: {})
     assert not verify.exists() and not capture.exists() and not capture.with_name("capability").exists() and not verify.parent.parent.exists()
+
+
+def test_prepare_runtime_leaves_gateway_capability_absent_until_authority_signs_it(tmp_path):
+    raw = manifest(); prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    capability = Path(prepared["captureSocket"]).with_name("capability")
+    assert not capability.exists()
+    capability.write_text("wrong-run-replay", encoding="utf-8")
+    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"a" * 32,
+                                                       socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=capability)
+    authority.start()
+    try:
+        token = capability.read_text(encoding="utf-8").strip()
+        assert token != "wrong-run-replay"
+        assert authority._capture_issuer.consume(token, run_id=raw["runId"], realm=raw["realm"], gateway_id="turn-gateway", operation="media-observation")
+        assert not authority._capture_issuer.consume(token, run_id=raw["runId"], realm=raw["realm"], gateway_id="turn-gateway", operation="media-observation")
+    finally:
+        authority.close()

@@ -62,6 +62,19 @@ def test_gateway_drops_only_confirmed_channel_video_and_forwards_control_bytes()
     assert result.drop is False and result.payload == stun
 
 
+def test_gateway_baseline_mode_counts_only_the_sealed_video_without_dropping():
+    gateway = _module()
+    state = gateway.GatewayMediaState()
+    state.confirm_channel(client_id="viewer", channel_number=0x4001, peer=("127.0.0.1", 51002))
+    state.seal_target(client_id="viewer", channel_number=0x4001, payload_type=96, ssrc=7)
+
+    video = state.observe_baseline(client_id="viewer", payload=_channel(0x4001, _rtp(1)))
+    other = state.observe_baseline(client_id="viewer", payload=_channel(0x4001, _rtp(2, ssrc=8)))
+
+    assert video.eligible is True and video.drop is False and video.sequence == 1
+    assert other.eligible is False and other.drop is False
+
+
 def test_gateway_refuses_to_seal_an_unconfirmed_channel():
     gateway = _module()
     state = gateway.GatewayMediaState()

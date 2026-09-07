@@ -132,6 +132,16 @@ class GatewayMediaState:
     def clear_on_control_disconnect(self) -> None:
         self.armed = None
 
+    def observe_baseline(self, *, client_id: str, payload: bytes) -> GatewayDecision:
+        """Classify only the sealed receiver-directed video for a dry run."""
+        target = self._target
+        if target is None or target[0] != client_id:
+            return GatewayDecision(False, payload)
+        video = parse_channel_data_video(payload, channel_number=target[1], payload_type=target[2], ssrc=target[3])
+        if video is None:
+            return GatewayDecision(False, payload)
+        return GatewayDecision(False, payload, video.sequence, True)
+
     def decide(self, *, client_id: str, payload: bytes, now_ns: int | None = None) -> GatewayDecision:
         target, armed = self._target, self.armed
         if target is None or target[0] != client_id:
@@ -269,7 +279,7 @@ class InlineTurnGateway:
         if self._state_path is None or self._relay_binding_path is None:
             return
         event = self._read_json(self._state_path)
-        if event is None or event.get("state") not in {"probing", "armed"}:
+        if event is None or event.get("state") != "armed" or event.get("mode") not in {"baseline", "loss"}:
             if self._active_event_id is not None:
                 self._after_event_id = self._active_event_id
             self.media.clear_on_control_disconnect(); self._active_event_id = self._probe_event_id = None
@@ -297,7 +307,7 @@ class InlineTurnGateway:
                                       deadline_ns=deadline, before_sequences=tuple(self._recent_forwarded))
         except (RuntimeError, ValueError):
             self.media.clear_on_control_disconnect(); return
-        if event.get("state") == "probing":
+        if event.get("mode") == "baseline":
             self.media.clear_on_control_disconnect(); self._probe_event_id = event_id; self._active_event_id = None
             return
         self._probe_event_id = None
@@ -381,7 +391,8 @@ class InlineTurnGateway:
         if mapping is None:
             return
         self._record_media_observation(upstream_id=upstream_id, association=association, payload=payload, source=source, upstream=upstream)
-        decision = self.media.decide(client_id=str(upstream_id), payload=payload)
+        decision = (self.media.observe_baseline(client_id=str(upstream_id), payload=payload)
+                    if self._probe_event_id is not None else self.media.decide(client_id=str(upstream_id), payload=payload))
         event_id = self._active_event_id or self._probe_event_id
         if decision.sequence is not None and self._counter_store is not None and event_id is not None and decision.drop:
             self._counter_store.record(event_id, phase="during", eligible=decision.eligible, dropped=True, sequence=decision.sequence)
