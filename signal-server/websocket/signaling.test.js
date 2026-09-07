@@ -2077,6 +2077,108 @@ test('control logs redact lease token and text payload', () => {
   assert.equal(text.includes('SecretText'), false);
 });
 
+test('v2 input validation and authorization emit safe correlation events while relaying valid input', () => {
+  resetConnections();
+  const io = makeIo();
+  const events = [];
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    structuredLogger: { info: (event) => events.push(event) },
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+  });
+  const host = new FakeSocket('host-input-events', 'host');
+  const viewer = new FakeSocket('viewer-input-events', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+
+  viewer.trigger('control-acquire', { requestId: 'input-events' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+
+  const valid = v2Key({
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    inputIds: ['kbd_fixture_1'],
+  });
+  viewer.trigger('input', valid);
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, 1);
+
+  viewer.trigger('input', v2Key({
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    inputIds: ['kbd_fixture_1'],
+    transport: 'datachannel',
+    payload: { ...valid.payload, text: 'TEXT_CANARY' },
+  }));
+  viewer.trigger('input', v2Key({
+    leaseId: 'lease-stale-canary',
+    leaseEpoch: grant.leaseEpoch,
+    inputIds: ['kbd_fixture_1'],
+  }));
+
+  const relay = events.find((event) => event.event === 'signal_input_relayed');
+  const rejected = events.filter((event) => event.event === 'signal_input_rejected');
+  assert.ok(relay);
+  assert.equal(relay.domain, 'input');
+  assert.equal(relay.meta.inputIdHash, '3e9fd6a21afbb55b');
+  assert.equal(relay.meta.inputIdCount, 1);
+  assert.equal(relay.meta.transport, 'socket');
+  assert.equal(relay.meta.seq, 1);
+  assert.equal(relay.meta.leaseEpoch, grant.leaseEpoch);
+  assert.equal(rejected.length, 2);
+  assert.equal(rejected.every((event) => event.meta.status === 'rejected'), true);
+  assert.equal(rejected.some((event) => event.meta.reason === 'UNKNOWN_FIELD'), true);
+  assert.equal(rejected.some((event) => event.meta.reason === 'unauthorized'), true);
+  assert.equal(rejected.every((event) => event.meta.transport === 'socket'), true);
+  const serialized = JSON.stringify(events);
+  assert.equal(serialized.includes('TEXT_CANARY'), false);
+  assert.equal(serialized.includes('kbd_fixture_1'), false);
+  assert.equal(serialized.includes('lease-stale-canary'), false);
+});
+
+test('Signal aggregates high-frequency mouse outcomes with normalized status keys', () => {
+  resetConnections();
+  const io = makeIo();
+  const events = [];
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    structuredLogger: { info: (event) => events.push(event) },
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+  });
+  const host = new FakeSocket('host-input-aggregate', 'host');
+  const viewer = new FakeSocket('viewer-input-aggregate', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'input-aggregate' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
+
+  for (let index = 0; index < 100; index += 1) {
+    viewer.trigger('input', {
+      schemaVersion: 2,
+      type: 'mouse',
+      action: 'move',
+      leaseId: grant.leaseId,
+      leaseEpoch: grant.leaseEpoch,
+      inputIds: ['mouse_fixture'],
+      payload: { relX: 0.5, relY: 0.5, buttons: 0 },
+    });
+  }
+
+  const aggregates = events.filter((event) => event.event === 'signal_input_aggregate');
+  assert.equal(aggregates.length, 1);
+  assert.equal(aggregates[0].meta.count, 100);
+  assert.equal(aggregates[0].meta.status, 'accepted');
+  assert.match(aggregates[0].meta.inputIdHash, /^[0-9a-f]{16}$/);
+  assert.equal(JSON.stringify(aggregates).includes('mouse_fixture'), false);
+});
+
 
 test('blocked reset cannot grant a new controller and retries are same-epoch bounded', () => {
   // single-desktop-viewer policy: sequential sole viewer then later B for blocked acquire.

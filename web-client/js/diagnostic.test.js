@@ -253,6 +253,73 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputChannelTimeline[0].kind, 'open');
 });
 
+test('manual and automatic diagnostics share the complete safe input snapshot and trace', () => {
+  const { context } = createDiagnosticContext();
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const safeInputState = {
+    keyboardMode: 'mac',
+    isActive: true,
+    hasLease: true,
+    effectiveGate: {
+      allowed: false,
+      blockedReasons: ['surface-uncertain'],
+      recovery: { state: 'waiting', generation: 2, retryAvailable: false },
+    },
+    surface: { state: 'uncertain', generation: 3 },
+    draft: { composing: false, hasPending: false, deliveryUncertain: true, status: 'uncertain' },
+    viewport: { inputSupported: true },
+    recovery: { state: 'waiting', generation: 2, retryAvailable: false },
+    pendingMouseReset: true,
+    desktopWriteRecovery: { state: 'reacquire-required', status: 'execution-failed' },
+  };
+  const inputTrace = {
+    schemaVersion: 1,
+    events: [{ stage: 'ack', inputType: 'keyboard', status: 'execution-failed', inputIdHash: '3e9fd6a21afbb55b' }],
+    counters: { droppedEvents: 4, pendingAckCount: 1 },
+  };
+  context.Input = { getDiagnosticState: () => safeInputState };
+  Diagnostic.getInputTraceSnapshot = () => inputTrace;
+
+  const manual = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual', reason: 'manual' });
+  const automatic = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'pc-failed' });
+
+  assert.deepEqual(manual.inputState, safeInputState);
+  assert.deepEqual(manual.inputTrace, inputTrace);
+  assert.deepEqual(automatic.inputState, safeInputState);
+  assert.deepEqual(automatic.inputTrace, inputTrace);
+});
+
+test('sendLogs waits for the shared sender, uses authenticated HTTP when disconnected, and reports failure', async () => {
+  const requests = [];
+  const alerts = [];
+  let ioCalls = 0;
+  const { context, storage } = createDiagnosticContext({
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: false, status: 503 };
+    },
+    io: () => {
+      ioCalls += 1;
+      throw new Error('temporary viewer socket must not be created');
+    },
+  });
+  context.alert = (message) => alerts.push(message);
+  context.Auth = { getToken: () => 'viewer-token' };
+  context.WebRTC.socket = { connected: false, emit() { throw new Error('socket must not be used'); } };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  const result = await Diagnostic.sendLogs({ trigger: 'manual', reason: 'manual-disconnect' });
+
+  assert.equal(result, false);
+  assert.equal(ioCalls, 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer viewer-token');
+  assert.equal(alerts.some((message) => String(message).includes('失败')), true);
+  assert.equal(alerts.some((message) => String(message).includes('已发送')), false);
+  const queued = JSON.parse(storage.getItem('wrdPendingDiagnostics'));
+  assert.equal(queued.length, 1);
+});
+
 test('sendLogs includes paint continuity fields from the live WebRTC session', () => {
   const { context } = createDiagnosticContext();
   const emitted = [];

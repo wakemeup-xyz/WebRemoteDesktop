@@ -1,3 +1,4 @@
+import json
 import logging
 from types import SimpleNamespace
 
@@ -215,7 +216,9 @@ async def test_host_input_logs_metadata_without_payload_or_cross_clock_delay(cap
     assert '"transport":"datachannel"' in text
     assert '"payloadBytes":' in text
     assert '"inputIdHash":' in text
-    assert '"localExecuteMs":12.0' in text
+    assert '"localExecuteMs":' in text
+    assert '"timingScope":"host-adapter-await"' in text
+    assert '"timingIncludesQueueWait":true' in text
 
 
 @pytest.mark.asyncio
@@ -372,6 +375,194 @@ async def test_host_v2_command_ack_keeps_its_type_with_applied_sequence():
     ack = __import__("json").loads(sent[0])
     assert ack["inputType"] == "command"
     assert ack["appliedSeq"] == 7
+
+
+@pytest.mark.asyncio
+async def test_host_input_outcomes_report_status_and_ack_enqueue_result_without_raw_values(caplog):
+    sent = []
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 12,
+        "connectionGeneration": 1,
+    }
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host._input_datachannel = SimpleNamespace(send=lambda value: sent.append(value), readyState="open")
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+
+    async def apply_keyboard(data, **_kwargs):
+        return {
+            "inputIds": data["inputIds"],
+            "status": data["payload"]["status"],
+            "appliedSeq": data["seq"],
+            "pressedKeyCount": 0,
+            "modifierMask": 0,
+        }
+
+    host.input_adapter = SimpleNamespace(apply_keyboard=apply_keyboard)
+    base = {
+        "viewerId": "viewer-1",
+        "schemaVersion": 2,
+        "type": "keyboard",
+        "action": "key",
+        "transport": "datachannel",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 12,
+        "inputIds": ["kbd_fixture_1"],
+        "payload": {"phase": "down", "status": "applied", "code": "KeyA"},
+    }
+
+    with caplog.at_level(logging.INFO, logger="host"):
+        for seq, status in enumerate(("applied", "duplicate", "execution-failed"), start=1):
+            data = {**base, "seq": seq, "payload": {**base["payload"], "status": status}}
+            await host.on_input(data)
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "host"]
+    result_lines = [json.loads(message) for message in messages if '"event":"host_input_result"' in message]
+    ack_lines = [json.loads(message) for message in messages if '"event":"host_input_ack_sent"' in message]
+    assert [line["meta"]["status"] for line in result_lines] == ["applied", "duplicate", "execution-failed"]
+    assert [line["meta"]["appliedSeq"] for line in result_lines] == [1, 2, 3]
+    assert all(line["meta"]["ackAccepted"] is True for line in ack_lines)
+    assert all(line["meta"]["inputIdHash"] == "3e9fd6a21afbb55b" for line in result_lines)
+    text = "\n".join(messages)
+    assert "CANARY" not in text
+    assert "KeyA" not in text
+    assert "kbd_fixture_1" not in text
+
+
+@pytest.mark.asyncio
+async def test_host_input_ack_enqueue_failure_is_reported_without_claiming_client_receipt(caplog):
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001",
+        "leaseEpoch": 12,
+        "connectionGeneration": 1,
+    }
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host._input_datachannel = SimpleNamespace(send=lambda _value: (_ for _ in ()).throw(RuntimeError("CANARY")), readyState="open")
+    host.input_handler = SimpleNamespace(_pressed_key_codes=(), _modifier_flags=0)
+
+    async def apply_keyboard(data, **_kwargs):
+        return {"inputIds": data["inputIds"], "status": "applied", "appliedSeq": data["seq"]}
+
+    host.input_adapter = SimpleNamespace(apply_keyboard=apply_keyboard)
+    with caplog.at_level(logging.INFO, logger="host"):
+        await host.on_input({
+            "viewerId": "viewer-1", "schemaVersion": 2, "type": "keyboard", "action": "key",
+            "transport": "datachannel", "leaseId": "lease-000000000001", "leaseEpoch": 12,
+            "seq": 1, "inputIds": ["kbd_fixture_1"],
+            "payload": {"phase": "down", "code": "KeyA"},
+        })
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "host"]
+    ack_line = next(json.loads(message) for message in messages if '"event":"host_input_ack_sent"' in message)
+    assert ack_line["meta"]["status"] == "applied"
+    assert ack_line["meta"]["ackAccepted"] is False
+    assert "CANARY" not in "\n".join(messages)
+
+
+@pytest.mark.asyncio
+async def test_host_stale_lease_and_datachannel_binding_rejections_are_structured_and_safe(caplog):
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host._active_input_binding = {
+        "viewerId": "viewer-1", "leaseId": "lease-000000000001", "leaseEpoch": 12,
+        "connectionGeneration": 1,
+    }
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host.input_handler = SimpleNamespace()
+    host.input_adapter = host.input_handler
+    with caplog.at_level(logging.INFO, logger="host"):
+        await host.on_input({
+            "viewerId": "viewer-1", "schemaVersion": 2, "type": "keyboard", "action": "key",
+            "transport": "socket", "leaseId": "lease-stale-canary", "leaseEpoch": 11,
+            "seq": 1, "inputIds": ["kbd_fixture_1"],
+            "payload": {"phase": "down", "code": "KeyA", "text": "CANARY"},
+        })
+        assert host._prepare_bound_datachannel_input(
+            host._active_input_binding,
+            {"schemaVersion": 2, "type": "keyboard", "action": "key", "leaseId": "lease-stale-canary", "leaseEpoch": 11,
+             "inputIds": ["kbd_fixture_1"], "payload": {"phase": "down", "code": "KeyA"}},
+            channel=SimpleNamespace(),
+        ) is None
+        assert host._prepare_bound_datachannel_input(
+            {**host._active_input_binding, "connectionGeneration": 0},
+            {"type": "dc_keepalive", "action": "ping", "payload": {"text": "CANARY"}},
+            channel=SimpleNamespace(),
+        ) is None
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "host"]
+    rejected = [json.loads(message) for message in messages if '"event":"host_input_rejected"' in message]
+    assert len(rejected) >= 2
+    assert all(line["meta"]["status"] in {"stale-lease", "invalid-input"} for line in rejected)
+    assert any(line["meta"]["transport"] == "datachannel" for line in rejected)
+    assert "CANARY" not in "\n".join(messages)
+    assert "kbd_fixture_1" not in "\n".join(messages)
+
+
+@pytest.mark.asyncio
+async def test_host_malformed_input_metadata_rejects_without_observation_error(caplog):
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+
+    with caplog.at_level(logging.INFO, logger="host"):
+        await host.on_input({
+            "viewerId": "viewer-1",
+            "type": ["keyboard", "TYPE_CANARY"],
+            "action": {"name": "ACTION_CANARY"},
+            "transport": ["socket"],
+            "status": {"name": "STATUS_CANARY"},
+            "reason": ["REASON_CANARY"],
+            "payload": {"text": "PAYLOAD_CANARY"},
+        })
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "host"]
+    rejected = [json.loads(message) for message in messages if '"event":"host_input_rejected"' in message]
+    assert len(rejected) == 1
+    assert rejected[0]["meta"]["status"] == "invalid-input"
+    assert rejected[0]["meta"]["inputType"] == "unknown"
+    assert "CANARY" not in "\n".join(messages)
+
+
+@pytest.mark.asyncio
+async def test_host_aggregates_high_frequency_mouse_outcomes(caplog):
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+
+    async def handle_input(_data):
+        return {"inputIds": [], "status": "unordered"}
+
+    host.input_adapter = SimpleNamespace(handle_input=handle_input)
+    host.input_handler = host.input_adapter
+    with caplog.at_level(logging.INFO, logger="host"):
+        for _index in range(100):
+            await host.on_input({
+                "viewerId": "viewer-1",
+                "type": "mouse",
+                "action": "move",
+                "transport": "socket",
+                "inputIds": ["mouse_fixture"],
+                "payload": {"relX": 0.5, "relY": 0.5, "buttons": 0},
+            })
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "host"]
+    aggregates = [json.loads(message) for message in messages if '"event":"host_input_aggregate"' in message]
+    assert len(aggregates) == 2
+    assert {line["meta"]["count"] for line in aggregates} == {100}
+    assert {line["meta"]["status"] for line in aggregates} == {"accepted", "unordered"}
+    text = "\n".join(messages)
+    assert "mouse_fixture" not in text
 
 
 def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
