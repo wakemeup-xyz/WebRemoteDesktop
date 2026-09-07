@@ -1393,6 +1393,24 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "networkName": prepared["networkName"]}
 
 
+def cleanup_prepared_bridge(prepared: Mapping[str, str]) -> None:
+    """Remove only known per-run authority artifacts after every lifecycle exit."""
+    try:
+        verify, capture = Path(str(prepared["bridgeSocket"])), Path(str(prepared["captureSocket"]))
+    except (KeyError, TypeError):
+        return
+    for path in (verify, capture, capture.with_name("capability")):
+        try: path.unlink(missing_ok=True)
+        except OSError: pass
+    for directory in (verify.parent, capture.parent):
+        try: directory.rmdir()
+        except OSError: pass
+    root = verify.parent.parent
+    if root == capture.parent.parent and root.name.startswith("wrd-turn-loss-"):
+        try: root.rmdir()
+        except OSError: pass
+
+
 def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Path, authority: LabReceiverBridgeAuthority | None,
                                 authority_factory: Callable[[], LabReceiverBridgeAuthority] | None = None,
                                 fixture_start: Callable[[], None] | None = None,
@@ -1421,9 +1439,7 @@ def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Pa
         try: run([*command, "down", "-v"])
         finally:
             if active_authority is not None: active_authority.close()
-            bridge_dir = Path(prepared["bridgeSocket"]).parent
-            try: bridge_dir.rmdir()
-            except OSError: pass
+            cleanup_prepared_bridge(prepared)
 
 
 def _main() -> None:

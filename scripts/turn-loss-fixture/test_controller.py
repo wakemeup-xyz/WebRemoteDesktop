@@ -1020,3 +1020,13 @@ def test_runtime_relay_binding_rejects_mismatched_host_selected_pair(tmp_path):
     path = tmp_path / "actual-relay.json"; path.write_text(json.dumps(binding))
     with pytest.raises(controller.RuntimeBlocked, match="host selected pair"):
         controller.load_runtime_relay_binding(path, parsed)
+
+
+def test_lifecycle_cleanup_removes_precreated_capture_capability_when_factory_never_runs(tmp_path):
+    raw = manifest(); prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    verify, capture = Path(prepared["bridgeSocket"]), Path(prepared["captureSocket"])
+    with pytest.raises(controller.RuntimeBlocked, match="probe refused"):
+        controller.run_isolated_loss_lifecycle(prepared=prepared, compose_file=HERE / "compose.yaml", authority=None,
+            fixture_probe=lambda: (_ for _ in ()).throw(controller.RuntimeBlocked("probe refused")),
+            run=lambda command: (0, prepared["turnEndpoint"] if "3478/udp" in " ".join(command) else (prepared["controlEndpoint"] if "19091/tcp" in " ".join(command) else (prepared["networkName"] if "network" in command else "")), ""), drive=lambda: {})
+    assert not verify.exists() and not capture.exists() and not capture.with_name("capability").exists() and not verify.parent.parent.exists()
