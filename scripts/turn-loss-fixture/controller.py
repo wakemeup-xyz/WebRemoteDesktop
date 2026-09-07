@@ -24,6 +24,7 @@ import fcntl
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
+from gateway_evidence import ReceiverCapabilityIssuer
 
 
 _SCHEMA_FIELDS = frozenset({
@@ -856,6 +857,8 @@ class LabReceiverBridgeAuthority:
         self._actual_egress_selector = dict(actual_egress_selector) if actual_egress_selector is not None else dict(manifest.egress_selector)
         self._receipts: dict[str, dict[str, Any]] = {}
         self._media_observations: list[dict[str, Any]] = []
+        self._gateway_id = "turn-gateway"
+        self._capture_issuer = ReceiverCapabilityIssuer(hashlib.sha256(self._verifier + b":turn-gateway-capability").digest())
         self._lock = threading.RLock()
         self._servers: list[socketserver.ThreadingUnixStreamServer] = []
 
@@ -888,6 +891,24 @@ class LabReceiverBridgeAuthority:
             matches = [row for row in self._media_observations if row["allocationRelay"] == expected.get("allocationRelay") and row["peer"] == expected.get("peer") and row["rtpSsrc"] == expected.get("rtpSsrc")]
         if len(matches) != 1: raise RuntimeError("receiver media selection is absent or ambiguous")
         return dict(matches[0])
+
+    def seal_gateway_media_binding(self, *, viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], expected: Mapping[str, Any]) -> dict[str, Any]:
+        """Join gateway-observed ChannelData to reciprocal browser/Host evidence."""
+        if not isinstance(host_pair, Mapping) or set(host_pair) != _PAIR_FIELDS | {"videoSsrc"} or not isinstance(host_pair.get("videoSsrc"), int):
+            raise RuntimeError("host video SSRC evidence is invalid")
+        viewer, host = _runtime_pair(viewer_pair, "viewerPair"), _runtime_pair({key: value for key, value in host_pair.items() if key != "videoSsrc"}, "hostPair")
+        if not isinstance(expected, Mapping) or expected.get("rtpSsrc") != host_pair["videoSsrc"]:
+            raise RuntimeError("Host and Viewer video SSRC do not agree")
+        endpoint = lambda row: (row["address"], row["port"], row["protocol"])
+        if (viewer["local"]["candidateType"] != "relay" or host["remote"]["candidateType"] != "relay"
+                or endpoint(viewer["local"]) != endpoint(host["remote"])
+                or endpoint(viewer["remote"]) != endpoint(host["local"])):
+            raise RuntimeError("gateway selected pair reciprocity is invalid")
+        media = self.select_media_binding(expected)
+        if ((media["allocationRelay"]["address"], media["allocationRelay"]["port"]) != endpoint(viewer["local"])[:2]
+                or (media["peer"]["address"], media["peer"]["port"]) != endpoint(viewer["remote"])[:2]):
+            raise RuntimeError("gateway media binding does not match selected pair")
+        return media
 
     def seal(self, raw_bridge: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
         # The parent signs the raw bridge only after T3/T5 validation. The raw
@@ -928,7 +949,9 @@ class LabReceiverBridgeAuthority:
         self.socket_path.unlink(missing_ok=True)
         self.capture_socket_path.unlink(missing_ok=True)
         if not self._capture_capability_path.exists():
-            self._capture_capability_path.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+            self._capture_capability_path.write_text(self._capture_issuer.issue(
+                run_id=self.manifest.run_id, realm=self.manifest.realm, gateway_id=self._gateway_id,
+                operation="media-observation", ttl_ns=120_000_000_000), encoding="utf-8")
             self._capture_capability_path.chmod(0o600)
         try:
             capture_capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
@@ -958,9 +981,13 @@ class LabReceiverBridgeAuthority:
             def handle(self) -> None:
                 try:
                     raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
+                    operation = raw.get("operation") if isinstance(raw, Mapping) else None
                     if (not isinstance(raw, Mapping) or raw.get("runId") != owner.manifest.run_id
+                            or operation not in {"capture", "media-observation"}
                             or not isinstance(raw.get("captureCapability"), str)
-                            or not secrets.compare_digest(raw["captureCapability"], capture_capability)):
+                            or not owner._capture_issuer.consume(raw["captureCapability"], run_id=owner.manifest.run_id,
+                                                                  realm=owner.manifest.realm, gateway_id=owner._gateway_id,
+                                                                  operation=operation)):
                         raise ValueError("receiver capture capability is invalid")
                     if raw.get("operation") == "capture" and set(raw) == {"operation", "runId", "capture", "captureCapability"}:
                         result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}

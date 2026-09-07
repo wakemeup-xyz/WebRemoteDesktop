@@ -1043,6 +1043,19 @@ def test_authority_selects_only_unique_receiver_observed_channel_media(tmp_path)
         authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
 
 
+def test_authority_seals_gateway_media_only_for_reciprocal_pairs_and_shared_video_ssrc(tmp_path):
+    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
+    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=tmp_path / "verify.sock")
+    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
+    authority.record_media_observation(row)
+    viewer = {"pairId":"v","localCandidateId":"r","remoteCandidateId":"h","local":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"remote":{"id":"h","candidateType":"relay","address":"172.31.0.8","port":59000,"protocol":"udp"}}
+    host = {"pairId":"h","localCandidateId":"h","remoteCandidateId":"r","local":{"id":"h","candidateType":"relay","address":"172.31.0.8","port":59000,"protocol":"udp"},"remote":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"videoSsrc":0x10203040}
+    assert authority.seal_gateway_media_binding(viewer_pair=viewer, host_pair=host, expected={"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}) == row
+    host["videoSsrc"] = 9
+    with pytest.raises(RuntimeError, match="video SSRC"):
+        authority.seal_gateway_media_binding(viewer_pair=viewer, host_pair=host, expected={"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
+
+
 def test_authority_socket_accepts_only_capability_observation_and_seals_unique_binding(tmp_path):
     raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
     short_root = Path(tempfile.mkdtemp(prefix="wrdta-", dir="/tmp"))
@@ -1057,6 +1070,8 @@ def test_authority_socket_accepts_only_capability_observation_and_seals_unique_b
         denied = request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":"forged"})
         assert denied["status"] == "BLOCKED"
         assert request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":cap}) == {"status":"OBSERVED"}
+        replay = request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":cap})
+        assert replay["status"] == "BLOCKED"
         chosen = request(authority.socket_path, {"operation":"select-media-binding","runId":raw["runId"],"expected":{"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}})
         assert chosen == {"status":"SEALED","mediaBinding":row}
         binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=row["outerEgress"], viewer_pair={"pairId":"v","localCandidateId":"r","remoteCandidateId":"h","local":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"remote":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"}}, host_pair={"pairId":"h","localCandidateId":"h","remoteCandidateId":"r","local":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"},"remote":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"}}, media_binding=chosen["mediaBinding"])
