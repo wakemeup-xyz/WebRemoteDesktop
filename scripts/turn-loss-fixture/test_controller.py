@@ -676,6 +676,11 @@ def test_generated_compose_is_syntactically_valid_without_user_environment(tmp_p
     assert completed.returncode == 0, completed.stderr
 
 
+def test_controller_image_contains_the_fixture_udp_echo_peer_source():
+    dockerfile = (HERE / "Dockerfile").read_text()
+    assert "COPY udp_echo_peer.py /fixture/udp_echo_peer.py" in dockerfile
+
+
 def test_loopback_control_server_runs_the_authenticated_open_command_then_closes_session():
     fixture = controller.LossController(controller.LossFixtureManifest.parse(manifest()), backend=RecordingBackend())
     server = controller.LossControlServer({"host": "127.0.0.1", "port": 0}, controller.ControlRequestRouter(fixture, "temporary-token"))
@@ -703,6 +708,10 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     assert f"{tmp_path}:/runtime:ro" in override
     assert f"{tmp_path / 'turn.env'}" in override
     assert ":/lab-bridge:ro" in override
+    # The echo peer participates in the real TURN readiness transaction.  It
+    # must receive the same locally-built controller image as the other
+    # fixture sidecars, so Compose never attempts its placeholder registry.
+    assert f"udp-echo-peer:\n    image: {raw['imageDigests']['controller']}" in override
     assert generated["controlEndpoint"].startswith("127.0.0.1:")
     assert generated["bridgeSocket"].endswith("/authority.sock")
     assert generated["turnEndpoint"].startswith("127.0.0.1:")
