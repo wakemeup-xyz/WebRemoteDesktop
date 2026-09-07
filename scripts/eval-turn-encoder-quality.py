@@ -58,7 +58,7 @@ class _PeakAmbientSampler:
     def __init__(self, *, snapshot_reader=None, process_executable_resolver=None, interval_seconds: float = 1.0):
         self._snapshot_reader = snapshot_reader or self._read_snapshot
         self._process_executable_resolver = process_executable_resolver or self._executed_binary_path
-        self._trusted_python_executable = os.path.realpath(sys.executable)
+        self._trusted_python_framework_root = self._python_framework_root(os.path.realpath(sys.executable))
         self._interval_seconds = interval_seconds
         self.samples: list[dict] = []
         self.abort_reasons: list[dict] = []
@@ -122,6 +122,18 @@ class _PeakAmbientSampler:
             if any(pattern in lowered for pattern in patterns):
                 return name
         return None
+
+    @staticmethod
+    def _python_framework_root(path: str) -> str | None:
+        """Return the canonical Python.framework version root for a Python executable."""
+        parts = Path(os.path.realpath(path)).parts
+        try:
+            framework_index = parts.index("Python.framework")
+        except ValueError:
+            return None
+        if len(parts) <= framework_index + 2 or parts[framework_index + 1] != "Versions":
+            return None
+        return str(Path(parts[0]).joinpath(*parts[1:framework_index + 3]))
 
     def _read_snapshot(self) -> dict:
         completed = subprocess.run(
@@ -193,7 +205,9 @@ class _PeakAmbientSampler:
         actual_path = self._canonical_executable_path(process)
         if actual_path is None or actual_path != os.path.realpath(argv[0]):
             return None
-        if actual_path != self._trusted_python_executable or not Path(actual_path).name.lower().startswith("python"):
+        framework_root = self._python_framework_root(actual_path)
+        expected_executable = None if framework_root is None else f"{framework_root}/Resources/Python.app/Contents/MacOS/Python"
+        if framework_root != self._trusted_python_framework_root or actual_path != expected_executable:
             return None
         result = dict(process)
         result["binaryPath"] = actual_path

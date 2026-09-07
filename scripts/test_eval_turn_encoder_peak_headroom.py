@@ -132,7 +132,9 @@ class PeakAmbientSamplerTest(unittest.TestCase):
     @staticmethod
     def _snapshot(pid=10, epoch="Mon Sep  8 12:00:00 2026", cpu=2.0):
         mysql = {"pid": pid, "rssKiB": 1, "cpuPercent": cpu, "command": "/opt/mysql/mysqld", "argv": "/opt/mysql/mysqld", "executablePath": "/opt/mysql/mysqld", "binaryPath": "/opt/mysql/mysqld", "startEpoch": epoch}
-        python_executable = os.path.realpath(sys.executable)
+        framework_root = MODULE._PeakAmbientSampler._python_framework_root(os.path.realpath(sys.executable))
+        assert framework_root is not None
+        python_executable = f"{framework_root}/Resources/Python.app/Contents/MacOS/Python"
         sync = {"pid": 20, "rssKiB": 2, "cpuPercent": 1.0, "command": python_executable, "argv": f"{python_executable} -m backend.scripts.sync_worker", "executablePath": python_executable, "startEpoch": epoch}
         return {"processes": [mysql, sync], "mysqld": [mysql], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}
 
@@ -163,13 +165,25 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: pytest); sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
 
-    def test_sync_worker_requires_trusted_kernel_executable_matching_argv0(self):
+    def test_sync_worker_accepts_python_app_executable_from_matrix_framework(self):
         snapshot = self._snapshot()
         snapshot["processes"][1]["command"] = "/Users/macstudio"
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
         sampler._sample_once(phase="PREFLIGHT")
         self.assertIsNone(sampler.abort_status())
-        self.assertEqual(sampler.evidence()["syncWorker"]["identity"]["binaryPath"], os.path.realpath(sys.executable))
+        self.assertEqual(sampler.evidence()["syncWorker"]["identity"]["binaryPath"], snapshot["processes"][1]["executablePath"])
+
+    def test_sync_worker_rejects_python_app_executable_outside_matrix_framework(self):
+        snapshot = self._snapshot()
+        worker = snapshot["processes"][1]
+        root = MODULE._PeakAmbientSampler._python_framework_root(os.path.realpath(sys.executable))
+        assert root is not None
+        outside = f"{Path(root).parent}/999.0/Resources/Python.app/Contents/MacOS/Python"
+        worker["argv"] = f"{outside} -m backend.scripts.sync_worker"
+        worker["executablePath"] = outside
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity unavailable", [item["reason"] for item in sampler.abort_reasons])
 
     def test_sync_worker_rejects_tmp_python_even_when_argv_shape_is_exact(self):
         snapshot = self._snapshot()
