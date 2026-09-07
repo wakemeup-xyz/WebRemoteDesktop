@@ -395,7 +395,8 @@ class LabRun:
                 self._expected_turn_applied_digest = expected_turn_applied_digest
                 self._selected_turn_identity = {"id": turn_bootstrap.selected_turn_server_id,
                                                 "fingerprint": turn_bootstrap.turn_fingerprint,
-                                                "digest": expected_turn_applied_digest}
+                                                "digest": expected_turn_applied_digest,
+                                                "urls": list(turn_bootstrap.turn_urls)}
                 self._last_status = "running"
                 watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-lab-watch-{run_id}", daemon=True)
                 self._watch_thread = watch
@@ -496,7 +497,7 @@ class LabRun:
                 raise RuntimeError("running lab transcript verifier is required")
             return self._transcript_secret.encode("utf-8")
 
-    def selected_turn_identity(self) -> dict[str, str]:
+    def selected_turn_identity(self) -> dict[str, Any]:
         """Read the already production-preflighted TURN identity without credentials."""
         with self._lock:
             if self.closed or self._selected_turn_identity is None:

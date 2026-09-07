@@ -543,6 +543,16 @@ class PlaywrightLabViewerAdapter:
             return None
         return row
 
+    def selected_relay_leg(self, catalog: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+        rows = self.viewer_page.evaluate("""async () => {
+          const pc = WebRTC?.peerConnection || WebRTC?.pc;
+          if (!pc?.getStats) return [];
+          return [...(await pc.getStats()).values()].map(row => ({id: row.id, type: row.type, selected: row.selected,
+            nominated: row.nominated, state: row.state, localCandidateId: row.localCandidateId,
+            candidateType: row.candidateType, address: row.address, port: row.port, protocol: row.protocol}));
+        }""")
+        return selected_relay_leg_from_stats(rows, catalog) if isinstance(rows, list) else None
+
     def close(self) -> None:
         self._browser.close(); self._playwright.stop()
 
@@ -617,6 +627,17 @@ def selected_relay_leg_from_stats(rows: list[Mapping[str, Any]], catalog: list[M
     return dict(matches[0]) if len(matches) == 1 else None
 
 
+def turn_catalog(identity: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Create a credential-free relay catalog from the current server config."""
+    result = []
+    for url in identity.get("urls", []) if isinstance(identity.get("urls"), list) else []:
+        if not isinstance(url, str) or not url.startswith("turn:"): continue
+        body = url[5:].split("?", 1)[0]; host, sep, port = body.rpartition(":")
+        if not host or not sep or not port.isdigit(): continue
+        result.append({"address": host, "port": int(port), "protocol": "udp", "id": identity.get("id"), "fingerprint": identity.get("fingerprint"), "digest": identity.get("digest")})
+    return result
+
+
 class RawLossTimelineCollector:
     """Live-owner raw event accumulator; never accepts recovery booleans."""
     def __init__(self, *, started_ns: int, ended_ns: int) -> None:
@@ -667,9 +688,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter.configure_marker_roi(layout)
         visible, reason = adapter.producer_window_precondition()
         selected_turn = lab.selected_turn_identity()
+        selected_leg = adapter.selected_relay_leg(turn_catalog(selected_turn))
+        if selected_leg is None:
+            raise RuntimeError("getStats did not prove a selected relay/catalog mapping")
         if (session["selectedTurnId"] != selected_turn["id"] or session["turnFingerprint"] != selected_turn["fingerprint"]
                 or session["turnDigest"] != selected_turn["digest"]):
             raise RuntimeError("viewer selected TURN identity does not match the Lab-preflighted path")
+        selected_turn = {key: selected_leg[key] for key in ("id", "fingerprint", "digest")}
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
                            "scope": {"attemptId": session["attemptId"], "generation": session["generation"], "streamId": session["streamId"]},
                            "selectedTurn": selected_turn}
