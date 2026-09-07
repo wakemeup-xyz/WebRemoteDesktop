@@ -220,3 +220,17 @@ def test_trace_barrier_blocks_until_host_viewer_flush_ack_is_present():
     with __import__("pytest").raises(controller.RuntimeBlocked, match="barrier did not acknowledge"):
         runner._await_trace_flush(adapter=PendingAdapter(), timeline=RawLossTimelineCollector(started_ns=1, ended_ns=2), wait=waits.append, attempts=3)
     assert waits == [0.05, 0.05, 0.05]
+
+def test_final_bridge_requires_verified_gateway_proof_fields():
+    manifest = _manifest()
+    authority = controller.LabReceiverBridgeAuthority(manifest, verifier=b"lab-verifier", socket_path=Path(tempfile.mkdtemp()) / "authority.sock")
+    # A bridge missing the immutable gateway proof is rejected by the same
+    # authority.seal path used by the dedicated runner.
+    fixture = controller.LossController(manifest, backend=Backend(), receiver_source=DeferredEvidence())
+    session = fixture.open_session(manifest.run_id, "s", 1, attempt_id="a", stream_id="v")
+    session.confirm_selected_leg(); event = session.apply_loss(manifest.run_id, "all_for_200ms", 200)
+    event = fixture.clear_loss(manifest.run_id)
+    bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": {}, "t5": {},
+              "loss": {"runId":manifest.run_id,"realm":manifest.realm,"sessionId":"s","attemptId":"a","generation":1,"streamId":"v","selectedTurn":manifest.selected_turn,"eventHandle":event["comment"],"startedMonotonicNs":event["startedMonotonicNs"],"endedMonotonicNs":event["endedMonotonicNs"],"receiverCapture":{},"receiverCaptures":{},"eventHandles":[],"eventBindings":{}}, "timeline": {}}
+    with __import__('pytest').raises(RuntimeError):
+        authority.seal(bridge, event)
