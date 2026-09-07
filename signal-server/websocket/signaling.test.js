@@ -1755,6 +1755,7 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
       supportsSessionTurn: false,
       supportsMultiTurn: false,
       turnServerId: '',
+      labTurnAppliedDigest: '',
       defaultTurnServerId: '',
       turnServerIds: [],
       updatedAt: null,
