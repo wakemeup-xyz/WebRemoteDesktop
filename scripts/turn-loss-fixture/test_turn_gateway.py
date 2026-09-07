@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import socket
 import struct
 import sys
 from pathlib import Path
@@ -92,3 +93,42 @@ def test_gateway_tracks_only_an_allocate_success_with_its_request_transaction():
     association.observe_client(_stun(0x0003, txid))
     association.observe_server(_stun(0x0103, txid, _attr(0x0016, _xor_endpoint(b"\x7f\0\0\x01", 51000))))
     assert association.relay == ("127.0.0.1", 51000)
+
+
+def test_inline_gateway_forwards_control_datagrams_without_connecting_upstream_socket():
+    gateway_module = _module()
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0)); upstream.settimeout(1)
+    gateway = gateway_module.InlineTurnGateway(turn_endpoint=upstream.getsockname(), bind_host="127.0.0.1", control_port=0, relay_ports=())
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); client.settimeout(1)
+    try:
+        gateway.start()
+        client.sendto(b"opaque-turn-control", gateway.control_endpoint)
+        gateway.poll(timeout_s=.1)
+        payload, gateway_upstream = upstream.recvfrom(4096)
+        assert payload == b"opaque-turn-control"
+        upstream.sendto(b"opaque-turn-reply", gateway_upstream)
+        gateway.poll(timeout_s=.1)
+        assert client.recvfrom(4096)[0] == b"opaque-turn-reply"
+        assert gateway.client_mappings()[0].upstream_connected is False
+    finally:
+        client.close(); upstream.close(); gateway.close()
+
+
+def test_inline_gateway_preserves_the_public_relay_source_port_for_peer_packets():
+    gateway_module = _module()
+    control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); control.bind(("127.0.0.1", 0))
+    relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); relay.bind(("127.0.0.1", 0)); relay.settimeout(1)
+    public = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); public.bind(("127.0.0.1", 0)); relay_port = public.getsockname()[1]; public.close()
+    gateway = gateway_module.InlineTurnGateway(turn_endpoint=control.getsockname(), relay_endpoints={relay_port: relay.getsockname()}, bind_host="127.0.0.1", control_port=0, relay_ports=(relay_port,))
+    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); peer.settimeout(1)
+    try:
+        gateway.start()
+        peer.sendto(b"peer-ice-check", ("127.0.0.1", relay_port)); gateway.poll(timeout_s=.1)
+        payload, gateway_path = relay.recvfrom(4096)
+        assert payload == b"peer-ice-check"
+        relay.sendto(b"peer-ice-response", gateway_path); gateway.poll(timeout_s=.1)
+        response, source = peer.recvfrom(4096)
+        assert response == b"peer-ice-response" and source[1] == relay_port
+    finally:
+        peer.close(); control.close(); relay.close(); gateway.close()
