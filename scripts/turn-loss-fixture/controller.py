@@ -176,7 +176,7 @@ class LossFixtureManifest:
         return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, receiver_bridge_file, selected_turn, digest, image_digests)
 
 
-_RUNTIME_RELAY_FIELDS = frozenset({"schemaVersion", "runId", "expectedEgressSelector", "actualEgressSelector", "viewerPair", "hostPair"})
+_RUNTIME_RELAY_FIELDS = frozenset({"schemaVersion", "runId", "expectedEgressSelector", "actualEgressSelector", "viewerPair", "hostPair", "mediaBinding"})
 _PAIR_FIELDS = frozenset({"pairId", "localCandidateId", "remoteCandidateId", "local", "remote"})
 _CANDIDATE_FIELDS = frozenset({"id", "candidateType", "address", "port", "protocol"})
 
@@ -214,7 +214,7 @@ def _runtime_pair(value: Any, field: str) -> dict[str, Any]:
     return result
 
 
-def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mapping[str, Any], viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any]) -> dict[str, Any]:
+def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mapping[str, Any], viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], media_binding: Mapping[str, Any]) -> dict[str, Any]:
     """Build a parent-owned binding from live Viewer and Host selected pairs.
 
     The manifest's static tuple is retained solely as an expected fixture map;
@@ -222,7 +222,7 @@ def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mappi
     pair proof has been validated and written read-only into the namespace.
     """
     return {"schemaVersion": 1, "runId": manifest.run_id, "expectedEgressSelector": dict(manifest.egress_selector),
-            "actualEgressSelector": dict(actual_egress), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair)}
+            "actualEgressSelector": dict(actual_egress), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair), "mediaBinding": dict(media_binding)}
 
 
 def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dict[str, Any]:
@@ -231,17 +231,34 @@ def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dic
     if not isinstance(raw, Mapping) or set(raw) != _RUNTIME_RELAY_FIELDS or raw.get("schemaVersion") != 1 or raw.get("runId") != manifest.run_id or raw.get("expectedEgressSelector") != manifest.egress_selector:
         raise RuntimeBlocked("actual TURN relay binding does not match the fixture expectation")
     actual, viewer, host = _runtime_leg(raw.get("actualEgressSelector"), "actualEgressSelector"), _runtime_pair(raw.get("viewerPair"), "viewerPair"), _runtime_pair(raw.get("hostPair"), "hostPair")
+    media = raw.get("mediaBinding")
+    if (not isinstance(media, Mapping) or set(media) != {"outerEgress", "allocationRelay", "peer", "channelNumber", "encapsulation", "rtpSsrc", "payloadType"}
+            or _runtime_leg(media.get("outerEgress"), "mediaBinding.outerEgress") != actual
+            or not isinstance(media.get("channelNumber"), int) or not 0x4000 <= media["channelNumber"] <= 0x7fff
+            or media.get("encapsulation") != "channel-data" or not isinstance(media.get("rtpSsrc"), int) or not 0 <= media["rtpSsrc"] <= 0xffffffff
+            or media.get("payloadType") != 96):
+        raise RuntimeBlocked("trusted TURN media binding is incomplete")
     def endpoint(candidate: Mapping[str, Any]) -> tuple[str, int, str, str]:
         return (str(candidate["address"]), int(candidate["port"]), str(candidate["protocol"]), str(candidate["candidateType"]))
     if (viewer["local"]["candidateType"] != "relay" or host["remote"]["candidateType"] != "relay"
             or endpoint(viewer["remote"]) != endpoint(host["local"])
             or endpoint(viewer["local"]) != endpoint(host["remote"])):
         raise RuntimeBlocked("Viewer and host selected pair reciprocity is invalid")
-    derived = {"protocol": "udp", "source": viewer["local"]["address"], "sourcePort": viewer["local"]["port"],
-               "destination": viewer["remote"]["address"], "destinationPort": viewer["remote"]["port"]}
-    if actual != derived or actual["sourcePort"] not in _RELAY_PORTS:
-        raise RuntimeBlocked("actual TURN namespace egress tuple is inconsistent with selected pairs")
-    return {"actualEgressSelector": actual, "viewerPair": viewer, "hostPair": host}
+    allocation, peer = media.get("allocationRelay"), media.get("peer")
+    if (not isinstance(allocation, Mapping) or set(allocation) != {"address", "port"}
+            or not isinstance(peer, Mapping) or set(peer) != {"address", "port"}):
+        raise RuntimeBlocked("trusted TURN media allocation mapping is incomplete")
+    relay = (_require_fixture_ip(allocation.get("address"), "mediaBinding.allocationRelay.address"),
+             _require_port(allocation.get("port"), "mediaBinding.allocationRelay.port"))
+    peer_endpoint = (_require_fixture_ip(peer.get("address"), "mediaBinding.peer.address"),
+                     _require_port(peer.get("port"), "mediaBinding.peer.port"))
+    # Browser stats identify R<->H; the packet observer proves S->C.  Neither
+    # may substitute for the other.  The two legs are joined only through the
+    # Allocate/ChannelBind mapping carried in ``mediaBinding``.
+    if ((viewer["local"]["address"], viewer["local"]["port"]) != relay
+            or (viewer["remote"]["address"], viewer["remote"]["port"]) != peer_endpoint):
+        raise RuntimeBlocked("selected relay pair does not match TURN allocation mapping")
+    return {"actualEgressSelector": actual, "viewerPair": viewer, "hostPair": host, "mediaBinding": dict(media)}
 
 
 def write_runtime_relay_binding(path: Path, binding: Mapping[str, Any]) -> None:
@@ -788,7 +805,8 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
         raise RuntimeError("receiver capture provenance is invalid")
     if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != event.get("egressSelector"):
         raise RuntimeError("receiver capture does not bind selected relay leg")
-    if not isinstance(value.get("kernelDropCount"), int) or value["kernelDropCount"] <= 0 or not isinstance(value.get("ssrc"), int):
+    if (not isinstance(value.get("kernelDropCount"), int) or value["kernelDropCount"] <= 0 or not isinstance(value.get("ssrc"), int)
+            or not isinstance(event.get("mediaBinding"), Mapping) or value.get("ssrc") != event["mediaBinding"].get("rtpSsrc")):
         raise RuntimeError("receiver capture kernel counter or SSRC is invalid")
     cursor, groups = value.get("cursor"), value.get("receivedRtp")
     if (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)
@@ -998,6 +1016,27 @@ class LossController:
             return dict(self.manifest.egress_selector)
         return dict(load_runtime_relay_binding(self._relay_binding_path, self.manifest)["actualEgressSelector"])
 
+    def _active_media_binding(self) -> dict[str, Any]:
+        if self._relay_binding_path is None:
+            # Legacy in-memory unit backends do not represent a namespace or
+            # expose a writable binding path.  This branch is unreachable in
+            # Compose: prepare_runtime always supplies --relay-binding.
+            selector = self.manifest.egress_selector
+            return {"outerEgress": dict(selector), "allocationRelay": {"address": selector["source"], "port": selector["sourcePort"]},
+                    "peer": {"address": selector["destination"], "port": selector["destinationPort"]},
+                    "channelNumber": 0x4001, "encapsulation": "channel-data", "rtpSsrc": 7, "payloadType": 96}
+        return dict(load_runtime_relay_binding(self._relay_binding_path, self.manifest)["mediaBinding"])
+
+    @staticmethod
+    def _channel_rtp_classifier(media: Mapping[str, Any]) -> list[str]:
+        channel, ssrc = media.get("channelNumber"), media.get("rtpSsrc")
+        if not isinstance(channel, int) or not isinstance(ssrc, int): raise RuntimeBlocked("trusted TURN media classifier is unavailable")
+        # IP header length + UDP header points at ChannelData.  Match its
+        # channel prefix and the encapsulated RTP SSRC, so STUN, RTCP and other
+        # data-channel payloads on the identical S->C five-tuple cannot match.
+        expr = f"0>>22&0x3C@8&0xffff0000=0x{channel:04x}0000 && 0>>22&0x3C@20=0x{ssrc:08x}"
+        return ["-m", "u32", "--u32", expr]
+
     def _require_run(self, run_id: str) -> None:
         if run_id != self.manifest.run_id:
             raise ValueError("runId does not match the fixture manifest")
@@ -1023,10 +1062,12 @@ class LossController:
         comment = f"wrd-baseline:{self.manifest.run_id[:8]}:{nonce}"
         chain = f"WRDB{self.manifest.run_id.replace('-', '')[:8]}{nonce[:8]}"
         selector = self._active_egress_selector()
+        media = self._active_media_binding()
         jump = [
             "-o", self.manifest.interface, "-p", "udp",
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
             "-d", selector["destination"], "--dport", str(selector["destinationPort"]),
+            *self._channel_rtp_classifier(media),
             "-m", "comment", "--comment", f"{comment}:jump", "-j", chain,
         ]
         counter_rule = ["-m", "comment", "--comment", comment, "-j", "RETURN"]
@@ -1049,7 +1090,7 @@ class LossController:
             raise RuntimeError("selected-leg kernel counter probe observed no matching UDP traffic")
         observed = self._monotonic_ns()
         with self._lock:
-            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "packetCount": after - before, "observedMonotonicNs": observed}
+            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "mediaBinding": dict(media), "packetCount": after - before, "observedMonotonicNs": observed}
 
     def _rule_for(self, pattern: str, comment: str) -> list[str]:
         selector = self._active_egress_selector()
@@ -1058,6 +1099,7 @@ class LossController:
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
             "-d", selector["destination"], "--dport", str(selector["destinationPort"]),
         ]
+        rule.extend(self._channel_rtp_classifier(self._active_media_binding()))
         if pattern == "every_100th_for_30s":
             rule.extend(["-m", "statistic", "--mode", "nth", "--every", "100", "--packet", "0"])
         rule.extend(["-m", "comment", "--comment", comment])
@@ -1074,7 +1116,8 @@ class LossController:
             baseline = self._baselines.pop(session.session_id, None)  # one dry-run can arm one injection only
             if baseline is None:
                 raise RuntimeError("selected-leg nonzero baseline is required before loss injection")
-            if baseline["generation"] != session.generation or baseline["selector"] != self._active_egress_selector():
+            if (baseline["generation"] != session.generation or baseline["selector"] != self._active_egress_selector()
+                    or baseline["mediaBinding"] != self._active_media_binding()):
                 raise RuntimeError("selected-leg baseline does not match this control session")
             now = self._monotonic_ns()
             if now < baseline["observedMonotonicNs"] or now - baseline["observedMonotonicNs"] > self._baseline_ttl_ns:
@@ -1086,7 +1129,7 @@ class LossController:
             event = {
                 "schemaVersion": 1, "state": "installing", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
-                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "expectedEgressSelector": dict(self.manifest.egress_selector),
+                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "mediaBinding": self._active_media_binding(), "expectedEgressSelector": dict(self.manifest.egress_selector),
                 "sessionId": session.session_id, "attemptId": session.attempt_id, "streamId": session.stream_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
                 "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
                 "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,

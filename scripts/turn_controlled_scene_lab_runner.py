@@ -558,7 +558,7 @@ class PlaywrightLabViewerAdapter:
         }""")
         return selected_relay_leg_from_stats(rows, catalog) if isinstance(rows, list) else None
 
-    def selected_relay_binding(self, manifest: Any) -> dict[str, Any] | None:
+    def selected_relay_binding(self, manifest: Any, media_binding: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         rows = self.viewer_page.evaluate("""async () => {
           const pc = WebRTC?.peerConnection || WebRTC?.pc;
           if (!pc?.getStats) return [];
@@ -572,7 +572,7 @@ class PlaywrightLabViewerAdapter:
           try { return await window.WebRTC?.requestLossLabHostSelectedPair?.(); }
           catch (_error) { return null; }
         }""")
-        return selected_relay_binding_from_stats(rows, manifest, host_pair)
+        return selected_relay_binding_from_stats(rows, manifest, host_pair, media_binding)
 
     def arm_loss_lab_taps(self) -> bool:
         """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""
@@ -647,7 +647,7 @@ def seal_loss_bridge_after_clear(*, manifest_path: Path, socket_path: Path, raw_
         raise RuntimeError("isolated loss bridge seal was refused")
 
 
-def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: Any, host_pair: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: Any, host_pair: Mapping[str, Any] | None = None, media_binding: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     """Bind the current selected pair, including candidate ids and both ends.
 
     ``hostPair`` is the reciprocal representation of the same nominated ICE
@@ -669,10 +669,11 @@ def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: A
         return None
     viewer = {"pairId": str(pair.get("id")), "localCandidateId": local["id"], "remoteCandidateId": remote["id"],
               "local": {key: local[key] for key in required}, "remote": {key: remote[key] for key in required}}
-    if not isinstance(host_pair, Mapping): return None
-    actual = {"protocol": "udp", "source": local["address"], "sourcePort": local["port"], "destination": remote["address"], "destinationPort": remote["port"]}
+    if not isinstance(host_pair, Mapping) or not isinstance(media_binding, Mapping): return None
+    actual = media_binding.get("outerEgress")
+    if not isinstance(actual, Mapping): return None
     from controller import runtime_relay_binding
-    return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair)
+    return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair, media_binding=media_binding)
 
 
 def selected_relay_leg_from_stats(rows: list[Mapping[str, Any]], catalog: list[Mapping[str, Any]]) -> dict[str, Any] | None:

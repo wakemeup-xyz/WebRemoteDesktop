@@ -18,7 +18,26 @@ def parse_rtp_header(packet: bytes) -> dict[str, int] | None:
     if len(packet) < 12 + csrc * 4:
         return None
     return {"sequence": int.from_bytes(packet[2:4], "big"), "rtpTimestamp": int.from_bytes(packet[4:8], "big"),
-            "ssrc": int.from_bytes(packet[8:12], "big")}
+            "ssrc": int.from_bytes(packet[8:12], "big"), "payloadType": packet[1] & 0x7f}
+
+
+def channel_data_media_payload(packet: bytes, media: Mapping[str, Any]) -> bytes | None:
+    """Accept exactly the ChannelData frame authorized by the TURN observer.
+
+    This is deliberately stricter than RTP parsing: STUN starts with a 0-bit
+    top type and DataChannel/RTCP/wrong-SSRC payloads never enter the capture.
+    The controller uses the equivalent kernel u32 selector before DROP.
+    """
+    if not isinstance(media, Mapping) or len(packet) < 4:
+        return None
+    channel, length = struct.unpack("!HH", packet[:4])
+    if channel != media.get("channelNumber") or length < 12 or len(packet) < 4 + length:
+        return None
+    payload = packet[4:4 + length]
+    rtp = parse_rtp_header(payload)
+    if rtp is None or rtp["ssrc"] != media.get("rtpSsrc") or rtp["payloadType"] != media.get("payloadType"):
+        return None
+    return payload
 
 
 def _udp_payload(frame: bytes) -> tuple[dict[str, Any], bytes] | None:
@@ -72,8 +91,9 @@ def seal_received_capture(*, run_id: str, event_handle: str, selected_leg: Mappi
 
 class ReceiverDirectedObserver:
     """Owns AF_PACKET and only emits headers matching one selected receiver leg."""
-    def __init__(self, *, interface: str, selected_leg: Mapping[str, Any], clock_ns=time.monotonic_ns) -> None:
+    def __init__(self, *, interface: str, selected_leg: Mapping[str, Any], media_binding: Mapping[str, Any] | None = None, clock_ns=time.monotonic_ns) -> None:
         self.interface, self.selected_leg, self.clock_ns = interface, dict(selected_leg), clock_ns
+        self.media_binding = dict(media_binding) if media_binding is not None else None
         self._rows: list[dict[str, int]] = []; self._arrival = 0
 
     def accept_frame(self, frame: bytes) -> None:
@@ -81,10 +101,13 @@ class ReceiverDirectedObserver:
         if decoded is None: return
         leg, payload = decoded
         if leg != self.selected_leg: return
+        if self.media_binding is None: return
+        payload = channel_data_media_payload(payload, self.media_binding)
+        if payload is None: return
         rtp = parse_rtp_header(payload)
         if rtp is None: return
         self._arrival += 1
-        self._rows.append({**rtp, "fixtureClockNs": int(self.clock_ns()), "arrivalSeq": self._arrival})
+        self._rows.append({key: rtp[key] for key in ("sequence", "rtpTimestamp", "ssrc")} | {"fixtureClockNs": int(self.clock_ns()), "arrivalSeq": self._arrival})
 
     def capture_once(self, *, timeout_s: float = 0.25) -> int:
         """Read kernel frames directly.  No runner callback can submit a row."""
@@ -106,7 +129,7 @@ def write_capture(path: Path, capture: Mapping[str, Any]) -> None:
 
 class FixtureCaptureService:
     """State-driven observer; runner has no write path into this object."""
-    def __init__(self, *, observer: ReceiverDirectedObserver, manifest: Mapping[str, Any], state_path: Path, output: Path, authority_socket: Path, capture_capability: str) -> None:
+    def __init__(self, *, observer: ReceiverDirectedObserver, manifest: Mapping[str, Any], state_path: Path, output: Path, authority_socket: Path, capture_capability: str, relay_binding: Path) -> None:
         if not isinstance(capture_capability, str) or not capture_capability:
             raise ValueError("receiver capture capability is required")
         self.observer, self.manifest, self.state_path, self.output, self.authority_socket, self.capture_capability, self.relay_binding = observer, dict(manifest), Path(state_path), Path(output), Path(authority_socket), capture_capability, Path(relay_binding)
@@ -127,6 +150,7 @@ class FixtureCaptureService:
             time.sleep(.05)
             return
         self.observer.selected_leg = dict(runtime["actualEgressSelector"])
+        self.observer.media_binding = dict(runtime["mediaBinding"])
         previous = len(self.observer.rows); self.observer.capture_once(timeout_s=.25)
         fresh = list(self.observer.rows)[previous:]
         active = self._state()

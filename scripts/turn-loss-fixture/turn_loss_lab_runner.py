@@ -272,13 +272,14 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
         def fixture_probe() -> None:
-            from turn_udp_probe import permission_send_data_echo
+            from turn_udp_probe import channel_media_binding_echo, permission_send_data_echo
             endpoint_host, endpoint_port = str(prepared["turnEndpoint"]).rsplit(":", 1)
             echo_container = f"{prepared['projectName']}-udp-echo-peer-1"
             code, peer_ip, _err = DockerRuntimeProbe._run_command(["docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", echo_container])
             if code or not peer_ip.strip(): raise RuntimeBlocked("fixture UDP echo peer is not ready")
             try:
                 permission_send_data_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, timeout=2.0)
+                holder["mediaBinding"] = channel_media_binding_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, rtp_ssrc=0x10203040, timeout=2.0)
             except Exception as exc: raise RuntimeBlocked("fixture TURN UDP permission/data echo probe failed") from exc
         def fixture_start() -> None:
             # Compose readiness was verified before this callback.  Signal,
@@ -287,7 +288,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
-            binding = adapter.selected_relay_binding(manifest)
+            binding = adapter.selected_relay_binding(manifest, holder.get("mediaBinding"))
             if (not isinstance(scope, Mapping) or not isinstance(binding, Mapping)
                     or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
                 adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
