@@ -182,7 +182,7 @@ digest、原始 encode P50/P95 和可选的同对相对环境因子。sentinel �
 把它写成 adjusted P95 或改变原始质量/成本门槛。
 
 所有正常或异常产物均采用同一可审计 schema：环境 health/preflight/mysqld
-identity/coverage/missed 与 late tick/脱敏 forbidden 类别 PID CPU、candidate、
+identity/coverage/missed 与 late tick/脱敏 quiescentExternalProcesses 类别 PID CPU、candidate、
 runtime、selection 和 source digests。通用加载、candidate、digest 或 hook 异常
 也必须原子写出完整 `ABORTED_INCONCLUSIVE` JSON，保留已有 partial 证据，但
 `eligible=false` 且不能产生 `OFFLINE_PASS_ONLY`。

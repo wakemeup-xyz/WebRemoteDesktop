@@ -247,6 +247,11 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
         self.assertEqual(len(sampler.evidence()["quiescentExternalProcesses"]), 2)
+
+    def test_matrix_child_and_macos_system_roots_are_excluded(self):
+        snapshot = self._snapshot(); snapshot["processes"] += [{"pid": 77, "ppid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/bin/ps", "argv": "/bin/ps"}, {"pid": 78, "rssKiB": 1, "cpuPercent": 99.0, "command": "/usr/libexec/logd", "argv": "/usr/libexec/logd"}]
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot); sampler._sample_once(phase="RUNNING")
+        self.assertIsNone(sampler.abort_status())
         aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 43, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}, {"pid": 44, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")

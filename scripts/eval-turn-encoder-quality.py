@@ -50,7 +50,7 @@ class _PeakAmbientSampler:
         "lab": ("/lab", " lab"),
         "docker": ("docker compose", "docker-compose"),
     }
-    _SYSTEM_EXECUTABLE_ROOTS = ("/System/Library/", "/usr/lib/", "/usr/sbin/", "/sbin/")
+    _SYSTEM_EXECUTABLE_ROOTS = ("/System/Library/", "/usr/lib/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/bin/")
 
     def __init__(self, *, snapshot_reader=None, interval_seconds: float = 1.0):
         self._snapshot_reader = snapshot_reader or self._read_snapshot
@@ -101,23 +101,23 @@ class _PeakAmbientSampler:
 
     def _read_snapshot(self) -> dict:
         completed = subprocess.run(
-            ("ps", "-axo", "pid=,rss=,%cpu=,command="),
+            ("ps", "-axo", "pid=,ppid=,rss=,%cpu=,command="),
             text=True,
             capture_output=True,
             check=True,
         )
         processes = []
         for row in completed.stdout.splitlines():
-            parts = row.split(None, 3)
-            if len(parts) != 4:
+            parts = row.split(None, 4)
+            if len(parts) != 5:
                 continue
-            pid, rss, cpu, argv = parts
+            pid, ppid, rss, cpu, argv = parts
             try:
                 argv_tokens = shlex.split(argv)
                 if not argv_tokens:
                     continue
                 processes.append({
-                    "pid": int(pid), "rssKiB": int(rss), "cpuPercent": float(cpu),
+                    "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
                     "command": argv_tokens[0], "argv": argv,
                 })
             except ValueError:
@@ -180,11 +180,18 @@ class _PeakAmbientSampler:
                 mysql_pids = {entry["pid"] for entry in mysql}
                 sync = [entry for process in processes if (entry := self._exact_sync_worker(process)) is not None]
                 sync_pids = {entry["pid"] for entry in sync}
+                own_pids = {os.getpid()}
+                changed = True
+                while changed:
+                    changed = False
+                    for process in processes:
+                        if process.get("ppid") in own_pids and process["pid"] not in own_pids:
+                            own_pids.add(process["pid"]); changed = True
                 viewers = dict(snapshot["viewerStatus"])
                 forbidden = []
                 for process in processes:
                     process_class = self._forbidden_class(str(process["command"]), str(process.get("argv", "")))
-                    if process["pid"] in mysql_pids | sync_pids | {os.getpid()}:
+                    if process["pid"] in mysql_pids | sync_pids | own_pids:
                         continue
                     if process_class is None and self._is_system_process(process):
                         continue
@@ -1490,7 +1497,7 @@ def _peak_atomic_abort_artifact(error: Exception) -> dict:
         "mysqld": {"identity": None, "cpuPercent": {"p50": None, "p95": None, "max": None}, "stabilityThresholds": dict(_PeakAmbientSampler.MYSQL_STABILITY_THRESHOLDS)},
         "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": None},
         "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": 1.0, "aggregateCpuPercentMaximum": 1.0},
-        "coverage": [], "missedTicks": 0, "lateTicks": [], "forbidden": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
+        "coverage": [], "missedTicks": 0, "lateTicks": [], "quiescentExternalProcesses": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
         "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
     }
     candidate = {"id": "on-demand-peak-headroom-v1", "parameters": None, "prescreen": {"status": "NOT RUN"}, "offline": {"status": "NOT RUN"}, "runtime": runtime, "eligible": False, "ineligibleReason": list(ambient["abortReasons"]), "execution": {"prescreen": "ABORTED", "fullMatrix": "ABORTED"}}
