@@ -3,9 +3,9 @@
 日期：2026-09-08
 范围：`codex/input-recovery-observability` 的离线交互验收、当前输入恢复/诊断文档和安全证据摘要。
 基线 SHA：`39fa1eadc89b00546e2bf66f1ed1d1e6f892ca42`。
-Task 4 开始时的实现 HEAD：`cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae`（本报告的脚本/文档改动在该 HEAD 上测试，交付 commit 由 companion task report 记录）。
+Task 4 已提交测试实现版本（delivery commit）：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 Task 4 开始时的实现 HEAD `cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae` 为父提交。本轮仅作永久文档 provenance/link 修正，起点为 `FIX_BASE=2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`，不在自身报告中预写尚未产生的 docs-only commit hash。
 
-本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划](../plans/2026-09-07-input-recovery-observability-plan.md) 和 [计划与任务 brief](../../../.superpowers/sdd/2026-09-07-input-recovery-observability-plan/task-4-brief.md) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
+本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划的 Task 4 锚点](../plans/2026-09-07-input-recovery-observability-plan.md#task-4-acceptance) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
 
 ## 结论与边界
 

@@ -6,7 +6,7 @@
 
 修复普通鼠标/实体键盘在失焦、隐藏、媒体暂停再恢复后，被移动输入 surface 不确定性永久锁住的问题；为再次发生的现场故障留下足以区分本地拦截、发送失败、Host 拒绝及 ACK 丢失的证据。
 
-依据：[本轮诊断报告](../reports/2026-09-07-overall-completion-and-resume-input-diagnosis.md)。基线 `39fa1ea` 的 Viewer 离线套件通过，但跨模块探针存在四个反例：所有 ACK 都能到达，仍可出现 `isActive=true / keyboard=READY / surface=uncertain / hasPending=false`，新点击和按键均未发送。证明的是充分原因，不是每次现场故障的排他归因。
+依据：[本轮诊断报告](../reports/2026-09-07-overall-completion-and-resume-input-diagnosis.md)；Task 4 的最终离线验收见[输入恢复与诊断验收报告](../reports/2026-09-07-input-recovery-observability-acceptance.md)。基线 `39fa1ea` 的 Viewer 离线套件通过，但跨模块探针存在四个反例：所有 ACK 都能到达，仍可出现 `isActive=true / keyboard=READY / surface=uncertain / hasPending=false`，新点击和按键均未发送。证明的是充分原因，不是每次现场故障的排他归因。
 
 约束继续以当前需求文档和代码为准：媒体恢复仍要求当前 attempt 的恢复确认与新帧；Terminal、手动暂停、只读控制不被本次修复绕过。
 

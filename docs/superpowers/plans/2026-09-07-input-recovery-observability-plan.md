@@ -164,9 +164,11 @@ inputState: typeof Input !== 'undefined' ? Input.getDiagnosticState() : null,
 inputTrace: this.getInputTraceSnapshot?.() || null,
 ```
 
+<a id="task-4-acceptance"></a>
+
 ### Task 4: 离线交互验收与文档闭环
 
-**Files:** 修改 `scripts/mobile_input_interaction_acceptance.py` 及其现有对应测试（若存在），或新增独立 `scripts/input_recovery_acceptance.py`（复用离线fixture，不复制整套大harness）；更新 `README.md`, `docs/需求文档/WebRemoteDesktop-需求文档.md`，新增 `docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md` 和 `reports/evidence/2026-09-07-input-recovery-observability/` 下安全测试摘要。只更新本次输入口径，不改TURN/Terminal/watch历史结论。
+**Files:** 修改 `scripts/mobile_input_interaction_acceptance.py` 及其现有对应测试（若存在），或新增独立 `scripts/input_recovery_acceptance.py`（复用离线fixture，不复制整套大harness）；更新 `README.md`, `docs/需求文档/WebRemoteDesktop-需求文档.md`，新增 [Task 4 最终验收报告](../reports/2026-09-07-input-recovery-observability-acceptance.md) 和 `reports/evidence/2026-09-07-input-recovery-observability/` 下安全测试摘要。只更新本次输入口径，不改TURN/Terminal/watch历史结论。
 
 **Interfaces:** 消费全部生产模块和body恢复UI；报告记录基线SHA、分支HEAD、测试命令/结果/证据路径，区分测试级别。新脚本若有则支持 `--out PATH --browser chromium`，不读凭据、不访问网络/现场origin，不生成真实键值截图。
 
