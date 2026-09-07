@@ -82,3 +82,43 @@ def permission_send_data_echo(host: str, port: int, username: str, password: str
     except OSError as exc: raise RuntimeError('TURN relay echo timed out') from exc
     finally:
       if own: sock.close()
+
+
+def channel_media_binding_echo(host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, rtp_ssrc: int, timeout: float = 2.0) -> dict[str, Any]:
+    """Prove one real coturn allocation, ChannelBind and inbound RTP payload.
+
+    The returned tuple is observer evidence, never a browser self-report: C is
+    the TURN client socket, S is recvfrom()'s TURN endpoint, R comes from the
+    authenticated Allocate response, and H/channel originate in the successful
+    CreatePermission/ChannelBind exchange.
+    """
+    if not isinstance(rtp_ssrc, int) or not 0 <= rtp_ssrc <= 0xffffffff: raise ValueError("RTP SSRC is required")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(timeout)
+        tx = os.urandom(12); sock.sendto(_message(0x0003, tx, _attr(0x0019, b"\x11\0\0\0")), (host, port)); raw, _ = sock.recvfrom(4096); kind, got, attrs = _parse(raw)
+        if kind != 0x0113 or got != tx or 0x0014 not in attrs or 0x0015 not in attrs: raise RuntimeError("TURN allocation challenge unavailable")
+        realm, nonce = attrs[0x0014], attrs[0x0015]; tx = os.urandom(12)
+        sock.sendto(_authenticated(0x0003, tx, username, password, realm, nonce, _attr(0x0019, b"\x11\0\0\0")), (host, port)); raw, _ = sock.recvfrom(4096); kind, got, attrs = _parse(raw)
+        if kind != 0x0103 or got != tx or 0x0016 not in attrs: raise RuntimeError("TURN allocation unavailable")
+        relay_host, relay_port = _xor_decode(attrs[0x0016], tx)
+        peer = _xor_peer(peer_host, peer_port, tx); tx = os.urandom(12)
+        sock.sendto(_authenticated(0x0008, tx, username, password, realm, nonce, _attr(0x0012, peer)), (host, port)); raw, _ = sock.recvfrom(4096); kind, got, _ = _parse(raw)
+        if kind != 0x0108 or got != tx: raise RuntimeError("TURN CreatePermission failed")
+        channel = 0x4001; tx = os.urandom(12)
+        bind = _attr(0x000C, struct.pack("!H", channel) + b"\0\0") + _attr(0x0012, _xor_peer(peer_host, peer_port, tx))
+        sock.sendto(_authenticated(0x0009, tx, username, password, realm, nonce, bind), (host, port)); raw, _ = sock.recvfrom(4096); kind, got, _ = _parse(raw)
+        if kind != 0x0109 or got != tx: raise RuntimeError("TURN ChannelBind failed")
+        rtp = bytes([0x80, 96, 0, 1, 0, 0, 0, 1]) + struct.pack("!I", rtp_ssrc) + os.urandom(12)
+        sock.sendto(struct.pack("!HH", channel, len(rtp)) + rtp + b"\0" * ((-len(rtp)) % 4), (host, port))
+        raw, server = sock.recvfrom(4096)
+        if len(raw) < 16 or struct.unpack("!H", raw[:2])[0] != channel or struct.unpack("!H", raw[2:4])[0] != len(rtp) or raw[4:4 + len(rtp)] != rtp:
+            raise RuntimeError("TURN ChannelData media echo mismatch")
+        client_host, client_port = sock.getsockname()[:2]
+        return {"outerEgress": {"protocol": "udp", "source": str(server[0]), "sourcePort": int(server[1]), "destination": str(client_host), "destinationPort": int(client_port)},
+                "allocationRelay": {"address": relay_host, "port": relay_port}, "peer": {"address": peer_host, "port": peer_port},
+                "channelNumber": channel, "encapsulation": "channel-data", "rtpSsrc": rtp_ssrc, "payloadType": 96}
+    except OSError as exc:
+        raise RuntimeError("TURN ChannelData media binding timed out") from exc
+    finally:
+        sock.close()

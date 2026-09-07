@@ -1,6 +1,7 @@
 from __future__ import annotations
 import importlib.util, hashlib, hmac
 from pathlib import Path
+import pytest
 spec=importlib.util.spec_from_file_location('p',Path(__file__).with_name('turn_udp_probe.py')); p=importlib.util.module_from_spec(spec); assert spec.loader; spec.loader.exec_module(p)
 class Sock:
  def __init__(self): self.sent=[]; self.n=0
@@ -35,3 +36,10 @@ def test_relay_echo_requires_permission_transport_and_exact_nonce():
  try:p.relay_echo_probe('127.0.0.1',3478,'u','p','172.31.0.9',59000,udp_socket=Bad())
  except RuntimeError:pass
  else:assert False
+
+
+def test_channel_media_binding_requires_channel_data_not_a_plain_turn_pair(monkeypatch):
+    # Contract gate: the real-coturn integration test below exercises this
+    # function; a relay candidate pair alone cannot manufacture its evidence.
+    with pytest.raises(ValueError, match="SSRC"):
+        p.channel_media_binding_echo("127.0.0.1", 3478, "u", "p", "127.0.0.2", 9, rtp_ssrc=-1)

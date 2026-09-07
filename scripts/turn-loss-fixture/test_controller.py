@@ -827,6 +827,9 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
         host, port = prepared["turnEndpoint"].rsplit(":", 1)
         credentials = controller.load_fixture_credentials(tmp_path / "runtime" / raw["credentialsFile"], raw["realm"])
         assert module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)["peer"].endswith(":59000")
+        binding = module.channel_media_binding_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, rtp_ssrc=0x10203040, timeout=3)
+        assert binding["encapsulation"] == "channel-data" and binding["rtpSsrc"] == 0x10203040
+        assert binding["outerEgress"]["destinationPort"] > 0 and binding["allocationRelay"]["port"] >= 51000
     finally:
         subprocess.run([*command, "down", "-v"], text=True, capture_output=True, check=False)
 
