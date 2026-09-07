@@ -93,6 +93,8 @@ def serialize_codec_creation_record(record: CodecCreationRecord) -> dict[str, An
         "configuredFps": record.configured_fps,
         "configuredBitrateBps": record.configured_bitrate_bps,
         "configuredAverageBitrateBps": record.configured_bitrate_bps,
+        "configuredRcMaxRateBps": record.configured_rc_max_rate_bps,
+        "configuredRcBufferSizeBits": record.configured_rc_buffer_size_bits,
         "submittedVbvMaxrateKbps": submitted_value("vbv-maxrate"),
         "submittedVbvBufsizeKbits": submitted_value("vbv-bufsize"),
         "submittedVbvInit": submitted_value("vbv-init"),
@@ -371,6 +373,7 @@ def _scenario_run(
             vbv_maxrate_bps=getattr(config, "vbv_maxrate_by_resolution", {}).get(resolution_key),
             vbv_bufsize_kbits=getattr(config, "vbv_bufsize_kbits_by_resolution", {}).get(resolution_key),
             vbv_init=getattr(config, "vbv_init", 0.4),
+            force_idr_option=getattr(config, "force_idr_option", False),
         )
         encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario_id)
         decoder = av.CodecContext.create("h264", "r")

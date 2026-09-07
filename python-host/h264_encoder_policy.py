@@ -50,6 +50,7 @@ class H264SessionPolicy:
     vbv_maxrate_bps: int | None = None
     vbv_bufsize_kbits: int | None = None
     vbv_init: float = 0.4
+    force_idr_option: bool = False
 
 
 @dataclass(frozen=True)

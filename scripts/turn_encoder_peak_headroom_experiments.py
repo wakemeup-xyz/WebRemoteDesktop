@@ -28,7 +28,7 @@ def _x264_params(*, maxrate_bps: int, bufsize_kbits: int) -> str:
         "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
         "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
         "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
-        f"forced-idr=1:vbv-maxrate={maxrate_bps // 1000}:vbv-bufsize={bufsize_kbits}:"
+        f"vbv-maxrate={maxrate_bps // 1000}:vbv-bufsize={bufsize_kbits}:"
         "vbv-init=1:nal-hrd=none"
     )
 
@@ -44,6 +44,7 @@ class PeakHeadroomConfig:
     vbv_maxrate_by_resolution: Mapping[str, int]
     vbv_bufsize_kbits_by_resolution: Mapping[str, int]
     vbv_init: float
+    force_idr_option: bool
     # Kept only for the shared probe's policy adapter: explicit buffer wins.
     vbv_ms: int
     periodic_idr_frames: int
@@ -54,6 +55,7 @@ class PeakHeadroomConfig:
         return {
             "preset": self.preset,
             "tune": "zerolatency",
+            "forced-idr": "1",
             "x264-params": _x264_params(
                 maxrate_bps=int(self.vbv_maxrate_by_resolution[key]),
                 bufsize_kbits=int(self.vbv_bufsize_kbits_by_resolution[key]),
@@ -71,6 +73,7 @@ class PeakHeadroomConfig:
             "vbvMaxrateByResolution": dict(self.vbv_maxrate_by_resolution),
             "vbvBufsizeKbitsByResolution": dict(self.vbv_bufsize_kbits_by_resolution),
             "vbvInit": self.vbv_init,
+            "forcedIdr": 1,
             "periodicIdrFrames": self.periodic_idr_frames,
             "optionsDigest": self.options_digest,
             "encoderParameterDigest": self.options_digest,
@@ -84,14 +87,14 @@ def build_peak_headroom_candidate() -> PeakHeadroomConfig:
         "vbvMaxrateBps": dict(_MAXRATE), "vbvBufsizeKbits": dict(_BUFSIZE),
         "vbvInit": 1, "periodicIdrFrames": 0,
         "submittedOptionsByResolution": {
-            key: {"preset": "superfast", "tune": "zerolatency", "x264-params": _x264_params(maxrate_bps=_MAXRATE[key], bufsize_kbits=_BUFSIZE[key])}
+            key: {"preset": "superfast", "tune": "zerolatency", "forced-idr": "1", "x264-params": _x264_params(maxrate_bps=_MAXRATE[key], bufsize_kbits=_BUFSIZE[key])}
             for key in sorted(_AVERAGE)
         },
     }
     return PeakHeadroomConfig(
         id="on-demand-peak-headroom-v1", preset="superfast", codec="libx264", profile="Baseline", fps=20,
         bitrate_by_resolution=_AVERAGE, vbv_maxrate_by_resolution=_MAXRATE,
-        vbv_bufsize_kbits_by_resolution=_BUFSIZE, vbv_init=1.0, vbv_ms=1, periodic_idr_frames=0,
+        vbv_bufsize_kbits_by_resolution=_BUFSIZE, vbv_init=1.0, force_idr_option=True, vbv_ms=1, periodic_idr_frames=0,
         options_digest=sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
     )
 
@@ -127,6 +130,8 @@ def _record_errors(scenario: Mapping[str, Any], config: PeakHeadroomConfig, reso
         (str(record.get("submittedVbvMaxrateKbps")) == str(config.vbv_maxrate_by_resolution[f"{resolution[0]}x{resolution[1]}"] // 1000), "recorded maxrate drift"),
         (str(record.get("submittedVbvBufsizeKbits")) == str(config.vbv_bufsize_kbits_by_resolution[f"{resolution[0]}x{resolution[1]}"]), "recorded bufsize drift"),
         (str(record.get("submittedVbvInit")) == "1", "recorded vbv init drift"),
+        (record.get("configuredRcMaxRateBps") is None, "conflicting context maxrate submission"),
+        (record.get("configuredRcBufferSizeBits") is None, "conflicting context bufsize submission"),
     )
     errors.extend(f"{scenario_id}: {message}" for passed, message in checks if not passed)
     if dict(scenario.get("configuredOptions", {})) != expected:
@@ -163,7 +168,10 @@ def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, i
             continue
         if frame.get("idrKind") != kind or frame.get("idrBytes") != frame.get("bytes") or not isinstance(frame.get("bytes"), int) or frame["bytes"] <= 0:
             errors.append(f"{scenario_id}: IDR evidence drift")
-        if kind in {"on-demand", "encoder-safety-net"} or (require_initial_quality and kind == "initial"):
+        if kind == "on-demand":
+            if float(frame.get("psnr", 0)) < 28.0:
+                errors.append(f"{scenario_id}: quality failure")
+        elif kind == "encoder-safety-net" or (require_initial_quality and kind == "initial"):
             if float(frame.get("psnr", 0)) < 28.0 or float(frame.get("changeMAE", math.inf)) > 3.0:
                 errors.append(f"{scenario_id}: quality failure")
     if scenario.get("requestTokens") != [f"{scenario_id}:{index}" for index in requests]:

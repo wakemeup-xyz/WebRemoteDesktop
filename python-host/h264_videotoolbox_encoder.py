@@ -62,6 +62,8 @@ class CodecCreationRecord:
     configured_profile: str
     configured_fps: int
     configured_bitrate_bps: int
+    configured_rc_max_rate_bps: int | None
+    configured_rc_buffer_size_bits: int | None
     generation: int
     reopen_reason: str
 
@@ -94,6 +96,7 @@ def libx264_zerolatency_options(
     vbv_maxrate_bps: int | None = None,
     vbv_bufsize_kbits: int | None = None,
     vbv_init: float = 0.4,
+    force_idr_option: bool = False,
 ) -> dict:
     preset_s = str(preset)
     if preset_s not in LIBX264_ALLOWED_PRESETS:
@@ -112,20 +115,27 @@ def libx264_zerolatency_options(
     if not 0.0 < init <= 1.0:
         raise ValueError("vbv_init must be in (0, 1]")
     init_s = f"{init:g}"
+    forced_idr_param = "" if force_idr_option else "forced-idr=1:"
     gop_s = str(
         int(gop) if int(gop) > 0 else ON_DEMAND_ONLY_KEYINT_FRAMES
     )
-    return {
+    options = {
         "preset": preset_s,
         "tune": "zerolatency",
         "x264-params": (
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
             f"threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
             f"rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
-            f"forced-idr=1:vbv-maxrate={maxrate_kbps}:vbv-bufsize={bufsize}:"
+            f"{forced_idr_param}vbv-maxrate={maxrate_kbps}:vbv-bufsize={bufsize}:"
             f"vbv-init={init_s}:nal-hrd=none"
         ),
     }
+    if force_idr_option:
+        # `forced-idr` is an FFmpeg libx264 AVOption, not an x264-params key.
+        # Keep legacy submissions byte-for-byte stable; only the isolated
+        # candidate uses this accepted option channel.
+        options["forced-idr"] = "1"
+    return options
 
 
 def _nal_is_idr(nal: bytes) -> bool:
@@ -799,6 +809,7 @@ class H264VideoToolboxEncoder(Encoder):
                 vbv_maxrate_bps=self._policy.vbv_maxrate_bps,
                 vbv_bufsize_kbits=self._policy.vbv_bufsize_kbits,
                 vbv_init=self._policy.vbv_init,
+                force_idr_option=self._policy.force_idr_option,
             )
         reopen_reason = self._consume_pending_codec_reopen_reason()
 
@@ -814,11 +825,20 @@ class H264VideoToolboxEncoder(Encoder):
         codec.width = frame.width
         codec.height = frame.height
         codec.bit_rate = bitrate
-        try:
-            codec.rc_max_rate = bitrate
-            codec.rc_buffer_size = max(120_000, bitrate * self._policy.vbv_buffer_ms // 1000)
-        except Exception:
-            pass
+        configured_rc_max_rate = None
+        configured_rc_buffer_size = None
+        if self._policy.vbv_maxrate_bps is None and self._policy.vbv_bufsize_kbits is None:
+            # Preserve the legacy context submission exactly.  The isolated
+            # peak-headroom candidate leaves these unset so x264 receives one
+            # unambiguous rate-control authority through its accepted options.
+            try:
+                configured_rc_max_rate = bitrate
+                configured_rc_buffer_size = max(120_000, bitrate * self._policy.vbv_buffer_ms // 1000)
+                codec.rc_max_rate = configured_rc_max_rate
+                codec.rc_buffer_size = configured_rc_buffer_size
+            except Exception:
+                configured_rc_max_rate = None
+                configured_rc_buffer_size = None
         codec.pix_fmt = "yuv420p"
         frame_rate = max(1, min(int(self._policy.target_fps), MAX_FRAME_RATE))
         codec.framerate = fractions.Fraction(frame_rate, 1)
@@ -854,6 +874,8 @@ class H264VideoToolboxEncoder(Encoder):
                 configured_profile=str(codec.profile),
                 configured_fps=frame_rate,
                 configured_bitrate_bps=int(codec.bit_rate),
+                configured_rc_max_rate_bps=configured_rc_max_rate,
+                configured_rc_buffer_size_bits=configured_rc_buffer_size,
                 generation=int(self._policy.generation),
                 reopen_reason=reopen_reason,
             )

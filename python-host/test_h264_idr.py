@@ -86,16 +86,18 @@ def test_libx264_peak_headroom_overrides_submit_independent_rate_buffer_and_init
         vbv_maxrate_bps=4_800_000,
         vbv_bufsize_kbits=1_000,
         vbv_init=1.0,
+        force_idr_option=True,
     )
 
     assert options == {
         "preset": "superfast",
         "tune": "zerolatency",
+        "forced-idr": "1",
         "x264-params": (
             "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
             "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
             "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
-            "forced-idr=1:vbv-maxrate=4800:vbv-bufsize=1000:"
+            "vbv-maxrate=4800:vbv-bufsize=1000:"
             "vbv-init=1:nal-hrd=none"
         ),
     }
@@ -517,6 +519,38 @@ def test_real_codec_creation_submits_policy_preset_and_preserves_frozen_legacy_o
     assert record.reopen_reason == "initial"
     with pytest.raises(TypeError):
         record.submitted_codec_options["preset"] = "ultrafast"
+
+
+def test_real_peak_headroom_codec_uses_ffmpeg_forced_idr_and_aligned_rc_context():
+    """The candidate must submit its forced-IDR and VBV caps through accepted fields."""
+    from dataclasses import replace
+
+    import av
+    import numpy as np
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    legacy = resolve_h264_policy(
+        MediaSessionIntent("peak-headroom", 1, "relay", 1152, 720, 20, 0),
+        "relay-legacy-v1",
+    )
+    policy = replace(
+        legacy, periodic_idr_frames=0, target_bitrate_bps=3_200_000,
+        max_bitrate_bps=4_800_000, preset="superfast", vbv_maxrate_bps=4_800_000,
+        vbv_bufsize_kbits=1_000, vbv_init=1.0, force_idr_option=True,
+    )
+    frame = av.VideoFrame.from_ndarray(np.zeros((720, 1152, 4), dtype=np.uint8), format="bgra")
+    encoder = H264VideoToolboxEncoder(policy=policy)
+    nals = list(encoder._encode_frame(frame, True))
+    codec = encoder.codec
+    record = encoder.codec_creation_records[0]
+
+    assert nals
+    assert any((nal[0] & 0x1F) == 5 for nal in nals if nal)
+    assert dict(record.submitted_codec_options)["forced-idr"] == "1"
+    assert "forced-idr=" not in dict(record.submitted_codec_options)["x264-params"]
+    assert record.configured_bitrate_bps == 3_200_000
+    assert record.configured_rc_max_rate_bps is None
+    assert record.configured_rc_buffer_size_bits is None
 
 
 def test_real_codec_creation_rejects_unknown_preset_before_opening_codec(monkeypatch):
