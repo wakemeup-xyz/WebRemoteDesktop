@@ -50,3 +50,11 @@ def test_receiver_capability_rejects_a_wrong_authority_scope():
     issuer = evidence.ReceiverCapabilityIssuer(b"a" * 32, now_ns=lambda: 100)
     capability = issuer.issue(run_id="run", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", ttl_ns=50)
     assert not issuer.consume(capability, run_id="other", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", now_ns=125)
+
+
+def test_gateway_counter_store_persists_only_header_counts_for_one_event(tmp_path):
+    evidence = _module()
+    store = evidence.GatewayCounterStore(tmp_path / "counters.json")
+    store.record("event-a", eligible=True, dropped=False, sequence=1)
+    store.record("event-a", eligible=True, dropped=True, sequence=2)
+    assert store.count("event-a") == {"eligibleCount": 2, "droppedCount": 1, "forwardedSequences": [1], "droppedSequences": [2]}

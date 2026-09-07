@@ -5,8 +5,10 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
+from pathlib import Path
 from typing import Callable
 
 
@@ -53,6 +55,69 @@ class GatewayLossCounter:
                 "deadlineMonotonicNs": self.deadline_ns, "deadlineExpired": self.deadline_expired,
                 "eligibleCount": self.eligible_count, "droppedCount": self.dropped_count,
                 "forwardedSequences": list(self.forwarded_sequences), "droppedSequences": list(self.dropped_sequences)}
+
+
+class GatewayCounterStore:
+    """Small atomic state bridge from the inline gateway to the controller.
+
+    It deliberately persists only packet headers that the causal verifier needs:
+    event-local counters and RTP sequence numbers.  RTP payload bytes never
+    cross this boundary.
+    """
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+
+    @staticmethod
+    def _empty() -> dict:
+        return {"events": {}}
+
+    def _read(self) -> dict:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return self._empty()
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("gateway counter state is unreadable") from exc
+        if not isinstance(raw, dict) or set(raw) != {"events"} or not isinstance(raw["events"], dict):
+            raise RuntimeError("gateway counter state has invalid schema")
+        return raw
+
+    def _write(self, raw: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(raw, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        temporary.chmod(0o600)
+        os.replace(temporary, self.path)
+        self.path.chmod(0o600)
+
+    def record(self, event_id: str, *, eligible: bool, dropped: bool, sequence: int) -> None:
+        if not isinstance(event_id, str) or not event_id or len(event_id) > 256:
+            raise ValueError("gateway event id is invalid")
+        if not isinstance(eligible, bool) or not isinstance(dropped, bool) or (dropped and not eligible):
+            raise ValueError("gateway counter outcome is invalid")
+        if not isinstance(sequence, int) or not 0 <= sequence <= 65535:
+            raise ValueError("gateway RTP sequence is invalid")
+        raw = self._read()
+        event = raw["events"].setdefault(event_id, {"eligibleCount": 0, "droppedCount": 0,
+                                                     "forwardedSequences": [], "droppedSequences": []})
+        if set(event) != {"eligibleCount", "droppedCount", "forwardedSequences", "droppedSequences"}:
+            raise RuntimeError("gateway counter event has invalid schema")
+        if eligible:
+            event["eligibleCount"] += 1
+            event["droppedSequences" if dropped else "forwardedSequences"].append(sequence)
+            if dropped:
+                event["droppedCount"] += 1
+        self._write(raw)
+
+    def count(self, event_id: str) -> dict:
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("gateway event id is invalid")
+        event = self._read()["events"].get(event_id)
+        if event is None:
+            return {"eligibleCount": 0, "droppedCount": 0, "forwardedSequences": [], "droppedSequences": []}
+        if not isinstance(event, dict) or set(event) != {"eligibleCount", "droppedCount", "forwardedSequences", "droppedSequences"}:
+            raise RuntimeError("gateway counter event has invalid schema")
+        return {key: (list(value) if isinstance(value, list) else value) for key, value in event.items()}
 
 
 class ReceiverCapabilityIssuer:
