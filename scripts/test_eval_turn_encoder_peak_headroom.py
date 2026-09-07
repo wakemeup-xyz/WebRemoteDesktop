@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import importlib.util
 import json
 import os
@@ -213,6 +214,28 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler._sample_once(phase="RUNNING")
         self.assertFalse(sampler.healthy.is_set())
         self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
+
+    def test_unparseable_ps_command_line_fails_sampling_closed(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        ps_output = "31 1 42 99.0 /usr/local/bin/node unmatched'quote\n"
+        sampler = MODULE._PeakAmbientSampler()
+        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertFalse(sampler.healthy.is_set())
+        self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
+        self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_parseable_ps_command_lines_are_retained(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n20 1 2 1.0 /usr/bin/python3 -m backend.scripts.sync_worker\n"
+        sampler = MODULE._PeakAmbientSampler()
+        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            snapshot = sampler._read_snapshot()
+        self.assertEqual([process["command"] for process in snapshot["processes"]], ["/opt/mysql/mysqld", "/usr/bin/python3"])
+        self.assertEqual(snapshot["viewerStatus"], {"viewerCount": 0, "relayViewerCount": 0})
 
     def test_forbidden_process_evidence_is_sanitized(self):
         snapshot = self._snapshot()

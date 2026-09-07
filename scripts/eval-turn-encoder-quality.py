@@ -108,20 +108,22 @@ class _PeakAmbientSampler:
         )
         processes = []
         for row in completed.stdout.splitlines():
+            if not row.strip():
+                continue
             parts = row.split(None, 4)
             if len(parts) != 5:
-                continue
+                raise RuntimeError("ps snapshot row is malformed")
             pid, ppid, rss, cpu, argv = parts
             try:
                 argv_tokens = shlex.split(argv)
                 if not argv_tokens:
-                    continue
+                    raise RuntimeError("ps snapshot command is empty")
                 processes.append({
                     "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
                     "command": argv_tokens[0], "argv": argv,
                 })
-            except ValueError:
-                continue
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("ps snapshot row is unparseable") from exc
         with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
             status = json.load(response)
         return {
