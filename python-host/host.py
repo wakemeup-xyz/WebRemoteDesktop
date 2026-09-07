@@ -2628,6 +2628,19 @@ class WebRemoteHost:
                                 channel.send(json.dumps(resp))
                                 return
 
+                            if data.get("type") == "loss_lab_trace_begin":
+                                epoch = data.get("epoch")
+                                registry = self._frame_trace_registry
+                                if not self._lab_loss_trace_enabled or registry is None:
+                                    return
+                                try:
+                                    barrier = registry.begin_loss_lab_trace(epoch)
+                                except ValueError:
+                                    return
+                                channel.send(json.dumps({"type": "loss_lab_trace_flush_ack", "schemaVersion": 1,
+                                                         **barrier}))
+                                return
+
                             bound = self._prepare_bound_datachannel_input(binding, data, channel=channel)
                             if bound is None:
                                 logger.warning("Ignoring unbound or stale DataChannel input")

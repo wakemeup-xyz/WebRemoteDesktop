@@ -700,7 +700,9 @@ class RawLossTimelineCollector:
             candidate = {**clear, "feedbackObservedNs": feedback_at, "idrObservedNs": idr_at, "paintObservedNs": paint_at}
             if not any(row.get("eventHandle") == clear["eventHandle"] for row in self.recovery): self.recovery.append(candidate)
     def ingest_viewer_tap(self, raw: Mapping[str, Any] | None, *, runner_observed_ns: int | None = None) -> None:
-        if not isinstance(raw, Mapping) or raw.get("droppedHostEvents") != 0: raise ValueError("viewer loss tap is missing or dropped raw Host events")
+        if (not isinstance(raw, Mapping) or raw.get("droppedHostEvents") != 0
+                or raw.get("staleHostEvents") != 0):
+            raise ValueError("viewer loss tap is missing or dropped raw Host events")
         if runner_observed_ns is None: runner_observed_ns = time.monotonic_ns()
         if not isinstance(runner_observed_ns, int): raise ValueError("runner observation clock is required")
         stats = raw.get("stats")

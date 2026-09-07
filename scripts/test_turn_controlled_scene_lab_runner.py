@@ -312,7 +312,7 @@ def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api(
                              {"type": "encoder_idr", "monotonicNs": 4, "frameKey": key, "requestToken": "token"},
                              {"type": "rtp_send", "monotonicNs": 5, "frameKey": key, "sequence": 1, "rtpTimestamp": 9}],
                     "rvfc": [{**key, "rtpTimestamp": 9, "viewerAcceptedMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
-                    "droppedHostEvents": 0,
+                    "droppedHostEvents": 0, "staleHostEvents": 0,
                     "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"},
                               "inbound": {"packetsReceived": 4, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter); adapter.viewer_page = Page()

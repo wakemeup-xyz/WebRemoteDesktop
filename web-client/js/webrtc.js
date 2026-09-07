@@ -3952,6 +3952,10 @@ const WebRTC = {
           this.acceptFrameTraceBatch(data);
           return;
         }
+        if (data.type === 'loss_lab_trace_flush_ack') {
+          this.acceptLossLabFlushAck(data);
+          return;
+        }
         if (data.type === 'loss_lab_host_trace_batch') {
           this.acceptLossLabHostTraceBatch(data);
           return;
@@ -4892,10 +4896,18 @@ if (this.tunnelLastObjectUrl) {
     // Only an isolated Lab origin may enable detailed packet diagnostics.
     if (!/^http:\/\/(127\.0\.0\.1|\[::1\]):\d+$/.test(String(window?.location?.origin || ''))) return false;
     const epoch = Number(this._lossLabTrace?.tapEpoch || 0) + 1;
-    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, tapEpoch: epoch, sourceSeq: 0,
+    const channel = this.inputChannel;
+    if (!channel || channel.readyState !== 'open') return false;
+    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, staleHostEvents: 0, tapEpoch: epoch, sourceSeq: 0,
       // `sourceWatermark` is the last accepted source sequence before this
       // epoch.  A zero value proves both queues were newly created.
-      flushAck: { epoch, accepted: true, sourceWatermark: 0 } };
+      flushAck: null };
+    try {
+      channel.send(JSON.stringify({ type: 'loss_lab_trace_begin', schemaVersion: 1, epoch }));
+    } catch (_error) {
+      this._lossLabTrace = null;
+      return false;
+    }
     return true;
   },
 
@@ -4932,14 +4944,32 @@ if (this.tunnelLastObjectUrl) {
   acceptLossLabHostTraceBatch(batch) {
     const trace = this._lossLabTrace;
     if (!trace || !batch || batch.type !== 'loss_lab_host_trace_batch' || batch.schemaVersion !== 1
+        || !Number.isSafeInteger(batch.tapEpoch) || batch.tapEpoch !== trace.tapEpoch
         || !Array.isArray(batch.events) || batch.events.length > 64
         || !Number.isSafeInteger(batch.droppedEventCount) || batch.droppedEventCount < 0) return false;
     trace.droppedHostEvents += batch.droppedEventCount;
     for (const event of batch.events) {
       if (!event || typeof event !== 'object' || !['rtcp_feedback', 'encoder_idr', 'rtp_send', 'pc_state'].includes(event.type)
+          || event.tapEpoch !== trace.tapEpoch || !Number.isSafeInteger(event.sourceSeq)
           || !Number.isSafeInteger(event.monotonicNs) || event.monotonicNs < 0) return false;
+      if (!trace.flushAck || event.sourceSeq <= trace.flushAck.sourceWatermark) {
+        trace.staleHostEvents += 1;
+        continue;
+      }
       this._appendLossLabTrace('host', event);
     }
+    return true;
+  },
+
+  acceptLossLabFlushAck(ack) {
+    const trace = this._lossLabTrace;
+    if (!trace || !ack || ack.type !== 'loss_lab_trace_flush_ack' || ack.schemaVersion !== 1
+        || ack.epoch !== trace.tapEpoch || !Number.isSafeInteger(ack.sourceWatermark)
+        || ack.sourceWatermark < 0) {
+      if (trace) trace.staleHostEvents += 1;
+      return false;
+    }
+    trace.flushAck = { epoch: ack.epoch, accepted: true, sourceWatermark: ack.sourceWatermark };
     return true;
   },
 
@@ -4951,7 +4981,8 @@ if (this.tunnelLastObjectUrl) {
     const local = pair ? rows.find((row) => row?.id === pair.localCandidateId && row.type === 'local-candidate') : null;
     const inbound = rows.find((row) => row?.type === 'inbound-rtp' && (row.kind === 'video' || row.mediaType === 'video'));
     if (!pair || !local || local.candidateType !== 'relay' || !inbound) return null;
-    const result = { host: trace.host.splice(0), rvfc: trace.rvfc.splice(0), droppedHostEvents: trace.droppedHostEvents, tapEpoch: trace.tapEpoch, flushAck: trace.flushAck,
+    if (!trace.flushAck) return null;
+    const result = { host: trace.host.splice(0), rvfc: trace.rvfc.splice(0), droppedHostEvents: trace.droppedHostEvents, staleHostEvents: trace.staleHostEvents, tapEpoch: trace.tapEpoch, flushAck: trace.flushAck,
       stats: { pcId: `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}`,
         state: String(this.pc.connectionState || ''), selectedRelay: { address: local.address, port: local.port, protocol: local.protocol },
         inbound: { packetsReceived: Number(inbound.packetsReceived) || 0, packetsLost: Number(inbound.packetsLost) || 0,

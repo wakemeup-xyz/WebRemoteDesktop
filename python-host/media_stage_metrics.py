@@ -98,6 +98,8 @@ class FrameTraceRegistry:
         self._lab_loss_capacity = max(1, min(int(lab_loss_capacity), 2048))
         self._lab_loss_events: deque[dict] = deque()
         self._lab_loss_dropped = 0
+        self._lab_loss_epoch = 0
+        self._lab_loss_source_sequence = 0
         self._traces: dict[tuple[str, int, str], OrderedDict[int, FrameTrace]] = {}
         self._active_generation: OrderedDict[tuple[str, str], tuple[int, int]] = OrderedDict()
         self._wire: dict[tuple[str, int, str, int, int], FrameTrace] = {}
@@ -273,10 +275,23 @@ class FrameTraceRegistry:
     def _append_lab_loss_event(self, event: dict) -> None:
         if not self._lab_loss_trace:
             return
+        self._lab_loss_source_sequence += 1
+        event = {**event, "tapEpoch": self._lab_loss_epoch,
+                 "sourceSeq": self._lab_loss_source_sequence}
         if len(self._lab_loss_events) >= self._lab_loss_capacity:
             self._lab_loss_events.popleft()
             self._lab_loss_dropped += 1
         self._lab_loss_events.append(event)
+
+    def begin_loss_lab_trace(self, epoch: int) -> dict:
+        """Atomically discard old Host taps and acknowledge a new Lab epoch."""
+        if not self._lab_loss_trace or not isinstance(epoch, int) or epoch <= self._lab_loss_epoch:
+            raise ValueError("loss trace epoch is invalid")
+        with self._lock:
+            self._lab_loss_events.clear()
+            self._lab_loss_dropped = 0
+            self._lab_loss_epoch = epoch
+            return {"epoch": epoch, "sourceWatermark": self._lab_loss_source_sequence}
 
     def record_lab_rtcp_feedback(self, kind: str, *, sender: object | None = None) -> None:
         if kind not in {"PLI", "FIR"}:
@@ -313,7 +328,7 @@ class FrameTraceRegistry:
             dropped = self._lab_loss_dropped
             self._lab_loss_dropped = 0
             return {"type": "loss_lab_host_trace_batch", "schemaVersion": 1,
-                    "events": rows, "droppedEventCount": dropped}
+                    "tapEpoch": self._lab_loss_epoch, "events": rows, "droppedEventCount": dropped}
 
     def note_dropped_loss_lab_events(self, count: int) -> None:
         with self._lock:
