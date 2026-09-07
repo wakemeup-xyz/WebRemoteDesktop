@@ -30,6 +30,10 @@ JS_FILES = (
     "chrome-layout.js",
     "ui.js",
 )
+TRACE_JS_FILES = (
+    "input-trace.js",
+    "diagnostic-core.js",
+)
 TERMINAL_JS_FILES = (
     "terminal-session-fsm.js",
     "terminal.js",
@@ -48,6 +52,23 @@ SCENARIO_NAMES = (
     "terminal-lifecycle",
     "fullscreen-native-containment",
     "fullscreen-fallback-focus",
+    "recovery-layout",
+    "retry-button",
+    "trace-observability",
+    "timeout-incident-eligibility",
+    "deferred-incident-eligibility",
+    "blocked-gate-incident",
+    "release-ack-loss",
+    "desktop-draft-entry",
+)
+
+OFFLINE_NETWORK_STATS = {
+    "requests": 0,
+    "sensitivePayloads": 0,
+}
+SENSITIVE_REQUEST_MARKERS = re.compile(
+    r"(?:password|token|secret|authorization|cookie|inputids|leaseid|payload)",
+    re.IGNORECASE,
 )
 
 
@@ -128,6 +149,7 @@ class OfflineFixture:
         safe_bottom: int = 0,
         show_mobile: bool = True,
         include_terminal: bool = False,
+        include_diagnostics: bool = False,
     ) -> None:
         self.page = browser.new_page(
             viewport={"width": width, "height": height},
@@ -137,7 +159,22 @@ class OfflineFixture:
         self.page.set_default_navigation_timeout(2500)
         # This route is intentionally installed before set_content and remains
         # active for the lifetime of the page.
-        self.page.route("**/*", lambda route: route.abort())
+        def abort_offline_request(route: Any) -> None:
+            try:
+                request = route.request
+                OFFLINE_NETWORK_STATS["requests"] += 1
+                request_metadata = f"{request.url}\n{request.post_data or ''}"
+                if SENSITIVE_REQUEST_MARKERS.search(request_metadata):
+                    OFFLINE_NETWORK_STATS["sensitivePayloads"] += 1
+            except Exception:
+                # The request observer is diagnostic-only.  A malformed
+                # request object must never prevent the deny-by-default route
+                # from aborting the request.
+                pass
+            finally:
+                route.abort()
+
+        self.page.route("**/*", abort_offline_request)
         self.page.set_content(strip_external_markup(HTML_PATH.read_text()))
         for css_name in CSS_FILES:
             self.page.add_style_tag(content=source(f"web-client/css/{css_name}"))
@@ -283,7 +320,17 @@ class OfflineFixture:
                 sendInput(payload) { return acceptSend(payload); },
                 canEnableDesktopInput: () => true,
                 syncDesktopInputGate() {},
-                getDesktopInputGateSnapshot: () => ({ active: true }),
+                getDesktopInputGateSnapshot: () => ({
+                  enabled: true,
+                  hasActiveControl: true,
+                  manualDisconnect: false,
+                  mediaState: 'active',
+                  runtimePhase: 'active',
+                  currentConnectionAttemptId: null,
+                  mediaReadyConnectionAttemptId: null,
+                  inputIsActive: true,
+                  blockedReasons: [],
+                }),
                 getDesktopSessionSnapshot: () => ({ canInput: true }),
                 getMediaActivitySnapshot: () => ({ reasons: [] }),
                 setMediaActivityReason() {},
@@ -329,6 +376,9 @@ class OfflineFixture:
                 "offsetTop": offset_top,
             },
         )
+        if include_diagnostics:
+            for js_name in TRACE_JS_FILES:
+                self.page.add_script_tag(content=source(f"web-client/js/{js_name}"))
         for js_name in JS_FILES[:6]:
             self.page.add_script_tag(content=source(f"web-client/js/{js_name}"))
         if include_terminal:
@@ -623,6 +673,8 @@ def scenario_text_transaction(browser: Any) -> dict[str, Any]:
                 compositionEveryFrame: compositionFrames.every(Boolean),
                 nonEmptyEveryFrame: nonEmptyFrames.every(Boolean),
                 finalFocus: document.activeElement?.id === 'mobileTextInput',
+                recoveryNoticeHidden: document.getElementById('inputRecoveryNotice')?.hidden === true,
+                recoveryDraftEntryHidden: document.getElementById('inputRecoveryDraftBtn')?.hidden === true,
               };
             }
             """
@@ -735,6 +787,8 @@ def scenario_text_transaction(browser: Any) -> dict[str, Any]:
             "compositionFocusEveryFrame": composition_probe["focusEveryFrame"] and composition_probe["finalFocus"],
             "compositionEveryFrame": composition_probe["compositionEveryFrame"],
             "compositionNonEmptyEveryFrame": composition_probe["nonEmptyEveryFrame"],
+            "normalCompositionDoesNotShowRecovery": composition_probe["recoveryNoticeHidden"]
+                and composition_probe["recoveryDraftEntryHidden"],
             "compositionNoWireBeforeEnd": after_composition_frames["total"] == before_composition_end["total"],
             "initialDomInputAccepted": first_count == 1,
             "toolbarNavigationAccepted": navigation_count >= 1,
@@ -751,7 +805,9 @@ def scenario_text_transaction(browser: Any) -> dict[str, Any]:
             "resetAcceptedImmediately": reset_probe["resetAccepted"] and reset_probe["keyboardReset"] >= 1,
             "sixteenStepContinuationCancelled": reset_probe["afterResetBatch"] == reset_probe["keyboardBatch"]
                 and after_reset_counts["keyboardBatch"] == reset_probe["keyboardBatch"],
-            "resetCancelsDraft": not after_reset["mobilePending"] and not after_reset["mobileShown"],
+            "resetRetainsDraftUncertainty": after_reset["mobilePending"]
+                and after_reset["mobileUncertain"]
+                and after_reset["mobileShown"],
             "resetDoesNotReemitCancelledText": after_reset_counts["keyboardText"] == reset_probe["keyboardText"],
         }
         counts = {
@@ -1847,6 +1903,718 @@ def scenario_unsupported(browser: Any) -> dict[str, Any]:
             "unsupportedHintVisible": unsupported_state["hintVisible"] and unsupported_state["statusTextPresent"],
         }
         return result("unsupported-viewport-continuity", "PASS" if all(checks.values()) else "FAIL", checks=checks, counts={"acceptedMouseMoves": continued["mouseMove"], "touchWheel": two_after["mouseWheel"] - two_before["mouseWheel"], "retryWrites": retry_count})
+    finally:
+        fixture.close()
+
+
+def scenario_recovery_layout(browser: Any) -> dict[str, Any]:
+    """Exercise blur recovery and fresh input on desktop, phone, and root fullscreen."""
+    viewports = (
+        ("desktop", 1440, 900, False, False),
+        ("phone", 390, 844, True, False),
+        ("tablet-fullscreen", 1024, 768, True, True),
+    )
+    checks: dict[str, bool] = {}
+    fresh_counts = {"mouseDown": 0, "mouseUp": 0, "keyboardKeys": 0}
+    for name, width, height, touch, fullscreen in viewports:
+        fixture = OfflineFixture(
+            browser,
+            width=width,
+            height=height,
+            touch=touch,
+            show_mobile=False,
+            include_diagnostics=True,
+        )
+        page = fixture.page
+        try:
+            page.evaluate(
+                "() => { WebRTC.currentConnectionAttemptId = 'offline-recovery-layout'; }"
+            )
+            fixture.settle()
+            if fullscreen:
+                enter_native_fullscreen(page)
+                fixture.settle()
+
+            point = surface_point(page)
+            page.mouse.click(point["x"], point["y"])
+            page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+            fixture.settle()
+            page.evaluate("() => window.dispatchEvent(new Event('focus'))")
+            waiting = page.evaluate(
+                """
+                () => {
+                  const notice = document.getElementById('inputRecoveryNotice');
+                  const text = document.getElementById('inputRecoveryNoticeText');
+                  const rect = notice?.getBoundingClientRect();
+                  const status = document.getElementById('statusBar');
+                  const docks = document.getElementById('chromeDocks');
+                  const hidden = (element) => {
+                    const style = element ? getComputedStyle(element) : null;
+                    return style?.visibility === 'hidden' && style?.pointerEvents === 'none';
+                  };
+                  const recovery = Input.getEffectiveInputGate().recovery;
+                  return {
+                    waiting: recovery.state === 'waiting',
+                    visible: Boolean(notice && !notice.hidden),
+                    readable: Boolean(text && text.textContent.trim().length > 0),
+                    withinViewport: Boolean(rect && rect.width > 0 && rect.height > 0
+                      && rect.left >= 0 && rect.top >= 0
+                      && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1),
+                    rootFullscreen: document.fullscreenElement === document.documentElement,
+                    statusHidden: hidden(status),
+                    docksHidden: hidden(docks),
+                  };
+                }
+                """
+            )
+            fixture.settle()
+            before_new = wire_counts(page)
+            point = surface_point(page)
+            page.mouse.click(point["x"], point["y"])
+            fixture.settle()
+            page.keyboard.press("a")
+            fixture.settle()
+            after_new = wire_counts(page)
+            recovered = page.evaluate(
+                """
+                () => ({
+                  allowed: Input.getEffectiveInputGate().allowed,
+                  state: Input.getEffectiveInputGate().recovery.state,
+                  noticeVisible: !document.getElementById('inputRecoveryNotice').hidden,
+                })
+                """
+            )
+            prefix = f"{name}-"
+            checks.update(
+                {
+                    f"{prefix}recoveryWaitsForOwnedResets": waiting["waiting"],
+                    f"{prefix}recoveryNoticeVisible": waiting["visible"],
+                    f"{prefix}recoveryNoticeReadable": waiting["readable"],
+                    f"{prefix}recoveryNoticeWithinViewport": waiting["withinViewport"],
+                    f"{prefix}freshMouseDownAccepted": after_new["mouseDown"] - before_new["mouseDown"] == 1,
+                    f"{prefix}freshMouseUpAccepted": after_new["mouseUp"] - before_new["mouseUp"] == 1,
+                    f"{prefix}freshKeyboardDownUpAccepted": after_new["keyboardKey"] - before_new["keyboardKey"] == 2,
+                    f"{prefix}recoveryClearsAfterFreshInput": recovered == {
+                        "allowed": True,
+                        "state": "recovered",
+                        "noticeVisible": False,
+                    },
+                    f"{prefix}rootFullscreenTarget": not fullscreen or waiting["rootFullscreen"],
+                    f"{prefix}statusChromeHiddenInRootFullscreen": not fullscreen or waiting["statusHidden"],
+                    f"{prefix}docksHiddenInRootFullscreen": not fullscreen or waiting["docksHidden"],
+                }
+            )
+            fresh_counts["mouseDown"] += after_new["mouseDown"] - before_new["mouseDown"]
+            fresh_counts["mouseUp"] += after_new["mouseUp"] - before_new["mouseUp"]
+            fresh_counts["keyboardKeys"] += after_new["keyboardKey"] - before_new["keyboardKey"]
+        finally:
+            fixture.close()
+    return result(
+        "recovery-layout",
+        "PASS" if all(checks.values()) else "FAIL",
+        checks=checks,
+        counts={"viewports": len(viewports), **fresh_counts},
+        layout={"desktop": "1440x900", "phone": "390x844", "rootFullscreen": "1024x768"},
+    )
+
+
+def scenario_retry_button(browser: Any) -> dict[str, Any]:
+    """Use the real fixed retry button after a bounded failed recovery cycle."""
+    fixture = OfflineFixture(
+        browser,
+        width=390,
+        height=844,
+        touch=True,
+        show_mobile=False,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-retry-button'; }"
+        )
+        fixture.settle()
+        point = surface_point(page)
+        page.mouse.click(point["x"], point["y"])
+        page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        fixture.settle()
+        page.evaluate("() => window.dispatchEvent(new Event('focus'))")
+        # Only keyboard reset is acknowledged.  The real recovery deadline
+        # must expose a failed cycle and the locator action must send both
+        # owned resets exactly once.
+        page.evaluate(
+            """
+            () => {
+              for (const payload of __offlineWire.slice(__offlineAckIndex)
+                .filter((item) => item.type === 'keyboard')) {
+                Input.acceptKeyboardAck({
+                  schemaVersion: 2,
+                  inputType: 'keyboard',
+                  inputIds: payload.inputIds,
+                  leaseEpoch: payload.leaseEpoch,
+                  appliedSeq: payload.seq,
+                  status: 'applied',
+                });
+              }
+            }
+            """
+        )
+        page.wait_for_timeout(3200)
+        before_retry = wire_counts(page)
+        failed_state = page.evaluate("() => Input.getEffectiveInputGate().recovery.state")
+        page.locator("#inputRecoveryRetryBtn").click()
+        after_retry_click = wire_counts(page)
+        waiting_state = page.evaluate("() => Input.getEffectiveInputGate().recovery.state")
+        fixture.settle()
+        before_new = wire_counts(page)
+        point = surface_point(page)
+        page.mouse.click(point["x"], point["y"])
+        fixture.settle()
+        page.keyboard.press("a")
+        fixture.settle()
+        after_new = wire_counts(page)
+        checks = {
+            "failedCycleIsVisible": failed_state == "failed",
+            "retryReturnsToWaiting": waiting_state == "waiting",
+            "retryEmitsExactlyTwoResets": after_retry_click["total"] - before_retry["total"] == 2,
+            "retryEmitsOneMouseAndKeyboardReset": (
+                after_retry_click["mouseReset"] - before_retry["mouseReset"] == 1
+                and after_retry_click["keyboardReset"] - before_retry["keyboardReset"] == 1
+            ),
+            "retryDoesNotReplayOrdinaryInput": after_retry_click["mouseDown"] == before_retry["mouseDown"]
+                and after_retry_click["mouseUp"] == before_retry["mouseUp"]
+                and after_retry_click["keyboardKey"] == before_retry["keyboardKey"],
+            "freshMouseDownAccepted": after_new["mouseDown"] - before_new["mouseDown"] == 1,
+            "freshMouseUpAccepted": after_new["mouseUp"] - before_new["mouseUp"] == 1,
+            "freshKeyboardDownUpAccepted": after_new["keyboardKey"] - before_new["keyboardKey"] == 2,
+            "freshGateAllowed": page.evaluate("() => Input.getEffectiveInputGate().allowed") is True,
+        }
+        return result(
+            "retry-button",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "retryWrites": after_retry_click["total"] - before_retry["total"],
+                "freshMouseDown": after_new["mouseDown"] - before_new["mouseDown"],
+                "freshMouseUp": after_new["mouseUp"] - before_new["mouseUp"],
+                "freshKeyboardKeys": after_new["keyboardKey"] - before_new["keyboardKey"],
+            },
+        )
+    finally:
+        fixture.close()
+
+
+def scenario_trace_observability(browser: Any) -> dict[str, Any]:
+    """Capture actual DOM sends and ACKs through the production trace core."""
+    fixture = OfflineFixture(
+        browser,
+        width=1024,
+        height=768,
+        touch=False,
+        show_mobile=False,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-trace-observability'; }"
+        )
+        fixture.settle()
+        point = surface_point(page)
+        page.mouse.click(point["x"], point["y"])
+        fixture.settle()
+        page.keyboard.press("a")
+        fixture.settle()
+        trace = page.evaluate(
+            """
+            () => {
+              const snapshot = Diagnostic.getInputTraceSnapshot();
+              const accepted = snapshot.events.filter((event) => (
+                event.stage === 'transport-send' && event.accepted && event.action !== 'reset'
+              ));
+              const acks = snapshot.events.filter((event) => event.stage === 'ack' && event.accepted);
+              const domSends = accepted.filter((event) => Number.isSafeInteger(event.eventId));
+              const safeEvents = snapshot.events.every((event) => (
+                !['code', 'key', 'keyCode', 'text', 'payload', 'inputIds', 'leaseId']
+                  .some((field) => Object.prototype.hasOwnProperty.call(event, field))
+              ));
+              const safeHashes = accepted.every((event) => (
+                !Object.prototype.hasOwnProperty.call(event, 'inputIdHash')
+                  || event.inputIdHash === null
+                  || /^[0-9a-f]{16}$/.test(event.inputIdHash)
+              ));
+              return {
+                traceLoaded: typeof InputTrace?.create === 'function',
+                exactLiveInput: Diagnostic._currentInput() === Input,
+                schemaVersion: snapshot.schemaVersion,
+                hasPointerDom: snapshot.events.some((event) => (
+                  event.stage === 'dom-received' && event.inputType === 'pointer'
+                )),
+                hasKeyboardDom: snapshot.events.some((event) => (
+                  event.stage === 'dom-received' && event.inputType === 'keyboard'
+                )),
+                acceptedPointerSends: accepted.filter((event) => event.inputType === 'pointer').length,
+                acceptedKeyboardSends: accepted.filter((event) => (
+                  event.inputType === 'keyboard' && event.action === 'key'
+                )).length,
+                allDomSendsHaveAssociatedAck: domSends.length === 4
+                  && domSends.every((send) => acks.some((ack) => ack.eventId === send.eventId)),
+                safeEvents,
+                safeHashes,
+                pendingAckCount: snapshot.counters.pendingAckCount,
+                pendingHashCount: snapshot.counters.pendingHashCount,
+                traceEventCount: snapshot.events.length,
+              };
+            }
+            """
+        )
+        checks = {
+            "traceCoreLoadedOnceThroughFixture": trace["traceLoaded"],
+            "traceUsesRealInputBinding": trace["exactLiveInput"],
+            "traceSchemaIsCurrent": trace["schemaVersion"] == 1,
+            "pointerDomObserved": trace["hasPointerDom"],
+            "keyboardDomObserved": trace["hasKeyboardDom"],
+            "twoPointerWritesObserved": trace["acceptedPointerSends"] == 2,
+            "twoKeyboardWritesObserved": trace["acceptedKeyboardSends"] == 2,
+            "everyDomWriteHasAck": trace["allDomSendsHaveAssociatedAck"],
+            "traceEventsAreAllowlisted": trace["safeEvents"],
+            "traceHashesAreNullOrBounded": trace["safeHashes"],
+            "traceHasNoPendingAcks": trace["pendingAckCount"] == 0,
+            "traceHashWorkIsSettled": trace["pendingHashCount"] == 0,
+        }
+        return result(
+            "trace-observability",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "acceptedPointerSends": trace["acceptedPointerSends"],
+                "acceptedKeyboardSends": trace["acceptedKeyboardSends"],
+                "traceEvents": trace["traceEventCount"],
+            },
+        )
+    finally:
+        fixture.close()
+
+
+def scenario_timeout_incident_eligibility(browser: Any) -> dict[str, Any]:
+    """Ensure real physical, touch, and IME writes leave timeout evidence."""
+    outcomes: list[dict[str, int | bool]] = []
+    expected = {
+        "physical": {"writes": 2, "ackTimeouts": 2},
+        "touch": {"writes": 2, "ackTimeouts": 2},
+        "ime": {"writes": 1, "ackTimeouts": 1},
+    }
+    for kind in ("physical", "touch", "ime"):
+        fixture = OfflineFixture(
+            browser,
+            touch=kind != "physical",
+            show_mobile=kind == "ime",
+            include_diagnostics=True,
+        )
+        page = fixture.page
+        try:
+            page.evaluate(
+                "() => { WebRTC.currentConnectionAttemptId = 'offline-timeout-incident'; }"
+            )
+            fixture.settle()
+            if kind == "ime":
+                dispatch_composition_mobile_input(page, "offline-timeout")
+                page.locator("#mobileTextInput").dispatch_event("compositionend", {"bubbles": True})
+            elif kind == "touch":
+                point = surface_point(page)
+                page.touchscreen.tap(point["x"], point["y"])
+            else:
+                page.locator("#remoteVideo").focus()
+                page.keyboard.press("a")
+            page.wait_for_timeout(3200)
+            outcome = page.evaluate(
+                """
+                () => {
+                  const trace = Diagnostic.getInputTraceSnapshot();
+                  const writes = trace.events.filter((event) => (
+                    event.stage === 'transport-send' && event.accepted && event.action !== 'reset'
+                  ));
+                  return {
+                    writes: writes.length,
+                    ackTimeouts: trace.counters.ackTimeoutCount,
+                    incidents: Diagnostic._pendingInputIncidents.length,
+                    allWritesHaveEventId: writes.every((event) => Number.isSafeInteger(event.eventId)),
+                    hasTimeoutIncident: Diagnostic._pendingInputIncidents.some((item) => (
+                      item.reason === 'input-ack-timeout'
+                    )),
+                  };
+                }
+                """
+            )
+            outcomes.append(outcome)
+        finally:
+            fixture.close()
+    checks = {
+        **{
+            f"{kind}HasExactWriteTimeoutCounts": (
+                outcome["writes"] == expected[kind]["writes"]
+                and outcome["ackTimeouts"] == expected[kind]["ackTimeouts"]
+            )
+            for kind, outcome in zip(("physical", "touch", "ime"), outcomes)
+        },
+        **{
+            f"{kind}DelayedWritesHaveOriginatingEventId": outcome["allWritesHaveEventId"]
+            for kind, outcome in zip(("physical", "touch", "ime"), outcomes)
+        },
+        **{
+            f"{kind}TimeoutLeavesOneIncident": outcome["incidents"] == 1
+            and outcome["hasTimeoutIncident"]
+            for kind, outcome in zip(("physical", "touch", "ime"), outcomes)
+        },
+    }
+    return result(
+        "timeout-incident-eligibility",
+        "PASS" if len(outcomes) == 3 and all(checks.values()) else "FAIL",
+        checks=checks,
+        counts={
+            "kinds": len(outcomes),
+            "writes": sum(int(outcome["writes"]) for outcome in outcomes),
+            "ackTimeouts": sum(int(outcome["ackTimeouts"]) for outcome in outcomes),
+            "incidents": sum(int(outcome["incidents"]) for outcome in outcomes),
+        },
+    )
+
+
+def scenario_deferred_incident_eligibility(browser: Any) -> dict[str, Any]:
+    """Keep timeout evidence for long-press, drag-start, and deferred drains."""
+    outcomes: list[dict[str, int | bool]] = []
+    expected = {
+        "longPress": {"sends": 1, "ackTimeouts": 1, "acceptedAcks": 0},
+        "dragStart": {"sends": 1, "ackTimeouts": 1, "acceptedAcks": 0},
+        "deferredDrain": {"sends": 17, "ackTimeouts": 1, "acceptedAcks": 16},
+    }
+    for kind in ("long-press", "drag-start", "deferred-drain"):
+        fixture = OfflineFixture(
+            browser,
+            touch=True,
+            show_mobile=kind == "deferred-drain",
+            include_diagnostics=True,
+        )
+        page = fixture.page
+        try:
+            page.evaluate(
+                "() => { WebRTC.currentConnectionAttemptId = 'offline-deferred-incident'; }"
+            )
+            fixture.settle()
+            if kind == "deferred-drain":
+                dispatch_mobile_input(page, "a" * 17)
+                fixture.settle()
+                seeded = page.evaluate("() => Diagnostic.getInputTraceSnapshot().events.length")
+                page.evaluate(
+                    """
+                    () => {
+                      const input = document.getElementById('mobileTextInput');
+                      input.value = '\u200b';
+                      input.dispatchEvent(new InputEvent('input', {
+                        bubbles: true,
+                        inputType: 'deleteContentBackward',
+                      }));
+                      // Only the synchronous batch is acknowledged; the real
+                      // adapter drain remains unacknowledged and must time out.
+                      globalThis.__offlineAckAll();
+                    }
+                    """
+                )
+            else:
+                seeded = page.evaluate("() => Diagnostic.getInputTraceSnapshot().events.length")
+                point = surface_point(page)
+                dispatch_touch(page, "pointerdown", 88, point["x"], point["y"], 1)
+                if kind == "drag-start":
+                    dispatch_touch(page, "pointermove", 88, point["x"] + 20, point["y"], 1)
+            page.wait_for_timeout(4000)
+            outcome = page.evaluate(
+                """
+                (seeded) => {
+                  const trace = Diagnostic.getInputTraceSnapshot();
+                  const records = trace.events.slice(seeded);
+                  const sends = records.filter((event) => (
+                    event.stage === 'transport-send' && event.accepted && event.action !== 'reset'
+                  ));
+                  return {
+                    sends: sends.length,
+                    ackTimeouts: trace.counters.ackTimeoutCount,
+                    incidents: Diagnostic._pendingInputIncidents.length,
+                    acceptedAcks: records.filter((event) => event.stage === 'ack' && event.accepted).length,
+                    allSendsHaveEventId: sends.every((event) => Number.isSafeInteger(event.eventId)),
+                    hasTimeoutRecord: records.some((event) => event.stage === 'ack-timeout'),
+                  };
+                }
+                """,
+                seeded,
+            )
+            outcomes.append(outcome)
+        finally:
+            fixture.close()
+    checks = {
+        **{
+            f"{kind}HasExactDeferredOutcome": (
+                outcome["sends"] == expected[kind]["sends"]
+                and outcome["ackTimeouts"] == expected[kind]["ackTimeouts"]
+                and outcome["acceptedAcks"] == expected[kind]["acceptedAcks"]
+            )
+            for kind, outcome in zip(("longPress", "dragStart", "deferredDrain"), outcomes)
+        },
+        **{
+            f"{kind}DeferredWritesHaveOriginatingEventId": outcome["allSendsHaveEventId"]
+            for kind, outcome in zip(("longPress", "dragStart", "deferredDrain"), outcomes)
+        },
+        **{
+            f"{kind}DeferredTimeoutLeavesOneIncident": outcome["incidents"] == 1
+            and outcome["hasTimeoutRecord"]
+            for kind, outcome in zip(("longPress", "dragStart", "deferredDrain"), outcomes)
+        },
+    }
+    return result(
+        "deferred-incident-eligibility",
+        "PASS" if len(outcomes) == 3 and all(checks.values()) else "FAIL",
+        checks=checks,
+        counts={
+            "kinds": len(outcomes),
+            "sends": sum(int(outcome["sends"]) for outcome in outcomes),
+            "ackTimeouts": sum(int(outcome["ackTimeouts"]) for outcome in outcomes),
+            "incidents": sum(int(outcome["incidents"]) for outcome in outcomes),
+        },
+    )
+
+
+def scenario_blocked_gate_incident(browser: Any) -> dict[str, Any]:
+    """Preserve unexpected-gate diagnostics for a visible blocked user input."""
+    fixture = OfflineFixture(
+        browser,
+        touch=False,
+        show_mobile=False,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-blocked-gate'; }"
+        )
+        fixture.settle()
+        page.locator('[data-action="showDock"]').click()
+        page.evaluate(
+            """
+            () => {
+              const payload = __offlineWire.find((item) => (
+                item.type === 'command' && item.action === 'showDock'
+              ));
+              if (!payload) throw new Error('toolbar emitted no command');
+              Input.acceptMouseAck({
+                schemaVersion: 2,
+                inputType: 'command',
+                inputIds: payload.inputIds,
+                leaseEpoch: payload.leaseEpoch,
+                appliedSeq: 0,
+                status: 'resync-required',
+              });
+            }
+            """
+        )
+        before_blocked_input = page.evaluate("() => __offlineWire.length")
+        page.locator("#remoteVideo").focus()
+        page.keyboard.down("a")
+        state = page.evaluate(
+            """
+            (beforeBlockedInput) => {
+              const trace = Diagnostic.getInputTraceSnapshot();
+              const gate = Input.getEffectiveInputGate();
+              const mobile = Input.mobileTextInputAdapter.getSnapshot();
+              return {
+                blocked: gate.allowed === false
+                  && gate.blockedReasons.includes('desktop-write-reacquire-required'),
+                noNewWrite: __offlineWire.length === beforeBlockedInput,
+                noDraftMutation: mobile.deliveryUncertain === false && mobile.hasPending === false,
+                gateRejected: trace.events.some((event) => (
+                  event.stage === 'gate' && event.accepted === false
+                    && event.reason === 'desktop-write-reacquire-required'
+                )),
+                unexpectedIncident: Diagnostic._pendingInputIncidents.some((item) => (
+                  item.reason === 'input-gate-unexpected'
+                )),
+              };
+            }
+            """,
+            before_blocked_input,
+        )
+        # The value is only read inside the browser expression; it is never
+        # serialized in the safe result artifact.
+        checks = {
+            "blockedGateIsFailClosed": state["blocked"],
+            "blockedInputEmitsNoWrite": state["noNewWrite"],
+            "blockedInputDoesNotCreateDraft": state["noDraftMutation"],
+            "blockedGateTraceIsRecorded": state["gateRejected"],
+            "blockedGateLeavesUnexpectedIncident": state["unexpectedIncident"],
+        }
+        return result(
+            "blocked-gate-incident",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={"blockedWrites": 0 if state["noNewWrite"] else 1, "incidents": 1 if state["unexpectedIncident"] else 0},
+        )
+    finally:
+        fixture.close()
+
+
+def scenario_release_ack_loss(browser: Any) -> dict[str, Any]:
+    """Exercise release-only ACK loss for mouse, physical keyboard, and touch."""
+    outcomes: list[dict[str, int | bool]] = []
+    for kind in ("mouse-up", "key-up", "touch-up"):
+        fixture = OfflineFixture(
+            browser,
+            touch=kind == "touch-up",
+            show_mobile=False,
+            include_diagnostics=True,
+        )
+        page = fixture.page
+        try:
+            page.evaluate(
+                "() => { WebRTC.currentConnectionAttemptId = 'offline-release-ack-loss'; }"
+            )
+            fixture.settle()
+            if kind == "key-up":
+                page.locator("#remoteVideo").focus()
+                page.keyboard.press("a")
+            else:
+                point = surface_point(page)
+                if kind == "touch-up":
+                    page.touchscreen.tap(point["x"], point["y"])
+                else:
+                    page.mouse.click(point["x"], point["y"])
+            page.evaluate(
+                """
+                () => {
+                  for (const payload of __offlineWire.slice(__offlineAckIndex)) {
+                    if (payload.action !== 'down'
+                      && !(payload.action === 'key' && payload.payload?.phase === 'down')) continue;
+                    const ack = {
+                      schemaVersion: 2,
+                      inputType: payload.type,
+                      inputIds: payload.inputIds,
+                      leaseEpoch: payload.leaseEpoch,
+                      appliedSeq: payload.seq,
+                      status: 'applied',
+                    };
+                    if (payload.type === 'keyboard') Input.acceptKeyboardAck(ack);
+                    else Input.acceptMouseAck(ack);
+                  }
+                }
+                """
+            )
+            page.wait_for_timeout(3400)
+            outcome = page.evaluate(
+                """
+                () => {
+                  const trace = Diagnostic.getInputTraceSnapshot();
+                  return {
+                    sends: trace.events.filter((event) => (
+                      event.stage === 'transport-send' && event.accepted && event.action !== 'reset'
+                    )).length,
+                    acceptedDownAcks: trace.events.filter((event) => (
+                      event.stage === 'ack' && event.accepted
+                    )).length,
+                    timeouts: trace.counters.ackTimeoutCount,
+                    incidents: Diagnostic._pendingInputIncidents.length,
+                    releaseTimeoutRecorded: trace.events.some((event) => event.stage === 'ack-timeout'),
+                  };
+                }
+                """
+            )
+            outcomes.append(outcome)
+        finally:
+            fixture.close()
+    checks = {
+        **{
+            f"{kind}HasDownAndReleaseWrites": outcome["sends"] == 2
+            for kind, outcome in zip(("mouseUp", "keyUp", "touchUp"), outcomes)
+        },
+        **{
+            f"{kind}OnlyReleaseAckTimesOut": (
+                outcome["acceptedDownAcks"] == 1
+                and outcome["timeouts"] == 1
+                and outcome["releaseTimeoutRecorded"]
+            )
+            for kind, outcome in zip(("mouseUp", "keyUp", "touchUp"), outcomes)
+        },
+        **{
+            f"{kind}ReleaseTimeoutLeavesIncident": outcome["incidents"] > 0
+            for kind, outcome in zip(("mouseUp", "keyUp", "touchUp"), outcomes)
+        },
+    }
+    return result(
+        "release-ack-loss",
+        "PASS" if len(outcomes) == 3 and all(checks.values()) else "FAIL",
+        checks=checks,
+        counts={
+            "kinds": len(outcomes),
+            "writes": sum(int(outcome["sends"]) for outcome in outcomes),
+            "downAcks": sum(int(outcome["acceptedDownAcks"]) for outcome in outcomes),
+            "releaseTimeouts": sum(int(outcome["timeouts"]) for outcome in outcomes),
+            "incidents": sum(int(outcome["incidents"]) for outcome in outcomes),
+        },
+    )
+
+
+def scenario_desktop_draft_entry(browser: Any) -> dict[str, Any]:
+    """Use the fixed recovery draft entry from a non-touch desktop surface."""
+    fixture = OfflineFixture(
+        browser,
+        touch=False,
+        show_mobile=True,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        fixture.settle()
+        page.evaluate(
+            """
+            () => {
+              globalThis.__offlineFailNext = 'text';
+            }
+            """
+        )
+        dispatch_mobile_input(page, "offline-unsent-draft")
+        fixture.settle()
+        initial_editor_hidden = page.locator("#mobileInputDock").is_hidden()
+        before = page.evaluate("() => __offlineWire.length")
+        page.locator("#inputRecoveryDraftBtn").click()
+        fixture.settle()
+        state = page.evaluate(
+            """
+            () => {
+              const mobile = Input.mobileTextInputAdapter.getSnapshot();
+              const draftEntry = document.getElementById('inputRecoveryDraftBtn');
+              const editor = document.getElementById('mobileInputDock');
+              return {
+                desktop: navigator.maxTouchPoints === 0,
+                entryVisible: !draftEntry.hidden,
+                editorVisible: !editor.hidden,
+                pending: mobile.hasPending,
+                uncertain: mobile.deliveryUncertain,
+                wireCount: __offlineWire.length,
+                textWrites: __offlineWire.filter((event) => event.action === 'text').length,
+              };
+            }
+            """
+        )
+        checks = {
+            "nonTouchDesktopStartsWithHiddenEditor": initial_editor_hidden,
+            "nonTouchSurfaceIsDetected": state["desktop"],
+            "fixedDraftEntryVisible": state["entryVisible"],
+            "draftEntryOpensEditor": state["editorVisible"],
+            "draftRemainsPendingAndUncertain": state["pending"] and state["uncertain"],
+            "draftEntryDoesNotReplayText": state["textWrites"] == 0 and state["wireCount"] == before,
+        }
+        return result(
+            "desktop-draft-entry",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={"textWrites": state["textWrites"], "wireWritesAfterEntry": state["wireCount"] - before},
+        )
     finally:
         fixture.close()
 
@@ -3071,6 +3839,14 @@ def run_browser_suite(browser: Any) -> list[dict[str, Any]]:
         scenario_collapse_reopen,
         scenario_virtual_modifier,
         scenario_unsupported,
+        scenario_recovery_layout,
+        scenario_retry_button,
+        scenario_trace_observability,
+        scenario_timeout_incident_eligibility,
+        scenario_deferred_incident_eligibility,
+        scenario_blocked_gate_incident,
+        scenario_release_ack_loss,
+        scenario_desktop_draft_entry,
         scenario_layout_matrix,
         scenario_terminal_lifecycle,
         scenario_fullscreen_native,
@@ -3088,9 +3864,12 @@ def run_browser_suite(browser: Any) -> list[dict[str, Any]]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    OFFLINE_NETWORK_STATS["requests"] = 0
+    OFFLINE_NETWORK_STATS["sensitivePayloads"] = 0
     artifact_base = {
         "scope": "offline-synthetic",
         "browser": args.browser,
+        "network": OFFLINE_NETWORK_STATS.copy(),
         "scenarios": [],
     }
     try:
@@ -3165,6 +3944,7 @@ def main(argv: list[str] | None = None) -> int:
             result("runtime-cleanup", "FAIL", checks={"cleanupCompleted": False}, reason="browser-action-failed")
         )
 
+    artifact_base["network"] = OFFLINE_NETWORK_STATS.copy()
     write_json(args.out, artifact_base)
     print(json.dumps(artifact_base, ensure_ascii=False))
     return 1 if any(item["status"] == "FAIL" for item in artifact_base["scenarios"]) else 0

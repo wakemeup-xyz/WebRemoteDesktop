@@ -58,7 +58,7 @@
 
 手机、Pad 与桌面浏览器使用同一个正式 Viewer 入口：`https://link.stockhub.wiki`。移动端不会因为触控或软键盘而切换到另一套域名、端口、认证或信令协议。
 
-基本操作：单指点按/拖拽、550ms 长按右键、双指滚动；点击“移动键盘”使用本机输入法提交远端文本。虚拟复制/粘贴操作使用远端 Mac 的剪贴板。2026-09-06 整改分支已实现焦点连续性、失败草稿显式重试、导航基线、手机/iPad统一避让与完整Viewer全屏；离线Chromium集成验收和主线程最终审查已通过，尚未合入main或重启服务。详见[整改验收与剩余边界](docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)；[2026-09-05问题报告](docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)保留历史证据。真实手机/iPad、系统键盘、Quartz和公网尚未验收，不能据单元测试宣称移动端全链路可用。
+基本操作：单指点按/拖拽、550ms 长按右键、双指滚动；点击“移动键盘”使用本机输入法提交远端文本。虚拟复制/粘贴操作使用远端 Mac 的剪贴板。2026-09-08 整改分支已实现焦点连续性、失败草稿显式重试、导航基线、手机/iPad统一避让、完整Viewer全屏，以及由真实 DOM/wire 副作用驱动的 20 场景离线恢复/诊断验收；当前分支尚未合入main、push或重启服务。详见[Task4输入恢复与诊断验收](docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)、[整改验收与剩余边界](docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)；[2026-09-05问题报告](docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)保留历史证据。真实手机/iPad、系统键盘、Quartz和公网尚未验收，不能据离线浏览器或单元测试宣称移动端全链路可用。
 
 - 正式对外访问：`https://link.stockhub.wiki`
 - 本机调试：`http://127.0.0.1:8080`
@@ -324,8 +324,8 @@ http://127.0.0.1:8080
 - 关闭当前 Terminal 标签页或整个 Viewer 页面，只会让该浏览器断开附着，不会 kill 底层 PTY；会话会持续到显式关闭或服务重启
 - Viewer 的 `断开连接` 按钮和网络模式切换只影响远程桌面 / WebRTC 路径，不会关闭共享 Terminal 会话
 - 切换到 Terminal 或手动暂停会立即停止远程桌面 capture、编码和视频 payload；页面进入后台必须持续 **5 分钟（300s）** 才停止采集。暂停时信令、ICE、DataChannel、Terminal Socket 和共享 PTY 保持连接
-- 窗口失焦或页面隐藏时，若桌面输入 DataChannel 为 `open` 则发送 keyboard reset；若 DataChannel 已关闭/不可用则 park 本地输入状态，避免把短暂失焦变成无法恢复的 reset barrier
-- presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。Socket 断线显示「正在重新附着」，不对未完成真实验收的自动恢复作承诺
+- 窗口失焦或页面隐藏时，若桌面输入 DataChannel 为 `open` 则发送 keyboard reset；若 DataChannel 已关闭/不可用则 park 本地输入状态，避免把短暂失焦变成无法恢复的 reset barrier。恢复只接受当前 lease/connection attempt 所拥有的 mouse 与 keyboard reset 正向 ACK
+- presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。Socket 断线显示「正在重新附着」。恢复状态会明确显示等待确认或失败；失败不会自动重放/清空未发草稿，用户可点击固定的重试/草稿入口，在重新确认远端状态后显式继续
 - 已附着的 Terminal session 被再次激活时不得无条件抢 presenter；运行时 session/presenter/attach/lifecycle 真相由 `TerminalPanel` 持有，`createTerminalSessionFsm` 仅作为确定性测试 seam，不是生产状态 owner
 - 返回桌面或页面重新可见时只清除对应自动原因；手动暂停会继续生效，直到用户再次点击恢复。暂停和恢复期间的预期 0 FPS 不触发质量降档、ICE restart 或自动重连
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
@@ -603,6 +603,9 @@ TURN_CREDENTIAL=你的凭证
 10. 默认输入日志只记录 action、transport、payload byte count、input ID hash 和本机执行时间，不记录 key、code、文本、坐标或完整 payload
 11. `host_event_loop_lag` 以 20ms/100ms 分级并附带媒体档位、连接状态、计数和有界资源摘要；普通告警按 5 秒聚合，避免日志放大阻塞
 12. 排查问题时，优先看实时服务端日志；若已开启 bundle 持久化，再读取临时目录中的最新诊断文件
+13. 输入故障按六个可对照阶段排查：`dom-received`（收到真实 DOM 事件）→ `gate`（当前可写门禁）→ `transport-send`（本地 enqueue 及 DataChannel/Socket 结果）→ `ack` 或 `ack-timeout`（接收端结果/超时）→ `lifecycle`/`recovery`（失焦、reset、恢复状态）→ incident/诊断上传资格。各阶段只输出有界 allowlist 摘要
+14. 桌面 DataChannel 输入不经过 Signal Server；因此 Signal 没有 input relay 记录不能单独证明丢包。只有 Socket.IO 兜底输入和诊断上传才经过 Signal，需结合 Viewer trace、Host ACK 与服务端摘要定位
+15. `enqueued` 只表示 Viewer 接受本地排队，`applied` 是 Host native adapter 返回成功，业务 `ACK` 是带有输入关联的接收结果；这些都不等于操作者已经在人眼看到系统效果。下一帧或 `visualFeedback` 单独记录可见反馈，不并入 input RTT
 
 ### Mac 待机后服务不可用
 
