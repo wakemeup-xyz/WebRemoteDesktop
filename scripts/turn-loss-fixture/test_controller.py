@@ -1165,3 +1165,24 @@ def test_runtime_relay_binding_rejects_mismatched_host_selected_pair(tmp_path):
     path = tmp_path / "actual-relay.json"; path.write_text(json.dumps(binding))
     with pytest.raises(controller.RuntimeBlocked, match="host selected pair"):
         controller.load_runtime_relay_binding(path, parsed)
+
+def test_gateway_counter_backend_rejects_self_signed_identity_and_replayed_receipts(tmp_path):
+    """Exercise the production counter backend verifier, not a helper-only path."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    import base64
+    raw = manifest(); media = {"channelNumber": 0x4001, "rtpSsrc": 7, "payloadType": 96}
+    event = {"comment": "wrd-loss:receipt", "mediaBinding": media}
+    pinned = {"publicKey": "00" * 32, "gatewayInstanceId": "pinned", "instanceDigest": "bad"}
+    backend = controller.GatewayCounterBackend(tmp_path / "counters.json", authority_endpoint=("127.0.0.1", 1), control_token="t", run_id=raw["runId"], realm=raw["realm"])
+    private = Ed25519PrivateKey.generate(); public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+    identity = {"publicKey": public, "gatewayInstanceId": "forged", "instanceDigest": hashlib.sha256(json.dumps({"runId":raw["runId"],"realm":raw["realm"],"gatewayInstanceId":"forged","publicKey":public}, sort_keys=True,separators=(",",":")).encode()).hexdigest()}
+    counters = {"eventHandle": event["comment"], "mediaBindingDigest": controller.GatewayCounterStore._digest_binding(media), "startedMonotonicNs": 1, "deadlineMonotonicNs": 2, "eligibleCount": 1, "forwardedCount": 0, "droppedCount": 1, "sendFailureCount": 0, "beforeForwardedSequences": [1], "duringForwardedSequences": [], "afterForwardedSequences": [3], "droppedSequences": [2]}
+    body = {"runId":raw["runId"],"realm":raw["realm"],**identity,"eventHandle":event["comment"],"mediaBindingDigest":counters["mediaBindingDigest"],"gatewayCounters":counters}
+    receipt = {**body,"signatureAlgorithm":"Ed25519","signature":base64.b64encode(private.sign(json.dumps(body,sort_keys=True,separators=(",",":")).encode())).decode()}
+    backend._authority_call = lambda _body: {"status":"SEALED", "receipt":receipt}  # production backend transport seam
+    with pytest.raises(RuntimeError, match="identity changed"):
+        backend._verified_receipt({**event, "gatewayIdentity": pinned})
+    seen=set()
+    with pytest.raises(RuntimeError, match="identity changed"):
+        controller.verify_gateway_receipt(receipt, run_id=raw["runId"], realm=raw["realm"], event=event, expected_gateway_identity=pinned, expected_binding_digest=counters["mediaBindingDigest"], seen_receipt_ids=seen)
