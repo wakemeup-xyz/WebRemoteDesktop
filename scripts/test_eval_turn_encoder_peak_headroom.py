@@ -160,6 +160,15 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: pytest); sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
 
+    def test_sync_identity_uses_full_argv0_when_macos_comm_is_truncated(self):
+        snapshot = self._snapshot()
+        snapshot["processes"][1]["command"] = "/Users/macstudio"
+        snapshot["processes"][1]["argv"] = "/Users/macstudio/Applications/Python.app/Contents/MacOS/Python -m backend.scripts.sync_worker"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIsNone(sampler.abort_status())
+        self.assertTrue(sampler.evidence()["syncWorker"]["identity"]["binaryPath"].endswith("/Python"))
+
     def test_mysql_binary_and_start_epoch_drift_are_inconclusive(self):
         for changed in (self._snapshot(epoch="Tue Sep  9 12:00:00 2026"), {"processes": [{"pid": 10, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/local/mysql-alt/bin/mysqld", "binaryPath": "/usr/local/mysql-alt/bin/mysqld", "startEpoch": "Mon Sep  8 12:00:00 2026"}], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}):
             with self.subTest(changed=changed["processes"][0]["command"]):

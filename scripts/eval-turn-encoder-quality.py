@@ -99,21 +99,24 @@ class _PeakAmbientSampler:
 
     def _read_snapshot(self) -> dict:
         completed = subprocess.run(
-            ("ps", "-axo", "pid=,rss=,%cpu=,comm=,args="),
+            ("ps", "-axo", "pid=,rss=,%cpu=,command="),
             text=True,
             capture_output=True,
             check=True,
         )
         processes = []
         for row in completed.stdout.splitlines():
-            parts = row.split(None, 4)
-            if len(parts) != 5:
+            parts = row.split(None, 3)
+            if len(parts) != 4:
                 continue
-            pid, rss, cpu, command, argv = parts
+            pid, rss, cpu, argv = parts
             try:
+                argv_tokens = shlex.split(argv)
+                if not argv_tokens:
+                    continue
                 processes.append({
                     "pid": int(pid), "rssKiB": int(rss), "cpuPercent": float(cpu),
-                    "command": command, "argv": argv,
+                    "command": argv_tokens[0], "argv": argv,
                 })
             except ValueError:
                 continue
@@ -147,12 +150,11 @@ class _PeakAmbientSampler:
         return result
 
     def _exact_sync_worker(self, process: dict) -> dict | None:
-        command = str(process["command"])
-        if not command.startswith("/") or not Path(command).name.startswith("python"):
-            return None
         argv = shlex.split(str(process.get("argv", "")))
-        canonical_path = os.path.realpath(command)
-        if argv != [command, "-m", "backend.scripts.sync_worker"]:
+        if not argv or not argv[0].startswith("/") or not Path(argv[0]).name.lower().startswith("python"):
+            return None
+        canonical_path = os.path.realpath(argv[0])
+        if argv != [argv[0], "-m", "backend.scripts.sync_worker"]:
             return None
         result = dict(process)
         result["binaryPath"] = canonical_path
