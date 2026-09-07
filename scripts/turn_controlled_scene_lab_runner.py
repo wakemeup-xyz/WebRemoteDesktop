@@ -604,6 +604,36 @@ def seal_loss_bridge_after_clear(*, manifest_path: Path, socket_path: Path, raw_
         raise RuntimeError("isolated loss bridge seal was refused")
 
 
+def selected_relay_leg_from_stats(rows: list[Mapping[str, Any]], catalog: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Bind the *selected* WebRTC relay candidate to one public catalog row."""
+    pairs = [row for row in rows if row.get("type") == "candidate-pair" and (row.get("selected") is True or row.get("nominated") is True) and row.get("state") == "succeeded"]
+    if len(pairs) != 1:
+        return None
+    pair = pairs[0]; local_id = pair.get("localCandidateId")
+    local = next((row for row in rows if row.get("id") == local_id and row.get("type") == "local-candidate"), None)
+    if not isinstance(local, Mapping) or local.get("candidateType") != "relay":
+        return None
+    matches = [row for row in catalog if row.get("address") == local.get("address") and row.get("port") == local.get("port") and row.get("protocol") == local.get("protocol")]
+    return dict(matches[0]) if len(matches) == 1 else None
+
+
+class RawLossTimelineCollector:
+    """Live-owner raw event accumulator; never accepts recovery booleans."""
+    def __init__(self, *, started_ns: int, ended_ns: int) -> None:
+        self.started_ns, self.ended_ns = started_ns, ended_ns
+        self.rtp = {"before": [], "during": [], "after": []}; self.feedback = []; self.idr = None; self.paint = None; self.pc = []
+    def rtp_packet(self, phase: str, *, sequence: int, rtp_timestamp: int) -> None:
+        if phase not in self.rtp or not isinstance(sequence, int) or not isinstance(rtp_timestamp, int): raise ValueError("raw RTP event invalid")
+        self.rtp[phase].append({"sequence": sequence, "rtpTimestamp": rtp_timestamp})
+    def feedback_event(self, kind: str, monotonic_ns: int) -> None:
+        if kind not in {"PLI", "FIR"}: raise ValueError("feedback kind invalid")
+        self.feedback.append({"kind": kind, "monotonicNs": monotonic_ns})
+    def idr_event(self, *, frame_id: str, wire_timestamp: int, monotonic_ns: int) -> None: self.idr = {"frameId": frame_id, "wireTimestamp": wire_timestamp, "monotonicNs": monotonic_ns}
+    def rvfc_paint(self, *, frame_id: str, wire_timestamp: int, monotonic_ns: int) -> None: self.paint = {"frameId": frame_id, "wireTimestamp": wire_timestamp, "rvfcMonotonicNs": monotonic_ns}
+    def pc_snapshot(self, *, identifier: str, state: str, resolution: Mapping[str, Any]) -> None: self.pc.append({"id": identifier, "state": state, "resolution": dict(resolution)})
+    def as_bridge_fields(self) -> dict[str, Any]: return {"sequences": self.rtp, "timeline": {"feedback": self.feedback, "idr": self.idr, "paint": self.paint, "pc": self.pc}}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run isolated Lab Signal/Host/static lifecycle; never falls back to personal-desktop input.")
     token_group = parser.add_mutually_exclusive_group(required=True)

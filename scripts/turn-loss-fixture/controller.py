@@ -1168,6 +1168,25 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "networkName": prepared["networkName"]}
 
 
+def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Path, authority: LabReceiverBridgeAuthority,
+                                run: Callable[[list[str]], tuple[int, str, str]], drive: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
+    """T4/T5 owner orchestration with unconditional disposable cleanup."""
+    project, override = prepared["projectName"], prepared["composeOverride"]
+    command = ["docker", "compose", "--project-name", project, "-f", str(compose_file), "-f", override]
+    authority.start()
+    try:
+        code, _out, err = run([*command, "up", "-d"])
+        if code: raise RuntimeBlocked(f"isolated compose up failed: {err}")
+        verify_started_fixture(prepared, run=run)
+        return dict(drive())
+    finally:
+        run([*command, "down", "-v"])
+        authority.close()
+        bridge_dir = Path(prepared["bridgeSocket"]).parent
+        try: bridge_dir.rmdir()
+        except OSError: pass
+
+
 def _main() -> None:
     parser = argparse.ArgumentParser()
     subcommands = parser.add_subparsers(dest="command", required=True)

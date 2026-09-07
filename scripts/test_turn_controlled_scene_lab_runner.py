@@ -290,4 +290,11 @@ def test_t4_t5_owner_seals_only_after_clear_through_the_host_unix_authority(tmp_
     )
     assert commands[0][2] == "seal-bridge"
     assert "--verifier-fd" not in commands[0] and "--event" in commands[0]
+
+
+def test_selected_relay_stats_must_map_uniquely_to_catalog_and_raw_timeline_has_no_recovery_booleans():
+    stats = [{"id": "pair", "type": "candidate-pair", "selected": True, "state": "succeeded", "localCandidateId": "local"}, {"id": "local", "type": "local-candidate", "candidateType": "relay", "address": "10.0.0.2", "port": 51002, "protocol": "udp"}]
+    assert runner.selected_relay_leg_from_stats(stats, [{"address": "10.0.0.2", "port": 51002, "protocol": "udp", "id": "turn"}])["id"] == "turn"
+    timeline = runner.RawLossTimelineCollector(started_ns=1, ended_ns=2); timeline.rtp_packet("before", sequence=1, rtp_timestamp=2); timeline.feedback_event("PLI", 2); timeline.idr_event(frame_id="f", wire_timestamp=3, monotonic_ns=3); timeline.rvfc_paint(frame_id="f", wire_timestamp=3, monotonic_ns=4); timeline.pc_snapshot(identifier="pc", state="connected", resolution={"width": 1, "height": 1})
+    assert "recoveryMs" not in timeline.as_bridge_fields()["timeline"]
     assert runner.lifecycle_failure(RuntimeError("secret=must-not-persist")) == "lifecycle:RuntimeError"
