@@ -2213,7 +2213,7 @@ test('mobile input reset clears the reserved Dock state', () => {
   assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
 });
 
-test('owned keyboard reset ACK reopens mobile text only for the next explicit input', () => {
+test('owned keyboard reset ACK preserves lifecycle content until empty context is confirmed', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2226,7 +2226,7 @@ test('owned keyboard reset ACK reopens mobile text only for the next explicit in
 
   const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
   assert.ok(reset);
-  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(mobileInput.value, 'old\u200b');
   assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
     .map(({ payload }) => payload.payload.text), ['old']);
@@ -2247,7 +2247,7 @@ test('owned keyboard reset ACK reopens mobile text only for the next explicit in
     .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
 });
 
-test('owned reset ACK preserves a new draft entered while the barrier is pending', () => {
+test('owned reset ACK preserves a new draft until the mouse reset also confirms', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2273,11 +2273,11 @@ test('owned reset ACK preserves a new draft entered while the barrier is pending
     inputIds: reset.inputIds,
   });
   assert.equal(mobileInput.value, 'during-reset');
-  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
   assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1);
-  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
-    .map(({ payload }) => payload.payload.text), ['old', 'during-reset']);
+    .map(({ payload }) => payload.payload.text), ['old']);
 });
 
 test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
@@ -2309,7 +2309,7 @@ test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
   }
 });
 
-test('park clears mobile draft without a reset barrier and permits later explicit input', () => {
+test('park preserves mobile draft without a reset barrier until explicit discard', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2322,9 +2322,14 @@ test('park clears mobile draft without a reset barrier and permits later explici
   Input.parkKeyboard('visibility-hidden');
   assert.equal(socketEvents.length, eventsBeforePark);
   assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').length, 0);
-  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(mobileInput.value, 'old\u200b');
 
   mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old']);
+  elements.get('mobileInputDiscardBtn').listeners.get('click')({ preventDefault() {} });
   mobileInput.value = 'fresh';
   mobileInput.listeners.get('input')({ target: mobileInput });
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')

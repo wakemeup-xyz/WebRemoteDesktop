@@ -47,6 +47,7 @@
     let pendingGeneration = null;
     let drainActive = false;
     let drainTimer = null;
+    let contextRecoveryRequired = false;
     const listeners = [];
 
     function accepted(result) {
@@ -574,7 +575,35 @@
       pendingGeneration = null;
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       restoreAcceptedBuffer();
+    }
+
+    function invalidateContext(reason) {
+      const hadPending = hasPending();
+      lastResetReason = reason || 'context-invalidated';
+      cancelDrain();
+      generation += 1;
+      contextValid = false;
+      deliveryUncertain = true;
+      contextRecoveryRequired = true;
+      if (hadPending) {
+        retryRequired = true;
+        pendingGeneration = generation;
+      } else {
+        retryRequired = false;
+        pendingGeneration = null;
+      }
+      notifyState();
+      return true;
+    }
+
+    function confirmEmptyContextRecovery() {
+      if (composing || hasPending()) return false;
+      if (!contextRecoveryRequired && contextValid && !deliveryUncertain) return true;
+      resetAcceptedHistory();
+      notifyState();
+      return true;
     }
 
     function runExternalAction(kind, send) {
@@ -657,6 +686,7 @@
       resetHistory();
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       notifyState();
     }
 
@@ -666,6 +696,18 @@
       const resetAcknowledged = next === 'ready' && options?.resetAcknowledged === true;
       transportState = next;
       if (resetAcknowledged) {
+        // A lifecycle invalidation owns a separate context recovery barrier.
+        // Keyboard ACK alone cannot prove that an empty/draft context still
+        // targets the same remote focus; Input confirms it after both reset
+        // barriers have been acknowledged.
+        if (contextRecoveryRequired) {
+          if (!surfaceSettled() || hasPending() || composing) {
+            notifyState();
+            return;
+          }
+          confirmEmptyContextRecovery();
+          return;
+        }
         if (!surfaceSettled()) {
           contextValid = false;
           deliveryUncertain = true;
@@ -771,6 +813,7 @@
       pendingGeneration = null;
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       if (element) element.value = SENTINEL;
       setCursorSelection(SENTINEL);
       hide();
@@ -786,6 +829,12 @@
       getSnapshot,
       retryPending,
       discardPending,
+      invalidateContext,
+      confirmEmptyContextRecovery,
+      // Input uses this internal predicate to distinguish a lifecycle/context
+      // invalidation from a normal edit or an ACK already in flight. Keep it
+      // out of the public diagnostic snapshot.
+      needsContextRecovery: () => contextRecoveryRequired,
       onTransportState,
       refreshDeliveryState,
       sendControlKey,

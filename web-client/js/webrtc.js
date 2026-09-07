@@ -823,6 +823,9 @@ const WebRTC = {
     this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    if (typeof Input !== 'undefined' && typeof Input.onConnectionAttemptChanged === 'function') {
+      Input.onConnectionAttemptChanged(this.currentConnectionAttemptId);
+    }
     this._mediaProfileSequence = 0;
     this.ensureDesktopSessionState()?.beginAttempt(this.currentConnectionAttemptId, {
       socket: this.socket?.connected ? 'online' : 'connecting',
@@ -2946,6 +2949,7 @@ const WebRTC = {
     if (!lease || typeof Input === 'undefined') return false;
     Input.setControlLease(lease);
     Input.setKeyboardDataChannelAvailable?.(this.inputChannel?.readyState === 'open');
+    Input.requestInputRecovery?.({ source: 'auto' });
     Input.updateKeyboardUI?.();
     return true;
   },

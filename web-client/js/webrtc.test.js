@@ -256,6 +256,55 @@ test('refresh attempt compares paint growth against a zero inbound baseline', ()
   assert.equal(WebRTC.hasPaintedFrame, true);
 });
 
+test('new connection attempts notify Input so old recovery ownership is revoked', () => {
+  const attempts = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      onConnectionAttemptChanged: (attemptId) => attempts.push(attemptId),
+      setActive: () => {},
+    },
+  });
+  WebRTC.socket = { connected: true, emit() {} };
+  WebRTC.controlState = {
+    hostOnline: true,
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.createConnectionAttemptId = () => 'attempt-notified';
+
+  assert.equal(WebRTC.beginConnectionAttempt('test-attempt'), 'attempt-notified');
+  assert.deepEqual(attempts, ['attempt-notified']);
+});
+
+test('active keyboard lease rebind requests bounded Input recovery after transport state sync', () => {
+  const calls = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      setControlLease: (lease) => calls.push(['lease', lease]),
+      setKeyboardDataChannelAvailable: (available) => calls.push(['channel', available]),
+      requestInputRecovery: (options) => calls.push(['recovery', options]),
+      updateKeyboardUI: () => calls.push(['ui']),
+    },
+  });
+  WebRTC.controlState = {
+    hostOnline: true,
+    controller: true,
+    state: 'ACTIVE',
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.inputChannel = { readyState: 'open' };
+
+  assert.equal(WebRTC.rebindActiveKeyboardLease('test-rebind'), true);
+  assert.equal(calls[0][0], 'lease');
+  assert.equal(calls[0][1].leaseId, 'lease-000000000001');
+  assert.equal(calls[0][1].leaseEpoch, 1);
+  assert.deepEqual(calls.slice(1, 2), [['channel', true]]);
+  assert.equal(calls[2][0], 'recovery');
+  assert.equal(calls[2][1].source, 'auto');
+  assert.deepEqual(calls.slice(3), [['ui']]);
+});
+
 test('media profile emits current attempt and a monotonic profile sequence', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();

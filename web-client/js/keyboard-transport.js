@@ -12,6 +12,9 @@
       ? config.makeInputId
       : () => `kbd_${now()}_${Math.random().toString(36).slice(2, 8)}`;
     const ackTimeoutMs = Number.isFinite(config.ackTimeoutMs) ? config.ackTimeoutMs : 3000;
+    const getConnectionAttemptId = typeof config.getConnectionAttemptId === 'function'
+      ? config.getConnectionAttemptId
+      : () => null;
     const adapters = {
       dataChannel: typeof config.sendDataChannel === 'function' ? config.sendDataChannel : null,
       socket: typeof config.sendSocket === 'function' ? config.sendSocket : null,
@@ -59,8 +62,9 @@
 
     function expireBarrier() {
       if (!barrier || now() <= barrier.deadline) return;
-      leaseId = null;
-      leaseEpoch = 0;
+      // Keep the failed identity in memory.  Clearing it here would make a
+      // same-lease `setLease()` look like a new session and could wash away an
+      // expired reset without a real control re-acquire.
       pending.clear();
       pressed.clear();
       pinnedAdapter = null;
@@ -79,8 +83,10 @@
     }
 
     function requireReacquire() {
-      leaseId = null;
-      leaseEpoch = 0;
+      // Preserve the identity internally so the caller cannot turn the same
+      // lease/epoch into a fresh sequence merely by rebinding it.  The lease
+      // never appears in a public snapshot and all sends remain blocked until
+      // a different lease or epoch is installed.
       pressed.clear();
       pinnedAdapter = null;
       barrier = null;
@@ -154,6 +160,12 @@
     function sendThrough(adapterName, message, isReset) {
       const inputId = makeInputId();
       const seq = ++lastSent;
+      let connectionAttemptId = null;
+      try {
+        connectionAttemptId = getConnectionAttemptId() || null;
+      } catch (_) {
+        connectionAttemptId = null;
+      }
       const payload = {
         type: message.type || 'keyboard',
         action: message.action,
@@ -164,7 +176,13 @@
         seq,
         inputIds: [inputId],
       };
-      const record = { inputId, seq, adapter: adapterName, reset: Boolean(isReset) };
+      const record = {
+        inputId,
+        seq,
+        adapter: adapterName,
+        reset: Boolean(isReset),
+        connectionAttemptId,
+      };
       let delivered = false;
       try {
         delivered = adapters[adapterName](payload) === true;
@@ -188,7 +206,7 @@
 
     function sendReset(reason) {
       expireBarrier();
-      if (!leaseId) return null;
+      if (!leaseId || reacquireRequired) return null;
       invalidateBeforeReset();
       const adapterName = chooseAdapter(true);
       if (!adapterName) {
@@ -204,7 +222,12 @@
         requireReacquire();
         return null;
       }
-      barrier = { inputId: record.inputId, seq: record.seq, deadline: now() + ackTimeoutMs };
+      barrier = {
+        inputId: record.inputId,
+        seq: record.seq,
+        deadline: now() + ackTimeoutMs,
+        connectionAttemptId: record.connectionAttemptId,
+      };
       notifyState();
       return record.inputId;
     }
@@ -218,7 +241,11 @@
         && nextLease.leaseEpoch >= 0;
       const nextLeaseId = validLease ? nextLease.leaseId : null;
       const nextLeaseEpoch = validLease ? nextLease.leaseEpoch : 0;
-      if (nextLeaseId === leaseId && nextLeaseEpoch === leaseEpoch && !reacquireRequired) return;
+      if (nextLeaseId === leaseId && nextLeaseEpoch === leaseEpoch) {
+        // A failed/expired transport identity is intentionally sticky.  Only a
+        // genuinely different lease/epoch may establish a new sequence.
+        return;
+      }
       leaseId = nextLeaseId;
       leaseEpoch = nextLeaseEpoch;
       reacquireRequired = false;
@@ -228,7 +255,7 @@
 
     function send(message) {
       expireBarrier();
-      if (!leaseId || barrier || !message || !message.action) return null;
+      if (!leaseId || reacquireRequired || barrier || !message || !message.action) return null;
       const adapterName = chooseAdapter(false);
       if (!adapterName) return null;
       const identity = keyIdentity(message);
@@ -248,7 +275,25 @@
     }
 
     function resetBarrier(reason) {
+      expireBarrier();
+      if (barrier) {
+        let currentAttemptId = null;
+        try {
+          currentAttemptId = getConnectionAttemptId() || null;
+        } catch (_) {
+          currentAttemptId = null;
+        }
+        // A barrier sent on a prior WebRTC attempt cannot be claimed by a new
+        // recovery cycle. Drop only that stale barrier and emit a fresh reset
+        // under the current attempt; the next positive ACK owns the new ID.
+        if (barrier.connectionAttemptId !== currentAttemptId) {
+          invalidateBeforeReset();
+          barrier = null;
+          notifyState();
+        }
+      }
       if (barrier) return barrier.inputId;
+      if (reacquireRequired) return null;
       return sendReset(reason || 'unspecified');
     }
 
@@ -256,6 +301,19 @@
       expireBarrier();
       const payload = ack || {};
       if (!leaseId || payload.schemaVersion !== 2 || payload.leaseEpoch !== leaseEpoch) {
+        return { status: 'stale' };
+      }
+      const ackInputIds = Array.isArray(payload.inputIds)
+        ? payload.inputIds
+        : (payload.inputId ? [payload.inputId] : null);
+      // A cumulative ACK without inputIds is part of the existing v2 contract
+      // and remains accepted.  When an ACK names IDs, however, it must name the
+      // owned reset barrier; otherwise a late/foreign ACK must not unlock it.
+      if (barrier && ackInputIds && !ackInputIds.includes(barrier.inputId)) {
+        return { status: 'stale' };
+      }
+      if (barrier && Object.prototype.hasOwnProperty.call(payload, 'inputType')
+        && payload.inputType !== 'keyboard') {
         return { status: 'stale' };
       }
       if (payload.status === 'resync-required' || payload.status === 'sequence-gap') {
@@ -319,6 +377,17 @@
       };
     }
 
+    function getPendingReset() {
+      expireBarrier();
+      if (!barrier) return null;
+      return {
+        inputId: barrier.inputId,
+        seq: barrier.seq,
+        leaseEpoch,
+        connectionAttemptId: barrier.connectionAttemptId,
+      };
+    }
+
     return {
       setLease,
       send,
@@ -328,6 +397,7 @@
       markAdapterAvailable,
       canSendNewInput,
       getSnapshot,
+      getPendingReset,
       subscribeState,
     };
   }

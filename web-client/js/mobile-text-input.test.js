@@ -198,6 +198,35 @@ test('ordinary hide preserves the same-context pending draft', () => {
   assert.equal(h.adapter.getSnapshot().hasPending, true);
 });
 
+test('context invalidation keeps an empty surface uncertain until explicit confirmation', () => {
+  const h = makeTextHarness();
+  const sentBefore = h.sent.length;
+  h.adapter.invalidateContext('visibility-hidden');
+
+  assert.equal(h.adapter.needsContextRecovery(), true);
+  assert.equal(h.adapter.getSnapshot().hasPending, false);
+  assert.equal(h.adapter.getSnapshot().deliveryUncertain, true);
+  assert.equal(h.sent.length, sentBefore);
+  assert.equal(h.adapter.confirmEmptyContextRecovery(), true);
+  assert.equal(h.adapter.needsContextRecovery(), false);
+  assert.equal(h.adapter.getSnapshot().deliveryUncertain, false);
+});
+
+test('empty context confirmation refuses a draft or composition until discard/commit', () => {
+  const h = makeTextHarness({sendTextResult: false});
+  h.input.value = 'draft';
+  h.emit('input');
+  h.adapter.invalidateContext('page-hide');
+  assert.equal(h.adapter.confirmEmptyContextRecovery(), false);
+  assert.equal(h.input.value, 'draft');
+
+  h.adapter.discardPending();
+  assert.equal(h.adapter.confirmEmptyContextRecovery(), true);
+  h.emit('compositionstart');
+  assert.equal(h.adapter.confirmEmptyContextRecovery(), false);
+  h.emit('compositionend');
+});
+
 test('bounded deletion timer is cancelled by reset before its old callback can send', () => {
   const nativeSetTimeout = global.setTimeout;
   const nativeClearTimeout = global.clearTimeout;
