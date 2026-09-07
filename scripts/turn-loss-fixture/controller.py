@@ -1010,6 +1010,7 @@ class ControlRequestRouter:
             "apply": {"operation", "controlToken", "runId", "pattern", "durationMs"},
             "collect": {"operation", "controlToken"},
             "clear": {"operation", "controlToken"},
+            "verify": {"operation", "controlToken", "runId"},
         }.get(request["operation"])
         if expected is None or set(request) != expected:
             if "actualDropCount" in request:
@@ -1040,6 +1041,8 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                         raise RuntimeError("control session is already open")
                     session = router.controller.open_session(request["runId"], request["sessionId"], request["generation"], attempt_id=request["attemptId"], stream_id=request["streamId"])
                     response = {"status": "OPEN", "generation": session.generation}
+                elif operation == "verify":
+                    response = router.controller.verify_final_evidence(request["runId"])
                 elif session is None:
                     raise RuntimeError("open a control session before this command")
                 elif operation == "confirm":
