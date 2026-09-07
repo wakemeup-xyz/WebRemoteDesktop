@@ -1298,19 +1298,22 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
             if ambient.abort_status():
                 raise RuntimeError("ambient monitor aborted")
 
+        matrix_error: Exception | None = None
+        full = None
         try:
             full = probe.evaluate_preset_scenario_matrix(candidate, measurement_hook=measurement_hook)
             partial["full"] = full
         except Exception as exc:
-            if ambient.abort_status():
-                return aborted_result(error=exc)
-            raise
+            matrix_error = exc
         finally:
             # The final check happens after the matrix and before any raw PASS is derived.
             ambient.verify_coverage()
             ambient.stop()
         if ambient.abort_status():
-            return aborted_result()
+            return aborted_result(error=matrix_error)
+        if matrix_error is not None:
+            raise matrix_error
+        assert full is not None
         full["ambientTelemetry"] = {**ambient.evidence(), "sentinels": sentinels}
         full_errors = validate_full_matrix(full)
         candidate_row["execution"]["fullMatrix"] = "COMPLETED"
