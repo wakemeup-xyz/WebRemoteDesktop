@@ -6,6 +6,7 @@ payload bytes and accepts only TURN-to-Viewer UDP on the manifest egress leg.
 """
 from __future__ import annotations
 import hashlib, ipaddress, json, socket, struct, time
+from controller import LossFixtureManifest, RuntimeBlocked, load_runtime_relay_binding
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -108,7 +109,7 @@ class FixtureCaptureService:
     def __init__(self, *, observer: ReceiverDirectedObserver, manifest: Mapping[str, Any], state_path: Path, output: Path, authority_socket: Path, capture_capability: str) -> None:
         if not isinstance(capture_capability, str) or not capture_capability:
             raise ValueError("receiver capture capability is required")
-        self.observer, self.manifest, self.state_path, self.output, self.authority_socket, self.capture_capability = observer, dict(manifest), Path(state_path), Path(output), Path(authority_socket), capture_capability
+        self.observer, self.manifest, self.state_path, self.output, self.authority_socket, self.capture_capability, self.relay_binding = observer, dict(manifest), Path(state_path), Path(output), Path(authority_socket), capture_capability, Path(relay_binding)
         self._ring: list[dict[str, int]] = []; self._event: Mapping[str, Any] | None = None
         self._during: list[dict[str, int]] = []; self._after: list[dict[str, int]] = []
     def _state(self) -> Mapping[str, Any] | None:
@@ -117,6 +118,15 @@ class FixtureCaptureService:
             return row if isinstance(row, Mapping) and row.get("state") == "armed" else None
         except (OSError, ValueError): return None
     def poll(self) -> None:
+        # Do not retain a static-manifest packet ring.  The parent must first
+        # bind the actual reciprocal Viewer/Host selected pair into this
+        # namespace; only that tuple can authorize AF_PACKET observation.
+        try:
+            runtime = load_runtime_relay_binding(self.relay_binding, LossFixtureManifest.parse(self.manifest))
+        except RuntimeBlocked:
+            time.sleep(.05)
+            return
+        self.observer.selected_leg = dict(runtime["actualEgressSelector"])
         previous = len(self.observer.rows); self.observer.capture_once(timeout_s=.25)
         fresh = list(self.observer.rows)[previous:]
         active = self._state()
@@ -144,12 +154,12 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    observe = sub.add_parser("observe"); observe.add_argument("--manifest", type=Path, required=True); observe.add_argument("--state", type=Path, required=True); observe.add_argument("--output", type=Path, required=True); observe.add_argument("--authority-socket", type=Path, required=True); observe.add_argument("--capture-capability", type=Path, required=True)
+    observe = sub.add_parser("observe"); observe.add_argument("--manifest", type=Path, required=True); observe.add_argument("--state", type=Path, required=True); observe.add_argument("--output", type=Path, required=True); observe.add_argument("--authority-socket", type=Path, required=True); observe.add_argument("--capture-capability", type=Path, required=True); observe.add_argument("--relay-binding", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "observe":
         raw = json.loads(args.manifest.read_text(encoding="utf-8")); selector = raw["udpLegSelector"]
         # Canonical relay egress from manifest's sole relay port.
         leg = selector if selector["sourcePort"] in {57004, 57005} else {"protocol": "udp", "source": selector["destination"], "sourcePort": selector["destinationPort"], "destination": selector["source"], "destinationPort": selector["sourcePort"]}
         capability = args.capture_capability.read_text(encoding="utf-8").strip()
-        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg), manifest=raw, state_path=args.state, output=args.output, authority_socket=args.authority_socket, capture_capability=capability)
+        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg), manifest=raw, state_path=args.state, output=args.output, authority_socket=args.authority_socket, capture_capability=capability, relay_binding=args.relay_binding)
         while True: service.poll()

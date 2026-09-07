@@ -15,7 +15,7 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     network_mode: service:turn
-    command: ["python", "/fixture/controller.py", "serve", "--manifest", "/runtime/manifest.json", "--credentials", "/runtime/credentials/turn.json", "--state", "/state/active-loss.json"]
+    command: ["python", "/fixture/controller.py", "serve", "--manifest", "/runtime/manifest.json", "--credentials", "/runtime/credentials/turn.json", "--state", "/state/active-loss.json", "--relay-binding", "/runtime/actual-relay.json"]
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
     security_opt: [no-new-privileges:true]
@@ -29,7 +29,7 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     network_mode: service:turn
-    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-capture/authority.sock", "--capture-capability", "/lab-capture/capability"]
+    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-capture/authority.sock", "--capture-capability", "/lab-capture/capability", "--relay-binding", "/runtime/actual-relay.json"]
     cap_drop: [ALL]
     cap_add: [NET_RAW]
     security_opt: [no-new-privileges:true]

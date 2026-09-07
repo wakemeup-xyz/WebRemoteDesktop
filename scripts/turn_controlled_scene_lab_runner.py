@@ -552,10 +552,27 @@ class PlaywrightLabViewerAdapter:
           const pc = WebRTC?.peerConnection || WebRTC?.pc;
           if (!pc?.getStats) return [];
           return [...(await pc.getStats()).values()].map(row => ({id: row.id, type: row.type, selected: row.selected,
-            nominated: row.nominated, state: row.state, localCandidateId: row.localCandidateId,
+            nominated: row.nominated, state: row.state, selectedCandidatePairId: row.selectedCandidatePairId,
+            localCandidateId: row.localCandidateId, remoteCandidateId: row.remoteCandidateId,
             candidateType: row.candidateType, address: row.address, port: row.port, protocol: row.protocol}));
         }""")
         return selected_relay_leg_from_stats(rows, catalog) if isinstance(rows, list) else None
+
+    def selected_relay_binding(self, manifest: Any) -> dict[str, Any] | None:
+        rows = self.viewer_page.evaluate("""async () => {
+          const pc = WebRTC?.peerConnection || WebRTC?.pc;
+          if (!pc?.getStats) return [];
+          return [...(await pc.getStats()).values()].map(row => ({id: row.id, type: row.type, selected: row.selected,
+            nominated: row.nominated, state: row.state, selectedCandidatePairId: row.selectedCandidatePairId,
+            localCandidateId: row.localCandidateId, remoteCandidateId: row.remoteCandidateId,
+            candidateType: row.candidateType, address: row.address, port: row.port, protocol: row.protocol}));
+        }""")
+        if not isinstance(rows, list): return None
+        host_pair = self.viewer_page.evaluate("""async () => {
+          try { return await window.WebRTC?.requestLossLabHostSelectedPair?.(); }
+          catch (_error) { return null; }
+        }""")
+        return selected_relay_binding_from_stats(rows, manifest, host_pair)
 
     def arm_loss_lab_taps(self) -> bool:
         """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""
@@ -628,6 +645,34 @@ def seal_loss_bridge_after_clear(*, manifest_path: Path, socket_path: Path, raw_
     completed = (run or (lambda argv: subprocess.run(argv, check=False, capture_output=True, text=True)))(command)
     if getattr(completed, "returncode", 0) != 0:
         raise RuntimeError("isolated loss bridge seal was refused")
+
+
+def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: Any, host_pair: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+    """Bind the current selected pair, including candidate ids and both ends.
+
+    ``hostPair`` is the reciprocal representation of the same nominated ICE
+    pair.  Controller-side validation requires the full reciprocal candidate
+    identity before translating the viewer-visible pair into TURN OUTPUT.
+    """
+    transports = [row for row in rows if isinstance(row, Mapping) and row.get("type") == "transport" and isinstance(row.get("selectedCandidatePairId"), str)]
+    selected_id = transports[0].get("selectedCandidatePairId") if len(transports) == 1 else None
+    pairs = [row for row in rows if isinstance(row, Mapping) and row.get("type") == "candidate-pair" and row.get("state") == "succeeded" and (row.get("id") == selected_id if selected_id else (row.get("selected") is True or row.get("nominated") is True))]
+    if len(pairs) != 1: return None
+    pair = pairs[0]
+    local = next((row for row in rows if isinstance(row, Mapping) and row.get("type") == "local-candidate" and row.get("id") == pair.get("localCandidateId")), None)
+    remote = next((row for row in rows if isinstance(row, Mapping) and row.get("type") == "remote-candidate" and row.get("id") == pair.get("remoteCandidateId")), None)
+    required = ("id", "candidateType", "address", "port", "protocol")
+    if (not isinstance(local, Mapping) or not isinstance(remote, Mapping) or local.get("candidateType") != "relay"
+            or any(not isinstance(local.get(key), str if key in {"id", "candidateType", "address", "protocol"} else int) for key in required)
+            or any(not isinstance(remote.get(key), str if key in {"id", "candidateType", "address", "protocol"} else int) for key in required)
+            or local.get("protocol") != "udp" or remote.get("protocol") != "udp"):
+        return None
+    viewer = {"pairId": str(pair.get("id")), "localCandidateId": local["id"], "remoteCandidateId": remote["id"],
+              "local": {key: local[key] for key in required}, "remote": {key: remote[key] for key in required}}
+    if not isinstance(host_pair, Mapping): return None
+    actual = {"protocol": "udp", "source": local["address"], "sourcePort": local["port"], "destination": remote["address"], "destinationPort": remote["port"]}
+    from controller import runtime_relay_binding
+    return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair)
 
 
 def selected_relay_leg_from_stats(rows: list[Mapping[str, Any]], catalog: list[Mapping[str, Any]]) -> dict[str, Any] | None:

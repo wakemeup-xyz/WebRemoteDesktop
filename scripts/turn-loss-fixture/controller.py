@@ -176,6 +176,81 @@ class LossFixtureManifest:
         return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, receiver_bridge_file, selected_turn, digest, image_digests)
 
 
+_RUNTIME_RELAY_FIELDS = frozenset({"schemaVersion", "runId", "expectedEgressSelector", "actualEgressSelector", "viewerPair", "hostPair"})
+_PAIR_FIELDS = frozenset({"pairId", "localCandidateId", "remoteCandidateId", "local", "remote"})
+_CANDIDATE_FIELDS = frozenset({"id", "candidateType", "address", "port", "protocol"})
+
+
+def _runtime_leg(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"protocol", "source", "sourcePort", "destination", "destinationPort"}:
+        raise RuntimeBlocked(f"{field} must identify one actual UDP egress tuple")
+    if value.get("protocol") != "udp": raise RuntimeBlocked(f"{field} protocol must be udp")
+    return {"protocol": "udp", "source": _require_fixture_ip(value.get("source"), f"{field}.source"),
+            "sourcePort": _require_port(value.get("sourcePort"), f"{field}.sourcePort"),
+            "destination": _require_fixture_ip(value.get("destination"), f"{field}.destination"),
+            "destinationPort": _require_port(value.get("destinationPort"), f"{field}.destinationPort")}
+
+
+def _runtime_candidate(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != _CANDIDATE_FIELDS:
+        raise RuntimeBlocked(f"{field} candidate schema is invalid")
+    candidate_type = _require_string(value.get("candidateType"), f"{field}.candidateType")
+    if value.get("protocol") != "udp": raise RuntimeBlocked(f"{field}.protocol must be udp")
+    return {"id": _require_string(value.get("id"), f"{field}.id"), "candidateType": candidate_type,
+            "address": _require_fixture_ip(value.get("address"), f"{field}.address"),
+            "port": _require_port(value.get("port"), f"{field}.port"), "protocol": "udp"}
+
+
+def _runtime_pair(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != _PAIR_FIELDS:
+        raise RuntimeBlocked(f"{field} selected pair schema is invalid")
+    result = {"pairId": _require_string(value.get("pairId"), f"{field}.pairId"),
+              "localCandidateId": _require_string(value.get("localCandidateId"), f"{field}.localCandidateId"),
+              "remoteCandidateId": _require_string(value.get("remoteCandidateId"), f"{field}.remoteCandidateId"),
+              "local": _runtime_candidate(value.get("local"), f"{field}.local"),
+              "remote": _runtime_candidate(value.get("remote"), f"{field}.remote")}
+    if result["localCandidateId"] != result["local"]["id"] or result["remoteCandidateId"] != result["remote"]["id"]:
+        raise RuntimeBlocked(f"{field} candidate ids do not bind the selected pair")
+    return result
+
+
+def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mapping[str, Any], viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a parent-owned binding from live Viewer and Host selected pairs.
+
+    The manifest's static tuple is retained solely as an expected fixture map;
+    the controller consumes only ``actualEgressSelector`` after this reciprocal
+    pair proof has been validated and written read-only into the namespace.
+    """
+    return {"schemaVersion": 1, "runId": manifest.run_id, "expectedEgressSelector": dict(manifest.egress_selector),
+            "actualEgressSelector": dict(actual_egress), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair)}
+
+
+def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dict[str, Any]:
+    try: raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc: raise RuntimeBlocked("actual TURN relay binding is unavailable") from exc
+    if not isinstance(raw, Mapping) or set(raw) != _RUNTIME_RELAY_FIELDS or raw.get("schemaVersion") != 1 or raw.get("runId") != manifest.run_id or raw.get("expectedEgressSelector") != manifest.egress_selector:
+        raise RuntimeBlocked("actual TURN relay binding does not match the fixture expectation")
+    actual, viewer, host = _runtime_leg(raw.get("actualEgressSelector"), "actualEgressSelector"), _runtime_pair(raw.get("viewerPair"), "viewerPair"), _runtime_pair(raw.get("hostPair"), "hostPair")
+    def endpoint(candidate: Mapping[str, Any]) -> tuple[str, int, str, str]:
+        return (str(candidate["address"]), int(candidate["port"]), str(candidate["protocol"]), str(candidate["candidateType"]))
+    if (viewer["local"]["candidateType"] != "relay" or host["remote"]["candidateType"] != "relay"
+            or endpoint(viewer["remote"]) != endpoint(host["local"])
+            or endpoint(viewer["local"]) != endpoint(host["remote"])):
+        raise RuntimeBlocked("Viewer and host selected pair reciprocity is invalid")
+    derived = {"protocol": "udp", "source": viewer["local"]["address"], "sourcePort": viewer["local"]["port"],
+               "destination": viewer["remote"]["address"], "destinationPort": viewer["remote"]["port"]}
+    if actual != derived or actual["sourcePort"] not in _RELAY_PORTS:
+        raise RuntimeBlocked("actual TURN namespace egress tuple is inconsistent with selected pairs")
+    return {"actualEgressSelector": actual, "viewerPair": viewer, "hostPair": host}
+
+
+def write_runtime_relay_binding(path: Path, binding: Mapping[str, Any]) -> None:
+    destination = Path(path); destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(dict(binding), sort_keys=True), encoding="utf-8"); temporary.chmod(0o600)
+    os.replace(temporary, destination); destination.chmod(0o600)
+
+
 class RuleBackend(Protocol):
     def add_rule(self, argv: list[str]) -> None: ...
     def remove_rule(self, argv: list[str]) -> None: ...
@@ -711,7 +786,7 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
     required = {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest", "authoritySignature"}
     if set(value) != required or value.get("source") != "fixture-af-packet" or value.get("direction") != "turn-to-viewer":
         raise RuntimeError("receiver capture provenance is invalid")
-    if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != manifest.egress_selector:
+    if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != event.get("egressSelector"):
         raise RuntimeError("receiver capture does not bind selected relay leg")
     if not isinstance(value.get("kernelDropCount"), int) or value["kernelDropCount"] <= 0 or not isinstance(value.get("ssrc"), int):
         raise RuntimeError("receiver capture kernel counter or SSRC is invalid")
@@ -753,12 +828,14 @@ class LabReceiverBridgeAuthority:
     second run unable to authenticate after the Lab closes.
     """
     def __init__(self, manifest: LossFixtureManifest, *, verifier: bytes, socket_path: Path,
-                 capture_socket_path: Path | None = None, capture_capability_path: Path | None = None) -> None:
+                 capture_socket_path: Path | None = None, capture_capability_path: Path | None = None,
+                 actual_egress_selector: Mapping[str, Any] | None = None) -> None:
         if not isinstance(verifier, bytes) or not verifier:
             raise ValueError("a running Lab transcript verifier is required")
         self.manifest, self._verifier, self.socket_path = manifest, bytes(verifier), Path(socket_path)
         self.capture_socket_path = Path(capture_socket_path) if capture_socket_path is not None else self.socket_path.with_name("capture-authority.sock")
         self._capture_capability_path = Path(capture_capability_path) if capture_capability_path is not None else self.capture_socket_path.with_name("capture-capability")
+        self._actual_egress_selector = dict(actual_egress_selector) if actual_egress_selector is not None else dict(manifest.egress_selector)
         self._receipts: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._servers: list[socketserver.ThreadingUnixStreamServer] = []
@@ -766,7 +843,7 @@ class LabReceiverBridgeAuthority:
     def attest_capture(self, capture: Mapping[str, Any]) -> dict[str, Any]:
         body = dict(capture); body.pop("authoritySignature", None)
         # Validate no runner-selected tuple/direction before signing.
-        if body.get("runId") != self.manifest.run_id or body.get("selectedLeg") != self.manifest.egress_selector or body.get("direction") != "turn-to-viewer": raise RuntimeError("capture does not bind fixture selected leg")
+        if body.get("runId") != self.manifest.run_id or body.get("selectedLeg") != self._actual_egress_selector or body.get("direction") != "turn-to-viewer": raise RuntimeError("capture does not bind fixture selected leg")
         signature = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
         return {**body, "authoritySignature": signature}
 
@@ -893,11 +970,12 @@ class UnixSealedReceiverEvidenceSource:
 
 class LossController:
     """Manifest-bound controller. Deadline removal belongs to another process."""
-    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns, probe_window_s: float = 0.25, probe_sleep: Callable[[float], None] = time.sleep) -> None:
+    def __init__(self, manifest: LossFixtureManifest, *, backend: RuleBackend, state_store: DeadlineState | None = None, receiver_source: ReceiverEvidenceSource | None = None, relay_binding_path: Path | None = None, baseline_ttl_ns: int = 10_000_000_000, monotonic_ns: Callable[[], int] = time.monotonic_ns, probe_window_s: float = 0.25, probe_sleep: Callable[[float], None] = time.sleep) -> None:
         self.manifest = manifest
         self._backend = backend
         self._state_store = state_store or MemoryDeadlineState()
         self._receiver_source = receiver_source
+        self._relay_binding_path = Path(relay_binding_path) if relay_binding_path is not None else None
         # T4/T5 do not yet expose a signed receiver-bridge artifact bound to
         # run/attempt/generation/selected pair. Plain files are useful for
         # diagnostics only and must never close the media-effect gate.
@@ -911,6 +989,14 @@ class LossController:
         self._session_generations: dict[str, int] = {}
         self.active_event: dict[str, Any] | None = None
         self._last_event: dict[str, Any] | None = None
+
+    def _active_egress_selector(self) -> dict[str, Any]:
+        if self._relay_binding_path is None:
+            # Unit-only compatibility; the Compose controller is always given
+            # the parent-owned live binding path and therefore cannot authorize
+            # a static manifest tuple.
+            return dict(self.manifest.egress_selector)
+        return dict(load_runtime_relay_binding(self._relay_binding_path, self.manifest)["actualEgressSelector"])
 
     def _require_run(self, run_id: str) -> None:
         if run_id != self.manifest.run_id:
@@ -936,7 +1022,7 @@ class LossController:
         nonce = secrets.token_hex(6)
         comment = f"wrd-baseline:{self.manifest.run_id[:8]}:{nonce}"
         chain = f"WRDB{self.manifest.run_id.replace('-', '')[:8]}{nonce[:8]}"
-        selector = self.manifest.egress_selector
+        selector = self._active_egress_selector()
         jump = [
             "-o", self.manifest.interface, "-p", "udp",
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
@@ -963,10 +1049,10 @@ class LossController:
             raise RuntimeError("selected-leg kernel counter probe observed no matching UDP traffic")
         observed = self._monotonic_ns()
         with self._lock:
-            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(self.manifest.selector), "packetCount": after - before, "observedMonotonicNs": observed}
+            self._baselines[session.session_id] = {"sessionId": session.session_id, "generation": session.generation, "selector": dict(selector), "packetCount": after - before, "observedMonotonicNs": observed}
 
     def _rule_for(self, pattern: str, comment: str) -> list[str]:
-        selector = self.manifest.egress_selector
+        selector = self._active_egress_selector()
         rule = [
             "-o", self.manifest.interface, "-p", "udp",
             "-s", selector["source"], "--sport", str(selector["sourcePort"]),
@@ -988,7 +1074,7 @@ class LossController:
             baseline = self._baselines.pop(session.session_id, None)  # one dry-run can arm one injection only
             if baseline is None:
                 raise RuntimeError("selected-leg nonzero baseline is required before loss injection")
-            if baseline["generation"] != session.generation or baseline["selector"] != self.manifest.selector:
+            if baseline["generation"] != session.generation or baseline["selector"] != self._active_egress_selector():
                 raise RuntimeError("selected-leg baseline does not match this control session")
             now = self._monotonic_ns()
             if now < baseline["observedMonotonicNs"] or now - baseline["observedMonotonicNs"] > self._baseline_ttl_ns:
@@ -1000,7 +1086,7 @@ class LossController:
             event = {
                 "schemaVersion": 1, "state": "installing", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
-                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": dict(self.manifest.egress_selector),
+                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "expectedEgressSelector": dict(self.manifest.egress_selector),
                 "sessionId": session.session_id, "attemptId": session.attempt_id, "streamId": session.stream_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
                 "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
                 "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,
@@ -1287,7 +1373,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
         encoding="utf-8",
     )
     project = f"turn-loss-{manifest.run_id[:8]}"
-    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "bridgeSocket": str(verify_dir / "authority.sock"), "captureSocket": str(capture_dir / "authority.sock")}
+    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "bridgeSocket": str(verify_dir / "authority.sock"), "captureSocket": str(capture_dir / "authority.sock"), "relayBinding": str(runtime_dir / "actual-relay.json")}
 
 
 def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[str]], tuple[int, str, str]]) -> dict[str, str]:
@@ -1349,6 +1435,7 @@ def _main() -> None:
         command.add_argument("--state", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
+    subcommands.choices["serve"].add_argument("--relay-binding", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
                                                 help="inherited live-Lab verifier descriptor; never a path, argv secret, or environment variable")
     prepare = subcommands.add_parser("prepare")
@@ -1426,7 +1513,7 @@ def _main() -> None:
         if not verifier or len(verifier) >= 4096:
             raise RuntimeError("inherited live Lab verifier is unavailable or oversized")
         receiver_source = SignedT3T5ReceiverEvidenceSource.from_file(arguments.receiver_bridge, verifier=verifier)
-    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=receiver_source)
+    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=receiver_source, relay_binding_path=arguments.relay_binding)
     # Docker forwards the loopback-published host port to the fixture bridge
     # address, not the container loopback. The Compose override restricts the
     # published side to 127.0.0.1; this listener still exists only in TURN's

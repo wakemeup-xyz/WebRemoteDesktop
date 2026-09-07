@@ -2152,6 +2152,30 @@ class WebRemoteHost:
             for field in ("viewerId", "leaseId", "leaseEpoch", "connectionGeneration")
         )
 
+    def _lab_host_selected_pair(self):
+        """Read aiortc's nominated ICE pair for the disposable Lab only."""
+        if not self._lab_loss_trace_enabled or self.pc is None:
+            return None
+        try:
+            ice = self.pc.sctp.transport.transport
+            nominated = getattr(getattr(ice, "_connection"), "_nominated", {})
+            pair = nominated.get(1) if isinstance(nominated, dict) else None
+            if pair is None and isinstance(nominated, dict) and len(nominated) == 1:
+                pair = next(iter(nominated.values()))
+            local, remote = getattr(pair, "local_candidate", None), getattr(pair, "remote_candidate", None)
+            def candidate(value, identifier):
+                host, port, protocol = getattr(value, "host", None), getattr(value, "port", None), str(getattr(value, "transport", "udp")).lower()
+                kind = str(getattr(value, "type", "host")).lower()
+                if not isinstance(host, str) or not isinstance(port, int) or protocol != "udp": return None
+                return {"id": identifier, "candidateType": kind, "address": host, "port": port, "protocol": protocol}
+            local_row, remote_row = candidate(local, "host-local"), candidate(remote, "host-remote")
+            if local_row is None or remote_row is None: return None
+            return {"type": "loss_lab_host_selected_pair", "schemaVersion": 1, "pairId": "host-nominated",
+                    "localCandidateId": local_row["id"], "remoteCandidateId": remote_row["id"],
+                    "local": local_row, "remote": remote_row}
+        except Exception:
+            return None
+
     def _is_live_input_channel(self, channel):
         return channel is not None and (
             channel is getattr(self, "_input_datachannel", None)
@@ -2626,6 +2650,12 @@ class WebRemoteHost:
                                     "h1": h1,
                                 }
                                 channel.send(json.dumps(resp))
+                                return
+
+                            if data.get("type") == "loss_lab_selected_pair_request":
+                                selected = self._lab_host_selected_pair()
+                                if selected is not None:
+                                    channel.send(json.dumps(selected))
                                 return
 
                             if data.get("type") == "loss_lab_trace_begin":

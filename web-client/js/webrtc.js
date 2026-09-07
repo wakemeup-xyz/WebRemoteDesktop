@@ -3952,6 +3952,10 @@ const WebRTC = {
           this.acceptFrameTraceBatch(data);
           return;
         }
+        if (data.type === 'loss_lab_host_selected_pair') {
+          if (typeof this._lossLabHostPairResolve === 'function') this._lossLabHostPairResolve(data);
+          return;
+        }
         if (data.type === 'loss_lab_trace_flush_ack') {
           this.acceptLossLabFlushAck(data);
           return;
@@ -4890,6 +4894,19 @@ if (this.tunnelLastObjectUrl) {
 
   getFrameTraceDiagnostics() {
     return this.ensureFrameTraceCollector().diagnostics();
+  },
+
+  requestLossLabHostSelectedPair() {
+    const channel = this.inputChannel;
+    if (!channel || channel.readyState !== 'open') return Promise.reject(new Error('Lab input channel is unavailable'));
+    if (this._lossLabHostPairPromise) return this._lossLabHostPairPromise;
+    this._lossLabHostPairPromise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => { this._lossLabHostPairPromise = null; reject(new Error('Host selected pair acknowledgement timed out')); }, 2000);
+      this._lossLabHostPairResolve = (value) => { clearTimeout(timeout); this._lossLabHostPairPromise = null; this._lossLabHostPairResolve = null; resolve(value); };
+      try { channel.send(JSON.stringify({ type: 'loss_lab_selected_pair_request', schemaVersion: 1 })); }
+      catch (error) { clearTimeout(timeout); this._lossLabHostPairPromise = null; this._lossLabHostPairResolve = null; reject(error); }
+    });
+    return this._lossLabHostPairPromise;
   },
 
   beginLossLabTrace() {

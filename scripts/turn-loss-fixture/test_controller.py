@@ -994,3 +994,29 @@ def test_authority_close_removes_receiver_capability_sockets_and_empty_bridge_tr
     authority.close()
     assert not verify_socket.exists() and not capture_socket.exists()
     assert not capture_socket.with_name("capability").exists() and not bridge_root.exists()
+
+
+def test_runtime_relay_binding_not_static_manifest_drives_baseline_and_drop_selector(tmp_path):
+    raw, backend = manifest(), RecordingBackend()
+    actual = {"protocol": "udp", "source": "172.31.0.9", "sourcePort": 51007, "destination": "172.31.0.8", "destinationPort": 45678}
+    binding = controller.runtime_relay_binding(manifest=controller.LossFixtureManifest.parse(raw), actual_egress=actual,
+        viewer_pair={"pairId": "viewer-pair", "localCandidateId": "relay", "remoteCandidateId": "host", "local": {"id": "relay", "candidateType": "relay", "address": actual["source"], "port": actual["sourcePort"], "protocol": "udp"}, "remote": {"id": "host", "candidateType": "host", "address": actual["destination"], "port": actual["destinationPort"], "protocol": "udp"}},
+        host_pair={"pairId": "host-pair", "localCandidateId": "host", "remoteCandidateId": "relay", "local": {"id": "host", "candidateType": "host", "address": actual["destination"], "port": actual["destinationPort"], "protocol": "udp"}, "remote": {"id": "relay", "candidateType": "relay", "address": actual["source"], "port": actual["sourcePort"], "protocol": "udp"}})
+    path = tmp_path / "actual-relay.json"; controller.write_runtime_relay_binding(path, binding)
+    fixture = controller.LossController(controller.LossFixtureManifest.parse(raw), backend=backend, relay_binding_path=path)
+    session = fixture.open_session(raw["runId"], "s", 1, attempt_id="a", stream_id="v")
+    session.confirm_selected_leg()
+    event = session.apply_loss(raw["runId"], "all_for_200ms", 200)
+    assert actual["source"] in backend.probes[0][1] and str(actual["destinationPort"]) in backend.probes[0][1]
+    assert event["egressSelector"] == actual and actual["source"] in backend.added[-1]
+
+
+def test_runtime_relay_binding_rejects_mismatched_host_selected_pair(tmp_path):
+    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
+    actual = {"protocol": "udp", "source": "172.31.0.9", "sourcePort": 51007, "destination": "172.31.0.8", "destinationPort": 45678}
+    binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=actual,
+        viewer_pair={"pairId": "viewer-pair", "localCandidateId": "relay", "remoteCandidateId": "host", "local": {"id": "relay", "candidateType": "relay", "address": actual["source"], "port": actual["sourcePort"], "protocol": "udp"}, "remote": {"id": "host", "candidateType": "host", "address": actual["destination"], "port": actual["destinationPort"], "protocol": "udp"}},
+        host_pair={"pairId": "host-pair", "localCandidateId": "other", "remoteCandidateId": "relay", "local": {"id": "other", "candidateType": "host", "address": "172.31.0.77", "port": actual["destinationPort"], "protocol": "udp"}, "remote": {"id": "relay", "candidateType": "relay", "address": actual["source"], "port": actual["sourcePort"], "protocol": "udp"}})
+    path = tmp_path / "actual-relay.json"; path.write_text(json.dumps(binding))
+    with pytest.raises(controller.RuntimeBlocked, match="host selected pair"):
+        controller.load_runtime_relay_binding(path, parsed)

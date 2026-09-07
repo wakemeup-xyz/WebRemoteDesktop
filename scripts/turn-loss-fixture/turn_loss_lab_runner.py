@@ -14,8 +14,8 @@ if str(_SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_ROOT))
 
 from controller import (DockerRuntimeProbe, LabReceiverBridgeAuthority, LossFixtureManifest,
-                        RuntimeBlocked, load_fixture_credentials, prepare_runtime,
-                        run_isolated_loss_lifecycle)
+                        RuntimeBlocked, load_fixture_credentials, load_runtime_relay_binding,
+                        prepare_runtime, run_isolated_loss_lifecycle, write_runtime_relay_binding)
 
 
 def _collect_current_t3(*, lab: Any, adapter: Any, scope: Mapping[str, Any], selected_turn: Mapping[str, Any],
@@ -287,13 +287,23 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
-            selected_leg = adapter.selected_relay_leg(turn_catalog(lab_turn))
-            if (not isinstance(scope, Mapping) or selected_leg is None or {key: selected_leg.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
+            binding = adapter.selected_relay_binding(manifest)
+            if (not isinstance(scope, Mapping) or not isinstance(binding, Mapping)
+                    or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
                 adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
-            holder.update(adapter=adapter, scope=scope)
+            # The static manifest leg is only a mapping expectation.  Persist
+            # the nominated browser pair and reciprocal Host pair before the
+            # controller or AF_PACKET observer may authorize media traffic.
+            write_runtime_relay_binding(Path(prepared["relayBinding"]), binding)
+            try: runtime_relay = load_runtime_relay_binding(Path(prepared["relayBinding"]), manifest)
+            except RuntimeBlocked:
+                adapter.close(); raise
+            holder.update(adapter=adapter, scope=scope, runtimeRelay=runtime_relay)
         def make_authority() -> Any:
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
-            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
+            runtime_relay = holder.get("runtimeRelay")
+            if not isinstance(runtime_relay, Mapping): raise RuntimeBlocked("actual TURN relay binding is unavailable")
+            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"), actual_egress_selector=runtime_relay["actualEgressSelector"])
             holder["authority"] = authority; return authority
         def drive() -> Mapping[str, Any]:
             adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
