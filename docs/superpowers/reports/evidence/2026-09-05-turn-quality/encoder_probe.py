@@ -489,7 +489,22 @@ def _scenario_run(
     }, encoder, decoder)
 
 
-def evaluate_preset_scenario_matrix(config) -> dict[str, Any]:
+def evaluate_peak_headroom_sentinel(config, width: int, height: int) -> dict[str, Any]:
+    """Measure a fixed static block with the same immutable candidate."""
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    logging.disable(logging.CRITICAL)
+    font, _metadata = load_probe_font()
+    run, _encoder, _decoder = _scenario_run(
+        width, height, font, config=config, scenario_id="ambient-sentinel",
+        session_id=f"{config.id}:{width}x{height}:ambient-sentinel", phase_start_index=0,
+        frame_count=65, request_indices=(),
+    )
+    values = [float(frame["encodeMs"]) for frame in run["frames"]]
+    return {"frameCount": len(values), "encodeMsMedian": round(statistics.median(values), 3), "encodeMsP95": round(percentile_95(values), 3)}
+
+
+def evaluate_preset_scenario_matrix(config, measurement_hook=None) -> dict[str, Any]:
     """Collect the fixed five ScenarioRuns for one immutable preset config."""
     random.seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
@@ -508,6 +523,8 @@ def evaluate_preset_scenario_matrix(config) -> dict[str, Any]:
         scroll_encoder = None
         scroll_decoder = None
         for scenario_id, start, count, requests in scenario_specs:
+            if measurement_hook is not None:
+                measurement_hook("before", width, height, scenario_id)
             session_id = f"{config.id}:{width}x{height}:{'scroll' if scenario_id in {'scrolling-text', 'post-scroll-static'} else scenario_id}"
             if scenario_id == "post-scroll-static":
                 run, scroll_encoder, scroll_decoder = _scenario_run(
@@ -524,6 +541,8 @@ def evaluate_preset_scenario_matrix(config) -> dict[str, Any]:
                 if scenario_id == "scrolling-text":
                     scroll_encoder, scroll_decoder = created_encoder, created_decoder
             scenarios.append(run)
+            if measurement_hook is not None:
+                measurement_hook("after", width, height, scenario_id)
         resolution_runs.append({"resolution": [width, height], "scenarios": scenarios})
     return {
         "config": config.to_dict(),

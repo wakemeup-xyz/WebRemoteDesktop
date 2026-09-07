@@ -8,9 +8,13 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import threading
+import time
+import urllib.request
 from pathlib import Path
 
 
@@ -18,6 +22,41 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE_PATH = ROOT / "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
+
+
+class _PeakAmbientSampler:
+    """One-Hz telemetry; its normalized values never replace raw P95 gates."""
+    def __init__(self):
+        self.samples, self.abort_reasons, self._stop = [], [], threading.Event()
+        self._over = {}; self._thread = threading.Thread(target=self._run, daemon=True)
+    def start(self): self._thread.start()
+    def stop(self): self._stop.set(); self._thread.join(timeout=2)
+    def _run(self):
+        while not self._stop.is_set(): self._sample(); self._stop.wait(1)
+    def _sample(self):
+        rows = subprocess.run(["ps", "-axo", "pid=,rss=,%cpu=,comm="], text=True, capture_output=True, check=True).stdout.splitlines()
+        mysql=[]; offenders=[]
+        for row in rows:
+            parts=row.split(None, 3)
+            if len(parts) != 4: continue
+            pid,rss,cpu,comm=parts
+            try: cpu=float(cpu); rss=int(rss)
+            except ValueError: continue
+            item={"pid":int(pid),"rssKiB":rss,"cpuPercent":cpu,"command":comm}
+            if "mysqld" in comm: mysql.append(item); continue
+            if any(name in comm for name in ("pytest", "sync_worker")):
+                offenders.append(item)
+                self.abort_reasons.append(f"non-allowlisted interference {pid}")
+        try:
+            status=json.load(urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1))
+            viewers={key:status.get(key) for key in ("viewerCount", "relayViewerCount")}
+            if viewers["viewerCount"] or viewers["relayViewerCount"]: self.abort_reasons.append("viewer activity")
+        except Exception:
+            viewers={"status":"unavailable"}; self.abort_reasons.append("viewer status unavailable")
+        self.samples.append({"monotonicNs":time.monotonic_ns(),"loadavg":list(os.getloadavg()),"mysqld":mysql,"nonAllowlisted":offenders,"viewerStatus":viewers})
+    def evidence(self):
+        return {"sampleHz":1,"samples":self.samples,"abortReasons":sorted(set(self.abort_reasons)),"status":"CONTAMINATED" if self.abort_reasons else "OBSERVED",
+                "note":"Relative ambient factors are non-gating telemetry; raw P95 remains formal. No no-load reference exists, so absolute debiased P95 is unavailable."}
 
 
 def _execution_source_revision() -> str:
@@ -940,6 +979,8 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
     )
 
     candidate = build_peak_headroom_candidate()
+    ambient = _PeakAmbientSampler()
+    ambient.start()
     execution_source_revision = _execution_source_revision()
     source_digests = {
         str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -954,6 +995,13 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
     }
     runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
     prescreen = probe.evaluate_peak_headroom_prescreen(candidate)
+    if ambient.abort_reasons:
+        ambient.stop()
+        return {"kind": "relay-peak-headroom-v1", "status": "ABORTED_CONTAMINATED",
+                "scope": "ambient monitor observed viewer activity or a non-allowlisted process; no qualification result",
+                "defaultPolicy": "relay-legacy-v1", "runtime": runtime,
+                "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+                "ambientTelemetry": ambient.evidence()}
     prescreen_errors = validate_prescreen(prescreen)
     declared = candidate.to_dict()
     declared["submittedCodecOptionsByResolution"] = {
@@ -972,6 +1020,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
     if prescreen_errors:
         candidate_row["offline"] = {"status": "NOT RUN"}
         candidate_row["ineligibleReason"] = list(prescreen_errors)
+        ambient.stop()
         return {
             "kind": "relay-peak-headroom-v1", "status": "NO_QUALIFIED_CANDIDATE",
             "scope": "one offline candidate; failed safety prescreen stopped the full matrix and runtime remains NOT RUN",
@@ -980,7 +1029,19 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
             "selection": select_relay_candidate([]),
         }
 
-    full = probe.evaluate_preset_scenario_matrix(candidate)
+    sentinels = []
+    def measurement_hook(phase, width, height, scenario_id):
+        if ambient.abort_reasons:
+            raise RuntimeError("ABORTED_CONTAMINATED: " + "; ".join(ambient.abort_reasons))
+        sentinels.append({"phase": phase, "resolution": [width, height], "scenarioId": scenario_id,
+                          "measurement": probe.evaluate_peak_headroom_sentinel(candidate, width, height)})
+        if ambient.abort_reasons:
+            raise RuntimeError("ABORTED_CONTAMINATED: " + "; ".join(ambient.abort_reasons))
+    try:
+        full = probe.evaluate_preset_scenario_matrix(candidate, measurement_hook=measurement_hook)
+    finally:
+        ambient.stop()
+    full["ambientTelemetry"] = {**ambient.evidence(), "sentinels": sentinels}
     full_errors = validate_full_matrix(full)
     candidate_row["execution"]["fullMatrix"] = "COMPLETED"
     candidate_row["offline"] = {"status": "PASS" if not full_errors else "FAIL", "evidence": full, "validationErrors": full_errors}
