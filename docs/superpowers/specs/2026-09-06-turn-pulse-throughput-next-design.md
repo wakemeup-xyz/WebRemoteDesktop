@@ -1,8 +1,25 @@
 # TURN 画质脉冲与出帧耗时：下一轮设计
 
-日期：2026-09-06。基线：本地 main `91cf000`。状态：经主线程补充自审修订；方案可行性仍待实验，未实施，不保证彻底修复。审查记录：`../reports/2026-09-06-turn-pulse-throughput-plan-review.md`。
+日期：2026-09-06。基线：本地 main `91cf000`。状态：经主线程补充自审修订；实现与自动化已分批落地，但真实桌面、维护窗口、生产和原用户场景的结论仍按下表保留，不保证彻底修复。审查记录：`../reports/2026-09-06-turn-pulse-throughput-plan-review.md`。
 
 规划路径沿用用户已确认的 EnterPlanMode；仓库内设计和计划为执行入口。本文件扩展 2026-09-05 原设计，不改写已失败的历史验收。对应计划：`../plans/2026-09-06-turn-pulse-throughput-next-plan.md`。
+
+## 实施快照（2026-09-07）
+
+`IMPLEMENTED` 与 `CLEAN` 只描述相应提交的代码和自动化/限定实验；它们不代替 `OFFLINE_PASS`、`LAB_PASS`、`PRODUCTION_PASS` 或 `USER_SCENARIO_PASS`。本表是当前状态，保留后续章节的原始门禁和未勾选步骤作为执行清单。
+
+| Task | 代码与自动化 | 真实运行与未闭环项 |
+|---|---|---|
+| T1 | `IMPLEMENTED`；提交时的 preset 真实创建路径与回归测试通过。 | 不单独产生产品 runtime 结论；由 T2 重新测量实际候选。 |
+| T2 | `IMPLEMENTED`；矩阵/evaluator 自动化 `CLEAN`。 | 干净矩阵为 `NOT_RUN`，须等待 `viewerCount=0` 和低负载。既有运行产物受活动 Viewer/负载污染，不能作为候选 PASS 或推广依据。 |
+| T3 | `IMPLEMENTED`；帧关联、阶段度量和失败关闭测试 `CLEAN`。 | 真实 legacy 60 秒阶段采样为 `BLOCKED`：共享桌面已锁定且不能打扰在用 Viewer；没有真实阶段归因。 |
+| T4 | `IMPLEMENTED`；隔离 Lab/production-boundary 自动化通过。 | 真实 Lab Host 会话仍随共享桌面和单 Viewer 限制保持 `NOT_RUN`；没有借自动化结论声称真实媒体已通过。 |
+| T5 | `IMPLEMENTED`；marker、输入 guard、受控场景自动化 `CLEAN`。 | 实际 T3 对齐的文字/输入因果链及维护窗口为 `BLOCKED`（共享/锁定桌面；自动 Quartz 输入不可执行）。生产和原用户场景为 `NOT_RUN`。 |
+| T6 | `IMPLEMENTED`；controller/gateway 自动化通过，真实 Docker fixture 的三 allocation、两个固定丢包 pattern 端到端为 `CLEAN`。 | 这只证明 Lab-only 网络 fixture。依赖真实 T3/T5 的 PLI/FIR → IDR → paint、两秒恢复和无重建检查仍为 `NOT_RUN`。 |
+| T7 | `IMPLEMENTED`；capture runner/evaluator 自动化 `CLEAN`。 | 六会话 A/B/A、B/A/B 及 trace 开/关真实 runtime 均为 `NOT_RUN`；没有候选或吞吐收益结论。 |
+| T8 | `NOT_RUN`。 | 被 T2 干净矩阵、T3/T5 真实证据、T6 恢复链和 T7 runtime 阻断；没有发布、维护窗口、生产或原用户场景 PASS。 |
+
+真实桌面受限时，`BLOCKED` 说明已知前置条件不能安全满足；`NOT_RUN` 说明该运行尚未开始。二者均不能被已通过的测试、Docker fixture 或旧长跑替代。
 
 ## 1. 问题、事实与目标
 

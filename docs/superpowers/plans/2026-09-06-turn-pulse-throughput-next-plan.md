@@ -1,6 +1,6 @@
 # TURN 画质脉冲与出帧耗时优化执行计划
 
-> EnterPlanMode 路径的仓库内后续计划。沿用用户先前选择，不切换规划流程。For agentic workers: 实施时使用 superpowers:subagent-driven-development，Terra High逐任务开发并独立review；以下checkbox当前全部未执行。
+> EnterPlanMode 路径的仓库内后续计划。沿用用户先前选择，不切换规划流程。For agentic workers: 实施时使用 superpowers:subagent-driven-development，Terra High逐任务开发并独立review；checkbox保留为原始执行清单，不能表示当前交付状态。
 
 **可行性状态：** 当前候选未通过实验，本计划是有界验证与优化路径，不能保证全部问题在这一轮解决。T2失败记NO_QUALIFIED_CANDIDATE，保留失败证据并进入后续设计；T7瓶颈未解决保持OPEN，均阻止T8推广。
 
@@ -11,6 +11,23 @@
 **Baseline:** main `91cf000`；历史Task0–14不重新执行。当前是计划交付，未授权由本次规划自动开始编码或服务实验。
 
 **Review:** 两位Terra High分别完成架构/边界与执行/验收复审，PASS；详见 `docs/superpowers/reports/2026-09-06-turn-pulse-throughput-plan-review.md`。该PASS已由主线程补充自审限定；新发现与修订见 `docs/superpowers/reports/2026-09-06-turn-pulse-throughput-self-review.md`，不代表候选可行或产品已修复。
+
+## 当前逐任务状态（2026-09-07）
+
+`IMPLEMENTED`/`CLEAN` 仅指代码、自动化或表中明确限定的 Docker fixture；不得读成后续 runtime、生产或用户场景已通过。状态与证据层必须逐行读取。
+
+| Task | 实施/测试状态 | runtime、发布与阻断 |
+|---|---|---|
+| T1 | `IMPLEMENTED`；提交时的真实 codec preset 路径及回归测试通过。 | 后续候选实测交给 T2。 |
+| T2 | `IMPLEMENTED`；完整矩阵/evaluator 自动化 `CLEAN`。 | 干净矩阵 `NOT_RUN`，等待 `viewerCount=0` 和低负载；旧产物受活动 Viewer/负载污染，不能当作 `OFFLINE_PASS`。 |
+| T3 | `IMPLEMENTED`；frame trace/阶段观测自动化 `CLEAN`。 | 真实 legacy 60 秒采样 `BLOCKED`，因为共享桌面锁定且不能干扰在用 Viewer；没有阶段归因结论。 |
+| T4 | `IMPLEMENTED`；Lab 与生产隔离边界自动化通过。 | 真实 Lab Host 媒体会话 `NOT_RUN`，受同一共享桌面/单 Viewer 边界约束。 |
+| T5 | `IMPLEMENTED`；marker、输入 guard 与受控场景自动化 `CLEAN`。 | 真实文字/输入因果链和维护窗口 `BLOCKED`（共享/锁定桌面，禁止自动 Quartz 输入）；生产与原用户场景 `NOT_RUN`。 |
+| T6 | `IMPLEMENTED`；gateway/controller 自动化通过；真实 Docker fixture 中三 allocation、两个固定 pattern 端到端 `CLEAN`。 | T3/T5 所需 PLI/FIR → IDR → paint、两秒恢复、无 PeerConnection 重建/分辨率变化仍 `NOT_RUN`；不能标记 `LAB_PASS`。 |
+| T7 | `IMPLEMENTED`；capture runner/evaluator 自动化 `CLEAN`。 | A/B/A、B/A/B 和 trace-off/on 的真实六会话 `NOT_RUN`，没有收益候选或推广结论。 |
+| T8 | `NOT_RUN`。 | 被 T2、T3、T5、T6 recovery 与 T7 runtime 的 `NOT_RUN`/`BLOCKED` 阻断；没有维护窗口、发布、生产或用户场景 PASS。 |
+
+`BLOCKED` 是安全前置条件无法满足；`NOT_RUN` 是尚未运行。两者均不能由通过的测试、Docker fixture 或历史长跑改写。
 
 ## 全局约束与执行入口
 

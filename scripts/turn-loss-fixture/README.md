@@ -4,6 +4,27 @@ This fixture injects two and only two finite UDP loss patterns into an
 experiment-only TURN relay leg: `every_100th_for_30s` (30 seconds) and
 `all_for_200ms` (200 milliseconds).  It is never a production-network tool.
 
+## Current scope and evidence boundary (2026-09-07)
+
+The original AF_PACKET/iptables direction was replaced by this Lab-only inline
+UDP TURN gateway. Docker Desktop cannot provide a trustworthy observation of
+the selected unicast relay leg at that host-level boundary, so host packet
+capture/rules could not prove that a loss rule touched the media being claimed.
+The in-path gateway instead observes the authority-bound ChannelData flow it
+actually proxies. It signs its internal media binding and event ledger with an
+ephemeral Ed25519 key; the host verifies the gateway public material, instance
+digest, run/realm, binding digest, counters and receipt signature before
+accepting evidence. The control caller cannot supply observations, packet rows,
+drop counts or receiver sequences.
+
+The implemented fixture and its automated checks are `CLEAN`. A real Docker
+fixture run has also completed three allocations through the gateway and both
+permitted loss patterns end to end. That is a fixture-only result. It does not
+make T3/T5 desktop evidence pass: the real 60-second frame trace, controlled
+input, and the PLI/FIR → IDR → new-paint two-second recovery chain remain
+`NOT_RUN` while the shared desktop is locked/in use. It is therefore not a
+production or original-user-scenario result.
+
 Before use, the T4 driver must create a unique UUID `runId`, a realm beginning
 `turn-loss-lab-`, and a strict manifest with the selected UDP leg.  It then
 runs `python3 controller.py prepare --manifest INPUT --runtime runtime`.  This
