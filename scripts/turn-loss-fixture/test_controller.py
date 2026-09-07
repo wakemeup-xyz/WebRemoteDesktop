@@ -1186,3 +1186,21 @@ def test_gateway_counter_backend_rejects_self_signed_identity_and_replayed_recei
     seen=set()
     with pytest.raises(RuntimeError, match="identity changed"):
         controller.verify_gateway_receipt(receipt, run_id=raw["runId"], realm=raw["realm"], event=event, expected_gateway_identity=pinned, expected_binding_digest=counters["mediaBindingDigest"], seen_receipt_ids=seen)
+    # The same signed event can be read once for this pinned instance only.
+    controller.verify_gateway_receipt(receipt, run_id=raw["runId"], realm=raw["realm"], event=event, expected_gateway_identity=identity, expected_binding_digest=counters["mediaBindingDigest"], seen_receipt_ids=seen)
+    with pytest.raises(RuntimeError, match="replayed"):
+        controller.verify_gateway_receipt(receipt, run_id=raw["runId"], realm=raw["realm"], event=event, expected_gateway_identity=identity, expected_binding_digest=counters["mediaBindingDigest"], seen_receipt_ids=seen)
+    restarted = {**identity, "gatewayInstanceId": "restarted"}
+    with pytest.raises(RuntimeError, match="identity changed"):
+        controller.verify_gateway_receipt(receipt, run_id=raw["runId"], realm=raw["realm"], event=event, expected_gateway_identity=restarted, expected_binding_digest=counters["mediaBindingDigest"])
+
+
+def test_final_bridge_blocks_fabricated_pair_receipt_and_digest():
+    raw, backend = manifest(), RecordingBackend(); fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1; fixture.collect_receiver_evidence(raw["runId"]); event = fixture.clear_loss(raw["runId"])
+    for mutate in (lambda pair: pair.__setitem__("authoritySignature", "fabricated"),):
+        bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+        mutate(bridge["loss"]["pairEvidence"])
+        bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+        with pytest.raises(RuntimeError, match="pair evidence"):
+            controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier).sequences_for(controller.LossFixtureManifest.parse(raw), event)
