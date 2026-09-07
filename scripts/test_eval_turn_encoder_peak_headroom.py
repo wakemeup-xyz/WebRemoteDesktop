@@ -130,7 +130,8 @@ class PeakAmbientSamplerTest(unittest.TestCase):
     @staticmethod
     def _snapshot(pid=10, epoch="Mon Sep  8 12:00:00 2026", cpu=2.0):
         mysql = {"pid": pid, "rssKiB": 1, "cpuPercent": cpu, "command": "/opt/mysql/mysqld", "binaryPath": "/opt/mysql/mysqld", "startEpoch": epoch}
-        return {"processes": [mysql], "mysqld": [mysql], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}
+        sync = {"pid": 20, "rssKiB": 2, "cpuPercent": 1.0, "command": "/usr/bin/python3", "argv": "/usr/bin/python3 -m backend.scripts.sync_worker", "startEpoch": epoch}
+        return {"processes": [mysql, sync], "mysqld": [mysql], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}
 
     def test_mysql_pid_drift_is_inconclusive(self):
         snapshots = iter([self._snapshot(pid=10), self._snapshot(pid=11)])
@@ -139,6 +140,17 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
         self.assertIn("mysqld identity changed", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_sync_worker_spoof_missing_and_identity_drift_fail_closed(self):
+        good = self._snapshot()
+        spoof = self._snapshot(); spoof["processes"][1]["argv"] = "/usr/bin/python3 -m backend.scripts.sync_worker_evil"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: spoof)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity unavailable", [x["reason"] for x in sampler.abort_reasons])
+        changed = self._snapshot(); changed["processes"][1]["pid"] = 21
+        snapshots = iter([good, changed]); sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: next(snapshots))
+        sampler._sample_once(phase="PREFLIGHT"); sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity changed", [x["reason"] for x in sampler.abort_reasons])
 
     def test_mysql_binary_and_start_epoch_drift_are_inconclusive(self):
         for changed in (self._snapshot(epoch="Tue Sep  9 12:00:00 2026"), {"processes": [{"pid": 10, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/local/mysql-alt/bin/mysqld", "binaryPath": "/usr/local/mysql-alt/bin/mysqld", "startEpoch": "Mon Sep  8 12:00:00 2026"}], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}):

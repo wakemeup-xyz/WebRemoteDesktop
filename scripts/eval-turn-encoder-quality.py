@@ -11,6 +11,7 @@ import math
 import os
 import queue
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -98,21 +99,21 @@ class _PeakAmbientSampler:
 
     def _read_snapshot(self) -> dict:
         completed = subprocess.run(
-            ("ps", "-axo", "pid=,rss=,%cpu=,comm="),
+            ("ps", "-axo", "pid=,rss=,%cpu=,comm=,args="),
             text=True,
             capture_output=True,
             check=True,
         )
         processes = []
         for row in completed.stdout.splitlines():
-            parts = row.split(None, 3)
-            if len(parts) != 4:
+            parts = row.split(None, 4)
+            if len(parts) != 5:
                 continue
-            pid, rss, cpu, command = parts
+            pid, rss, cpu, command, argv = parts
             try:
                 processes.append({
                     "pid": int(pid), "rssKiB": int(rss), "cpuPercent": float(cpu),
-                    "command": command,
+                    "command": command, "argv": argv,
                 })
             except ValueError:
                 continue
@@ -145,6 +146,18 @@ class _PeakAmbientSampler:
         result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
         return result
 
+    def _exact_sync_worker(self, process: dict) -> dict | None:
+        command = str(process["command"])
+        if not command.startswith("/") or not Path(command).name.startswith("python"):
+            return None
+        argv = shlex.split(str(process.get("argv", "")))
+        if "-m" not in argv or argv[argv.index("-m") + 1:argv.index("-m") + 2] != ["backend.scripts.sync_worker"]:
+            return None
+        result = dict(process)
+        result["binaryPath"] = os.path.realpath(command)
+        result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
+        return result
+
     def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
         """Capture one snapshot.  The worker is the sole normal caller."""
         tick_ns = time.monotonic_ns()
@@ -156,11 +169,13 @@ class _PeakAmbientSampler:
                 processes = list(snapshot["processes"])
                 mysql = [entry for process in processes if (entry := self._exact_mysqld(process)) is not None]
                 mysql_pids = {entry["pid"] for entry in mysql}
+                sync = [entry for process in processes if (entry := self._exact_sync_worker(process)) is not None]
+                sync_pids = {entry["pid"] for entry in sync}
                 viewers = dict(snapshot["viewerStatus"])
                 forbidden = []
                 for process in processes:
                     process_class = self._forbidden_class(str(process["command"]))
-                    if process_class is not None and process["pid"] not in mysql_pids:
+                    if process_class is not None and process["pid"] not in mysql_pids | sync_pids:
                         forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 for offender in forbidden:
                     self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
@@ -174,13 +189,19 @@ class _PeakAmbientSampler:
                         self._mysql_identity = observed_identity
                     elif observed_identity != self._mysql_identity:
                         self._abort("INCONCLUSIVE", "mysqld identity changed", expected=self._mysql_identity, observed=observed_identity)
+                if len(sync) != 1:
+                    self._abort("INCONCLUSIVE", "sync_worker identity unavailable", observedCount=len(sync))
+                else:
+                    identity = {"pid": int(sync[0]["pid"]), "binaryPath": sync[0]["binaryPath"], "startEpoch": sync[0]["startEpoch"]}
+                    if getattr(self, "_sync_identity", None) is None: self._sync_identity = identity
+                    elif identity != self._sync_identity: self._abort("INCONCLUSIVE", "sync_worker identity changed", expected=self._sync_identity, observed=identity)
                 late_seconds = None if scheduled_ns is None else max(0.0, (tick_ns - scheduled_ns) / 1_000_000_000)
                 if late_seconds is not None and late_seconds > self.PRE_FLIGHT_LATE_TICK_SECONDS:
                     late = {"scheduledMonotonicNs": scheduled_ns, "observedMonotonicNs": tick_ns, "lateSeconds": late_seconds}
                     self._late_ticks.append(late)
                     self._abort("INCONCLUSIVE", "ambient sampling tick late", **late)
                 self._sequence += 1
-                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "forbidden": forbidden, "viewerStatus": viewers}
+                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "syncWorker": sync, "forbidden": forbidden, "viewerStatus": viewers}
                 if self._last_tick_ns is not None:
                     elapsed_seconds = (tick_ns - self._last_tick_ns) / 1_000_000_000
                     if phase == "PREFLIGHT" and not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= elapsed_seconds <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
@@ -325,6 +346,7 @@ class _PeakAmbientSampler:
             "health": dict(self._health),
             "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status, "intervalSeconds": self.PRE_FLIGHT_INTERVAL_SECONDS, "intervalBoundsSeconds": list(self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
             "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
+            "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
             "forbidden": [
                 {key: reason[key] for key in ("class", "pid", "cpuPercent")}

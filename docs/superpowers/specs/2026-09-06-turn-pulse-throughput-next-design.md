@@ -170,6 +170,8 @@ marker version=1、reserved=0；边框四角依次TL/TR/BL/BR=0/1/1/1；顶边�
 sync_worker、Lab 或 docker compose 等非 allowlisted 干扰进程只要出现即为
 `ABORTED_CONTAMINATED`。Viewer 或 relay Viewer 非零同样中止。
 
+本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。缺失、重启、漂移或 argv spoof 都中止；此授权不泛化到其他 Python/pytest 进程。
+
 边界 sentinel 请求排入同一 sampler，不能从调用线程并发读取 `ps`。每个
 分辨率/场景前后使用相同静态输入和冻结 candidate，记录单调窗口、输入与配置
 digest、原始 encode P50/P95 和可选的同对相对环境因子。sentinel 仅描述环境
