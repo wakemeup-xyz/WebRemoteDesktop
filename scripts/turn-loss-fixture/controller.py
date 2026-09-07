@@ -810,7 +810,7 @@ class SignedT3T5ReceiverEvidenceSource:
     from another run cannot make the media-effect gate pass.
     """
     _BRIDGE_FIELDS = frozenset({"schemaVersion", "kind", "t3", "t5", "loss", "timeline", "signature"})
-    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture", "receiverCaptures", "eventHandles", "eventBindings"})
+    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "gatewayIdentity", "bindingReceiptDigest", "pairEvidence", "pairEvidenceDigest", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture", "receiverCaptures", "eventHandles", "eventBindings"})
     _TIMELINE_FIELDS = frozenset({"feedback", "idr", "paint", "pc", "recovery"})
 
     def __init__(self, bridge: Mapping[str, Any] | Callable[[], Mapping[str, Any]], *, verifier: bytes) -> None:
@@ -889,13 +889,16 @@ class SignedT3T5ReceiverEvidenceSource:
                 or not isinstance(loss.get("endedMonotonicNs"), int) or loss["endedMonotonicNs"] < loss["startedMonotonicNs"]):
             raise RuntimeError("receiver bridge does not bind the active loss event")
         pair = loss.get("pairEvidence")
-        if pair is not None:
-            body = {key: value for key, value in pair.items() if key != "authoritySignature"} if isinstance(pair, Mapping) else {}
-            expected_pair = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
-            if (not isinstance(pair, Mapping) or pair.get("runId") != manifest.run_id or pair.get("realm") != manifest.realm
-                    or pair.get("scope") != scope or pair.get("viewerSsrc") != pair.get("hostSsrc")
-                    or not hmac.compare_digest(str(pair.get("authoritySignature")), expected_pair)):
-                raise RuntimeError("Lab pair evidence receipt is invalid")
+        body = {key: value for key, value in pair.items() if key != "authoritySignature"} if isinstance(pair, Mapping) else {}
+        expected_pair = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
+        identity, binding_digest, pair_digest = loss.get("gatewayIdentity"), loss.get("bindingReceiptDigest"), loss.get("pairEvidenceDigest")
+        if (not isinstance(pair, Mapping) or pair.get("runId") != manifest.run_id or pair.get("realm") != manifest.realm
+                or pair.get("scope") != scope or pair.get("viewerSsrc") != pair.get("hostSsrc")
+                or not hmac.compare_digest(str(pair.get("authoritySignature")), expected_pair)
+                or not isinstance(identity, Mapping) or set(identity) != {"publicKey", "gatewayInstanceId", "instanceDigest"}
+                or not isinstance(binding_digest, str) or len(binding_digest) != 64
+                or not isinstance(pair_digest, str) or pair_digest != hashlib.sha256(_canonical_evidence(dict(pair))).hexdigest()):
+            raise RuntimeError("gateway identity or Lab pair evidence receipt is invalid")
         feedback, idr, paint, pc = timeline["feedback"], timeline["idr"], timeline["paint"], timeline["pc"]
         if (not isinstance(feedback, list) or not feedback or not all(isinstance(row, Mapping) and row.get("kind") in {"PLI", "FIR"} and isinstance(row.get("runnerObservedNs", row.get("monotonicNs")), int) for row in feedback)
                 or not isinstance(idr, Mapping) or not isinstance(paint, Mapping) or not isinstance(pc, list) or len(pc) < 2):
