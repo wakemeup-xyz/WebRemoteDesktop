@@ -46,11 +46,38 @@ async function issueContext(lab, admission, runId) {
     body: JSON.stringify({
       origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch,
       mode: 'legacy', runId, policyId: 'experiment/socket-proof',
+      captureExperiment: { captureMultiplier: 2, opencvThreads: 0 },
     }),
   });
   assert.equal(response.status, 201);
   return (await response.json()).context.credential;
 }
+
+test('Lab context issue requires the complete sealed capture experiment binding', async () => {
+  const lab = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    const { admission } = await loginAndIssueProof(lab);
+    const base = {
+      origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch,
+      mode: 'legacy', runId: 'sealed-capture', policyId: 'experiment/socket-proof',
+      captureExperiment: { captureMultiplier: 2, opencvThreads: 0 },
+    };
+    for (const body of [
+      { ...base, captureExperiment: undefined },
+      { ...base, captureExperiment: { captureMultiplier: 2 } },
+      { ...base, captureExperiment: { captureMultiplier: 2, opencvThreads: 0, extra: true } },
+      { ...base, captureExperiment: { captureMultiplier: 3, opencvThreads: 0 } },
+    ]) {
+      const response = await fetch(`${lab.origin}/api/lab-context/issue`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 400);
+    }
+  } finally {
+    await lab.close();
+  }
+});
 
 test('strict Lab Socket.IO admits only one exact proof and rejects proofless and relay bypasses', async () => {
   const lab = await createLabRuntime({ allowSourceFallback: true });

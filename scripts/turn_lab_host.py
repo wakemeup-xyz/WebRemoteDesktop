@@ -51,7 +51,7 @@ if os.environ.get("WRD_LAB_HOST_ENTRY") == "1":
 from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, PolicySelection, RELAY_LEGACY_V1, resolve_h264_policy
 from capture_experiment import CaptureExperiment
 from host import ScreenCaptureTrack, WebRemoteHost
-from turn_lab_input_guard import LabInputGuard
+from turn_lab_input_guard import LabInputGuard, validate_native_fixture_probe
 
 
 def _is_loopback_origin(origin: str) -> bool:
@@ -172,10 +172,6 @@ class LabWebRemoteHost(WebRemoteHost):
         # guard at the same InputAdapter boundary used by Viewer messages; it
         # begins fail-closed because this process has not yet been given a
         # verified fixture-window probe or a live Viewer control lease.
-        self._controlled_fixture_proof: Callable[[], dict[str, Any]] = lambda: {
-            "leaseId": "", "proofToken": "", "fixtureId": "",
-            "isolated": False, "foreground": False, "fixtureWindow": False,
-        }
         self._lab_input_adapter = self.input_adapter
         # Idle labs must retain the real Host adapter.  The guard is installed
         # only once a lifecycle-owned Viewer lease and fixture probe exist.
@@ -258,15 +254,7 @@ class LabWebRemoteHost(WebRemoteHost):
                     or not isinstance(data["leaseEpoch"], int) or isinstance(data["leaseEpoch"], bool)
                     or data["leaseEpoch"] < 0 or not isinstance(data["fixtureId"], str) or not data["fixtureId"]):
                 raise ValueError("invalid arm")
-            observed = self._local_fixture_probe(lease_id=data["leaseId"], fixture_id=data["fixtureId"])
-            if (not isinstance(observed, dict) or observed.get("leaseId") != data["leaseId"]
-                    or observed.get("fixtureId") != data["fixtureId"] or observed.get("isolated") is not True
-                    or observed.get("foreground") is not True or observed.get("fixtureWindow") is not True):
-                raise ValueError("dedicated fixture probe rejected")
-            proof = lambda: {"leaseId": data["leaseId"], "proofToken": context.proof_token,
-                             "fixtureId": data["fixtureId"], "isolated": True,
-                             "foreground": True, "fixtureWindow": True}
-            self.arm_controlled_input(lease_id=data["leaseId"], fixture_id=data["fixtureId"], fixture_proof=proof)
+            self.arm_controlled_input(lease_id=data["leaseId"], fixture_id=data["fixtureId"])
             receipt = {"armId": data["armId"], "status": "armed",
                        "turnAppliedDigest": str((self._session_turn_override or {}).get("appliedDigest") or "")}
         except Exception:
@@ -275,33 +263,41 @@ class LabWebRemoteHost(WebRemoteHost):
             await self.sio.emit("lab-controlled-input-arm-ack", receipt)
 
     def _install_controlled_input_guard(self, *, lease_id: str, fixture_id: str,
-                                        fixture_proof: Callable[[], dict[str, Any]]) -> None:
+                                        fixture_anchor: dict[str, Any]) -> None:
         context = self._verified_lab_context
         self.controlled_input_guard = LabInputGuard(
             expected_lease_id=lease_id,
             expected_proof_token=context.proof_token,
             expected_fixture_id=fixture_id,
-            desktop_proof=fixture_proof,
             # GuardedLabInputAdapter delegates to the existing adapter; this
             # callable cannot send an event and exists only for direct tests.
             input_handler=lambda _action: None,
             binding_resolver=self._claim_controlled_binding,
+            native_fixture_probe=self._local_fixture_probe,
+            native_fixture_anchor=fixture_anchor,
+            expected_proof_epoch=context.epoch,
         )
         self.input_adapter = self.controlled_input_guard.install_at_lab_host(self._lab_input_adapter)
 
-    def arm_controlled_input(self, *, lease_id: str, fixture_id: str,
-                             fixture_proof: Callable[[], dict[str, Any]]) -> None:
+    def arm_controlled_input(self, *, lease_id: str, fixture_id: str) -> None:
         """Arm one Lab-only input mapping after a trusted local fixture probe.
 
         No Viewer or Signal payload can call this.  It replaces the initial
         unarmed boundary with one bound to the currently observed Host lease,
         the Signal-issued proof token and the dedicated fixture identity.
         """
-        if not (isinstance(lease_id, str) and lease_id and isinstance(fixture_id, str) and fixture_id
-                and callable(fixture_proof)):
+        if not (isinstance(lease_id, str) and lease_id and isinstance(fixture_id, str) and fixture_id):
             raise ValueError("controlled input requires lease, fixture and trusted probe")
+        try:
+            fixture_anchor = validate_native_fixture_probe(
+                self._local_fixture_probe(lease_id=lease_id, fixture_id=fixture_id),
+                lease_id=lease_id, fixture_id=fixture_id,
+                proof_epoch=self._verified_lab_context.epoch,
+            )
+        except InputGuardRejected as exc:
+            raise ValueError("dedicated fixture probe rejected") from exc
         self._install_controlled_input_guard(lease_id=lease_id, fixture_id=fixture_id,
-                                             fixture_proof=fixture_proof)
+                                             fixture_anchor=fixture_anchor)
 
     def bind_controlled_input(self, action: Mapping[str, Any]) -> None:
         """Lab-only server-side binding for a pre-issued Viewer inputId.

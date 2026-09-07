@@ -12,6 +12,42 @@ class InputGuardRejected(RuntimeError):
     pass
 
 
+_NATIVE_FIXTURE_IDENTITY_FIELDS = ("desktopId", "windowId", "geometry", "proofEpoch")
+
+
+def validate_native_fixture_probe(proof: Any, *, lease_id: str, fixture_id: str,
+                                  proof_epoch: int) -> dict[str, Any]:
+    """Validate one atomic dedicated-desktop observation from the Host.
+
+    This deliberately accepts no boolean-only claim: the native probe must
+    name the exact desktop and window and report the captured geometry and
+    Signal proof epoch that the Host is still observing.
+    """
+    if not isinstance(proof, dict):
+        raise InputGuardRejected("fixture identity probe is invalid")
+    if proof.get("leaseId") != lease_id:
+        raise InputGuardRejected("lease identity changed")
+    if proof.get("fixtureId") != fixture_id:
+        raise InputGuardRejected("fixture identity changed")
+    if proof.get("isolated") is not True:
+        raise InputGuardRejected("isolated laboratory desktop required")
+    if proof.get("foreground") is not True:
+        raise InputGuardRejected("fixture window is not foreground")
+    if proof.get("fixtureWindow") is not True:
+        raise InputGuardRejected("fixture window identity required")
+    if not isinstance(proof.get("desktopId"), str) or not proof["desktopId"]:
+        raise InputGuardRejected("dedicated desktop identity required")
+    if not isinstance(proof.get("windowId"), str) or not proof["windowId"]:
+        raise InputGuardRejected("fixture window identity required")
+    geometry = proof.get("geometry")
+    if (not isinstance(geometry, (tuple, list)) or len(geometry) != 4
+            or any(type(value) is not int for value in geometry)):
+        raise InputGuardRejected("fixture geometry is invalid")
+    if type(proof.get("proofEpoch")) is not int or proof["proofEpoch"] != proof_epoch:
+        raise InputGuardRejected("fixture proof epoch changed")
+    return {**proof, "geometry": tuple(geometry)}
+
+
 class LabInputGuard:
     """Check the disposable desktop at the injection boundary, then delegate.
 
@@ -19,9 +55,13 @@ class LabInputGuard:
     is the existing InputAdapter/InputHandler path owned by the Lab Host.
     """
 
-    def __init__(self, *, desktop_proof: Callable[[], dict[str, Any]], input_handler: Callable[[dict[str, Any]], Any],
+    def __init__(self, *, input_handler: Callable[[dict[str, Any]], Any],
+                 desktop_proof: Callable[[], dict[str, Any]] | None = None,
                  expected_lease_id: str | None = None, expected_proof_token: str | None = None,
-                 expected_fixture_id: str | None = None, binding_resolver: Callable[[str], Any] | None = None) -> None:
+                 expected_fixture_id: str | None = None, binding_resolver: Callable[[str], Any] | None = None,
+                 native_fixture_probe: Callable[..., dict[str, Any]] | None = None,
+                 native_fixture_anchor: dict[str, Any] | None = None,
+                 expected_proof_epoch: int | None = None) -> None:
         if not all(isinstance(value, str) and value for value in (expected_lease_id, expected_proof_token, expected_fixture_id)):
             raise ValueError("expected lab lease, proof and fixture identities are required")
         self._desktop_proof = desktop_proof
@@ -32,6 +72,21 @@ class LabInputGuard:
         self._installed = False
         self._bound_actions: dict[str, dict[str, Any]] = {}
         self._binding_resolver = binding_resolver
+        if native_fixture_probe is None:
+            if not callable(desktop_proof) or native_fixture_anchor is not None or expected_proof_epoch is not None:
+                raise ValueError("native fixture anchor requires a live native probe")
+            self._native_fixture_probe = None
+            self._native_fixture_anchor = None
+            self._expected_proof_epoch = None
+        else:
+            if not callable(native_fixture_probe) or type(expected_proof_epoch) is not int:
+                raise ValueError("live native probe requires an exact proof epoch")
+            self._native_fixture_probe = native_fixture_probe
+            self._expected_proof_epoch = expected_proof_epoch
+            self._native_fixture_anchor = validate_native_fixture_probe(
+                native_fixture_anchor, lease_id=self._expected_lease_id,
+                fixture_id=self._expected_fixture_id, proof_epoch=expected_proof_epoch,
+            )
 
     @property
     def installed(self) -> bool:
@@ -118,6 +173,21 @@ class LabInputGuard:
             raise InputGuardRejected("action lease/proof/fixture identity mismatch")
     def _verify(self, action: dict[str, Any], *, execution_mode: str = "automatic-isolated") -> None:
         self._verify_action(action, execution_mode=execution_mode)
+        if self._native_fixture_probe is not None:
+            try:
+                proof = self._native_fixture_probe(
+                    lease_id=self._expected_lease_id, fixture_id=self._expected_fixture_id,
+                )
+            except Exception as exc:
+                raise InputGuardRejected("native fixture probe failed") from exc
+            proof = validate_native_fixture_probe(
+                proof, lease_id=self._expected_lease_id,
+                fixture_id=self._expected_fixture_id, proof_epoch=self._expected_proof_epoch,
+            )
+            for field in _NATIVE_FIXTURE_IDENTITY_FIELDS:
+                if proof[field] != self._native_fixture_anchor[field]:
+                    raise InputGuardRejected(f"fixture {field} changed")
+            return None
         proof = self._desktop_proof()
         if not isinstance(proof, dict):
             raise InputGuardRejected("fixture identity probe is invalid")

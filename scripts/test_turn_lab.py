@@ -24,6 +24,7 @@ from turn_lab import (LabIdentity, LabRun, LabTurnBootstrap, ProductionAdmission
 import turn_lab as turn_lab_module  # noqa: E402
 import turn_lab_host as turn_lab_host_module  # noqa: E402
 from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _context_from_verified_binding, _test_verified_context, verify_candidate_manifest  # noqa: E402
+from turn_lab_input_guard import InputGuardRejected  # noqa: E402
 
 
 class _ProofFixture:
@@ -124,6 +125,16 @@ def _run(tmp_path, fixture):
 
 def _intent(generation=1, sequence=0): return MediaSessionIntent("lab-attempt", generation, "relay", 1280, 720, 20, 1_800_000, sequence)
 def _context(): return _test_verified_context(origin="http://127.0.0.1:40123", realm="lab-test-realm", proof_token="proof-token", epoch=4)
+
+
+def _dedicated_fixture_probe(*, lease_id="lease-1", fixture_id="fixture-1", foreground=True,
+                            desktop_id="desktop-1", window_id="window-1", geometry=(10, 20, 1280, 720),
+                            proof_epoch=4):
+    return {"leaseId": lease_id, "fixtureId": fixture_id, "isolated": True,
+            "foreground": foreground, "fixtureWindow": True, "desktopId": desktop_id,
+            "windowId": window_id, "geometry": geometry, "proofEpoch": proof_epoch}
+
+
 def _wait(condition):
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
@@ -251,16 +262,10 @@ def test_lab_host_installs_the_guard_only_after_the_real_fixture_lease_arms_it(m
         async def handle_input(self, *_args, **_kwargs): return {"status": "applied"}
     monkeypatch.setattr(turn_lab_host_module.WebRemoteHost, "__init__", lambda self: setattr(self, "input_adapter", Adapter()))
     host = LabWebRemoteHost(_context())
-    host._local_fixture_probe = lambda **_kwargs: {"leaseId": "lease-1", "fixtureId": "fixture-1",
-                                                   "isolated": True, "foreground": True, "fixtureWindow": True}
+    host._local_fixture_probe = lambda **_kwargs: _dedicated_fixture_probe()
     assert host.controlled_input_guard is None
     assert type(host.input_adapter).__name__ == "Adapter"
-    host.arm_controlled_input(
-        lease_id="lease-1", fixture_id="fixture-1",
-        fixture_proof=lambda: {"leaseId": "lease-1", "proofToken": _context().proof_token,
-                               "fixtureId": "fixture-1", "isolated": True,
-                               "foreground": True, "fixtureWindow": True},
-    )
+    host.arm_controlled_input(lease_id="lease-1", fixture_id="fixture-1")
     assert host.controlled_input_guard.installed
     assert type(host.input_adapter).__name__ == "GuardedLabInputAdapter"
     host.bind_controlled_input({"inputId": "input-1", "leaseId": "lease-1",
@@ -286,14 +291,50 @@ def test_lab_host_control_plane_arm_installs_the_real_adapter_guard_and_reports_
     host._session_turn_override = {"selectedTurnServerId": "fixture-turn", "turnFingerprint": "fixture-fp",
                                    "urls": ["turn:relay.fixture.invalid:3478"], "username": "fixture-user",
                                    "credential": "not-persisted", "appliedDigest": digest}
-    host._local_fixture_probe = lambda **_kwargs: {"leaseId": "lease-1", "fixtureId": "fixture-1",
-                                                   "isolated": True, "foreground": True, "fixtureWindow": True}
+    host._local_fixture_probe = lambda **_kwargs: _dedicated_fixture_probe()
     asyncio.run(host.on_lab_controlled_input_arm({
         "armId": "arm-1", "realm": context.realm, "runId": context.run_id, "epoch": context.epoch,
         "leaseId": "lease-1", "leaseEpoch": 2, "fixtureId": "fixture-1",
     }))
     assert host.controlled_input_guard is not None and host.controlled_input_guard.installed
     assert host.sio.events == [("lab-controlled-input-arm-ack", {"armId": "arm-1", "status": "armed", "turnAppliedDigest": digest})]
+
+
+@pytest.mark.parametrize(
+    ("after_arm", "reason"),
+    [
+        (lambda: _dedicated_fixture_probe(foreground=False), "foreground"),
+        (lambda: _dedicated_fixture_probe(window_id="replacement-window"), "window"),
+        (lambda: (_ for _ in ()).throw(RuntimeError("native probe failed")), "probe"),
+    ],
+)
+def test_lab_host_reprobes_native_fixture_immediately_before_injection_and_blocks_arm_races(monkeypatch, after_arm, reason):
+    class Adapter:
+        def __init__(self): self.native_input_calls = []
+        async def apply_keyboard(self, envelope, *, transport=None):
+            self.native_input_calls.append((envelope, transport)); return {"status": "applied"}
+        async def handle_input(self, envelope):
+            self.native_input_calls.append((envelope, None)); return {"status": "applied"}
+
+    adapter = Adapter()
+    monkeypatch.setattr(turn_lab_host_module.WebRemoteHost, "__init__", lambda self: setattr(self, "input_adapter", adapter))
+    host = LabWebRemoteHost(_context())
+    probe = {"value": _dedicated_fixture_probe()}
+
+    def local_probe(**_kwargs):
+        value = probe["value"]
+        return value() if callable(value) else value
+
+    host._local_fixture_probe = local_probe
+    host.arm_controlled_input(lease_id="lease-1", fixture_id="fixture-1")
+    host.bind_controlled_input({"inputId": "lab_inp_race", "leaseId": "lease-1",
+                                "proofToken": _context().proof_token, "fixtureId": "fixture-1"})
+    probe["value"] = after_arm
+
+    with pytest.raises(InputGuardRejected, match=reason):
+        asyncio.run(host.input_adapter.apply_keyboard({"schemaVersion": 2, "type": "keyboard", "action": "down",
+                                                        "inputIds": ["lab_inp_race"], "payload": {}}))
+    assert adapter.native_input_calls == []
 
 
 def test_lab_host_rejects_runner_or_viewer_claimed_fixture_flags_without_its_private_native_probe(monkeypatch):
