@@ -271,6 +271,11 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"], (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
+        def select_receiver_media(expected: Mapping[str, Any]) -> Mapping[str, Any]:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(3); client.connect(str(prepared["bridgeSocket"])); client.sendall((json.dumps({"operation":"select-media-binding", "runId":manifest.run_id, "expected":dict(expected)}, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+            if not isinstance(reply, Mapping) or reply.get("status") != "SEALED" or not isinstance(reply.get("mediaBinding"), Mapping): raise RuntimeBlocked("receiver authority has no unique browser media binding")
+            return reply["mediaBinding"]
         def fixture_probe() -> None:
             from turn_udp_probe import channel_media_binding_echo, permission_send_data_echo
             endpoint_host, endpoint_port = str(prepared["turnEndpoint"]).rsplit(":", 1)
@@ -279,16 +284,19 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             if code or not peer_ip.strip(): raise RuntimeBlocked("fixture UDP echo peer is not ready")
             try:
                 permission_send_data_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, timeout=2.0)
-                holder["mediaBinding"] = channel_media_binding_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, rtp_ssrc=0x10203040, timeout=2.0)
+                channel_media_binding_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, rtp_ssrc=0x10203040, timeout=2.0)
             except Exception as exc: raise RuntimeBlocked("fixture TURN UDP permission/data echo probe failed") from exc
         def fixture_start() -> None:
             # Compose readiness was verified before this callback.  Signal,
             # Host, and Viewer receive only the generated fixture credential.
             identity = lab.start_fixture_turn(bootstrap); lab.start_host()
+            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
+            authority.start(); holder["authority"] = authority
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
-            binding = adapter.selected_relay_binding(manifest, holder.get("mediaBinding"))
+            expected = adapter.selected_media_expectation()
+            binding = adapter.selected_relay_binding(manifest, select_receiver_media(expected) if isinstance(expected, Mapping) else None)
             if (not isinstance(scope, Mapping) or not isinstance(binding, Mapping)
                     or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
                 adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
@@ -304,8 +312,10 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
             runtime_relay = holder.get("runtimeRelay")
             if not isinstance(runtime_relay, Mapping): raise RuntimeBlocked("actual TURN relay binding is unavailable")
-            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"), actual_egress_selector=runtime_relay["actualEgressSelector"])
-            holder["authority"] = authority; return authority
+            authority = holder.get("authority")
+            if not isinstance(authority, LabReceiverBridgeAuthority): raise RuntimeBlocked("receiver authority was not started before Viewer")
+            authority._actual_egress_selector = dict(runtime_relay["actualEgressSelector"])
+            return authority
         def drive() -> Mapping[str, Any]:
             adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
             if adapter is None or not isinstance(scope, Mapping) or authority is None: raise RuntimeBlocked("fixture peers or authority are unavailable")

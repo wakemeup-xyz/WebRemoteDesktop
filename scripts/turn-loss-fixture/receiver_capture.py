@@ -229,8 +229,11 @@ class FixtureCaptureService:
         rows = owner.observations
         for row in rows[self._published_media:]:
             request = {"operation": "media-observation", "runId": self.manifest["runId"], "observation": row, "captureCapability": self.capture_capability}
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(2); client.connect(str(self.authority_socket)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(2); client.connect(str(self.authority_socket)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+            except OSError:
+                return
             if not isinstance(reply, Mapping) or reply.get("status") != "OBSERVED": raise RuntimeError("Lab authority refused media observation")
             self._published_media += 1
     def _state(self) -> Mapping[str, Any] | None:

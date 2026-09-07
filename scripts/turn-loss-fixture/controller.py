@@ -1505,7 +1505,8 @@ def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Pa
         if active_authority is None:
             if authority_factory is None: raise RuntimeBlocked("fixture authority is unavailable")
             active_authority = authority_factory()
-        active_authority.start()
+        if not active_authority._servers:
+            active_authority.start()
         return dict(drive())
     finally:
         try: run([*command, "down", "-v"])

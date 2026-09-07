@@ -574,6 +574,14 @@ class PlaywrightLabViewerAdapter:
         }""")
         return selected_relay_binding_from_stats(rows, manifest, host_pair, media_binding)
 
+    def selected_media_expectation(self) -> dict[str, Any] | None:
+        rows = self.viewer_page.evaluate("""async () => {
+          const pc = WebRTC?.peerConnection || WebRTC?.pc;
+          if (!pc?.getStats) return [];
+          const stats = await pc.getStats(); return [...stats.values()];
+        }""")
+        return selected_media_expectation_from_stats(rows) if isinstance(rows, list) else None
+
     def arm_loss_lab_taps(self) -> bool:
         """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""
         return self.viewer_page.evaluate("() => window.WebRTC?.beginLossLabTrace?.() === true") is True
@@ -674,6 +682,20 @@ def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: A
     if not isinstance(actual, Mapping): return None
     from controller import runtime_relay_binding
     return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair, media_binding=media_binding)
+
+
+def selected_media_expectation_from_stats(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Read-only browser expectation; the receiver authority supplies tuple evidence."""
+    transports = [r for r in rows if isinstance(r, Mapping) and r.get("type") == "transport" and isinstance(r.get("selectedCandidatePairId"), str)]
+    pairs = [r for r in rows if isinstance(r, Mapping) and r.get("type") == "candidate-pair" and len(transports) == 1 and r.get("id") == transports[0]["selectedCandidatePairId"]]
+    if len(pairs) != 1: return None
+    pair = pairs[0]; local = next((r for r in rows if isinstance(r, Mapping) and r.get("id") == pair.get("localCandidateId")), None); remote = next((r for r in rows if isinstance(r, Mapping) and r.get("id") == pair.get("remoteCandidateId")), None)
+    video = [r for r in rows if isinstance(r, Mapping) and r.get("type") in {"inbound-rtp", "outbound-rtp"} and r.get("kind") == "video" and isinstance(r.get("ssrc"), int)]
+    if not isinstance(local, Mapping) or not isinstance(remote, Mapping) or local.get("candidateType") != "relay" or len(video) != 1: return None
+    try:
+        relay = {"address": str(local["address"]), "port": int(local["port"])}; peer = {"address": str(remote["address"]), "port": int(remote["port"])}
+    except (KeyError, TypeError, ValueError): return None
+    return {"allocationRelay": relay, "peer": peer, "rtpSsrc": video[0]["ssrc"]}
 
 
 def selected_relay_leg_from_stats(rows: list[Mapping[str, Any]], catalog: list[Mapping[str, Any]]) -> dict[str, Any] | None:
