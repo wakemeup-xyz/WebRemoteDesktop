@@ -121,7 +121,7 @@ def test_resolution_change_updates_user_size_truth():
     host = _make_host(1280, 720)
 
     import asyncio
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         host.on_resolution_change({"viewerId": "viewer-1", "width": 1920, "height": 1080})
     )
     assert host._user_resolution == {"width": 1920, "height": 1080}
@@ -153,7 +153,6 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     try:
-        loop = asyncio.get_event_loop()
         payload = {
             "viewerId": "viewer-1",
             "fps": 0,
@@ -173,14 +172,14 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
             "freezeCount": 1,
         }
         for _ in range(4):
-            loop.run_until_complete(host.on_viewer_stats(payload))
+            asyncio.run(host.on_viewer_stats(payload))
         stall_before = [
             record.getMessage()
             for record in handler.records
             if "WRD_STALL_SAMPLE" in record.getMessage()
         ]
         assert stall_before == []
-        loop.run_until_complete(host.on_viewer_stats(payload))
+        asyncio.run(host.on_viewer_stats(payload))
     finally:
         logger.removeHandler(handler)
         logger.setLevel(original_level)
@@ -226,7 +225,6 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
     host._keyframe_recovery_state = {}
     encoder = FakeEncoder()
     host.video_sender = type("Sender", (), {"_encoder": encoder})()
-    loop = asyncio.get_event_loop()
     freeze = {
         "viewerId": "viewer-1",
         "connectionAttemptId": "attempt-quality",
@@ -248,22 +246,22 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
     uncorrelated.pop("connectionAttemptId")
     uncorrelated.pop("connectionAttemptSequence")
     uncorrelated.pop("generation")
-    loop.run_until_complete(host.on_viewer_stats(uncorrelated))
+    asyncio.run(host.on_viewer_stats(uncorrelated))
     assert encoder.calls == 0
     assert host.media_sender.request_keyframe.call_count == 0
     assert host._stall_sample_count == 0
     assert host._keyframe_recovery_state == {}
-    loop.run_until_complete(host.on_viewer_stats(freeze))
+    asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 0
     assert host.media_sender.request_keyframe.call_count == 1
-    loop.run_until_complete(host.on_viewer_stats(freeze))
+    asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 0
-    loop.run_until_complete(host.on_viewer_stats(freeze))
+    asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
-    loop.run_until_complete(host.on_viewer_stats(freeze))
+    asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
-    loop.run_until_complete(host.on_viewer_stats(healthy))
-    loop.run_until_complete(host.on_viewer_stats(freeze))
+    asyncio.run(host.on_viewer_stats(healthy))
+    asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
 
 
