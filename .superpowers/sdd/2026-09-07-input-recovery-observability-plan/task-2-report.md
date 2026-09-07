@@ -183,3 +183,35 @@ The remaining finding was that delayed long-press, drag-start, and serial text-d
 ### Fix-round-2 scoped commit
 
 - `8363b79` — `fix(diagnostics): retain deferred input focus attribution`.
+
+## Fix round 3 — nested touch focus handoff (FIX_BASE `af69a58`)
+
+### Finding and covering files
+
+The final rereview found that the outer deferred touch scope supplied `focusKind='desktop'` to `_withInputTraceEvent()`, but that helper retained only the event ID. The nested `runMobileEditingAction()` therefore saw no focus category and the MobileTextInput wrapper defaulted the same physical touch send to `mobile-text`. `_withInputTraceEvent()` now validates the finite focus-kind allowlist, retains the selected kind with the event ID for the nested scope, drops explicitly invalid categories rather than inheriting stale focus, and preserves the existing context restore/clear and current-state eligibility behavior.
+
+- `web-client/js/input.js`: bounded focus-kind allowlist and scoped context retention in `_withInputTraceEvent()`.
+- `web-client/js/input-recovery.test.js`: real Input + TouchInputAdapter + MobileTextInput + collector regression that clears the original DOM scope before a deferred long-press send, then observes the nested scope at the actual WebRTC send boundary; invalid-category negative coverage is included.
+
+### RED evidence
+
+- `node --test --test-name-pattern='deferred touch dispatch retains desktop focus through nested mobile scope' web-client/js/input-recovery.test.js` exited **1** on `6ee8d02/af69a58`: the actual nested send had `focusKind=undefined` where the test required `desktop`, while the original `_inputTraceContext` had already cleared after pointerdown.
+- After strengthening the invalid-category case with an inherited `desktop` context, `node --test --test-name-pattern='invalid nested focus categories' web-client/js/input-recovery.test.js` exited **1** before the final correction: the invalid option incorrectly retained `desktop` (expected no focus and `incidentEligible=false`).
+
+### GREEN evidence
+
+- `node --test --test-name-pattern='deferred touch dispatch retains desktop focus through nested mobile scope|invalid nested focus categories' web-client/js/input-recovery.test.js`: **2 tests, 2 pass, 0 fail**.
+- `node --test web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/mobile-text-input.test.js web-client/js/touch-input-adapter.test.js`: **193 tests, 193 pass, 0 fail**.
+- `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-deferred-incident-probe.py`: **exit 0**; unchanged probe reports long-press `1/1/1`, drag-start `1/1/1`, and deferred-drain `17/1/1` for sends/ACK timeouts/incidents.
+- `node --check web-client/js/input.js` and `git diff --check` passed.
+
+### Correlation, privacy, and scope evidence
+
+- The new real deferred-touch test records the physical `desktop` focus at the actual nested WebRTC send boundary, verifies the original DOM context is `null` before the timer fires, and confirms the nested send retains the originating DOM event ID. This covers the mobile wrapper seam rather than only the outer TouchInputAdapter callback.
+- Explicitly invalid focus categories are removed from the nested context and cannot authorize incidents, even when a stale enclosing context had `desktop`; valid categories remain finite and bounded. No map, history, gesture state machine, business send/result, protocol field, or recovery ownership changed.
+- Existing focused privacy, ACK identity, ring/hash bounds, unassociated-action, current-visibility, callback non-replay, and normal draft/composition regressions remain green from the 193-test matrix. No raw text, key/code, payload, coordinates, DOM value/label, lease ID, token, or password is serialized.
+- Evidence remains offline Node/VM and supplied offline Chromium only. Physical device, system IME, Quartz/native effects, live WebRTC, public origin/tunnel, and watcher acceptance remain **NOT RUN**. Task 1’s separate normal-composition notice-only UI issue remains untouched.
+
+### Fix-round-3 scoped commit
+
+- `c408d1d` — `fix(diagnostics): retain nested touch focus attribution`.
