@@ -42,6 +42,41 @@ Task 1 → Task 2 → Task 3 → Task 4。共享 Input/diagnostic 接口必须�
 - [ ] Step 5: body fixed的 `inputRecoveryNotice`, `inputRecoveryRetryBtn`, `inputRecoveryDraftBtn` 实现真实按钮handler、role/status和隐藏规则；接入effective gate状态文案，桌面/mobile/fullscreen可达且不影响退出按钮和Terminal焦点。恢复失败指引现有控制操作，不自动调用夺取控制。测试点击事件带来的状态/发送结果，不只查HTML字符串。
 - [ ] Step 6: 运行 `node --test web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/mobile-text-input.test.js web-client/js/webrtc.test.js`，再运行 `node --test web-client/js/*.test.js web-client/css/*.test.js`。记录 RED/GREEN 命令、数量、实际输出、未跑物理边界；自审并提交 `fix(input): recover current-session controls after lifecycle reset`。
 
+核心 RED 的可执行形状（`fixture()` 取自本仓诊断 `reproduce.cjs` 的真实模块fixture，复制为本测试文件的本地 helper，保留其 pointer/inputs/ack/resume/document 接口；不执行旧脚本的顶层反例）：
+
+```js
+test('blur before click ACKs recovers new mouse and keyboard writes only after owned resets', () => {
+  const h = fixture();
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.window.dispatch('blur');
+  h.inputs().forEach(message => h.ack(message));
+  h.resume();
+  h.inputs().filter(message => message.action === 'reset').forEach(message => h.ack(message));
+  const before = h.inputs().length;
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.inputs().slice(before).forEach(message => h.ack(message));
+  h.keydown();
+  h.document.dispatch('keyup', { target: h.video, code: 'KeyA', key: 'a', location: 0 });
+  assert.deepEqual(h.inputs().slice(before).map(message =>
+    `${message.type}:${message.action}:${message.payload.phase || ''}`),
+  ['mouse:down:', 'mouse:up:', 'keyboard:key:down', 'keyboard:key:up']);
+});
+```
+
+实现中的 ACK 判定需具有以下必要条件（在实际 owner 内使用，不创建通用框架；调用者还检查 generation/current attempt 及 transport 接受结果）：
+
+```js
+function isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
+  return Boolean(reset && ack?.schemaVersion === 2
+    && ack.inputType === inputType && ack.leaseEpoch === leaseEpoch
+    && Array.isArray(ack.inputIds) && ack.inputIds.includes(reset.inputId)
+    && ['applied', 'duplicate'].includes(ack.status)
+    && Number.isSafeInteger(ack.appliedSeq) && ack.appliedSeq >= reset.seq);
+}
+```
+
 ### Task 2: Viewer 有界输入轨迹与真实门禁打点
 
 **Files:** 新增 `web-client/js/input-trace.js`, `input-trace.test.js`；修改 `input.js`, `input.test.js`, `input-recovery.test.js`, `mobile-text-input.js`, `mobile-text-input.test.js`, `diagnostic-core.js`, `diagnostic.test.js`, `webrtc.js`, `webrtc.test.js`, `web-client/viewer.html`, `signal-server/scripts/web-asset-graph.js`。只有为记录ACK deadline确需 transport hook 时才修改 `keyboard-transport.js` 和对应测试，必须在报告说明。
@@ -53,6 +88,34 @@ Task 1 → Task 2 → Task 3 → Task 4。共享 Input/diagnostic 接口必须�
 - [ ] Step 3: gate接受/拒绝记录effective原因、真实transport enqueue结果（含fallback/失败）、ACK接受/拒绝/timeout、生命周期与recovery。只在真实用户输入并且媒体active/可见/有权的unexpected不确定门禁，或可靠ACK deadline触发autoSendFailure；正常draft/只读/Terminal/manual-pause不触发。不要逐move/wheel触发故障。
 - [ ] Step 4: collector 放入critical graph且早于Input，Diagnostic core晚加载handoff保持既有轨迹。测试真实gate拒绝只产生DOM+gate不产生发送；DC和Socket各实际记录正确transport，迟到ACK不伪造成功，一次失败的3000ms计时与恢复不互相刷无限重试。
 - [ ] Step 5: 运行 `node --test web-client/js/input-trace.test.js web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/diagnostic.test.js web-client/js/webrtc.test.js`，再运行Viewer全量；记录红绿与隐私/压力结果，提交 `feat(diagnostics): trace sanitized viewer input decisions`。
+
+`snapshot()` 的接口为 `{ schemaVersion: 1, events, counters }`。条目包含允许的 stage/eventId/meta字段与本地相对时间；计数在counters下（包括pendingHashCount），JSON整体也受64KiB上限。固定向量测试使用真实Node WebCrypto，不用返回固定字符串的假hash：
+
+```js
+const { webcrypto } = require('node:crypto');
+async function hashInputIds(ids) {
+  const bytes = new TextEncoder().encode(ids.join('\x1f'));
+  const digest = await webcrypto.subtle.digest('SHA-256', bytes);
+  return Buffer.from(digest).toString('hex').slice(0, 16);
+}
+test('correlates input IDs without retaining secret payload fields', async () => {
+  const trace = InputTrace.create({ now: () => 10, hashInputIds });
+  trace.record('transport-send', { inputType: 'keyboard', action: 'key',
+    accepted: true, inputIds: ['kbd_fixture_1'], seq: 1, leaseEpoch: 7,
+    key: 'KEY_CANARY', payload: { text: 'TEXT_CANARY' }, leaseId: 'LEASE_CANARY' });
+  for (let turn = 0; turn < 100 && trace.snapshot().counters.pendingHashCount; turn += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.events[0].inputIdHash, '3e9fd6a21afbb55b');
+  const json = JSON.stringify(snapshot);
+  for (const secret of ['kbd_fixture_1', 'KEY_CANARY', 'TEXT_CANARY', 'LEASE_CANARY']) {
+    assert.equal(json.includes(secret), false);
+  }
+});
+```
+
+默认实现以同样UTF-8/WebCrypto摘要逻辑返回前16位hex；没有subtle时返回null并计数。调用方用`record`提交allowlist元数据，不在Input中自行散落JSON序列化/哈希代码。
 
 ### Task 3: 统一上传、Signal/Host关联与准确处理结果
 
@@ -66,6 +129,39 @@ Task 1 → Task 2 → Task 3 → Task 4。共享 Input/diagnostic 接口必须�
 - [ ] Step 4: 实现Host/Signal安全日志。保留当前业务拒绝、reset、安全释放、ACK和seq原语义；不为未授权数据新增业务ACK。移除误导性unconditional executed成功表述，高频路径聚合。所有日志不得包含payload、键值或原始输入ID。
 - [ ] Step 5: 使用现有依赖（可给worktree单独设置NODE_PATH指向main已安装node_modules，禁止修改其内容）：`node --test web-client/js/diagnostic.test.js signal-server/test/diagnostic.test.js signal-server/websocket/signaling.test.js`；`python3 -m pytest -q python-host/test_observability.py python-host/test_connection_diagnostics.py python-host/test_input_handler.py python-host/test_remote_keyboard_state.py python-host/test_remote_desktop_write_state.py`。运行 `npm --prefix signal-server test`（构建仅worktree dist），记录完整结果；提交 `fix(diagnostics): correlate input outcomes without viewer takeover`。
 
+跨语言固定测试向量与接收边界的RED形状：
+
+```python
+def test_input_hash_matches_viewer_fixture():
+    from observability import hash_input_ids
+    assert hash_input_ids(["kbd_fixture_1"]) == "3e9fd6a21afbb55b"
+    assert hash_input_ids(["inp_fixture_a", "inp_fixture_b"]) == "1721100bdad63938"
+```
+
+```js
+test('diagnostic ingestion strips nested input secrets but preserves final gate', () => {
+  const clean = redactDiagnosticPayload({ inputState: {
+    isActive: true, hasLease: true, leaseEpoch: 7,
+    effectiveGate: { allowed: false, blockedReasons: ['surface-uncertain'], key: 'GATE_CANARY' },
+    surface: { state: 'uncertain', generation: 2 },
+    draft: { hasPending: false, composing: false, deliveryUncertain: true, text: 'TEXT_CANARY' },
+    leaseId: 'LEASE_CANARY',
+  } });
+  assert.equal(clean.inputState.effectiveGate.allowed, false);
+  assert.equal(clean.inputState.surface.state, 'uncertain');
+  for (const secret of ['GATE_CANARY', 'TEXT_CANARY', 'LEASE_CANARY']) {
+    assert.equal(JSON.stringify(clean).includes(secret), false);
+  }
+});
+```
+
+在公共diagnostic payload返回对象中增加以下两项，manual不再重新组装删字段的inputState；服务器必须对应过滤并保留两项到report，不能只在redactor里保留：
+
+```js
+inputState: typeof Input !== 'undefined' ? Input.getDiagnosticState() : null,
+inputTrace: this.getInputTraceSnapshot?.() || null,
+```
+
 ### Task 4: 离线交互验收与文档闭环
 
 **Files:** 修改 `scripts/mobile_input_interaction_acceptance.py` 及其现有对应测试（若存在），或新增独立 `scripts/input_recovery_acceptance.py`（复用离线fixture，不复制整套大harness）；更新 `README.md`, `docs/需求文档/WebRemoteDesktop-需求文档.md`，新增 `docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md` 和 `reports/evidence/2026-09-07-input-recovery-observability/` 下安全测试摘要。只更新本次输入口径，不改TURN/Terminal/watch历史结论。
@@ -77,3 +173,26 @@ Task 1 → Task 2 → Task 3 → Task 4。共享 Input/diagnostic 接口必须�
 - [ ] Step 3: 最终运行Viewer全量、Signal全量（含worktree构建）、Python输入/媒体/诊断回归；检查build graph与built Viewer无缺失模块。所有额外失败区分基线/新增，失败不能静默忽略。控制恢复专项测试需确实发送新的输入，而不只测active/READY。
 - [ ] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/公网/系统IME仍NOT RUN，明确尚未合main/push/restart。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
 - [ ] Step 5: 自审文档链接、隐私金丝雀与 `git diff --check`，提交 `test(input): verify recovery interaction and document diagnostics`。根线程随后做whole-branch独立review与自己的验收，保留分支等待后续集成授权。
+
+浏览器验收复用`OfflineFixture`，只以真实locator动作和实际wire副作用判定；用可触发页面click的真实事件进入root fullscreen：
+
+```python
+page.locator('#inputRecoveryRetryBtn').click()
+fixture.settle()
+page.locator('#remoteVideo').click(position={"x": 100, "y": 100})
+fixture.settle()
+before_keys = wire_counts(page)["keyboardKeys"]
+page.keyboard.press('a')
+fixture.settle()
+assert wire_counts(page)["keyboardKeys"] == before_keys + 2
+assert page.locator('#inputRecoveryNotice').is_hidden()
+```
+
+上下文setup必须先以真实pointer/blur或受控外部ACK失败制造notice（不得直接写production recovery状态让测试通过）。写入JSON后独立核对：
+
+```python
+assert report["scope"] == "offline-synthetic"
+assert len(report["scenarios"]) >= 12
+assert all(item["status"] == "PASS" for item in report["scenarios"])
+assert all(all(item["checks"].values()) for item in report["scenarios"])
+```
