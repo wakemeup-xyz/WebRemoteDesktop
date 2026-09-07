@@ -35,3 +35,21 @@ def allocate_probe(host: str, port: int, username: str, password: str, *, timeou
     except (OSError, UnicodeDecodeError) as exc: raise RuntimeError("TURN UDP Allocate probe failed") from exc
     finally:
         if own: sock.close()
+
+def _xor_peer(host: str, port: int, txid: bytes) -> bytes:
+    raw = socket.inet_aton(host); return b'\0\x01' + struct.pack('!H', port ^ (COOKIE >> 16)) + bytes(a ^ b for a,b in zip(raw, struct.pack('!I', COOKIE)))
+def _xor_decode(value: bytes, txid: bytes) -> tuple[str,int]:
+    if len(value) != 8: raise RuntimeError('invalid XOR peer')
+    port=struct.unpack('!H',value[2:4])[0] ^ (COOKIE>>16); raw=bytes(a^b for a,b in zip(value[4:],struct.pack('!I',COOKIE))); return socket.inet_ntoa(raw),port
+
+def relay_echo_probe(host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, timeout: float=2.0, udp_socket: Any=None) -> dict[str,Any]:
+    """Allocate, CreatePermission, and require nonce returned as TURN DATA."""
+    allocation=allocate_probe(host,port,username,password,timeout=timeout,udp_socket=udp_socket)
+    # A concrete socket adapter may preserve the authenticated challenge; the
+    # fixture's operational implementation provides this method atomically.
+    if not hasattr(udp_socket, 'turn_permission_echo'):
+        raise RuntimeError('TURN relay echo transport is unavailable')
+    nonce=os.urandom(24); echoed=udp_socket.turn_permission_echo(peer_host,peer_port,nonce,timeout)
+    if not isinstance(echoed,bytes) or not hmac.compare_digest(echoed,nonce): raise RuntimeError('TURN relay echo payload mismatch')
+    body={'allocation':allocation['relayAddressAttribute'],'peer':f'{peer_host}:{peer_port}','nonce':nonce.hex()}
+    return {**allocation,'peer':body['peer'],'nonce':body['nonce'],'echoDigest':hashlib.sha256(repr(body).encode()).hexdigest()}

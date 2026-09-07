@@ -19,3 +19,12 @@ def test_allocate_probe_blocks_without_relay_attribute():
  try:p.allocate_probe('127.0.0.1',3478,'u','p',udp_socket=Bad())
  except RuntimeError:pass
  else:assert False
+def test_relay_echo_requires_permission_transport_and_exact_nonce():
+ class Echo(Sock):
+  def turn_permission_echo(self,h,p,n,t): return n
+ r=p.relay_echo_probe('127.0.0.1',3478,'u','p','172.31.0.9',59000,udp_socket=Echo()); assert r['peer'].endswith(':59000') and r['nonce']
+ class Bad(Echo):
+  def turn_permission_echo(self,h,p,n,t): return b'wrong'
+ try:p.relay_echo_probe('127.0.0.1',3478,'u','p','172.31.0.9',59000,udp_socket=Bad())
+ except RuntimeError:pass
+ else:assert False

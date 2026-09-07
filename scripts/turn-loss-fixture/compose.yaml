@@ -9,6 +9,15 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
 
+  udp-echo-peer:
+    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    labels:
+      com.wrd.turn-loss-fixture: "true"
+    networks: [turn-loss]
+    command: ["python", "/fixture/udp_echo_peer.py", "--port", "59000"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
   loss-controller:
     # The generated override supplies a prebuilt, digest-pinned controller image.
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
