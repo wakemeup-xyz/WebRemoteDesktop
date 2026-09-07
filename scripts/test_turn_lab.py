@@ -784,3 +784,15 @@ def test_fixture_turn_requires_production_zero_viewer_lease_and_watchdog(tmp_pat
     assert identity.realm.startswith("lab-") and proof_fixture.proofs == 1
     proof_fixture.epoch += 1; _wait(lambda: run.closed); _wait(lambda: not proof_fixture.leases)
     assert run.monitor() == "stopped:production-epoch-changed"
+
+
+def test_fixture_start_host_revalidates_production_proof_before_spawning(tmp_path, proof_fixture, monkeypatch):
+    fixture_turn = LabTurnBootstrap("fixture-turn", "fixture-fingerprint", ("turn:127.0.0.1:57004?transport=udp",), "once", "secret")
+    run = _run(tmp_path, proof_fixture); run.start_fixture_turn(fixture_turn)
+    proof_fixture.viewers = 1
+    calls = []
+    original = turn_lab_module.subprocess.Popen
+    monkeypatch.setattr(turn_lab_module.subprocess, "Popen", lambda *args, **kwargs: calls.append(args) or original(*args, **kwargs))
+    with pytest.raises(RuntimeError, match="production preflight"):
+        run.start_host()
+    assert calls == [] and run.closed and not proof_fixture.leases

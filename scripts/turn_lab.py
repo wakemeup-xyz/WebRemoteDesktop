@@ -681,8 +681,9 @@ class LabRun:
             host_secret = self._host_secret
         if token is None or (proof is None and not self._fixture_turn_run): raise RuntimeError("lab identity is required before starting a Host")
         try:
-            if not self._fixture_turn_run:
-                self._production_preflight(proof, proof.epoch)
+            # Fixture TURN changes only transport endpoints.  The Host still
+            # needs a fresh sealed production proof immediately before spawn.
+            self._production_preflight(proof, proof.epoch)
             env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1", "WRD_FRAME_TRACE_DETAIL": "1", "WRD_LAB_LOSS_TRACE": "1"})
             with self._spawn_lock:
                 with self._lock:

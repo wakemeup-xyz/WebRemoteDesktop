@@ -981,3 +981,16 @@ def test_signed_bridge_rejects_host_sender_sequences_even_when_they_show_a_gap()
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
     assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authority_close_removes_receiver_capability_sockets_and_empty_bridge_tree(tmp_path):
+    raw = manifest()
+    prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    verify_socket, capture_socket = Path(prepared["bridgeSocket"]), Path(prepared["captureSocket"])
+    bridge_root = verify_socket.parent.parent
+    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"cleanup-verifier", socket_path=verify_socket, capture_socket_path=capture_socket, capture_capability_path=capture_socket.with_name("capability"))
+    authority.start()
+    assert verify_socket.exists() and capture_socket.exists() and capture_socket.with_name("capability").exists()
+    authority.close()
+    assert not verify_socket.exists() and not capture_socket.exists()
+    assert not capture_socket.with_name("capability").exists() and not bridge_root.exists()

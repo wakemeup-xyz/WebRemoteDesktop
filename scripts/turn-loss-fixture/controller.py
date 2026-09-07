@@ -856,8 +856,21 @@ class LabReceiverBridgeAuthority:
         for server in self._servers:
             server.shutdown(); server.server_close()
         self._servers = []
-        self.socket_path.unlink(missing_ok=True)
-        self.capture_socket_path.unlink(missing_ok=True)
+        # Only erase the per-run capability and endpoints we created.  Never
+        # recursively remove an arbitrary caller directory; nonempty or
+        # unexpected directories remain for diagnosis rather than deletion.
+        for path in (self.socket_path, self.capture_socket_path, self._capture_capability_path):
+            try: path.unlink(missing_ok=True)
+            except OSError: pass
+        parents = {self.socket_path.parent, self.capture_socket_path.parent}
+        for directory in parents:
+            try: directory.rmdir()
+            except OSError: pass
+        roots = {directory.parent for directory in parents}
+        for root in roots:
+            if root.name.startswith("wrd-turn-loss-"):
+                try: root.rmdir()
+                except OSError: pass
 
 
 class UnixSealedReceiverEvidenceSource:
