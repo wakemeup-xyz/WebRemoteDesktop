@@ -1,9 +1,12 @@
-"""Fail-closed orchestration tests for the peak-headroom prescreen."""
+"""Fail-closed tests for peak-headroom ambient admissibility."""
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -16,24 +19,57 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
 
 
+class AmbientStub:
+    def __init__(self):
+        self.abort_reasons = []
+        self.stopped = False
+        self.blocks = []
+
+    def start(self): pass
+    def stop(self): self.stopped = True
+    def run_preflight(self): return not self.abort_reasons
+    def begin_block(self, block_id): self.blocks.append(block_id)
+    def end_block(self, block_id):
+        return {"blockId": block_id, "startedMonotonicNs": 1, "endedMonotonicNs": 2, "sampleCount": 1}
+    def verify_coverage(self): pass
+    def abort_status(self):
+        if any(reason["category"] == "CONTAMINATED" for reason in self.abort_reasons):
+            return "ABORTED_CONTAMINATED"
+        return "ABORTED_INCONCLUSIVE" if self.abort_reasons else None
+    def evidence(self):
+        return {"status": "CONTAMINATED" if self.abort_status() else "OBSERVED", "rawGatesUnchanged": True,
+                "relativeOnly": True, "noLoadBaseline": None, "coverage": [], "missedTicks": 0,
+                "preflight": {"status": "PASS"}, "mysqld": {}, "forbidden": list(self.abort_reasons),
+                "abortReasons": list(self.abort_reasons), "samples": []}
+
+
 class PeakHeadroomMatrixCliTest(unittest.TestCase):
-    def test_failed_prescreen_is_archived_without_running_the_full_matrix(self):
-        candidate = types.SimpleNamespace(
+    def setUp(self):
+        self.candidate = types.SimpleNamespace(
             id="on-demand-peak-headroom-v1",
             options_digest="candidate-digest",
             to_dict=lambda: {"id": "on-demand-peak-headroom-v1", "encoderParameterDigest": "candidate-digest"},
         )
         experiment = types.ModuleType("turn_encoder_peak_headroom_experiments")
-        experiment.build_peak_headroom_candidate = lambda: candidate
+        experiment.build_peak_headroom_candidate = lambda: self.candidate
         experiment.submitted_options = lambda _config, resolution: {"resolution": str(resolution)}
-        experiment.validate_prescreen = lambda _evidence: ["safety-net: quality failure"]
-        experiment.validate_full_matrix = lambda _evidence: (_ for _ in ()).throw(AssertionError("full matrix must not validate"))
-        previous = sys.modules.get("turn_encoder_peak_headroom_experiments")
+        experiment.validate_prescreen = lambda _evidence: []
+        experiment.validate_full_matrix = lambda _evidence: []
+        self.previous_experiment = sys.modules.get("turn_encoder_peak_headroom_experiments")
         sys.modules["turn_encoder_peak_headroom_experiments"] = experiment
-        self.addCleanup(
-            lambda: sys.modules.__setitem__("turn_encoder_peak_headroom_experiments", previous)
-            if previous is not None else sys.modules.pop("turn_encoder_peak_headroom_experiments", None)
-        )
+        self.addCleanup(self._restore_experiment)
+        self.previous_sampler = MODULE._PeakAmbientSampler
+        self.addCleanup(lambda: setattr(MODULE, "_PeakAmbientSampler", self.previous_sampler))
+
+    def _restore_experiment(self):
+        if self.previous_experiment is None:
+            sys.modules.pop("turn_encoder_peak_headroom_experiments", None)
+        else:
+            sys.modules["turn_encoder_peak_headroom_experiments"] = self.previous_experiment
+
+    def test_failed_prescreen_is_archived_without_running_the_full_matrix(self):
+        sys.modules["turn_encoder_peak_headroom_experiments"].validate_prescreen = lambda _evidence: ["safety-net: quality failure"]
+        MODULE._PeakAmbientSampler = AmbientStub
         calls = []
 
         class Probe:
@@ -41,16 +77,117 @@ class PeakHeadroomMatrixCliTest(unittest.TestCase):
                 calls.append(("prescreen", config.id))
                 return {"config": config.to_dict(), "input": {"fixed": True}, "runs": []}
 
-            def evaluate_preset_scenario_matrix(self, _config):
+            def evaluate_preset_scenario_matrix(self, _config, **_kwargs):
                 calls.append(("full", _config.id))
                 raise AssertionError("must not run full matrix")
 
         result = MODULE.evaluate_peak_headroom_matrix(Probe())
 
-        self.assertEqual(calls, [("prescreen", candidate.id)])
+        self.assertEqual(calls, [("prescreen", self.candidate.id)])
         self.assertEqual(result["status"], "NO_QUALIFIED_CANDIDATE")
         self.assertEqual(result["candidate"]["execution"]["fullMatrix"], "NOT RUN")
-        self.assertEqual(result["defaultPolicy"], "relay-legacy-v1")
+
+    def test_final_hook_contamination_cannot_become_offline_pass(self):
+        ambient = AmbientStub()
+        MODULE._PeakAmbientSampler = lambda: ambient
+
+        class Probe:
+            def evaluate_peak_headroom_prescreen(self, config): return {"config": config.to_dict(), "runs": []}
+            def evaluate_peak_headroom_sentinel(self, *_args): return {"encodeMsMedian": 2.0, "encodeMsP95": 999.0}
+            def evaluate_preset_scenario_matrix(self, _config, measurement_hook):
+                measurement_hook("before", 1152, 720, "static")
+                ambient.abort_reasons.append({"category": "CONTAMINATED", "reason": "non-allowlisted process present", "class": "pytest", "pid": 1, "cpuPercent": 0.0})
+                return {"runs": []}
+
+        result = MODULE.evaluate_peak_headroom_matrix(Probe())
+
+        self.assertEqual(result["status"], "ABORTED_CONTAMINATED")
+        self.assertFalse(result["candidate"]["eligible"])
+        self.assertEqual(result["candidate"]["offline"]["status"], "NOT RUN")
+        self.assertNotIn("OFFLINE_PASS_ONLY", json.dumps(result))
+
+    def test_sentinel_p95_is_telemetry_and_not_a_raw_quality_gate(self):
+        MODULE._PeakAmbientSampler = AmbientStub
+
+        class Probe:
+            def evaluate_peak_headroom_prescreen(self, config): return {"config": config.to_dict(), "runs": []}
+            def evaluate_peak_headroom_sentinel(self, *_args): return {"encodeMsMedian": 1.0, "encodeMsP95": 12345.0}
+            def evaluate_preset_scenario_matrix(self, _config, measurement_hook):
+                measurement_hook("before", 1152, 720, "static")
+                measurement_hook("after", 1152, 720, "static")
+                return {"runs": []}
+
+        result = MODULE.evaluate_peak_headroom_matrix(Probe())
+
+        self.assertEqual(result["status"], "OFFLINE_PASS_ONLY")
+        self.assertEqual(result["candidate"]["offline"]["status"], "PASS")
+        self.assertNotIn("adjusted", json.dumps(result))
+
+
+class PeakAmbientSamplerTest(unittest.TestCase):
+    @staticmethod
+    def _snapshot(pid=10, epoch="Mon Sep  8 12:00:00 2026", cpu=2.0):
+        mysql = {"pid": pid, "rssKiB": 1, "cpuPercent": cpu, "command": "/opt/mysql/mysqld", "binaryPath": "/opt/mysql/mysqld", "startEpoch": epoch}
+        return {"processes": [mysql], "mysqld": [mysql], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}
+
+    def test_mysql_pid_drift_is_inconclusive(self):
+        snapshots = iter([self._snapshot(pid=10), self._snapshot(pid=11)])
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: next(snapshots))
+        sampler._sample_once(phase="PREFLIGHT")
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("mysqld identity changed", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_zero_mysql_samples_fail_closed(self):
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: {"processes": [], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}})
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIsNone(sampler.evidence()["mysqld"]["cpuPercent"]["p95"])
+
+    def test_sampler_exception_is_inconclusive_and_ready(self):
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: (_ for _ in ()).throw(OSError("ps unavailable")))
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertTrue(sampler.ready.is_set())
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertEqual(sampler.abort_reasons[0]["reason"], "ambient sampling failure")
+
+    def test_forbidden_process_evidence_is_sanitized(self):
+        snapshot = self._snapshot()
+        snapshot["processes"].append({"pid": 42, "rssKiB": 2, "cpuPercent": 6.0, "command": "/usr/bin/pytest private-argument"})
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        self.assertEqual(sampler.evidence()["forbidden"], [{"class": "pytest", "pid": 42, "cpuPercent": 6.0}])
+
+
+class AtomicAbortArtifactTest(unittest.TestCase):
+    def test_main_writes_atomic_abort_artifact_when_probe_load_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "abort.json"
+            previous_args, previous_loader = MODULE.parse_args, MODULE.load_probe_module
+            self.addCleanup(lambda: setattr(MODULE, "parse_args", previous_args))
+            self.addCleanup(lambda: setattr(MODULE, "load_probe_module", previous_loader))
+            MODULE.parse_args = lambda: argparse.Namespace(policy=None, matrix="relay-peak-headroom-v1", output=output)
+            MODULE.load_probe_module = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+            MODULE.main()
+            artifact = json.loads(output.read_text())
+        self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
+        self.assertFalse(artifact["eligible"])
+
+    def test_main_writes_atomic_abort_artifact_when_matrix_hook_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "abort-hook.json"
+            old_args, old_loader, old_evaluator = MODULE.parse_args, MODULE.load_probe_module, MODULE.evaluate_peak_headroom_matrix
+            self.addCleanup(lambda: setattr(MODULE, "parse_args", old_args))
+            self.addCleanup(lambda: setattr(MODULE, "load_probe_module", old_loader))
+            self.addCleanup(lambda: setattr(MODULE, "evaluate_peak_headroom_matrix", old_evaluator))
+            MODULE.parse_args = lambda: argparse.Namespace(policy=None, matrix="relay-peak-headroom-v1", output=output)
+            MODULE.load_probe_module = lambda: object()
+            MODULE.evaluate_peak_headroom_matrix = lambda _probe: (_ for _ in ()).throw(RuntimeError("sentinel hook failure"))
+            MODULE.main()
+            artifact = json.loads(output.read_text())
+        self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
+        self.assertEqual(artifact["error"]["type"], "RuntimeError")
 
 
 if __name__ == "__main__":

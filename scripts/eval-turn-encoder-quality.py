@@ -25,38 +25,258 @@ if str(ROOT / "scripts") not in sys.path:
 
 
 class _PeakAmbientSampler:
-    """One-Hz telemetry; its normalized values never replace raw P95 gates."""
-    def __init__(self):
-        self.samples, self.abort_reasons, self._stop = [], [], threading.Event()
-        self._over = {}; self._thread = threading.Thread(target=self._run, daemon=True)
-    def start(self): self._thread.start()
-    def stop(self): self._stop.set(); self._thread.join(timeout=2)
-    def _run(self):
-        while not self._stop.is_set(): self._sample(); self._stop.wait(1)
-    def _sample(self):
-        rows = subprocess.run(["ps", "-axo", "pid=,rss=,%cpu=,comm="], text=True, capture_output=True, check=True).stdout.splitlines()
-        mysql=[]; offenders=[]
-        for row in rows:
-            parts=row.split(None, 3)
-            if len(parts) != 4: continue
-            pid,rss,cpu,comm=parts
-            try: cpu=float(cpu); rss=int(rss)
-            except ValueError: continue
-            item={"pid":int(pid),"rssKiB":rss,"cpuPercent":cpu,"command":comm}
-            if "mysqld" in comm: mysql.append(item); continue
-            if any(name in comm for name in ("pytest", "sync_worker")):
-                offenders.append(item)
-                self.abort_reasons.append(f"non-allowlisted interference {pid}")
+    """Fail-closed one-Hz environment monitor for the offline matrix.
+
+    Its measurements describe ambient drift only.  They are deliberately kept
+    out of the encoder validator, so no normalized or adjusted P95 can become a
+    qualification result.
+    """
+
+    PRE_FLIGHT_SAMPLES = 30
+    SAMPLE_HZ = 1
+    MYSQL_STABILITY_THRESHOLDS = {
+        "maximumCpuPercent": 95.0,
+        "maximumCpuSwingPercent": 35.0,
+    }
+    _FORBIDDEN_CLASSES = {
+        "pytest": ("pytest",),
+        "sync_worker": ("sync_worker",),
+        "lab": ("/lab", " lab"),
+        "docker": ("docker compose", "docker-compose"),
+    }
+
+    def __init__(self, *, snapshot_reader=None, interval_seconds: float = 1.0):
+        self._snapshot_reader = snapshot_reader or self._read_snapshot
+        self._interval_seconds = interval_seconds
+        self.samples: list[dict] = []
+        self.abort_reasons: list[dict] = []
+        self._stop = threading.Event()
+        self.ready = threading.Event()
+        self.healthy = threading.Event()
+        self._sample_event = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread_started = False
+        self._preflight_samples: list[dict] = []
+        self._preflight_status = "PENDING"
+        self._mysql_identity: dict | None = None
+        self._coverage: list[dict] = []
+        self._active_blocks: dict[str, dict] = {}
+        self._missed_ticks = 0
+        self._last_tick_ns: int | None = None
+
+    @staticmethod
+    def _mysql_start_epoch(pid: int) -> str:
+        completed = subprocess.run(
+            ("ps", "-p", str(pid), "-o", "lstart="),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        value = completed.stdout.strip()
+        if not value:
+            raise RuntimeError(f"mysqld {pid} has no start epoch")
+        return value
+
+    @classmethod
+    def _forbidden_class(cls, command: str) -> str | None:
+        lowered = command.lower()
+        for name, patterns in cls._FORBIDDEN_CLASSES.items():
+            if any(pattern in lowered for pattern in patterns):
+                return name
+        return None
+
+    def _read_snapshot(self) -> dict:
+        completed = subprocess.run(
+            ("ps", "-axo", "pid=,rss=,%cpu=,comm="),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        processes = []
+        for row in completed.stdout.splitlines():
+            parts = row.split(None, 3)
+            if len(parts) != 4:
+                continue
+            pid, rss, cpu, command = parts
+            try:
+                processes.append({
+                    "pid": int(pid), "rssKiB": int(rss), "cpuPercent": float(cpu),
+                    "command": command,
+                })
+            except ValueError:
+                continue
+        mysql = [item for item in processes if "mysqld" in item["command"].lower()]
+        for item in mysql:
+            item["binaryPath"] = item["command"]
+            item["startEpoch"] = self._mysql_start_epoch(item["pid"])
+        with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
+            status = json.load(response)
+        return {
+            "processes": processes,
+            "mysqld": mysql,
+            "viewerStatus": {
+                "viewerCount": status.get("viewerCount"),
+                "relayViewerCount": status.get("relayViewerCount"),
+            },
+        }
+
+    def _abort(self, category: str, reason: str, **details) -> None:
+        entry = {"category": category, "reason": reason, **details}
+        if entry not in self.abort_reasons:
+            self.abort_reasons.append(entry)
+
+    def _sample_once(self, *, phase: str) -> None:
+        tick_ns = time.monotonic_ns()
         try:
-            status=json.load(urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1))
-            viewers={key:status.get(key) for key in ("viewerCount", "relayViewerCount")}
-            if viewers["viewerCount"] or viewers["relayViewerCount"]: self.abort_reasons.append("viewer activity")
-        except Exception:
-            viewers={"status":"unavailable"}; self.abort_reasons.append("viewer status unavailable")
-        self.samples.append({"monotonicNs":time.monotonic_ns(),"loadavg":list(os.getloadavg()),"mysqld":mysql,"nonAllowlisted":offenders,"viewerStatus":viewers})
-    def evidence(self):
-        return {"sampleHz":1,"samples":self.samples,"abortReasons":sorted(set(self.abort_reasons)),"status":"CONTAMINATED" if self.abort_reasons else "OBSERVED",
-                "note":"Relative ambient factors are non-gating telemetry; raw P95 remains formal. No no-load reference exists, so absolute debiased P95 is unavailable."}
+            snapshot = self._snapshot_reader()
+            processes = list(snapshot["processes"])
+            mysql = list(snapshot["mysqld"])
+            viewers = dict(snapshot["viewerStatus"])
+            forbidden = []
+            for process in processes:
+                process_class = self._forbidden_class(str(process["command"]))
+                if process_class is not None and "mysqld" not in str(process["command"]).lower():
+                    forbidden.append({
+                        "class": process_class,
+                        "pid": int(process["pid"]),
+                        "cpuPercent": float(process["cpuPercent"]),
+                    })
+            if forbidden:
+                for offender in forbidden:
+                    self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
+            if viewers.get("viewerCount") != 0 or viewers.get("relayViewerCount") != 0:
+                self._abort("CONTAMINATED", "viewer activity", viewers=viewers)
+            if len(mysql) != 1:
+                self._abort("INCONCLUSIVE", "mysqld identity unavailable", observedCount=len(mysql))
+            else:
+                observed_identity = {
+                    "pid": int(mysql[0]["pid"]),
+                    "binaryPath": str(mysql[0]["binaryPath"]),
+                    "startEpoch": str(mysql[0]["startEpoch"]),
+                }
+                if self._mysql_identity is None:
+                    self._mysql_identity = observed_identity
+                elif observed_identity != self._mysql_identity:
+                    self._abort(
+                        "INCONCLUSIVE", "mysqld identity changed",
+                        expected=self._mysql_identity, observed=observed_identity,
+                    )
+            sample = {
+                "monotonicNs": tick_ns,
+                "phase": phase,
+                "loadavg": list(os.getloadavg()),
+                "mysqld": mysql,
+                "forbidden": forbidden,
+                "viewerStatus": viewers,
+            }
+            with self._lock:
+                if self._last_tick_ns is not None:
+                    elapsed = tick_ns - self._last_tick_ns
+                    missed = max(0, round(elapsed / (self._interval_seconds * 1_000_000_000)) - 1)
+                    self._missed_ticks += missed
+                    if missed:
+                        self._abort("INCONCLUSIVE", "ambient sampling tick missed", missedTicks=missed)
+                self._last_tick_ns = tick_ns
+                self.samples.append(sample)
+                if phase == "PREFLIGHT":
+                    self._preflight_samples.append(sample)
+            self.healthy.set()
+        except Exception as exc:  # ps/status failures must make qualification impossible.
+            self._abort("INCONCLUSIVE", "ambient sampling failure", error=type(exc).__name__)
+        finally:
+            self.ready.set()
+            self._sample_event.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._sample_once(phase="PREFLIGHT" if self._preflight_status == "PENDING" else "RUNNING")
+            self._stop.wait(self._interval_seconds)
+
+    def start(self) -> None:
+        self._thread_started = True
+        self._thread.start()
+        if not self.ready.wait(timeout=5):
+            self._abort("INCONCLUSIVE", "ambient sampler did not become ready")
+
+    def run_preflight(self) -> bool:
+        """Require a continuous 30x1Hz stable mysqld identity before encoding."""
+        deadline = time.monotonic() + (self.PRE_FLIGHT_SAMPLES + 5) * self._interval_seconds
+        while len(self._preflight_samples) < self.PRE_FLIGHT_SAMPLES and not self.abort_reasons:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._abort("INCONCLUSIVE", "ambient preflight missing samples", observed=len(self._preflight_samples))
+                break
+            self._sample_event.clear()
+            self._sample_event.wait(timeout=min(self._interval_seconds + 0.2, remaining))
+        cpu_values = [sample["mysqld"][0]["cpuPercent"] for sample in self._preflight_samples if len(sample["mysqld"]) == 1]
+        if len(cpu_values) != self.PRE_FLIGHT_SAMPLES:
+            self._abort("INCONCLUSIVE", "ambient preflight incomplete", observed=len(cpu_values))
+        elif max(cpu_values) > self.MYSQL_STABILITY_THRESHOLDS["maximumCpuPercent"]:
+            self._abort("INCONCLUSIVE", "mysqld CPU stability bound exceeded", maximum=max(cpu_values))
+        elif max(cpu_values) - min(cpu_values) > self.MYSQL_STABILITY_THRESHOLDS["maximumCpuSwingPercent"]:
+            self._abort("INCONCLUSIVE", "mysqld CPU swing stability bound exceeded", swing=max(cpu_values) - min(cpu_values))
+        self._preflight_status = "PASS" if not self.abort_reasons else "FAILED"
+        return self._preflight_status == "PASS"
+
+    def begin_block(self, block_id: str) -> None:
+        self._sample_once(phase="RUNNING")
+        self._active_blocks[block_id] = {"blockId": block_id, "startedMonotonicNs": time.monotonic_ns(), "startSampleCount": len(self.samples)}
+
+    def end_block(self, block_id: str) -> dict:
+        self._sample_once(phase="RUNNING")
+        block = self._active_blocks.pop(block_id)
+        block["endedMonotonicNs"] = time.monotonic_ns()
+        block["sampleCount"] = max(0, len(self.samples) - block.pop("startSampleCount"))
+        self._coverage.append(block)
+        if block["sampleCount"] == 0:
+            self._abort("INCONCLUSIVE", "ambient block missing samples", blockId=block_id)
+        return block
+
+    def verify_coverage(self) -> None:
+        if self._active_blocks:
+            self._abort("INCONCLUSIVE", "ambient block did not close", blockIds=sorted(self._active_blocks))
+        if not self._coverage:
+            self._abort("INCONCLUSIVE", "ambient matrix has no block coverage")
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread_started:
+            self._thread.join(timeout=3)
+            if self._thread.is_alive():
+                self._abort("INCONCLUSIVE", "ambient sampler did not stop")
+
+    def abort_status(self) -> str | None:
+        if any(reason["category"] == "CONTAMINATED" for reason in self.abort_reasons):
+            return "ABORTED_CONTAMINATED"
+        if self.abort_reasons:
+            return "ABORTED_INCONCLUSIVE"
+        return None
+
+    def evidence(self) -> dict:
+        cpu_values = [sample["mysqld"][0]["cpuPercent"] for sample in self.samples if len(sample["mysqld"]) == 1]
+        def percentile(values: list[float], p: float) -> float | None:
+            if not values:
+                return None
+            ordered = sorted(values)
+            return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * p) - 1)]
+        return {
+            "status": "CONTAMINATED" if self.abort_status() == "ABORTED_CONTAMINATED" else "INCONCLUSIVE" if self.abort_reasons else "OBSERVED",
+            "sampleHz": self.SAMPLE_HZ,
+            "rawGatesUnchanged": True,
+            "relativeOnly": True,
+            "noLoadBaseline": None,
+            "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status},
+            "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
+            "coverage": list(self._coverage), "missedTicks": self._missed_ticks,
+            "forbidden": [
+                {key: reason[key] for key in ("class", "pid", "cpuPercent")}
+                for reason in self.abort_reasons
+                if reason["category"] == "CONTAMINATED" and "class" in reason
+            ],
+            "abortReasons": list(self.abort_reasons), "samples": list(self.samples),
+            "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
+        }
 
 
 def _execution_source_revision() -> str:
@@ -980,7 +1200,6 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
 
     candidate = build_peak_headroom_candidate()
     ambient = _PeakAmbientSampler()
-    ambient.start()
     execution_source_revision = _execution_source_revision()
     source_digests = {
         str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -994,15 +1213,6 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         )
     }
     runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
-    prescreen = probe.evaluate_peak_headroom_prescreen(candidate)
-    if ambient.abort_reasons:
-        ambient.stop()
-        return {"kind": "relay-peak-headroom-v1", "status": "ABORTED_CONTAMINATED",
-                "scope": "ambient monitor observed viewer activity or a non-allowlisted process; no qualification result",
-                "defaultPolicy": "relay-legacy-v1", "runtime": runtime,
-                "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
-                "ambientTelemetry": ambient.evidence()}
-    prescreen_errors = validate_prescreen(prescreen)
     declared = candidate.to_dict()
     declared["submittedCodecOptionsByResolution"] = {
         f"{width}x{height}": submitted_options(candidate, (width, height))
@@ -1011,50 +1221,113 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
     candidate_row = {
         "id": candidate.id,
         "parameters": declared,
-        "prescreen": {"status": "PASS" if not prescreen_errors else "FAIL", "evidence": prescreen, "validationErrors": prescreen_errors},
         "runtime": runtime,
         "eligible": False,
         "ineligibleReason": [],
-        "execution": {"prescreen": "COMPLETED", "fullMatrix": "NOT RUN"},
+        "execution": {"prescreen": "NOT RUN", "fullMatrix": "NOT RUN"},
     }
-    if prescreen_errors:
-        candidate_row["offline"] = {"status": "NOT RUN"}
-        candidate_row["ineligibleReason"] = list(prescreen_errors)
-        ambient.stop()
+
+    sentinels: list[dict] = []
+    partial: dict = {"sentinels": sentinels}
+
+    def aborted_result(*, error: Exception | None = None) -> dict:
+        """Keep partial raw evidence, but never select an ambiently invalid run."""
+        status = ambient.abort_status() or "ABORTED_INCONCLUSIVE"
+        reason = list(ambient.abort_reasons)
+        if error is not None:
+            reason.append({"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__})
+        candidate_row["eligible"] = False
+        candidate_row["ineligibleReason"] = reason
+        candidate_row["offline"] = {"status": "NOT RUN", "evidence": {"partial": partial}}
+        candidate_row["execution"]["fullMatrix"] = "ABORTED"
         return {
-            "kind": "relay-peak-headroom-v1", "status": "NO_QUALIFIED_CANDIDATE",
-            "scope": "one offline candidate; failed safety prescreen stopped the full matrix and runtime remains NOT RUN",
+            "kind": "relay-peak-headroom-v1", "status": status,
+            "scope": "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
             "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
             "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+            "ambientTelemetry": {**ambient.evidence(), "sentinels": sentinels},
             "selection": select_relay_candidate([]),
         }
 
-    sentinels = []
-    def measurement_hook(phase, width, height, scenario_id):
-        if ambient.abort_reasons:
-            raise RuntimeError("ABORTED_CONTAMINATED: " + "; ".join(ambient.abort_reasons))
-        sentinels.append({"phase": phase, "resolution": [width, height], "scenarioId": scenario_id,
-                          "measurement": probe.evaluate_peak_headroom_sentinel(candidate, width, height)})
-        if ambient.abort_reasons:
-            raise RuntimeError("ABORTED_CONTAMINATED: " + "; ".join(ambient.abort_reasons))
+    ambient.start()
     try:
-        full = probe.evaluate_preset_scenario_matrix(candidate, measurement_hook=measurement_hook)
+        if not ambient.run_preflight():
+            return aborted_result()
+        prescreen = probe.evaluate_peak_headroom_prescreen(candidate)
+        partial["prescreen"] = prescreen
+        candidate_row["execution"]["prescreen"] = "COMPLETED"
+        if ambient.abort_status():
+            return aborted_result()
+        prescreen_errors = validate_prescreen(prescreen)
+        candidate_row["prescreen"] = {"status": "PASS" if not prescreen_errors else "FAIL", "evidence": prescreen, "validationErrors": prescreen_errors}
+        if prescreen_errors:
+            candidate_row["offline"] = {"status": "NOT RUN"}
+            candidate_row["ineligibleReason"] = list(prescreen_errors)
+            return {
+                "kind": "relay-peak-headroom-v1", "status": "NO_QUALIFIED_CANDIDATE",
+                "scope": "one offline candidate; failed safety prescreen stopped the full matrix and runtime remains NOT RUN",
+                "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
+                "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+                "ambientTelemetry": {**ambient.evidence(), "sentinels": sentinels},
+                "selection": select_relay_candidate([]),
+            }
+
+        def measurement_hook(phase, width, height, scenario_id):
+            if ambient.abort_status():
+                raise RuntimeError("ambient monitor aborted")
+            block_id = f"sentinel:{phase}:{width}x{height}:{scenario_id}"
+            ambient.begin_block(block_id)
+            try:
+                measurement = probe.evaluate_peak_headroom_sentinel(candidate, width, height)
+            finally:
+                window = ambient.end_block(block_id)
+            sentinels.append({
+                "phase": phase, "resolution": [width, height], "scenarioId": scenario_id,
+                "inputDigest": hashlib.sha256(b"fixed-static-sentinel-v1").hexdigest(),
+                "configurationDigest": candidate.options_digest,
+                "monotonicWindow": window,
+                "rawEncodeMs": {"p50": measurement["encodeMsMedian"], "p95": measurement["encodeMsP95"]},
+                "measurement": measurement,
+            })
+            if phase == "after":
+                for earlier in reversed(sentinels[:-1]):
+                    if (earlier["phase"], earlier["resolution"], earlier["scenarioId"]) == ("before", [width, height], scenario_id):
+                        baseline = earlier["rawEncodeMs"]["p95"]
+                        sentinels[-1]["pairedRelativeAmbientFactor"] = None if baseline == 0 else measurement["encodeMsP95"] / baseline
+                        break
+            if ambient.abort_status():
+                raise RuntimeError("ambient monitor aborted")
+
+        try:
+            full = probe.evaluate_preset_scenario_matrix(candidate, measurement_hook=measurement_hook)
+            partial["full"] = full
+        except Exception as exc:
+            if ambient.abort_status():
+                return aborted_result(error=exc)
+            raise
+        finally:
+            # The final check happens after the matrix and before any raw PASS is derived.
+            ambient.verify_coverage()
+            ambient.stop()
+        if ambient.abort_status():
+            return aborted_result()
+        full["ambientTelemetry"] = {**ambient.evidence(), "sentinels": sentinels}
+        full_errors = validate_full_matrix(full)
+        candidate_row["execution"]["fullMatrix"] = "COMPLETED"
+        candidate_row["offline"] = {"status": "PASS" if not full_errors else "FAIL", "evidence": full, "validationErrors": full_errors}
+        candidate_row["eligible"] = not full_errors
+        candidate_row["ineligibleReason"] = list(full_errors)
+        return {
+            "kind": "relay-peak-headroom-v1",
+            "status": "OFFLINE_PASS_ONLY" if not full_errors else "NO_QUALIFIED_CANDIDATE",
+            "scope": "one offline candidate; no runtime policy change, desktop capture, Host startup, Viewer, or network connection",
+            "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
+            "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+            "ambientTelemetry": {**ambient.evidence(), "sentinels": sentinels},
+            "selection": select_relay_candidate([candidate_row] if not full_errors else []),
+        }
     finally:
         ambient.stop()
-    full["ambientTelemetry"] = {**ambient.evidence(), "sentinels": sentinels}
-    full_errors = validate_full_matrix(full)
-    candidate_row["execution"]["fullMatrix"] = "COMPLETED"
-    candidate_row["offline"] = {"status": "PASS" if not full_errors else "FAIL", "evidence": full, "validationErrors": full_errors}
-    candidate_row["eligible"] = not full_errors
-    candidate_row["ineligibleReason"] = list(full_errors)
-    return {
-        "kind": "relay-peak-headroom-v1",
-        "status": "OFFLINE_PASS_ONLY" if not full_errors else "NO_QUALIFIED_CANDIDATE",
-        "scope": "one offline candidate; no runtime policy change, desktop capture, Host startup, Viewer, or network connection",
-        "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
-        "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
-        "selection": select_relay_candidate([candidate_row] if not full_errors else []),
-    }
 
 
 def load_probe_module():
@@ -1075,24 +1348,41 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _write_atomic_json(path: Path, evidence: dict) -> None:
+    """Persist even a fail-closed abort without leaving a partial JSON document."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
 def main() -> None:
     args = parse_args()
-    probe = load_probe_module()
-    evidence = (
-        probe.evaluate_legacy_policy()
-        if args.policy == "relay-legacy-v1"
-        else evaluate_relay_matrix(probe)
-        if args.matrix == "relay"
-        else evaluate_relay_vbv_refinement(probe)
-        if args.matrix == "relay-vbv-refinement"
-        else evaluate_preset_matrix(probe)
-        if args.matrix == "relay-preset-refinement"
-        else evaluate_veryfast_matrix(probe)
-        if args.matrix == "relay-veryfast-refinement"
-        else evaluate_peak_headroom_matrix(probe)
-    )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    try:
+        probe = load_probe_module()
+        evidence = (
+            probe.evaluate_legacy_policy()
+            if args.policy == "relay-legacy-v1"
+            else evaluate_relay_matrix(probe)
+            if args.matrix == "relay"
+            else evaluate_relay_vbv_refinement(probe)
+            if args.matrix == "relay-vbv-refinement"
+            else evaluate_preset_matrix(probe)
+            if args.matrix == "relay-preset-refinement"
+            else evaluate_veryfast_matrix(probe)
+            if args.matrix == "relay-veryfast-refinement"
+            else evaluate_peak_headroom_matrix(probe)
+        )
+    except Exception as exc:
+        evidence = {
+            "kind": args.matrix or args.policy,
+            "status": "ABORTED_INCONCLUSIVE",
+            "eligible": False,
+            "defaultPolicy": "relay-legacy-v1",
+            "error": {"type": type(exc).__name__, "message": str(exc)},
+            "scope": "matrix raised before completion; this atomic abort artifact is not qualification evidence",
+        }
+    _write_atomic_json(args.output, evidence)
 
 
 if __name__ == "__main__":
