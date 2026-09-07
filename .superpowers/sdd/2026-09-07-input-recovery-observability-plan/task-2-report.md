@@ -146,3 +146,40 @@ The parent-thread baseline for this isolated branch was Viewer **747/747** on BA
 
 - `53ad8bd` — `fix(diagnostics): preserve mobile input trace identity`.
 - Pending report commit: `docs(diagnostics): record Task 2 fix-round evidence`.
+
+## Fix round 2 — deferred focus attribution (FIX_BASE `6ee8d02`)
+
+### Review finding and covering files
+
+The remaining finding was that delayed long-press, drag-start, and serial text-drain callbacks carried an event ID after their DOM scope ended but no originating focus category. `refreshEligibility` therefore evaluated `_traceIncidentEligible(undefined)` and disabled timeout incidents. The fix carries the validated `desktop` category on each active touch pointer and the validated `mobile-text` category on the single active text drain, while each deferred send recomputes eligibility against current visibility, media/gate, active lease, and draft state. Nested external actions now pass the enclosing focus category through the mobile wrapper; null event IDs remain deliberately unassociated.
+
+- `web-client/js/input.js`: pass the enclosing focus category alongside the event ID into nested mobile actions.
+- `web-client/js/mobile-text-input.js`: retain one bounded drain focus category, clear it with the drain timer, and pass it to every deferred delete/text send while refreshing current eligibility.
+- `web-client/js/touch-input-adapter.js`: retain `desktop` attribution only on active pointer entries and pass it through long-press, drag-start, and tap deferred commits; null move/wheel/toolbar sends remain unassociated.
+- `web-client/js/input-recovery.test.js`: real Input + touch/mobile adapters + collector regressions for long-press, drag-start, 17-step drain, and current-hidden negative eligibility.
+- `web-client/js/touch-input-adapter.test.js`: verifies physical sends receive `focusKind='desktop'` while intentional unassociated actions receive no focus category.
+
+### RED evidence
+
+- Unchanged supplied probe: `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-deferred-incident-probe.py` exited **1**. It reported long-press `sends=1, ackTimeouts=1, incidents=0`; drag-start `1/1/0`; and deferred-drain `17/1/0`, with event IDs retained but no incident. It failed with `AssertionError: deferred user writes timed out with no incident`.
+- New real fixture regressions before the production change: `node --test --test-name-pattern='deferred (long-press|drag-start|mobile text drain)' web-client/js/input-recovery.test.js` reported **3 tests, 0 pass, 3 fail**; each failed at the expected `incidents.length` assertion (`0 !== 1`).
+- Focus handoff regression before the production change: `node --test --test-name-pattern='touch dispatch attributes' web-client/js/touch-input-adapter.test.js` reported **1 test, 0 pass, 1 fail**; actual associated calls were `[[1, undefined], [2, undefined], [null, undefined], [null, undefined], [null, undefined]]`, missing `desktop` on the physical sends.
+
+### GREEN evidence
+
+- `node --test --test-name-pattern='deferred (long-press|drag-start|mobile text drain|touch send)' web-client/js/input-recovery.test.js`: **4 tests, 4 pass, 0 fail**.
+- `node --test --test-name-pattern='touch dispatch attributes' web-client/js/touch-input-adapter.test.js`: **1 test, 1 pass, 0 fail**.
+- `node --test web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/mobile-text-input.test.js web-client/js/touch-input-adapter.test.js`: **191 tests, 191 pass, 0 fail**.
+- Re-ran the unchanged probes: `root-trace-browser-probe.py` green with `allDomSendsHaveAssociatedAck=true` and four event-ID-correlated send/ACK pairs; `root-mobile-incident-probe.py` green with physical `2/2/1`, touch `2/2/1`, and IME `1/1/1` (writes/timeouts/incidents); `root-deferred-incident-probe.py` green with long-press `1/1/1`, drag-start `1/1/1`, and deferred-drain `17/1/1`.
+- `node --check web-client/js/input.js`, `node --check web-client/js/mobile-text-input.js`, `node --check web-client/js/touch-input-adapter.js`, and `git diff --check` passed. The prior round’s final Viewer **771/771** and asset build **5/5** remain unchanged; this narrow round did not rerun unrelated full suites per the dispatch.
+
+### Current-state, privacy, and non-interference evidence
+
+- The real hidden-state regression accepts the deferred touch write and records its ACK timeout, but produces **zero** incident callbacks after `document.hidden` becomes true before the deferred send. This guards against caching the originating eligibility decision.
+- The positive regressions prove event IDs and current-identity timeout incidents for delayed long-press, drag-start, and the 17th serial delete after the first 16 are ACKed. Existing physical DOM correlation and later unassociated toolbar-action tests remain green, proving nested focus preservation and stale-context clearing.
+- Only one focus value is retained per active touch pointer and one focus value per active text drain; no event-ID→context history or unbounded lifecycle structure was introduced. Existing bounded collector privacy/stress coverage remains green, and no raw text, key/code, payload, coordinates, DOM value/label, lease ID, token, or password is serialized.
+- No gesture recognition, business callback/send result, wire/control protocol, lease authorization, recovery ownership, or Task 1 UI behavior changed. Physical device, system IME, Quartz/native effects, live WebRTC, public origin/tunnel, and watcher acceptance remain **NOT RUN**.
+
+### Fix-round-2 scoped commit
+
+- `8363b79` — `fix(diagnostics): retain deferred input focus attribution`.
