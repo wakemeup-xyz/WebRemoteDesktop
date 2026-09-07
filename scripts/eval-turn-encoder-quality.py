@@ -155,11 +155,12 @@ class _PeakAmbientSampler:
                 snapshot = self._snapshot_reader()
                 processes = list(snapshot["processes"])
                 mysql = [entry for process in processes if (entry := self._exact_mysqld(process)) is not None]
+                mysql_pids = {entry["pid"] for entry in mysql}
                 viewers = dict(snapshot["viewerStatus"])
                 forbidden = []
                 for process in processes:
                     process_class = self._forbidden_class(str(process["command"]))
-                    if process_class is not None and self._exact_mysqld(process) is None:
+                    if process_class is not None and process["pid"] not in mysql_pids:
                         forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 for offender in forbidden:
                     self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
