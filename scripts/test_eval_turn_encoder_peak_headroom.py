@@ -152,6 +152,14 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler._sample_once(phase="PREFLIGHT"); sampler._sample_once(phase="PREFLIGHT")
         self.assertIn("sync_worker identity changed", [x["reason"] for x in sampler.abort_reasons])
 
+    def test_sync_worker_extra_argv_and_pytest_in_argv_are_rejected(self):
+        extra = self._snapshot(); extra["processes"][1]["argv"] += " --extra"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: extra); sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity unavailable", [x["reason"] for x in sampler.abort_reasons])
+        pytest = self._snapshot(); pytest["processes"].append({"pid": 44, "rssKiB": 1, "cpuPercent": 0.0, "command": "/usr/bin/python3", "argv": "/usr/bin/python3 -m pytest"})
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: pytest); sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+
     def test_mysql_binary_and_start_epoch_drift_are_inconclusive(self):
         for changed in (self._snapshot(epoch="Tue Sep  9 12:00:00 2026"), {"processes": [{"pid": 10, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/local/mysql-alt/bin/mysqld", "binaryPath": "/usr/local/mysql-alt/bin/mysqld", "startEpoch": "Mon Sep  8 12:00:00 2026"}], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}):
             with self.subTest(changed=changed["processes"][0]["command"]):
@@ -235,6 +243,7 @@ class AtomicAbortArtifactTest(unittest.TestCase):
                 self.assertIn("sourceDigests", artifact)
                 self.assertEqual(artifact["ambientTelemetry"]["preflight"]["status"], "NOT STARTED")
                 self.assertEqual(artifact["selection"]["state"], "no-offline-winner")
+                self.assertEqual(artifact["ambientTelemetry"]["acceptedBackgroundProcesses"], ["mysqld", "sync_worker"])
 
     def test_peak_abort_schema_survives_source_digest_failure(self):
         with mock.patch.object(Path, "read_bytes", side_effect=OSError("digest unavailable")):

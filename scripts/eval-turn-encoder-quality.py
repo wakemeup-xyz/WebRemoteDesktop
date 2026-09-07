@@ -90,8 +90,8 @@ class _PeakAmbientSampler:
         return value
 
     @classmethod
-    def _forbidden_class(cls, command: str) -> str | None:
-        lowered = command.lower()
+    def _forbidden_class(cls, command: str, argv: str = "") -> str | None:
+        lowered = f"{command} {argv}".lower()
         for name, patterns in cls._FORBIDDEN_CLASSES.items():
             if any(pattern in lowered for pattern in patterns):
                 return name
@@ -151,10 +151,11 @@ class _PeakAmbientSampler:
         if not command.startswith("/") or not Path(command).name.startswith("python"):
             return None
         argv = shlex.split(str(process.get("argv", "")))
-        if "-m" not in argv or argv[argv.index("-m") + 1:argv.index("-m") + 2] != ["backend.scripts.sync_worker"]:
+        canonical_path = os.path.realpath(command)
+        if argv != [command, "-m", "backend.scripts.sync_worker"]:
             return None
         result = dict(process)
-        result["binaryPath"] = os.path.realpath(command)
+        result["binaryPath"] = canonical_path
         result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
         return result
 
@@ -174,7 +175,7 @@ class _PeakAmbientSampler:
                 viewers = dict(snapshot["viewerStatus"])
                 forbidden = []
                 for process in processes:
-                    process_class = self._forbidden_class(str(process["command"]))
+                    process_class = self._forbidden_class(str(process["command"]), str(process.get("argv", "")))
                     if process_class is not None and process["pid"] not in mysql_pids | sync_pids:
                         forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 for offender in forbidden:
@@ -346,7 +347,7 @@ class _PeakAmbientSampler:
             "health": dict(self._health),
             "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status, "intervalSeconds": self.PRE_FLIGHT_INTERVAL_SECONDS, "intervalBoundsSeconds": list(self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
             "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
-            "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
+        "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
             "forbidden": [
                 {key: reason[key] for key in ("class", "pid", "cpuPercent")}
@@ -1475,6 +1476,7 @@ def _peak_atomic_abort_artifact(error: Exception) -> dict:
         "health": {"status": "FAILED", "lastError": type(error).__name__},
         "preflight": {"requiredSamples": _PeakAmbientSampler.PRE_FLIGHT_SAMPLES, "observedSamples": 0, "status": "NOT STARTED", "intervalSeconds": 1.0, "intervalBoundsSeconds": list(_PeakAmbientSampler.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
         "mysqld": {"identity": None, "cpuPercent": {"p50": None, "p95": None, "max": None}, "stabilityThresholds": dict(_PeakAmbientSampler.MYSQL_STABILITY_THRESHOLDS)},
+        "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": None},
         "coverage": [], "missedTicks": 0, "lateTicks": [], "forbidden": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
         "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
     }
