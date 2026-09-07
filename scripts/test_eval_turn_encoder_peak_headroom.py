@@ -131,8 +131,9 @@ class PeakHeadroomMatrixCliTest(unittest.TestCase):
 class PeakAmbientSamplerTest(unittest.TestCase):
     @staticmethod
     def _snapshot(pid=10, epoch="Mon Sep  8 12:00:00 2026", cpu=2.0):
-        mysql = {"pid": pid, "rssKiB": 1, "cpuPercent": cpu, "command": "/opt/mysql/mysqld", "binaryPath": "/opt/mysql/mysqld", "startEpoch": epoch}
-        sync = {"pid": 20, "rssKiB": 2, "cpuPercent": 1.0, "command": "/usr/bin/python3", "argv": "/usr/bin/python3 -m backend.scripts.sync_worker", "startEpoch": epoch}
+        mysql = {"pid": pid, "rssKiB": 1, "cpuPercent": cpu, "command": "/opt/mysql/mysqld", "argv": "/opt/mysql/mysqld", "executablePath": "/opt/mysql/mysqld", "binaryPath": "/opt/mysql/mysqld", "startEpoch": epoch}
+        python_executable = os.path.realpath(sys.executable)
+        sync = {"pid": 20, "rssKiB": 2, "cpuPercent": 1.0, "command": python_executable, "argv": f"{python_executable} -m backend.scripts.sync_worker", "executablePath": python_executable, "startEpoch": epoch}
         return {"processes": [mysql, sync], "mysqld": [mysql], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}
 
     def test_mysql_pid_drift_is_inconclusive(self):
@@ -162,17 +163,40 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: pytest); sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
 
-    def test_sync_identity_uses_full_argv0_when_macos_comm_is_truncated(self):
+    def test_sync_worker_requires_trusted_kernel_executable_matching_argv0(self):
         snapshot = self._snapshot()
         snapshot["processes"][1]["command"] = "/Users/macstudio"
-        snapshot["processes"][1]["argv"] = "/Users/macstudio/Applications/Python.app/Contents/MacOS/Python -m backend.scripts.sync_worker"
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
         sampler._sample_once(phase="PREFLIGHT")
         self.assertIsNone(sampler.abort_status())
-        self.assertTrue(sampler.evidence()["syncWorker"]["identity"]["binaryPath"].endswith("/Python"))
+        self.assertEqual(sampler.evidence()["syncWorker"]["identity"]["binaryPath"], os.path.realpath(sys.executable))
+
+    def test_sync_worker_rejects_tmp_python_even_when_argv_shape_is_exact(self):
+        snapshot = self._snapshot()
+        process = snapshot["processes"][1]
+        process["argv"] = "/tmp/python -m backend.scripts.sync_worker"
+        process["executablePath"] = "/tmp/python"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity unavailable", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_sync_worker_rejects_python_argv_when_kernel_executable_disagrees(self):
+        snapshot = self._snapshot()
+        process = snapshot["processes"][1]
+        process["executablePath"] = "/tmp/not-python"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("sync_worker identity unavailable", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_mysqld_requires_kernel_executable_matching_argv0(self):
+        snapshot = self._snapshot()
+        snapshot["processes"][0]["executablePath"] = "/tmp/mysqld"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIn("mysqld identity unavailable", [item["reason"] for item in sampler.abort_reasons])
 
     def test_mysql_binary_and_start_epoch_drift_are_inconclusive(self):
-        for changed in (self._snapshot(epoch="Tue Sep  9 12:00:00 2026"), {"processes": [{"pid": 10, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/local/mysql-alt/bin/mysqld", "binaryPath": "/usr/local/mysql-alt/bin/mysqld", "startEpoch": "Mon Sep  8 12:00:00 2026"}], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}):
+        for changed in (self._snapshot(epoch="Tue Sep  9 12:00:00 2026"), {"processes": [{"pid": 10, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/local/mysql-alt/bin/mysqld", "argv": "/usr/local/mysql-alt/bin/mysqld", "executablePath": "/usr/local/mysql-alt/bin/mysqld", "binaryPath": "/usr/local/mysql-alt/bin/mysqld", "startEpoch": "Mon Sep  8 12:00:00 2026"}, self._snapshot()["processes"][1]], "mysqld": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}}):
             with self.subTest(changed=changed["processes"][0]["command"]):
                 snapshots = iter([self._snapshot(), changed])
                 sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: next(snapshots))
@@ -219,7 +243,7 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "31 1 42 99.0 /usr/local/bin/node unmatched'quote\n"
-        sampler = MODULE._PeakAmbientSampler()
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda pid: "/opt/mysql/mysqld" if pid == 10 else os.path.realpath(sys.executable))
         with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
             sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
@@ -231,11 +255,23 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n20 1 2 1.0 /usr/bin/python3 -m backend.scripts.sync_worker\n"
-        sampler = MODULE._PeakAmbientSampler()
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda pid: "/opt/mysql/mysqld" if pid == 10 else os.path.realpath(sys.executable))
         with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
             snapshot = sampler._read_snapshot()
         self.assertEqual([process["command"] for process in snapshot["processes"]], ["/opt/mysql/mysqld", "/usr/bin/python3"])
+        self.assertEqual(snapshot["processes"][0]["canonicalExecutablePath"], "/opt/mysql/mysqld")
+        self.assertEqual(snapshot["processes"][1]["canonicalExecutablePath"], os.path.realpath(sys.executable))
         self.assertEqual(snapshot["viewerStatus"], {"viewerCount": 0, "relayViewerCount": 0})
+
+    def test_kernel_executable_lookup_failure_aborts_sampling_inconclusive(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n"
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: (_ for _ in ()).throw(OSError("proc_pidpath unavailable")))
+        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])
 
     def test_forbidden_process_evidence_is_sanitized(self):
         snapshot = self._snapshot()

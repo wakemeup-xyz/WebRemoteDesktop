@@ -168,7 +168,7 @@ marker version=1、reserved=0；边框四角依次TL/TR/BL/BR=0/1/1/1；顶边�
 30 个样本、mysqld PID/二进制路径/启动 epoch 改变或稳定界限越界，均产生
 `ABORTED_INCONCLUSIVE`。mysqld 与精确 sync_worker 仅在身份稳定时允许作为背景项；Viewer 或 relay Viewer 非零同样中止。
 
-本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。精确 sync 身份缺失、重启或漂移为 `ABORTED_INCONCLUSIVE`；非精确 sync argv、pytest、Lab、docker compose 等仍是外部受管进程，适用静默预算而非存在即中止。
+本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。每个 PID 的 executable 由 macOS `proc_pidpath` 读取，不能信任 `ps` 的 argv；sync 还必须与运行矩阵的 canonical Python 一致，mysqld 也必须与 argv[0] canonical 路径一致。内核查询缺失、argv 与内核可执行文件不一致、重启或漂移均为 `ABORTED_INCONCLUSIVE`；非精确 sync argv、pytest、Lab、docker compose 等仍是外部受管进程，适用静默预算而非存在即中止。
 
 非 allowlisted 外部进程采用 `quiescent-external-v1`：每样本单进程与总 CPU 都必须≤1.0%，可作为脱敏 `quiescentExternalProcesses` 记录；任一 spike 超过预算即 `ABORTED_CONTAMINATED`。此规则不调整 raw P95 或资格，sentinel 仍仅 relative telemetry。
 受管集合包含所有非系统根（`/System/Library`、`/usr/lib`、`/usr/libexec`、`/usr/sbin`、`/sbin`、`/bin`）、非 matrix 自身及其 descendants 且非精确 mysqld/sync 的进程；node、Host 与第三方 GUI 均受管。

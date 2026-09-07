@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -51,9 +52,13 @@ class _PeakAmbientSampler:
         "docker": ("docker compose", "docker-compose"),
     }
     _SYSTEM_EXECUTABLE_ROOTS = ("/System/Library/", "/usr/lib/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/bin/")
+    _proc_library = None
+    _proc_pidpath = None
 
-    def __init__(self, *, snapshot_reader=None, interval_seconds: float = 1.0):
+    def __init__(self, *, snapshot_reader=None, process_executable_resolver=None, interval_seconds: float = 1.0):
         self._snapshot_reader = snapshot_reader or self._read_snapshot
+        self._process_executable_resolver = process_executable_resolver or self._executed_binary_path
+        self._trusted_python_executable = os.path.realpath(sys.executable)
         self._interval_seconds = interval_seconds
         self.samples: list[dict] = []
         self.abort_reasons: list[dict] = []
@@ -92,6 +97,25 @@ class _PeakAmbientSampler:
         return value
 
     @classmethod
+    def _executed_binary_path(cls, pid: int) -> str:
+        """Read a process executable from the Darwin kernel, not its argv."""
+        if sys.platform != "darwin":
+            raise RuntimeError("kernel executable lookup is unavailable")
+        if cls._proc_pidpath is None:
+            cls._proc_library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            cls._proc_pidpath = cls._proc_library.proc_pidpath
+            cls._proc_pidpath.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+            cls._proc_pidpath.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(4096)
+        size = cls._proc_pidpath(pid, buffer, len(buffer))
+        if size <= 0:
+            raise OSError(ctypes.get_errno(), f"proc_pidpath failed for pid {pid}")
+        path = os.fsdecode(buffer.value)
+        if not path or not os.path.isabs(path):
+            raise RuntimeError(f"proc_pidpath returned an invalid path for pid {pid}")
+        return path
+
+    @classmethod
     def _forbidden_class(cls, command: str, argv: str = "") -> str | None:
         lowered = f"{command} {argv}".lower()
         for name, patterns in cls._FORBIDDEN_CLASSES.items():
@@ -118,9 +142,14 @@ class _PeakAmbientSampler:
                 argv_tokens = shlex.split(argv)
                 if not argv_tokens:
                     raise RuntimeError("ps snapshot command is empty")
+                executable_path = self._process_executable_resolver(int(pid))
+                if not isinstance(executable_path, str) or not os.path.isabs(executable_path):
+                    raise RuntimeError("kernel executable lookup returned an invalid path")
                 processes.append({
                     "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
                     "command": argv_tokens[0], "argv": argv,
+                    "executablePath": executable_path,
+                    "canonicalExecutablePath": os.path.realpath(executable_path),
                 })
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("ps snapshot row is unparseable") from exc
@@ -141,15 +170,17 @@ class _PeakAmbientSampler:
             self.abort_reasons.append(entry)
 
     def _exact_mysqld(self, process: dict) -> dict | None:
-        """Accept only the real absolute mysqld executable, never an argv substring."""
-        command = str(process["command"])
-        if not command.startswith("/") or Path(command).name != "mysqld":
+        """Accept mysqld only when its kernel executable agrees with argv[0]."""
+        argv = shlex.split(str(process.get("argv", "")))
+        if not argv or not argv[0].startswith("/"):
             return None
-        canonical_path = os.path.realpath(command)
-        if Path(canonical_path).name != "mysqld":
+        actual_path = self._canonical_executable_path(process)
+        if actual_path is None or Path(actual_path).name != "mysqld":
+            return None
+        if os.path.realpath(argv[0]) != actual_path:
             return None
         result = dict(process)
-        result["binaryPath"] = canonical_path
+        result["binaryPath"] = actual_path
         result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
         return result
 
@@ -157,17 +188,29 @@ class _PeakAmbientSampler:
         argv = shlex.split(str(process.get("argv", "")))
         if not argv or not argv[0].startswith("/") or not Path(argv[0]).name.lower().startswith("python"):
             return None
-        canonical_path = os.path.realpath(argv[0])
         if argv != [argv[0], "-m", "backend.scripts.sync_worker"]:
             return None
+        actual_path = self._canonical_executable_path(process)
+        if actual_path is None or actual_path != os.path.realpath(argv[0]):
+            return None
+        if actual_path != self._trusted_python_executable or not Path(actual_path).name.lower().startswith("python"):
+            return None
         result = dict(process)
-        result["binaryPath"] = canonical_path
+        result["binaryPath"] = actual_path
         result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
         return result
 
     @classmethod
     def _is_system_process(cls, process: dict) -> bool:
-        return os.path.realpath(str(process["command"])).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
+        path = process.get("canonicalExecutablePath") or process.get("executablePath") or process["command"]
+        return os.path.realpath(str(path)).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
+
+    @staticmethod
+    def _canonical_executable_path(process: dict) -> str | None:
+        path = process.get("canonicalExecutablePath") or process.get("executablePath")
+        if not isinstance(path, str) or not os.path.isabs(path):
+            return None
+        return os.path.realpath(path)
 
     def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
         """Capture one snapshot.  The worker is the sole normal caller."""
