@@ -51,7 +51,7 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     networks: [turn-loss]
-    command: ["python", "/fixture/udp_echo_peer.py", "--port", "59000"]
+    command: ["python", "/fixture/udp_echo_peer.py", "--port", "59000", "--port", "59001"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 

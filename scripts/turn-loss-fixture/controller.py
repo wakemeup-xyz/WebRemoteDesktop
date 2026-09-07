@@ -182,13 +182,27 @@ _PAIR_FIELDS = frozenset({"pairId", "localCandidateId", "remoteCandidateId", "lo
 _CANDIDATE_FIELDS = frozenset({"id", "candidateType", "address", "port", "protocol"})
 
 
+def _require_lab_ip(value: Any, field: str) -> str:
+    """Accept fixture-network addresses and the published loopback gateway.
+
+    Docker Desktop presents the public fixture endpoint as loopback to the
+    external Lab process.  It is still an observed, non-routable Lab endpoint,
+    whereas unspecified, multicast, and arbitrary public addresses remain
+    invalid.
+    """
+    address = ipaddress.ip_address(_require_string(value, field))
+    if address.is_loopback:
+        return str(address)
+    return _require_fixture_ip(str(address), field)
+
+
 def _runtime_leg(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != {"protocol", "source", "sourcePort", "destination", "destinationPort"}:
         raise RuntimeBlocked(f"{field} must identify one actual UDP egress tuple")
     if value.get("protocol") != "udp": raise RuntimeBlocked(f"{field} protocol must be udp")
-    return {"protocol": "udp", "source": _require_fixture_ip(value.get("source"), f"{field}.source"),
+    return {"protocol": "udp", "source": _require_lab_ip(value.get("source"), f"{field}.source"),
             "sourcePort": _require_port(value.get("sourcePort"), f"{field}.sourcePort"),
-            "destination": _require_fixture_ip(value.get("destination"), f"{field}.destination"),
+            "destination": _require_lab_ip(value.get("destination"), f"{field}.destination"),
             "destinationPort": _require_port(value.get("destinationPort"), f"{field}.destinationPort")}
 
 
@@ -198,7 +212,7 @@ def _runtime_candidate(value: Any, field: str) -> dict[str, Any]:
     candidate_type = _require_string(value.get("candidateType"), f"{field}.candidateType")
     if value.get("protocol") != "udp": raise RuntimeBlocked(f"{field}.protocol must be udp")
     return {"id": _require_string(value.get("id"), f"{field}.id"), "candidateType": candidate_type,
-            "address": _require_fixture_ip(value.get("address"), f"{field}.address"),
+            "address": _require_lab_ip(value.get("address"), f"{field}.address"),
             "port": _require_port(value.get("port"), f"{field}.port"), "protocol": "udp"}
 
 
@@ -249,9 +263,9 @@ def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dic
     if (not isinstance(allocation, Mapping) or set(allocation) != {"address", "port"}
             or not isinstance(peer, Mapping) or set(peer) != {"address", "port"}):
         raise RuntimeBlocked("trusted TURN media allocation mapping is incomplete")
-    relay = (_require_fixture_ip(allocation.get("address"), "mediaBinding.allocationRelay.address"),
+    relay = (_require_lab_ip(allocation.get("address"), "mediaBinding.allocationRelay.address"),
              _require_port(allocation.get("port"), "mediaBinding.allocationRelay.port"))
-    peer_endpoint = (_require_fixture_ip(peer.get("address"), "mediaBinding.peer.address"),
+    peer_endpoint = (_require_lab_ip(peer.get("address"), "mediaBinding.peer.address"),
                      _require_port(peer.get("port"), "mediaBinding.peer.port"))
     # Browser stats identify R<->H; the packet observer proves S->C.  Neither
     # may substitute for the other.  The two legs are joined only through the
@@ -331,19 +345,19 @@ class GatewayCounterBackend:
         if (count["eventHandle"] != event_id or count["mediaBindingDigest"] != digest
                 or count["startedMonotonicNs"] != started or count["deadlineMonotonicNs"] != event.get("deadlineMonotonicNs")
                 or count["sendFailureCount"] != 0 or count["eligibleCount"] <= 0
-                or count["droppedCount"] <= 0 or count["forwardedCount"] <= 0):
+                or count["droppedCount"] <= 0):
             raise RuntimeError("gateway counter evidence is incomplete")
         ssrc = media.get("rtpSsrc")
         if not isinstance(ssrc, int) or not 0 <= ssrc <= 0xffffffff:
             raise RuntimeError("gateway media SSRC is invalid")
-        def rows(sequences: Any, clock: int) -> list[dict[str, int]]:
-            if not isinstance(sequences, list) or not sequences:
+        def rows(sequences: Any, clock: int, *, allow_empty: bool = False) -> list[dict[str, int]]:
+            if not isinstance(sequences, list) or (not allow_empty and not sequences):
                 raise RuntimeError("gateway receiver-directed phase is empty")
             if any(not isinstance(value, int) or not 0 <= value <= 65535 for value in sequences):
                 raise RuntimeError("gateway receiver-directed sequence is invalid")
             return [{"sequence": value, "rtpTimestamp": 0, "ssrc": ssrc, "fixtureClockNs": clock} for value in sequences]
         received = {"before": rows(count["beforeForwardedSequences"], max(0, started - 1)),
-                    "during": rows(count["duringForwardedSequences"], started),
+                    "during": rows(count["duringForwardedSequences"], started, allow_empty=True),
                     "after": rows(count["afterForwardedSequences"], ended + 1)}
         body = {"source": "gateway-channeldata", "direction": "turn-to-viewer", "runId": event.get("runId"),
                 "eventHandle": event_id, "selectedLeg": dict(selector), "gatewayCounters": count,
@@ -838,7 +852,7 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
                 or counter.get("startedMonotonicNs") != event.get("startedMonotonicNs")
                 or counter.get("deadlineMonotonicNs") != event.get("deadlineMonotonicNs")
                 or not all(isinstance(counter.get(key), int) and counter[key] >= 0 for key in ("eligibleCount", "forwardedCount", "droppedCount", "sendFailureCount"))
-                or counter["sendFailureCount"] != 0 or counter["droppedCount"] <= 0 or counter["forwardedCount"] <= 0):
+                or counter["sendFailureCount"] != 0 or counter["droppedCount"] <= 0):
             raise RuntimeError("gateway counter evidence is invalid")
         if (counter["eligibleCount"] != counter["forwardedCount"] + counter["droppedCount"]
                 or len(counter["duringForwardedSequences"]) != counter["forwardedCount"]
@@ -859,7 +873,8 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
     rows: list[Mapping[str, Any]] = []
     for phase in ("before", "during", "after"):
         group = groups[phase]
-        if not isinstance(group, list) or not group: raise RuntimeError("receiver capture misses a phase")
+        if not isinstance(group, list) or (not group and not (gateway and phase == "during")):
+            raise RuntimeError("receiver capture misses a phase")
         for row in group:
             if (not isinstance(row, Mapping) or set(row) != {"sequence", "rtpTimestamp", "ssrc", "fixtureClockNs"}
                     or not all(isinstance(row.get(k), int) for k in row) or row.get("ssrc") != value["ssrc"]):
@@ -911,13 +926,23 @@ class LabReceiverBridgeAuthority:
     def record_media_observation(self, observation: Mapping[str, Any]) -> dict[str, Any]:
         """Accept only the receiver-capability's passive ChannelData evidence."""
         try:
-            outer = _runtime_leg(observation.get("outerEgress"), "mediaBinding.outerEgress")
+            outer_raw = observation.get("outerEgress")
+            if not isinstance(outer_raw, Mapping) or set(outer_raw) != {"protocol", "source", "sourcePort", "destination", "destinationPort"} or outer_raw.get("protocol") != "udp":
+                raise ValueError("outer egress schema")
+            def observed_address(value: Any, field: str) -> str:
+                address = ipaddress.ip_address(_require_string(value, field))
+                if address.is_unspecified or address.is_multicast: raise ValueError("outer egress address")
+                return str(address)
+            outer = {"protocol":"udp", "source":observed_address(outer_raw["source"], "outer.source"), "sourcePort":_require_port(outer_raw["sourcePort"], "outer.sourcePort"), "destination":observed_address(outer_raw["destination"], "outer.destination"), "destinationPort":_require_port(outer_raw["destinationPort"], "outer.destinationPort")}
             relay, peer = observation.get("allocationRelay"), observation.get("peer")
             if (not isinstance(relay, Mapping) or set(relay) != {"address", "port"} or not isinstance(peer, Mapping) or set(peer) != {"address", "port"}
                     or not isinstance(observation.get("channelNumber"), int) or not 0x4000 <= observation["channelNumber"] <= 0x7fff
                     or observation.get("encapsulation") != "channel-data" or not isinstance(observation.get("rtpSsrc"), int) or not 0 <= observation["rtpSsrc"] <= 0xffffffff
                     or observation.get("payloadType") != 96): raise ValueError("media observation schema")
-            row = {"outerEgress": outer, "allocationRelay": {"address": _require_fixture_ip(relay["address"], "relay.address"), "port": _require_port(relay["port"], "relay.port")}, "peer": {"address": _require_fixture_ip(peer["address"], "peer.address"), "port": _require_port(peer["port"], "peer.port")}, "channelNumber": observation["channelNumber"], "encapsulation": "channel-data", "rtpSsrc": observation["rtpSsrc"], "payloadType": 96}
+            relay_address = str(ipaddress.ip_address(_require_string(relay["address"], "relay.address")))
+            if not (ipaddress.ip_address(relay_address).is_loopback or _require_fixture_ip(relay_address, "relay.address")):
+                raise ValueError("relay address is invalid")
+            row = {"outerEgress": outer, "allocationRelay": {"address": relay_address, "port": _require_port(relay["port"], "relay.port")}, "peer": {"address": _require_fixture_ip(peer["address"], "peer.address"), "port": _require_port(peer["port"], "peer.port")}, "channelNumber": observation["channelNumber"], "encapsulation": "channel-data", "rtpSsrc": observation["rtpSsrc"], "payloadType": 96}
         except (KeyError, TypeError, ValueError, RuntimeBlocked) as exc: raise RuntimeError("receiver media observation is invalid") from exc
         with self._lock:
             if row not in self._media_observations: self._media_observations.append(row)

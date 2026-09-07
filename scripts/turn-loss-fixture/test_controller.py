@@ -863,13 +863,116 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
         # distinct Viewer and Host allocations, all through the published
         # endpoint rather than coturn's private listener.
         viewer = module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)
-        binding = module.channel_media_binding_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, rtp_ssrc=0x10203040, timeout=3)
-        assert len({reply["allocation"], viewer["allocation"], binding["allocationRelay"]["port"]}) == 3
-        assert isinstance(binding.get("allocationRelay"), dict)
-        assert binding["encapsulation"] == "channel-data" and binding["rtpSsrc"] == 0x10203040
-        assert binding["outerEgress"]["destinationPort"] > 0 and binding["allocationRelay"]["port"] >= 51000
+        authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"g" * 32,
+            socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
+        authority.start()
+        gateway = f"{prepared['projectName']}-turn-gateway-1"
+        def ledgers():
+            result = subprocess.run(["docker", "exec", gateway, "python", "-c", "import pathlib; print(pathlib.Path('/state/gateway-counters.json').read_text())"], text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)["events"]
+        def wait_for_ledger(handle):
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                rows = ledgers()
+                if handle in rows:
+                    return rows[handle]
+                time.sleep(.02)
+            pytest.fail(f"gateway did not arm event {handle}")
+        try:
+            with module.PersistentTurnAllocation(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=2) as allocation:
+                observed = allocation.send_rtp(1, 0x10203040)
+                assert observed is not None
+                observation = {"allocationRelay": observed["allocationRelay"], "peer": observed["peer"], "rtpSsrc": observed["rtpSsrc"]}
+                capability = Path(prepared["captureSocket"]).with_name("capability").read_text(encoding="utf-8").strip()
+                request = {"operation":"media-observation","runId":raw["runId"],"observation":observed,"captureCapability":capability}
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.connect(str(authority.capture_socket_path)); client.sendall((json.dumps(request) + "\n").encode()); assert json.loads(client.recv(4096)) == {"status":"OBSERVED"}
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.connect(str(authority.capture_socket_path)); client.sendall((json.dumps(request) + "\n").encode()); assert json.loads(client.recv(4096))["status"] == "BLOCKED"
+                sealed = authority.select_media_binding(observation)
+                parsed = controller.LossFixtureManifest.parse(raw)
+                relay, peer = sealed["allocationRelay"], sealed["peer"]
+                viewer_pair = {"pairId":"viewer", "localCandidateId":"relay", "remoteCandidateId":"host", "local":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}, "remote":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}}
+                host_pair = {"pairId":"host", "localCandidateId":"host", "remoteCandidateId":"relay", "local":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}, "remote":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}}
+                binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=sealed["outerEgress"], viewer_pair=viewer_pair, host_pair=host_pair, media_binding=sealed)
+                controller.write_runtime_relay_binding(tmp_path / "runtime" / "actual-relay.json", binding)
+                control_host, control_port = prepared["controlEndpoint"].rsplit(":", 1)
+                with socket.create_connection((control_host, int(control_port)), timeout=2) as control:
+                    control.settimeout(3)
+                    def control_call(body):
+                        control.sendall((json.dumps({"controlToken": credentials["controlToken"], **body}) + "\n").encode())
+                        return json.loads(control.recv(1_000_000))
+                    assert control_call({"operation":"open", "runId":raw["runId"], "sessionId":"real-host", "attemptId":"real-attempt", "streamId":"real-video", "generation":1}) == {"status":"OPEN", "generation":1}
+                    baseline_reply = {}
+                    def confirm(): baseline_reply.update(control_call({"operation":"confirm"}))
+                    confirming = threading.Thread(target=confirm); confirming.start()
+                    time.sleep(.08)
+                    assert allocation.send_rtp(2, 0x10203040) and allocation.send_rtp(3, 0x10203040)
+                    confirming.join(3); assert baseline_reply == {"status":"BASELINE_CONFIRMED"}
+                    baseline_ledger = next(value for key, value in ledgers().items() if key.startswith("wrd-baseline:"))
+                    assert baseline_ledger["eligibleCount"] == 2 and baseline_ledger["forwardedCount"] == 2 and baseline_ledger["droppedCount"] == 0
+                    control_packets = (b"\x00\x01\x00\x00" + b"stun", b"\x80\xc8\x00\x01rtcp", b"\x16\xfe\xfd\x00dtls", b"\x13\x88\x00\x00sctp")
+                    for payload in control_packets: assert allocation.send_channel_payload(allocation.channel, payload) == payload
+                    alternate_channel = allocation.bind_channel(0x4002, peer_port=59001)
+                    alternate_rtp = b"\x80\x60\x00\x04\x00\x00\x00\x04" + (0x10203040).to_bytes(4, "big") + b"fixture"
+                    assert allocation.send_channel_payload(alternate_channel, alternate_rtp) == alternate_rtp
+                    assert allocation.send_rtp(5, 0x10203041)  # wrong SSRC remains transparent
+                    nth = control_call({"operation":"apply", "runId":raw["runId"], "pattern":"every_100th_for_30s", "durationMs":30000})
+                    assert nth["state"] == "armed" and nth["mode"] == "loss"
+                    wait_for_ledger(nth["comment"])
+                    for sequence in range(6, 106): allocation.send_rtp(sequence, 0x10203040, expect_echo=sequence != 105)
+                    active_nth_ledger = ledgers()[nth["comment"]]
+                    assert (active_nth_ledger["eligibleCount"], active_nth_ledger["forwardedCount"], active_nth_ledger["droppedCount"], active_nth_ledger["droppedSequences"]) == (100, 99, 1, [105])
+                    assert control_call({"operation":"clear"})["cleared"] is True
+                    time.sleep(.15); assert allocation.send_rtp(106, 0x10203040)
+                    nth_ledger = ledgers()[nth["comment"]]
+                    assert (nth_ledger["eligibleCount"], nth_ledger["forwardedCount"], nth_ledger["droppedCount"], nth_ledger["droppedSequences"]) == (100, 99, 1, [105])
+                    assert 105 not in nth_ledger["duringForwardedSequences"] and nth_ledger["afterForwardedSequences"] == [106]
+                    baseline_reply.clear()
+                    confirming = threading.Thread(target=confirm); confirming.start()
+                    time.sleep(.08)
+                    assert allocation.send_rtp(107, 0x10203040) and allocation.send_rtp(108, 0x10203040)
+                    confirming.join(3); assert baseline_reply == {"status":"BASELINE_CONFIRMED"}
+                    all_loss = control_call({"operation":"apply", "runId":raw["runId"], "pattern":"all_for_200ms", "durationMs":200})
+                    assert all_loss["state"] == "armed" and all_loss["mode"] == "loss"
+                    wait_for_ledger(all_loss["comment"])
+                    for sequence in (109, 110, 111): allocation.send_rtp(sequence, 0x10203040, expect_echo=False)
+                    active_all_ledger = ledgers()[all_loss["comment"]]
+                    assert (active_all_ledger["eligibleCount"], active_all_ledger["forwardedCount"], active_all_ledger["droppedCount"], active_all_ledger["droppedSequences"]) == (3, 0, 3, [109, 110, 111])
+                    assert control_call({"operation":"clear"})["cleared"] is True
+                    time.sleep(.15); assert allocation.send_rtp(112, 0x10203040)
+                    all_ledger = ledgers()[all_loss["comment"]]
+                    assert all_ledger["eligibleCount"] == 3 and all_ledger["forwardedCount"] == 0 and all_ledger["droppedSequences"] == [109, 110, 111]
+                    assert all_ledger["afterForwardedSequences"] == [112]
+                # Leave a finite loss armed and let the independent Compose
+                # watchdog, rather than this control client, remove it.
+                with socket.create_connection((control_host, int(control_port)), timeout=2) as watchdog_control:
+                    watchdog_control.settimeout(3)
+                    def watchdog_call(body):
+                        watchdog_control.sendall((json.dumps({"controlToken": credentials["controlToken"], **body}) + "\n").encode())
+                        return json.loads(watchdog_control.recv(1_000_000))
+                    assert watchdog_call({"operation":"open", "runId":raw["runId"], "sessionId":"watchdog-host", "attemptId":"watchdog-attempt", "streamId":"watchdog-video", "generation":2}) == {"status":"OPEN", "generation":2}
+                    watchdog_baseline = {}
+                    def confirm_watchdog(): watchdog_baseline.update(watchdog_call({"operation":"confirm"}))
+                    confirming = threading.Thread(target=confirm_watchdog); confirming.start()
+                    time.sleep(.08)
+                    assert allocation.send_rtp(113, 0x10203040) and allocation.send_rtp(114, 0x10203040)
+                    confirming.join(3); assert watchdog_baseline == {"status":"BASELINE_CONFIRMED"}
+                    watchdog_event = watchdog_call({"operation":"apply", "runId":raw["runId"], "pattern":"all_for_200ms", "durationMs":200})
+                    wait_for_ledger(watchdog_event["comment"])
+                    allocation.send_rtp(115, 0x10203040, expect_echo=False)
+                    state_gone = ["docker", "exec", gateway, "python", "-c", "import pathlib,sys; sys.exit(pathlib.Path('/state/active-loss.json').exists())"]
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline and subprocess.run(state_gone, capture_output=True, check=False).returncode != 0:
+                        time.sleep(.05)
+                    assert subprocess.run(state_gone, capture_output=True, check=False).returncode == 0
+                    assert allocation.send_rtp(116, 0x10203040)
+        finally:
+            authority.close()
     finally:
         subprocess.run([*command, "down", "-v"], text=True, capture_output=True, check=False)
+        controller.cleanup_prepared_bridge(prepared)
 
 
 def test_loopback_control_server_runs_the_authenticated_open_command_then_closes_session():

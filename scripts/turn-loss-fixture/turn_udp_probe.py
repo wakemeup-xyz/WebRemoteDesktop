@@ -64,6 +64,85 @@ def _authenticated(kind: int, txid: bytes, username: str, password: str, realm: 
     integrity=hmac.new(key,header+attrs,hashlib.sha1).digest()
     return header+attrs+_attr(0x0008,integrity)
 
+
+class PersistentTurnAllocation:
+    """Fixture-test TURN allocation that keeps one authenticated UDP socket alive."""
+    def __init__(self, host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, timeout: float = 2.0, channel: int = 0x4001) -> None:
+        self.host, self.port, self.username, self.password = host, int(port), username, password
+        self.peer_host, self.peer_port, self.timeout, self.channel = peer_host, int(peer_port), float(timeout), int(channel)
+        self.sock: socket.socket | None = None; self.realm = self.nonce = None
+        self.relay_host = self.relay_port = None; self.last_server: tuple[str, int] | None = None
+
+    def __enter__(self) -> "PersistentTurnAllocation":
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.sock.settimeout(self.timeout)
+        # A connected UDP socket gives the passive receiver a concrete local
+        # destination rather than the wildcard address returned by an
+        # unconnected socket.  TURN control and ChannelData still retain the
+        # same allocation/socket for their whole lifetime.
+        self.sock.connect((self.host, self.port))
+        tx = os.urandom(12); self.sock.send(_message(0x0003, tx, _attr(0x0019, b"\x11\0\0\0"))); raw, _ = self.sock.recvfrom(4096); kind, got, attrs = _parse(raw)
+        if kind != 0x0113 or got != tx or 0x0014 not in attrs or 0x0015 not in attrs: raise RuntimeError("TURN allocation challenge unavailable")
+        self.realm, self.nonce = attrs[0x0014], attrs[0x0015]; tx = os.urandom(12)
+        self.sock.send(_authenticated(0x0003, tx, self.username, self.password, self.realm, self.nonce, _attr(0x0019, b"\x11\0\0\0"))); raw, _ = self.sock.recvfrom(4096); kind, got, attrs = _parse(raw)
+        if kind != 0x0103 or got != tx or 0x0016 not in attrs: raise RuntimeError("TURN allocation unavailable")
+        self.relay_host, self.relay_port = _xor_decode(attrs[0x0016], tx)
+        tx = os.urandom(12)
+        self.sock.send(_authenticated(0x0008, tx, self.username, self.password, self.realm, self.nonce, _attr(0x0012, _xor_peer(self.peer_host, self.peer_port, tx)))); raw, _ = self.sock.recvfrom(4096); kind, got, _ = _parse(raw)
+        if kind != 0x0108 or got != tx: raise RuntimeError("TURN CreatePermission failed")
+        self.bind_channel(self.channel)
+        return self
+
+    def bind_channel(self, channel: int, *, peer_host: str | None = None, peer_port: int | None = None) -> int:
+        if self.sock is None or self.realm is None or self.nonce is None:
+            raise RuntimeError("TURN allocation is closed")
+        channel = int(channel)
+        if not 0x4000 <= channel <= 0x7FFF:
+            raise ValueError("TURN channel is invalid")
+        peer_host = self.peer_host if peer_host is None else peer_host
+        peer_port = self.peer_port if peer_port is None else int(peer_port)
+        tx = os.urandom(12)
+        bind = _attr(0x000C, struct.pack("!H", channel) + b"\0\0") + _attr(0x0012, _xor_peer(peer_host, peer_port, tx))
+        self.sock.send(_authenticated(0x0009, tx, self.username, self.password, self.realm, self.nonce, bind)); raw, _ = self.sock.recvfrom(4096); kind, got, _ = _parse(raw)
+        if kind != 0x0109 or got != tx: raise RuntimeError("TURN ChannelBind failed")
+        return channel
+
+    def send_channel_payload(self, channel: int, payload: bytes, *, expect_echo: bool = True) -> bytes | None:
+        if self.sock is None: raise RuntimeError("TURN allocation is closed")
+        if not isinstance(payload, bytes) or not 0x4000 <= int(channel) <= 0x7FFF:
+            raise ValueError("TURN ChannelData payload is invalid")
+        packet = struct.pack("!HH", int(channel), len(payload)) + _pad(payload)
+        self.sock.send(packet)
+        if not expect_echo:
+            return None
+        raw, server = self.sock.recvfrom(4096)
+        if len(raw) < 4 or struct.unpack("!HH", raw[:4]) != (int(channel), len(payload)) or raw[4:4 + len(payload)] != payload:
+            raise RuntimeError(f"TURN ChannelData media echo mismatch: {raw[:64].hex()}")
+        self.last_server = (str(server[0]), int(server[1]))
+        return raw[4:4 + len(payload)]
+
+    def send_rtp(self, sequence: int, ssrc: int, *, payload_type: int = 96, expect_echo: bool = True) -> dict[str, Any] | None:
+        if self.sock is None or self.relay_host is None or self.relay_port is None: raise RuntimeError("TURN allocation is closed")
+        rtp = bytes((0x80, payload_type)) + struct.pack("!HII", int(sequence), int(sequence), int(ssrc)) + b"fixture"
+        echoed = self.send_channel_payload(self.channel, rtp, expect_echo=expect_echo)
+        if echoed is None:
+            return None
+        local = self.sock.getsockname()
+        server = self.last_server
+        if server is None: raise RuntimeError("TURN ChannelData sender is unavailable")
+        return {"outerEgress": {"protocol": "udp", "source": server[0], "sourcePort": server[1], "destination": str(local[0]), "destinationPort": int(local[1])},
+                "allocationRelay": {"address": self.relay_host, "port": self.relay_port}, "peer": {"address": self.peer_host, "port": self.peer_port},
+                "channelNumber": self.channel, "encapsulation": "channel-data", "rtpSsrc": int(ssrc), "payloadType": int(payload_type)}
+
+    def close(self) -> None:
+        if self.sock is None: return
+        try:
+            tx = os.urandom(12); self.sock.send(_authenticated(0x0004, tx, self.username, self.password, self.realm, self.nonce, _attr(0x000D, b"\0\0\0\0")))
+            self.sock.recvfrom(4096)
+        except (OSError, RuntimeError, TypeError): pass
+        self.sock.close(); self.sock = None
+
+    def __exit__(self, *_: object) -> None: self.close()
+
 def permission_send_data_echo(host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, timeout: float=2.0, udp_socket: Any=None) -> dict[str,Any]:
     """Concrete TURN UDP CreatePermission -> Send -> Data indication exchange."""
     sock=udp_socket or socket.socket(socket.AF_INET,socket.SOCK_DGRAM); own=udp_socket is None
