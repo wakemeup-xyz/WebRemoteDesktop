@@ -57,7 +57,18 @@ def _identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     required = ("runId", "realm", "origin", "epoch")
     if not all(isinstance(identity.get(key), str) and identity[key] for key in required[:-1]) or not isinstance(identity.get("epoch"), int):
         raise ValueError("a live Lab identity is required")
-    return {key: identity[key] for key in required}
+    result = {key: identity[key] for key in required}
+    # T6 runs T3 under one selected preflighted TURN leg.  Preserve that
+    # identity in the signed transcript; a verifier must not infer it from a
+    # later loss artifact.
+    selected = identity.get("selectedTurn")
+    if selected is not None:
+        if (not isinstance(selected, Mapping)
+                or set(selected) != {"id", "fingerprint", "digest"}
+                or not all(isinstance(selected.get(key), str) and selected[key] for key in selected)):
+            raise ValueError("T3 selected TURN identity is invalid")
+        result["selectedTurn"] = dict(selected)
+    return result
 
 
 def _observer_state(summaries: list[Mapping[str, Any]]) -> dict[str, Any]:

@@ -23,7 +23,7 @@ class Backend:
     def __init__(self): self.counter = 1; self.probe_counter = 0
     def add_rule(self, _): pass
     def remove_rule(self, _): pass
-    def read_rule_counter(self, _): return self.counter
+    def read_rule_counter(self, _): self.counter += 1; return self.counter
     def add_probe(self, *_): pass
     def remove_probe(self, *_): pass
     def read_probe_counter(self, _): self.probe_counter += 1; return self.probe_counter
@@ -40,18 +40,38 @@ class Adapter:
     def viewer_session_identity(self): return {"attemptId": "attempt", "generation": 2, "streamId": "video"}
     def sample_loss_lab_taps(self):
         self.samples += 1
-        return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": self.samples}], "rvfc": [{"rtpTimestamp": self.samples, "monotonicMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
+        host_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "encoderTimestamp": self.samples}
+        viewer_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "wireTimestamp": self.samples}
+        return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": self.samples}, {"type": "encoder_idr", "monotonicNs": self.samples, "frameKey": host_key, "requestToken": "request"}, {"type": "rtp_send", "monotonicNs": self.samples, "frameKey": host_key, "sequence": self.samples, "rtpTimestamp": self.samples, "ssrc": 1}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
 
 
 def test_runner_drives_loopback_controller_and_its_adapter_taps():
     manifest = _manifest(); fixture = controller.LossController(manifest, backend=Backend(), receiver_source=DeferredEvidence())
     server = controller.LossControlServer({"host": "127.0.0.1", "port": 0}, controller.ControlRequestRouter(fixture, "token"))
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-    adapter = Adapter(); timeline = RawLossTimelineCollector(started_ns=1, ended_ns=2)
+    adapter = Adapter(); timeline = RawLossTimelineCollector(started_ns=1, ended_ns=2); waits = []
     try:
-        result = runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=adapter, timeline=timeline, wait=lambda _: None)
+        result = runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=adapter, timeline=timeline, wait=waits.append)
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=2)
     assert len(result["events"]) == 2
-    assert adapter.armed == 1 and adapter.samples == 11
+    assert adapter.armed == 1 and adapter.samples == 52
+    assert sum(waits) == 50.2 and waits.count(1.0) == 50 and waits.count(0.2) == 1
+    assert all(timeline.rtp[phase] for phase in ("before", "during", "after"))
     assert timeline.feedback and timeline.paint and timeline.pc
+
+
+def test_runner_rejects_a_cleared_rule_with_zero_counter_delta():
+    class ZeroBackend(Backend):
+        def read_rule_counter(self, _): return 1
+    manifest = _manifest(); fixture = controller.LossController(manifest, backend=ZeroBackend(), receiver_source=DeferredEvidence())
+    server = controller.LossControlServer({"host": "127.0.0.1", "port": 0}, controller.ControlRequestRouter(fixture, "token"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        try:
+            runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=Adapter(), timeline=RawLossTimelineCollector(started_ns=1, ended_ns=2), wait=lambda _: None)
+            assert False, "zero counter delta must block"
+        except RuntimeError as error:
+            assert "did not clear" in str(error)
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)

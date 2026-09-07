@@ -503,7 +503,8 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
     scope = {"attemptId": event["attemptId"], "generation": event["generation"], "streamId": event["streamId"]}
     t3 = {
         "schemaVersion": 1, "kind": "turn-t3-lab-stage-run", "runId": raw_manifest["runId"],
-        "identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1},
+        "identity": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "origin": "http://lab.invalid", "epoch": 1,
+                     "selectedTurn": raw_manifest["selectedTurn"]},
         "durationSeconds": 60, "scope": scope, "status": "OBSERVED", "failures": [],
         "verification": {"algorithm": "HMAC-SHA256", "verifierSource": "lab-transcript-verifier/sha256:" + hashlib.sha256(verifier).hexdigest(), "selfVerified": True, "verifiedBeforeLabClose": True},
     }
@@ -523,7 +524,7 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
                  **scope, "selectedTurn": raw_manifest["selectedTurn"], "eventHandle": event["comment"],
                  "startedMonotonicNs": event["startedMonotonicNs"], "endedMonotonicNs": event["endedMonotonicNs"],
                  "sequences": {"before": [{"sequence": 10, "rtpTimestamp": 1}, {"sequence": 11, "rtpTimestamp": 2}], "during": [{"sequence": 13, "rtpTimestamp": 4}, {"sequence": 14, "rtpTimestamp": 5}], "after": [{"sequence": 15, "rtpTimestamp": 6}, {"sequence": 16, "rtpTimestamp": 7}]}},
-        "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameId": "f-1", "wireTimestamp": 8, "monotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameId": "f-1", "wireTimestamp": 8, "rvfcMonotonicNs": event["endedMonotonicNs"] + 2}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}]},
+        "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "hostMonotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "viewerAcceptedMs": 42.0}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}]},
     }
     bridge.update(changes)
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)

@@ -24,11 +24,19 @@ test('Lab-only loss taps retain rVFC and Host data-channel events with real getS
   };
   WebRTC.currentConnectionAttemptId = 'attempt'; WebRTC.connectionAttemptSequence = 4;
   assert.equal(WebRTC.beginLossLabTrace(), true);
+  assert.equal(WebRTC.acceptFrameTraceBatch({ type: 'frame_trace_batch', schemaVersion: 1, droppedTraceCount: 0,
+    traces: [{ attemptId: 'attempt', generation: 4, streamId: 'video', captureSeq: 7, encoderTimestamp: 41,
+      wireTimestamp: 42, ssrc: 1, framePts: 7, idrKind: 'PLI', idrReason: 'loss', policyDigest: 'policy',
+      stages: { grab: 1, age_at_recv: 1, worker_queue: 1, prepare: 1, build: 1, reformat: 1, encode: 1, packetize: 1, encode_total: 1 } }] }), 0);
+  assert.equal(WebRTC.ensureFrameTraceCollector().observeVideoFrame(
+    { attemptId: 'attempt', generation: 4, streamId: 'video', rtpTimestamp: 42 }, {}), true);
   WebRTC.recordLossLabRvfc({ rtpTimestamp: 42 }, { videoWidth: 1280, videoHeight: 720 });
   WebRTC.acceptLossLabHostTraceBatch({ type: 'loss_lab_host_trace_batch', schemaVersion: 1, droppedEventCount: 0,
     events: [{ type: 'rtcp_feedback', kind: 'PLI', monotonicNs: 1, senderId: 'host' }] });
   const snapshot = await WebRTC.takeLossLabTraceSnapshot();
   assert.equal(snapshot.rvfc[0].rtpTimestamp, 42);
+  assert.equal(snapshot.rvfc[0].captureSeq, 7);
+  assert.equal(snapshot.rvfc[0].wireTimestamp, 42);
   assert.equal(snapshot.host[0].kind, 'PLI');
   assert.equal(snapshot.stats.inbound.packetsLost, 1);
   assert.equal(snapshot.stats.selectedRelay.address, '127.0.0.1');

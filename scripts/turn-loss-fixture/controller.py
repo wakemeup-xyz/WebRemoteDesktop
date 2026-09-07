@@ -594,6 +594,7 @@ class SignedT3T5ReceiverEvidenceSource:
         if (value.get("schemaVersion") != 1 or value.get("kind") != "turn-t3-lab-stage-run" or value.get("runId") != manifest.run_id
                 or value.get("durationSeconds") != 60 or value.get("status") != "OBSERVED" or value.get("failures") != []
                 or not isinstance(identity, Mapping) or identity.get("runId") != manifest.run_id or identity.get("realm") != manifest.realm
+                or identity.get("selectedTurn") != manifest.selected_turn
                 or value.get("scope") != dict(scope) or not isinstance(verification, Mapping)
                 or verification.get("algorithm") != "HMAC-SHA256" or verification.get("selfVerified") is not True
                 or verification.get("verifiedBeforeLabClose") is not True):
@@ -651,10 +652,18 @@ class SignedT3T5ReceiverEvidenceSource:
                 or not isinstance(idr, Mapping) or not isinstance(paint, Mapping) or not isinstance(pc, list) or len(pc) < 2):
             raise RuntimeError("receiver bridge recovery proof is incomplete")
         feedback_at = max(row["monotonicNs"] for row in feedback)
-        if (feedback_at < loss["endedMonotonicNs"] or not isinstance(idr.get("monotonicNs"), int) or not isinstance(paint.get("rvfcMonotonicNs"), int)
-                or idr["monotonicNs"] < feedback_at or paint["rvfcMonotonicNs"] < idr["monotonicNs"]
-                or paint["rvfcMonotonicNs"] - loss["endedMonotonicNs"] > 2_000_000_000
-                or paint.get("frameId") != idr.get("frameId") or paint.get("wireTimestamp") != idr.get("wireTimestamp")):
+        # Host and Viewer monotonic clocks have unrelated origins.  The Host
+        # ordering ends at the encoded IDR; the decoded rVFC is joined only by
+        # the full T3 FrameKey and wire timestamp, never by subtraction across
+        # clock domains.
+        idr_key, paint_key = idr.get("frameKey"), paint.get("frameKey")
+        if (feedback_at < loss["endedMonotonicNs"] or not isinstance(idr.get("hostMonotonicNs"), int)
+                or idr["hostMonotonicNs"] < feedback_at
+                or not isinstance(idr_key, Mapping) or not isinstance(paint_key, Mapping)
+                or set(idr_key) != {"attemptId", "generation", "streamId", "captureSeq", "wireTimestamp"}
+                or idr_key != paint_key or idr.get("wireTimestamp") != idr_key.get("wireTimestamp")
+                or paint.get("wireTimestamp") != idr_key.get("wireTimestamp")
+                or not isinstance(paint.get("viewerAcceptedMs"), (int, float))):
             raise RuntimeError("receiver bridge recovery timeline is invalid")
         pc_ids = {(row.get("id"), row.get("state"), json.dumps(row.get("resolution"), sort_keys=True)) for row in pc if isinstance(row, Mapping)}
         if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected":

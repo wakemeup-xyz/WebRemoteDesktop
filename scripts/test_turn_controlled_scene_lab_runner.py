@@ -74,9 +74,9 @@ def test_viewer_session_identity_uses_the_live_webrtc_connection_sequence_for_ge
     adapter = object.__new__(runner.PlaywrightLabViewerAdapter)
     class Page:
         def evaluate(self, _script):
-                return {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "selectedTurnId": "turn-1", "turnFingerprint": "fingerprint", "turnDigest": "d" * 64, "sourceWidth": 1920, "sourceHeight": 1080}
+                return {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "sourceWidth": 1920, "sourceHeight": 1080}
     adapter.viewer_page = Page()
-    assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "selectedTurnId": "turn-1", "turnFingerprint": "fingerprint", "turnDigest": "d" * 64, "sourceWidth": 1920, "sourceHeight": 1080}
+    assert adapter.viewer_session_identity() == {"attemptId": "runtime-attempt", "generation": 7, "streamId": "video-track-1", "sourceWidth": 1920, "sourceHeight": 1080}
 
 
 def test_marker_roi_calibration_uses_canvas_content_inside_the_visible_fixture_border():
@@ -307,8 +307,11 @@ def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api(
             calls.append(script)
             if "beginLossLabTrace" in script:
                 return True
-            return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3}],
-                    "rvfc": [{"rtpTimestamp": 9, "monotonicMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
+            key = {"attemptId": "attempt", "generation": 1, "streamId": "video", "captureSeq": 4, "wireTimestamp": 9}
+            return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3},
+                             {"type": "encoder_idr", "monotonicNs": 4, "frameKey": key, "requestToken": "token"},
+                             {"type": "rtp_send", "monotonicNs": 5, "frameKey": key, "sequence": 1, "rtpTimestamp": 9}],
+                    "rvfc": [{**key, "rtpTimestamp": 9, "viewerAcceptedMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
                     "droppedHostEvents": 0,
                     "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"},
                               "inbound": {"packetsReceived": 4, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}

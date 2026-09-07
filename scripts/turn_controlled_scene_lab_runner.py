@@ -279,6 +279,11 @@ class PlaywrightLabViewerAdapter:
             self.viewer_page.wait_for_timeout(1000)
         return rows
 
+    def set_producer_proof(self, proof: ProducerProof) -> None:
+        """Reload the independent fixture with the scope proven by Viewer."""
+        url = Path(__file__).with_name("turn-runtime-controlled-producer.html").as_uri()
+        self.producer_page.goto(f"{url}?runNonce={proof.run_nonce}&sceneId={proof.scene_id}", wait_until="domcontentloaded")
+
     def _input_spec(self, item: Any) -> dict[str, Any]:
         """Map the immutable work declaration to the existing v2 input API."""
         geometry = self._fixture_geometry
@@ -528,16 +533,12 @@ class PlaywrightLabViewerAdapter:
           attemptId: WebRTC?.currentConnectionAttemptId || '',
           generation: Number(WebRTC?.connectionAttemptSequence || 0),
           streamId: String(WebRTC?.activeVideoStreamId || WebRTC?.remoteStream?.getVideoTracks?.()[0]?.id || ''),
-          selectedTurnId: String(WebRTC?.selectedCandidatePair?.turnServerId || WebRTC?.selectedTurnServerId || ''),
-          turnFingerprint: String(WebRTC?.selectedCandidatePair?.turnFingerprint || WebRTC?.turnFingerprint || ''),
-          turnDigest: String(WebRTC?.selectedCandidatePair?.turnAppliedDigest || WebRTC?.turnAppliedDigest || ''),
           sourceWidth: Number(document.getElementById('remoteVideo')?.videoWidth || 0),
           sourceHeight: Number(document.getElementById('remoteVideo')?.videoHeight || 0),
         })""")
         if (not isinstance(row, dict) or not isinstance(row.get("attemptId"), str) or not row["attemptId"]
                 or not isinstance(row.get("generation"), int) or row["generation"] <= 0
                 or not isinstance(row.get("streamId"), str) or not row["streamId"]
-                or not all(isinstance(row.get(key), str) and row[key] for key in ("selectedTurnId", "turnFingerprint", "turnDigest"))
                 or not isinstance(row.get("sourceWidth"), int) or row["sourceWidth"] <= 0
                 or not isinstance(row.get("sourceHeight"), int) or row["sourceHeight"] <= 0):
             return None
@@ -654,7 +655,10 @@ class RawLossTimelineCollector:
     """Live-owner raw event accumulator; never accepts recovery booleans."""
     def __init__(self, *, started_ns: int, ended_ns: int) -> None:
         self.started_ns, self.ended_ns = started_ns, ended_ns
-        self.rtp = {"before": [], "during": [], "after": []}; self.feedback = []; self.idr = None; self.paint = None; self.pc = []
+        self.rtp = {"before": [], "during": [], "after": []}; self.phase = "before"; self.feedback = []; self.idr = None; self.paint = None; self.pc = []
+    def set_phase(self, phase: str) -> None:
+        if phase not in self.rtp: raise ValueError("loss trace phase invalid")
+        self.phase = phase
     def rtp_packet(self, phase: str, *, sequence: int, rtp_timestamp: int) -> None:
         if phase not in self.rtp or not isinstance(sequence, int) or not isinstance(rtp_timestamp, int): raise ValueError("raw RTP event invalid")
         self.rtp[phase].append({"sequence": sequence, "rtpTimestamp": rtp_timestamp})
@@ -686,19 +690,37 @@ class RawLossTimelineCollector:
                 key = event["frameKey"]
                 # The actual wire timestamp arrives from the sender's RTP
                 # observer; retain the request token until that identity joins.
-                self.idr = {"frameId": json.dumps(dict(key), sort_keys=True), "wireTimestamp": None,
-                            "monotonicNs": int(event.get("monotonicNs")), "requestToken": event.get("requestToken")}
+                self.idr = {"hostFrameKey": dict(key), "frameKey": None, "wireTimestamp": None,
+                            "hostMonotonicNs": int(event.get("monotonicNs")), "requestToken": event.get("requestToken")}
             elif event.get("type") == "rtp_send":
                 key = event.get("frameKey")
                 if not isinstance(key, Mapping): raise ValueError("RTP loss tap lacks FrameKey")
-                self.rtp_packet("after", sequence=int(event.get("sequence")), rtp_timestamp=int(event.get("rtpTimestamp")))
-                if self.idr is not None and self.idr["frameId"] == json.dumps(dict(key), sort_keys=True):
-                    self.idr["wireTimestamp"] = int(event.get("rtpTimestamp"))
+                self.rtp_packet(self.phase, sequence=int(event.get("sequence")), rtp_timestamp=int(event.get("rtpTimestamp")))
+                if self.idr is not None:
+                    host_key = self.idr.get("hostFrameKey")
+                    # Host frame keys end at encoderTimestamp; the RTP sender
+                    # supplies the observed wire timestamp.  Make the exact
+                    # T3/Viewer join identity only at this boundary.
+                    if (isinstance(host_key, Mapping)
+                            and all(host_key.get(field) == key.get(field) for field in ("attemptId", "generation", "streamId", "captureSeq"))):
+                        wire = int(event.get("rtpTimestamp"))
+                        self.idr["frameKey"] = {field: key.get(field) for field in ("attemptId", "generation", "streamId", "captureSeq")}
+                        self.idr["frameKey"]["wireTimestamp"] = wire
+                        self.idr["wireTimestamp"] = wire
             elif event.get("type") == "pc_state":
                 self.pc_snapshot(identifier=str(event.get("pcId")), state=str(event.get("state")), resolution=event.get("resolution") if isinstance(event.get("resolution"), Mapping) else {})
         for event in raw.get("rvfc", []):
             if not isinstance(event, Mapping): raise ValueError("invalid rVFC tap event")
-            self.rvfc_paint(frame_id="viewer-rvfc", wire_timestamp=int(event.get("rtpTimestamp")), monotonic_ns=int(float(event.get("monotonicMs")) * 1_000_000))
+            key = {field: event.get(field) for field in ("attemptId", "generation", "streamId", "captureSeq", "wireTimestamp")}
+            if (not isinstance(key["attemptId"], str) or not key["attemptId"]
+                    or not isinstance(key["generation"], int) or isinstance(key["generation"], bool)
+                    or not isinstance(key["streamId"], str) or not key["streamId"]
+                    or not isinstance(key["captureSeq"], int) or not isinstance(key["wireTimestamp"], int)
+                    or not isinstance(event.get("viewerAcceptedMs"), (int, float))):
+                raise ValueError("rVFC loss tap lacks a matched T3 FrameKey")
+            if self.idr is not None and self.idr.get("frameKey") == key and self.idr.get("wireTimestamp") == key["wireTimestamp"]:
+                self.paint = {"frameKey": key, "wireTimestamp": key["wireTimestamp"],
+                              "viewerAcceptedMs": float(event["viewerAcceptedMs"])}
             self.pc_snapshot(identifier=str(event.get("pcId")), state=str(stats.get("state")), resolution=event.get("resolution") if isinstance(event.get("resolution"), Mapping) else {})
     def as_bridge_fields(self) -> dict[str, Any]: return {"sequences": self.rtp, "timeline": {"feedback": self.feedback, "idr": self.idr, "paint": self.paint, "pc": self.pc}}
 
@@ -730,6 +752,7 @@ def main(argv: list[str] | None = None) -> int:
         if session is None:
             raise RuntimeError("viewer session has no stable attempt/generation/resolution")
         proof = ProducerProof(proof.run_nonce, proof.scene_id, identity.origin, session["attemptId"], session["generation"], identity.realm, identity.run_id)
+        adapter.set_producer_proof(proof)
         roi = adapter.calibrate_marker_roi(source_width=session["sourceWidth"], source_height=session["sourceHeight"])
         layout = MarkerLayout.create(attempt_id=proof.attempt_id, generation=proof.generation,
                                      source_width=session["sourceWidth"], source_height=session["sourceHeight"], roi=roi)
@@ -739,9 +762,6 @@ def main(argv: list[str] | None = None) -> int:
         selected_leg = adapter.selected_relay_leg(turn_catalog(selected_turn))
         if selected_leg is None:
             raise RuntimeError("getStats did not prove a selected relay/catalog mapping")
-        if (session["selectedTurnId"] != selected_turn["id"] or session["turnFingerprint"] != selected_turn["fingerprint"]
-                or session["turnDigest"] != selected_turn["digest"]):
-            raise RuntimeError("viewer selected TURN identity does not match the Lab-preflighted path")
         selected_turn = {key: selected_leg[key] for key in ("id", "fingerprint", "digest")}
         identity_record = {"origin": identity.origin, "realm": identity.realm, "runId": identity.run_id, "epoch": identity.epoch,
                            "scope": {"attemptId": session["attemptId"], "generation": session["generation"], "streamId": session["streamId"]},

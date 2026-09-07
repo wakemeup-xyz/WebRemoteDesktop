@@ -52,6 +52,10 @@ class FrameTraceCollector {
     this.traces = new Map();
     this.seen = new Map();
     this.matched = [];
+    // Kept separately from `matched`: the Lab loss tap needs the same T3
+    // join for the rVFC which just accepted it, while T3 itself owns and
+    // drains the queued evidence.
+    this.lastMatched = null;
     this.unaligned = false;
     this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
@@ -71,6 +75,7 @@ class FrameTraceCollector {
     this.traces.clear();
     this.seen.clear();
     this.matched = [];
+    this.lastMatched = null;
     this.unaligned = false;
     this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
@@ -167,6 +172,7 @@ class FrameTraceCollector {
       return false;
     }
     this.matched.push({ at: Number(this.now()), value });
+    this.lastMatched = value;
     return true;
   }
 
@@ -266,6 +272,13 @@ class FrameTraceCollector {
     const matched = this.matched.map((entry) => entry.value);
     this.matched = [];
     return matched;
+  }
+
+  latestMatchedForRtp(rtpTimestamp) {
+    const row = this.lastMatched;
+    if (!row || (Number(row.rtpTimestamp) >>> 0) !== (Number(rtpTimestamp) >>> 0)) return null;
+    // Callers must not be able to mutate the T3-owned join object.
+    return { ...row };
   }
 
   takeControlledVisualEvidence() {
@@ -4896,10 +4909,17 @@ if (this.tunnelLastObjectUrl) {
     if (!this._lossLabTrace) return false;
     const rtpTimestamp = Number(metadata?.rtpTimestamp);
     if (!Number.isFinite(rtpTimestamp)) return false;
+    const matched = this.frameTraceCollector?.latestMatchedForRtp?.(rtpTimestamp);
+    // A loss paint is useful only when it is exactly the T3 frame row that
+    // crossed the wire.  Never manufacture a viewer-only frame identity.
+    if (!matched || matched.traceStatus !== 'matched') return false;
     return this._appendLossLabTrace('rvfc', {
-      attemptId: this.currentConnectionAttemptId || '', generation: Number(this.connectionAttemptSequence) || 0,
-      rtpTimestamp: rtpTimestamp >>> 0, presentedFrames: Number(metadata?.presentedFrames) || 0,
-      monotonicMs: Number(performance.now()), pcId: this.pc ? `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}` : '',
+      attemptId: matched.attemptId, generation: matched.generation, streamId: matched.streamId,
+      captureSeq: matched.captureSeq, wireTimestamp: matched.wireTimestamp,
+      rtpTimestamp: matched.rtpTimestamp, presentedFrames: Number(metadata?.presentedFrames) || 0,
+      // This is intentionally a Viewer-only acceptance clock.  It is never
+      // compared to Host monotonic time.
+      viewerAcceptedMs: Number(performance.now()), pcId: this.pc ? `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}` : '',
       resolution: { width: Number(video?.videoWidth) || 0, height: Number(video?.videoHeight) || 0 },
     });
   },
