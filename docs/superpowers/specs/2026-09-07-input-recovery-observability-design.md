@@ -65,11 +65,11 @@ DOM → Viewer gate → Viewer transport enqueue ─ DataChannel ─→ Host ing
 
 DataChannel 不经过 Signal；因此 Signal 无记录不能单独证明丢包。输入 enqueue 只表示本地接受排队；Host `applied` 表示 native adapter 返回成功，不冒充人眼看到系统效果。
 
-InputTrace 在 critical bundle 中加载，早于 Input；Diagnostic core 持有同一 collector，deferred diagnostic 加载不能清除历史。接口：`InputTrace.create({ now, hashInputIds }) -> { record(stage, meta), snapshot() }`。record 不等待哈希或网络，不影响输入结果。
+InputTrace 在 critical bundle 中加载，早于 Input；Diagnostic core 持有同一 collector，deferred diagnostic 加载不能清除历史。接口：`InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`。所有参数可省略，时钟/计时器默认使用当前环境、onIncident默认为noop。record 不等待哈希或网络，不影响输入结果；DOM阶段返回新分配的eventId，其他阶段返回关联eventId或null。snapshot为 `{ schemaVersion: 1, events, counters }`。计时器最多一个，处理最近ACK deadline；onIncident只回传有限reason，Diagnostic core决定是否满足自动上报条件，回调异常不得影响输入。
 
 stage 白名单：`dom-received, gate, transport-send, ack, ack-timeout, lifecycle, recovery`。DOM 记录分配递增 eventId，仅描述 keyboard/pointer/text/control 的类别和 phase；Input 将同步发送的 existing inputIds 映射到该 eventId，IME 延后发送使用单独事件关联，不虚构一一对应。
 
-允许字段：eventId、stage、inputType、action、phase、transport、accepted、reason、status、seq、appliedSeq、leaseEpoch、connectionAttemptId、inputIdHash、inputIdCount、clientRttMs，以及本设计的有限状态字段。类型/动作/原因/状态用枚举白名单，数值须 finite/有界，ID 格式/长度受限。禁止 key/code/keyCode、输入正文、payload、坐标、DOM label/value、完整 URL、token、password、raw leaseId、raw inputIds；不要只按字段名删几个词再任意扩展对象。
+允许字段：eventId、stage、inputType、action、phase、transport、accepted、reason、status、seq、appliedSeq、leaseEpoch、connectionAttemptId、inputIdHash、inputIdCount、clientRttMs，以及本设计的有限状态字段。DOM额外记录 `focusKind: desktop | mobile-text | local-editor | terminal | other` 与 `visibility: visible | hidden`，不能把本地编辑/Terminal事件混算为远端输入尝试。类型/动作/原因/状态用枚举白名单，数值须 finite/有界，ID 格式/长度受限。禁止 key/code/keyCode、输入正文、payload、坐标、DOM label/value、完整 URL、token、password、raw leaseId、raw inputIds；不要只按字段名删几个词再任意扩展对象。
 
 关联哈希保持 Host 现有算法：UTF-8 的 `inputIds.join('\x1f')` 做 SHA-256，取小写 hex 前16位。浏览器用 Web Crypto 异步计算；无 crypto 或摘要失败时填 null 并增加 unavailable 计数，不记录明文、不退回弱哈希。异步结果只回填仍在本 ring 中的原记录。最多64个待摘要工作，超过明确计数丢弃，不阻塞实际输入。
 

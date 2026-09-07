@@ -81,7 +81,7 @@ function isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
 
 **Files:** 新增 `web-client/js/input-trace.js`, `input-trace.test.js`；修改 `input.js`, `input.test.js`, `input-recovery.test.js`, `mobile-text-input.js`, `mobile-text-input.test.js`, `diagnostic-core.js`, `diagnostic.test.js`, `webrtc.js`, `webrtc.test.js`, `web-client/viewer.html`, `signal-server/scripts/web-asset-graph.js`。只有为记录ACK deadline确需 transport hook 时才修改 `keyboard-transport.js` 和对应测试，必须在报告说明。
 
-**Interfaces:** 消费 Task 1 的有效gate与恢复snapshot；产出 `InputTrace.create({ now, hashInputIds }) -> { record(stage, meta), snapshot() }`。Diagnostic core 暴露 `recordInputTrace(stage, meta)` 与 `getInputTraceSnapshot()`（同一 collector 不因deferred加载替换）。Input.getDiagnosticState 产出 Spec §4.2 的安全 inputState，供 Task 3 原样经严格 allowlist处理。record stage和数值上限按Spec §4.1。
+**Interfaces:** 消费 Task 1 的有效gate与恢复snapshot；产出 `InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`（参数可选，默认环境时钟/WebCrypto/timer/noop）。record的DOM阶段返回新eventId，其他阶段返回关联eventId或null；snapshot为 `{ schemaVersion: 1, events, counters }`。最多一个deadline计时器，onIncident仅传有限reason；core按可见/active/有权条件决定上报。Diagnostic core 暴露 `recordInputTrace(stage, meta)` 与 `getInputTraceSnapshot()`（同一 collector 不因deferred加载替换）。Input.getDiagnosticState 产出 Spec §4.2 的安全 inputState，供 Task 3 原样经严格 allowlist处理。record stage、focusKind/visibility和数值上限按Spec §4.1。
 
 - [ ] Step 1: RED 测试固定 inputIds 的已知SHA256 hash、异步回填、无crypto/摘要失败、超64待摘要、256条/64KiB/256个ACK/10秒等待上限；敏感字段用唯一金丝雀，序列化snapshot中必须完全不存在。move/wheel大量输入只能增加聚合计数，不逐条hash。
 - [ ] Step 2: 实现独立collector。record不得等待hash或抛出影响业务的异常；snapshot不得泄漏内部raw IDs或DOM对象；哈希淘汰/失败计数明确。真实Input发送旁路记录DOM eventId→现有inputIds，keyboard与pointer/text入口覆盖，IME异步事件另设准确关联。
