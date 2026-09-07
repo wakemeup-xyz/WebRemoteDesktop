@@ -2,6 +2,7 @@
 from __future__ import annotations
 import importlib.util
 import json
+import hashlib
 import sys
 import threading
 import tempfile
@@ -55,6 +56,13 @@ class Adapter:
         return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request"}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
 
 
+    def read_receiver_capture(self, *, manifest, event):
+        leg = manifest.egress_selector; start, end = event["startedMonotonicNs"], event["endedMonotonicNs"]
+        capture = {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": manifest.run_id, "eventHandle": event["comment"], "selectedLeg": leg, "kernelDropCount": 1, "ssrc": 9, "cursor": {"first": 1, "last": 6}, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 9, "fixtureClockNs": start - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 9, "fixtureClockNs": start}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 9, "fixtureClockNs": start}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 9, "fixtureClockNs": end}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 9, "fixtureClockNs": end + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 9, "fixtureClockNs": end + 2}]}}
+        capture["captureDigest"] = hashlib.sha256(json.dumps(capture, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return capture
+
+
 def test_runner_drives_loopback_controller_and_its_adapter_taps():
     manifest = _manifest(); fixture = controller.LossController(manifest, backend=Backend(), receiver_source=DeferredEvidence())
     server = controller.LossControlServer({"host": "127.0.0.1", "port": 0}, controller.ControlRequestRouter(fixture, "token"))
@@ -67,7 +75,7 @@ def test_runner_drives_loopback_controller_and_its_adapter_taps():
     assert len(result["events"]) == 2
     assert adapter.armed == 1 and adapter.samples == 52
     assert sum(waits) == 50.2 and waits.count(1.0) == 50 and waits.count(0.2) == 1
-    assert all(timeline.rtp[phase] for phase in ("before", "during", "after"))
+    assert len(timeline.recovery) == 2
     assert timeline.feedback and timeline.paint and timeline.pc
 
 

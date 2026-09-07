@@ -22,6 +22,21 @@ services:
     volumes:
       - turn-loss-state:/state
 
+  receiver-capture:
+    # Header-only AF_PACKET observer.  It shares only the isolated TURN
+    # namespace and cannot access Host, production TURN, or Viewer state.
+    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    labels:
+      com.wrd.turn-loss-fixture: "true"
+    network_mode: service:turn
+    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json"]
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - turn-loss-receiver:/receiver
+      - turn-loss-state:/state:ro
+
   loss-watchdog:
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
     labels:
@@ -39,3 +54,4 @@ networks:
 
 volumes:
   turn-loss-state:
+  turn-loss-receiver:

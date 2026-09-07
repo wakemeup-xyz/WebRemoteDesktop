@@ -68,12 +68,14 @@ def seal_and_verify_live_bridge(*, manifest: LossFixtureManifest, authority: Any
     scope = transaction.get("scope")
     if not isinstance(scope, Mapping):
         raise RuntimeBlocked("loss transaction scope is unavailable")
+    capture = transaction.get("receiverCapture")
+    if not isinstance(capture, Mapping): raise RuntimeBlocked("fixture receiver capture is unavailable")
     bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": dict(t3), "t5": dict(t5),
               "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": transaction.get("sessionId"),
                        "attemptId": scope.get("attemptId"), "generation": scope.get("generation"), "streamId": scope.get("streamId"),
                        "selectedTurn": manifest.selected_turn, "eventHandle": event.get("comment"),
                        "startedMonotonicNs": event.get("startedMonotonicNs"), "endedMonotonicNs": event.get("endedMonotonicNs"),
-                       "sequences": fields["sequences"]}, "timeline": fields["timeline"]}
+                       "receiverCapture": dict(capture)}, "timeline": fields["timeline"]}
     sealed = authority.seal(bridge, event)
     if sealed.get("status") != "SEALED":
         raise RuntimeBlocked("Lab authority did not seal the current bridge")
@@ -150,26 +152,28 @@ class LossControlClient:
         return dict(reply)
 
 
-def _sample(adapter: Any, timeline: Any) -> dict[str, Any]:
+def _sample(adapter: Any, timeline: Any, *, now_ns: Callable[[], int] = time.monotonic_ns) -> dict[str, Any]:
     raw = adapter.sample_loss_lab_taps()
     if not isinstance(raw, Mapping):
         raise RuntimeBlocked("Viewer native loss taps are unavailable")
-    timeline.ingest_viewer_tap(raw)
+    timeline.ingest_viewer_tap(raw, runner_observed_ns=now_ns())
     return dict(raw)
 
 
 def _wait_and_sample(*, seconds: float, adapter: Any, timeline: Any,
-                     wait: Callable[[float], None], sample_interval: float = 1.0) -> None:
+                     wait: Callable[[float], None], now_ns: Callable[[], int] = time.monotonic_ns,
+                     sample_interval: float = 1.0) -> None:
     """Hold the actual rule for its declared duration while draining taps."""
     remaining = float(seconds)
     while remaining > 0:
         step = min(sample_interval, remaining)
-        wait(step); _sample(adapter, timeline); remaining -= step
+        wait(step); _sample(adapter, timeline, now_ns=now_ns); remaining -= step
 
 
 def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: str, control_token: str,
                                     adapter: Any, timeline: Any, recovery_seconds: int = 10,
-                                    wait: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+                                    wait: Callable[[float], None] = time.sleep,
+                                    now_ns: Callable[[], int] = time.monotonic_ns) -> dict[str, Any]:
     """Drive control and consume only the concrete Viewer adapter tap API."""
     if recovery_seconds != 10 or adapter.arm_loss_lab_taps() is not True:
         raise RuntimeBlocked("Lab Viewer loss taps did not arm")
@@ -182,7 +186,7 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
         client.call("open", runId=manifest.run_id, sessionId=session_id, attemptId=scope["attemptId"], streamId=scope["streamId"], generation=scope["generation"])
         client.call("confirm")  # real no-loss kernel-counter probe
         timeline.set_phase("before")
-        baseline = _sample(adapter, timeline)
+        baseline = _sample(adapter, timeline, now_ns=now_ns)
         if baseline["stats"]["inbound"]["packetsLost"] != 0: raise RuntimeBlocked("Viewer reports loss before fixture injection")
         events = []
         patterns = (("every_100th_for_30s", 30_000), ("all_for_200ms", 200))
@@ -193,82 +197,87 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
                 client.call("confirm")
             event = client.call("apply", runId=manifest.run_id, pattern=pattern, durationMs=duration)
             timeline.set_phase("during")
-            _wait_and_sample(seconds=duration / 1000, adapter=adapter, timeline=timeline, wait=wait)
+            _wait_and_sample(seconds=duration / 1000, adapter=adapter, timeline=timeline, wait=wait, now_ns=now_ns)
             client.call("collect")
             cleared = client.call("clear")
+            clear_observed_ns = now_ns()
             if (cleared.get("cleared") is not True or cleared.get("comment") != event.get("comment")
                     or not isinstance(cleared.get("actualDropCount"), int) or cleared["actualDropCount"] <= 0):
                 raise RuntimeBlocked("fixture loss rule did not clear")
-            events.append(cleared)
+            events.append({**cleared, "clearReplyObservedNs": clear_observed_ns})
+            timeline.clear_barrier(event_handle=str(cleared.get("comment")), observed_ns=clear_observed_ns)
             # Sample each clear's 10s health window.  Keep the first window
             # distinct from the final after segment so a later loss cannot
             # make the sealed RTP sequence non-chronological.
             timeline.set_phase("after" if index == len(patterns) - 1 else "recovery")
-            _wait_and_sample(seconds=recovery_seconds, adapter=adapter, timeline=timeline, wait=wait)
-        if any(not timeline.rtp[phase] for phase in ("before", "during", "after")):
-            raise RuntimeBlocked("raw RTP trace is missing a required loss phase")
-        return {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline}
+            _wait_and_sample(seconds=recovery_seconds, adapter=adapter, timeline=timeline, wait=wait, now_ns=now_ns)
+            if not any(row.get("eventHandle") == cleared.get("comment") for row in timeline.recovery):
+                raise RuntimeBlocked("clear did not produce a fresh PLI/FIR, IDR, and rVFC recovery")
+        result = {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline}
+        # The runner may only read a fixture-owned capture artifact; it never
+        # supplies packet rows or derives gaps from Host diagnostics.
+        reader = getattr(adapter, "read_receiver_capture", None)
+        if callable(reader): result["receiverCapture"] = reader(manifest=manifest, event=events[-1])
+        return result
     finally:
         client.close()
 
 
 def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewer_token: str) -> dict[str, Any]:
-    """Concrete Lab -> authority -> Compose -> control -> seal -> verify path."""
+    """Fixture-first Lab lifecycle; no production TURN bootstrap is reachable."""
     from turn_lab import LabRun, LabTurnBootstrap
     from turn_controlled_scene import ProducerProof
-    from turn_controlled_scene_lab_runner import (PlaywrightLabViewerAdapter,
-                                                   RawLossTimelineCollector,
-                                                   seal_loss_bridge_after_clear, turn_catalog)
+    from turn_controlled_scene_lab_runner import PlaywrightLabViewerAdapter, RawLossTimelineCollector, turn_catalog
     manifest = LossFixtureManifest.parse(json.loads(manifest_path.read_text()))
-    # Prepare the disposable relay before creating Signal/Host.  This path
-    # deliberately does not call LabRun.start(), which obtains production TURN.
     resolved = DockerRuntimeProbe().resolve_fixture_images(manifest.image_digests)
     prepared = prepare_runtime(json.loads(manifest_path.read_text()), runtime, resolved_images=resolved)
     credentials = load_fixture_credentials(runtime / manifest.credentials_file, manifest.realm)
     host, port = str(prepared["turnEndpoint"]).rsplit(":", 1)
-    bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"],
-                                 (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
-    lab = LabRun(); adapter = None
+    bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"], (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
+    lab, holder = LabRun(), {"adapter": None, "authority": None, "scope": None}
     try:
-        identity = lab.start_fixture_turn(bootstrap); lab.start_host()
-        proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
-        adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
-        scope = adapter.viewer_session_identity()
-        lab_turn = lab.selected_turn_identity()
-        selected_leg = adapter.selected_relay_leg(turn_catalog(lab_turn))
-        if (not isinstance(scope, Mapping) or selected_leg is None
-                or {key: selected_leg.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn
-                or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
-            raise RuntimeBlocked("Lab selected TURN does not bind the fixture manifest")
-        authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
-        timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
+        def fixture_start() -> None:
+            # Compose readiness was verified before this callback.  Signal,
+            # Host, and Viewer receive only the generated fixture credential.
+            identity = lab.start_fixture_turn(bootstrap); lab.start_host()
+            proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
+            adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
+            scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
+            selected_leg = adapter.selected_relay_leg(turn_catalog(lab_turn))
+            if (not isinstance(scope, Mapping) or selected_leg is None or {key: selected_leg.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
+                adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
+            holder.update(adapter=adapter, scope=scope)
+        def make_authority() -> Any:
+            if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
+            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
+            holder["authority"] = authority; return authority
         def drive() -> Mapping[str, Any]:
-            # The signed T5 static/identity and T3 trace gates belong to this
-            # LabRun and must pass before the first loss rule can be installed.
+            adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
+            if adapter is None or not isinstance(scope, Mapping) or authority is None: raise RuntimeBlocked("fixture peers or authority are unavailable")
             t5 = _collect_current_t5(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             t3 = _collect_current_t3(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
+            timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
             result = run_controlled_loss_transaction(manifest=manifest, endpoint=prepared["controlEndpoint"], control_token=credentials["controlToken"], adapter=adapter, timeline=timeline)
-            fields = timeline.as_bridge_fields()
-            last = result["events"][-1]
-            bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge",
-                      "t3": t3, "t5": t5,
+            capture_path = runtime / manifest.receiver_evidence_file
+            try: result["receiverCapture"] = json.loads(capture_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc: raise RuntimeBlocked("fixture receiver-side RTP capture is unavailable") from exc
+            fields, last = timeline.as_bridge_fields(), result["events"][-1]
+            bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
                       "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": result["sessionId"],
                                "attemptId": result["scope"]["attemptId"], "generation": result["scope"]["generation"], "streamId": result["scope"]["streamId"],
-                               "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"],
-                               "endedMonotonicNs": last["endedMonotonicNs"], "sequences": fields["sequences"]}, "timeline": fields["timeline"]}
+                               "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"]}, "timeline": fields["timeline"]}
             raw_path, event_path, seal_path = runtime / "raw-bridge.json", runtime / "cleared.json", runtime / manifest.receiver_bridge_file
-            raw_path.write_text(json.dumps(bridge)); event_path.write_text(json.dumps(last))
+            raw_path.write_text(json.dumps(bridge), encoding="utf-8"); event_path.write_text(json.dumps({key: value for key, value in last.items() if key != "clearReplyObservedNs"}), encoding="utf-8")
+            from turn_controlled_scene_lab_runner import seal_loss_bridge_after_clear
             seal_loss_bridge_after_clear(manifest_path=manifest_path, socket_path=Path(prepared["bridgeSocket"]), raw_bridge_path=raw_path, cleared_event_path=event_path, seal_path=seal_path)
             verifier = LossControlClient(prepared["controlEndpoint"], credentials["controlToken"])
-            try:
-                final = verifier.call("verify", runId=manifest.run_id)
-            finally:
-                verifier.close()
+            try: final = verifier.call("verify", runId=manifest.run_id)
+            finally: verifier.close()
             if final.get("status") != "PASS": raise RuntimeBlocked("sealed final loss verification did not pass")
             return {"transaction": result, "final": final}
-        return run_isolated_loss_lifecycle(prepared=prepared, compose_file=Path(__file__).with_name("compose.yaml"), authority=authority,
-                                           run=DockerRuntimeProbe._run_command, drive=drive)
+        return run_isolated_loss_lifecycle(prepared=prepared, compose_file=Path(__file__).with_name("compose.yaml"), authority=None, authority_factory=make_authority, fixture_start=fixture_start, run=DockerRuntimeProbe._run_command, drive=drive)
     finally:
+        adapter = holder.get("adapter")
         if adapter is not None: adapter.close()
         lab.close()
 

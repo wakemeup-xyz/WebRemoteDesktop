@@ -569,8 +569,8 @@ class SignedT3T5ReceiverEvidenceSource:
     from another run cannot make the media-effect gate pass.
     """
     _BRIDGE_FIELDS = frozenset({"schemaVersion", "kind", "t3", "t5", "loss", "timeline", "signature"})
-    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "sequences"})
-    _TIMELINE_FIELDS = frozenset({"feedback", "idr", "paint", "pc"})
+    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture"})
+    _TIMELINE_FIELDS = frozenset({"feedback", "idr", "paint", "pc", "recovery"})
 
     def __init__(self, bridge: Mapping[str, Any] | Callable[[], Mapping[str, Any]], *, verifier: bytes) -> None:
         if (not isinstance(bridge, Mapping) and not callable(bridge)) or not isinstance(verifier, bytes) or not verifier:
@@ -648,32 +648,28 @@ class SignedT3T5ReceiverEvidenceSource:
                 or not isinstance(loss.get("endedMonotonicNs"), int) or loss["endedMonotonicNs"] < loss["startedMonotonicNs"]):
             raise RuntimeError("receiver bridge does not bind the active loss event")
         feedback, idr, paint, pc = timeline["feedback"], timeline["idr"], timeline["paint"], timeline["pc"]
-        if (not isinstance(feedback, list) or not feedback or not all(isinstance(row, Mapping) and row.get("kind") in {"PLI", "FIR"} and isinstance(row.get("monotonicNs"), int) for row in feedback)
+        if (not isinstance(feedback, list) or not feedback or not all(isinstance(row, Mapping) and row.get("kind") in {"PLI", "FIR"} and isinstance(row.get("runnerObservedNs", row.get("monotonicNs")), int) for row in feedback)
                 or not isinstance(idr, Mapping) or not isinstance(paint, Mapping) or not isinstance(pc, list) or len(pc) < 2):
             raise RuntimeError("receiver bridge recovery proof is incomplete")
-        feedback_at = max(row["monotonicNs"] for row in feedback)
-        # Host and Viewer monotonic clocks have unrelated origins.  The Host
-        # ordering ends at the encoded IDR; the decoded rVFC is joined only by
-        # the full T3 FrameKey and wire timestamp, never by subtraction across
-        # clock domains.
         idr_key, paint_key = idr.get("frameKey"), paint.get("frameKey")
-        if (feedback_at < loss["endedMonotonicNs"] or not isinstance(idr.get("hostMonotonicNs"), int)
-                or idr["hostMonotonicNs"] < feedback_at
-                or not isinstance(idr_key, Mapping) or not isinstance(paint_key, Mapping)
+        if (not isinstance(idr_key, Mapping) or not isinstance(paint_key, Mapping)
                 or set(idr_key) != {"attemptId", "generation", "streamId", "captureSeq", "wireTimestamp"}
                 or idr_key != paint_key or idr.get("wireTimestamp") != idr_key.get("wireTimestamp")
-                or paint.get("wireTimestamp") != idr_key.get("wireTimestamp")
-                or not isinstance(paint.get("viewerAcceptedMs"), (int, float))):
-            raise RuntimeError("receiver bridge recovery timeline is invalid")
+                or paint.get("wireTimestamp") != idr_key.get("wireTimestamp")):
+            raise RuntimeError("receiver bridge FrameKey recovery join is invalid")
         pc_ids = {(row.get("id"), row.get("state"), json.dumps(row.get("resolution"), sort_keys=True)) for row in pc if isinstance(row, Mapping)}
-        if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected":
-            raise RuntimeError("receiver bridge PC identity or resolution changed")
-        sequences = loss.get("sequences")
-        if not isinstance(sequences, Mapping) or set(sequences) != {"before", "during", "after"} or not all(isinstance(sequences[key], list) and sequences[key] for key in sequences):
-            raise RuntimeError("receiver bridge requires RTP sequences before, during, and after loss")
-        if not all(isinstance(row, Mapping) and isinstance(row.get("sequence"), int) and isinstance(row.get("rtpTimestamp"), int) for group in sequences.values() for row in group):
-            raise RuntimeError("receiver bridge RTP timeline is malformed")
-        result = [row["sequence"] for group in ("before", "during", "after") for row in sequences[group]]
+        if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected": raise RuntimeError("receiver bridge PC identity or resolution changed")
+        result = _received_sequences_for_capture(loss.get("receiverCapture"), manifest, event)
+        recovery = timeline.get("recovery")
+        if not isinstance(recovery, list) or not recovery:
+            raise RuntimeError("receiver bridge lacks per-pattern clear recovery")
+        for row in recovery:
+            if (not isinstance(row, Mapping) or set(row) != {"eventHandle", "clearReplyObservedNs", "feedbackObservedNs", "idrObservedNs", "paintObservedNs", "tapEpoch"}
+                    or not all(isinstance(row[key], int) for key in ("clearReplyObservedNs", "feedbackObservedNs", "idrObservedNs", "paintObservedNs", "tapEpoch"))
+                    or not isinstance(row.get("eventHandle"), str)
+                    or not (row["clearReplyObservedNs"] <= row["feedbackObservedNs"] <= row["idrObservedNs"] <= row["paintObservedNs"])
+                    or row["paintObservedNs"] - row["clearReplyObservedNs"] > 2_000_000_000):
+                raise RuntimeError("receiver bridge clear recovery is not bounded by runner clock")
         self._verify_t3(bridge.get("t3"), manifest, scope)
         self._verify_t5(bridge.get("t5"), manifest, scope)
         return result
@@ -681,6 +677,40 @@ class SignedT3T5ReceiverEvidenceSource:
     @property
     def authenticated(self) -> bool:
         return True
+
+
+def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
+    """Accept only sealed fixture observer rows, never Host rtp_send diagnostics."""
+    if not isinstance(value, Mapping): raise RuntimeError("receiver capture is unavailable")
+    required = {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest"}
+    if set(value) != required or value.get("source") != "fixture-af-packet" or value.get("direction") != "turn-to-viewer":
+        raise RuntimeError("receiver capture provenance is invalid")
+    if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != manifest.egress_selector:
+        raise RuntimeError("receiver capture does not bind selected relay leg")
+    if not isinstance(value.get("kernelDropCount"), int) or value["kernelDropCount"] <= 0 or not isinstance(value.get("ssrc"), int):
+        raise RuntimeError("receiver capture kernel counter or SSRC is invalid")
+    cursor, groups = value.get("cursor"), value.get("receivedRtp")
+    if (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)
+            or not isinstance(groups, Mapping) or set(groups) != {"before", "during", "after"}):
+        raise RuntimeError("receiver capture cursor or phases are invalid")
+    digest_body = {key: value[key] for key in required - {"captureDigest"}}
+    actual = hashlib.sha256(_canonical_evidence(digest_body)).hexdigest()
+    if not hmac.compare_digest(str(value.get("captureDigest")), actual): raise RuntimeError("receiver capture digest is invalid")
+    rows: list[Mapping[str, Any]] = []
+    for phase in ("before", "during", "after"):
+        group = groups[phase]
+        if not isinstance(group, list) or not group: raise RuntimeError("receiver capture misses a phase")
+        for row in group:
+            if (not isinstance(row, Mapping) or set(row) != {"sequence", "rtpTimestamp", "ssrc", "fixtureClockNs"}
+                    or not all(isinstance(row.get(k), int) for k in row) or row.get("ssrc") != value["ssrc"]):
+                raise RuntimeError("receiver capture RTP row is invalid")
+            rows.append(row)
+    started, ended = event.get("startedMonotonicNs"), event.get("endedMonotonicNs")
+    during = groups["during"]
+    if (not isinstance(started, int) or not isinstance(ended, int) or started > ended
+            or not all(started <= row["fixtureClockNs"] <= ended for row in during)):
+        raise RuntimeError("receiver capture is not in active loss interval")
+    return [row["sequence"] for row in rows]
 
 
 class LabReceiverBridgeAuthority:
@@ -884,7 +914,7 @@ class LossController:
                 raise RuntimeError("selected-leg baseline expired before loss injection")
             if self.active_event is not None:
                 raise RuntimeError("another loss rule is already active")
-            comment = f"wrd-loss:{run_id[:8]}:{session.session_id}:{session.generation}"
+            comment = f"wrd-loss:{run_id[:8]}:{session.session_id}:{session.generation}:{secrets.token_hex(6)}"
             rule = self._rule_for(pattern, comment)
             event = {
                 "schemaVersion": 1, "state": "installing", "comment": comment,
@@ -952,6 +982,11 @@ class LossController:
             event["endedMonotonicNs"] = self._monotonic_ns()
             event["clearReason"] = reason
             event["state"] = "armed"
+            # Persist the just-cleared fixture event for the AF_PACKET sidecar;
+            # it contains only event/kernel data and expires with the volume.
+            if isinstance(self._state_store, DeadlineStateStore):
+                cleared_path = self._state_store.path.with_name("last-cleared.json")
+                cleared_path.write_text(json.dumps(event, sort_keys=True), encoding="utf-8")
             self._state_store.clear()
             self.active_event = None
             self._last_event = event
@@ -1159,6 +1194,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
@@ -1183,22 +1219,32 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "networkName": prepared["networkName"]}
 
 
-def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Path, authority: LabReceiverBridgeAuthority,
+def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Path, authority: LabReceiverBridgeAuthority | None,
+                                authority_factory: Callable[[], LabReceiverBridgeAuthority] | None = None,
+                                fixture_start: Callable[[], None] | None = None,
                                 run: Callable[[list[str]], tuple[int, str, str]], drive: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
-    """T4/T5 owner orchestration with unconditional disposable cleanup."""
+    """Start the disposable TURN fixture before creating any Lab peer.
+
+    ``authority_factory`` permits a fixture-first Lab to create its ephemeral
+    transcript verifier only after Compose has proved the relay ready.
+    """
     project, override = prepared["projectName"], prepared["composeOverride"]
     command = ["docker", "compose", "--project-name", project, "-f", str(compose_file), "-f", override]
-    authority.start()
+    active_authority = authority
     try:
         code, _out, err = run([*command, "up", "-d"])
         if code: raise RuntimeBlocked(f"isolated compose up failed: {err}")
         verify_started_fixture(prepared, run=run)
+        if fixture_start is not None: fixture_start()
+        if active_authority is None:
+            if authority_factory is None: raise RuntimeBlocked("fixture authority is unavailable")
+            active_authority = authority_factory()
+        active_authority.start()
         return dict(drive())
     finally:
-        try:
-            run([*command, "down", "-v"])
+        try: run([*command, "down", "-v"])
         finally:
-            authority.close()
+            if active_authority is not None: active_authority.close()
             bridge_dir = Path(prepared["bridgeSocket"]).parent
             try: bridge_dir.rmdir()
             except OSError: pass

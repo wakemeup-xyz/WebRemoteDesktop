@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import json
 import shutil
 import socket
 import subprocess
@@ -523,10 +524,14 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
         "loss": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "sessionId": event["sessionId"],
                  **scope, "selectedTurn": raw_manifest["selectedTurn"], "eventHandle": event["comment"],
                  "startedMonotonicNs": event["startedMonotonicNs"], "endedMonotonicNs": event["endedMonotonicNs"],
-                 "sequences": {"before": [{"sequence": 10, "rtpTimestamp": 1}, {"sequence": 11, "rtpTimestamp": 2}], "during": [{"sequence": 13, "rtpTimestamp": 4}, {"sequence": 14, "rtpTimestamp": 5}], "after": [{"sequence": 15, "rtpTimestamp": 6}, {"sequence": 16, "rtpTimestamp": 7}]}},
-        "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "hostMonotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "viewerAcceptedMs": 42.0}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}]},
+                 "receiverCapture": {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": raw_manifest["runId"], "eventHandle": event["comment"], "selectedLeg": controller.LossFixtureManifest.parse(raw_manifest).egress_selector, "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 6}, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"] - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"]}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 2}]}, "captureDigest": ""}},
+        "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "hostMonotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "viewerAcceptedMs": 42.0}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}], "recovery": [{"eventHandle": event["comment"], "clearReplyObservedNs": 10, "feedbackObservedNs": 11, "idrObservedNs": 12, "paintObservedNs": 13, "tapEpoch": 1}]},
     }
     bridge.update(changes)
+    capture = bridge.get("loss", {}).get("receiverCapture")
+    if isinstance(capture, dict) and not capture.get("captureDigest"):
+        body = {key: value for key, value in capture.items() if key != "captureDigest"}
+        capture["captureDigest"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     return bridge
 
@@ -799,3 +804,15 @@ def test_runtime_probe_verifies_local_controller_id_labels_and_network_none_cont
     assert resolved.controller_base_digest == labels["org.wrd.turn-loss.base-repodigest"]
     assert resolved.controller_source_sha256 == labels["org.wrd.turn-loss.controller-sha256"]
     assert resolved.controller_dockerfile_sha256 == labels["org.wrd.turn-loss.dockerfile-sha256"]
+
+def test_signed_bridge_rejects_host_sender_sequences_even_when_they_show_a_gap():
+    """Regression: Host rtp_send 1,3 cannot replace receiver AF_PACKET evidence."""
+    raw, backend = manifest(), RecordingBackend()
+    fixture, _event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 2; fixture.collect_receiver_evidence(raw["runId"]); event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    bridge["loss"].pop("receiverCapture")
+    bridge["loss"]["sequences"] = {"before": [{"sequence": 1, "rtpTimestamp": 1}], "during": [{"sequence": 3, "rtpTimestamp": 3}], "after": [{"sequence": 4, "rtpTimestamp": 4}]}
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
