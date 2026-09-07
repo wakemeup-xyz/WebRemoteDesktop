@@ -136,14 +136,23 @@ class _PeakAmbientSampler:
         return str(Path(parts[0]).joinpath(*parts[1:framework_index + 3]))
 
     def _read_snapshot(self) -> dict:
-        completed = subprocess.run(
+        ps_process = subprocess.Popen(
             ("ps", "-axo", "pid=,ppid=,rss=,%cpu=,command="),
             text=True,
-            capture_output=True,
-            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
+        stdout, stderr = ps_process.communicate()
+        if ps_process.returncode:
+            raise subprocess.CalledProcessError(
+                ps_process.returncode,
+                ps_process.args,
+                output=stdout,
+                stderr=stderr,
+            )
+        ps_child_pid = ps_process.pid
         processes = []
-        for row in completed.stdout.splitlines():
+        for row in stdout.splitlines():
             if not row.strip():
                 continue
             parts = row.split(None, 4)
@@ -151,14 +160,17 @@ class _PeakAmbientSampler:
                 raise RuntimeError("ps snapshot row is malformed")
             pid, ppid, rss, cpu, argv = parts
             try:
+                pid_value = int(pid)
+                if pid_value == ps_child_pid:
+                    continue
                 argv_tokens = shlex.split(argv)
                 if not argv_tokens:
                     raise RuntimeError("ps snapshot command is empty")
-                executable_path = self._process_executable_resolver(int(pid))
+                executable_path = self._process_executable_resolver(pid_value)
                 if not isinstance(executable_path, str) or not os.path.isabs(executable_path):
                     raise RuntimeError("kernel executable lookup returned an invalid path")
                 processes.append({
-                    "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
+                    "pid": pid_value, "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
                     "command": argv_tokens[0], "argv": argv,
                     "executablePath": executable_path,
                     "canonicalExecutablePath": os.path.realpath(executable_path),

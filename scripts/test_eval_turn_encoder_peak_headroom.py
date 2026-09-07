@@ -257,8 +257,9 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "31 1 42 99.0 /usr/local/bin/node unmatched'quote\n"
+        ps_child = types.SimpleNamespace(pid=99, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
         sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda pid: "/opt/mysql/mysqld" if pid == 10 else os.path.realpath(sys.executable))
-        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
             sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
         self.assertFalse(sampler.healthy.is_set())
@@ -269,20 +270,47 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n20 1 2 1.0 /usr/bin/python3 -m backend.scripts.sync_worker\n"
+        ps_child = types.SimpleNamespace(pid=99, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
         sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda pid: "/opt/mysql/mysqld" if pid == 10 else os.path.realpath(sys.executable))
-        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
             snapshot = sampler._read_snapshot()
         self.assertEqual([process["command"] for process in snapshot["processes"]], ["/opt/mysql/mysqld", "/usr/bin/python3"])
         self.assertEqual(snapshot["processes"][0]["canonicalExecutablePath"], "/opt/mysql/mysqld")
         self.assertEqual(snapshot["processes"][1]["canonicalExecutablePath"], os.path.realpath(sys.executable))
         self.assertEqual(snapshot["viewerStatus"], {"viewerCount": 0, "relayViewerCount": 0})
 
+    def test_ps_child_pid_is_excluded_before_kernel_executable_lookup(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        ps_child_pid = 99
+        ps_output = f"{ps_child_pid} 1 1 0.0 /bin/ps -axo pid=,ppid=,rss=,%cpu=,command=\n"
+        ps_child = types.SimpleNamespace(pid=ps_child_pid, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
+        resolver = mock.Mock(side_effect=AssertionError("ps child must not reach proc_pidpath"))
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=resolver)
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            snapshot = sampler._read_snapshot()
+        self.assertEqual(snapshot["processes"], [])
+        resolver.assert_not_called()
+
+    def test_non_ps_exited_pid_still_aborts_sampling_inconclusive(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        ps_child_pid = 99
+        ps_output = "98 1 1 0.0 /opt/exited-worker\n" + f"{ps_child_pid} 1 1 0.0 /bin/ps -axo pid=,ppid=,rss=,%cpu=,command=\n"
+        ps_child = types.SimpleNamespace(pid=ps_child_pid, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: (_ for _ in ()).throw(OSError("proc_pidpath unavailable")))
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])
+
     def test_kernel_executable_lookup_failure_aborts_sampling_inconclusive(self):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n"
+        ps_child = types.SimpleNamespace(pid=99, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
         sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: (_ for _ in ()).throw(OSError("proc_pidpath unavailable")))
-        with mock.patch.object(MODULE.subprocess, "run", return_value=types.SimpleNamespace(stdout=ps_output)), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
             sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
         self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])

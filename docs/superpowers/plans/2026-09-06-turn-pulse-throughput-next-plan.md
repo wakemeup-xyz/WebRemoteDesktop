@@ -198,7 +198,7 @@
   预检；第一样本无前序间隔，其余严格记录 0.85–1.15 秒窗口、late/missed tick。
 - [x] 固定并验证 mysqld 的 PID、绝对二进制路径和 start epoch；记录 CPU
   P50/P95/max、稳定阈值和每个 sentinel block 的样本覆盖。
-- [x] 仅额外允许 argv 精确为 `python -m backend.scripts.sync_worker` 的稳定后台；用 macOS `proc_pidpath` 锁定内核实际 executable，要求其 canonical path 匹配 argv[0]，且为矩阵解释器 canonical `Python.framework/Versions/X.Y` 内的官方 `Resources/Python.app/Contents/MacOS/Python`。因此同一安装的 `bin/python3` 入口与 app executable 不会误拒绝，而其他 version/root 与 `/tmp/python` 不会被 allowlist。再锁定 PID/start epoch 并记录全程 CPU/RSS。mysqld 也要求内核实际 executable 与 argv[0] canonical 一致；查询缺失、精确身份缺失或漂移为 INCONCLUSIVE，非精确 sync 与其他 Python/pytest 转入静默预算。
+- [x] 仅额外允许 argv 精确为 `python -m backend.scripts.sync_worker` 的稳定后台；用 macOS `proc_pidpath` 锁定内核实际 executable，要求其 canonical path 匹配 argv[0]，且为矩阵解释器 canonical `Python.framework/Versions/X.Y` 内的官方 `Resources/Python.app/Contents/MacOS/Python`。本次 `ps` 子进程 PID 在解析后、内核查询前被排除，避免它完成后退出造成的必然竞争；其它任意 PID 的查询缺失仍为 INCONCLUSIVE。因此同一安装的 `bin/python3` 入口与 app executable 不会误拒绝，而其他 version/root 与 `/tmp/python` 不会被 allowlist。再锁定 PID/start epoch 并记录全程 CPU/RSS。mysqld 也要求内核实际 executable 与 argv[0] canonical 一致；精确身份缺失或漂移为 INCONCLUSIVE，非精确 sync 与其他 Python/pytest 转入静默预算。
 - [x] `quiescent-external-v1` 仅允许非 allowlisted 进程每样本单项及总和 CPU≤1.0%；schema记录脱敏 PID/class/CPU，超预算即污染中止，不改变 raw P95 或 sentinel 的 relative-only 语义。
 - [x] 将非 allowlisted pytest、非精确 sync、Lab/docker compose 按静默预算 fail-closed；Viewer/relay Viewer 活动为 CONTAMINATED，精确背景身份及健康/采样失败为 INCONCLUSIVE。
 - [x] 每场景前后运行冻结静态 sentinel；仅归档原始 P50/P95、输入/配置 digest
