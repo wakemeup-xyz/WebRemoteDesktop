@@ -659,7 +659,7 @@ class SignedT3T5ReceiverEvidenceSource:
             raise RuntimeError("receiver bridge FrameKey recovery join is invalid")
         pc_ids = {(row.get("id"), row.get("state"), json.dumps(row.get("resolution"), sort_keys=True)) for row in pc if isinstance(row, Mapping)}
         if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected": raise RuntimeError("receiver bridge PC identity or resolution changed")
-        result = _received_sequences_for_capture(loss.get("receiverCapture"), manifest, event)
+        result = _received_sequences_for_capture(loss.get("receiverCapture"), manifest, event, self._verifier)
         recovery = timeline.get("recovery")
         if not isinstance(recovery, list) or not recovery:
             raise RuntimeError("receiver bridge lacks per-pattern clear recovery")
@@ -679,10 +679,10 @@ class SignedT3T5ReceiverEvidenceSource:
         return True
 
 
-def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, event: Mapping[str, Any]) -> list[int]:
+def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, event: Mapping[str, Any], verifier: bytes) -> list[int]:
     """Accept only sealed fixture observer rows, never Host rtp_send diagnostics."""
     if not isinstance(value, Mapping): raise RuntimeError("receiver capture is unavailable")
-    required = {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest"}
+    required = {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest", "authoritySignature"}
     if set(value) != required or value.get("source") != "fixture-af-packet" or value.get("direction") != "turn-to-viewer":
         raise RuntimeError("receiver capture provenance is invalid")
     if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != manifest.egress_selector:
@@ -693,9 +693,13 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
     if (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)
             or not isinstance(groups, Mapping) or set(groups) != {"before", "during", "after"}):
         raise RuntimeError("receiver capture cursor or phases are invalid")
-    digest_body = {key: value[key] for key in required - {"captureDigest"}}
+    digest_body = {key: value[key] for key in required - {"captureDigest", "authoritySignature"}}
     actual = hashlib.sha256(_canonical_evidence(digest_body)).hexdigest()
     if not hmac.compare_digest(str(value.get("captureDigest")), actual): raise RuntimeError("receiver capture digest is invalid")
+    # The authority owns this HMAC; a runner-written JSON capture has no way
+    # to produce it, even when it knows packet-like rows.
+    expected_signature = hmac.new(verifier, _canonical_evidence({key: value[key] for key in required - {"authoritySignature"}}), hashlib.sha256).hexdigest()
+    if not verifier or not hmac.compare_digest(str(value.get("authoritySignature")), expected_signature): raise RuntimeError("receiver capture authority capability is invalid")
     rows: list[Mapping[str, Any]] = []
     for phase in ("before", "during", "after"):
         group = groups[phase]
@@ -729,6 +733,13 @@ class LabReceiverBridgeAuthority:
         self._receipts: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._server: socketserver.ThreadingUnixStreamServer | None = None
+
+    def attest_capture(self, capture: Mapping[str, Any]) -> dict[str, Any]:
+        body = dict(capture); body.pop("authoritySignature", None)
+        # Validate no runner-selected tuple/direction before signing.
+        if body.get("runId") != self.manifest.run_id or body.get("selectedLeg") != self.manifest.egress_selector or body.get("direction") != "turn-to-viewer": raise RuntimeError("capture does not bind fixture selected leg")
+        signature = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
+        return {**body, "authoritySignature": signature}
 
     def seal(self, raw_bridge: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
         # The parent signs the raw bridge only after T3/T5 validation. The raw
@@ -773,7 +784,9 @@ class LabReceiverBridgeAuthority:
                     raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
                     if not isinstance(raw, Mapping) or not isinstance(raw.get("operation"), str):
                         raise ValueError("bridge request is invalid")
-                    if raw["operation"] == "seal" and set(raw) == {"operation", "runId", "bridge", "event"} and raw["runId"] == owner.manifest.run_id:
+                    if raw["operation"] == "capture" and set(raw) == {"operation", "runId", "capture"} and raw["runId"] == owner.manifest.run_id:
+                        result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
+                    elif raw["operation"] == "seal" and set(raw) == {"operation", "runId", "bridge", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.seal(raw["bridge"], raw["event"])
                     elif raw["operation"] == "verify" and set(raw) == {"operation", "runId", "seal", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.verify(raw["seal"], raw["event"])
@@ -1194,7 +1207,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )

@@ -70,6 +70,9 @@ def seal_and_verify_live_bridge(*, manifest: LossFixtureManifest, authority: Any
         raise RuntimeBlocked("loss transaction scope is unavailable")
     capture = transaction.get("receiverCapture")
     if not isinstance(capture, Mapping): raise RuntimeBlocked("fixture receiver capture is unavailable")
+    # Test orchestration may provide a fixture observer result, but only the
+    # Lab authority can attach the acceptance capability used by final verify.
+    if not isinstance(capture.get("authoritySignature"), str): capture = authority.attest_capture(capture)
     bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": dict(t3), "t5": dict(t5),
               "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": transaction.get("sessionId"),
                        "attemptId": scope.get("attemptId"), "generation": scope.get("generation"), "streamId": scope.get("streamId"),

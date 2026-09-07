@@ -29,13 +29,14 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     network_mode: service:turn
-    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json"]
+    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-bridge/authority.sock"]
     cap_drop: [ALL]
     cap_add: [NET_RAW]
     security_opt: [no-new-privileges:true]
     volumes:
       - turn-loss-receiver:/receiver
       - turn-loss-state:/state:ro
+      - turn-loss-bridge:/lab-bridge:ro
 
   loss-watchdog:
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -55,3 +56,4 @@ networks:
 volumes:
   turn-loss-state:
   turn-loss-receiver:
+  turn-loss-bridge:

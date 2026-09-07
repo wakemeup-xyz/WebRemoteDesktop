@@ -105,8 +105,8 @@ def write_capture(path: Path, capture: Mapping[str, Any]) -> None:
 
 class FixtureCaptureService:
     """State-driven observer; runner has no write path into this object."""
-    def __init__(self, *, observer: ReceiverDirectedObserver, manifest: Mapping[str, Any], state_path: Path, output: Path) -> None:
-        self.observer, self.manifest, self.state_path, self.output = observer, dict(manifest), Path(state_path), Path(output)
+    def __init__(self, *, observer: ReceiverDirectedObserver, manifest: Mapping[str, Any], state_path: Path, output: Path, authority_socket: Path) -> None:
+        self.observer, self.manifest, self.state_path, self.output, self.authority_socket = observer, dict(manifest), Path(state_path), Path(output), Path(authority_socket)
         self._ring: list[dict[str, int]] = []; self._event: Mapping[str, Any] | None = None
         self._during: list[dict[str, int]] = []; self._after: list[dict[str, int]] = []
     def _state(self) -> Mapping[str, Any] | None:
@@ -132,18 +132,22 @@ class FixtureCaptureService:
                       "after": [{k:v for k,v in row.items() if k != "arrivalSeq"} for row in self._after if row["ssrc"] == ssrc]}
             if all(groups.values()) and isinstance(event.get("actualDropCount"), int) and event["actualDropCount"] > 0:
                 capture = seal_received_capture(run_id=str(event["runId"]), event_handle=str(event["comment"]), selected_leg=self.observer.selected_leg, kernel_drop_count=event["actualDropCount"], received_rtp=groups, ssrc=ssrc, cursor={"first": self._ring[0]["arrivalSeq"], "last": self._after[-1]["arrivalSeq"]})
-                write_capture(self.output, capture); self._event = None
+                request = {"operation": "capture", "runId": self.manifest["runId"], "capture": capture}
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(2); client.connect(str(self.authority_socket)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+                if not isinstance(reply, Mapping) or reply.get("status") != "ATTESTED" or not isinstance(reply.get("capture"), Mapping): raise RuntimeError("Lab authority refused receiver capture")
+                write_capture(self.output, reply["capture"]); self._event = None
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    observe = sub.add_parser("observe"); observe.add_argument("--manifest", type=Path, required=True); observe.add_argument("--state", type=Path, required=True); observe.add_argument("--output", type=Path, required=True)
+    observe = sub.add_parser("observe"); observe.add_argument("--manifest", type=Path, required=True); observe.add_argument("--state", type=Path, required=True); observe.add_argument("--output", type=Path, required=True); observe.add_argument("--authority-socket", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "observe":
         raw = json.loads(args.manifest.read_text(encoding="utf-8")); selector = raw["udpLegSelector"]
         # Canonical relay egress from manifest's sole relay port.
         leg = selector if selector["sourcePort"] in {57004, 57005} else {"protocol": "udp", "source": selector["destination"], "sourcePort": selector["destinationPort"], "destination": selector["source"], "destinationPort": selector["sourcePort"]}
-        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg), manifest=raw, state_path=args.state, output=args.output)
+        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg), manifest=raw, state_path=args.state, output=args.output, authority_socket=args.authority_socket)
         while True: service.poll()
 

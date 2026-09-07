@@ -532,6 +532,8 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
     if isinstance(capture, dict) and not capture.get("captureDigest"):
         body = {key: value for key, value in capture.items() if key != "captureDigest"}
         capture["captureDigest"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if isinstance(capture, dict) and not capture.get("authoritySignature"):
+        capture["authoritySignature"] = __import__("hmac").new(verifier, json.dumps({key: value for key, value in capture.items() if key != "authoritySignature"}, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     return bridge
 
