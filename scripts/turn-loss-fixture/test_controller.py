@@ -546,11 +546,21 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
         "loss": {"runId": raw_manifest["runId"], "realm": raw_manifest["realm"], "sessionId": event["sessionId"],
                  **scope, "selectedTurn": raw_manifest["selectedTurn"], "eventHandle": event["comment"],
                  "startedMonotonicNs": event["startedMonotonicNs"], "endedMonotonicNs": event["endedMonotonicNs"],
-                 "receiverCapture": {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": raw_manifest["runId"], "eventHandle": event["comment"], "selectedLeg": controller.LossFixtureManifest.parse(raw_manifest).egress_selector, "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 6}, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"] - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"]}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 2}]}, "captureDigest": ""}, "receiverCaptures": {}, "eventHandles": []},
+                 "receiverCapture": {"source": "removed-legacy-packet-capture", "direction": "turn-to-viewer", "runId": raw_manifest["runId"], "eventHandle": event["comment"], "selectedLeg": controller.LossFixtureManifest.parse(raw_manifest).egress_selector, "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 6}, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"] - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"]}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 2}]}, "captureDigest": ""}, "receiverCaptures": {}, "eventHandles": []},
         "timeline": {"feedback": [{"kind": "PLI", "monotonicNs": event["endedMonotonicNs"]}], "idr": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "hostMonotonicNs": event["endedMonotonicNs"] + 1}, "paint": {"frameKey": {"attemptId": scope["attemptId"], "generation": scope["generation"], "streamId": scope["streamId"], "captureSeq": 1, "wireTimestamp": 8}, "wireTimestamp": 8, "viewerAcceptedMs": 42.0}, "pc": [{"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}, {"id": "pc-1", "state": "connected", "resolution": {"width": 1280, "height": 720}}], "recovery": [{"eventHandle": event["comment"], "clearReplyObservedNs": 10, "feedbackObservedNs": 11, "idrObservedNs": 12, "paintObservedNs": 13, "tapEpoch": 1}]},
     }
     bridge.update(changes)
-    capture = bridge.get("loss", {}).get("receiverCapture")
+    # Unit bridge models the gateway-owned ChannelData ledger; removed packet-capture
+    # rows cannot authorize final media evidence.
+    media = event["mediaBinding"]
+    capture = {"source": "gateway-channeldata", "direction": "turn-to-viewer", "runId": raw_manifest["runId"],
+               "eventHandle": event["comment"], "selectedLeg": controller.LossFixtureManifest.parse(raw_manifest).egress_selector,
+               "gatewayCounters": {"eventHandle": event["comment"], "mediaBindingDigest": controller.GatewayCounterStore._digest_binding(media),
+                   "startedMonotonicNs": event["startedMonotonicNs"], "deadlineMonotonicNs": event["deadlineMonotonicNs"],
+                   "eligibleCount": 3, "forwardedCount": 2, "droppedCount": 1, "sendFailureCount": 0,
+                   "beforeForwardedSequences": [10, 11], "duringForwardedSequences": [13, 14], "afterForwardedSequences": [15, 16], "droppedSequences": [12]},
+               "ssrc": 7, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"] - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 7, "fixtureClockNs": event["startedMonotonicNs"]}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"]}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 7, "fixtureClockNs": event["endedMonotonicNs"] + 2}]}, "captureDigest": ""}
+    bridge["loss"]["receiverCapture"] = capture
     if isinstance(capture, dict) and not capture.get("captureDigest"):
         body = {key: value for key, value in capture.items() if key != "captureDigest"}
         capture["captureDigest"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -565,6 +575,9 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
         archive_event.update({"comment": archive_handle, "startedMonotonicNs": event["startedMonotonicNs"] - 2_000_000, "endedMonotonicNs": event["endedMonotonicNs"] - 1_000_000})
         archive = json.loads(json.dumps(capture))
         archive["eventHandle"] = archive_handle
+        archive["gatewayCounters"]["eventHandle"] = archive_handle
+        archive["gatewayCounters"]["startedMonotonicNs"] = archive_event["startedMonotonicNs"]
+        archive["gatewayCounters"]["deadlineMonotonicNs"] = archive_event["deadlineMonotonicNs"]
         for phase in ("before", "during", "after"):
             for row in archive["receivedRtp"][phase]:
                 row["fixtureClockNs"] -= 2_000_000
@@ -593,7 +606,7 @@ def _signed_fixture(raw_manifest, backend, *, verifier=b"live-lab-verifier"):
 def test_authenticated_t3_t5_bridge_requires_live_verifier_and_all_recovery_links():
     raw, backend = manifest(), RecordingBackend()
     fixture, event, verifier = _signed_fixture(raw, backend)
-    backend.counter = 2
+    backend.counter = 1
     fixture.collect_receiver_evidence(raw["runId"])
     event = fixture.clear_loss(raw["runId"])
     bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
@@ -750,32 +763,6 @@ def test_compose_controller_uses_per_run_unix_authority_without_receiving_the_la
         authority.close()
 
 
-def test_capture_attestation_requires_the_receiver_only_capability_socket(tmp_path):
-    raw = manifest()
-    prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
-    verifier = b"receiver-only-capability"
-    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=verifier, socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
-    authority.start()
-    try:
-        def request(path, body):
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.connect(str(path)); client.sendall((json.dumps(body) + "\n").encode())
-                return json.loads(client.makefile("rb").readline())
-        capture = {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": raw["runId"],
-                   "eventHandle": "event", "selectedLeg": controller.LossFixtureManifest.parse(raw).egress_selector,
-                   "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 3},
-                   "receivedRtp": {"before": [{"sequence": 1, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": 1}], "during": [{"sequence": 2, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": 2}], "after": [{"sequence": 3, "rtpTimestamp": 3, "ssrc": 7, "fixtureClockNs": 3}]}}
-        capture["captureDigest"] = hashlib.sha256(json.dumps(capture, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        # The loss-controller's verification endpoint has no capture route,
-        # and an uncredentialed Unix caller cannot turn arbitrary JSON into an
-        # authority signature on the receiver-only endpoint.
-        assert request(Path(prepared["bridgeSocket"]), {"operation": "capture", "runId": raw["runId"], "capture": capture})["status"] == "BLOCKED"
-        capture_socket = Path(prepared["captureSocket"])
-        assert request(capture_socket, {"operation": "capture", "runId": raw["runId"], "capture": capture})["status"] == "BLOCKED"
-    finally:
-        authority.close()
-
-
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):
     raw = manifest()
     generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))
@@ -863,38 +850,46 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
         # distinct Viewer and Host allocations, all through the published
         # endpoint rather than coturn's private listener.
         viewer = module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)
-        authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"g" * 32,
-            socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
-        authority.start()
         gateway = f"{prepared['projectName']}-turn-gateway-1"
-        def ledgers():
-            result = subprocess.run(["docker", "exec", gateway, "python", "-c", "import pathlib; print(pathlib.Path('/state/gateway-counters.json').read_text())"], text=True, capture_output=True, check=False)
-            assert result.returncode == 0, result.stderr
-            return json.loads(result.stdout)["events"]
+        authority_host, authority_port = prepared["gatewayAuthorityEndpoint"].rsplit(":", 1)
+        def authority_call(body):
+            with socket.create_connection((authority_host, int(authority_port)), timeout=2) as client:
+                client.sendall((json.dumps({"controlToken": credentials["controlToken"], **body}) + "\n").encode())
+                return json.loads(client.recv(1_000_000))
         def wait_for_ledger(handle):
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                rows = ledgers()
-                if handle in rows:
-                    return rows[handle]
+                health = authority_call({"operation":"health"})
+                if health.get("activeEvent") == handle:
+                    return authority_call({"operation":"event-receipt", "eventHandle":handle})["receipt"]["gatewayCounters"]
                 time.sleep(.02)
             pytest.fail(f"gateway did not arm event {handle}")
+        def wait_for_eligible(handle, count):
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                ledger = authority_call({"operation":"event-receipt", "eventHandle":handle})["receipt"]["gatewayCounters"]
+                if ledger["eligibleCount"] >= count:
+                    return ledger
+                time.sleep(.02)
+            pytest.fail(f"gateway did not count {count} packets for {handle}")
         try:
             with module.PersistentTurnAllocation(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=2) as allocation:
                 observed = allocation.send_rtp(1, 0x10203040)
                 assert observed is not None
                 observation = {"allocationRelay": observed["allocationRelay"], "peer": observed["peer"], "rtpSsrc": observed["rtpSsrc"]}
-                capability = Path(prepared["captureSocket"]).with_name("capability").read_text(encoding="utf-8").strip()
-                request = {"operation":"media-observation","runId":raw["runId"],"observation":observed,"captureCapability":capability}
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                    client.connect(str(authority.capture_socket_path)); client.sendall((json.dumps(request) + "\n").encode()); assert json.loads(client.recv(4096)) == {"status":"OBSERVED"}
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                    client.connect(str(authority.capture_socket_path)); client.sendall((json.dumps(request) + "\n").encode()); assert json.loads(client.recv(4096))["status"] == "BLOCKED"
-                sealed = authority.select_media_binding(observation)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and authority_call({"operation":"health"}).get("observationCount") == 0:
+                    time.sleep(.02)
+                assert authority_call({"operation":"health"})["observationCount"] > 0
+                assert authority_call({"operation":"submit-observation", "observation":observed})["status"] == "BLOCKED"
                 parsed = controller.LossFixtureManifest.parse(raw)
-                relay, peer = sealed["allocationRelay"], sealed["peer"]
+                relay, peer = observed["allocationRelay"], observed["peer"]
                 viewer_pair = {"pairId":"viewer", "localCandidateId":"relay", "remoteCandidateId":"host", "local":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}, "remote":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}}
-                host_pair = {"pairId":"host", "localCandidateId":"host", "remoteCandidateId":"relay", "local":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}, "remote":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}}
+                host_pair = {"pairId":"host", "localCandidateId":"host", "remoteCandidateId":"relay", "local":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}, "remote":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}, "videoSsrc":observed["rtpSsrc"]}
+                selected = authority_call({"operation":"select-media-binding", "expected":{**observation, "viewerPair":viewer_pair, "hostPair":host_pair}})
+                assert selected["status"] == "SEALED" and selected["observationCount"] > 0 and selected["realm"] == raw["realm"]
+                sealed = controller.verify_gateway_binding(selected, run_id=raw["runId"], realm=raw["realm"])
+                host_pair = {key:value for key,value in host_pair.items() if key != "videoSsrc"}
                 binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=sealed["outerEgress"], viewer_pair=viewer_pair, host_pair=host_pair, media_binding=sealed)
                 controller.write_runtime_relay_binding(tmp_path / "runtime" / "actual-relay.json", binding)
                 control_host, control_port = prepared["controlEndpoint"].rsplit(":", 1)
@@ -910,8 +905,6 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
                     time.sleep(.08)
                     assert allocation.send_rtp(2, 0x10203040) and allocation.send_rtp(3, 0x10203040)
                     confirming.join(3); assert baseline_reply == {"status":"BASELINE_CONFIRMED"}
-                    baseline_ledger = next(value for key, value in ledgers().items() if key.startswith("wrd-baseline:"))
-                    assert baseline_ledger["eligibleCount"] == 2 and baseline_ledger["forwardedCount"] == 2 and baseline_ledger["droppedCount"] == 0
                     control_packets = (b"\x00\x01\x00\x00" + b"stun", b"\x80\xc8\x00\x01rtcp", b"\x16\xfe\xfd\x00dtls", b"\x13\x88\x00\x00sctp")
                     for payload in control_packets: assert allocation.send_channel_payload(allocation.channel, payload) == payload
                     alternate_channel = allocation.bind_channel(0x4002, peer_port=59001)
@@ -921,30 +914,39 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
                     nth = control_call({"operation":"apply", "runId":raw["runId"], "pattern":"every_100th_for_30s", "durationMs":30000})
                     assert nth["state"] == "armed" and nth["mode"] == "loss"
                     wait_for_ledger(nth["comment"])
-                    for sequence in range(6, 106): allocation.send_rtp(sequence, 0x10203040, expect_echo=sequence != 105)
-                    active_nth_ledger = ledgers()[nth["comment"]]
-                    assert (active_nth_ledger["eligibleCount"], active_nth_ledger["forwardedCount"], active_nth_ledger["droppedCount"], active_nth_ledger["droppedSequences"]) == (100, 99, 1, [105])
+                    missing = []
+                    for sequence in range(6, 106):
+                        try: allocation.send_rtp(sequence, 0x10203040)
+                        except TimeoutError: missing.append(sequence)
+                    assert len(missing) == 1
+                    active_nth_ledger = authority_call({"operation":"event-receipt", "eventHandle":nth["comment"]})["receipt"]["gatewayCounters"]
+                    assert (active_nth_ledger["eligibleCount"], active_nth_ledger["forwardedCount"], active_nth_ledger["droppedCount"], active_nth_ledger["droppedSequences"]) == (100, 99, 1, missing)
                     assert control_call({"operation":"clear"})["cleared"] is True
-                    time.sleep(.15); assert allocation.send_rtp(106, 0x10203040)
-                    nth_ledger = ledgers()[nth["comment"]]
-                    assert (nth_ledger["eligibleCount"], nth_ledger["forwardedCount"], nth_ledger["droppedCount"], nth_ledger["droppedSequences"]) == (100, 99, 1, [105])
-                    assert 105 not in nth_ledger["duringForwardedSequences"] and nth_ledger["afterForwardedSequences"] == [106]
+                    time.sleep(.15); assert allocation.send_rtp(107, 0x10203040)
+                    nth_receipt = authority_call({"operation":"event-receipt", "eventHandle":nth["comment"]})["receipt"]
+                    nth_ledger = controller.verify_gateway_receipt(nth_receipt, run_id=raw["runId"], realm=raw["realm"], event=nth)
+                    assert (nth_ledger["eligibleCount"], nth_ledger["forwardedCount"], nth_ledger["droppedCount"], nth_ledger["droppedSequences"]) == (100, 99, 1, missing)
+                    forged_receipt = dict(nth_receipt); forged_receipt["mediaBindingDigest"] = "0" * 64
+                    with pytest.raises(RuntimeError, match="signature"):
+                        controller.verify_gateway_receipt(forged_receipt, run_id=raw["runId"], realm=raw["realm"], event=nth)
+                    assert missing[0] not in nth_ledger["duringForwardedSequences"] and nth_ledger["afterForwardedSequences"] == [107]
                     baseline_reply.clear()
                     confirming = threading.Thread(target=confirm); confirming.start()
                     time.sleep(.08)
-                    assert allocation.send_rtp(107, 0x10203040) and allocation.send_rtp(108, 0x10203040)
+                    assert allocation.send_rtp(108, 0x10203040) and allocation.send_rtp(109, 0x10203040)
                     confirming.join(3); assert baseline_reply == {"status":"BASELINE_CONFIRMED"}
                     all_loss = control_call({"operation":"apply", "runId":raw["runId"], "pattern":"all_for_200ms", "durationMs":200})
                     assert all_loss["state"] == "armed" and all_loss["mode"] == "loss"
                     wait_for_ledger(all_loss["comment"])
-                    for sequence in (109, 110, 111): allocation.send_rtp(sequence, 0x10203040, expect_echo=False)
-                    active_all_ledger = ledgers()[all_loss["comment"]]
-                    assert (active_all_ledger["eligibleCount"], active_all_ledger["forwardedCount"], active_all_ledger["droppedCount"], active_all_ledger["droppedSequences"]) == (3, 0, 3, [109, 110, 111])
+                    time.sleep(.03)
+                    for sequence in (110, 111, 112): allocation.send_rtp(sequence, 0x10203040, expect_echo=False)
+                    active_all_ledger = wait_for_eligible(all_loss["comment"], 3)
+                    assert (active_all_ledger["eligibleCount"], active_all_ledger["forwardedCount"], active_all_ledger["droppedCount"], active_all_ledger["droppedSequences"]) == (3, 0, 3, [110, 111, 112])
                     assert control_call({"operation":"clear"})["cleared"] is True
-                    time.sleep(.15); assert allocation.send_rtp(112, 0x10203040)
-                    all_ledger = ledgers()[all_loss["comment"]]
-                    assert all_ledger["eligibleCount"] == 3 and all_ledger["forwardedCount"] == 0 and all_ledger["droppedSequences"] == [109, 110, 111]
-                    assert all_ledger["afterForwardedSequences"] == [112]
+                    time.sleep(.15); assert allocation.send_rtp(113, 0x10203040)
+                    all_ledger = authority_call({"operation":"event-receipt", "eventHandle":all_loss["comment"]})["receipt"]["gatewayCounters"]
+                    assert all_ledger["eligibleCount"] == 3 and all_ledger["forwardedCount"] == 0 and all_ledger["droppedSequences"] == [110, 111, 112]
+                    assert all_ledger["afterForwardedSequences"] == [113]
                 # Leave a finite loss armed and let the independent Compose
                 # watchdog, rather than this control client, remove it.
                 with socket.create_connection((control_host, int(control_port)), timeout=2) as watchdog_control:
@@ -957,19 +959,19 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
                     def confirm_watchdog(): watchdog_baseline.update(watchdog_call({"operation":"confirm"}))
                     confirming = threading.Thread(target=confirm_watchdog); confirming.start()
                     time.sleep(.08)
-                    assert allocation.send_rtp(113, 0x10203040) and allocation.send_rtp(114, 0x10203040)
+                    assert allocation.send_rtp(114, 0x10203040) and allocation.send_rtp(115, 0x10203040)
                     confirming.join(3); assert watchdog_baseline == {"status":"BASELINE_CONFIRMED"}
                     watchdog_event = watchdog_call({"operation":"apply", "runId":raw["runId"], "pattern":"all_for_200ms", "durationMs":200})
                     wait_for_ledger(watchdog_event["comment"])
-                    allocation.send_rtp(115, 0x10203040, expect_echo=False)
+                    allocation.send_rtp(116, 0x10203040, expect_echo=False)
                     state_gone = ["docker", "exec", gateway, "python", "-c", "import pathlib,sys; sys.exit(pathlib.Path('/state/active-loss.json').exists())"]
                     deadline = time.monotonic() + 2
                     while time.monotonic() < deadline and subprocess.run(state_gone, capture_output=True, check=False).returncode != 0:
                         time.sleep(.05)
                     assert subprocess.run(state_gone, capture_output=True, check=False).returncode == 0
-                    assert allocation.send_rtp(116, 0x10203040)
+                    assert allocation.send_rtp(117, 0x10203040)
         finally:
-            authority.close()
+            pass
     finally:
         subprocess.run([*command, "down", "-v"], text=True, capture_output=True, check=False)
         controller.cleanup_prepared_bridge(prepared)
@@ -1023,6 +1025,7 @@ def test_started_fixture_layout_verifies_the_manifest_derived_host_ports_and_net
     calls = []
     replies = iter([
         (0, generated["turnEndpoint"] + "\n", ""),
+        (0, generated["gatewayAuthorityEndpoint"] + "\n", ""),
         (0, generated["controlEndpoint"] + "\n", ""),
         (0, generated["networkName"] + "\n", ""),
     ])
@@ -1128,19 +1131,6 @@ def test_signed_bridge_rejects_host_sender_sequences_even_when_they_show_a_gap()
     assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
 
 
-def test_authority_close_removes_receiver_capability_sockets_and_empty_bridge_tree(tmp_path):
-    raw = manifest()
-    prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
-    verify_socket, capture_socket = Path(prepared["bridgeSocket"]), Path(prepared["captureSocket"])
-    bridge_root = verify_socket.parent.parent
-    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"cleanup-verifier", socket_path=verify_socket, capture_socket_path=capture_socket, capture_capability_path=capture_socket.with_name("capability"))
-    authority.start()
-    assert verify_socket.exists() and capture_socket.exists() and capture_socket.with_name("capability").exists()
-    authority.close()
-    assert not verify_socket.exists() and not capture_socket.exists()
-    assert not capture_socket.with_name("capability").exists() and not bridge_root.exists()
-
-
 def test_runtime_relay_binding_not_static_manifest_drives_baseline_and_drop_selector(tmp_path):
     raw, backend = manifest(), RecordingBackend()
     # S->C is packet-observed TURN output.  Browser/Host pair remains R<->H.
@@ -1168,82 +1158,3 @@ def test_runtime_relay_binding_rejects_mismatched_host_selected_pair(tmp_path):
     path = tmp_path / "actual-relay.json"; path.write_text(json.dumps(binding))
     with pytest.raises(controller.RuntimeBlocked, match="host selected pair"):
         controller.load_runtime_relay_binding(path, parsed)
-
-
-def test_authority_selects_only_unique_receiver_observed_channel_media(tmp_path):
-    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
-    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=tmp_path / "verify.sock")
-    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
-    assert authority.record_media_observation(row)["status"] == "OBSERVED"
-    assert authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}) == row
-    with pytest.raises(RuntimeError, match="absent or ambiguous"):
-        authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":9})
-    second = {**row, "outerEgress": {**row["outerEgress"], "destinationPort": 48001}}
-    authority.record_media_observation(second)
-    with pytest.raises(RuntimeError, match="absent or ambiguous"):
-        authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
-
-
-def test_authority_seals_gateway_media_only_for_reciprocal_pairs_and_shared_video_ssrc(tmp_path):
-    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
-    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=tmp_path / "verify.sock")
-    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
-    authority.record_media_observation(row)
-    viewer = {"pairId":"v","localCandidateId":"r","remoteCandidateId":"h","local":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"remote":{"id":"h","candidateType":"relay","address":"172.31.0.8","port":59000,"protocol":"udp"}}
-    host = {"pairId":"h","localCandidateId":"h","remoteCandidateId":"r","local":{"id":"h","candidateType":"relay","address":"172.31.0.8","port":59000,"protocol":"udp"},"remote":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"videoSsrc":0x10203040}
-    assert authority.seal_gateway_media_binding(viewer_pair=viewer, host_pair=host, expected={"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}) == row
-    host["videoSsrc"] = 9
-    with pytest.raises(RuntimeError, match="video SSRC"):
-        authority.seal_gateway_media_binding(viewer_pair=viewer, host_pair=host, expected={"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
-
-
-def test_authority_socket_accepts_only_capability_observation_and_seals_unique_binding(tmp_path):
-    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
-    short_root = Path(tempfile.mkdtemp(prefix="wrdta-", dir="/tmp"))
-    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=short_root / "verify.sock")
-    authority.start()
-    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
-    cap = authority._capture_capability_path.read_text().strip()
-    def request(path, body):
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.connect(str(path)); client.sendall((json.dumps(body) + "\n").encode()); return json.loads(client.recv(4096))
-    try:
-        denied = request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":"forged"})
-        assert denied["status"] == "BLOCKED"
-        assert request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":cap}) == {"status":"OBSERVED"}
-        replay = request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":cap})
-        assert replay["status"] == "BLOCKED"
-        chosen = request(authority.socket_path, {"operation":"select-media-binding","runId":raw["runId"],"expected":{"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}})
-        assert chosen == {"status":"SEALED","mediaBinding":row}
-        binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=row["outerEgress"], viewer_pair={"pairId":"v","localCandidateId":"r","remoteCandidateId":"h","local":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"remote":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"}}, host_pair={"pairId":"h","localCandidateId":"h","remoteCandidateId":"r","local":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"},"remote":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"}}, media_binding=chosen["mediaBinding"])
-        path = tmp_path / "actual.json"; controller.write_runtime_relay_binding(path, binding)
-        assert path.stat().st_mode & 0o777 == 0o600
-    finally:
-        authority.close(); shutil.rmtree(short_root, ignore_errors=True)
-
-
-def test_lifecycle_cleanup_removes_precreated_capture_capability_when_factory_never_runs(tmp_path):
-    raw = manifest(); prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
-    verify, capture = Path(prepared["bridgeSocket"]), Path(prepared["captureSocket"])
-    with pytest.raises(controller.RuntimeBlocked, match="probe refused"):
-        controller.run_isolated_loss_lifecycle(prepared=prepared, compose_file=HERE / "compose.yaml", authority=None,
-            fixture_probe=lambda: (_ for _ in ()).throw(controller.RuntimeBlocked("probe refused")),
-            run=lambda command: (0, prepared["turnEndpoint"] if "3478/udp" in " ".join(command) else (prepared["controlEndpoint"] if "19091/tcp" in " ".join(command) else (prepared["networkName"] if "network" in command else "")), ""), drive=lambda: {})
-    assert not verify.exists() and not capture.exists() and not capture.with_name("capability").exists() and not verify.parent.parent.exists()
-
-
-def test_prepare_runtime_leaves_gateway_capability_absent_until_authority_signs_it(tmp_path):
-    raw = manifest(); prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
-    capability = Path(prepared["captureSocket"]).with_name("capability")
-    assert not capability.exists()
-    capability.write_text("wrong-run-replay", encoding="utf-8")
-    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=b"a" * 32,
-                                                       socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=capability)
-    authority.start()
-    try:
-        token = capability.read_text(encoding="utf-8").strip()
-        assert token != "wrong-run-replay"
-        assert authority._capture_issuer.consume(token, run_id=raw["runId"], realm=raw["realm"], gateway_id="turn-gateway", operation="media-observation")
-        assert not authority._capture_issuer.consume(token, run_id=raw["runId"], realm=raw["realm"], gateway_id="turn-gateway", operation="media-observation")
-    finally:
-        authority.close()

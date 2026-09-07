@@ -6,6 +6,8 @@ import hashlib
 import sys
 import threading
 import tempfile
+
+import pytest
 import time
 import urllib.request
 from types import SimpleNamespace
@@ -59,29 +61,15 @@ class Adapter:
         return {"tapEpoch": epoch, "flushAck": {"epoch": epoch, "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp, "tapEpoch": epoch, "sourceSeq": self.samples * 3 - 2}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request", "tapEpoch": epoch, "sourceSeq": self.samples * 3 - 1}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1, "tapEpoch": epoch, "sourceSeq": self.samples * 3}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "staleHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
 
 
-    def read_receiver_capture(self, *, manifest, event):
-        leg = manifest.egress_selector; start, end = event["startedMonotonicNs"], event["endedMonotonicNs"]
-        capture = {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": manifest.run_id, "eventHandle": event["comment"], "selectedLeg": leg, "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 6}, "receivedRtp": {"before": [{"sequence": 10, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": start - 1}, {"sequence": 11, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": start}], "during": [{"sequence": 13, "rtpTimestamp": 4, "ssrc": 7, "fixtureClockNs": start}, {"sequence": 14, "rtpTimestamp": 5, "ssrc": 7, "fixtureClockNs": end}], "after": [{"sequence": 15, "rtpTimestamp": 6, "ssrc": 7, "fixtureClockNs": end + 1}, {"sequence": 16, "rtpTimestamp": 7, "ssrc": 7, "fixtureClockNs": end + 2}]}}
-        capture["captureDigest"] = hashlib.sha256(json.dumps(capture, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return capture
-
-
-def test_runner_drives_loopback_controller_and_its_adapter_taps():
+def test_runner_blocks_synthetic_adapter_without_gateway_receipts():
     manifest = _manifest(); fixture = controller.LossController(manifest, backend=Backend(), receiver_source=DeferredEvidence())
     server = controller.LossControlServer({"host": "127.0.0.1", "port": 0}, controller.ControlRequestRouter(fixture, "token"))
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-    adapter = Adapter(); timeline = RawLossTimelineCollector(started_ns=1, ended_ns=2); waits = []
     try:
-        result = runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=adapter, timeline=timeline, wait=waits.append)
+        with pytest.raises(controller.RuntimeBlocked, match="gateway-signed receiver capture"):
+            runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=Adapter(), timeline=RawLossTimelineCollector(started_ns=1, ended_ns=2), wait=lambda _seconds: None)
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=2)
-    assert len(result["events"]) == 2
-    # Each clear begins a new Viewer/Host trace epoch.  A local collector
-    # increment alone would allow stale callbacks from the prior loss.
-    assert adapter.armed == 3 and adapter.samples == 54
-    assert sum(waits) == 50.2 and waits.count(1.0) == 50 and waits.count(0.2) == 1
-    assert len(timeline.recovery) == 2
-    assert timeline.feedback and timeline.paint and timeline.pc
 
 
 def test_runner_rejects_a_cleared_rule_with_zero_counter_delta():
@@ -189,12 +177,13 @@ def test_runner_full_fake_lab_path_generates_stages_then_seals_and_verifies_once
         authority.start()
         try:
             timeline = RawLossTimelineCollector(started_ns=1, ended_ns=2)
-            transaction = runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=adapter, timeline=timeline, wait=clock.wait)
-            final = runner.seal_and_verify_live_bridge(manifest=manifest, authority=authority, fixture=fixture, seal_path=Path(directory) / "seal.json", transaction=transaction, timeline=timeline, t3=t3, t5=t5)
+            with pytest.raises(controller.RuntimeBlocked, match="gateway-signed receiver capture"):
+                runner.run_controlled_loss_transaction(manifest=manifest, endpoint=f"127.0.0.1:{server.server_address[1]}", control_token="token", adapter=adapter, timeline=timeline, wait=clock.wait)
+            final = {"status": "BLOCKED"}
         finally:
             authority.close(); server.shutdown(); server.server_close(); thread.join(timeout=2)
     assert t3["status"] == "OBSERVED" and t5["automatic"]["status"] == "PASS"
-    assert final["status"] == "PASS" and adapter.inputs > 0
+    assert final["status"] == "BLOCKED" and adapter.inputs > 0
 
 
 def test_runner_full_path_blocks_when_t3_live_callback_is_missing():

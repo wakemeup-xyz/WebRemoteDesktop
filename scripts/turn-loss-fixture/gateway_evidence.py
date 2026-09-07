@@ -1,16 +1,12 @@
-"""Bounded, header-only evidence and capability primitives for the Lab gateway."""
+"""Bounded, header-only evidence primitives for the Lab gateway."""
 from __future__ import annotations
 
-import base64
 import hashlib
-import hmac
 import json
 import os
-import secrets
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Callable
 
 
 _DURATION_MS = {"every_100th_for_30s": 30_000, "all_for_200ms": 200}
@@ -174,39 +170,3 @@ class GatewayCounterStore:
         if not isinstance(event, dict) or set(event) != self._EVENT_FIELDS:
             raise RuntimeError("gateway counter event has invalid schema")
         return {key: (list(value) if isinstance(value, list) else value) for key, value in event.items()}
-
-
-class ReceiverCapabilityIssuer:
-    """The gateway gets a signed, scoped bearer; only authority holds the key."""
-    def __init__(self, key: bytes, *, now_ns: Callable[[], int] = time.monotonic_ns) -> None:
-        if not isinstance(key, bytes) or len(key) < 32:
-            raise ValueError("receiver capability key is invalid")
-        self._key, self._now_ns, self._used = key, now_ns, set()
-
-    def issue(self, *, run_id: str, realm: str, gateway_id: str, operation: str, ttl_ns: int) -> str:
-        now = int(self._now_ns())
-        if not all(isinstance(value, str) and value for value in (run_id, realm, gateway_id, operation)) or not 0 < int(ttl_ns) <= 120_000_000_000:
-            raise ValueError("receiver capability claims are invalid")
-        claims = {"v": 1, "runId": run_id, "realm": realm, "gatewayId": gateway_id, "operation": operation,
-                  "issuedNs": now, "expiresNs": now + int(ttl_ns), "nonce": secrets.token_urlsafe(18)}
-        body = base64.urlsafe_b64encode(_canonical(claims)).decode("ascii").rstrip("=")
-        signature = hmac.new(self._key, body.encode("ascii"), hashlib.sha256).hexdigest()
-        return f"{body}.{signature}"
-
-    def consume(self, capability: str, *, run_id: str, realm: str, gateway_id: str, operation: str, now_ns: int | None = None) -> bool:
-        try:
-            body, signature = capability.split(".", 1)
-            expected = hmac.new(self._key, body.encode("ascii"), hashlib.sha256).hexdigest()
-            padding = "=" * ((-len(body)) % 4)
-            claims = json.loads(base64.urlsafe_b64decode(body + padding))
-            now = int(self._now_ns() if now_ns is None else now_ns)
-        except (AttributeError, ValueError, UnicodeError, json.JSONDecodeError):
-            return False
-        nonce = claims.get("nonce") if isinstance(claims, dict) else None
-        expected_claims = {"runId": run_id, "realm": realm, "gatewayId": gateway_id, "operation": operation}
-        if (not hmac.compare_digest(signature, expected) or not isinstance(nonce, str) or nonce in self._used
-                or any(claims.get(key) != value for key, value in expected_claims.items())
-                or not isinstance(claims.get("expiresNs"), int) or now > claims["expiresNs"]):
-            return False
-        self._used.add(nonce)
-        return True

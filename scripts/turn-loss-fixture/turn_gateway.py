@@ -3,12 +3,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import argparse
+import base64
 from collections import deque
+import hashlib
+import hmac
 import json
 from pathlib import Path
 import selectors
+import secrets
 import socket
+import socketserver
+import threading
 import time
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from gateway_evidence import GatewayCounterStore, GatewayLossCounter
 from turn_wire import COOKIE, WireProtocolError, parse_channel_data, parse_channel_data_video, parse_rtp, parse_stun
@@ -158,6 +167,80 @@ class GatewayMediaState:
         return GatewayDecision(not forward, payload, video.sequence, eligible)
 
 
+class GatewayObservationAuthority:
+    """Gateway-owned passive observations and Ed25519-signed receipts.
+
+    The private key lives only in the gateway process.  Control callers may
+    submit an expectation, but cannot submit observations or write ledger rows.
+    """
+    def __init__(self, *, run_id: str, realm: str, control_token: str) -> None:
+        if not isinstance(run_id, str) or not run_id or not isinstance(realm, str) or not realm or not isinstance(control_token, str) or not control_token:
+            raise ValueError("gateway authority identity is invalid")
+        self.run_id, self.realm, self.instance_id, self._token = run_id, realm, secrets.token_urlsafe(18), control_token
+        self._private = Ed25519PrivateKey.generate()
+        self._public_key = self._private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+        self.instance_digest = hashlib.sha256(self._canonical({"runId": run_id, "realm": realm, "gatewayInstanceId": self.instance_id, "publicKey": self._public_key})).hexdigest()
+        self._observations: list[dict] = []
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _canonical(value: object) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+    def _signed(self, body: dict) -> dict:
+        signature = base64.b64encode(self._private.sign(self._canonical(body))).decode("ascii")
+        return {**body, "signatureAlgorithm": "Ed25519", "signature": signature}
+
+    def manifest(self) -> dict:
+        return {"runId": self.run_id, "realm": self.realm, "gatewayInstanceId": self.instance_id,
+                "publicKey": self._public_key, "instanceDigest": self.instance_digest}
+
+    def observe(self, row: dict) -> None:
+        with self._lock:
+            if row not in self._observations:
+                self._observations.append(dict(row))
+
+    def select(self, expected: dict) -> dict:
+        required = {"allocationRelay", "peer", "rtpSsrc", "viewerPair", "hostPair"}
+        if not isinstance(expected, dict) or set(expected) != required:
+            raise GatewayBlocked("gateway media expectation is invalid")
+        relay, peer, ssrc, viewer, host = expected["allocationRelay"], expected["peer"], expected["rtpSsrc"], expected["viewerPair"], expected["hostPair"]
+        if (not isinstance(relay, dict) or not isinstance(peer, dict) or not isinstance(ssrc, int)
+                or not isinstance(viewer, dict) or not isinstance(host, dict) or not isinstance(host.get("videoSsrc"), int)
+                or host["videoSsrc"] != ssrc):
+            raise GatewayBlocked("gateway browser/Host media expectation is invalid")
+        try:
+            vl, vr, hl, hr = viewer["local"], viewer["remote"], host["local"], host["remote"]
+            endpoint = lambda value: (value["address"], value["port"])
+            if (vl.get("candidateType") != "relay" or hr.get("candidateType") != "relay"
+                    or endpoint(vr) != endpoint(hl) or endpoint(vl) != endpoint(hr)
+                    or endpoint(vl) != (relay["address"], relay["port"])
+                    or endpoint(vr) != (peer["address"], peer["port"])):
+                raise GatewayBlocked("gateway selected pair is not reciprocal")
+        except (KeyError, TypeError):
+            raise GatewayBlocked("gateway selected pair is invalid") from None
+        with self._lock:
+            matches = [row for row in self._observations if all(row.get(key) == expected[key] for key in ("allocationRelay", "peer", "rtpSsrc"))]
+            count = len(self._observations)
+        if len(matches) != 1:
+            raise GatewayBlocked("gateway media observation is absent or ambiguous")
+        digest = hashlib.sha256(self._canonical(matches[0])).hexdigest()
+        body = {**self.manifest(), "mediaBinding": matches[0], "mediaBindingDigest": digest, "observationCount": count}
+        return {"status": "SEALED", **self._signed(body)}
+
+    def receipt(self, event_handle: str, store: GatewayCounterStore) -> dict:
+        count = store.count(event_handle)
+        body = {**self.manifest(), "eventHandle": event_handle, "mediaBindingDigest": count["mediaBindingDigest"], "gatewayCounters": count}
+        return {"status": "SEALED", "receipt": self._signed(body)}
+
+    def status(self) -> dict:
+        with self._lock:
+            return {"status": "READY", **self.manifest(), "observationCount": len(self._observations)}
+
+    def authorized(self, token: object) -> bool:
+        return isinstance(token, str) and hmac.compare_digest(token, self._token)
+
+
 class InlineTurnGateway:
     """Owns public Lab UDP sockets and forwards each TURN client via its own socket.
 
@@ -193,11 +276,26 @@ class InlineTurnGateway:
         self._after_event_id: str | None = None
         self._probe_event_id: str | None = None
         self._completed_event_ids: set[str] = set()
-        self._capture_socket_path: Path | None = None
-        self._capture_capability_path: Path | None = None
-        self._run_id: str | None = None
+        self._authority: GatewayObservationAuthority | None = None
+        self._authority_server: socketserver.ThreadingTCPServer | None = None
+        self._authority_port: int | None = None
         self._observed_media: set[tuple[int, int, int]] = set()
+        self._sealed_binding: dict | None = None
+        self._observation_host: str | None = None
         self._recent_forwarded: deque[int] = deque(maxlen=256)
+
+    def _gateway_address(self) -> str:
+        if self._observation_host is not None:
+            return self._observation_host
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(self.turn_endpoint)
+            self._observation_host = str(probe.getsockname()[0])
+        except OSError:
+            self._observation_host = self.bind_host
+        finally:
+            probe.close()
+        return self._observation_host
 
     def configure_control_bridge(self, *, state_path: Path, relay_binding_path: Path, counter_path: Path) -> None:
         """Attach the Lab-only file bridge after all paths have been fixed.
@@ -209,14 +307,15 @@ class InlineTurnGateway:
         self._relay_binding_path = Path(relay_binding_path)
         self._counter_store = GatewayCounterStore(counter_path)
 
-    def configure_observation_bridge(self, *, capture_socket_path: Path, capture_capability_path: Path, run_id: str) -> None:
-        if not isinstance(run_id, str) or not run_id:
-            raise ValueError("gateway observation run id is invalid")
-        self._capture_socket_path, self._capture_capability_path, self._run_id = Path(capture_socket_path), Path(capture_capability_path), run_id
+    def configure_authority(self, *, run_id: str, realm: str, control_token: str, port: int) -> None:
+        if not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("gateway authority port is invalid")
+        self._authority = GatewayObservationAuthority(run_id=run_id, realm=realm, control_token=control_token)
+        self._authority_port = port
 
     def _record_media_observation(self, *, upstream_id: int, association: TurnAssociation, payload: bytes, source: tuple[str, int], upstream: socket.socket) -> None:
-        """Offer one passive header-only ChannelData observation to authority."""
-        if self._capture_socket_path is None or self._capture_capability_path is None or self._run_id is None:
+        """Record a passive header-only observation inside the gateway process."""
+        if self._authority is None:
             return
         parsed = parse_channel_data(payload)
         if parsed is None or parsed[0] not in association.confirmed_channels:
@@ -227,24 +326,14 @@ class InlineTurnGateway:
         key = (upstream_id, parsed[0], rtp.ssrc)
         if key in self._observed_media:
             return
-        try:
-            capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
-            local = upstream.getsockname()
-            observation = {"outerEgress": {"protocol": "udp", "source": str(source[0]), "sourcePort": int(source[1]),
-                                             "destination": str(local[0]), "destinationPort": int(local[1])},
-                           "allocationRelay": {"address": association.relay[0], "port": association.relay[1]},
-                           "peer": {"address": association.confirmed_channels[parsed[0]][0], "port": association.confirmed_channels[parsed[0]][1]},
-                           "channelNumber": parsed[0], "encapsulation": "channel-data", "rtpSsrc": rtp.ssrc, "payloadType": rtp.payload_type}
-            request = {"operation": "media-observation", "runId": self._run_id, "observation": observation, "captureCapability": capability}
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(.25); client.connect(str(self._capture_socket_path)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode())
-                reply = json.loads(client.makefile("rb").readline(65536))
-            if isinstance(reply, dict) and reply.get("status") == "OBSERVED":
-                self._observed_media.add(key)
-        except (OSError, ValueError, json.JSONDecodeError):
-            # The authority may start after Compose or the one-shot capability
-            # may already be consumed.  Do not affect TURN byte forwarding.
-            return
+        local = upstream.getsockname()
+        observation = {"outerEgress": {"protocol": "udp", "source": str(source[0]), "sourcePort": int(source[1]),
+                                         "destination": str(local[0]), "destinationPort": int(local[1])},
+                       "allocationRelay": {"address": association.relay[0], "port": association.relay[1]},
+                       "peer": {"address": association.confirmed_channels[parsed[0]][0], "port": association.confirmed_channels[parsed[0]][1]},
+                       "channelNumber": parsed[0], "encapsulation": "channel-data", "rtpSsrc": rtp.ssrc, "payloadType": rtp.payload_type}
+        self._authority.observe(observation)
+        self._observed_media.add(key)
 
     @staticmethod
     def _read_json(path: Path) -> dict | None:
@@ -287,7 +376,7 @@ class InlineTurnGateway:
         event_id, pattern = event.get("comment"), event.get("pattern")
         if not isinstance(event_id, str) or not event_id:
             self.media.clear_on_control_disconnect(); self._active_event_id = self._probe_event_id = None; return
-        binding = self._read_json(self._relay_binding_path)
+        binding = self._sealed_binding
         # The controller persists the authority-sealed media tuple in the
         # event before it becomes armed.  A later binding-file replacement
         # must never retarget that event to a different ChannelData stream.
@@ -315,7 +404,12 @@ class InlineTurnGateway:
             self.media.clear_on_control_disconnect(); return
         if self._active_event_id != event_id:
             if not isinstance(pattern, str): return
-            self.media.arm(pattern, now_ns=started)
+            # The controller timestamp binds the ledger, while the finite
+            # packet window begins only once this in-path gateway actually
+            # consumes the armed control state.  Starting at the controller
+            # write time could make the 200ms test expire before the gateway
+            # has observed a single packet.
+            self.media.arm(pattern)
             self._active_event_id = event_id
 
     @property
@@ -323,6 +417,38 @@ class InlineTurnGateway:
         if self.control_port not in self._front:
             raise GatewayBlocked("gateway is not started")
         return self._front[self.control_port].getsockname()[:2]
+
+    def _start_authority_server(self) -> None:
+        authority = self._authority
+        if authority is None or self._authority_port is None:
+            return
+        gateway = self
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self) -> None:
+                try:
+                    raw = json.loads(self.rfile.readline(65536))
+                    if not isinstance(raw, dict) or not authority.authorized(raw.get("controlToken")):
+                        raise GatewayBlocked("gateway authority token is invalid")
+                    operation = raw.get("operation")
+                    if operation == "health" and set(raw) == {"operation", "controlToken"}:
+                        reply = authority.status()
+                        reply["activeEvent"] = gateway._active_event_id
+                        reply["baselineEvent"] = gateway._probe_event_id
+                    elif operation == "select-media-binding" and set(raw) == {"operation", "controlToken", "expected"}:
+                        reply = authority.select(raw["expected"])
+                        gateway._sealed_binding = {"mediaBinding": reply["mediaBinding"]}
+                    elif operation == "event-receipt" and set(raw) == {"operation", "controlToken", "eventHandle"} and isinstance(raw.get("eventHandle"), str) and gateway._counter_store is not None:
+                        reply = authority.receipt(raw["eventHandle"], gateway._counter_store)
+                    else:
+                        raise GatewayBlocked("gateway authority operation is unavailable")
+                except Exception as exc:
+                    reply = {"status": "BLOCKED", "reason": type(exc).__name__}
+                self.wfile.write((json.dumps(reply, sort_keys=True) + "\n").encode())
+        server = socketserver.ThreadingTCPServer((self.bind_host, self._authority_port), Handler)
+        server.allow_reuse_address = True
+        server.daemon_threads = True
+        self._authority_server = server
+        threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def start(self) -> None:
         if self._front:
@@ -346,6 +472,7 @@ class InlineTurnGateway:
         # A requested port 0 becomes its bound port and remains the control one.
         if self.control_port == 0:
             self.control_port = next(iter(self._front))
+        self._start_authority_server()
 
     def client_mappings(self) -> tuple[ClientMapping, ...]:
         return self._table.values()
@@ -356,7 +483,7 @@ class InlineTurnGateway:
             return existing
         upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # bind without connect: data may arrive from coturn's relay ports.
-        upstream.bind((self.bind_host, 0)); upstream.setblocking(False)
+        upstream.bind((self._gateway_address(), 0)); upstream.setblocking(False)
         association = TurnAssociation(client_id=str(mapping.upstream_id))
         self._runtime[mapping.upstream_id] = (upstream, association)
         self._selector.register(upstream, selectors.EVENT_READ, ("upstream", mapping.upstream_id))
@@ -436,6 +563,8 @@ class InlineTurnGateway:
 
     def close(self) -> None:
         self.media.clear_on_control_disconnect()
+        if self._authority_server is not None:
+            self._authority_server.shutdown(); self._authority_server.server_close(); self._authority_server = None
         for sock, _ in self._runtime.values():
             try: self._selector.unregister(sock)
             except Exception: pass
@@ -464,17 +593,21 @@ def _main() -> None:
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--relay-binding", type=Path, required=True)
     parser.add_argument("--counters", type=Path, required=True)
-    parser.add_argument("--capture-authority", type=Path)
-    parser.add_argument("--capture-capability", type=Path)
-    parser.add_argument("--run-id")
+    parser.add_argument("--credentials", type=Path, required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--authority-port", type=int, default=19092)
     arguments = parser.parse_args()
     gateway = InlineTurnGateway(turn_endpoint=(arguments.turn_host, arguments.turn_port), bind_host=arguments.bind_host,
                                 control_port=arguments.control_port, relay_ports=tuple(range(arguments.relay_start, arguments.relay_end + 1)))
     gateway.configure_control_bridge(state_path=arguments.state, relay_binding_path=arguments.relay_binding, counter_path=arguments.counters)
-    if any(value is not None for value in (arguments.capture_authority, arguments.capture_capability, arguments.run_id)):
-        if arguments.capture_authority is None or arguments.capture_capability is None or arguments.run_id is None:
-            raise SystemExit("gateway observation bridge arguments must be supplied together")
-        gateway.configure_observation_bridge(capture_socket_path=arguments.capture_authority, capture_capability_path=arguments.capture_capability, run_id=arguments.run_id)
+    credentials = json.loads(arguments.credentials.read_text(encoding="utf-8"))
+    token = credentials.get("controlToken") if isinstance(credentials, dict) else None
+    if not isinstance(token, str) or not token:
+        raise SystemExit("gateway authority control token is unavailable")
+    realm = credentials.get("realm") if isinstance(credentials, dict) else None
+    if not isinstance(realm, str) or not realm:
+        raise SystemExit("gateway authority realm is unavailable")
+    gateway.configure_authority(run_id=arguments.run_id, realm=realm, control_token=token, port=arguments.authority_port)
     gateway.start()
     try:
         while True: gateway.poll(timeout_s=.1)

@@ -14,7 +14,7 @@ if str(_SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_ROOT))
 
 from controller import (DockerRuntimeProbe, LabReceiverBridgeAuthority, LossFixtureManifest,
-                        RuntimeBlocked, load_fixture_credentials, load_runtime_relay_binding,
+                        RuntimeBlocked, load_fixture_credentials, load_runtime_relay_binding, verify_gateway_binding,
                         prepare_runtime, run_isolated_loss_lifecycle, write_runtime_relay_binding)
 
 
@@ -70,10 +70,13 @@ def seal_and_verify_live_bridge(*, manifest: LossFixtureManifest, authority: Any
         raise RuntimeBlocked("loss transaction scope is unavailable")
     capture = transaction.get("receiverCapture")
     if not isinstance(capture, Mapping): raise RuntimeBlocked("fixture receiver capture is unavailable")
-    # Test orchestration may provide a fixture observer result, but only the
-    # Lab authority can attach the acceptance capability used by final verify.
-    if not isinstance(capture.get("authoritySignature"), str): capture = authority.attest_capture(capture)
-    captures = {handle: (value if isinstance(value, Mapping) and isinstance(value.get("authoritySignature"), str) else authority.attest_capture(value)) for handle, value in dict(transaction.get("receiverCaptures", {})).items()}
+    # Final media effect is bound to an Ed25519 receipt issued by the inline
+    # gateway.  The Lab authority seals T3/T5 only; it never signs packet rows.
+    if not isinstance(capture.get("gatewayReceipt"), Mapping):
+        raise RuntimeBlocked("gateway-signed receiver receipt is unavailable")
+    captures = dict(transaction.get("receiverCaptures", {}))
+    if any(not isinstance(value, Mapping) or not isinstance(value.get("gatewayReceipt"), Mapping) for value in captures.values()):
+        raise RuntimeBlocked("gateway-signed receiver receipt is unavailable")
     bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": dict(t3), "t5": dict(t5),
               "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": transaction.get("sessionId"),
                        "attemptId": scope.get("attemptId"), "generation": scope.get("generation"), "streamId": scope.get("streamId"),
@@ -248,15 +251,9 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
                 raise RuntimeBlocked("clear did not produce a fresh PLI/FIR, IDR, and rVFC recovery")
             collected = client.call("collect")
             capture = collected.get("receiverCapture") if isinstance(collected, Mapping) else None
-            # Test-only adapters retain the old synthetic protocol surface;
-            # the dedicated lifecycle never installs this reader and therefore
-            # cannot turn it into a runtime PASS path.
-            if capture is None:
-                reader = getattr(adapter, "read_receiver_capture", None)
-                if callable(reader):
-                    capture = reader(manifest=manifest, event=events[-1])
-            if not isinstance(capture, Mapping) or capture.get("eventHandle") != cleared.get("comment"):
-                raise RuntimeBlocked("gateway receiver-directed capture did not bind the current event")
+            if (not isinstance(capture, Mapping) or capture.get("eventHandle") != cleared.get("comment")
+                    or not isinstance(capture.get("gatewayReceipt"), Mapping)):
+                raise RuntimeBlocked("gateway-signed receiver capture did not bind the current event")
             events[-1]["receiverCapture"] = dict(capture)
         captures = {event["comment"]: event.pop("receiverCapture") for event in events}
         return {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline, "receiverCaptures": captures, "receiverCapture": captures[events[-1]["comment"]]}
@@ -278,12 +275,17 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
         def seal_gateway_media(inputs: Mapping[str, Any]) -> Mapping[str, Any]:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                request = {"operation": "seal-gateway-media", "runId": manifest.run_id,
-                           "viewerPair": dict(inputs["viewerPair"]), "hostPair": dict(inputs["hostPair"]), "expected": dict(inputs["expected"])}
-                client.settimeout(3); client.connect(str(prepared["bridgeSocket"])); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
-            if not isinstance(reply, Mapping) or reply.get("status") != "SEALED" or not isinstance(reply.get("mediaBinding"), Mapping): raise RuntimeBlocked("gateway authority has no unique browser media binding")
-            return reply["mediaBinding"]
+            endpoint_host, endpoint_port = str(prepared["gatewayAuthorityEndpoint"]).rsplit(":", 1)
+            expected = {**dict(inputs["expected"]), "viewerPair": dict(inputs["viewerPair"]), "hostPair": dict(inputs["hostPair"])}
+            request = {"controlToken": credentials["controlToken"], "operation": "select-media-binding", "expected": expected}
+            with socket.create_connection((endpoint_host, int(endpoint_port)), timeout=3) as client:
+                client.sendall((json.dumps(request, sort_keys=True) + "\n").encode())
+                reply = json.loads(client.makefile("rb").readline(1_000_000))
+            if not isinstance(reply, Mapping) or reply.get("status") != "SEALED" or not isinstance(reply.get("mediaBinding"), Mapping):
+                raise RuntimeBlocked("gateway authority has no unique browser media binding")
+            # The Host/Viewer reciprocal pair and sender SSRC are validated by
+            # the gateway before this signed binding is released.
+            return verify_gateway_binding(reply, run_id=manifest.run_id, realm=manifest.realm)
         def fixture_probe() -> None:
             from turn_udp_probe import channel_media_binding_echo, permission_send_data_echo
             endpoint_host, endpoint_port = str(prepared["turnEndpoint"]).rsplit(":", 1)
@@ -298,8 +300,6 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             # Compose readiness was verified before this callback.  Signal,
             # Host, and Viewer receive only the generated fixture credential.
             identity = lab.start_fixture_turn(bootstrap); lab.start_host()
-            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
-            authority.start(); holder["authority"] = authority
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
@@ -330,13 +330,10 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
             runtime_relay = holder.get("runtimeRelay")
             if not isinstance(runtime_relay, Mapping): raise RuntimeBlocked("actual TURN relay binding is unavailable")
-            authority = holder.get("authority")
-            if not isinstance(authority, LabReceiverBridgeAuthority): raise RuntimeBlocked("receiver authority was not started before Viewer")
-            authority._actual_egress_selector = dict(runtime_relay["actualEgressSelector"])
-            return authority
+            return LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
         def drive() -> Mapping[str, Any]:
-            adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
-            if adapter is None or not isinstance(scope, Mapping) or authority is None: raise RuntimeBlocked("fixture peers or authority are unavailable")
+            adapter, scope = holder["adapter"], holder["scope"]
+            if adapter is None or not isinstance(scope, Mapping): raise RuntimeBlocked("fixture peers are unavailable")
             t5 = _collect_current_t5(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             t3 = _collect_current_t3(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())

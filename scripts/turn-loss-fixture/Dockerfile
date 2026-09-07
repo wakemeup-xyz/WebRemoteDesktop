@@ -1,6 +1,8 @@
 ARG CONTROLLER_BASE_IMAGE
 FROM ${CONTROLLER_BASE_IMAGE}
 
+RUN pip install --no-cache-dir cryptography==44.0.3
+
 WORKDIR /fixture
 COPY controller.py /fixture/controller.py
 COPY udp_echo_peer.py /fixture/udp_echo_peer.py

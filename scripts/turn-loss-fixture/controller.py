@@ -6,6 +6,7 @@ only useful from the ``loss-controller`` sidecar described in compose.yaml.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -24,7 +25,9 @@ import fcntl
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
-from gateway_evidence import GatewayCounterStore, ReceiverCapabilityIssuer
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from gateway_evidence import GatewayCounterStore
 
 
 _SCHEMA_FIELDS = frozenset({
@@ -292,6 +295,54 @@ class RuleBackend(Protocol):
     def read_probe_counter(self, counter_rule: list[str]) -> int: ...
 
 
+def verify_gateway_binding(sealed: Mapping[str, Any], *, run_id: str, realm: str) -> dict[str, Any]:
+    """Verify the gateway-signed unique media selection before persisting it."""
+    if not isinstance(sealed, Mapping) or sealed.get("status") != "SEALED" or sealed.get("signatureAlgorithm") != "Ed25519":
+        raise RuntimeBlocked("gateway media-binding receipt is unavailable")
+    signed = {key: value for key, value in sealed.items() if key not in {"status", "signature", "signatureAlgorithm"}}
+    if (sealed.get("runId") != run_id or sealed.get("realm") != realm or not isinstance(sealed.get("publicKey"), str)
+            or not isinstance(sealed.get("gatewayInstanceId"), str) or not isinstance(sealed.get("instanceDigest"), str)
+            or not isinstance(sealed.get("mediaBinding"), Mapping) or not isinstance(sealed.get("mediaBindingDigest"), str)):
+        raise RuntimeBlocked("gateway media-binding receipt identity is invalid")
+    canonical = lambda value: json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode()
+    instance = {key: sealed[key] for key in ("runId", "realm", "gatewayInstanceId", "publicKey")}
+    if hashlib.sha256(canonical(instance)).hexdigest() != sealed["instanceDigest"]:
+        raise RuntimeBlocked("gateway media-binding instance digest is invalid")
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(sealed["publicKey"])).verify(base64.b64decode(str(sealed.get("signature")), validate=True), canonical(signed))
+    except Exception as exc:
+        raise RuntimeBlocked("gateway media-binding signature is invalid") from exc
+    media = dict(sealed["mediaBinding"])
+    if GatewayCounterStore._digest_binding(media) != sealed["mediaBindingDigest"]:
+        raise RuntimeBlocked("gateway media-binding digest is invalid")
+    return media
+
+
+def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: str, event: Mapping[str, Any]) -> dict[str, Any]:
+    """Verify the gateway's Ed25519 event receipt without trusting shared JSON."""
+    if not isinstance(receipt, Mapping) or receipt.get("signatureAlgorithm") != "Ed25519":
+        raise RuntimeError("gateway receipt signature is unavailable")
+    signed = {key: value for key, value in receipt.items() if key not in {"signature", "signatureAlgorithm"}}
+    if (receipt.get("runId") != run_id or receipt.get("realm") != realm or receipt.get("eventHandle") != event.get("comment")
+            or not isinstance(receipt.get("publicKey"), str) or not isinstance(receipt.get("signature"), str)
+            or not isinstance(receipt.get("gatewayInstanceId"), str) or not isinstance(receipt.get("instanceDigest"), str)):
+        raise RuntimeError("gateway receipt identity is invalid")
+    manifest = {key: receipt[key] for key in ("runId", "realm", "gatewayInstanceId", "publicKey")}
+    canonical = lambda value: json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(canonical(manifest)).hexdigest() != receipt["instanceDigest"]:
+        raise RuntimeError("gateway receipt instance digest is invalid")
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(receipt["publicKey"])).verify(base64.b64decode(receipt["signature"], validate=True), canonical(signed))
+    except Exception as exc:
+        raise RuntimeError("gateway receipt signature is invalid") from exc
+    counter = receipt.get("gatewayCounters")
+    media = event.get("mediaBinding")
+    if (not isinstance(counter, dict) or receipt.get("mediaBindingDigest") != counter.get("mediaBindingDigest")
+            or not isinstance(media, Mapping) or counter.get("mediaBindingDigest") != GatewayCounterStore._digest_binding(media)):
+        raise RuntimeError("gateway receipt counters are invalid")
+    return counter
+
+
 class GatewayCounterBackend:
     """Controller adapter for the inline Lab gateway's header-only counters.
 
@@ -299,8 +350,44 @@ class GatewayCounterBackend:
     controller protocol and final causal verifier remain unchanged.  No
     network namespace capability or packet-filter operation is involved.
     """
-    def __init__(self, counter_path: Path) -> None:
+    def __init__(self, counter_path: Path, *, authority_endpoint: tuple[str, int] | None = None,
+                 control_token: str | None = None, run_id: str | None = None, realm: str | None = None) -> None:
         self._store = GatewayCounterStore(counter_path)
+        self._authority_endpoint, self._control_token = authority_endpoint, control_token
+        self._run_id, self._realm = run_id, realm
+        if authority_endpoint is not None and (not control_token or not run_id or not realm):
+            raise ValueError("gateway receipt verifier identity is incomplete")
+
+    @staticmethod
+    def _canonical(value: Mapping[str, Any]) -> bytes:
+        return json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode()
+
+    def _authority_call(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        if self._authority_endpoint is None or self._control_token is None:
+            raise RuntimeError("gateway receipt authority is unavailable")
+        try:
+            with socket.create_connection(self._authority_endpoint, timeout=2) as client:
+                client.sendall((json.dumps({"controlToken": self._control_token, **dict(body)}, sort_keys=True) + "\n").encode())
+                raw = json.loads(client.makefile("rb").readline(1_000_000))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("gateway receipt authority is unavailable") from exc
+        if not isinstance(raw, dict) or raw.get("status") != "SEALED":
+            raise RuntimeError("gateway receipt authority refused request")
+        return raw
+
+    def _receipt_for(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        event_id = event.get("comment")
+        if not isinstance(event_id, str):
+            raise RuntimeError("gateway event handle is invalid")
+        reply = self._authority_call({"operation": "event-receipt", "eventHandle": event_id})
+        receipt = reply.get("receipt")
+        if not isinstance(receipt, dict):
+            raise RuntimeError("gateway receipt is unavailable")
+        verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event)
+        return receipt
+
+    def _verified_receipt(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        return verify_gateway_receipt(self._receipt_for(event), run_id=str(self._run_id), realm=str(self._realm), event=event)
 
     @staticmethod
     def _marker(argv: list[str]) -> str:
@@ -340,7 +427,8 @@ class GatewayCounterBackend:
         if (not isinstance(event_id, str) or not isinstance(media, Mapping) or not isinstance(selector, Mapping)
                 or not isinstance(started, int) or not isinstance(ended, int) or ended < started):
             raise RuntimeError("gateway event binding is unavailable")
-        count = self._store.count(event_id)
+        receipt = self._receipt_for(event) if self._authority_endpoint is not None else None
+        count = (verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event) if receipt is not None else self._store.count(event_id))
         digest = GatewayCounterStore._digest_binding(media)
         if (count["eventHandle"] != event_id or count["mediaBindingDigest"] != digest
                 or count["startedMonotonicNs"] != started or count["deadlineMonotonicNs"] != event.get("deadlineMonotonicNs")
@@ -361,7 +449,7 @@ class GatewayCounterBackend:
                     "after": rows(count["afterForwardedSequences"], ended + 1)}
         body = {"source": "gateway-channeldata", "direction": "turn-to-viewer", "runId": event.get("runId"),
                 "eventHandle": event_id, "selectedLeg": dict(selector), "gatewayCounters": count,
-                "ssrc": ssrc, "receivedRtp": received}
+                "ssrc": ssrc, "receivedRtp": received, **({"gatewayReceipt": receipt} if receipt is not None else {})}
         body["captureDigest"] = hashlib.sha256(_canonical_evidence(body)).hexdigest()
         return body
 
@@ -835,14 +923,15 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
     """Accept an authority-sealed gateway send ledger, never Host diagnostics."""
     if not isinstance(value, Mapping): raise RuntimeError("receiver capture is unavailable")
     gateway = value.get("source") == "gateway-channeldata"
-    required = ({"source", "direction", "runId", "eventHandle", "selectedLeg", "gatewayCounters", "ssrc", "receivedRtp", "captureDigest", "authoritySignature"}
-                if gateway else {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest", "authoritySignature"})
-    if set(value) != required or value.get("source") not in {"gateway-channeldata", "fixture-af-packet"} or value.get("direction") != "turn-to-viewer":
+    has_receipt = isinstance(value.get("gatewayReceipt"), Mapping)
+    required = ({"source", "direction", "runId", "eventHandle", "selectedLeg", "gatewayCounters", "ssrc", "receivedRtp", "captureDigest", "gatewayReceipt"}
+                if has_receipt else {"source", "direction", "runId", "eventHandle", "selectedLeg", "gatewayCounters", "ssrc", "receivedRtp", "captureDigest", "authoritySignature"})
+    if not gateway or set(value) != required or value.get("direction") != "turn-to-viewer":
         raise RuntimeError("receiver capture provenance is invalid")
     if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != event.get("egressSelector"):
         raise RuntimeError("receiver capture does not bind selected relay leg")
-    counter = value.get("gatewayCounters") if gateway else value.get("kernelDropCount")
-    if (not isinstance(counter, Mapping if gateway else int) or (not gateway and counter <= 0) or not isinstance(value.get("ssrc"), int)
+    counter = value.get("gatewayCounters")
+    if (not isinstance(counter, Mapping) or not isinstance(value.get("ssrc"), int)
             or not isinstance(event.get("mediaBinding"), Mapping) or value.get("ssrc") != event["mediaBinding"].get("rtpSsrc")):
         raise RuntimeError("receiver capture kernel counter or SSRC is invalid")
     if gateway:
@@ -859,17 +948,21 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
                 or len(counter["droppedSequences"]) != counter["droppedCount"]
                 or event.get("actualDropCount") != counter["droppedCount"]):
             raise RuntimeError("gateway counter totals do not bind the cleared event")
+    if has_receipt:
+        receipt_counter = verify_gateway_receipt(value["gatewayReceipt"], run_id=manifest.run_id, realm=manifest.realm, event=event)
+        if receipt_counter != counter:
+            raise RuntimeError("gateway receipt does not bind capture counters")
     cursor, groups = value.get("cursor"), value.get("receivedRtp")
-    if ((not gateway and (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)))
-            or not isinstance(groups, Mapping) or set(groups) != {"before", "during", "after"}):
+    if (not isinstance(groups, Mapping) or set(groups) != {"before", "during", "after"}):
         raise RuntimeError("receiver capture cursor or phases are invalid")
     digest_body = {key: value[key] for key in required - {"captureDigest", "authoritySignature"}}
     actual = hashlib.sha256(_canonical_evidence(digest_body)).hexdigest()
     if not hmac.compare_digest(str(value.get("captureDigest")), actual): raise RuntimeError("receiver capture digest is invalid")
     # The authority owns this HMAC; a runner-written JSON capture has no way
     # to produce it, even when it knows packet-like rows.
-    expected_signature = hmac.new(verifier, _canonical_evidence({key: value[key] for key in required - {"authoritySignature"}}), hashlib.sha256).hexdigest()
-    if not verifier or not hmac.compare_digest(str(value.get("authoritySignature")), expected_signature): raise RuntimeError("receiver capture authority capability is invalid")
+    if not has_receipt:
+        expected_signature = hmac.new(verifier, _canonical_evidence({key: value[key] for key in required - {"authoritySignature"}}), hashlib.sha256).hexdigest()
+        if not verifier or not hmac.compare_digest(str(value.get("authoritySignature")), expected_signature): raise RuntimeError("receiver capture authority signature is invalid")
     rows: list[Mapping[str, Any]] = []
     for phase in ("before", "during", "after"):
         group = groups[phase]
@@ -900,79 +993,13 @@ class LabReceiverBridgeAuthority:
     socket.  The authority's in-memory receipt table makes a copied seal or a
     second run unable to authenticate after the Lab closes.
     """
-    def __init__(self, manifest: LossFixtureManifest, *, verifier: bytes, socket_path: Path,
-                 capture_socket_path: Path | None = None, capture_capability_path: Path | None = None,
-                 actual_egress_selector: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, manifest: LossFixtureManifest, *, verifier: bytes, socket_path: Path) -> None:
         if not isinstance(verifier, bytes) or not verifier:
             raise ValueError("a running Lab transcript verifier is required")
         self.manifest, self._verifier, self.socket_path = manifest, bytes(verifier), Path(socket_path)
-        self.capture_socket_path = Path(capture_socket_path) if capture_socket_path is not None else self.socket_path.with_name("capture-authority.sock")
-        self._capture_capability_path = Path(capture_capability_path) if capture_capability_path is not None else self.capture_socket_path.with_name("capture-capability")
-        self._actual_egress_selector = dict(actual_egress_selector) if actual_egress_selector is not None else dict(manifest.egress_selector)
         self._receipts: dict[str, dict[str, Any]] = {}
-        self._media_observations: list[dict[str, Any]] = []
-        self._gateway_id = "turn-gateway"
-        self._capture_issuer = ReceiverCapabilityIssuer(hashlib.sha256(self._verifier + b":turn-gateway-capability").digest())
         self._lock = threading.RLock()
         self._servers: list[socketserver.ThreadingUnixStreamServer] = []
-
-    def attest_capture(self, capture: Mapping[str, Any]) -> dict[str, Any]:
-        body = dict(capture); body.pop("authoritySignature", None)
-        # Validate no runner-selected tuple/direction before signing.
-        if body.get("runId") != self.manifest.run_id or body.get("selectedLeg") != self._actual_egress_selector or body.get("direction") != "turn-to-viewer": raise RuntimeError("capture does not bind fixture selected leg")
-        signature = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
-        return {**body, "authoritySignature": signature}
-
-    def record_media_observation(self, observation: Mapping[str, Any]) -> dict[str, Any]:
-        """Accept only the receiver-capability's passive ChannelData evidence."""
-        try:
-            outer_raw = observation.get("outerEgress")
-            if not isinstance(outer_raw, Mapping) or set(outer_raw) != {"protocol", "source", "sourcePort", "destination", "destinationPort"} or outer_raw.get("protocol") != "udp":
-                raise ValueError("outer egress schema")
-            def observed_address(value: Any, field: str) -> str:
-                address = ipaddress.ip_address(_require_string(value, field))
-                if address.is_unspecified or address.is_multicast: raise ValueError("outer egress address")
-                return str(address)
-            outer = {"protocol":"udp", "source":observed_address(outer_raw["source"], "outer.source"), "sourcePort":_require_port(outer_raw["sourcePort"], "outer.sourcePort"), "destination":observed_address(outer_raw["destination"], "outer.destination"), "destinationPort":_require_port(outer_raw["destinationPort"], "outer.destinationPort")}
-            relay, peer = observation.get("allocationRelay"), observation.get("peer")
-            if (not isinstance(relay, Mapping) or set(relay) != {"address", "port"} or not isinstance(peer, Mapping) or set(peer) != {"address", "port"}
-                    or not isinstance(observation.get("channelNumber"), int) or not 0x4000 <= observation["channelNumber"] <= 0x7fff
-                    or observation.get("encapsulation") != "channel-data" or not isinstance(observation.get("rtpSsrc"), int) or not 0 <= observation["rtpSsrc"] <= 0xffffffff
-                    or observation.get("payloadType") != 96): raise ValueError("media observation schema")
-            relay_address = str(ipaddress.ip_address(_require_string(relay["address"], "relay.address")))
-            if not (ipaddress.ip_address(relay_address).is_loopback or _require_fixture_ip(relay_address, "relay.address")):
-                raise ValueError("relay address is invalid")
-            row = {"outerEgress": outer, "allocationRelay": {"address": relay_address, "port": _require_port(relay["port"], "relay.port")}, "peer": {"address": _require_fixture_ip(peer["address"], "peer.address"), "port": _require_port(peer["port"], "peer.port")}, "channelNumber": observation["channelNumber"], "encapsulation": "channel-data", "rtpSsrc": observation["rtpSsrc"], "payloadType": 96}
-        except (KeyError, TypeError, ValueError, RuntimeBlocked) as exc: raise RuntimeError("receiver media observation is invalid") from exc
-        with self._lock:
-            if row not in self._media_observations: self._media_observations.append(row)
-        return {"status": "OBSERVED"}
-
-    def select_media_binding(self, expected: Mapping[str, Any]) -> dict[str, Any]:
-        if not isinstance(expected, Mapping) or set(expected) != {"allocationRelay", "peer", "rtpSsrc"}:
-            raise RuntimeError("media selection schema is invalid")
-        with self._lock:
-            matches = [row for row in self._media_observations if row["allocationRelay"] == expected.get("allocationRelay") and row["peer"] == expected.get("peer") and row["rtpSsrc"] == expected.get("rtpSsrc")]
-        if len(matches) != 1: raise RuntimeError("receiver media selection is absent or ambiguous")
-        return dict(matches[0])
-
-    def seal_gateway_media_binding(self, *, viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], expected: Mapping[str, Any]) -> dict[str, Any]:
-        """Join gateway-observed ChannelData to reciprocal browser/Host evidence."""
-        if not isinstance(host_pair, Mapping) or set(host_pair) != _PAIR_FIELDS | {"videoSsrc"} or not isinstance(host_pair.get("videoSsrc"), int):
-            raise RuntimeError("host video SSRC evidence is invalid")
-        viewer, host = _runtime_pair(viewer_pair, "viewerPair"), _runtime_pair({key: value for key, value in host_pair.items() if key != "videoSsrc"}, "hostPair")
-        if not isinstance(expected, Mapping) or expected.get("rtpSsrc") != host_pair["videoSsrc"]:
-            raise RuntimeError("Host and Viewer video SSRC do not agree")
-        endpoint = lambda row: (row["address"], row["port"], row["protocol"])
-        if (viewer["local"]["candidateType"] != "relay" or host["remote"]["candidateType"] != "relay"
-                or endpoint(viewer["local"]) != endpoint(host["remote"])
-                or endpoint(viewer["remote"]) != endpoint(host["local"])):
-            raise RuntimeError("gateway selected pair reciprocity is invalid")
-        media = self.select_media_binding(expected)
-        if ((media["allocationRelay"]["address"], media["allocationRelay"]["port"]) != endpoint(viewer["local"])[:2]
-                or (media["peer"]["address"], media["peer"]["port"]) != endpoint(viewer["remote"])[:2]):
-            raise RuntimeError("gateway media binding does not match selected pair")
-        return media
 
     def seal(self, raw_bridge: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
         # The parent signs the raw bridge only after T3/T5 validation. The raw
@@ -1009,30 +1036,7 @@ class LabReceiverBridgeAuthority:
 
     def start(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        self.capture_socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
-        self.capture_socket_path.unlink(missing_ok=True)
-        # ``prepare_runtime`` deliberately leaves this path absent.  The live
-        # Lab authority atomically replaces any stale or malformed artifact
-        # with its own scoped, one-shot capability immediately before serving.
-        capability = self._capture_issuer.issue(run_id=self.manifest.run_id, realm=self.manifest.realm,
-                                                 gateway_id=self._gateway_id, operation="media-observation",
-                                                 ttl_ns=120_000_000_000)
-        temporary = self._capture_capability_path.with_name(f".{self._capture_capability_path.name}.{os.getpid()}.tmp")
-        try:
-            temporary.write_text(capability, encoding="utf-8")
-            temporary.chmod(0o600)
-            os.replace(temporary, self._capture_capability_path)
-            self._capture_capability_path.chmod(0o600)
-        except OSError as exc:
-            temporary.unlink(missing_ok=True)
-            raise RuntimeError("receiver capture capability cannot be installed") from exc
-        try:
-            capture_capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise RuntimeError("receiver capture capability is unavailable") from exc
-        if not capture_capability:
-            raise RuntimeError("receiver capture capability is unavailable")
         owner = self
         class VerifyHandler(socketserver.StreamRequestHandler):
             def handle(self) -> None:
@@ -1044,60 +1048,24 @@ class LabReceiverBridgeAuthority:
                         result = owner.seal(raw["bridge"], raw["event"])
                     elif raw["operation"] == "verify" and set(raw) == {"operation", "runId", "seal", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.verify(raw["seal"], raw["event"])
-                    elif raw["operation"] == "select-media-binding" and set(raw) == {"operation", "runId", "expected"} and raw["runId"] == owner.manifest.run_id:
-                        result = {"status": "SEALED", "mediaBinding": owner.select_media_binding(raw["expected"])}
-                    elif raw["operation"] == "seal-gateway-media" and set(raw) == {"operation", "runId", "viewerPair", "hostPair", "expected"} and raw["runId"] == owner.manifest.run_id:
-                        result = {"status": "SEALED", "mediaBinding": owner.seal_gateway_media_binding(viewer_pair=raw["viewerPair"], host_pair=raw["hostPair"], expected=raw["expected"])}
                     else:
                         raise ValueError("bridge request schema is invalid")
                 except Exception as exc:
                     result = {"status": "BLOCKED", "reason": type(exc).__name__}
                 self.wfile.write((json.dumps(result, sort_keys=True) + "\n").encode())
-        class CaptureHandler(socketserver.StreamRequestHandler):
-            def handle(self) -> None:
-                try:
-                    raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
-                    operation = raw.get("operation") if isinstance(raw, Mapping) else None
-                    if (not isinstance(raw, Mapping) or raw.get("runId") != owner.manifest.run_id
-                            or operation not in {"capture", "media-observation"}
-                            or not isinstance(raw.get("captureCapability"), str)
-                            or not owner._capture_issuer.consume(raw["captureCapability"], run_id=owner.manifest.run_id,
-                                                                  realm=owner.manifest.realm, gateway_id=owner._gateway_id,
-                                                                  operation=operation)):
-                        raise ValueError("receiver capture capability is invalid")
-                    if raw.get("operation") == "capture" and set(raw) == {"operation", "runId", "capture", "captureCapability"}:
-                        result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
-                    elif raw.get("operation") == "media-observation" and set(raw) == {"operation", "runId", "observation", "captureCapability"}:
-                        result = owner.record_media_observation(raw["observation"])
-                    else: raise ValueError("receiver capture request schema is invalid")
-                except Exception as exc:
-                    result = {"status": "BLOCKED", "reason": type(exc).__name__}
-                self.wfile.write((json.dumps(result, sort_keys=True) + "\n").encode())
-        for path, handler in ((self.socket_path, VerifyHandler), (self.capture_socket_path, CaptureHandler)):
-            server = socketserver.ThreadingUnixStreamServer(str(path), handler)
-            path.chmod(0o600)
-            self._servers.append(server)
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+        server = socketserver.ThreadingUnixStreamServer(str(self.socket_path), VerifyHandler)
+        self.socket_path.chmod(0o600)
+        self._servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def close(self) -> None:
         for server in self._servers:
             server.shutdown(); server.server_close()
         self._servers = []
-        # Only erase the per-run capability and endpoints we created.  Never
-        # recursively remove an arbitrary caller directory; nonempty or
-        # unexpected directories remain for diagnosis rather than deletion.
-        for path in (self.socket_path, self.capture_socket_path, self._capture_capability_path):
-            try: path.unlink(missing_ok=True)
-            except OSError: pass
-        parents = {self.socket_path.parent, self.capture_socket_path.parent}
-        for directory in parents:
-            try: directory.rmdir()
-            except OSError: pass
-        roots = {directory.parent for directory in parents}
-        for root in roots:
-            if root.name.startswith("wrd-turn-loss-"):
-                try: root.rmdir()
-                except OSError: pass
+        try: self.socket_path.unlink(missing_ok=True)
+        except OSError: pass
+        try: self.socket_path.parent.rmdir()
+        except OSError: pass
 
 
 class UnixSealedReceiverEvidenceSource:
@@ -1482,9 +1450,10 @@ def load_fixture_credentials(path: Path, realm: str) -> dict[str, str]:
     return {key: raw[key] for key in required}
 
 
-def _derived_ports(manifest: LossFixtureManifest) -> tuple[int, int]:
+def _derived_ports(manifest: LossFixtureManifest) -> tuple[int, int, int]:
     value = int(hashlib.sha256(manifest.run_id.encode()).hexdigest()[:8], 16)
-    return 20000 + value % 10000, 40000 + value % 10000
+    offset = value % 9000
+    return 20000 + offset, 40000 + offset, 50000 + offset
 
 
 def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resolved_images: ResolvedImageEvidence | None = None) -> dict[str, str]:
@@ -1547,26 +1516,26 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     }, sort_keys=True), encoding="utf-8")
     (runtime_dir / "image-evidence.json").chmod(0o600)
     shutil.copyfile(Path(__file__).with_name("turn-entrypoint.sh"), runtime_dir / "turn-entrypoint.sh")
-    turn_port, control_port = _derived_ports(manifest)
+    turn_port, control_port, authority_port = _derived_ports(manifest)
     (runtime_dir / "compose.generated.yaml").write_text(
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  turn-gateway:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/turn_gateway.py\", \"--turn-host\", \"turn\", \"--turn-port\", \"3478\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--counters\", \"/state/gateway-counters.json\", \"--capture-authority\", \"/lab-capture/authority.sock\", \"--capture-capability\", \"/lab-capture/capability\", \"--run-id\", \"{manifest.run_id}\"]\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {capture_dir}:/lab-capture:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  turn-gateway:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/turn_gateway.py\", \"--turn-host\", \"turn\", \"--turn-port\", \"3478\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--counters\", \"/state/gateway-counters.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--run-id\", \"{manifest.run_id}\", \"--authority-port\", \"19092\"]\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{authority_port}:19092/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/controller.py\", \"serve\", \"--manifest\", \"/runtime/manifest.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--gateway-counters\", \"/state/gateway-counters.json\", \"--gateway-authority-host\", \"turn-gateway\", \"--gateway-authority-port\", \"19092\"]\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/controller.py\", \"watchdog\", \"--manifest\", \"/runtime/manifest.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--state\", \"/state/active-loss.json\", \"--gateway-counters\", \"/state/gateway-counters.json\", \"--gateway-authority-host\", \"turn-gateway\", \"--gateway-authority-port\", \"19092\"]\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
     project = f"turn-loss-{manifest.run_id[:8]}"
-    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "bridgeSocket": str(verify_dir / "authority.sock"), "captureSocket": str(capture_dir / "authority.sock"), "relayBinding": str(runtime_dir / "actual-relay.json")}
+    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "gatewayAuthorityEndpoint": f"127.0.0.1:{authority_port}", "bridgeSocket": str(verify_dir / "authority.sock"), "relayBinding": str(runtime_dir / "actual-relay.json")}
 
 
 def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[str]], tuple[int, str, str]]) -> dict[str, str]:
     """Verify Docker's post-start mappings instead of trusting planned ports."""
-    required = {"projectName", "networkName", "composeOverride", "turnEndpoint", "controlEndpoint"}
+    required = {"projectName", "networkName", "composeOverride", "turnEndpoint", "controlEndpoint", "gatewayAuthorityEndpoint"}
     if set(prepared) < required:
         raise ValueError("prepared fixture layout is incomplete")
-    for service, target, expected in (("turn-gateway", "3478/udp", prepared["turnEndpoint"]), ("loss-controller", "19091/tcp", prepared["controlEndpoint"])):
+    for service, target, expected in (("turn-gateway", "3478/udp", prepared["turnEndpoint"]), ("turn-gateway", "19092/tcp", prepared["gatewayAuthorityEndpoint"]), ("loss-controller", "19091/tcp", prepared["controlEndpoint"])):
         container = f"{prepared['projectName']}-{service}-1"
         template = f'{{{{with index .NetworkSettings.Ports "{target}"}}}}{{{{(index . 0).HostIp}}}}:{{{{(index . 0).HostPort}}}}{{{{end}}}}'
         code, stdout, stderr = run(["docker", "inspect", "--format", template, container])
@@ -1575,23 +1544,21 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
     code, stdout, stderr = run(["docker", "network", "inspect", "--format", "{{.Name}}", prepared["networkName"]])
     if code != 0 or stdout.strip() != prepared["networkName"]:
         raise RuntimeBlocked(f"fixture network is missing or mismatched: {stderr}")
-    return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "networkName": prepared["networkName"]}
+    return {"status": "READY", "turnEndpoint": prepared["turnEndpoint"], "controlEndpoint": prepared["controlEndpoint"], "gatewayAuthorityEndpoint": prepared["gatewayAuthorityEndpoint"], "networkName": prepared["networkName"]}
 
 
 def cleanup_prepared_bridge(prepared: Mapping[str, str]) -> None:
     """Remove only known per-run authority artifacts after every lifecycle exit."""
     try:
-        verify, capture = Path(str(prepared["bridgeSocket"])), Path(str(prepared["captureSocket"]))
+        verify = Path(str(prepared["bridgeSocket"]))
     except (KeyError, TypeError):
         return
-    for path in (verify, capture, capture.with_name("capability")):
-        try: path.unlink(missing_ok=True)
-        except OSError: pass
-    for directory in (verify.parent, capture.parent):
-        try: directory.rmdir()
-        except OSError: pass
+    try: verify.unlink(missing_ok=True)
+    except OSError: pass
+    try: verify.parent.rmdir()
+    except OSError: pass
     root = verify.parent.parent
-    if root == capture.parent.parent and root.name.startswith("wrd-turn-loss-"):
+    if root.name.startswith("wrd-turn-loss-"):
         try: root.rmdir()
         except OSError: pass
 
@@ -1634,9 +1601,11 @@ def _main() -> None:
     for name in ("serve", "watchdog"):
         command = subcommands.add_parser(name)
         command.add_argument("--manifest", type=Path, required=True)
+        command.add_argument("--credentials", type=Path, required=True)
         command.add_argument("--state", type=Path, required=True)
         command.add_argument("--gateway-counters", type=Path, required=True)
-    subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
+        command.add_argument("--gateway-authority-host", default="turn-gateway")
+        command.add_argument("--gateway-authority-port", type=int, default=19092)
     subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
     subcommands.choices["serve"].add_argument("--relay-binding", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
@@ -1698,13 +1667,15 @@ def _main() -> None:
         arguments.output.chmod(0o600)
         print(json.dumps({"status": "SEALED"}, sort_keys=True)); return
     manifest = LossFixtureManifest.parse(json.loads(arguments.manifest.read_text(encoding="utf-8")))
+    credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
     store = DeadlineStateStore(arguments.state)
-    backend: RuleBackend = GatewayCounterBackend(arguments.gateway_counters)
+    backend: RuleBackend = GatewayCounterBackend(arguments.gateway_counters,
+        authority_endpoint=(arguments.gateway_authority_host, arguments.gateway_authority_port),
+        control_token=credentials["controlToken"], run_id=manifest.run_id, realm=manifest.realm)
     if arguments.command == "watchdog":
         while True:
             recover_deadline_state(store, backend)
             time.sleep(0.1)
-    credentials = load_fixture_credentials(arguments.credentials, manifest.realm)
     receiver_source: ReceiverEvidenceSource
     if arguments.receiver_verifier_fd is None:
         # The Compose mount is deliberately not authentication. A runtime that

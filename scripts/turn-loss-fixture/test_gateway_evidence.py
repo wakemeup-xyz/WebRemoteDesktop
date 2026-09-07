@@ -37,21 +37,6 @@ def test_loss_counter_refuses_to_run_past_its_hard_deadline():
     assert counter.seal(ended_ns=210_000_001)["deadlineExpired"] is True
 
 
-def test_receiver_capability_is_short_lived_scoped_and_single_use():
-    evidence = _module()
-    issuer = evidence.ReceiverCapabilityIssuer(b"a" * 32, now_ns=lambda: 100)
-    capability = issuer.issue(run_id="run", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", ttl_ns=50)
-    assert issuer.consume(capability, run_id="run", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", now_ns=125)
-    assert not issuer.consume(capability, run_id="run", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", now_ns=125)
-
-
-def test_receiver_capability_rejects_a_wrong_authority_scope():
-    evidence = _module()
-    issuer = evidence.ReceiverCapabilityIssuer(b"a" * 32, now_ns=lambda: 100)
-    capability = issuer.issue(run_id="run", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", ttl_ns=50)
-    assert not issuer.consume(capability, run_id="other", realm="turn-loss-lab-run", gateway_id="gateway-a", operation="observe", now_ns=125)
-
-
 def test_gateway_counter_store_persists_only_header_counts_for_one_event(tmp_path):
     evidence = _module()
     store = evidence.GatewayCounterStore(tmp_path / "counters.json")

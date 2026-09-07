@@ -75,6 +75,29 @@ def test_gateway_baseline_mode_counts_only_the_sealed_video_without_dropping():
     assert other.eligible is False and other.drop is False
 
 
+def test_gateway_authority_accepts_only_its_own_unique_observation(tmp_path):
+    gateway = _module()
+    authority = gateway.GatewayObservationAuthority(run_id="run", realm="turn-loss-lab-run", control_token="token")
+    relay, peer = {"address": "127.0.0.1", "port": 51000}, {"address": "172.31.0.2", "port": 59000}
+    viewer = {"local": {"candidateType": "relay", **relay}, "remote": {"candidateType": "host", **peer}}
+    host = {"local": {"candidateType": "host", **peer}, "remote": {"candidateType": "relay", **relay}, "videoSsrc": 7}
+    expected = {"allocationRelay": relay, "peer": peer, "rtpSsrc": 7, "viewerPair": viewer, "hostPair": host}
+    with pytest.raises(gateway.GatewayBlocked):
+        authority.select(expected)
+    row = {"outerEgress": {"protocol": "udp", "source": "172.31.0.3", "sourcePort": 3478, "destination": "172.31.0.4", "destinationPort": 40000}, **expected, "channelNumber": 0x4001, "encapsulation": "channel-data", "payloadType": 96}
+    authority.observe(row); authority.observe(row)
+    sealed = authority.select(expected)
+    assert sealed["status"] == "SEALED" and sealed["observationCount"] == 1 and sealed["mediaBinding"] == row
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    import base64
+    signed = {key: value for key, value in sealed.items() if key not in {"status", "signature", "signatureAlgorithm"}}
+    Ed25519PublicKey.from_public_bytes(bytes.fromhex(sealed["publicKey"])).verify(base64.b64decode(sealed["signature"]), authority._canonical(signed))
+    forged = dict(sealed); forged["mediaBindingDigest"] = "0" * 64
+    with pytest.raises(Exception):
+        forged_body = {key: value for key, value in forged.items() if key not in {"status", "signature", "signatureAlgorithm"}}
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(forged["publicKey"])).verify(base64.b64decode(forged["signature"]), authority._canonical(forged_body))
+
+
 def test_gateway_refuses_to_seal_an_unconfirmed_channel():
     gateway = _module()
     state = gateway.GatewayMediaState()
