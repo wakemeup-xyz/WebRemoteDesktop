@@ -134,6 +134,10 @@
 
 ## Task 7（T7）：依据阶段数据优化吞吐，每次一个变量
 
+**实现状态（2026-09-07）：** `turn_capture_experiments.py run` 现以同一冻结 `LabRun` 调用 T3 签名 60 秒采集器与 T5 headed 受控输入入口，并生成 A/B/A、B/A/B 以及独立 trace-off/on 对。汇总只在 Lab 存活且正式 HMAC 校验通过时从原始产物导出；落盘清单会重读并重算两份源文件哈希。真实六会话、trace 对照和所有 runtime 门槛仍为 `NOT_RUN`，生产默认继续 legacy，未授权候选推广。
+
+运行入口（只可在隔离桌面和 T5 fixture 已就绪时执行，当前未执行）：`python scripts/turn_capture_experiments.py run --output artifacts/turn-capture/manifest.json --artifact-dir artifacts/turn-capture/raw --viewer-token-env WRD_LAB_VIEWER_TOKEN --declared-cost-metric prepareP95Ms --opencv-threads 0 --headed-producer --dedicated-desktop --fixture-window`。
+
 **Files:** 修改 `python-host/host.py`、`python-host/test_frame_worker.py`；扩展T4 driver和新 `scripts/turn_capture_experiments.py`、`scripts/test_turn_capture_experiments.py`。实验配置只由T4内部注入，生产默认保持现状直到选中。
 
 **Interface:** `CaptureExperiment(capture_multiplier, opencv_threads)`；`evaluate_repeated_runs(aba, bab, declared_cost_metric) -> dict`按spec5.2的六次run范围计算，只返回candidate-requires-confirmation/INCONCLUSIVE/无收益，不以手写PASS选择。capture策略构造时固定，暂停/profile更新继续读取合法targetFPS。

@@ -49,7 +49,8 @@ if os.environ.get("WRD_LAB_HOST_ENTRY") == "1":
     except ValueError as exc: raise RuntimeError("lab Host requires a non-production loopback SERVER_URL before import") from exc
 
 from h264_encoder_policy import H264SessionPolicy, MediaSessionIntent, PolicySelection, RELAY_LEGACY_V1, resolve_h264_policy
-from host import WebRemoteHost
+from capture_experiment import CaptureExperiment
+from host import ScreenCaptureTrack, WebRemoteHost
 from turn_lab_input_guard import LabInputGuard
 
 
@@ -97,8 +98,9 @@ class VerifiedLabContext:
     selection: PolicySelection
     mode: str
     run_id: str
+    capture_experiment: CaptureExperiment
 
-    def __init__(self, origin: str, realm: str, proof_token: str, epoch: int, selection: PolicySelection, mode: str, run_id: str, *, _seal: object | None = None) -> None:
+    def __init__(self, origin: str, realm: str, proof_token: str, epoch: int, selection: PolicySelection, mode: str, run_id: str, capture_experiment: CaptureExperiment, *, _seal: object | None = None) -> None:
         if _seal is not _CONTEXT_SEAL:
             raise TypeError("VerifiedLabContext is sealed; Signal-issued context required")
         if not _is_loopback_origin(origin):
@@ -109,20 +111,22 @@ class VerifiedLabContext:
             raise ValueError("lab policy selection must be an experiment policy")
         if mode not in {"legacy", "candidate"} or not isinstance(run_id, str) or not run_id:
             raise ValueError("invalid lab mode")
+        if not isinstance(capture_experiment, CaptureExperiment):
+            raise TypeError("lab capture experiment must be immutable CaptureExperiment")
         object.__setattr__(self, "origin", origin); object.__setattr__(self, "realm", realm)
         object.__setattr__(self, "proof_token", proof_token); object.__setattr__(self, "epoch", epoch)
-        object.__setattr__(self, "selection", selection); object.__setattr__(self, "mode", mode); object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "selection", selection); object.__setattr__(self, "mode", mode); object.__setattr__(self, "run_id", run_id); object.__setattr__(self, "capture_experiment", capture_experiment)
 
-def _context_from_consumed_signal(*, origin: str, realm: str, proof_token: str, epoch: int, run_id: str) -> VerifiedLabContext:
+def _context_from_consumed_signal(*, origin: str, realm: str, proof_token: str, epoch: int, run_id: str, capture_experiment: CaptureExperiment) -> VerifiedLabContext:
     """Module-private conversion after the one-time Signal credential is consumed."""
     digest = hashlib.sha256(f"legacy:{origin}:{realm}".encode()).hexdigest()
     policy_id = f"experiment/{digest}"
-    return VerifiedLabContext(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", run_id, _seal=_CONTEXT_SEAL)
+    return VerifiedLabContext(origin, realm, proof_token, epoch, PolicySelection(policy_id, _experiment_resolver(policy_id, digest), digest), "legacy", run_id, capture_experiment, _seal=_CONTEXT_SEAL)
 
 
-def _test_verified_context(*, origin: str, realm: str, proof_token: str, epoch: int) -> VerifiedLabContext:
+def _test_verified_context(*, origin: str, realm: str, proof_token: str, epoch: int, capture_experiment: CaptureExperiment | None = None) -> VerifiedLabContext:
     """Private test seam; production entrypoints consume a Signal credential."""
-    return _context_from_consumed_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch, run_id="test-run")
+    return _context_from_consumed_signal(origin=origin, realm=realm, proof_token=proof_token, epoch=epoch, run_id="test-run", capture_experiment=capture_experiment or CaptureExperiment(2.0, 0))
 
 
 _CANDIDATE_FIELDS = frozenset({"schemaVersion", "mode", "evidencePath", "evidenceSha256", "offlineStatus"})
@@ -343,19 +347,39 @@ class LabWebRemoteHost(WebRemoteHost):
             raise TypeError("LabWebRemoteHost requires VerifiedLabContext")
         return context.selection
 
+    def _create_screen_track(self):
+        context = getattr(self, "_verified_lab_context", None)
+        if not isinstance(context, VerifiedLabContext):
+            raise TypeError("LabWebRemoteHost requires VerifiedLabContext")
+        return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"], max_width=self.media_profile["width"],
+                                  max_height=self.media_profile["height"], frame_trace_context=self._frame_trace_context,
+                                  capture_strategy=context.capture_experiment)
+
+
+def configure_lab_opencv_threads_before_host_start(context: VerifiedLabContext) -> None:
+    if not isinstance(context, VerifiedLabContext):
+        raise TypeError("OpenCV configuration requires VerifiedLabContext")
+    import host as host_module
+    if host_module.HAS_CV2:
+        host_module.cv2.setNumThreads(context.capture_experiment.opencv_threads)
+
 
 def _context_from_verified_binding(raw: Mapping[str, Any], issued: Mapping[str, Any]) -> VerifiedLabContext:
     """Validate every raw Host binding after Signal consumed its credential."""
-    required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "credential"}
+    required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "captureExperiment", "credential"}
     if not isinstance(raw, Mapping) or set(raw) != required:
         raise ValueError("lab Host context has missing or unknown fields")
     origin = _validate_lab_origin(str(raw["origin"]))
-    for field in ("origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId"):
+    for field in ("origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "captureExperiment"):
         if issued.get(field) != raw.get(field):
             raise ValueError("Signal-issued lab context binding mismatch")
     if raw.get("mode") != "legacy":
         raise ValueError("candidate lab Host is unavailable without qualified T2 evidence")
-    context = _context_from_consumed_signal(origin=origin, realm=str(raw["realm"]), proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]), run_id=str(raw["runId"]))
+    try:
+        capture_experiment = CaptureExperiment.from_binding(raw["captureExperiment"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Signal-issued capture experiment is invalid") from exc
+    context = _context_from_consumed_signal(origin=origin, realm=str(raw["realm"]), proof_token=str(raw["proofToken"]), epoch=int(raw["epoch"]), run_id=str(raw["runId"]), capture_experiment=capture_experiment)
     if context.selection.policy_id != raw["policyId"]:
         raise ValueError("Signal-issued lab policy binding mismatch")
     return context
@@ -364,7 +388,7 @@ def _context_from_verified_binding(raw: Mapping[str, Any], issued: Mapping[str, 
 def main() -> int:
     try:
         raw = json.loads(os.environ["WRD_LAB_CONTEXT"])
-        required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "credential"}
+        required = {"origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "captureExperiment", "credential"}
         if not isinstance(raw, dict) or set(raw) != required:
             raise ValueError("lab Host context has missing or unknown fields")
         origin = _validate_lab_origin(str(raw["origin"]))
@@ -375,6 +399,7 @@ def main() -> int:
         with urlopen(consume, timeout=5) as response:
             issued = json.loads(response.read().decode())["context"]
         context = _context_from_verified_binding(raw, issued)
+        configure_lab_opencv_threads_before_host_start(context)
         import asyncio
         asyncio.run(LabWebRemoteHost(context).run())
     except Exception as exc:

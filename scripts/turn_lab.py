@@ -20,6 +20,11 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "python-host") not in sys.path:
+    sys.path.insert(0, str(ROOT / "python-host"))
+from capture_experiment import CaptureExperiment
+
 _PRODUCTION_ORIGIN = "http://127.0.0.1:8080"
 _INTERNAL_TEST_CAPABILITY = object()
 _PROOF_SEAL = object()
@@ -309,8 +314,12 @@ class LabRun:
         if not self._production_client.proof_active(proof):
             raise RuntimeError("production preflight refused: proof lease inactive")
 
-    def start(self, mode: str, manifest: Mapping[str, Any] | None = None) -> LabIdentity:
+    def start(self, mode: str, manifest: Mapping[str, Any] | None = None,
+              capture_experiment: CaptureExperiment | None = None) -> LabIdentity:
         if mode not in {"legacy", "candidate"}: raise ValueError("lab mode must be legacy or candidate")
+        if capture_experiment is not None and not isinstance(capture_experiment, CaptureExperiment):
+            raise TypeError("capture_experiment must be a frozen CaptureExperiment")
+        capture_experiment = capture_experiment or CaptureExperiment(2.0, 0)
         if self._production_client is None: raise RuntimeError("production proof is required before starting a lab")
         if mode == "candidate":
             if manifest is None: raise ValueError("candidate manifest is required")
@@ -381,7 +390,9 @@ class LabRun:
             identity = LabIdentity(run_id, lab.origin, lab_proof["epoch"], realm, str(lab_proof["token"]))
             import hashlib
             digest = hashlib.sha256(f"legacy:{lab.origin}:{realm}".encode()).hexdigest()
-            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch, "mode": mode, "runId": run_id, "policyId": f"experiment/{digest}"}
+            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch,
+                       "mode": mode, "runId": run_id, "policyId": f"experiment/{digest}",
+                       "captureExperiment": capture_experiment.to_binding()}
             context["credential"] = self._issue_host_context(lab, context)
             self._require_owner(token, generation)
             # This is deliberately after every lab-side network operation and
@@ -438,7 +449,9 @@ class LabRun:
             proof_row = self._issue_lab_proof(lab)
             if lab.realm != realm or not isinstance(proof_row.get("epoch"), int) or not isinstance(proof_row.get("token"), str): raise RuntimeError("fixture Lab Signal did not issue an isolated proof")
             identity = LabIdentity(run_id, lab.origin, int(proof_row["epoch"]), realm, str(proof_row["token"]))
-            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch, "mode": "legacy", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
+            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch,
+                       "mode": "legacy", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}",
+                       "captureExperiment": CaptureExperiment(2.0, 0).to_binding()}
             context["credential"] = self._issue_host_context(lab, context)
             self._production_preflight(proof, proof.epoch)
             with self._lock:
@@ -521,7 +534,7 @@ class LabRun:
         finally: selector.close()
 
     def _issue_host_context(self, lab: LabSignal, context: Mapping[str, Any]) -> str:
-        keys = ("origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId")
+        keys = ("origin", "realm", "proofToken", "epoch", "mode", "runId", "policyId", "captureExperiment")
         request = Request(f"{lab.origin}/api/lab-context/issue", method="POST", data=json.dumps({key: context[key] for key in keys}).encode(), headers={"Content-Type": "application/json", "x-wrd-lab-context-secret": lab.context_secret})
         with urlopen(request, timeout=5) as response:
             if response.status != 201: raise RuntimeError("lab Signal refused context issue")
@@ -671,7 +684,7 @@ class LabRun:
             time.sleep(.05)
         return None
 
-    def start_host(self) -> subprocess.Popen[Any]:
+    def start_host(self, *, trace_enabled: bool = True) -> subprocess.Popen[Any]:
         # Snapshot under lock, make all HTTP calls without it, then claim the
         # exact generation again.  A close racing Popen leaves at most a child
         # which this method immediately reaps before returning.
@@ -680,11 +693,12 @@ class LabRun:
             token, generation, identity, proof, runtime_dir, context = self._run_token, self._generation, self.identity, self._production_proof, self._runtime_dir, dict(self._context)
             host_secret = self._host_secret
         if token is None or (proof is None and not self._fixture_turn_run): raise RuntimeError("lab identity is required before starting a Host")
+        if not isinstance(trace_enabled, bool): raise TypeError("trace_enabled must be a bool")
         try:
             # Fixture TURN changes only transport endpoints.  The Host still
             # needs a fresh sealed production proof immediately before spawn.
             self._production_preflight(proof, proof.epoch)
-            env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1", "WRD_FRAME_TRACE_DETAIL": "1", "WRD_LAB_LOSS_TRACE": "1"})
+            env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1", "WRD_FRAME_TRACE_DETAIL": "1" if trace_enabled else "0", "WRD_LAB_LOSS_TRACE": "1"})
             with self._spawn_lock:
                 with self._lock:
                     if not self._owns_locked(token, generation):

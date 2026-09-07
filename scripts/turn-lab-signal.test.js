@@ -117,14 +117,15 @@ test('lab signal creates a private runtime with random temporary authentication'
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ ...admission, realm: 'production' }),
     });
     assert.deepEqual(await mismatchedRelease.json(), { released: false });
+    const captureExperiment = { captureMultiplier: 2, opencvThreads: 0 };
     const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment }),
     });
     const credential = (await issue.json()).context.credential;
     const secondIssue = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment }),
     });
     assert.equal(secondIssue.status, 201);
     const secondCredential = (await secondIssue.json()).context.credential;
@@ -145,7 +146,7 @@ test('lab signal creates a private runtime with random temporary authentication'
     assert.equal(replay.status, 409);
     const badToken = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: 'swapped', epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: 'swapped', epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment }),
     });
     assert.equal(badToken.status, 400);
     for (const changed of [
@@ -153,13 +154,13 @@ test('lab signal creates a private runtime with random temporary authentication'
     ]) {
       const rejected = await fetch(`${lab.origin}/api/lab-context/issue`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-        body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', ...changed }),
+        body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment, ...changed }),
       });
       assert.equal(rejected.status, 400);
     }
     const unknown = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', extra: true }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: 0, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment, extra: true }),
     });
     assert.equal(unknown.status, 400);
     const released = await fetch(`${lab.origin}/api/proof-admission/release`, {
@@ -189,7 +190,7 @@ test('lab context burns when its viewer proof was consumed before host startup',
     const admission = (await proofResponse.json()).admission;
     const issue = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-stale', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-stale', policyId: 'experiment/test', captureExperiment: { captureMultiplier: 2, opencvThreads: 0 } }),
     });
     const credential = (await issue.json()).context.credential;
     assert.equal(lab.runtime.signalingRuntime.admitProofViewer(admission), true);
@@ -215,7 +216,7 @@ test('controlled input binding stays fail-closed until an independent Host guard
     const admission = (await proof.json()).admission;
     const issued = await fetch(`${lab.origin}/api/lab-context/issue`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-wrd-lab-context-secret': lab.contextSecret },
-      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test' }),
+      body: JSON.stringify({ origin: lab.origin, realm: lab.realm, proofToken: admission.token, epoch: admission.epoch, mode: 'legacy', runId: 'run-1', policyId: 'experiment/test', captureExperiment: { captureMultiplier: 2, opencvThreads: 0 } }),
     });
     const credential = (await issued.json()).context.credential;
     assert.equal((await fetch(`${lab.origin}/api/lab-context/consume`, {

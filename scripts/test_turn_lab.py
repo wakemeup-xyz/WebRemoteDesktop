@@ -18,6 +18,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts")]
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent  # noqa: E402
+from capture_experiment import CaptureExperiment  # noqa: E402
+import host as host_module  # noqa: E402
 from turn_lab import (LabIdentity, LabRun, LabTurnBootstrap, ProductionAdmissionClient, ProductionProof, _make_test_lab_run, _make_test_production_client, validate_lab_origin)  # noqa: E402
 import turn_lab as turn_lab_module  # noqa: E402
 import turn_lab_host as turn_lab_host_module  # noqa: E402
@@ -133,7 +135,29 @@ def _wait(condition):
 def test_lab_host_requires_verified_context_and_rejects_viewer_selection():
     with pytest.raises(TypeError): LabWebRemoteHost()  # type: ignore[call-arg]
     with pytest.raises(TypeError): LabWebRemoteHost(_context(), policy_selection="candidate")  # type: ignore[call-arg]
-    with pytest.raises(TypeError): VerifiedLabContext("http://127.0.0.1:40123", "lab-r", "x", 0, _context().selection, "legacy")
+    with pytest.raises(TypeError): VerifiedLabContext("http://127.0.0.1:40123", "lab-r", "x", 0, _context().selection, "legacy", "run", CaptureExperiment(2, 0))
+
+
+def test_lab_capture_factory_and_opencv_derive_only_from_the_sealed_context(monkeypatch):
+    context = _test_verified_context(origin="http://127.0.0.1:40123", realm="lab-test-realm", proof_token="proof-token", epoch=4,
+                                     capture_experiment=CaptureExperiment(1, 1))
+    created, calls = {}, []
+    class Track:
+        def __init__(self, **kwargs): created.update(kwargs)
+    class Cv2:
+        @staticmethod
+        def setNumThreads(value): calls.append(value)
+    monkeypatch.setattr(turn_lab_host_module, "ScreenCaptureTrack", Track)
+    monkeypatch.setattr(host_module, "HAS_CV2", True)
+    monkeypatch.setattr(host_module, "cv2", Cv2)
+    lab_host = object.__new__(LabWebRemoteHost)
+    lab_host._verified_lab_context = context
+    lab_host.media_profile = {"target_fps": 20, "width": 1280, "height": 720}
+    lab_host._frame_trace_context = object()
+    lab_host._create_screen_track()
+    turn_lab_host_module.configure_lab_opencv_threads_before_host_start(context)
+    assert created["capture_strategy"] is context.capture_experiment
+    assert calls == [1]
 
 
 def test_strict_production_client_accepts_the_legacy_token_epoch_admission_shape_as_production(monkeypatch, proof_fixture):
@@ -321,7 +345,7 @@ def test_public_lab_paths_cannot_inject_or_forge_proofs(tmp_path):
 
 def test_host_context_binding_rejects_token_realm_epoch_policy_mode_unknown_and_replay_shape():
     context = _context()
-    raw = {"origin": context.origin, "realm": context.realm, "proofToken": context.proof_token, "epoch": context.epoch, "mode": "legacy", "runId": "run-1", "policyId": context.selection.policy_id, "credential": "one-time"}
+    raw = {"origin": context.origin, "realm": context.realm, "proofToken": context.proof_token, "epoch": context.epoch, "mode": "legacy", "runId": "run-1", "policyId": context.selection.policy_id, "captureExperiment": context.capture_experiment.to_binding(), "credential": "one-time"}
     issued = {key: value for key, value in raw.items() if key != "credential"}
     assert _context_from_verified_binding(raw, issued).selection.policy_id == context.selection.policy_id
     for field, value in [("proofToken", "swapped"), ("realm", "lab-other"), ("epoch", 5), ("policyId", "experiment/other"), ("mode", "candidate")]:

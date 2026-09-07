@@ -108,6 +108,10 @@ recovery gates remain `NOT RUN` pending the Task 9 real selected-relay path.
 
 ## Task 7 capture-cost probe (2026-09-06)
 
+### Follow-up implementation status (2026-09-07)
+
+The capture experiment runner now starts each isolated LabRun with a sealed 1x/2x and OpenCV 0/1 context, invokes the signed T3 60-second collector and the headed T5 controlled-input driver, then verifies both formal HMAC artifacts before deriving a summary. Its durable manifest rereads source files and recomputes their SHA-256 bindings. The six-session matrix and separate trace-off/on pair remain `NOT_RUN`; unavailable T3 guard metrics or T5 fixture evidence produce `BLOCKED`, never a candidate. Production legacy cadence is unchanged.
+
 `scripts/benchmark-turn-capture.py` was run on the local 1792x1120 desktop,
 scaled to the relay-default 1152x720 output, with a 20 FPS target and four
 seconds per capture cadence. It opened MSS only: it did not start Host, a

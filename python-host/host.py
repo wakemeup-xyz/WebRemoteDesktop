@@ -52,6 +52,7 @@ from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
 from observability import configure_host_logging, emit_host_event, summarize_input_event
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
+from capture_experiment import CaptureExperiment
 
 if __name__ == "__main__":
     configure_host_logging()
@@ -1036,8 +1037,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     kind = "video"
 
-    def __init__(self, target_fps=20, max_width=1280, max_height=720, *, frame_trace_context=None):
+    def __init__(self, target_fps=20, max_width=1280, max_height=720, *, frame_trace_context=None,
+                 capture_strategy=None):
         super().__init__()
+        if capture_strategy is not None and not isinstance(capture_strategy, CaptureExperiment):
+            raise TypeError("capture_strategy must be a CaptureExperiment or None")
         self.sct = MSS()
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
@@ -1045,6 +1049,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._frame_clock = RtpFrameClock()
         self._last_frame_time = 0
         self._target_fps = target_fps
+        self._capture_strategy = capture_strategy
         self._frame_interval = 1.0 / target_fps
         self._max_width = max_width
         self._max_height = max_height
@@ -1121,7 +1126,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     break
             with self._target_lock:
                 target_fps = self._target_fps
-            _min_interval = 1.0 / self.capture_fps_for_target(target_fps)
+            _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
             grab_started_ns = time.monotonic_ns()
             try:
                 # Gate again immediately before MSS grab.
@@ -1622,8 +1627,12 @@ class ScreenCaptureTrack(VideoStreamTrack):
         logger.info("Screen stream target FPS set to %s", target_fps)
 
     @staticmethod
-    def capture_fps_for_target(target_fps):
+    def capture_fps_for_target(target_fps, *, capture_strategy=None):
         """Preserve legacy 2x headroom until selected-relay paint evidence exists."""
+        if capture_strategy is not None:
+            if not isinstance(capture_strategy, CaptureExperiment):
+                raise TypeError("capture_strategy must be a CaptureExperiment or None")
+            return capture_strategy.capture_fps_for_target(target_fps)
         target_fps = max(1, int(target_fps))
         return min(60, max(target_fps * 2, target_fps + 5))
 
@@ -1761,6 +1770,12 @@ class WebRemoteHost:
             stream_id="video",
             policy_digest=str(getattr(policy, "policy_id", "") or ""),
         )
+
+    def _create_screen_track(self):
+        """Production construction retains the legacy capture strategy."""
+        return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"],
+                                  max_width=self.media_profile["width"], max_height=self.media_profile["height"],
+                                  frame_trace_context=self._frame_trace_context, capture_strategy=None)
 
     async def authenticate(self):
         try:
@@ -2683,12 +2698,7 @@ class WebRemoteHost:
                 # Add video track
                 policy = self._h264_policy_provider.current_policy()
                 self._frame_trace_context = self._frame_trace_context_for_policy(policy)
-                self.screen_track = ScreenCaptureTrack(
-                    target_fps=self.media_profile["target_fps"],
-                    max_width=self.media_profile["width"],
-                    max_height=self.media_profile["height"],
-                    frame_trace_context=self._frame_trace_context,
-                )
+                self.screen_track = self._create_screen_track()
                 self.capture_adapter = CaptureAdapter(track=self.screen_track)
                 self.screen_track._host_ref = self
                 self.video_sender = self.pc.addTrack(self.screen_track)

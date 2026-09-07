@@ -10,7 +10,7 @@ import pytest
 from aiortc.mediastreams import MediaStreamError
 
 import host
-from host import ScreenCaptureTrack
+from host import CaptureExperiment, ScreenCaptureTrack, WebRemoteHost
 from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from host import detailed_frame_trace_enabled
 
@@ -42,6 +42,7 @@ def bare_track(*, max_width=2, max_height=2):
     track._max_height = max_height
     track.monitor = {"width": max_width, "height": max_height}
     track._target_fps = 30
+    track._capture_strategy = None
     track._frame_interval = 0
     track._last_frame_time = 0
     track._process_executor = ThreadPoolExecutor(max_workers=1)
@@ -73,6 +74,67 @@ def bare_track(*, max_width=2, max_height=2):
 
     track.next_timestamp = next_timestamp
     return track
+
+
+def test_capture_strategy_keeps_none_at_legacy_two_times_and_candidate_at_target_rate():
+    candidate = CaptureExperiment(capture_multiplier=1.0, opencv_threads=None)
+
+    assert ScreenCaptureTrack.capture_fps_for_target(20) == 40
+    assert ScreenCaptureTrack.capture_fps_for_target(20, capture_strategy=candidate) == 20
+    assert ScreenCaptureTrack.capture_fps_for_target(12) == 24
+
+
+def test_normal_host_track_factory_passes_immutable_legacy_capture_strategy(monkeypatch):
+    created = {}
+
+    class StubTrack:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+
+    monkeypatch.setattr(host, "ScreenCaptureTrack", StubTrack)
+    remote_host = object.__new__(WebRemoteHost)
+    remote_host.media_profile = {"target_fps": 20, "width": 1280, "height": 720}
+    remote_host._frame_trace_context = object()
+
+    remote_host._create_screen_track()
+
+    assert created["capture_strategy"] is None
+
+
+@pytest.mark.asyncio
+async def test_capture_loop_pauses_grabs_then_resumes_fresh_dimensions_pts_and_input_effect(monkeypatch):
+    class CountingMss:
+        monitors = [{"left": 0, "top": 0, "width": 2, "height": 1}]
+        def __init__(self): self.calls = 0
+        def grab(self, _monitor):
+            self.calls += 1
+            return Screenshot(np.full((1, 2, 4), self.calls, dtype=np.uint8))
+        def close(self): pass
+
+    capture = CountingMss()
+    monkeypatch.setattr(host, "MSS", lambda: capture)
+    monkeypatch.setattr(host, "get_screeninfo_monitors", lambda: [])
+    track = ScreenCaptureTrack(target_fps=20, max_width=2, max_height=1,
+                               capture_strategy=CaptureExperiment(1.0, None))
+    sent = []
+    track._host_ref = type("Host", (), {"get_input_datachannel": lambda _self: type("DC", (), {"send": sent.append})()})()
+    try:
+        assert await asyncio.to_thread(track.wait_for_fresh_capture, 0, 1.0)
+        baseline = track.set_suspended(True)
+        await asyncio.sleep(0.12)
+        assert capture.calls == baseline
+        track.apply_media_profile({"width": 2, "height": 1, "target_fps": 20})
+        track.set_suspended(False)
+        assert await asyncio.to_thread(track.wait_for_fresh_capture, baseline, 1.0)
+        with track._pending_input_lock:
+            track._pending_input_ids.add("input-1")
+        first, second = await track.recv(), await track.recv()
+    finally:
+        await track.shutdown()
+
+    assert (first.width, first.height) == (2, 1)
+    assert second.pts > first.pts
+    assert any('"inputIds": ["input-1"]' in payload for payload in sent)
 
 
 @pytest.mark.asyncio

@@ -193,10 +193,14 @@ async function createLabRuntime(options = {}) {
   runtime.app.post('/api/lab-context/issue', (req, res) => {
     if (!checkContextSecret(req, res)) return;
     const body = req.body || {};
-    const allowed = new Set(['origin', 'realm', 'proofToken', 'epoch', 'mode', 'runId', 'policyId']);
+    const allowed = new Set(['origin', 'realm', 'proofToken', 'epoch', 'mode', 'runId', 'policyId', 'captureExperiment']);
+    const capture = body.captureExperiment;
     if (Object.keys(body).length !== allowed.size || Object.keys(body).some((key) => !allowed.has(key))
       || body.origin !== origin || body.realm !== realm || body.mode !== 'legacy'
       || !body.runId || !body.policyId || !body.proofToken || !Number.isInteger(body.epoch) || body.epoch < 0
+      || !capture || typeof capture !== 'object' || Array.isArray(capture)
+      || Object.keys(capture).length !== 2 || !Object.hasOwn(capture, 'captureMultiplier') || !Object.hasOwn(capture, 'opencvThreads')
+      || ![1, 2].includes(capture.captureMultiplier) || ![0, 1].includes(capture.opencvThreads)
       || !runtime.signalingRuntime.hasProofAdmission({ token: body.proofToken, epoch: body.epoch, realm: body.realm })) {
       return res.status(400).json({ error: 'invalid lab context binding' });
     }
