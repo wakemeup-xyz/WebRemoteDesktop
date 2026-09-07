@@ -1097,6 +1097,11 @@ const Input = {
       return;
     }
     const raw = this.keyboardController?.getSnapshot().state || 'INACTIVE';
+    const effectiveGate = this.getEffectiveInputGate();
+    // The controller can be READY while a downstream surface, draft, viewport,
+    // media, or recovery veto still blocks new input. Do not present that raw
+    // transport state as user-visible readiness.
+    const displayState = raw === 'READY' && !effectiveGate.allowed ? 'BLOCKED' : raw;
     const labels = {
       INACTIVE: '键盘：未激活',
       READY: '键盘：就绪',
@@ -1107,8 +1112,8 @@ const Input = {
       blocked: '键盘：阻塞',
       ready: '键盘：就绪',
     };
-    display.textContent = labels[raw] || `键盘：${raw}`;
-    display.dataset.state = raw;
+    display.textContent = labels[displayState] || `键盘：${displayState}`;
+    display.dataset.state = displayState;
     this.updateMobileTextInputButton();
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
     this.updateMobileVirtualModifierButtons();

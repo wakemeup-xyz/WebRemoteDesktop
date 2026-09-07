@@ -451,6 +451,30 @@ test('ordinary surface pending, IME composing, and healthy blur do not spend rec
   assert.equal(healthyBlur.Input.getDiagnosticState().recovery.state, 'idle');
 });
 
+test('keyboard UI reflects effective vetoes instead of reporting raw READY', () => {
+  const uncertain = loadRecoveryFixture();
+  const uncertainDisplay = uncertain.elements.get('keyInputDisplay');
+  assert.equal(uncertain.Input.keyboardController.getSnapshot().state, 'READY');
+  uncertain.Input._markMobileSurfaceUncertain('ui-gate');
+  uncertain.Input.updateKeyboardUI();
+  assert.equal(uncertainDisplay.textContent, '键盘：阻塞');
+  assert.equal(uncertainDisplay.dataset.state, 'BLOCKED');
+
+  const unsupported = loadRecoveryFixture();
+  const unsupportedDisplay = unsupported.elements.get('keyInputDisplay');
+  assert.equal(unsupported.Input.keyboardController.getSnapshot().state, 'READY');
+  unsupported.Input.setViewportInputSupported(false);
+  unsupported.Input.updateKeyboardUI();
+  assert.equal(unsupportedDisplay.textContent, '键盘：阻塞');
+  assert.equal(unsupportedDisplay.dataset.state, 'BLOCKED');
+
+  const healthy = loadRecoveryFixture();
+  const healthyDisplay = healthy.elements.get('keyInputDisplay');
+  healthy.Input.updateKeyboardUI();
+  assert.equal(healthyDisplay.textContent, '键盘：就绪');
+  assert.equal(healthyDisplay.dataset.state, 'READY');
+});
+
 test('a visible focus return recovers a parked surface without waiting for a media frame', () => {
   const h = loadRecoveryFixture();
   h.setDataChannelOpen(false);
