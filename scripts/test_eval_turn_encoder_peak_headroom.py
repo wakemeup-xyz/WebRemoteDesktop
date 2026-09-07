@@ -253,18 +253,21 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         self.assertFalse(sampler.healthy.is_set())
         self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
 
-    def test_unparseable_ps_command_line_fails_sampling_closed(self):
+    def test_unparseable_ps_command_line_is_retained_only_after_kernel_executable_lookup(self):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_output = "31 1 42 99.0 /usr/local/bin/node unmatched'quote\n"
         ps_child = types.SimpleNamespace(pid=99, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
-        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda pid: "/opt/mysql/mysqld" if pid == 10 else os.path.realpath(sys.executable))
+        executable = os.path.realpath(sys.executable)
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: executable)
         with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
-            sampler._sample_once(phase="PREFLIGHT")
-        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
-        self.assertFalse(sampler.healthy.is_set())
-        self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
-        self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])
+            snapshot = sampler._read_snapshot()
+        self.assertEqual(snapshot["processes"], [{
+            "pid": 31, "ppid": 1, "rssKiB": 42, "cpuPercent": 99.0,
+            "command": executable, "argv": "/usr/local/bin/node unmatched'quote",
+            "argvParseStatus": "UNPARSEABLE", "executablePath": executable,
+            "canonicalExecutablePath": executable,
+        }])
 
     def test_parseable_ps_command_lines_are_retained(self):
         response = mock.MagicMock()
@@ -292,7 +295,24 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         self.assertEqual(snapshot["processes"], [])
         resolver.assert_not_called()
 
-    def test_non_ps_exited_pid_still_aborts_sampling_inconclusive(self):
+    def test_matrix_own_ps_descendant_is_excluded_before_kernel_executable_lookup(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
+        own_child_pid = 98
+        ps_child_pid = 99
+        ps_output = (
+            f"{own_child_pid} {os.getpid()} 1 99.0 /opt/matrix-helper\n"
+            f"{ps_child_pid} 1 1 0.0 /bin/ps -axo pid=,ppid=,rss=,%cpu=,command=\n"
+        )
+        ps_child = types.SimpleNamespace(pid=ps_child_pid, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
+        resolver = mock.Mock(side_effect=AssertionError("matrix-own child must not reach proc_pidpath"))
+        sampler = MODULE._PeakAmbientSampler(process_executable_resolver=resolver)
+        with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
+            snapshot = sampler._read_snapshot()
+        self.assertEqual(snapshot["processes"], [])
+        resolver.assert_not_called()
+
+    def test_non_ps_exited_pid_is_retained_as_unresolved_external(self):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
         ps_child_pid = 99
@@ -300,14 +320,17 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         ps_child = types.SimpleNamespace(pid=ps_child_pid, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
         sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: (_ for _ in ()).throw(OSError("proc_pidpath unavailable")))
         with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
-            sampler._sample_once(phase="PREFLIGHT")
-        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
-        self.assertIn("ambient sampling failure", [item["reason"] for item in sampler.abort_reasons])
+            snapshot = sampler._read_snapshot()
+        self.assertEqual(snapshot["processes"], [{
+            "pid": 98, "ppid": 1, "rssKiB": 1, "cpuPercent": 0.0,
+            "command": "/opt/exited-worker", "argv": "/opt/exited-worker",
+            "executableResolution": "unavailable",
+        }])
 
-    def test_kernel_executable_lookup_failure_aborts_sampling_inconclusive(self):
+    def test_unparseable_argv_without_a_kernel_executable_fails_sampling_closed(self):
         response = mock.MagicMock()
         response.__enter__.return_value = io.StringIO('{"viewerCount": 0, "relayViewerCount": 0}')
-        ps_output = "10 1 1 2.0 /opt/mysql/mysqld\n"
+        ps_output = "10 1 1 2.0 /opt/mysql/mysqld unmatched'quote\n"
         ps_child = types.SimpleNamespace(pid=99, returncode=0, communicate=mock.Mock(return_value=(ps_output, "")))
         sampler = MODULE._PeakAmbientSampler(process_executable_resolver=lambda _pid: (_ for _ in ()).throw(OSError("proc_pidpath unavailable")))
         with mock.patch.object(MODULE.subprocess, "Popen", return_value=ps_child), mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response):
@@ -344,18 +367,117 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         node = self._snapshot(); node["processes"].append({"pid": 66, "rssKiB": 1, "cpuPercent": 99.0, "command": "/usr/local/bin/node", "argv": "node"})
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: node); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
-        aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 67, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/a", "argv": "a"}, {"pid": 68, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/b", "argv": "b"}, {"pid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/opt/matrix", "argv": "matrix"}, {"pid": 69, "rssKiB": 1, "cpuPercent": 99.0, "command": "/System/Library/x", "argv": "x"}]
+        aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 67, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/a", "argv": "a"}, {"pid": 68, "rssKiB": 1, "cpuPercent": .6, "command": "/opt/b", "argv": "b"}, {"pid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/opt/matrix", "argv": "matrix"}, {"pid": 69, "rssKiB": 1, "cpuPercent": 99.0, "command": "/System/Library/x", "argv": "x", "executablePath": "/System/Library/x"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
         self.assertEqual(len(sampler.evidence()["quiescentExternalProcesses"]), 2)
 
     def test_matrix_child_and_macos_system_roots_are_excluded(self):
-        snapshot = self._snapshot(); snapshot["processes"] += [{"pid": 77, "ppid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/bin/ps", "argv": "/bin/ps"}, {"pid": 78, "rssKiB": 1, "cpuPercent": 99.0, "command": "/usr/libexec/logd", "argv": "/usr/libexec/logd"}]
+        snapshot = self._snapshot(); snapshot["processes"] += [{"pid": 77, "ppid": os.getpid(), "rssKiB": 1, "cpuPercent": 99.0, "command": "/bin/ps", "argv": "/bin/ps"}, {"pid": 78, "rssKiB": 1, "cpuPercent": 99.0, "command": "/usr/libexec/logd", "argv": "/usr/libexec/logd", "executablePath": "/usr/libexec/logd"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot); sampler._sample_once(phase="RUNNING")
         self.assertIsNone(sampler.abort_status())
         aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 43, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}, {"pid": 44, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+
+    def test_unresolved_external_is_recorded_and_never_skips_as_system(self):
+        snapshot = self._snapshot()
+        snapshot["processes"].append({
+            "pid": 90, "ppid": 1, "rssKiB": 1, "cpuPercent": 0.5,
+            "command": "/System/Library/short-lived", "argv": "/System/Library/short-lived",
+            "executableResolution": "unavailable",
+        })
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIsNone(sampler.abort_status())
+        self.assertEqual(sampler.evidence()["quiescentExternalProcesses"], [{
+            "class": "external", "pid": 90, "cpuPercent": 0.5,
+            "executableResolution": "unavailable",
+        }])
+
+    def test_unresolved_external_over_budget_aborts_contaminated(self):
+        snapshot = self._snapshot()
+        snapshot["processes"].append({
+            "pid": 91, "ppid": 1, "rssKiB": 1, "cpuPercent": 99.0,
+            "command": "/opt/short-lived", "argv": "/opt/short-lived",
+            "executableResolution": "unavailable",
+        })
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+
+    def test_unresolved_mysqld_or_sync_worker_remains_identity_inconclusive(self):
+        mysql = self._snapshot()
+        mysql["processes"][0] = {
+            "pid": 10, "ppid": 1, "rssKiB": 1, "cpuPercent": 0.0,
+            "command": "/opt/mysql/mysqld", "argv": "/opt/mysql/mysqld",
+            "executableResolution": "unavailable",
+        }
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: mysql)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("mysqld identity unavailable", [item["reason"] for item in sampler.abort_reasons])
+
+        sync = self._snapshot()
+        sync["processes"][1] = {
+            "pid": 20, "ppid": 1, "rssKiB": 1, "cpuPercent": 0.0,
+            "command": "/opt/python", "argv": "/opt/python -m backend.scripts.sync_worker",
+            "executableResolution": "unavailable",
+        }
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: sync)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("sync_worker identity unavailable", [item["reason"] for item in sampler.abort_reasons])
+
+    def test_unparseable_generic_processes_are_budgeted_without_allowlist_privilege(self):
+        executable = os.path.realpath(sys.executable)
+        loud = self._snapshot()
+        loud["processes"].append({
+            "pid": 92, "ppid": 1, "rssKiB": 1, "cpuPercent": 99.0,
+            "command": executable, "argv": "/usr/local/bin/node unmatched'quote",
+            "argvParseStatus": "UNPARSEABLE", "executablePath": executable,
+            "canonicalExecutablePath": executable,
+        })
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: loud)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        self.assertEqual(sampler.evidence()["quiescentExternalProcesses"], [{
+            "class": "external", "pid": 92, "cpuPercent": 99.0,
+            "argvParseStatus": "UNPARSEABLE",
+        }])
+
+        quiet = self._snapshot()
+        quiet["processes"].append({
+            "pid": 93, "ppid": 1, "rssKiB": 1, "cpuPercent": 0.5,
+            "command": executable, "argv": "/usr/local/bin/node unmatched'quote",
+            "argvParseStatus": "UNPARSEABLE", "executablePath": executable,
+            "canonicalExecutablePath": executable,
+        })
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: quiet)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertIsNone(sampler.abort_status())
+        self.assertEqual(sampler.evidence()["quiescentExternalProcesses"], [{
+            "class": "external", "pid": 93, "cpuPercent": 0.5,
+            "argvParseStatus": "UNPARSEABLE",
+        }])
+
+    def test_unparseable_plausible_mysqld_or_sync_cannot_gain_allowlist_privilege(self):
+        mysql = self._snapshot()
+        mysql["processes"][0]["argv"] += " unmatched'quote"
+        mysql["processes"][0]["argvParseStatus"] = "UNPARSEABLE"
+        mysql["processes"][0]["cpuPercent"] = 0.5
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: mysql)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("mysqld identity unavailable", [item["reason"] for item in sampler.abort_reasons])
+
+        sync = self._snapshot()
+        sync["processes"][1]["argv"] += " unmatched'quote"
+        sync["processes"][1]["argvParseStatus"] = "UNPARSEABLE"
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: sync)
+        sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("sync_worker identity unavailable", [item["reason"] for item in sampler.abort_reasons])
 
     def test_boundary_samples_use_the_single_worker_owner(self):
         callers = []

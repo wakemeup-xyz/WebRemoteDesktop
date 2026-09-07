@@ -151,7 +151,11 @@ class _PeakAmbientSampler:
                 stderr=stderr,
             )
         ps_child_pid = ps_process.pid
-        processes = []
+        parsed_processes = []
+        # Parse the complete ps result before resolving executables.  That lets
+        # us identify the matrix's own descendants from the same atomic-ish
+        # process listing, so a short-lived helper cannot disappear between
+        # ps and proc_pidpath and poison its parent measurement.
         for row in stdout.splitlines():
             if not row.strip():
                 continue
@@ -160,22 +164,56 @@ class _PeakAmbientSampler:
                 raise RuntimeError("ps snapshot row is malformed")
             pid, ppid, rss, cpu, argv = parts
             try:
-                pid_value = int(pid)
-                if pid_value == ps_child_pid:
-                    continue
-                argv_tokens = shlex.split(argv)
-                if not argv_tokens:
-                    raise RuntimeError("ps snapshot command is empty")
-                executable_path = self._process_executable_resolver(pid_value)
+                parsed_processes.append({
+                    "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss),
+                    "cpuPercent": float(cpu), "argv": argv,
+                })
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("ps snapshot row is unparseable") from exc
+
+        matrix_own_pids = {os.getpid()}
+        changed = True
+        while changed:
+            changed = False
+            for process in parsed_processes:
+                if process["ppid"] in matrix_own_pids and process["pid"] not in matrix_own_pids:
+                    matrix_own_pids.add(process["pid"])
+                    changed = True
+        processes = []
+        for process in parsed_processes:
+            if process["pid"] == ps_child_pid or process["pid"] in matrix_own_pids:
+                continue
+            try:
+                executable_path = self._process_executable_resolver(process["pid"])
                 if not isinstance(executable_path, str) or not os.path.isabs(executable_path):
                     raise RuntimeError("kernel executable lookup returned an invalid path")
-                processes.append({
-                    "pid": pid_value, "ppid": int(ppid), "rssKiB": int(rss), "cpuPercent": float(cpu),
-                    "command": argv_tokens[0], "argv": argv,
+            except OSError:
+                # A parseable short-lived process may disappear between ps and
+                # proc_pidpath.  Keep it as unresolved external evidence, but
+                # do not let an unparseable argv through without an actual
+                # kernel executable to classify it conservatively.
+                try:
+                    argv_tokens = shlex.split(process["argv"])
+                except ValueError as exc:
+                    raise RuntimeError("kernel executable unavailable for unparseable argv") from exc
+                if not argv_tokens:
+                    raise RuntimeError("ps snapshot command is empty")
+                processes.append({**process, "command": argv_tokens[0], "executableResolution": "unavailable"})
+                continue
+            try:
+                argv_tokens = shlex.split(process["argv"])
+                if not argv_tokens:
+                    raise RuntimeError("ps snapshot command is empty")
+                processes.append({**process, "command": argv_tokens[0],
                     "executablePath": executable_path,
                     "canonicalExecutablePath": os.path.realpath(executable_path),
                 })
-            except (TypeError, ValueError) as exc:
+            except ValueError:
+                processes.append({**process, "command": os.path.realpath(executable_path),
+                    "argvParseStatus": "UNPARSEABLE", "executablePath": executable_path,
+                    "canonicalExecutablePath": os.path.realpath(executable_path),
+                })
+            except TypeError as exc:
                 raise RuntimeError("ps snapshot row is unparseable") from exc
         with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
             status = json.load(response)
@@ -195,6 +233,8 @@ class _PeakAmbientSampler:
 
     def _exact_mysqld(self, process: dict) -> dict | None:
         """Accept mysqld only when its kernel executable agrees with argv[0]."""
+        if process.get("argvParseStatus") == "UNPARSEABLE":
+            return None
         argv = shlex.split(str(process.get("argv", "")))
         if not argv or not argv[0].startswith("/"):
             return None
@@ -209,6 +249,8 @@ class _PeakAmbientSampler:
         return result
 
     def _exact_sync_worker(self, process: dict) -> dict | None:
+        if process.get("argvParseStatus") == "UNPARSEABLE":
+            return None
         argv = shlex.split(str(process.get("argv", "")))
         if not argv or not argv[0].startswith("/") or not Path(argv[0]).name.lower().startswith("python"):
             return None
@@ -228,8 +270,10 @@ class _PeakAmbientSampler:
 
     @classmethod
     def _is_system_process(cls, process: dict) -> bool:
-        path = process.get("canonicalExecutablePath") or process.get("executablePath") or process["command"]
-        return os.path.realpath(str(path)).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
+        # A command line can claim a system location.  System exclusion is
+        # allowed only after the kernel supplied an executable path.
+        path = process.get("canonicalExecutablePath") or process.get("executablePath")
+        return isinstance(path, str) and os.path.isabs(path) and os.path.realpath(path).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
 
     @staticmethod
     def _canonical_executable_path(process: dict) -> str | None:
@@ -266,7 +310,12 @@ class _PeakAmbientSampler:
                         continue
                     if process_class is None and self._is_system_process(process):
                         continue
-                    forbidden.append({"class": process_class or "external", "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
+                    external = {"class": process_class or "external", "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])}
+                    if process.get("executableResolution") == "unavailable":
+                        external["executableResolution"] = "unavailable"
+                    if process.get("argvParseStatus") == "UNPARSEABLE":
+                        external["argvParseStatus"] = "UNPARSEABLE"
+                    forbidden.append(external)
                 external_cpu = sum(item["cpuPercent"] for item in forbidden)
                 for offender in forbidden:
                     if offender["cpuPercent"] > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
