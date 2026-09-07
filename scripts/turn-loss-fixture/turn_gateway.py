@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import time
 
 from gateway_evidence import GatewayLossCounter
-from turn_wire import parse_channel_data_video
+from turn_wire import COOKIE, WireProtocolError, parse_channel_data_video, parse_stun
 
 
 class GatewayBlocked(RuntimeError):
@@ -24,6 +24,57 @@ class GatewayDecision:
     drop: bool
     payload: bytes
     sequence: int | None = None
+
+
+def _xor_endpoint(value: bytes) -> tuple[str, int] | None:
+    if len(value) != 8 or value[:2] != b"\0\x01":
+        return None
+    raw = bytes(left ^ right for left, right in zip(value[4:], COOKIE.to_bytes(4, "big")))
+    try:
+        host = ".".join(str(part) for part in raw)
+        port = int.from_bytes(value[2:4], "big") ^ (COOKIE >> 16)
+    except (TypeError, ValueError):
+        return None
+    return host, port
+
+
+class TurnAssociation:
+    """Associates TURN transactions without modifying their authenticated bytes."""
+    def __init__(self, *, client_id: str) -> None:
+        self.client_id = client_id
+        self.relay: tuple[str, int] | None = None
+        self.confirmed_channels: dict[int, tuple[str, int]] = {}
+        self._allocate_transactions: set[bytes] = set()
+        self._pending_channel_binds: dict[bytes, tuple[int, tuple[str, int]]] = {}
+
+    def observe_client(self, packet: bytes) -> None:
+        try:
+            message = parse_stun(packet)
+        except WireProtocolError:
+            return
+        if message.message_type == 0x0003:
+            self._allocate_transactions.add(message.transaction_id)
+        elif message.message_type == 0x0009:
+            channel, peer = message.attribute(0x000C), _xor_endpoint(message.attribute(0x0012) or b"")
+            if channel is not None and len(channel) == 4 and peer is not None:
+                number = int.from_bytes(channel[:2], "big")
+                if 0x4000 <= number <= 0x7FFF:
+                    self._pending_channel_binds[message.transaction_id] = (number, peer)
+
+    def observe_server(self, packet: bytes) -> None:
+        try:
+            message = parse_stun(packet)
+        except WireProtocolError:
+            return
+        if message.message_type == 0x0103 and message.transaction_id in self._allocate_transactions:
+            relay = _xor_endpoint(message.attribute(0x0016) or b"")
+            if relay is not None:
+                self.relay = relay
+            self._allocate_transactions.discard(message.transaction_id)
+        elif message.message_type == 0x0109:
+            pending = self._pending_channel_binds.pop(message.transaction_id, None)
+            if pending is not None:
+                self.confirmed_channels[pending[0]] = pending[1]
 
 
 class ClientMappingTable:
