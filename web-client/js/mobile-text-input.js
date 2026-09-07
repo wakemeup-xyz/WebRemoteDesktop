@@ -241,7 +241,7 @@
       }
     }
 
-    function sendWithTrace(send, eventId = activeTraceEventId) {
+    function sendWithTrace(send, eventId = activeTraceEventId, options = {}) {
       let invoked = false;
       let businessResult;
       const invoke = () => {
@@ -250,7 +250,11 @@
         return businessResult;
       };
       try {
-        return withTraceEvent(eventId, invoke);
+        const traceOptions = {
+          ...(eventId === null ? { incidentEligible: false } : { refreshEligibility: true }),
+          ...options,
+        };
+        return withTraceEvent(eventId, invoke, traceOptions);
       } catch (_) {
         // A tracing wrapper can throw either before or after invoking the
         // business callback. Retry only the former so diagnostics can never
@@ -578,10 +582,12 @@
     }
 
     function onCompositionEnd() {
-      traceDom('composition', 'compositionend');
       observedValue = getValue();
       draftValue = observedValue;
       composing = false;
+      // Evaluate commit eligibility after composition has ended. A real
+      // composition commit is not the same as an ordinary composing draft.
+      traceDom('composition', 'compositionend');
       if (!retryRequired) flushDiff({ traceEventId: activeTraceEventId });
       compositionBaseValue = '';
       notifyState();
@@ -692,7 +698,7 @@
       return true;
     }
 
-    function runExternalAction(kind, send) {
+    function runExternalAction(kind, send, traceOptions = {}) {
       if (!['navigation', 'context-change'].includes(kind)
         || typeof send !== 'function'
         || composing || hasPending() || deliveryUncertain || !contextValid
@@ -700,7 +706,10 @@
         || !isEnabled()) return false;
       let result;
       try {
-        result = sendWithTrace(send);
+        const hasEventId = Object.prototype.hasOwnProperty.call(traceOptions, 'eventId');
+        const eventId = hasEventId ? traceOptions.eventId : activeTraceEventId;
+        const { eventId: _ignoredEventId, ...contextOptions } = traceOptions;
+        result = sendWithTrace(send, eventId, contextOptions);
       } catch (_) {
         result = false;
       }

@@ -44,9 +44,14 @@ function safeDiagnosticEnum(value, allowed, fallback = null) {
 function safeDiagnosticReason(value) {
   if (typeof value !== 'string') return null;
   if (INPUT_DIAGNOSTIC_REASONS.has(value)) return value;
-  const [prefix, suffix] = value.split(':', 2);
-  if (prefix === 'runtime-phase' && INPUT_DIAGNOSTIC_RUNTIME_PHASES.has(suffix)) return value;
-  if (prefix === 'media-state' && INPUT_DIAGNOSTIC_MEDIA_STATES.has(suffix)) return value;
+  if (/^runtime-phase:(active|suspending|suspended|resuming)$/.test(value)
+    && INPUT_DIAGNOSTIC_RUNTIME_PHASES.has(value.slice('runtime-phase:'.length))) {
+    return `runtime-phase:${value.slice('runtime-phase:'.length)}`;
+  }
+  if (/^media-state:(active|suspended)$/.test(value)
+    && INPUT_DIAGNOSTIC_MEDIA_STATES.has(value.slice('media-state:'.length))) {
+    return `media-state:${value.slice('media-state:'.length)}`;
+  }
   return null;
 }
 
@@ -503,6 +508,20 @@ const Input = {
     };
   },
 
+  _traceIncidentEligible(focusKind = this._inputTraceContext?.focusKind) {
+    if (!['desktop', 'mobile-text'].includes(focusKind)
+      || this._traceVisibility() !== 'visible'
+      || this.isActive !== true
+      || !this.activeControlLease) return false;
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    if (mobile.composing === true || mobile.deliveryUncertain === true) return false;
+    const gate = this.getEffectiveInputGate?.() || {};
+    const blockedReasons = (gate.blockedReasons || [])
+      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason));
+    return gate.allowed === true || (gate.allowed === false
+      && (gate.blockedReasons || []).length > 0 && blockedReasons.length === 0);
+  },
+
   _traceCollector() {
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.recordInputTrace === 'function') {
       return Diagnostic;
@@ -573,15 +592,13 @@ const Input = {
     const focusKind = options.focusKind || this._traceFocusKind(target);
     const visibility = this._traceVisibility();
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
-    const eligible = options.incidentEligible === true
-      || (options.incidentEligible !== false
-        && ['desktop', 'mobile-text'].includes(focusKind)
-        && visibility === 'visible'
-        && this.isActive === true
-        && Boolean(this.activeControlLease)
-        && mobile.composing !== true
-        && mobile.hasPending !== true
-        && mobile.deliveryUncertain !== true);
+    const eligible = options.incidentEligible !== false
+      && ['desktop', 'mobile-text'].includes(focusKind)
+      && visibility === 'visible'
+      && this.isActive === true
+      && Boolean(this.activeControlLease)
+      && mobile.composing !== true
+      && mobile.deliveryUncertain !== true;
     this._inputTraceContext = {
       eventId: null,
       inputType,
@@ -603,19 +620,24 @@ const Input = {
     if (typeof fn !== 'function') return false;
     const previous = this._inputTraceContext;
     const current = previous || {};
+    const hasIncidentEligibility = Object.prototype.hasOwnProperty.call(options, 'incidentEligible');
+    const incidentEligible = hasIncidentEligibility
+      ? options.incidentEligible === true
+      : options.refreshEligibility === true
+        ? this._traceIncidentEligible(options.focusKind || current.focusKind)
+        : current.incidentEligible === true;
     this._inputTraceContext = {
       ...current,
       eventId: Number.isSafeInteger(eventId) ? eventId : null,
-      incidentEligible: options.incidentEligible === undefined
-        ? current.incidentEligible === true : options.incidentEligible === true,
+      incidentEligible,
     };
     try {
       return fn();
     } finally {
-      // This wrapper scopes the collector context to one synchronous DOM
-      // dispatch. Deferred sends carry their explicit eventId through their
-      // own wrapper and must not revive this context afterward.
-      this._inputTraceContext = null;
+      // Nested mobile/gesture dispatches restore their enclosing DOM scope.
+      // The top-level listener opts into clearAfter so a later callback cannot
+      // inherit an unrelated eventId or eligibility decision.
+      this._inputTraceContext = options.clearAfter === true ? null : previous;
     }
   },
 
@@ -1159,6 +1181,44 @@ const Input = {
     return this.getEffectiveInputGate().allowed;
   },
 
+  _mobileDispatchGate(inputType, action) {
+    const gate = this.getEffectiveInputGate();
+    // MobileTextInput owns the local draft transaction. A live draft is
+    // expected while its accepted text is being committed, so draft reasons
+    // are not transport vetoes at this final dispatch boundary.
+    const rawBlockedReasons = Array.isArray(gate.blockedReasons) ? gate.blockedReasons : [];
+    const blockedReasons = rawBlockedReasons
+      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason));
+    const dispatchGate = {
+      allowed: gate.allowed === true || (gate.allowed === false && rawBlockedReasons.length > 0
+        && blockedReasons.length === 0),
+      blockedReasons,
+    };
+    if (!dispatchGate.allowed && !blockedReasons.length && rawBlockedReasons.length) {
+      dispatchGate.blockedReasons = rawBlockedReasons.slice(0, 16);
+    }
+    this._recordInputGate(inputType, action, dispatchGate);
+    return dispatchGate.allowed;
+  },
+
+  _sendMobileText(text) {
+    if (!this._mobileDispatchGate('text', 'text')) return false;
+    return this.keyboardController?.sendText(text) === true;
+  },
+
+  _sendMobileKey(key, modifiers = {}) {
+    if (!this._mobileDispatchGate('keyboard', 'key')) return false;
+    return this.keyboardController?.sendChord({
+      code: key,
+      modifiers: {
+        shift: Boolean(modifiers.shiftKey),
+        ctrl: Boolean(modifiers.ctrlKey),
+        alt: Boolean(modifiers.altKey),
+        meta: Boolean(modifiers.metaKey),
+      },
+    }) === true;
+  },
+
   _isAcceptedMobileSurfaceMove(payload = null) {
     const gesture = this._mobileSurfaceGesture;
     if (this._mobileSurfaceState !== 'pending'
@@ -1184,7 +1244,10 @@ const Input = {
     if (!['navigation', 'context-change'].includes(action)
       || !this._isMobileEditingActionAllowed() || typeof send !== 'function') return false;
     if (this.mobileTextInputAdapter?.runExternalAction) {
-      return this.mobileTextInputAdapter.runExternalAction(action, send);
+      const context = this._inputTraceContext;
+      return this.mobileTextInputAdapter.runExternalAction(action, send, {
+        eventId: Number.isSafeInteger(context?.eventId) ? context.eventId : null,
+      });
     }
     let result;
     try {
@@ -1412,7 +1475,7 @@ const Input = {
         this.runMobileEditingAction('context-change', () => (
           this.keyboardController?.handleDomEvent(event) === true
         ));
-      });
+      }, { clearAfter: true });
     });
     document.addEventListener('keyup', (event) => {
       if (isMobileTextEvent(event)) return;
@@ -1422,7 +1485,7 @@ const Input = {
       this._withInputTraceEvent(eventId, () => {
         this._recordInputGate('keyboard', 'key', { allowed: true, blockedReasons: [] });
         this.keyboardController?.handleDomEvent(event);
-      });
+      }, { clearAfter: true, incidentEligible: false });
     });
     video.addEventListener('click', (event) => {
       if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
@@ -2178,6 +2241,14 @@ const Input = {
         if (!accepted || !this._beginMobileSurfaceGesture(inputId)) return false;
         return true;
       },
+      onTraceDomEvent: (meta) => this._beginInputTraceDom(
+        meta?.inputType || 'pointer', meta?.action || 'down', meta?.phase || 'down', element,
+        { focusKind: 'desktop', ...(meta?.incidentEligible === false ? { incidentEligible: false } : {}) },
+      ),
+      onTraceEventEnd: (eventId) => {
+        if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
+      },
+      withTraceEvent: (eventId, send, options = {}) => this._withInputTraceEvent(eventId, send, options),
       validateGeometry: () => this.validateGeometry(element),
     });
     adapter.bind();
@@ -2203,15 +2274,10 @@ const Input = {
       }
     });
     element.addEventListener('pointerdown', (event) => {
+      // TouchInputAdapter is bound before this desktop listener and owns the
+      // physical touch event, including deferred gesture callbacks.
+      if (event.pointerType === 'touch') return;
       const eventId = this._beginInputTraceDom('pointer', 'down', 'down', event?.target || element);
-      if (event.pointerType === 'touch') {
-        // TouchInputAdapter owns touch dispatch and its deferred gesture timers;
-        // this listener cannot safely keep a synchronous DOM context alive
-        // across those callbacks. Adapter sends therefore remain unassociated
-        // rather than inheriting this event after a later lifecycle/ACK call.
-        this._inputTraceContext = null;
-        return;
-      }
       this._withInputTraceEvent(eventId, () => {
         const gate = this.getEffectiveInputGate();
         this._recordInputGate('pointer', 'down', gate);
@@ -2234,16 +2300,13 @@ const Input = {
         const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
         if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
         this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
-      });
+      }, { clearAfter: true });
     });
     element.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'touch') return;
       const eventId = this._beginInputTraceDom('pointer', 'up', 'up', event?.target || element, {
         incidentEligible: false,
       });
-      if (event.pointerType === 'touch') {
-        this._inputTraceContext = null;
-        return;
-      }
       this._withInputTraceEvent(eventId, () => {
         if (this._geometryAbortedPointerId === event.pointerId) {
           this._geometryAbortedPointerId = null;
@@ -2270,7 +2333,7 @@ const Input = {
         }
         if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
         this._pointerLifecycleGeneration += 1;
-      });
+      }, { clearAfter: true, incidentEligible: false });
     });
     element.addEventListener('pointercancel', (event) => {
       if (event.pointerType === 'touch') return;
@@ -2452,7 +2515,7 @@ const Input = {
       const text = Array.from(input?.value || '').slice(0, 4096).join('');
       if (!text) return false;
       const accepted = this.runMobileEditingAction('context-change', () => (
-        this.keyboardController?.sendText(text) === true
+        this._sendMobileText(text)
       ));
       if (accepted) close();
       return accepted;
@@ -2484,16 +2547,8 @@ const Input = {
     if (!this.mobileTextInputAdapter && mobileInput && typeof MobileTextInput !== 'undefined') {
       this.mobileTextInputAdapter = MobileTextInput.create({
         element: mobileInput,
-        sendText: (text) => this.keyboardController?.sendText(text),
-        sendKey: (key, modifiers = {}) => this.keyboardController?.sendChord({
-          code: key,
-          modifiers: {
-            shift: Boolean(modifiers.shiftKey),
-            ctrl: Boolean(modifiers.ctrlKey),
-            alt: Boolean(modifiers.altKey),
-            meta: Boolean(modifiers.metaKey),
-          },
-        }),
+        sendText: (text) => this._sendMobileText(text),
+        sendKey: (key, modifiers = {}) => this._sendMobileKey(key, modifiers),
         hasVirtualModifiers: () => (this.keyboardController?.getSnapshot()?.virtualModifiers || []).length > 0,
         releaseTrackedKey: (event) => this.keyboardController?.handleDomEvent(event) === true,
         isEnabled: () => this._viewportInputSupported
@@ -2520,7 +2575,7 @@ const Input = {
         onTraceEventEnd: (eventId) => {
           if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
         },
-        withTraceEvent: (eventId, send) => this._withInputTraceEvent(eventId, send),
+        withTraceEvent: (eventId, send, options = {}) => this._withInputTraceEvent(eventId, send, options),
         refreshViewport: () => {
           if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
         },

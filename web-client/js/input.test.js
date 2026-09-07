@@ -2451,6 +2451,34 @@ test('diagnostic input state uses bounded enums and never copies arbitrary sourc
   assert.deepEqual(JSON.parse(JSON.stringify(state.effectiveGate.blockedReasons)), ['no-active-control']);
 });
 
+test('diagnostic reason prefixes require an exact bounded value', () => {
+  const { Input, context } = loadInput();
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: false,
+    hasActiveControl: true,
+    manualDisconnect: false,
+    mediaState: 'active',
+    runtimePhase: 'active',
+    inputIsActive: true,
+    blockedReasons: [
+      'runtime-phase:active',
+      'runtime-phase:active:PASSWORD_CANARY',
+      'media-state:active',
+      'media-state:active:TEXT_CANARY',
+      `runtime-phase:active:${'SUFFIX_CANARY'.repeat(100)}`,
+    ],
+  });
+
+  const state = Input.getDiagnosticState();
+  assert.deepEqual(JSON.parse(JSON.stringify(state.gate.blockedReasons)), [
+    'runtime-phase:active', 'media-state:active',
+  ]);
+  const json = JSON.stringify(state);
+  for (const canary of ['PASSWORD_CANARY', 'TEXT_CANARY', 'SUFFIX_CANARY']) {
+    assert.equal(json.includes(canary), false, canary);
+  }
+});
+
 test('real keyboard gate rejection traces DOM and gate only', () => {
   const { Input, context, elements, documentListeners, trace } = loadInput();
   Input.videoElement = context.document.getElementById('remoteVideo');
@@ -2508,6 +2536,73 @@ test('real Input sends record DataChannel result, Socket fallback, and receiver 
   const ackEvent = trace.snapshot().events.find(({ stage }) => stage === 'ack');
   assert.equal(ackEvent.status, 'applied');
   assert.equal(ackEvent.accepted, false);
+});
+
+test('accepted mobile text records its gate before the real keyboard transport send', () => {
+  const { Input, context, elements, trace } = loadInput();
+  context.WebRTC.inputChannel = { readyState: 'open' };
+  context.WebRTC.sendInput = () => true;
+  activate(Input, context);
+  Input.setupTextInput();
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'mobile-gate-canary';
+  mobileInput.listeners.get('input')({ type: 'input', target: mobileInput });
+
+  const events = trace.snapshot().events.filter(({ stage }) => (
+    stage === 'dom-received' || stage === 'gate' || stage === 'transport-send'
+  ));
+  assert.deepEqual(JSON.parse(JSON.stringify(events.map(({ stage }) => stage))), [
+    'dom-received', 'gate', 'transport-send',
+  ]);
+  assert.equal(events[1].accepted, true);
+  assert.equal(events[1].eventId, events[0].eventId);
+  assert.equal(events[2].eventId, events[0].eventId);
+  assert.doesNotMatch(JSON.stringify(events), /mobile-gate-canary/);
+});
+
+test('physical DOM sends retain nested mobile scope through real ACK correlation', () => {
+  const { Input, context, elements, documentListeners, trace } = loadInput();
+  const writes = [];
+  context.WebRTC.inputChannel = { readyState: 'open' };
+  context.WebRTC.sendInput = (payload) => { writes.push(payload); return true; };
+  activate(Input, context);
+  Input.setupTextInput();
+  Input.setupEventListeners();
+
+  const surface = elements.get('remoteVideo');
+  const pointer = (type) => surface.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 1, button: 0,
+    detail: 1, clientX: 40, clientY: 40,
+    buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: surface, timeStamp: 10, preventDefault() {},
+  });
+  pointer('pointerdown');
+  pointer('pointerup');
+  for (const payload of writes.filter(({ type }) => type === 'mouse')) {
+    Input.acceptMouseAck({
+      schemaVersion: 2, inputType: 'mouse', leaseEpoch: 3,
+      status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds,
+    });
+  }
+  documentListeners.get('keydown')(keyboard('keydown', { target: surface }));
+  documentListeners.get('keyup')(keyboard('keyup', { target: surface }));
+
+  const sends = trace.snapshot().events.filter(({ stage, accepted, action }) => (
+    stage === 'transport-send' && accepted === true && action !== 'reset'
+  ));
+  assert.equal(sends.length, 4);
+  assert.ok(sends.every(({ eventId }) => Number.isSafeInteger(eventId)));
+
+  for (const payload of writes.filter(({ type }) => type === 'keyboard')) {
+    Input.acceptKeyboardAck({
+      schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 3,
+      status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds,
+    });
+  }
+  const acks = trace.snapshot().events.filter(({ stage, accepted }) => stage === 'ack' && accepted === true);
+  assert.equal(acks.length, 4);
+  assert.ok(sends.every((send) => acks.some((ack) => ack.eventId === send.eventId)));
 });
 
 test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {

@@ -63,7 +63,7 @@ function makeTarget(extra = {}) {
   return target;
 }
 
-function loadRecoveryFixture({ touchPoints = 0, channels = 'both' } = {}) {
+function loadRecoveryFixture({ touchPoints = 0, channels = 'both', onIncident = () => {} } = {}) {
   let now = 1000;
   let nextTimerId = 0;
   const timers = new Map();
@@ -142,6 +142,7 @@ function loadRecoveryFixture({ touchPoints = 0, channels = 'both' } = {}) {
     hashInputIds: null,
     setTimeoutFn: context.setTimeout,
     clearTimeoutFn: context.clearTimeout,
+    onIncident,
   });
   context.Diagnostic = {
     recordInputTrace(stage, meta) { return trace.record(stage, meta); },
@@ -309,6 +310,63 @@ test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decis
   assert.equal(JSON.stringify(snapshot).includes('recovery-lease-0001'), false);
   assert.equal(JSON.stringify(snapshot).includes('relX'), false);
   assert.equal(JSON.stringify(snapshot).includes('relY'), false);
+});
+
+test('touch and IME reliable writes retain bounded attribution for timeout incidents', () => {
+  const touchIncidents = [];
+  const touch = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => touchIncidents.push({ reason, identity }),
+  });
+  touch.video.dispatch('pointerdown', {
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 1,
+  });
+  touch.video.dispatch('pointerup', {
+    pointerType: 'touch', pointerId: 1, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 0,
+  });
+  touch.advance(3001);
+  const touchSnapshot = touch.trace.snapshot();
+  const touchWrites = touchSnapshot.events.filter(({ stage, inputType, accepted, action }) => (
+    stage === 'transport-send' && inputType === 'pointer' && accepted === true
+      && ['down', 'up'].includes(action)
+  ));
+  assert.equal(touchWrites.length, 2);
+  assert.ok(touchWrites.every(({ eventId }) => Number.isSafeInteger(eventId)));
+  assert.ok(touchIncidents.length > 0);
+  assert.ok(touchIncidents.every(({ reason, identity }) => (
+    reason === 'input-ack-timeout'
+      && identity.connectionAttemptId === 'recovery-attempt-1'
+      && identity.leaseEpoch === 7
+  )));
+
+  const imeIncidents = [];
+  const ime = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => imeIncidents.push({ reason, identity }),
+  });
+  const mobileInput = ime.elements.get('mobileTextInput');
+  mobileInput.dispatch('compositionstart');
+  mobileInput.value = 'ime-canary\u200b';
+  mobileInput.dispatch('compositionupdate');
+  mobileInput.dispatch('input');
+  mobileInput.dispatch('compositionend');
+  ime.advance(3001);
+  const imeSnapshot = ime.trace.snapshot();
+  const imeWrites = imeSnapshot.events.filter(({ stage, inputType, accepted, action }) => (
+    stage === 'transport-send' && inputType === 'keyboard' && accepted === true && action === 'text'
+  ));
+  assert.equal(imeWrites.length, 1);
+  assert.ok(Number.isSafeInteger(imeWrites[0].eventId));
+  assert.ok(imeIncidents.length > 0);
+  assert.ok(imeIncidents.every(({ reason, identity }) => (
+    reason === 'input-ack-timeout'
+      && identity.connectionAttemptId === 'recovery-attempt-1'
+      && identity.leaseEpoch === 7
+  )));
+  const json = JSON.stringify({ touchSnapshot, imeSnapshot, touchIncidents, imeIncidents });
+  assert.doesNotMatch(json, /ime-canary|recovery-lease-0001|relX|relY/);
 });
 
 test('recovery API unlocks a click and key only after both owned reset ACKs', () => {
