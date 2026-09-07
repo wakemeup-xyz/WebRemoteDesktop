@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable
 
@@ -90,23 +91,75 @@ class GatewayCounterStore:
         os.replace(temporary, self.path)
         self.path.chmod(0o600)
 
-    def record(self, event_id: str, *, eligible: bool, dropped: bool, sequence: int) -> None:
+    _EVENT_FIELDS = frozenset({"eventHandle", "mediaBindingDigest", "startedMonotonicNs", "deadlineMonotonicNs",
+                               "eligibleCount", "forwardedCount", "droppedCount", "sendFailureCount",
+                               "beforeForwardedSequences", "duringForwardedSequences", "afterForwardedSequences",
+                               "droppedSequences"})
+
+    @staticmethod
+    def _digest_binding(media_binding: Mapping[str, object]) -> str:
+        return hashlib.sha256(_canonical(dict(media_binding))).hexdigest()
+
+    def begin(self, event_id: str, *, media_binding: Mapping[str, object], started_ns: int,
+              deadline_ns: int, before_sequences: list[int] | tuple[int, ...] = ()) -> None:
+        """Create one immutable-target gateway event before counting packets."""
+        if (not isinstance(event_id, str) or not event_id or not isinstance(started_ns, int)
+                or not isinstance(deadline_ns, int) or deadline_ns < started_ns):
+            raise ValueError("gateway event metadata is invalid")
+        if any(not isinstance(value, int) or not 0 <= value <= 65535 for value in before_sequences):
+            raise ValueError("gateway before sequence is invalid")
+        digest = self._digest_binding(media_binding)
+        raw = self._read()
+        event = raw["events"].get(event_id)
+        if event is None:
+            raw["events"][event_id] = {"eventHandle": event_id, "mediaBindingDigest": digest,
+                                       "startedMonotonicNs": started_ns, "deadlineMonotonicNs": deadline_ns,
+                                       "eligibleCount": 0, "forwardedCount": 0, "droppedCount": 0,
+                                       "sendFailureCount": 0, "beforeForwardedSequences": list(before_sequences),
+                                       "duringForwardedSequences": [], "afterForwardedSequences": [],
+                                       "droppedSequences": []}
+            self._write(raw)
+            return
+        if (not isinstance(event, dict) or set(event) != self._EVENT_FIELDS
+                or event["mediaBindingDigest"] != digest or event["startedMonotonicNs"] != started_ns
+                or event["deadlineMonotonicNs"] != deadline_ns):
+            raise RuntimeError("gateway event target is absent or changed")
+
+    def record(self, event_id: str, *, phase: str = "during", eligible: bool, dropped: bool,
+               sequence: int, forwarded: bool | None = None) -> None:
         if not isinstance(event_id, str) or not event_id or len(event_id) > 256:
             raise ValueError("gateway event id is invalid")
         if not isinstance(eligible, bool) or not isinstance(dropped, bool) or (dropped and not eligible):
             raise ValueError("gateway counter outcome is invalid")
         if not isinstance(sequence, int) or not 0 <= sequence <= 65535:
             raise ValueError("gateway RTP sequence is invalid")
+        if phase not in {"before", "during", "after"} or (phase != "during" and (eligible or dropped)):
+            raise ValueError("gateway counter phase is invalid")
+        if forwarded is None:
+            forwarded = not dropped
+        if not isinstance(forwarded, bool) or (dropped and forwarded):
+            raise ValueError("gateway forward outcome is invalid")
         raw = self._read()
-        event = raw["events"].setdefault(event_id, {"eligibleCount": 0, "droppedCount": 0,
-                                                     "forwardedSequences": [], "droppedSequences": []})
-        if set(event) != {"eligibleCount", "droppedCount", "forwardedSequences", "droppedSequences"}:
+        event = raw["events"].get(event_id)
+        if not isinstance(event, dict) or set(event) != self._EVENT_FIELDS:
             raise RuntimeError("gateway counter event has invalid schema")
-        if eligible:
+        if phase == "during" and eligible:
             event["eligibleCount"] += 1
-            event["droppedSequences" if dropped else "forwardedSequences"].append(sequence)
             if dropped:
                 event["droppedCount"] += 1
+                event["droppedSequences"].append(sequence)
+            elif forwarded:
+                event["forwardedCount"] += 1
+                event["duringForwardedSequences"].append(sequence)
+        elif phase != "during" and forwarded:
+            event[f"{phase}ForwardedSequences"].append(sequence)
+        self._write(raw)
+
+    def record_send_failure(self, event_id: str) -> None:
+        raw = self._read(); event = raw["events"].get(event_id)
+        if not isinstance(event, dict) or set(event) != self._EVENT_FIELDS:
+            raise RuntimeError("gateway counter event has invalid schema")
+        event["sendFailureCount"] += 1
         self._write(raw)
 
     def count(self, event_id: str) -> dict:
@@ -114,8 +167,11 @@ class GatewayCounterStore:
             raise ValueError("gateway event id is invalid")
         event = self._read()["events"].get(event_id)
         if event is None:
-            return {"eligibleCount": 0, "droppedCount": 0, "forwardedSequences": [], "droppedSequences": []}
-        if not isinstance(event, dict) or set(event) != {"eligibleCount", "droppedCount", "forwardedSequences", "droppedSequences"}:
+            return {"eventHandle": event_id, "mediaBindingDigest": None, "startedMonotonicNs": None,
+                    "deadlineMonotonicNs": None, "eligibleCount": 0, "forwardedCount": 0,
+                    "droppedCount": 0, "sendFailureCount": 0, "beforeForwardedSequences": [],
+                    "duringForwardedSequences": [], "afterForwardedSequences": [], "droppedSequences": []}
+        if not isinstance(event, dict) or set(event) != self._EVENT_FIELDS:
             raise RuntimeError("gateway counter event has invalid schema")
         return {key: (list(value) if isinstance(value, list) else value) for key, value in event.items()}
 

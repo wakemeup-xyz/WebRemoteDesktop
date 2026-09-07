@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import socket
 import struct
 import sys
@@ -74,6 +75,41 @@ def test_gateway_disconnect_clears_an_armed_loss_rule():
     state.arm("every_100th_for_30s", now_ns=1)
     state.clear_on_control_disconnect()
     assert state.armed is None
+
+
+def test_gateway_refuses_to_arm_when_active_event_and_sealed_binding_disagree(tmp_path):
+    """A replacement relay binding cannot retarget an already-authorized event."""
+    gateway_module = _module()
+    state_path, binding_path, counters = (tmp_path / name for name in ("active.json", "binding.json", "counters.json"))
+    gateway = gateway_module.InlineTurnGateway(turn_endpoint=("127.0.0.1", 3478), bind_host="127.0.0.1", relay_ports=())
+    mapping = gateway._table.bind(("127.0.0.1", 40000))
+    association = gateway_module.TurnAssociation(client_id=str(mapping.upstream_id))
+    association.relay = ("10.0.0.9", 51000)
+    association.confirmed_channels[0x4001] = ("10.0.0.8", 59000)
+    gateway._runtime[mapping.upstream_id] = (None, association)
+    sealed_media = {"outerEgress": {"protocol": "udp", "source": "10.0.0.2", "sourcePort": 3478, "destination": "10.0.0.3", "destinationPort": 40000}, "allocationRelay": {"address": "10.0.0.9", "port": 51000}, "peer": {"address": "10.0.0.8", "port": 59000}, "channelNumber": 0x4001, "encapsulation": "channel-data", "rtpSsrc": 7, "payloadType": 96}
+    binding_path.write_text(json.dumps({"mediaBinding": sealed_media}))
+    state_path.write_text(json.dumps({"state": "armed", "comment": "wrd-loss:one", "pattern": "all_for_200ms", "mediaBinding": {**sealed_media, "rtpSsrc": 8}}))
+    gateway.configure_control_bridge(state_path=state_path, relay_binding_path=binding_path, counter_path=counters)
+
+    gateway.sync_control_state()
+
+    assert gateway.media.armed is None
+
+
+def test_gateway_restart_clears_a_persisted_active_fault_before_listening(tmp_path):
+    """Restart is a fail-safe clear, never a second full fault window."""
+    gateway_module = _module()
+    state_path = tmp_path / "active.json"
+    state_path.write_text(json.dumps({"state": "armed", "comment": "wrd-loss:one", "pattern": "every_100th_for_30s"}))
+    gateway = gateway_module.InlineTurnGateway(turn_endpoint=("127.0.0.1", 3478), bind_host="127.0.0.1", control_port=0, relay_ports=())
+    gateway.configure_control_bridge(state_path=state_path, relay_binding_path=tmp_path / "binding.json", counter_path=tmp_path / "counters.json")
+    try:
+        gateway.start()
+        assert not state_path.exists()
+        assert gateway.media.armed is None
+    finally:
+        gateway.close()
 
 
 def test_gateway_confirms_channel_only_after_the_matching_turn_success_response():

@@ -15,7 +15,7 @@ the controller to a locally-built OCI image ID `sha256:...`.
 the repository Dockerfile without a runtime tag, and records the returned image
 ID plus base, Dockerfile, and controller source hashes as labels. `prepare`
 verifies those labels, the exact local image ID, and `docker run --network none`
-availability of `/fixture/controller.py` and `iptables`; an unavailable daemon
+availability of the controller, gateway, and TURN wire parser; an unavailable daemon
 is `BLOCKED` and produces no runnable fixture.
 
 Use the generated override with the generated project name.  Compose assigns
@@ -28,8 +28,8 @@ without any public listener. The selected leg must have exactly one endpoint
 in that range. The project has a dedicated bridge network (not Docker
 `internal`, because Docker Desktop suppresses required loopback mappings); no
 service uses host networking or host PID. The TURN service receives only
-`NET_BIND_SERVICE`. The `loss-controller` and independent `loss-watchdog`
-sidecars alone receive `NET_ADMIN`, inside TURN's non-host network namespace.
+`NET_BIND_SERVICE`. The controller, gateway, and independent watchdog all
+drop every Linux capability; the gateway owns the in-path header ledger.
 The control server binds the fixture namespace so Docker can forward it, while
 Compose publishes it only as `127.0.0.1`; every request still needs its
 generated control token. The entrypoint loads the generated temporary credentials into
@@ -54,11 +54,9 @@ mutable tag is never a Compose runtime value.
 
 The T4 driver connects to the generated loopback control endpoint with the
 generated control token, opens a session/generation, and requests a baseline.
-The controller persists a short-lived probe transaction, creates a unique user
-chain, and installs an exact-leg OUTPUT jump into that chain. Its `RETURN`
-counter rule lives only in the user chain, so normal OUTPUT traversal continues.
-It reads the kernel counter before and after, then removes the jump, rule, and
-chain. Only a positive kernel delta grants a baseline; the control
+The controller persists a short-lived probe transaction and the gateway counts
+only the authority-sealed ChannelData target before and after the probe. Only a
+positive gateway counter delta grants a baseline; the control
 caller cannot submit packet counts, selectors, or observation times. That
 baseline is bound to the control session, generation, selector, and monotonic
 time; it is consumed by one `apply_loss(run_id, pattern, duration_ms)` call. The controller
@@ -69,16 +67,15 @@ that persistence fails it rolls the installed rule back.  If deletion fails it
 keeps the rule handle in `cleanupPending` state for retry.
 
 The independent watchdog reads the shared state at startup and continually
-removes expired or `cleanupPending` rules, so controller process loss cannot
-leave an accepted rule indefinitely. The controller holds the state store's
-cross-process lock across persisted probe/install intent, kernel handle
-addition, counter read, and terminal state. A watchdog therefore cannot clear
-intent in the middle of a transaction. A process death after addition leaves
-recoverable exact handles, including the probe's user chain. It reports `IDLE`, `ARMED`, `CLEARED`, or
+clears expired or `cleanupPending` gateway intents, so controller process loss
+cannot leave an accepted fault indefinitely. The controller holds the state
+store's cross-process lock across persisted probe/install intent and terminal
+state. A watchdog therefore cannot clear intent in the middle of a transaction.
+It reports `IDLE`, `ARMED`, `CLEARED`, or
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
 is present. The final evidence verifier records monotonic start/end, actual
-drop count from the exact iptables rule counter and strict ordered RTP sequence
-gaps. The live Lab parent starts `bridge-authority` with its inherited
+drop count, successful forwarding, send failures, and strict ordered
+receiver-directed RTP sequence gaps from the gateway ledger. The live Lab parent starts `bridge-authority` with its inherited
 `LabRun.transcript_verifier()` and the generated short `bridgeSocket` path;
 that per-run mode-0600 Unix socket alone is bind-mounted at `/lab-bridge` for
 the controller. After `clear`, the T4/T5 runner invokes `seal-bridge` on the

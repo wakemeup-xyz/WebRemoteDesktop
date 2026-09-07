@@ -21,6 +21,18 @@ services:
     volumes:
       - turn-loss-state:/state
 
+  loss-watchdog:
+    # Owns only deadline-state removal for the same header-counter backend.
+    image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    labels:
+      com.wrd.turn-loss-fixture: "true"
+    networks: [turn-loss]
+    command: ["python", "/fixture/controller.py", "watchdog", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--gateway-counters", "/state/gateway-counters.json"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - turn-loss-state:/state
+
   turn-gateway:
     # The public Lab TURN address terminates here.  All UDP bytes are relayed
     # inline; only sealed ChannelData RTP is eligible for the finite fault.

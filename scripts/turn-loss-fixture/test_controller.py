@@ -338,6 +338,25 @@ def test_connection_close_always_clears_active_loss():
     assert backend.removed and fixture.active_event is None
 
 
+def test_gateway_counter_backend_exposes_receiver_directed_forwarded_sequences(tmp_path):
+    counter_path = tmp_path / "gateway-counters.json"
+    store = controller.GatewayCounterStore(counter_path)
+    event = {"runId": manifest()["runId"], "comment": "wrd-loss:gateway", "startedMonotonicNs": 10, "endedMonotonicNs": 20, "deadlineMonotonicNs": 20,
+             "egressSelector": manifest()["udpLegSelector"],
+             "mediaBinding": {"channelNumber": 0x4001, "rtpSsrc": 7, "payloadType": 96}}
+    store.begin(event["comment"], media_binding=event["mediaBinding"], started_ns=10, deadline_ns=20, before_sequences=[98])
+    store.record(event["comment"], phase="during", eligible=True, dropped=False, sequence=99)
+    store.record(event["comment"], phase="during", eligible=True, dropped=True, sequence=100)
+    store.record(event["comment"], phase="after", eligible=False, dropped=False, sequence=101)
+
+    capture = controller.GatewayCounterBackend(counter_path).receiver_capture(event)
+
+    assert capture["source"] == "gateway-channeldata" and capture["gatewayCounters"]["droppedCount"] == 1
+    assert [row["sequence"] for row in capture["receivedRtp"]["before"]] == [98]
+    assert [row["sequence"] for row in capture["receivedRtp"]["during"]] == [99]
+    assert [row["sequence"] for row in capture["receivedRtp"]["after"]] == [101]
+
+
 def test_runtime_probe_does_not_claim_fixture_ready_when_docker_daemon_is_unavailable():
     probe = controller.DockerRuntimeProbe(run=lambda _argv: (1, "", "Cannot connect to the Docker daemon"))
     status = probe.status()
@@ -362,6 +381,7 @@ def test_compose_keeps_host_namespaces_out_and_grants_no_packet_filter_capabilit
     assert "NET_ADMIN" not in compose and "NET_RAW" not in compose
     assert "network_mode: service:turn" not in compose
     assert "turn-gateway" in compose and "networks: [turn-loss]" in compose
+    assert "loss-watchdog" in compose and "--gateway-counters" in compose
     # A dedicated bridge must permit the fixture's explicitly loopback-bound
     # relay/control ports. Docker Desktop suppresses those mappings for an
     # `internal` bridge.
@@ -812,7 +832,7 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
     command = ["docker", "compose", "--project-name", prepared["projectName"], "-f", str(compose), "-f", prepared["composeOverride"]]
     try:
         assert subprocess.run([*command, "up", "-d"], text=True, capture_output=True, check=False).returncode == 0
-        expected = {"turn", "turn-gateway", "loss-controller", "udp-echo-peer"}
+        expected = {"turn", "turn-gateway", "loss-controller", "loss-watchdog", "udp-echo-peer"}
         deadline = time.monotonic() + 12
         running: set[str | None] = set()
         while time.monotonic() < deadline:
@@ -995,7 +1015,7 @@ def test_runtime_probe_verifies_local_controller_id_labels_and_network_none_cont
     assert resolved.controller_dockerfile_sha256 == labels["org.wrd.turn-loss.dockerfile-sha256"]
 
 def test_signed_bridge_rejects_host_sender_sequences_even_when_they_show_a_gap():
-    """Regression: Host rtp_send 1,3 cannot replace receiver AF_PACKET evidence."""
+    """Regression: Host rtp_send 1,3 cannot replace receiver-directed evidence."""
     raw, backend = manifest(), RecordingBackend()
     fixture, _event, verifier = _signed_fixture(raw, backend)
     backend.counter = 2; fixture.collect_receiver_evidence(raw["runId"]); event = fixture.clear_loss(raw["runId"])

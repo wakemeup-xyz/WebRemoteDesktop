@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import argparse
+from collections import deque
 import json
 from pathlib import Path
 import selectors
@@ -29,6 +30,7 @@ class GatewayDecision:
     drop: bool
     payload: bytes
     sequence: int | None = None
+    eligible: bool = False
 
 
 def _xor_endpoint(value: bytes) -> tuple[str, int] | None:
@@ -140,9 +142,10 @@ class GatewayMediaState:
         if armed is None:
             return GatewayDecision(False, payload, video.sequence)
         forward = armed.observe(sequence=video.sequence, now_ns=time.monotonic_ns() if now_ns is None else int(now_ns))
+        eligible = not armed.deadline_expired
         if armed.deadline_expired:
             self.armed = None
-        return GatewayDecision(not forward, payload, video.sequence)
+        return GatewayDecision(not forward, payload, video.sequence, eligible)
 
 
 class InlineTurnGateway:
@@ -177,11 +180,14 @@ class InlineTurnGateway:
         self._relay_binding_path: Path | None = None
         self._counter_store: GatewayCounterStore | None = None
         self._active_event_id: str | None = None
+        self._after_event_id: str | None = None
+        self._probe_event_id: str | None = None
         self._completed_event_ids: set[str] = set()
         self._capture_socket_path: Path | None = None
         self._capture_capability_path: Path | None = None
         self._run_id: str | None = None
         self._observed_media: set[tuple[int, int, int]] = set()
+        self._recent_forwarded: deque[int] = deque(maxlen=256)
 
     def configure_control_bridge(self, *, state_path: Path, relay_binding_path: Path, counter_path: Path) -> None:
         """Attach the Lab-only file bridge after all paths have been fixed.
@@ -264,22 +270,42 @@ class InlineTurnGateway:
             return
         event = self._read_json(self._state_path)
         if event is None or event.get("state") not in {"probing", "armed"}:
-            self.media.clear_on_control_disconnect(); self._active_event_id = None
+            if self._active_event_id is not None:
+                self._after_event_id = self._active_event_id
+            self.media.clear_on_control_disconnect(); self._active_event_id = self._probe_event_id = None
             return
         event_id, pattern = event.get("comment"), event.get("pattern")
         if not isinstance(event_id, str) or not event_id:
-            self.media.clear_on_control_disconnect(); return
+            self.media.clear_on_control_disconnect(); self._active_event_id = self._probe_event_id = None; return
         binding = self._read_json(self._relay_binding_path)
-        if binding is None or self._target_from_binding(binding) is None:
+        # The controller persists the authority-sealed media tuple in the
+        # event before it becomes armed.  A later binding-file replacement
+        # must never retarget that event to a different ChannelData stream.
+        # Leave the event unarmed until the exact sealed tuple is present.
+        if (binding is None or event.get("mediaBinding") != binding.get("mediaBinding")
+                or self._target_from_binding(binding) is None):
+            self.media.clear_on_control_disconnect()
             return
+        if self._counter_store is None:
+            return
+        media = event["mediaBinding"]
+        started, deadline = event.get("startedMonotonicNs"), event.get("deadlineMonotonicNs")
+        if not isinstance(started, int) or not isinstance(deadline, int):
+            self.media.clear_on_control_disconnect(); return
+        try:
+            self._counter_store.begin(event_id, media_binding=media, started_ns=started,
+                                      deadline_ns=deadline, before_sequences=tuple(self._recent_forwarded))
+        except (RuntimeError, ValueError):
+            self.media.clear_on_control_disconnect(); return
         if event.get("state") == "probing":
-            self.media.clear_on_control_disconnect(); self._active_event_id = event_id
+            self.media.clear_on_control_disconnect(); self._probe_event_id = event_id; self._active_event_id = None
             return
+        self._probe_event_id = None
         if event_id in self._completed_event_ids:
             self.media.clear_on_control_disconnect(); return
         if self._active_event_id != event_id:
             if not isinstance(pattern, str): return
-            self.media.arm(pattern)
+            self.media.arm(pattern, now_ns=started)
             self._active_event_id = event_id
 
     @property
@@ -291,6 +317,14 @@ class InlineTurnGateway:
     def start(self) -> None:
         if self._front:
             raise GatewayBlocked("gateway is already started")
+        # An inline forwarder has no durable ownership of a previously armed
+        # fault.  On process restart, remove the per-run intent before opening
+        # any public socket so a stale 30-second window cannot be replayed.
+        if self._state_path is not None:
+            try:
+                self._state_path.unlink()
+            except FileNotFoundError:
+                pass
         for requested in (self.control_port, *self.relay_ports):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind((self.bind_host, requested)); sock.setblocking(False)
@@ -348,13 +382,26 @@ class InlineTurnGateway:
             return
         self._record_media_observation(upstream_id=upstream_id, association=association, payload=payload, source=source, upstream=upstream)
         decision = self.media.decide(client_id=str(upstream_id), payload=payload)
-        if decision.sequence is not None and self._counter_store is not None and self._active_event_id is not None:
-            self._counter_store.record(self._active_event_id, eligible=True, dropped=decision.drop, sequence=decision.sequence)
+        event_id = self._active_event_id or self._probe_event_id
+        if decision.sequence is not None and self._counter_store is not None and event_id is not None and decision.drop:
+            self._counter_store.record(event_id, phase="during", eligible=decision.eligible, dropped=True, sequence=decision.sequence)
         if self.media.armed is None and self._active_event_id is not None:
             self._completed_event_ids.add(self._active_event_id)
         if decision.drop:
             return
-        self._front.get(int(source[1]), self._front[self.control_port]).sendto(decision.payload, mapping.client_endpoint)
+        try:
+            self._front.get(int(source[1]), self._front[self.control_port]).sendto(decision.payload, mapping.client_endpoint)
+        except OSError:
+            if decision.sequence is not None and self._counter_store is not None and event_id is not None:
+                self._counter_store.record_send_failure(event_id)
+            return
+        if decision.sequence is not None:
+            self._recent_forwarded.append(decision.sequence)
+            if self._counter_store is not None:
+                if event_id is not None:
+                    self._counter_store.record(event_id, phase="during", eligible=decision.eligible, dropped=False, sequence=decision.sequence)
+                elif self._after_event_id is not None:
+                    self._counter_store.record(self._after_event_id, phase="after", eligible=False, dropped=False, sequence=decision.sequence)
 
     def _from_relay_upstream(self, key: tuple[int, tuple[str, int]]) -> None:
         upstream = self._relay_runtime[key]

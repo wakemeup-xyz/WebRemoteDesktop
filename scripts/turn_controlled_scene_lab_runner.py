@@ -586,6 +586,27 @@ class PlaywrightLabViewerAdapter:
         if not isinstance(expected, Mapping) or not isinstance(host, Mapping) or host.get("videoSsrc") != expected.get("rtpSsrc"): return None
         return dict(expected)
 
+    def gateway_media_inputs(self) -> dict[str, Any] | None:
+        """Return unsealed browser/Host observations for the Lab authority.
+
+        This method deliberately does not choose a relay tuple.  The inline
+        gateway observation and authority make that selection after checking
+        the Viewer/Host reciprocal pair and shared video SSRC.
+        """
+        rows = self.viewer_page.evaluate("""async () => {
+          const pc = WebRTC?.peerConnection || WebRTC?.pc;
+          if (!pc?.getStats) return [];
+          return [...(await pc.getStats()).values()].map(row => ({id: row.id, type: row.type, selected: row.selected,
+            nominated: row.nominated, state: row.state, selectedCandidatePairId: row.selectedCandidatePairId,
+            localCandidateId: row.localCandidateId, remoteCandidateId: row.remoteCandidateId,
+            candidateType: row.candidateType, address: row.address, port: row.port, protocol: row.protocol, kind: row.kind, ssrc: row.ssrc}));
+        }""")
+        host = self.viewer_page.evaluate("""async () => { try { return await window.WebRTC?.requestLossLabHostSelectedPair?.(); } catch (_error) { return null; } }""")
+        viewer = selected_viewer_pair_from_stats(rows) if isinstance(rows, list) else None
+        expected = selected_media_expectation_from_stats(rows) if isinstance(rows, list) else None
+        if not isinstance(viewer, Mapping) or not isinstance(host, Mapping) or not isinstance(expected, Mapping): return None
+        return {"viewerPair": dict(viewer), "hostPair": dict(host), "expected": dict(expected)}
+
     def arm_loss_lab_taps(self) -> bool:
         """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""
         return self.viewer_page.evaluate("() => window.WebRTC?.beginLossLabTrace?.() === true") is True
@@ -666,6 +687,17 @@ def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: A
     pair.  Controller-side validation requires the full reciprocal candidate
     identity before translating the viewer-visible pair into TURN OUTPUT.
     """
+    viewer = selected_viewer_pair_from_stats(rows)
+    if not isinstance(viewer, Mapping): return None
+    if not isinstance(host_pair, Mapping) or not isinstance(media_binding, Mapping): return None
+    actual = media_binding.get("outerEgress")
+    if not isinstance(actual, Mapping): return None
+    from controller import runtime_relay_binding
+    return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair, media_binding=media_binding)
+
+
+def selected_viewer_pair_from_stats(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Return only the nominated Viewer pair; it does not select media."""
     transports = [row for row in rows if isinstance(row, Mapping) and row.get("type") == "transport" and isinstance(row.get("selectedCandidatePairId"), str)]
     selected_id = transports[0].get("selectedCandidatePairId") if len(transports) == 1 else None
     pairs = [row for row in rows if isinstance(row, Mapping) and row.get("type") == "candidate-pair" and row.get("state") == "succeeded" and (row.get("id") == selected_id if selected_id else (row.get("selected") is True or row.get("nominated") is True))]
@@ -679,13 +711,8 @@ def selected_relay_binding_from_stats(rows: list[Mapping[str, Any]], manifest: A
             or any(not isinstance(remote.get(key), str if key in {"id", "candidateType", "address", "protocol"} else int) for key in required)
             or local.get("protocol") != "udp" or remote.get("protocol") != "udp"):
         return None
-    viewer = {"pairId": str(pair.get("id")), "localCandidateId": local["id"], "remoteCandidateId": remote["id"],
+    return {"pairId": str(pair.get("id")), "localCandidateId": local["id"], "remoteCandidateId": remote["id"],
               "local": {key: local[key] for key in required}, "remote": {key: remote[key] for key in required}}
-    if not isinstance(host_pair, Mapping) or not isinstance(media_binding, Mapping): return None
-    actual = media_binding.get("outerEgress")
-    if not isinstance(actual, Mapping): return None
-    from controller import runtime_relay_binding
-    return runtime_relay_binding(manifest=manifest, actual_egress=actual, viewer_pair=viewer, host_pair=host_pair, media_binding=media_binding)
 
 
 def selected_media_expectation_from_stats(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:

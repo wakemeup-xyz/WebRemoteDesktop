@@ -278,61 +278,6 @@ class RuleBackend(Protocol):
     def read_probe_counter(self, counter_rule: list[str]) -> int: ...
 
 
-class IptablesRuleBackend:
-    """Apply exact fixture rules from inside the controller sidecar only."""
-    def __init__(self, run: Callable[[list[str]], Any] | None = None) -> None:
-        self._run = run or self._subprocess_run
-
-    @staticmethod
-    def _subprocess_run(argv: list[str]) -> None:
-        subprocess.run(argv, check=True, capture_output=True, text=True)
-
-    def add_rule(self, argv: list[str]) -> None:
-        self._run(["iptables", "-w", "-t", "mangle", "-A", "OUTPUT", *argv])
-
-    def remove_rule(self, argv: list[str]) -> None:
-        try:
-            self._run(["iptables", "-w", "-t", "mangle", "-D", "OUTPUT", *argv])
-        except subprocess.CalledProcessError as exc:
-            # An independent watchdog may have won the race.  Treat only the
-            # kernel's no-such-rule response as idempotent success.
-            if "Bad rule" not in (exc.stderr or ""):
-                raise
-
-    def read_rule_counter(self, argv: list[str]) -> int:
-        completed = subprocess.run(["iptables-save", "-c", "-t", "mangle"], check=True, capture_output=True, text=True)
-        marker = next((part for part in argv if part.startswith(("wrd-loss:", "wrd-baseline:"))), None)
-        if marker is None:
-            raise RuntimeError("fixture rule has no unique counter marker")
-        for line in completed.stdout.splitlines():
-            if marker in line and line.startswith("["):
-                closing = line.find(":")
-                if closing > 1:
-                    return int(line[1:closing])
-        raise RuntimeError("fixture rule counter was not found")
-
-    def add_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
-        self._run(["iptables", "-w", "-t", "mangle", "-N", chain])
-        self._run(["iptables", "-w", "-t", "mangle", "-A", "OUTPUT", *jump])
-        self._run(["iptables", "-w", "-t", "mangle", "-A", chain, *counter_rule])
-
-    def remove_probe(self, chain: str, jump: list[str], counter_rule: list[str]) -> None:
-        # Cleanup is deliberately tolerant of every partial-install point.
-        for argv in (
-            ["iptables", "-w", "-t", "mangle", "-D", "OUTPUT", *jump],
-            ["iptables", "-w", "-t", "mangle", "-F", chain],
-            ["iptables", "-w", "-t", "mangle", "-X", chain],
-        ):
-            try:
-                self._run(argv)
-            except subprocess.CalledProcessError as exc:
-                if not any(marker in (exc.stderr or "") for marker in ("Bad rule", "No chain", "does a matching rule exist")):
-                    raise
-
-    def read_probe_counter(self, counter_rule: list[str]) -> int:
-        return self.read_rule_counter(counter_rule)
-
-
 class GatewayCounterBackend:
     """Controller adapter for the inline Lab gateway's header-only counters.
 
@@ -367,6 +312,44 @@ class GatewayCounterBackend:
 
     def read_probe_counter(self, counter_rule: list[str]) -> int:
         return int(self._store.count(self._marker(counter_rule))["eligibleCount"])
+
+    def receiver_capture(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the gateway's own receiver-directed header evidence.
+
+        The inline gateway is the only component that sees both the confirmed
+        ChannelData stream and the actual successful send to the Viewer.  This
+        replaces the privileged host packet-capture sidecar for final PASS.
+        """
+        event_id = event.get("comment")
+        media, selector = event.get("mediaBinding"), event.get("egressSelector")
+        started, ended = event.get("startedMonotonicNs"), event.get("endedMonotonicNs")
+        if (not isinstance(event_id, str) or not isinstance(media, Mapping) or not isinstance(selector, Mapping)
+                or not isinstance(started, int) or not isinstance(ended, int) or ended < started):
+            raise RuntimeError("gateway event binding is unavailable")
+        count = self._store.count(event_id)
+        digest = GatewayCounterStore._digest_binding(media)
+        if (count["eventHandle"] != event_id or count["mediaBindingDigest"] != digest
+                or count["startedMonotonicNs"] != started or count["deadlineMonotonicNs"] != event.get("deadlineMonotonicNs")
+                or count["sendFailureCount"] != 0 or count["eligibleCount"] <= 0
+                or count["droppedCount"] <= 0 or count["forwardedCount"] <= 0):
+            raise RuntimeError("gateway counter evidence is incomplete")
+        ssrc = media.get("rtpSsrc")
+        if not isinstance(ssrc, int) or not 0 <= ssrc <= 0xffffffff:
+            raise RuntimeError("gateway media SSRC is invalid")
+        def rows(sequences: Any, clock: int) -> list[dict[str, int]]:
+            if not isinstance(sequences, list) or not sequences:
+                raise RuntimeError("gateway receiver-directed phase is empty")
+            if any(not isinstance(value, int) or not 0 <= value <= 65535 for value in sequences):
+                raise RuntimeError("gateway receiver-directed sequence is invalid")
+            return [{"sequence": value, "rtpTimestamp": 0, "ssrc": ssrc, "fixtureClockNs": clock} for value in sequences]
+        received = {"before": rows(count["beforeForwardedSequences"], max(0, started - 1)),
+                    "during": rows(count["duringForwardedSequences"], started),
+                    "after": rows(count["afterForwardedSequences"], ended + 1)}
+        body = {"source": "gateway-channeldata", "direction": "turn-to-viewer", "runId": event.get("runId"),
+                "eventHandle": event_id, "selectedLeg": dict(selector), "gatewayCounters": count,
+                "ssrc": ssrc, "receivedRtp": received}
+        body["captureDigest"] = hashlib.sha256(_canonical_evidence(body)).hexdigest()
+        return body
 
 
 class RuntimeBlocked(RuntimeError):
@@ -624,8 +607,8 @@ class LossControlSession:
     def apply_loss(self, run_id: str, pattern: str, duration_ms: int) -> dict[str, Any]:
         return self._controller._apply_loss(self, run_id, pattern, duration_ms)
 
-    def collect_receiver_evidence(self) -> None:
-        self._controller.collect_receiver_evidence(self.run_id)
+    def collect_receiver_evidence(self) -> Mapping[str, Any] | None:
+        return self._controller.collect_receiver_evidence(self.run_id)
 
     def close(self) -> dict[str, Any]:
         if self.closed:
@@ -663,7 +646,7 @@ def _without_signature(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def _event_binding(value: Mapping[str, Any]) -> dict[str, Any]:
     """`clear_loss` adds a response-only marker that is not event evidence."""
-    return {key: item for key, item in value.items() if key != "cleared"}
+    return {key: item for key, item in value.items() if key not in {"cleared", "receiverCapture"}}
 
 
 def sign_t3_artifact(artifact: Mapping[str, Any], verifier: bytes) -> str:
@@ -835,18 +818,35 @@ class SignedT3T5ReceiverEvidenceSource:
 
 
 def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, event: Mapping[str, Any], verifier: bytes) -> list[int]:
-    """Accept only sealed fixture observer rows, never Host rtp_send diagnostics."""
+    """Accept an authority-sealed gateway send ledger, never Host diagnostics."""
     if not isinstance(value, Mapping): raise RuntimeError("receiver capture is unavailable")
-    required = {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest", "authoritySignature"}
-    if set(value) != required or value.get("source") != "fixture-af-packet" or value.get("direction") != "turn-to-viewer":
+    gateway = value.get("source") == "gateway-channeldata"
+    required = ({"source", "direction", "runId", "eventHandle", "selectedLeg", "gatewayCounters", "ssrc", "receivedRtp", "captureDigest", "authoritySignature"}
+                if gateway else {"source", "direction", "runId", "eventHandle", "selectedLeg", "kernelDropCount", "ssrc", "cursor", "receivedRtp", "captureDigest", "authoritySignature"})
+    if set(value) != required or value.get("source") not in {"gateway-channeldata", "fixture-af-packet"} or value.get("direction") != "turn-to-viewer":
         raise RuntimeError("receiver capture provenance is invalid")
     if value.get("runId") != manifest.run_id or value.get("eventHandle") != event.get("comment") or value.get("selectedLeg") != event.get("egressSelector"):
         raise RuntimeError("receiver capture does not bind selected relay leg")
-    if (not isinstance(value.get("kernelDropCount"), int) or value["kernelDropCount"] <= 0 or not isinstance(value.get("ssrc"), int)
+    counter = value.get("gatewayCounters") if gateway else value.get("kernelDropCount")
+    if (not isinstance(counter, Mapping if gateway else int) or (not gateway and counter <= 0) or not isinstance(value.get("ssrc"), int)
             or not isinstance(event.get("mediaBinding"), Mapping) or value.get("ssrc") != event["mediaBinding"].get("rtpSsrc")):
         raise RuntimeError("receiver capture kernel counter or SSRC is invalid")
+    if gateway:
+        expected_counter = {"eventHandle", "mediaBindingDigest", "startedMonotonicNs", "deadlineMonotonicNs", "eligibleCount", "forwardedCount", "droppedCount", "sendFailureCount", "beforeForwardedSequences", "duringForwardedSequences", "afterForwardedSequences", "droppedSequences"}
+        if (set(counter) != expected_counter or counter.get("eventHandle") != event.get("comment")
+                or counter.get("mediaBindingDigest") != GatewayCounterStore._digest_binding(event["mediaBinding"])
+                or counter.get("startedMonotonicNs") != event.get("startedMonotonicNs")
+                or counter.get("deadlineMonotonicNs") != event.get("deadlineMonotonicNs")
+                or not all(isinstance(counter.get(key), int) and counter[key] >= 0 for key in ("eligibleCount", "forwardedCount", "droppedCount", "sendFailureCount"))
+                or counter["sendFailureCount"] != 0 or counter["droppedCount"] <= 0 or counter["forwardedCount"] <= 0):
+            raise RuntimeError("gateway counter evidence is invalid")
+        if (counter["eligibleCount"] != counter["forwardedCount"] + counter["droppedCount"]
+                or len(counter["duringForwardedSequences"]) != counter["forwardedCount"]
+                or len(counter["droppedSequences"]) != counter["droppedCount"]
+                or event.get("actualDropCount") != counter["droppedCount"]):
+            raise RuntimeError("gateway counter totals do not bind the cleared event")
     cursor, groups = value.get("cursor"), value.get("receivedRtp")
-    if (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)
+    if ((not gateway and (not isinstance(cursor, Mapping) or set(cursor) != {"first", "last"} or not all(isinstance(cursor[k], int) for k in cursor)))
             or not isinstance(groups, Mapping) or set(groups) != {"before", "during", "after"}):
         raise RuntimeError("receiver capture cursor or phases are invalid")
     digest_body = {key: value[key] for key in required - {"captureDigest", "authoritySignature"}}
@@ -870,7 +870,10 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
     if (not isinstance(started, int) or not isinstance(ended, int) or started > ended
             or not all(started <= row["fixtureClockNs"] <= ended for row in during)):
         raise RuntimeError("receiver capture is not in active loss interval")
-    return [row["sequence"] for row in rows]
+    sequences = [row["sequence"] for row in rows]
+    if gateway and not set(counter["droppedSequences"]).issubset(set(sequence_gaps(sequences))):
+        raise RuntimeError("gateway dropped headers do not match receiver-directed gaps")
+    return sequences
 
 
 class LabReceiverBridgeAuthority:
@@ -1165,9 +1168,12 @@ class LossController:
             "-m", "comment", "--comment", f"{comment}:jump", "-j", chain,
         ]
         counter_rule = ["-m", "comment", "--comment", comment, "-j", "RETURN"]
+        started = self._monotonic_ns()
         event = {
             "schemaVersion": 1, "state": "probing", "runId": self.manifest.run_id,
-            "comment": comment, "deadlineMonotonicNs": self._monotonic_ns() + 2_000_000_000,
+            "comment": comment, "startedMonotonicNs": started,
+            "deadlineMonotonicNs": started + 2_000_000_000,
+            "mediaBinding": dict(media),
             "probe": {"chain": chain, "jump": jump, "counterRule": counter_rule},
         }
         if isinstance(self._state_store, DeadlineStateStore):
@@ -1248,7 +1254,7 @@ class LossController:
             self.active_event = event
             return dict(event)
 
-    def collect_receiver_evidence(self, run_id: str) -> None:
+    def collect_receiver_evidence(self, run_id: str) -> Mapping[str, Any] | None:
         self._require_run(run_id)
         with self._lock:
             event = self.active_event or self._last_event
@@ -1256,11 +1262,19 @@ class LossController:
                 raise RuntimeError("no active loss rule records this delivery")
             if self._receiver_source is None:
                 raise RuntimeError("receiver evidence source is unavailable")
-            current = self._backend.read_rule_counter(list(event["rule"]))
-            baseline = event.get("dropCounterAtInstall")
-            if not isinstance(baseline, int) or current < baseline:
-                raise RuntimeError("iptables counter evidence is invalid")
-            event["actualDropCount"] = current - baseline
+            if event is self.active_event:
+                current = self._backend.read_rule_counter(list(event["rule"]))
+                baseline = event.get("dropCounterAtInstall")
+                if not isinstance(baseline, int) or current < baseline:
+                    raise RuntimeError("gateway counter evidence is invalid")
+                event["actualDropCount"] = current - baseline
+            capture: Mapping[str, Any] | None = None
+            # The active window has no receiver-directed after segment yet.
+            # Once clear has completed, derive every accepted sequence from
+            # the gateway's confirmed ChannelData send ledger.
+            if event is self._last_event and isinstance(self._backend, GatewayCounterBackend):
+                capture = self._backend.receiver_capture(event)
+                event["receiverCapture"] = dict(capture)
             # A signed T3/T5 bridge is constructed only after the loss closes,
             # because its recovery proof includes the post-clear IDR and paint.
             # Plain staging files remain diagnostic-only and keep legacy gap
@@ -1269,6 +1283,7 @@ class LossController:
                 event["receiverSequenceGaps"] = sequence_gaps(self._receiver_source.sequences_for(self.manifest, event))
             if event is self.active_event:
                 self._state_store.save(event)
+            return capture
 
     def clear_loss(self, run_id: str, *, reason: str = "explicit") -> dict[str, Any]:
         self._require_run(run_id)
@@ -1286,8 +1301,8 @@ class LossController:
             event["endedMonotonicNs"] = self._monotonic_ns()
             event["clearReason"] = reason
             event["state"] = "armed"
-            # Persist the just-cleared fixture event for the AF_PACKET sidecar;
-            # it contains only event/kernel data and expires with the volume.
+            # Persist only the just-cleared event metadata for the independent
+            # gateway-state watchdog; media evidence stays in its own ledger.
             if isinstance(self._state_store, DeadlineStateStore):
                 cleared_path = self._state_store.path.with_name("last-cleared.json")
                 cleared_path.write_text(json.dumps(event, sort_keys=True), encoding="utf-8")
@@ -1399,8 +1414,8 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                 elif operation == "apply":
                     response = session.apply_loss(request["runId"], request["pattern"], request["durationMs"])
                 elif operation == "collect":
-                    session.collect_receiver_evidence()
-                    response = {"status": "RECEIVER_EVIDENCE_COLLECTED"}
+                    capture = session.collect_receiver_evidence()
+                    response = {"status": "RECEIVER_EVIDENCE_COLLECTED", **({"receiverCapture": capture} if capture is not None else {})}
                 elif operation == "clear":
                     response = router.controller.clear_loss(session.run_id)
                 else:
@@ -1505,6 +1520,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  turn-gateway:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/turn_gateway.py\", \"--turn-host\", \"turn\", \"--turn-port\", \"3478\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--counters\", \"/state/gateway-counters.json\", \"--capture-authority\", \"/lab-capture/authority.sock\", \"--capture-capability\", \"/lab-capture/capability\", \"--run-id\", \"{manifest.run_id}\"]\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {capture_dir}:/lab-capture:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
@@ -1586,10 +1602,10 @@ def _main() -> None:
         command = subcommands.add_parser(name)
         command.add_argument("--manifest", type=Path, required=True)
         command.add_argument("--state", type=Path, required=True)
+        command.add_argument("--gateway-counters", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--credentials", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
     subcommands.choices["serve"].add_argument("--relay-binding", type=Path, required=True)
-    subcommands.choices["serve"].add_argument("--gateway-counters", type=Path, required=True)
     subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
                                                 help="inherited live-Lab verifier descriptor; never a path, argv secret, or environment variable")
     prepare = subcommands.add_parser("prepare")
@@ -1650,7 +1666,7 @@ def _main() -> None:
         print(json.dumps({"status": "SEALED"}, sort_keys=True)); return
     manifest = LossFixtureManifest.parse(json.loads(arguments.manifest.read_text(encoding="utf-8")))
     store = DeadlineStateStore(arguments.state)
-    backend: RuleBackend = GatewayCounterBackend(arguments.gateway_counters) if arguments.command == "serve" else IptablesRuleBackend()
+    backend: RuleBackend = GatewayCounterBackend(arguments.gateway_counters)
     if arguments.command == "watchdog":
         while True:
             recover_deadline_state(store, backend)

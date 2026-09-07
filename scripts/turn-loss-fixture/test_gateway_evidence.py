@@ -55,6 +55,9 @@ def test_receiver_capability_rejects_a_wrong_authority_scope():
 def test_gateway_counter_store_persists_only_header_counts_for_one_event(tmp_path):
     evidence = _module()
     store = evidence.GatewayCounterStore(tmp_path / "counters.json")
+    media = {"channelNumber": 0x4001, "rtpSsrc": 7, "payloadType": 96}
+    store.begin("event-a", media_binding=media, started_ns=1, deadline_ns=2, before_sequences=[0])
     store.record("event-a", eligible=True, dropped=False, sequence=1)
     store.record("event-a", eligible=True, dropped=True, sequence=2)
-    assert store.count("event-a") == {"eligibleCount": 2, "droppedCount": 1, "forwardedSequences": [1], "droppedSequences": [2]}
+    count = store.count("event-a")
+    assert {key: count[key] for key in ("eligibleCount", "forwardedCount", "droppedCount", "sendFailureCount", "beforeForwardedSequences", "duringForwardedSequences", "afterForwardedSequences", "droppedSequences")} == {"eligibleCount": 2, "forwardedCount": 1, "droppedCount": 1, "sendFailureCount": 0, "beforeForwardedSequences": [0], "duringForwardedSequences": [1], "afterForwardedSequences": [], "droppedSequences": [2]}

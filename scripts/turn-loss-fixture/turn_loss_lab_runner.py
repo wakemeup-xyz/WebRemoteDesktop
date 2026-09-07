@@ -246,11 +246,17 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
             _wait_and_sample(seconds=recovery_seconds, adapter=adapter, timeline=timeline, wait=wait, now_ns=now_ns)
             if not any(row.get("eventHandle") == cleared.get("comment") for row in timeline.recovery):
                 raise RuntimeBlocked("clear did not produce a fresh PLI/FIR, IDR, and rVFC recovery")
-            reader = getattr(adapter, "read_receiver_capture", None)
-            if not callable(reader): raise RuntimeBlocked("fixture receiver capture reader is unavailable")
-            capture = reader(manifest=manifest, event=events[-1])
+            collected = client.call("collect")
+            capture = collected.get("receiverCapture") if isinstance(collected, Mapping) else None
+            # Test-only adapters retain the old synthetic protocol surface;
+            # the dedicated lifecycle never installs this reader and therefore
+            # cannot turn it into a runtime PASS path.
+            if capture is None:
+                reader = getattr(adapter, "read_receiver_capture", None)
+                if callable(reader):
+                    capture = reader(manifest=manifest, event=events[-1])
             if not isinstance(capture, Mapping) or capture.get("eventHandle") != cleared.get("comment"):
-                raise RuntimeBlocked("fixture receiver capture did not bind the current event")
+                raise RuntimeBlocked("gateway receiver-directed capture did not bind the current event")
             events[-1]["receiverCapture"] = dict(capture)
         captures = {event["comment"]: event.pop("receiverCapture") for event in events}
         return {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline, "receiverCaptures": captures, "receiverCapture": captures[events[-1]["comment"]]}
@@ -271,10 +277,12 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"], (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
-        def select_receiver_media(expected: Mapping[str, Any]) -> Mapping[str, Any]:
+        def seal_gateway_media(inputs: Mapping[str, Any]) -> Mapping[str, Any]:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(3); client.connect(str(prepared["bridgeSocket"])); client.sendall((json.dumps({"operation":"select-media-binding", "runId":manifest.run_id, "expected":dict(expected)}, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
-            if not isinstance(reply, Mapping) or reply.get("status") != "SEALED" or not isinstance(reply.get("mediaBinding"), Mapping): raise RuntimeBlocked("receiver authority has no unique browser media binding")
+                request = {"operation": "seal-gateway-media", "runId": manifest.run_id,
+                           "viewerPair": dict(inputs["viewerPair"]), "hostPair": dict(inputs["hostPair"]), "expected": dict(inputs["expected"])}
+                client.settimeout(3); client.connect(str(prepared["bridgeSocket"])); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+            if not isinstance(reply, Mapping) or reply.get("status") != "SEALED" or not isinstance(reply.get("mediaBinding"), Mapping): raise RuntimeBlocked("gateway authority has no unique browser media binding")
             return reply["mediaBinding"]
         def fixture_probe() -> None:
             from turn_udp_probe import channel_media_binding_echo, permission_send_data_echo
@@ -295,14 +303,24 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
-            expected = adapter.selected_media_expectation()
-            binding = adapter.selected_relay_binding(manifest, select_receiver_media(expected) if isinstance(expected, Mapping) else None)
+            deadline, inputs, media = time.monotonic() + 10, None, None
+            while time.monotonic() < deadline:
+                candidate = adapter.gateway_media_inputs()
+                if isinstance(candidate, Mapping):
+                    try: media = seal_gateway_media(candidate); inputs = candidate; break
+                    except RuntimeBlocked: pass
+                time.sleep(.1)
+            if not isinstance(inputs, Mapping) or not isinstance(media, Mapping):
+                adapter.close(); raise RuntimeBlocked("gateway did not seal a unique browser media mapping")
+            from controller import runtime_relay_binding
+            host_pair = {key: value for key, value in inputs["hostPair"].items() if key != "videoSsrc"}
+            binding = runtime_relay_binding(manifest=manifest, actual_egress=media["outerEgress"], viewer_pair=inputs["viewerPair"], host_pair=host_pair, media_binding=media)
             if (not isinstance(scope, Mapping) or not isinstance(binding, Mapping)
                     or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
                 adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
             # The static manifest leg is only a mapping expectation.  Persist
             # the nominated browser pair and reciprocal Host pair before the
-            # controller or AF_PACKET observer may authorize media traffic.
+            # controller or gateway may authorize media traffic.
             write_runtime_relay_binding(Path(prepared["relayBinding"]), binding)
             try: runtime_relay = load_runtime_relay_binding(Path(prepared["relayBinding"]), manifest)
             except RuntimeBlocked:
@@ -322,12 +340,6 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             t5 = _collect_current_t5(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             t3 = _collect_current_t3(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
-            capture_path = runtime / manifest.receiver_evidence_file
-            def read_receiver_capture(*, manifest: Any, event: Any) -> Mapping[str, Any]:
-                try: capture = json.loads(capture_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError, json.JSONDecodeError) as exc: raise RuntimeBlocked("fixture receiver-side RTP capture is unavailable") from exc
-                return capture
-            adapter.read_receiver_capture = read_receiver_capture
             result = run_controlled_loss_transaction(manifest=manifest, endpoint=prepared["controlEndpoint"], control_token=credentials["controlToken"], adapter=adapter, timeline=timeline)
             fields, last = timeline.as_bridge_fields(), result["events"][-1]
             bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
