@@ -77,15 +77,25 @@ def make_static_text_frame(width: int, height: int, font: ImageFont.ImageFont) -
 
 def serialize_codec_creation_record(record: CodecCreationRecord) -> dict[str, Any]:
     """Expose the immutable call-site record using the evidence schema names."""
+    submitted = dict(record.submitted_codec_options)
+    x264_params = str(submitted.get("x264-params", ""))
+
+    def submitted_value(name: str) -> str:
+        return x264_params.partition(f"{name}=")[2].partition(":")[0]
+
     return {
         "scenarioId": record.scenario_id,
         "resolution": list(record.resolution),
         "creationIndex": record.creation_index,
         "requestedPreset": record.requested_preset,
-        "submittedCodecOptions": dict(record.submitted_codec_options),
+        "submittedCodecOptions": submitted,
         "configuredProfile": record.configured_profile,
         "configuredFps": record.configured_fps,
         "configuredBitrateBps": record.configured_bitrate_bps,
+        "configuredAverageBitrateBps": record.configured_bitrate_bps,
+        "submittedVbvMaxrateKbps": submitted_value("vbv-maxrate"),
+        "submittedVbvBufsizeKbits": submitted_value("vbv-bufsize"),
+        "submittedVbvInit": submitted_value("vbv-init"),
         "generation": record.generation,
         "reopenReason": record.reopen_reason,
     }
@@ -143,6 +153,10 @@ def encoder_settings_from_creation_records(
         "profile": policy.profile,
         "targetFps": policy.target_fps,
         "bitrateBps": bitrate_bps,
+        "averageBitrateBps": bitrate_bps,
+        "submittedVbvMaxrateKbps": x264_params.partition("vbv-maxrate=")[2].partition(":")[0],
+        "submittedVbvBufsizeKbits": vbv_kbits,
+        "submittedVbvInit": x264_params.partition("vbv-init=")[2].partition(":")[0],
         "gopFrames": policy.periodic_idr_frames,
         "vbvKbits": vbv_kbits,
         "vbvMs": round(vbv_kbits * 1000 / max(1, bitrate_bps // 1000), 3),
@@ -354,6 +368,9 @@ def _scenario_run(
             target_bitrate_bps=config.bitrate_by_resolution[resolution_key],
             max_bitrate_bps=config.bitrate_by_resolution[resolution_key],
             preset=config.preset,
+            vbv_maxrate_bps=getattr(config, "vbv_maxrate_by_resolution", {}).get(resolution_key),
+            vbv_bufsize_kbits=getattr(config, "vbv_bufsize_kbits_by_resolution", {}).get(resolution_key),
+            vbv_init=getattr(config, "vbv_init", 0.4),
         )
         encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario_id)
         decoder = av.CodecContext.create("h264", "r")
@@ -517,4 +534,39 @@ def evaluate_preset_scenario_matrix(config) -> dict[str, Any]:
         },
         "versions": {"pyav": av.__version__, "aiortc": aiortc.__version__},
         "runs": resolution_runs,
+    }
+
+
+def evaluate_peak_headroom_prescreen(config) -> dict[str, Any]:
+    """Run the required fresh-codec safety net before the full five-scenario matrix.
+
+    Each resolution gets a new encoder and decoder from frame zero through
+    frame 1225.  This is deliberately separate from the full run so a failed
+    safety screen cannot be retrofitted from a selected subset of matrix data.
+    """
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    logging.disable(logging.CRITICAL)
+    font, font_metadata = load_probe_font()
+    runs = []
+    for width, height in RESOLUTIONS:
+        session_id = f"{config.id}:{width}x{height}:safety-net-prescreen"
+        scenario, _encoder, _decoder = _scenario_run(
+            width, height, font, config=config, scenario_id="safety-net",
+            session_id=session_id, phase_start_index=0, frame_count=1226,
+            request_indices=(),
+        )
+        runs.append({"resolution": [width, height], "scenarios": [scenario]})
+    return {
+        "config": config.to_dict(),
+        "scope": "offline fresh-codec safety prescreen; no desktop capture, Host startup, Viewer, or network connection",
+        "input": {
+            "randomSeed": RANDOM_SEED,
+            "frameRate": FRAME_RATE,
+            "timeBase": "1/90000",
+            "font": font_metadata,
+            "content": "fixed static text, fresh codec frames 0..1225",
+        },
+        "versions": {"pyav": av.__version__, "aiortc": aiortc.__version__},
+        "runs": runs,
     }

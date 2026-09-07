@@ -45,6 +45,11 @@ class H264SessionPolicy:
     profile: str
     connection_attempt_id: str = "legacy-local"
     generation: int = 0
+    # Optional experiment-only rate-control overrides.  The production resolver
+    # leaves every value at its legacy-equivalent default.
+    vbv_maxrate_bps: int | None = None
+    vbv_bufsize_kbits: int | None = None
+    vbv_init: float = 0.4
 
 
 @dataclass(frozen=True)

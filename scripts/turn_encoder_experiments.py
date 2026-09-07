@@ -104,6 +104,9 @@ def build_preset_experiments() -> tuple[ExperimentConfig, ExperimentConfig]:
 
 def submitted_options(config: ExperimentConfig, resolution: tuple[int, int]) -> dict[str, str]:
     """Return the exact options expected at one actual codec construction."""
+    delegated = getattr(config, "submitted_options", None)
+    if callable(delegated):
+        return delegated(resolution)
     key = f"{resolution[0]}x{resolution[1]}"
     return {
         "preset": config.preset,

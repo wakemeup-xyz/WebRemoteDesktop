@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "relay-peak-headroom-v1-sidecar",
+  "rawArtifact": "relay-peak-headroom-v1.raw.json",
+  "rawSha256": "75c0c22d905826bacc46303a547c7f78b971d1c164368937a508750bc58a2315",
+  "execution": {
+    "command": "nice -n 15 python3 scripts/eval-turn-encoder-quality.py --matrix relay-peak-headroom-v1 --output docs/superpowers/reports/evidence/2026-09-07-turn-peak-headroom/relay-peak-headroom-v1.raw.json",
+    "nice": 15,
+    "exitCode": 0,
+    "processPreflight": {
+      "labOrPerformanceProcesses": [],
+      "productionStatus": {
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0,
+        "viewerEpoch": 41
+      }
+    },
+    "timingQualification": "CONTAMINATED",
+    "timingContamination": {
+      "reason": "An external StockHub composite pytest/npm/build process (reported PID 24443) started after preflight and overlapped this offline run.",
+      "effect": "Frame-derived P95 values are preserved in raw evidence but are not used for candidate qualification.",
+      "followupRule": "Run one clean timing/full matrix only if the candidate first passes every quality and IDR gate. This candidate did not, so no rerun is authorized."
+    }
+  },
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "9f1c50973592366027e75e3a6fb8bc589c3cce1dbe352c3eb895fb8dbd2dc93c",
+    "python-host/h264_encoder_policy.py": "0858b8ac2cfd930fe549992e5ece648ef3c4f28ef371d28d5fd3b51076ae9946",
+    "python-host/h264_videotoolbox_encoder.py": "1ae1b8038bb83c5f07b3737d28a44f105507e52ab78b940ef5fdd4e08968481a",
+    "scripts/eval-turn-encoder-quality.py": "972161d3a0b6ebc8018cadb1256ee98611afe9337885dca328e077f156bd8ae3",
+    "scripts/turn_encoder_experiments.py": "c54712eda2408f8ccdb96891c573e331231d6a2e857f0f94ad83cadcbec67b3e",
+    "scripts/turn_encoder_peak_headroom_experiments.py": "2a0d757b0382ba9d41068d85923c7dce98e78f4f55971c76ddbf5e66d85f83c3"
+  }
+}

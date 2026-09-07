@@ -930,6 +930,72 @@ def evaluate_veryfast_matrix(probe) -> dict:
     return result
 
 
+def evaluate_peak_headroom_matrix(probe) -> dict:
+    """Run exactly one frozen candidate, with a fail-closed safety prescreen."""
+    from turn_encoder_peak_headroom_experiments import (
+        build_peak_headroom_candidate,
+        submitted_options,
+        validate_full_matrix,
+        validate_prescreen,
+    )
+
+    candidate = build_peak_headroom_candidate()
+    execution_source_revision = _execution_source_revision()
+    source_digests = {
+        str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (
+            Path(__file__).resolve(),
+            PROBE_PATH,
+            ROOT / "scripts/turn_encoder_experiments.py",
+            ROOT / "scripts/turn_encoder_peak_headroom_experiments.py",
+            ROOT / "python-host/h264_encoder_policy.py",
+            ROOT / "python-host/h264_videotoolbox_encoder.py",
+        )
+    }
+    runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
+    prescreen = probe.evaluate_peak_headroom_prescreen(candidate)
+    prescreen_errors = validate_prescreen(prescreen)
+    declared = candidate.to_dict()
+    declared["submittedCodecOptionsByResolution"] = {
+        f"{width}x{height}": submitted_options(candidate, (width, height))
+        for width, height in RELAY_RESOLUTIONS
+    }
+    candidate_row = {
+        "id": candidate.id,
+        "parameters": declared,
+        "prescreen": {"status": "PASS" if not prescreen_errors else "FAIL", "evidence": prescreen, "validationErrors": prescreen_errors},
+        "runtime": runtime,
+        "eligible": False,
+        "ineligibleReason": [],
+        "execution": {"prescreen": "COMPLETED", "fullMatrix": "NOT RUN"},
+    }
+    if prescreen_errors:
+        candidate_row["offline"] = {"status": "NOT RUN"}
+        candidate_row["ineligibleReason"] = list(prescreen_errors)
+        return {
+            "kind": "relay-peak-headroom-v1", "status": "NO_QUALIFIED_CANDIDATE",
+            "scope": "one offline candidate; failed safety prescreen stopped the full matrix and runtime remains NOT RUN",
+            "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
+            "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+            "selection": select_relay_candidate([]),
+        }
+
+    full = probe.evaluate_preset_scenario_matrix(candidate)
+    full_errors = validate_full_matrix(full)
+    candidate_row["execution"]["fullMatrix"] = "COMPLETED"
+    candidate_row["offline"] = {"status": "PASS" if not full_errors else "FAIL", "evidence": full, "validationErrors": full_errors}
+    candidate_row["eligible"] = not full_errors
+    candidate_row["ineligibleReason"] = list(full_errors)
+    return {
+        "kind": "relay-peak-headroom-v1",
+        "status": "OFFLINE_PASS_ONLY" if not full_errors else "NO_QUALIFIED_CANDIDATE",
+        "scope": "one offline candidate; no runtime policy change, desktop capture, Host startup, Viewer, or network connection",
+        "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
+        "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
+        "selection": select_relay_candidate([candidate_row] if not full_errors else []),
+    }
+
+
 def load_probe_module():
     spec = importlib.util.spec_from_file_location("turn_encoder_probe", PROBE_PATH)
     if spec is None or spec.loader is None:
@@ -943,7 +1009,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--policy", choices=("relay-legacy-v1",))
-    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement"))
+    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement", "relay-peak-headroom-v1"))
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
 
@@ -961,6 +1027,8 @@ def main() -> None:
         else evaluate_preset_matrix(probe)
         if args.matrix == "relay-preset-refinement"
         else evaluate_veryfast_matrix(probe)
+        if args.matrix == "relay-veryfast-refinement"
+        else evaluate_peak_headroom_matrix(probe)
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")

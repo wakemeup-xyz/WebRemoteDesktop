@@ -91,15 +91,27 @@ def libx264_zerolatency_options(
     vbv_buffer_ms: int = 100,
     *,
     preset: str = "ultrafast",
+    vbv_maxrate_bps: int | None = None,
+    vbv_bufsize_kbits: int | None = None,
+    vbv_init: float = 0.4,
 ) -> dict:
     preset_s = str(preset)
     if preset_s not in LIBX264_ALLOWED_PRESETS:
         allowed = ", ".join(sorted(LIBX264_ALLOWED_PRESETS))
         raise ValueError(f"unsupported libx264 preset {preset_s!r}; allowed: {allowed}")
     kbps = max(1, int(bitrate_bps) // 1000)
+    maxrate_kbps = max(1, int(vbv_maxrate_bps) // 1000) if vbv_maxrate_bps is not None else kbps
     # 100ms of bits: 1.8 Mbps → vbv-bufsize=180 kbit (~22KB IDR cap).
     # Standalone vbv-* keys are ignored by PyAV; x264-params is required.
-    bufsize = max(120, int(bitrate_bps) * max(1, int(vbv_buffer_ms)) // 1_000_000)
+    bufsize = (
+        max(1, int(vbv_bufsize_kbits))
+        if vbv_bufsize_kbits is not None
+        else max(120, int(bitrate_bps) * max(1, int(vbv_buffer_ms)) // 1_000_000)
+    )
+    init = float(vbv_init)
+    if not 0.0 < init <= 1.0:
+        raise ValueError("vbv_init must be in (0, 1]")
+    init_s = f"{init:g}"
     gop_s = str(
         int(gop) if int(gop) > 0 else ON_DEMAND_ONLY_KEYINT_FRAMES
     )
@@ -110,8 +122,8 @@ def libx264_zerolatency_options(
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
             f"threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
             f"rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
-            f"forced-idr=1:vbv-maxrate={kbps}:vbv-bufsize={bufsize}:"
-            f"vbv-init=0.4:nal-hrd=none"
+            f"forced-idr=1:vbv-maxrate={maxrate_kbps}:vbv-bufsize={bufsize}:"
+            f"vbv-init={init_s}:nal-hrd=none"
         ),
     }
 
@@ -784,6 +796,9 @@ class H264VideoToolboxEncoder(Encoder):
                 gop,
                 self._policy.vbv_buffer_ms,
                 preset=self._policy.preset,
+                vbv_maxrate_bps=self._policy.vbv_maxrate_bps,
+                vbv_bufsize_kbits=self._policy.vbv_bufsize_kbits,
+                vbv_init=self._policy.vbv_init,
             )
         reopen_reason = self._consume_pending_codec_reopen_reason()
 

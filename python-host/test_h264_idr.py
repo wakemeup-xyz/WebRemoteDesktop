@@ -75,6 +75,32 @@ def test_on_demand_policy_schedules_no_application_periodic_idr_in_a_sixty_secon
     assert periodic_idr_due(40, 40) is True
 
 
+def test_libx264_peak_headroom_overrides_submit_independent_rate_buffer_and_init():
+    legacy = libx264_zerolatency_options(3_200_000, 0)
+    assert legacy["x264-params"].endswith("vbv-maxrate=3200:vbv-bufsize=320:vbv-init=0.4:nal-hrd=none")
+
+    options = libx264_zerolatency_options(
+        3_200_000,
+        0,
+        preset="superfast",
+        vbv_maxrate_bps=4_800_000,
+        vbv_bufsize_kbits=1_000,
+        vbv_init=1.0,
+    )
+
+    assert options == {
+        "preset": "superfast",
+        "tune": "zerolatency",
+        "x264-params": (
+            "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
+            "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+            "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+            "forced-idr=1:vbv-maxrate=4800:vbv-bufsize=1000:"
+            "vbv-init=1:nal-hrd=none"
+        ),
+    }
+
+
 def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields(caplog):
     """Encoder observability is bounded and only reports locally measured work."""
     from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
