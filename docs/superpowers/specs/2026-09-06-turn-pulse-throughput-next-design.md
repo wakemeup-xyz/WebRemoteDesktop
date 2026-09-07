@@ -166,14 +166,12 @@ marker version=1、reserved=0；边框四角依次TL/TR/BL/BR=0/1/1/1；顶边�
 30 个 1Hz 预检样本。第一个样本没有前序间隔；其余相邻样本必须处于
 0.85–1.15 秒，且基于单调 deadline 排程。迟到、漏 tick、采样异常、缺少
 30 个样本、mysqld PID/二进制路径/启动 epoch 改变或稳定界限越界，均产生
-`ABORTED_INCONCLUSIVE`。mysqld 仅在身份稳定时允许作为背景项；pytest、
-sync_worker、Lab 或 docker compose 等非 allowlisted 干扰进程只要出现即为
-`ABORTED_CONTAMINATED`。Viewer 或 relay Viewer 非零同样中止。
+`ABORTED_INCONCLUSIVE`。mysqld 与精确 sync_worker 仅在身份稳定时允许作为背景项；Viewer 或 relay Viewer 非零同样中止。
 
-本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。缺失、重启、漂移或 argv spoof 都中止；此授权不泛化到其他 Python/pytest 进程。
+本次唯一授权的第二背景项是 exact Python executable 配合 argv `-m backend.scripts.sync_worker`；同样锁定 canonical executable、PID 与 start epoch，并在全部样本记录 CPU/RSS/coverage。精确 sync 身份缺失、重启或漂移为 `ABORTED_INCONCLUSIVE`；非精确 sync argv、pytest、Lab、docker compose 等仍是外部受管进程，适用静默预算而非存在即中止。
 
 非 allowlisted 外部进程采用 `quiescent-external-v1`：每样本单进程与总 CPU 都必须≤1.0%，可作为脱敏 `quiescentExternalProcesses` 记录；任一 spike 超过预算即 `ABORTED_CONTAMINATED`。此规则不调整 raw P95 或资格，sentinel 仍仅 relative telemetry。
-受管集合包含所有非系统根（`/System/Library`、`/usr/lib`、`/usr/sbin`、`/sbin`）、非 matrix 自身且非精确 mysqld/sync 的进程；node、Host 与第三方 GUI 均受管。
+受管集合包含所有非系统根（`/System/Library`、`/usr/lib`、`/usr/libexec`、`/usr/sbin`、`/sbin`、`/bin`）、非 matrix 自身及其 descendants 且非精确 mysqld/sync 的进程；node、Host 与第三方 GUI 均受管。
 
 边界 sentinel 请求排入同一 sampler，不能从调用线程并发读取 `ps`。每个
 分辨率/场景前后使用相同静态输入和冻结 candidate，记录单调窗口、输入与配置

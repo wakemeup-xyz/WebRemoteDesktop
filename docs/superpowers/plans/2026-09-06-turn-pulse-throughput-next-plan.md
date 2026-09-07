@@ -198,10 +198,9 @@
   预检；第一样本无前序间隔，其余严格记录 0.85–1.15 秒窗口、late/missed tick。
 - [x] 固定并验证 mysqld 的 PID、绝对二进制路径和 start epoch；记录 CPU
   P50/P95/max、稳定阈值和每个 sentinel block 的样本覆盖。
-- [x] 仅额外允许 argv 精确为 `python -m backend.scripts.sync_worker` 的稳定后台；锁定 canonical executable/PID/start epoch 并记录全程 CPU/RSS，其他 Python/pytest 仍中止。
+- [x] 仅额外允许 argv 精确为 `python -m backend.scripts.sync_worker` 的稳定后台；锁定 canonical executable/PID/start epoch 并记录全程 CPU/RSS，精确身份缺失/漂移为 INCONCLUSIVE；非精确 sync 与其他 Python/pytest 转入静默预算。
 - [x] `quiescent-external-v1` 仅允许非 allowlisted 进程每样本单项及总和 CPU≤1.0%；schema记录脱敏 PID/class/CPU，超预算即污染中止，不改变 raw P95 或 sentinel 的 relative-only 语义。
-- [x] 将 pytest、sync_worker、Lab/docker compose、Viewer/relay Viewer 活动和
-  健康/采样失败分别 fail-closed 为 CONTAMINATED 或 INCONCLUSIVE。
+- [x] 将非 allowlisted pytest、非精确 sync、Lab/docker compose 按静默预算 fail-closed；Viewer/relay Viewer 活动为 CONTAMINATED，精确背景身份及健康/采样失败为 INCONCLUSIVE。
 - [x] 每场景前后运行冻结静态 sentinel；仅归档原始 P50/P95、输入/配置 digest
   与 paired relative ambient factor，绝不改变 raw P95 qualification gate。
 - [x] 对 setup、digest、candidate 或 hook 例外原子写完整 ABORTED schema；异常和
