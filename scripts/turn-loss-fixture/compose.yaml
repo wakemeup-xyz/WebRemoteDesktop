@@ -29,14 +29,14 @@ services:
     labels:
       com.wrd.turn-loss-fixture: "true"
     network_mode: service:turn
-    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-bridge/authority.sock"]
+    command: ["python", "/fixture/receiver_capture.py", "observe", "--manifest", "/runtime/manifest.json", "--state", "/state/active-loss.json", "--output", "/receiver/sequence.json", "--authority-socket", "/lab-capture/authority.sock", "--capture-capability", "/lab-capture/capability"]
     cap_drop: [ALL]
     cap_add: [NET_RAW]
     security_opt: [no-new-privileges:true]
     volumes:
       - turn-loss-receiver:/receiver
       - turn-loss-state:/state:ro
-      - turn-loss-bridge:/lab-bridge:ro
+      - turn-loss-bridge:/lab-capture:ro
 
   udp-echo-peer:
     image: registry.invalid/wrd-turn-loss-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000

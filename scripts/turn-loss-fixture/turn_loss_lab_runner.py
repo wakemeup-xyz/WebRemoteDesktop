@@ -264,7 +264,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             holder.update(adapter=adapter, scope=scope)
         def make_authority() -> Any:
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
-            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
+            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
             holder["authority"] = authority; return authority
         def drive() -> Mapping[str, Any]:
             adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]

@@ -647,6 +647,32 @@ def test_compose_controller_uses_per_run_unix_authority_without_receiving_the_la
         authority.close()
 
 
+def test_capture_attestation_requires_the_receiver_only_capability_socket(tmp_path):
+    raw = manifest()
+    prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
+    verifier = b"receiver-only-capability"
+    authority = controller.LabReceiverBridgeAuthority(controller.LossFixtureManifest.parse(raw), verifier=verifier, socket_path=Path(prepared["bridgeSocket"]), capture_socket_path=Path(prepared["captureSocket"]), capture_capability_path=Path(prepared["captureSocket"]).with_name("capability"))
+    authority.start()
+    try:
+        def request(path, body):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(str(path)); client.sendall((json.dumps(body) + "\n").encode())
+                return json.loads(client.makefile("rb").readline())
+        capture = {"source": "fixture-af-packet", "direction": "turn-to-viewer", "runId": raw["runId"],
+                   "eventHandle": "event", "selectedLeg": controller.LossFixtureManifest.parse(raw).egress_selector,
+                   "kernelDropCount": 1, "ssrc": 7, "cursor": {"first": 1, "last": 3},
+                   "receivedRtp": {"before": [{"sequence": 1, "rtpTimestamp": 1, "ssrc": 7, "fixtureClockNs": 1}], "during": [{"sequence": 2, "rtpTimestamp": 2, "ssrc": 7, "fixtureClockNs": 2}], "after": [{"sequence": 3, "rtpTimestamp": 3, "ssrc": 7, "fixtureClockNs": 3}]}}
+        capture["captureDigest"] = hashlib.sha256(json.dumps(capture, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        # The loss-controller's verification endpoint has no capture route,
+        # and an uncredentialed Unix caller cannot turn arbitrary JSON into an
+        # authority signature on the receiver-only endpoint.
+        assert request(Path(prepared["bridgeSocket"]), {"operation": "capture", "runId": raw["runId"], "capture": capture})["status"] == "BLOCKED"
+        capture_socket = Path(prepared["captureSocket"])
+        assert request(capture_socket, {"operation": "capture", "runId": raw["runId"], "capture": capture})["status"] == "BLOCKED"
+    finally:
+        authority.close()
+
+
 def test_prepare_runtime_derives_immutable_compose_override_and_credentials_only_from_valid_manifest(tmp_path):
     raw = manifest()
     generated = controller.prepare_runtime(raw, tmp_path, resolved_images=controller._test_resolved_images(raw["imageDigests"]))

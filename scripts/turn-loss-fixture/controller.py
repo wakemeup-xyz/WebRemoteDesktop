@@ -736,13 +736,16 @@ class LabReceiverBridgeAuthority:
     socket.  The authority's in-memory receipt table makes a copied seal or a
     second run unable to authenticate after the Lab closes.
     """
-    def __init__(self, manifest: LossFixtureManifest, *, verifier: bytes, socket_path: Path) -> None:
+    def __init__(self, manifest: LossFixtureManifest, *, verifier: bytes, socket_path: Path,
+                 capture_socket_path: Path | None = None, capture_capability_path: Path | None = None) -> None:
         if not isinstance(verifier, bytes) or not verifier:
             raise ValueError("a running Lab transcript verifier is required")
         self.manifest, self._verifier, self.socket_path = manifest, bytes(verifier), Path(socket_path)
+        self.capture_socket_path = Path(capture_socket_path) if capture_socket_path is not None else self.socket_path.with_name("capture-authority.sock")
+        self._capture_capability_path = Path(capture_capability_path) if capture_capability_path is not None else self.capture_socket_path.with_name("capture-capability")
         self._receipts: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
-        self._server: socketserver.ThreadingUnixStreamServer | None = None
+        self._servers: list[socketserver.ThreadingUnixStreamServer] = []
 
     def attest_capture(self, capture: Mapping[str, Any]) -> dict[str, Any]:
         body = dict(capture); body.pop("authoritySignature", None)
@@ -786,17 +789,26 @@ class LabReceiverBridgeAuthority:
 
     def start(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        self.capture_socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
+        self.capture_socket_path.unlink(missing_ok=True)
+        if not self._capture_capability_path.exists():
+            self._capture_capability_path.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+            self._capture_capability_path.chmod(0o600)
+        try:
+            capture_capability = self._capture_capability_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError("receiver capture capability is unavailable") from exc
+        if not capture_capability:
+            raise RuntimeError("receiver capture capability is unavailable")
         owner = self
-        class Handler(socketserver.StreamRequestHandler):
+        class VerifyHandler(socketserver.StreamRequestHandler):
             def handle(self) -> None:
                 try:
                     raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
                     if not isinstance(raw, Mapping) or not isinstance(raw.get("operation"), str):
                         raise ValueError("bridge request is invalid")
-                    if raw["operation"] == "capture" and set(raw) == {"operation", "runId", "capture"} and raw["runId"] == owner.manifest.run_id:
-                        result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
-                    elif raw["operation"] == "seal" and set(raw) == {"operation", "runId", "bridge", "event"} and raw["runId"] == owner.manifest.run_id:
+                    if raw["operation"] == "seal" and set(raw) == {"operation", "runId", "bridge", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.seal(raw["bridge"], raw["event"])
                     elif raw["operation"] == "verify" and set(raw) == {"operation", "runId", "seal", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.verify(raw["seal"], raw["event"])
@@ -805,14 +817,31 @@ class LabReceiverBridgeAuthority:
                 except Exception as exc:
                     result = {"status": "BLOCKED", "reason": type(exc).__name__}
                 self.wfile.write((json.dumps(result, sort_keys=True) + "\n").encode())
-        self._server = socketserver.ThreadingUnixStreamServer(str(self.socket_path), Handler)
-        self.socket_path.chmod(0o600)
-        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        class CaptureHandler(socketserver.StreamRequestHandler):
+            def handle(self) -> None:
+                try:
+                    raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
+                    if (not isinstance(raw, Mapping) or set(raw) != {"operation", "runId", "capture", "captureCapability"}
+                            or raw.get("operation") != "capture" or raw.get("runId") != owner.manifest.run_id
+                            or not isinstance(raw.get("captureCapability"), str)
+                            or not secrets.compare_digest(raw["captureCapability"], capture_capability)):
+                        raise ValueError("receiver capture capability is invalid")
+                    result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
+                except Exception as exc:
+                    result = {"status": "BLOCKED", "reason": type(exc).__name__}
+                self.wfile.write((json.dumps(result, sort_keys=True) + "\n").encode())
+        for path, handler in ((self.socket_path, VerifyHandler), (self.capture_socket_path, CaptureHandler)):
+            server = socketserver.ThreadingUnixStreamServer(str(path), handler)
+            path.chmod(0o600)
+            self._servers.append(server)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def close(self) -> None:
-        if self._server is not None:
-            self._server.shutdown(); self._server.server_close(); self._server = None
+        for server in self._servers:
+            server.shutdown(); server.server_close()
+        self._servers = []
         self.socket_path.unlink(missing_ok=True)
+        self.capture_socket_path.unlink(missing_ok=True)
 
 
 class UnixSealedReceiverEvidenceSource:
@@ -1172,11 +1201,17 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     # AF_UNIX has a short kernel path limit. Keep the host authority socket in
     # a run-unique /tmp directory and bind only that directory into Compose;
     # arbitrary caller-selected runtime directories may be much longer.
-    bridge_dir = Path(tempfile.gettempdir()) / f"wrd-turn-loss-{manifest.run_id[:8]}"
+    runtime_key = hashlib.sha256(str(runtime_dir.resolve()).encode()).hexdigest()[:8]
+    bridge_dir = Path(tempfile.gettempdir()) / f"wrd-turn-loss-{manifest.run_id[:8]}-{runtime_key}"
     if bridge_dir.exists() and any(bridge_dir.iterdir()):
         raise RuntimeBlocked("per-run Lab bridge directory is not empty")
     bridge_dir.mkdir(mode=0o700, exist_ok=True)
     bridge_dir.chmod(0o700)
+    capture_dir, verify_dir = bridge_dir / "capture", bridge_dir / "verify"
+    capture_dir.mkdir(mode=0o700)
+    verify_dir.mkdir(mode=0o700)
+    (capture_dir / "capability").write_text(secrets.token_urlsafe(32), encoding="utf-8")
+    (capture_dir / "capability").chmod(0o600)
     credentials_dir = runtime_dir / "credentials"
     credentials_dir.mkdir(parents=True, exist_ok=False)
     (runtime_dir / "receiver").mkdir(mode=0o700)
@@ -1216,14 +1251,14 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
     (runtime_dir / "compose.generated.yaml").write_text(
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{control_port}:19091/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n      - {bridge_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  receiver-capture:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {runtime_dir / 'receiver'}:/receiver\n      - {capture_dir}:/lab-capture:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
     )
     project = f"turn-loss-{manifest.run_id[:8]}"
-    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "bridgeSocket": str(bridge_dir / "authority.sock")}
+    return {"projectName": project, "networkName": f"{project}_turn-loss", "runtimeDir": str(runtime_dir), "composeOverride": str(runtime_dir / "compose.generated.yaml"), "turnEndpoint": f"127.0.0.1:{turn_port}", "controlEndpoint": f"127.0.0.1:{control_port}", "bridgeSocket": str(verify_dir / "authority.sock"), "captureSocket": str(capture_dir / "authority.sock")}
 
 
 def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[str]], tuple[int, str, str]]) -> dict[str, str]:
