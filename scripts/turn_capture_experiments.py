@@ -27,6 +27,10 @@ from capture_experiment import CaptureExperiment
 _STATUS_CANDIDATE = "candidate-requires-confirmation"
 _STATUS_INCONCLUSIVE = "INCONCLUSIVE"
 _STATUS_NO_BENEFIT = "no-benefit"
+
+
+class CaptureEvidenceError(ValueError):
+    """An expected, persisted T3/T5 evidence-schema rejection."""
 _REQUIRED_GUARD_METRICS = (
     "fpsLowerBound",
     "captureAgeP95Ms",
@@ -58,7 +62,7 @@ def _canonical_digest(constant_config: Mapping[str, Any], source_binding: Mappin
     # Per-run transcript and artifact hashes must differ.  The comparison
     # digest binds only the declared fixed environment; each run still carries
     # (and the evaluator re-hashes) its own source artifacts separately.
-    stable_source = {key: source_binding.get(key) for key in ("sourceCommit", "policyDigest", "sceneId")}
+    stable_source = {key: source_binding.get(key) for key in ("sourceCommit", "sceneId", "sceneProofDigest")}
     body = json.dumps(
         {"constantConfig": constant_config, "sourceBinding": stable_source},
         sort_keys=True, separators=(",", ":"), allow_nan=False,
@@ -66,15 +70,77 @@ def _canonical_digest(constant_config: Mapping[str, Any], source_binding: Mappin
     return hashlib.sha256(body).hexdigest()
 
 
-def _validate_sequence(runs: Sequence[Mapping[str, Any]], expected: tuple[str, str, str], metric: str) -> str | None:
+_AUTHORITY_FIELDS = frozenset({"origin", "realm", "runId", "epoch", "policyId", "policyDigest",
+                               "finalVerifierDigest", "t3Signature", "t5Signature"})
+_BINDING_FIELDS = frozenset({"sourceCommit", "policyDigest", "sceneId", "sceneProofDigest", "authority",
+                             "t3Status", "t5Status", "stageCoverage", "dedicatedDesktop", "fixtureWindow",
+                             "headedProducer", "inputEvidence", "t3Path", "t5Path", "t3Sha256", "t5Sha256"})
+
+
+def _is_digest(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _validate_artifact_authority(binding: Mapping[str, Any], run_id: str) -> str | None:
+    authority = binding.get("authority")
+    if not isinstance(authority, Mapping) or set(authority) != _AUTHORITY_FIELDS:
+        return "sealed Lab authority is missing"
+    if (authority.get("runId") != run_id or not isinstance(authority.get("origin"), str)
+            or not authority["origin"].startswith(("http://127.0.0.1:", "http://[::1]:"))
+            or not isinstance(authority.get("realm"), str) or not authority["realm"].startswith("lab-")
+            or type(authority.get("epoch")) is not int):
+        return "Lab authority does not bind this run"
+    policy_digest = authority.get("policyDigest")
+    if (not _is_digest(policy_digest) or policy_digest == "0" * 64
+            or authority.get("policyId") != f"experiment/{policy_digest}"
+            or binding.get("policyDigest") != policy_digest):
+        return "sealed Lab policy digest is invalid"
+    if not all(_is_digest(authority.get(key)) for key in ("finalVerifierDigest", "t3Signature", "t5Signature")):
+        return "signed artifact authority is invalid"
+    return None
+
+
+def _validate_signed_source_artifacts(binding: Mapping[str, Any], run_id: str, expected_seconds: int) -> str | None:
+    authority = binding["authority"]
+    base_identity = {key: authority[key] for key in ("origin", "realm", "runId", "epoch")}
+    try:
+        t3, t5 = _load_json(binding["t3Path"]), _load_json(binding["t5Path"])
+    except ValueError:
+        return "signed T3/T5 source is unreadable"
+    t3_identity = t3.get("identity")
+    if (t3.get("kind") != "turn-t3-lab-stage-run" or t3.get("runId") != run_id
+            or not isinstance(t3_identity, Mapping)
+            or any(t3_identity.get(key) != value for key, value in base_identity.items())
+            or t3.get("durationSeconds") != expected_seconds
+            or t3.get("status") != "OBSERVED" or t3.get("signature") != authority["t3Signature"]):
+        return "signed T3 source does not match the Lab authority"
+    verification = t3.get("verification")
+    if (not isinstance(verification, Mapping) or verification.get("algorithm") != "HMAC-SHA256"
+            or verification.get("verifierSource") != "lab-transcript-verifier/sha256:" + authority["finalVerifierDigest"]
+            or verification.get("selfVerified") is not True or verification.get("verifiedBeforeLabClose") is not True):
+        return "T3 HMAC verification authority is incomplete"
+    t5_identity = t5.get("identity")
+    if (not isinstance(t5_identity, Mapping) or any(t5_identity.get(key) != value for key, value in base_identity.items())
+            or t5.get("signature") != authority["t5Signature"]):
+        return "signed T5 source does not match the Lab authority"
+    automatic, static, receipts = t5.get("automatic"), t5.get("static"), t5.get("receipts")
+    if (not isinstance(automatic, Mapping) or automatic.get("status") != "PASS"
+            or not isinstance(static, Mapping) or static.get("status") != "PASS"
+            or not isinstance(receipts, list) or len(receipts) < 20):
+        return "signed T5 evidence is incomplete"
+    return None
+
+
+def _validate_sequence(runs: Sequence[Mapping[str, Any]], expected: tuple[str, ...], metric: str,
+                       *, trace_enabled: tuple[bool, ...] | None = None) -> str | None:
     if not isinstance(runs, (list, tuple)) or not all(isinstance(run, Mapping) for run in runs):
         return "runs must be JSON arrays of objects"
-    if len(runs) != 3:
-        return "each ordered sequence requires exactly three independent 60-second runs"
+    if len(runs) != len(expected):
+        return "each ordered sequence requires exactly the declared independent 60-second runs"
     if tuple(run.get("variant") for run in runs) != expected:
         return f"run order must be {'/'.join(expected)}"
     run_ids = [run.get("runId") for run in runs]
-    if any(not isinstance(run_id, str) or not run_id for run_id in run_ids) or len(set(run_ids)) != 3:
+    if any(not isinstance(run_id, str) or not run_id for run_id in run_ids) or len(set(run_ids)) != len(expected):
         return "each ordered sequence requires distinct run identifiers"
 
     required_fields = {
@@ -82,13 +148,17 @@ def _validate_sequence(runs: Sequence[Mapping[str, Any]], expected: tuple[str, s
         "constantConfig", "sourceBinding", "variableName", "variableValue", "declaredCostMetric",
         "metrics", "functionalFailures",
     }
-    for run, variant in zip(runs, expected):
+    if trace_enabled is not None:
+        required_fields = {*required_fields, "traceEnabled"}
+    for index, (run, variant) in enumerate(zip(runs, expected)):
         if set(run) != required_fields:
             return "run has missing or unknown schema fields"
         if run.get("schemaVersion") != 1 or not isinstance(run.get("runId"), str) or not run.get("runId"):
             return "run identity schema is invalid"
         if run.get("variant") != variant or run.get("variableName") != "captureMultiplier":
             return "variant binding is invalid"
+        if trace_enabled is not None and run.get("traceEnabled") is not trace_enabled[index]:
+            return "trace mode is not bound to the full run record"
         expected_multiplier = 2.0 if variant == "A" else 1.0
         if isinstance(run.get("variableValue"), bool) or run.get("variableValue") != expected_multiplier:
             return "variant capture multiplier is invalid"
@@ -107,12 +177,14 @@ def _validate_sequence(runs: Sequence[Mapping[str, Any]], expected: tuple[str, s
         config, binding = run.get("constantConfig"), run.get("sourceBinding")
         if not isinstance(config, Mapping) or not isinstance(binding, Mapping):
             return "constant configuration binding is missing"
-        required_binding = {"sourceCommit", "policyDigest", "sceneId", "sceneProofDigest", "t3Status", "t5Status", "stageCoverage", "inputEvidence", "t3Path", "t5Path", "t3Sha256", "t5Sha256"}
-        if set(binding) != required_binding or binding.get("sceneId") != run.get("sceneId"):
+        if set(binding) != _BINDING_FIELDS or binding.get("sceneId") != run.get("sceneId"):
             return "source binding is invalid"
         if not all(isinstance(binding.get(name), str) and len(binding[name]) == length for name, length in (("sourceCommit", 40), ("policyDigest", 64), ("sceneProofDigest", 64))):
             return "source binding digest is invalid"
-        if binding.get("t3Status") != "PASS" or binding.get("t5Status") != "PASS" or _finite_number(binding.get("stageCoverage")) != 1.0:
+        if (binding.get("t3Status") != "PASS" or binding.get("t5Status") != "PASS"
+                or _finite_number(binding.get("stageCoverage")) != 1.0
+                or binding.get("dedicatedDesktop") is not True or binding.get("fixtureWindow") is not True
+                or binding.get("headedProducer") is not True):
             return "T3/T5 evidence coverage is incomplete"
         input_evidence = binding.get("inputEvidence")
         if not isinstance(input_evidence, Mapping) or set(input_evidence) != {"status", "actionCount", "effectCount"}:
@@ -134,6 +206,12 @@ def _validate_sequence(runs: Sequence[Mapping[str, Any]], expected: tuple[str, s
             return "constant configuration cannot be canonically bound"
         if run.get("constantConfigDigest") != digest:
             return "constant configuration digest is not bound to source evidence"
+        authority_error = _validate_artifact_authority(binding, run["runId"])
+        if authority_error:
+            return authority_error
+        artifact_error = _validate_signed_source_artifacts(binding, run["runId"], run["durationSeconds"])
+        if artifact_error:
+            return artifact_error
     return None
 
 
@@ -224,8 +302,10 @@ def trace_overhead_report(
     metric = str(declared_cost_metric)
     if trace_off.get("traceEnabled") is not False or trace_on.get("traceEnabled") is not True:
         raise ValueError("trace summaries must identify trace-off and trace-on modes")
-    off = _finite_number(trace_off.get(metric))
-    on = _finite_number(trace_on.get(metric))
+    off_metrics = trace_off.get("metrics") if isinstance(trace_off.get("metrics"), Mapping) else trace_off
+    on_metrics = trace_on.get("metrics") if isinstance(trace_on.get("metrics"), Mapping) else trace_on
+    off = _finite_number(off_metrics.get(metric))
+    on = _finite_number(on_metrics.get(metric))
     if off is None or on is None:
         raise ValueError("trace summaries are missing the declared finite metric")
     return {"metric": metric, "traceOff": off, "traceOn": on, "overhead": on - off}
@@ -237,12 +317,21 @@ def evaluate_experiment_manifest(manifest: object) -> dict[str, Any]:
         return {"evaluation": _result(_STATUS_INCONCLUSIVE, "experiment manifest has missing or unknown fields", ""), "traceOverhead": None}
     metric = manifest.get("declaredCostMetric")
     evaluation = evaluate_repeated_runs(manifest.get("aba"), manifest.get("bab"), metric)
+    if evaluation["status"] == _STATUS_INCONCLUSIVE:
+        return {"evaluation": evaluation, "traceOverhead": None}
     pair = manifest.get("tracePair")
     if not isinstance(pair, Mapping) or set(pair) != {"off", "on"}:
         return {"evaluation": _result(_STATUS_INCONCLUSIVE, "trace-off/on pair is required", evaluation["metric"]), "traceOverhead": None}
     try:
         off, on = pair["off"], pair["on"]
-        if not isinstance(off, Mapping) or not isinstance(on, Mapping) or off.get("constantConfig") != on.get("constantConfig"):
+        trace_error = _validate_sequence([off, on], ("A", "A"), evaluation["metric"], trace_enabled=(False, True))
+        if trace_error:
+            raise ValueError(trace_error)
+        all_runs = [*manifest["aba"], *manifest["bab"]]
+        if ({off["runId"], on["runId"]} & {run["runId"] for run in all_runs}
+                or off["constantConfig"] != on["constantConfig"]
+                or off["constantConfigDigest"] != all_runs[0]["constantConfigDigest"]
+                or on["constantConfigDigest"] != all_runs[0]["constantConfigDigest"]):
             raise ValueError("trace pair context mismatch")
         trace = trace_overhead_report(off, on, evaluation["metric"])
     except (TypeError, ValueError, KeyError):
@@ -261,6 +350,15 @@ class TrustedArtifacts:
     identity: Mapping[str, Any]
     verifier: bytes
     policy_digest: str
+    authority: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if not _is_digest(self.policy_digest) or self.policy_digest == "0" * 64:
+            raise ValueError("trusted artifact policy digest must be sealed and non-empty")
+        error = _validate_artifact_authority({"authority": self.authority, "policyDigest": self.policy_digest},
+                                             str(self.authority.get("runId", "")) if isinstance(self.authority, Mapping) else "")
+        if error:
+            raise ValueError(error)
 
 
 def _load_json(path: str | Path) -> Mapping[str, Any]:
@@ -303,12 +401,23 @@ def summary_from_artifacts(artifacts: TrustedArtifacts, *, expected_run_id: str,
     identity = dict(artifacts.identity)
     if identity.get("runId") != expected_run_id:
         raise ValueError("collector artifact identity mismatch")
+    authority = dict(artifacts.authority)
+    if any(authority.get(key) != identity.get(key) for key in ("origin", "realm", "runId", "epoch")):
+        raise RuntimeError("BLOCKED: T3/T5 authority belongs to a different Lab")
     if not verify_artifact(t3, artifacts.verifier) or not verify_transcript(t5, identity=identity, verifier=artifacts.verifier):
         raise ValueError("collector artifact signature validation failed")
+    verification = t3.get("verification")
+    if (not isinstance(verification, Mapping) or verification.get("algorithm") != "HMAC-SHA256"
+            or verification.get("verifierSource") != "lab-transcript-verifier/sha256:" + authority["finalVerifierDigest"]
+            or verification.get("selfVerified") is not True or verification.get("verifiedBeforeLabClose") is not True):
+        raise RuntimeError("BLOCKED: T3 HMAC authority is inconsistent with the final verifier")
     t3_identity = {key: identity.get(key) for key in ("origin", "realm", "runId", "epoch")}
+    if identity.get("selectedTurn") is not None:
+        t3_identity["selectedTurn"] = identity["selectedTurn"]
     if (t3.get("kind") != "turn-t3-lab-stage-run" or t3.get("runId") != expected_run_id
             or t3.get("identity") != t3_identity or t3.get("durationSeconds") != expected_seconds
-            or t3.get("status") != "OBSERVED" or t5.get("identity") != identity):
+            or t3.get("status") != "OBSERVED" or t5.get("identity") != identity
+            or t3.get("signature") != authority["t3Signature"] or t5.get("signature") != authority["t5Signature"]):
         raise RuntimeError("BLOCKED: T3/T5 collector evidence is unavailable")
     automatic, static, receipts = t5.get("automatic"), t5.get("static"), t5.get("receipts")
     if (not isinstance(automatic, Mapping) or automatic.get("status") != "PASS"
@@ -326,6 +435,7 @@ def summary_from_artifacts(artifacts: TrustedArtifacts, *, expected_run_id: str,
         "t3Sha256": artifact_sha256(artifacts.t3), "t5Sha256": artifact_sha256(artifacts.t5),
         "t3Path": str(artifacts.t3.resolve()), "t5Path": str(artifacts.t5.resolve()),
         "metrics": metrics, "inputEvidence": {"status": "PASS", "actionCount": len(receipts), "effectCount": len(receipts)},
+        "authority": authority,
     }
 
 
@@ -412,7 +522,11 @@ class LabCaptureCollector:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             t3_path, t5_path = self.output_dir / f"{identity.run_id}.t3.json", self.output_dir / f"{identity.run_id}.t5.json"
             write_artifact(t3_path, t3); t5_path.write_text(json.dumps(t5, sort_keys=True) + "\n", encoding="utf-8")
-            return TrustedArtifacts(t3_path, t5_path, identity_record, verifier, "")
+            authority = lab.capture_experiment_authority()
+            verifier_digest = hashlib.sha256(verifier).hexdigest()
+            authority = {**authority, "finalVerifierDigest": verifier_digest,
+                         "t3Signature": str(t3["signature"]), "t5Signature": str(t5["signature"])}
+            return TrustedArtifacts(t3_path, t5_path, identity_record, verifier, authority["policyDigest"], authority)
         finally:
             adapter.close()
 
@@ -431,15 +545,21 @@ class CaptureExperimentRunner:
         lab = self._lab_run_factory(); identity = lab.start("legacy", capture_experiment=experiment)
         try:
             trusted = self._collector.collect(lab, identity, duration_seconds=60, trace_enabled=trace_enabled)
-            summary = summary_from_artifacts(trusted, expected_run_id=identity.run_id)
+            try:
+                summary = summary_from_artifacts(trusted, expected_run_id=identity.run_id)
+            except ValueError as exc:
+                raise CaptureEvidenceError(f"BLOCKED: signed T3/T5 schema rejected: {exc}") from exc
+            if not isinstance(summary.get("authority"), Mapping) or dict(summary["authority"]) != dict(trusted.authority):
+                raise CaptureEvidenceError("BLOCKED: final verifier authority differs from the sealed Lab authority")
             # Current signed T3 does not yet expose all guard metrics.  Refuse
             # to invent them; this run remains a durable BLOCKED artifact.
             required = (self.metric, *_REQUIRED_GUARD_METRICS)
             if any(name not in summary["metrics"] for name in required):
                 raise RuntimeError("BLOCKED: T3/T5 formal artifacts lack required guard metrics")
-            binding = {"sourceCommit": _source_commit(), "policyDigest": trusted.policy_digest or "0" * 64,
+            binding = {"sourceCommit": _source_commit(), "policyDigest": trusted.policy_digest,
                        "sceneId": "headed-controlled-scene-v1", "sceneProofDigest": hashlib.sha256(b"headed-controlled-scene-v1").hexdigest(),
-                       "t3Status": "PASS", "t5Status": "PASS", "stageCoverage": 1.0,
+                       "authority": summary.pop("authority"), "t3Status": "PASS", "t5Status": "PASS", "stageCoverage": 1.0,
+                       "dedicatedDesktop": True, "fixtureWindow": True, "headedProducer": True,
                        "inputEvidence": summary.pop("inputEvidence"), "t3Path": summary.pop("t3Path"), "t5Path": summary.pop("t5Path"),
                        "t3Sha256": summary.pop("t3Sha256"), "t5Sha256": summary.pop("t5Sha256")}
             digest = _canonical_digest(self.constant_config, binding)
@@ -497,7 +617,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                    opencv_threads=args.opencv_threads).run()
                 result = {"schemaVersion": 1, "status": "COMPLETE", "manifest": manifest,
                           "evaluation": evaluate_experiment_manifest(manifest), "runtime": "RUN"}
-            except RuntimeError as exc:
+            except (RuntimeError, CaptureEvidenceError) as exc:
                 result = {"schemaVersion": 1, "status": "BLOCKED", "reason": str(exc), "runtime": "NOT_RUN"}
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
@@ -506,7 +626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         with open(args.manifest, encoding="utf-8") as handle:
             result = evaluate_experiment_manifest(json.load(handle))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(json.dumps({"evaluation": _result(_STATUS_INCONCLUSIVE, f"manifest unreadable: {exc}", ""), "traceOverhead": None}, sort_keys=True))
         return 2
     print(json.dumps(result, sort_keys=True))

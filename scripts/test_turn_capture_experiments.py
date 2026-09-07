@@ -18,21 +18,42 @@ sys.modules[SPEC.name] = experiments
 SPEC.loader.exec_module(experiments)
 
 
+def _authority(run_id: str) -> dict:
+    return {
+        "origin": "http://127.0.0.1:49999", "realm": "lab-test", "runId": run_id, "epoch": 1,
+        "policyId": "experiment/" + "b" * 64, "policyDigest": "b" * 64,
+        "finalVerifierDigest": "d" * 64, "t3Signature": "e" * 64, "t5Signature": "f" * 64,
+    }
+
+
 def _run(variant: str, run_id: str, cost: float, *, metric: str = "resizeP95Ms", scene: str = "scene-a") -> dict:
     constant_config = {"codec": "relay-legacy-v1", "targetFps": 20}
     artifact_dir = Path(tempfile.gettempdir()) / "wrd-turn-capture-test-artifacts"
     artifact_dir.mkdir(exist_ok=True)
     t3_path, t5_path = artifact_dir / f"{run_id}.t3.json", artifact_dir / f"{run_id}.t5.json"
-    t3_path.write_text(json.dumps({"run": run_id, "kind": "t3"}))
-    t5_path.write_text(json.dumps({"run": run_id, "kind": "t5"}))
+    authority = _authority(run_id)
+    identity = {key: authority[key] for key in ("origin", "realm", "runId", "epoch")}
+    t3_path.write_text(json.dumps({
+        "kind": "turn-t3-lab-stage-run", "runId": run_id, "identity": identity,
+        "durationSeconds": 60, "status": "OBSERVED", "signature": authority["t3Signature"],
+        "verification": {"algorithm": "HMAC-SHA256", "verifierSource": "lab-transcript-verifier/sha256:" + authority["finalVerifierDigest"],
+                         "selfVerified": True, "verifiedBeforeLabClose": True},
+    }))
+    t5_path.write_text(json.dumps({
+        "identity": identity, "static": {"status": "PASS"}, "automatic": {"status": "PASS"},
+        "receipts": [{}] * 20, "signature": authority["t5Signature"],
+    }))
     source_binding = {
-        "sourceCommit": "a" * 40,
-        "policyDigest": "b" * 64,
+        "sourceCommit": "a" * 40, "policyDigest": authority["policyDigest"],
         "sceneId": scene,
         "sceneProofDigest": "c" * 64,
+        "authority": authority,
         "t3Status": "PASS",
         "t5Status": "PASS",
         "stageCoverage": 1.0,
+        "dedicatedDesktop": True,
+        "fixtureWindow": True,
+        "headedProducer": True,
         "inputEvidence": {"status": "PASS", "actionCount": 20, "effectCount": 20},
         "t3Path": str(t3_path), "t5Path": str(t5_path),
         "t3Sha256": hashlib.sha256(t3_path.read_bytes()).hexdigest(),
@@ -168,7 +189,7 @@ def test_trace_overhead_report_is_read_only_and_labels_both_modes():
     assert trace_on == {"resizeP95Ms": 5.5, "traceEnabled": True}
 
 
-def test_experiment_manifest_driver_evaluates_runs_and_requires_a_trace_pair():
+def test_experiment_manifest_driver_evaluates_complete_trace_run_records():
     aba = [_run("A", "a1", 12), _run("B", "b1", 8), _run("A", "a2", 11)]
     bab = [_run("B", "b2", 7), _run("A", "a3", 10), _run("B", "b3", 9)]
     manifest = {
@@ -176,10 +197,8 @@ def test_experiment_manifest_driver_evaluates_runs_and_requires_a_trace_pair():
         "declaredCostMetric": "resizeP95Ms",
         "aba": aba,
         "bab": bab,
-        "tracePair": {
-            "off": {"resizeP95Ms": 4.0, "traceEnabled": False, "constantConfigDigest": aba[0]["constantConfigDigest"]},
-            "on": {"resizeP95Ms": 5.5, "traceEnabled": True, "constantConfigDigest": aba[0]["constantConfigDigest"]},
-        },
+        "tracePair": {"off": {**_run("A", "trace-off", 4), "traceEnabled": False},
+                      "on": {**_run("A", "trace-on", 5.5), "traceEnabled": True}},
     }
 
     result = experiments.evaluate_experiment_manifest(manifest)
@@ -187,6 +206,38 @@ def test_experiment_manifest_driver_evaluates_runs_and_requires_a_trace_pair():
     assert result["evaluation"]["status"] == "candidate-requires-confirmation"
     assert result["traceOverhead"]["overhead"] == 1.5
     assert experiments.evaluate_experiment_manifest({**manifest, "tracePair": {}})["evaluation"]["status"] == "INCONCLUSIVE"
+
+
+def test_manifest_rejects_a_flat_trace_pair_without_run_authority_or_signed_artifacts():
+    aba = [_run("A", "a1", 12), _run("B", "b1", 8), _run("A", "a2", 11)]
+    bab = [_run("B", "b2", 7), _run("A", "a3", 10), _run("B", "b3", 9)]
+    flat = {"off": {"resizeP95Ms": 4.0, "traceEnabled": False, "constantConfig": aba[0]["constantConfig"]},
+            "on": {"resizeP95Ms": 5.5, "traceEnabled": True, "constantConfig": aba[0]["constantConfig"]}}
+
+    result = experiments.evaluate_experiment_manifest({"schemaVersion": 1, "declaredCostMetric": "resizeP95Ms",
+                                                        "aba": aba, "bab": bab, "tracePair": flat})
+
+    assert result["evaluation"]["status"] == "INCONCLUSIVE"
+
+
+@pytest.mark.parametrize("mutation", ["source-hash", "t5-authority", "desktop-gate"])
+def test_manifest_rejects_each_trace_record_without_its_signed_lab_evidence(mutation):
+    aba = [_run("A", "a1", 12), _run("B", "b1", 8), _run("A", "a2", 11)]
+    bab = [_run("B", "b2", 7), _run("A", "a3", 10), _run("B", "b3", 9)]
+    off, on = {**_run("A", "trace-off-negative", 4), "traceEnabled": False}, {**_run("A", "trace-on-negative", 5.5), "traceEnabled": True}
+    if mutation == "source-hash":
+        Path(off["sourceBinding"]["t3Path"]).write_text("tampered")
+    elif mutation == "t5-authority":
+        path = Path(off["sourceBinding"]["t5Path"])
+        body = json.loads(path.read_text()); body["identity"]["realm"] = "lab-other"; path.write_text(json.dumps(body))
+        off["sourceBinding"]["t5Sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    else:
+        off["sourceBinding"]["dedicatedDesktop"] = False
+
+    result = experiments.evaluate_experiment_manifest({"schemaVersion": 1, "declaredCostMetric": "resizeP95Ms",
+                                                        "aba": aba, "bab": bab, "tracePair": {"off": off, "on": on}})
+
+    assert result["evaluation"]["status"] == "INCONCLUSIVE"
 
 
 def test_runner_uses_aba_bab_and_a_real_trace_off_on_pair(monkeypatch, tmp_path):
@@ -202,13 +253,16 @@ def test_runner_uses_aba_bab_and_a_real_trace_off_on_pair(monkeypatch, tmp_path)
     class Collector:
         def collect(self, _lab, identity, *, duration_seconds, trace_enabled):
             calls[-1] = (calls[-1][0], trace_enabled)
-            return experiments.TrustedArtifacts(tmp_path / "t3", tmp_path / "t5", {"runId": identity.run_id}, b"live", "b" * 64)
+            authority = _authority(identity.run_id)
+            return experiments.TrustedArtifacts(tmp_path / "t3", tmp_path / "t5",
+                                                {key: authority[key] for key in ("origin", "realm", "runId", "epoch")},
+                                                b"live", authority["policyDigest"], authority)
     def summary(_trusted, *, expected_run_id):
-        return {"metrics": {"resizeP95Ms": 1.0, "fpsLowerBound": 19.0, "captureAgeP95Ms": 1.0,
-                             "presentIntervalP95Ms": 50.0, "inputAckP95Ms": 1.0, "inputEffectP95Ms": 1.0},
-                "inputEvidence": {"status": "PASS", "actionCount": 31, "effectCount": 31},
-                "t3Path": str(tmp_path / expected_run_id), "t5Path": str(tmp_path / expected_run_id),
-                "t3Sha256": "a" * 64, "t5Sha256": "b" * 64}
+        row = _run("A", expected_run_id, 1.0)
+        binding = row["sourceBinding"]
+        return {"metrics": row["metrics"], "inputEvidence": binding["inputEvidence"], "authority": binding["authority"],
+                "t3Path": binding["t3Path"], "t5Path": binding["t5Path"],
+                "t3Sha256": binding["t3Sha256"], "t5Sha256": binding["t5Sha256"]}
     monkeypatch.setattr(experiments, "summary_from_artifacts", summary)
     runner = experiments.CaptureExperimentRunner(Lab, Collector(), declared_cost_metric="resizeP95Ms", opencv_threads=0)
     manifest = runner.run()
@@ -217,6 +271,7 @@ def test_runner_uses_aba_bab_and_a_real_trace_off_on_pair(monkeypatch, tmp_path)
     assert [row["variant"] for row in manifest["aba"]] == ["A", "B", "A"]
     assert [row["variant"] for row in manifest["bab"]] == ["B", "A", "B"]
     assert len(closed) == 8
+    assert experiments.evaluate_experiment_manifest(manifest)["evaluation"]["status"] == "no-benefit"
 
 
 def test_concrete_collector_allows_trace_off_to_reach_the_existing_desktop_gate(tmp_path):
@@ -229,6 +284,56 @@ def test_concrete_collector_allows_trace_off_to_reach_the_existing_desktop_gate(
         collector.collect(None, None, duration_seconds=60, trace_enabled=False)
 
 
+def test_trusted_artifacts_reject_an_empty_or_unsealed_policy_authority(tmp_path):
+    with pytest.raises(ValueError, match="policy digest"):
+        experiments.TrustedArtifacts(tmp_path / "t3", tmp_path / "t5", {"runId": "run"}, b"live", "", {})
+
+
+def test_summary_exports_the_same_live_hmac_authority_that_sealed_t3_and_t5(tmp_path):
+    from turn_controlled_scene_lab_runner import LabTranscript
+    from turn_t3_lab_collector import _seal_artifact
+
+    verifier, authority = b"live-final-verifier", _authority("live-run")
+    authority["finalVerifierDigest"] = hashlib.sha256(verifier).hexdigest()
+    identity = {key: authority[key] for key in ("origin", "realm", "runId", "epoch")}
+    stage_rows = {name: {"p95Ms": 1.0} for name in ("grab", "prepare", "build", "encode", "packetize")}
+    t3 = _seal_artifact({"kind": "turn-t3-lab-stage-run", "runId": "live-run", "identity": identity,
+                         "durationSeconds": 60, "status": "OBSERVED", "hostSummaries": [{"stages": {"stages": stage_rows}}]}, verifier)
+    t5 = LabTranscript.create(verifier=verifier, identity=identity, static={"status": "PASS"},
+                              automatic={"status": "PASS"}, receipts=[{}] * 20).as_dict()
+    authority["t3Signature"], authority["t5Signature"] = t3["signature"], t5["signature"]
+    t3_path, t5_path = tmp_path / "t3.json", tmp_path / "t5.json"
+    t3_path.write_text(json.dumps(t3)); t5_path.write_text(json.dumps(t5))
+    artifacts = experiments.TrustedArtifacts(t3_path, t5_path, identity, verifier, authority["policyDigest"], authority)
+
+    summary = experiments.summary_from_artifacts(artifacts, expected_run_id="live-run")
+
+    assert summary["authority"] == authority
+    forged = {**authority, "finalVerifierDigest": "0" * 64}
+    with pytest.raises(RuntimeError, match="HMAC authority"):
+        experiments.summary_from_artifacts(
+            experiments.TrustedArtifacts(t3_path, t5_path, identity, verifier, forged["policyDigest"], forged),
+            expected_run_id="live-run",
+        )
+
+
+def test_cli_persists_official_schema_value_errors_but_does_not_swallow_programming_errors(monkeypatch, tmp_path):
+    output = tmp_path / "result.json"
+    monkeypatch.setenv("T7_TEST_TOKEN", "test-token")
+    monkeypatch.setattr(experiments.CaptureExperimentRunner, "run", lambda _self: (_ for _ in ()).throw(experiments.CaptureEvidenceError("official schema refused")))
+
+    assert experiments.main(["run", "--output", str(output), "--artifact-dir", str(tmp_path / "artifacts"),
+                             "--viewer-token-env", "T7_TEST_TOKEN", "--declared-cost-metric", "prepareP95Ms",
+                             "--opencv-threads", "0"]) == 2
+    assert json.loads(output.read_text())["status"] == "BLOCKED"
+
+    monkeypatch.setattr(experiments.CaptureExperimentRunner, "run", lambda _self: (_ for _ in ()).throw(KeyError("programming fault")))
+    with pytest.raises(KeyError, match="programming fault"):
+        experiments.main(["run", "--output", str(output), "--artifact-dir", str(tmp_path / "artifacts"),
+                          "--viewer-token-env", "T7_TEST_TOKEN", "--declared-cost-metric", "prepareP95Ms",
+                          "--opencv-threads", "0"])
+
+
 @pytest.mark.parametrize("mutation", ["missing", "wrong-run", "bad-status", "short-window"])
 def test_artifact_summary_fail_closes_missing_or_invalid_t3_t5_evidence(tmp_path, mutation):
     t3, t5 = tmp_path / "t3.json", tmp_path / "t5.json"
@@ -238,7 +343,9 @@ def test_artifact_summary_fail_closes_missing_or_invalid_t3_t5_evidence(tmp_path
     elif mutation == "wrong-run": t5.write_text(t5.read_text().replace('"run"', '"other"'))
     elif mutation == "bad-status": t5.write_text(t5.read_text().replace('"PASS"', '"NOT_RUN"', 1))
     elif mutation == "short-window": t5.write_text(t5.read_text().replace('60', '59', 1))
-    trusted = experiments.TrustedArtifacts(t3, t5, {"runId": "run", "realm": "lab", "origin": "http://127.0.0.1:49999", "epoch": 1}, b"live", "a" * 64)
+    authority = _authority("run")
+    trusted = experiments.TrustedArtifacts(t3, t5, {key: authority[key] for key in ("runId", "realm", "origin", "epoch")},
+                                           b"live", authority["policyDigest"], authority)
     with pytest.raises((ValueError, RuntimeError)):
         experiments.summary_from_artifacts(trusted, expected_run_id="run")
 

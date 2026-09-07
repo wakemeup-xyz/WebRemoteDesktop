@@ -561,6 +561,20 @@ class LabRun:
                 raise RuntimeError("running lab transcript verifier is required")
             return self._transcript_secret.encode("utf-8")
 
+    def capture_experiment_authority(self) -> dict[str, Any]:
+        """Return the currently issued Lab policy authority without its credential."""
+        with self._lock:
+            if self.closed or self.identity is None or self._context is None:
+                raise RuntimeError("running Lab authority is required")
+            policy_id = self._context.get("policyId")
+            if not isinstance(policy_id, str) or not policy_id.startswith("experiment/"):
+                raise RuntimeError("sealed Lab experiment policy is required")
+            policy_digest = policy_id.removeprefix("experiment/")
+            if len(policy_digest) != 64 or any(char not in "0123456789abcdef" for char in policy_digest):
+                raise RuntimeError("sealed Lab policy digest is invalid")
+            return {"origin": self.identity.origin, "realm": self.identity.realm, "runId": self.identity.run_id,
+                    "epoch": self.identity.epoch, "policyId": policy_id, "policyDigest": policy_digest}
+
     def selected_turn_identity(self) -> dict[str, Any]:
         """Read the already production-preflighted TURN identity without credentials."""
         with self._lock:
