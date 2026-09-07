@@ -284,6 +284,7 @@ class LabRun:
         self._watch_thread: threading.Thread | None = None; self._last_status = "closed"
         self._generation = 0; self._run_token: object | None = None
         self._admission_token: object | None = None
+        self._fixture_turn_run = False
         # Spawn and close are linearized separately from the lifecycle state.
         # Always acquire this lock before _lock; no path takes the reverse.
         self._spawn_lock = threading.Lock()
@@ -401,6 +402,43 @@ class LabRun:
                 watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-lab-watch-{run_id}", daemon=True)
                 self._watch_thread = watch
                 watch.start()
+            return identity
+        except Exception:
+            self._close_generation(token, generation); raise
+
+    def start_fixture_turn(self, bootstrap: LabTurnBootstrap) -> LabIdentity:
+        """Start a disposable Lab from a fixture-owned TURN bootstrap.
+
+        This path intentionally never creates a ProductionAdmissionClient or
+        reads production status/configuration.  The caller owns the ephemeral
+        TURN credentials and must have started the fixture first.
+        """
+        if not isinstance(bootstrap, LabTurnBootstrap) or not bootstrap.selected_turn_server_id:
+            raise ValueError("fixture TURN bootstrap is required")
+        self.close()
+        with self._lock:
+            self._generation += 1; generation, token = self._generation, object()
+            self._run_token, self.closed, self._last_status = token, False, "starting-fixture-turn"
+            self._fixture_turn_run = True
+        try:
+            parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
+            runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-fixture-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"fixture-lab-{run_id}"
+            with self._lock: self._runtime_dir = runtime_dir
+            lab = self._spawn_signal(runtime_dir, realm, token, generation, bootstrap)
+            proof = self._issue_lab_proof(lab)
+            if lab.realm != realm or not isinstance(proof.get("epoch"), int) or not isinstance(proof.get("token"), str):
+                raise RuntimeError("fixture Lab Signal did not issue an isolated proof")
+            identity = LabIdentity(run_id, lab.origin, int(proof["epoch"]), realm, str(proof["token"]))
+            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch,
+                       "mode": "fixture-turn", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
+            context["credential"] = self._issue_host_context(lab, context)
+            with self._lock:
+                self.identity, self._context = identity, context
+                self._host_secret, self._viewer_password, self._context_secret, self._transcript_secret = lab.host_secret, lab.viewer_password, lab.context_secret, lab.transcript_secret
+                self._expected_identity = identity; self._expected_turn_applied_digest = bootstrap.applied_digest()
+                self._selected_turn_identity = {"id": bootstrap.selected_turn_server_id, "fingerprint": bootstrap.turn_fingerprint,
+                                                "digest": bootstrap.applied_digest(), "urls": list(bootstrap.turn_urls)}
+                self._last_status = "running-fixture-turn"
             return identity
         except Exception:
             self._close_generation(token, generation); raise
@@ -628,9 +666,10 @@ class LabRun:
             if self.closed or self.identity is None or self._runtime_dir is None or self._context is None: raise RuntimeError("lab identity is required before starting a Host")
             token, generation, identity, proof, runtime_dir, context = self._run_token, self._generation, self.identity, self._production_proof, self._runtime_dir, dict(self._context)
             host_secret = self._host_secret
-        if token is None or proof is None: raise RuntimeError("lab identity is required before starting a Host")
+        if token is None or (proof is None and not self._fixture_turn_run): raise RuntimeError("lab identity is required before starting a Host")
         try:
-            self._production_preflight(proof, proof.epoch)
+            if not self._fixture_turn_run:
+                self._production_preflight(proof, proof.epoch)
             env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}; env.update({"SERVER_URL": identity.origin, "HOST_SHARED_SECRET": host_secret, "WRD_LAB_HOST_ENTRY": "1", "WRD_LAB_CONTEXT": json.dumps(context, separators=(",", ":")), "WRD_DISABLE_OVERLAY": "1", "WRD_FRAME_TRACE_DETAIL": "1", "WRD_LAB_LOSS_TRACE": "1"})
             with self._spawn_lock:
                 with self._lock:
@@ -728,7 +767,7 @@ class LabRun:
                 proof = self._production_proof
                 admission_pending = self._admission_token is token
                 self._children.clear(); self._handles.clear(); self._stop_signal = None; self._runtime_dir = None; self.identity = None; self._expected_identity = None; self._context = None; self._host_secret = self._viewer_password = self._context_secret = self._transcript_secret = ""; self._expected_turn_applied_digest = ""; self._selected_turn_identity = None; self._production_epoch = None; self._production_proof = None
-                self._run_token = None; self._watch_stop = None; self._watch_thread = None
+                self._run_token = None; self._watch_stop = None; self._watch_thread = None; self._fixture_turn_run = False
         for child in children:
             self._terminate_child(child)
             for stream in (child.stdout, child.stderr):

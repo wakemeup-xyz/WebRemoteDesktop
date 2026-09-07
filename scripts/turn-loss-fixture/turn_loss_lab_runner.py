@@ -214,15 +214,23 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
 
 def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewer_token: str) -> dict[str, Any]:
     """Concrete Lab -> authority -> Compose -> control -> seal -> verify path."""
-    from turn_lab import LabRun
+    from turn_lab import LabRun, LabTurnBootstrap
     from turn_controlled_scene import ProducerProof
     from turn_controlled_scene_lab_runner import (PlaywrightLabViewerAdapter,
                                                    RawLossTimelineCollector,
                                                    seal_loss_bridge_after_clear, turn_catalog)
     manifest = LossFixtureManifest.parse(json.loads(manifest_path.read_text()))
-    lab = LabRun(viewer_token=viewer_token); adapter = None
+    # Prepare the disposable relay before creating Signal/Host.  This path
+    # deliberately does not call LabRun.start(), which obtains production TURN.
+    resolved = DockerRuntimeProbe().resolve_fixture_images(manifest.image_digests)
+    prepared = prepare_runtime(json.loads(manifest_path.read_text()), runtime, resolved_images=resolved)
+    credentials = load_fixture_credentials(runtime / manifest.credentials_file, manifest.realm)
+    host, port = str(prepared["turnEndpoint"]).rsplit(":", 1)
+    bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"],
+                                 (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
+    lab = LabRun(); adapter = None
     try:
-        identity = lab.start("legacy"); lab.start_host()
+        identity = lab.start_fixture_turn(bootstrap); lab.start_host()
         proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
         adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
         scope = adapter.viewer_session_identity()
@@ -232,9 +240,6 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
                 or {key: selected_leg.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn
                 or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
             raise RuntimeBlocked("Lab selected TURN does not bind the fixture manifest")
-        resolved = DockerRuntimeProbe().resolve_fixture_images(manifest.image_digests)
-        prepared = prepare_runtime(json.loads(manifest_path.read_text()), runtime, resolved_images=resolved)
-        credentials = load_fixture_credentials(runtime / manifest.credentials_file, manifest.realm)
         authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
         timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
         def drive() -> Mapping[str, Any]:
