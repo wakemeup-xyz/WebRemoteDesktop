@@ -33,7 +33,7 @@ Input 新增 `getEffectiveInputGate()`、`requestInputRecovery({ source })`。�
 
 reset 的确认必须同时满足：当前身份未改变、对应 reset inputId、正确 inputType/schema/epoch、`applied | duplicate`、appliedSeq 不小于本轮 reset seq，且真实传输 ACK 接收结果成功。拒绝 ACK 不得修改成功标记；同 epoch 但错误 ID、旧 generation、跨 attempt ACK 均不能解除门禁。
 
-`KeyboardTransport.getPendingReset()` 是内部查询 seam，返回当前 reset 的 `{ inputId, seq, leaseEpoch }` 或 null，不放进公共诊断；可以认领同一当前 attempt 下仍在途的 barrier，避免重复 keyboard reset。复位 ID 必须来自实际接受发送的报文，不能猜测 seq 或依赖仅 READY 的快照。
+`KeyboardTransport.getPendingReset()` 是内部查询 seam，返回当前 reset 的 `{ inputId, seq, leaseEpoch, connectionAttemptId }` 或 null，不放进公共诊断。新增可选 `create({ getConnectionAttemptId })` 注入当前attempt读取函数（缺省返回null），必须在实际发送时捕获归属；所有字段显式可见，不用non-enumerable属性掩藏跨模块契约。可以认领同一当前 attempt 下仍在途的 barrier，避免重复 keyboard reset；未过期的旧attempt barrier只能由新的reset替换，不清洗正常序号或重放普通输入。复位 ID 必须来自实际接受发送的报文，不能猜测 seq 或依赖仅 READY 的快照。
 
 ### 3.2 生命周期与预算
 
