@@ -1,6 +1,7 @@
 """Regression tests for receiver-owned RTP headers; no Host sender rows are accepted."""
 from __future__ import annotations
 import importlib.util
+import os
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -37,6 +38,25 @@ def test_af_packet_observer_rejects_stun_rtcp_data_and_wrong_video_ssrc():
     other_channel = _rtp(2)
     observer.accept_frame(frame((0x4002).to_bytes(2,"big") + len(other_channel).to_bytes(2,"big") + other_channel))
     assert observer.rows == ()
+
+def test_passive_turn_observer_selects_browser_allocation_not_readiness_allocation():
+    probe_spec = importlib.util.spec_from_file_location("turn_probe", HERE / "turn_udp_probe.py")
+    probe = importlib.util.module_from_spec(probe_spec); assert probe_spec.loader; probe_spec.loader.exec_module(probe)
+    observer = receiver.TurnProtocolObserver()
+    server, client, peer = ("172.31.0.20", 3478), ("172.31.0.21", 48000), ("172.31.0.8", 59000)
+    def leg(source, destination): return {"protocol":"udp", "source":source[0], "sourcePort":source[1], "destination":destination[0], "destinationPort":destination[1]}
+    # This record models a separate readiness allocation: it is never selected.
+    stale = os.urandom(12); observer.accept(leg(("172.31.0.30", 49000), server), probe._message(0x0003, stale, b""))
+    observer.accept(leg(server, ("172.31.0.30", 49000)), probe._message(0x0103, stale, probe._attr(0x0016, probe._xor_peer("172.31.0.99", 51001, stale))))
+    tx = os.urandom(12); observer.accept(leg(client, server), probe._message(0x0003, tx, b""))
+    observer.accept(leg(server, client), probe._message(0x0103, tx, probe._attr(0x0016, probe._xor_peer("172.31.0.9", 51007, tx))))
+    bind_tx = os.urandom(12); bind = probe._attr(0x000c, b"\x40\x01\0\0") + probe._attr(0x0012, probe._xor_peer(*peer, bind_tx))
+    observer.accept(leg(client, server), probe._message(0x0009, bind_tx, bind))
+    rtp = _rtp(12, 34, 0x10203040); observer.accept(leg(server, client), b"\x40\x01" + len(rtp).to_bytes(2,"big") + rtp)
+    selected = observer.select(relay={"address":"172.31.0.9","port":51007}, peer={"address":peer[0],"port":peer[1]}, ssrc=0x10203040)
+    assert selected and selected["outerEgress"] == leg(server, client)
+    assert observer.select(relay={"address":"172.31.0.99","port":51001}, peer={"address":peer[0],"port":peer[1]}, ssrc=0x10203040) is None
+    assert observer.select(relay={"address":"172.31.0.9","port":51007}, peer={"address":peer[0],"port":peer[1]}, ssrc=9) is None
 
 def test_capture_rejects_sender_only_rows_tuple_change_and_ssrc_change():
     rows = {"before": [{"sequence": 1,"rtpTimestamp":1,"ssrc":9,"fixtureClockNs":1}], "during": [{"sequence":3,"rtpTimestamp":3,"ssrc":9,"fixtureClockNs":2}], "after": [{"sequence":4,"rtpTimestamp":4,"ssrc":9,"fixtureClockNs":3}]}

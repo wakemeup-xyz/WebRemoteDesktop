@@ -53,6 +53,86 @@ def _udp_payload(frame: bytes) -> tuple[dict[str, Any], bytes] | None:
     return ({"protocol": "udp", "source": source, "sourcePort": sport, "destination": destination, "destinationPort": dport}, ip[ihl + 8:ihl + length])
 
 
+def _stun(packet: bytes) -> tuple[int, bytes, dict[int, bytes]] | None:
+    """Minimal TURN/STUN decoder used only by the namespace packet owner."""
+    if len(packet) < 20 or packet[:2][0] & 0xC0 or packet[4:8] != b"\x21\x12\xa4\x42": return None
+    kind, size = struct.unpack("!HH", packet[:4])
+    if size + 20 != len(packet): return None
+    attrs: dict[int, bytes] = {}; offset = 20
+    while offset < len(packet):
+        if offset + 4 > len(packet): return None
+        code, length = struct.unpack("!HH", packet[offset:offset + 4]); offset += 4
+        if offset + length > len(packet): return None
+        attrs[code] = packet[offset:offset + length]; offset += length + ((-length) % 4)
+    return kind, packet[8:20], attrs
+
+
+def _xor_endpoint(value: bytes, txid: bytes) -> tuple[str, int] | None:
+    if len(value) != 8 or value[:2] != b"\0\x01": return None
+    port = struct.unpack("!H", value[2:4])[0] ^ 0x2112
+    raw = bytes(a ^ b for a, b in zip(value[4:], b"\x21\x12\xa4\x42"))
+    try: return str(ipaddress.ip_address(raw)), port
+    except ValueError: return None
+
+
+class TurnProtocolObserver:
+    """Receiver-owned passive association of C↔S, R, H, ChannelData and RTP.
+
+    No runner row is accepted: allocations originate only in AF_PACKET frames.
+    A readiness probe can create an entry, but later selection is exact on its
+    relay R, peer H, channel and video SSRC, so a different browser allocation
+    cannot borrow it.
+    """
+    def __init__(self) -> None:
+        self._allocate: dict[bytes, tuple[tuple[str, int], tuple[str, int]]] = {}
+        self._allocations: dict[tuple[str, int], dict[str, Any]] = {}
+        self._observed: list[dict[str, Any]] = []
+
+    def accept(self, leg: Mapping[str, Any], payload: bytes) -> None:
+        source, destination = (str(leg["source"]), int(leg["sourcePort"])), (str(leg["destination"]), int(leg["destinationPort"]))
+        parsed = _stun(payload)
+        if parsed is not None:
+            kind, txid, attrs = parsed
+            if kind == 0x0003: self._allocate[txid] = (source, destination); return
+            if kind == 0x0103 and txid in self._allocate and 0x0016 in attrs:
+                client, server = self._allocate.pop(txid)
+                relay = _xor_endpoint(attrs[0x0016], txid)
+                if relay is not None and source == server and destination == client:
+                    self._allocations[client] = {"client": client, "server": server, "allocationRelay": relay, "peer": None, "channels": {}}
+                return
+            # TURN Data indication is a valid receive encoding.  Keep the
+            # observation for audit/selection, but it deliberately cannot
+            # authorize a DROP rule until a payload-safe classifier exists.
+            if kind == 0x0017:
+                allocation = self._allocations.get(destination)
+                peer = _xor_endpoint(attrs[0x0012], txid) if 0x0012 in attrs else None
+                rtp = parse_rtp_header(attrs[0x0013]) if 0x0013 in attrs else None
+                if allocation is not None and source == allocation["server"] and peer is not None and rtp is not None and rtp["payloadType"] == 96:
+                    self._observed.append({"outerEgress": dict(leg), "allocationRelay": {"address": allocation["allocationRelay"][0], "port": allocation["allocationRelay"][1]}, "peer": {"address": peer[0], "port": peer[1]}, "channelNumber": None, "encapsulation": "data-indication", "rtpSsrc": rtp["ssrc"], "payloadType": 96})
+                return
+            allocation = self._allocations.get(source)
+            if allocation is None or destination != allocation["server"]: return
+            if kind == 0x0008 and 0x0012 in attrs:
+                allocation["peer"] = _xor_endpoint(attrs[0x0012], txid); return
+            if kind == 0x0009 and 0x000c in attrs and 0x0012 in attrs and len(attrs[0x000c]) == 4:
+                channel = struct.unpack("!H", attrs[0x000c][:2])[0]; peer = _xor_endpoint(attrs[0x0012], txid)
+                if 0x4000 <= channel <= 0x7fff and peer is not None:
+                    allocation["peer"] = peer; allocation["channels"][channel] = peer
+            return
+        if len(payload) < 16 or payload[0] >> 6 != 1: return  # ChannelData only; STUN/Data indication cannot authorize DROP.
+        allocation = self._allocations.get(destination)
+        if allocation is None or source != allocation["server"]: return
+        channel, length = struct.unpack("!HH", payload[:4])
+        peer = allocation["channels"].get(channel)
+        rtp = parse_rtp_header(payload[4:4 + length]) if len(payload) >= 4 + length else None
+        if peer is None or rtp is None or rtp["payloadType"] != 96: return
+        self._observed.append({"outerEgress": dict(leg), "allocationRelay": {"address": allocation["allocationRelay"][0], "port": allocation["allocationRelay"][1]}, "peer": {"address": peer[0], "port": peer[1]}, "channelNumber": channel, "encapsulation": "channel-data", "rtpSsrc": rtp["ssrc"], "payloadType": 96})
+
+    def select(self, *, relay: Mapping[str, Any], peer: Mapping[str, Any], ssrc: int) -> dict[str, Any] | None:
+        matches = [row for row in self._observed if row["allocationRelay"] == dict(relay) and row["peer"] == dict(peer) and row["rtpSsrc"] == ssrc]
+        return dict(matches[-1]) if len(matches) else None
+
+
 def _canonical(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
 
@@ -91,15 +171,18 @@ def seal_received_capture(*, run_id: str, event_handle: str, selected_leg: Mappi
 
 class ReceiverDirectedObserver:
     """Owns AF_PACKET and only emits headers matching one selected receiver leg."""
-    def __init__(self, *, interface: str, selected_leg: Mapping[str, Any], media_binding: Mapping[str, Any] | None = None, clock_ns=time.monotonic_ns) -> None:
+    def __init__(self, *, interface: str, selected_leg: Mapping[str, Any], media_binding: Mapping[str, Any] | None = None, protocol_observer: TurnProtocolObserver | None = None, clock_ns=time.monotonic_ns) -> None:
         self.interface, self.selected_leg, self.clock_ns = interface, dict(selected_leg), clock_ns
         self.media_binding = dict(media_binding) if media_binding is not None else None
+        self.protocol_observer = protocol_observer
         self._rows: list[dict[str, int]] = []; self._arrival = 0
 
     def accept_frame(self, frame: bytes) -> None:
         decoded = _udp_payload(frame)
         if decoded is None: return
         leg, payload = decoded
+        if self.protocol_observer is not None:
+            self.protocol_observer.accept(leg, payload)
         if leg != self.selected_leg: return
         if self.media_binding is None: return
         payload = channel_data_media_payload(payload, self.media_binding)
