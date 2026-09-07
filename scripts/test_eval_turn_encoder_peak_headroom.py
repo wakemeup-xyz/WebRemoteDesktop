@@ -156,7 +156,7 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         extra = self._snapshot(); extra["processes"][1]["argv"] += " --extra"
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: extra); sampler._sample_once(phase="PREFLIGHT")
         self.assertIn("sync_worker identity unavailable", [x["reason"] for x in sampler.abort_reasons])
-        pytest = self._snapshot(); pytest["processes"].append({"pid": 44, "rssKiB": 1, "cpuPercent": 0.0, "command": "/usr/bin/python3", "argv": "/usr/bin/python3 -m pytest"})
+        pytest = self._snapshot(); pytest["processes"].append({"pid": 44, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/bin/python3", "argv": "/usr/bin/python3 -m pytest"})
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: pytest); sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
 
@@ -219,7 +219,18 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: snapshot)
         sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
-        self.assertEqual(sampler.evidence()["forbidden"], [{"class": "pytest", "pid": 42, "cpuPercent": 6.0}])
+        self.assertEqual(sampler.evidence()["quiescentExternalProcesses"], [{"class": "pytest", "pid": 42, "cpuPercent": 6.0}])
+
+    def test_quiescent_pytest_is_recorded_but_over_budget_processes_abort(self):
+        quiet = self._snapshot(); quiet["processes"].append({"pid": 41, "rssKiB": 1, "cpuPercent": .5, "command": "/usr/bin/pytest", "argv": "pytest"})
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: quiet); sampler._sample_once(phase="PREFLIGHT")
+        self.assertIsNone(sampler.abort_status())
+        loud = self._snapshot(); loud["processes"].append({"pid": 42, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/bin/pytest", "argv": "pytest"})
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: loud); sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 43, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}, {"pid": 44, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}]
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
 
     def test_boundary_samples_use_the_single_worker_owner(self):
         callers = []

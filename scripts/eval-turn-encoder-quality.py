@@ -39,6 +39,7 @@ class _PeakAmbientSampler:
     PRE_FLIGHT_INTERVAL_SECONDS = 1.0
     PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS = (0.85, 1.15)
     PRE_FLIGHT_LATE_TICK_SECONDS = 0.15
+    QUIESCENT_EXTERNAL_CPU_PERCENT = 1.0
     MYSQL_STABILITY_THRESHOLDS = {
         "maximumCpuPercent": 95.0,
         "maximumCpuSwingPercent": 35.0,
@@ -180,8 +181,12 @@ class _PeakAmbientSampler:
                     process_class = self._forbidden_class(str(process["command"]), str(process.get("argv", "")))
                     if process_class is not None and process["pid"] not in mysql_pids | sync_pids:
                         forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
+                external_cpu = sum(item["cpuPercent"] for item in forbidden)
                 for offender in forbidden:
-                    self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
+                    if offender["cpuPercent"] > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
+                        self._abort("CONTAMINATED", "non-allowlisted process exceeds quiescent CPU budget", **offender)
+                if external_cpu > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
+                    self._abort("CONTAMINATED", "non-allowlisted aggregate exceeds quiescent CPU budget", totalCpuPercent=external_cpu)
                 if viewers.get("viewerCount") != 0 or viewers.get("relayViewerCount") != 0:
                     self._abort("CONTAMINATED", "viewer activity", viewers=viewers)
                 if len(mysql) != 1:
@@ -204,7 +209,7 @@ class _PeakAmbientSampler:
                     self._late_ticks.append(late)
                     self._abort("INCONCLUSIVE", "ambient sampling tick late", **late)
                 self._sequence += 1
-                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "syncWorker": sync, "forbidden": forbidden, "viewerStatus": viewers}
+                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "syncWorker": sync, "quiescentExternalProcesses": forbidden, "externalCpuPercent": external_cpu, "viewerStatus": viewers}
                 if self._last_tick_ns is not None:
                     elapsed_seconds = (tick_ns - self._last_tick_ns) / 1_000_000_000
                     if phase == "PREFLIGHT" and not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= elapsed_seconds <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
@@ -349,9 +354,10 @@ class _PeakAmbientSampler:
             "health": dict(self._health),
             "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status, "intervalSeconds": self.PRE_FLIGHT_INTERVAL_SECONDS, "intervalBoundsSeconds": list(self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
             "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
-        "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
+            "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
+            "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT, "aggregateCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
-            "forbidden": [
+            "quiescentExternalProcesses": [
                 {key: reason[key] for key in ("class", "pid", "cpuPercent")}
                 for reason in self.abort_reasons
                 if reason["category"] == "CONTAMINATED" and "class" in reason
@@ -1479,6 +1485,7 @@ def _peak_atomic_abort_artifact(error: Exception) -> dict:
         "preflight": {"requiredSamples": _PeakAmbientSampler.PRE_FLIGHT_SAMPLES, "observedSamples": 0, "status": "NOT STARTED", "intervalSeconds": 1.0, "intervalBoundsSeconds": list(_PeakAmbientSampler.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
         "mysqld": {"identity": None, "cpuPercent": {"p50": None, "p95": None, "max": None}, "stabilityThresholds": dict(_PeakAmbientSampler.MYSQL_STABILITY_THRESHOLDS)},
         "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": None},
+        "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": 1.0, "aggregateCpuPercentMaximum": 1.0},
         "coverage": [], "missedTicks": 0, "lateTicks": [], "forbidden": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
         "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
     }
