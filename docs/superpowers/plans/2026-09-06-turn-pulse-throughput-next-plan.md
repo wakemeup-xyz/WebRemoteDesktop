@@ -192,4 +192,19 @@
 
 ## 交付状态枚举
 
+### T2 环境准入实施清单（2026-09-08）
+
+- [x] 在唯一 sampler 时序所有者中按 monotonic deadline 采集 30×1Hz mysqld
+  预检；第一样本无前序间隔，其余严格记录 0.85–1.15 秒窗口、late/missed tick。
+- [x] 固定并验证 mysqld 的 PID、绝对二进制路径和 start epoch；记录 CPU
+  P50/P95/max、稳定阈值和每个 sentinel block 的样本覆盖。
+- [x] 将 pytest、sync_worker、Lab/docker compose、Viewer/relay Viewer 活动和
+  健康/采样失败分别 fail-closed 为 CONTAMINATED 或 INCONCLUSIVE。
+- [x] 每场景前后运行冻结静态 sentinel；仅归档原始 P50/P95、输入/配置 digest
+  与 paired relative ambient factor，绝不改变 raw P95 qualification gate。
+- [x] 对 setup、digest、candidate 或 hook 例外原子写完整 ABORTED schema；异常和
+  污染的 partial evidence 可保留，但不可选择候选或写 OFFLINE_PASS_ONLY。
+
+完整 peak matrix 仍待显式运行授权及干净环境；runtime burst 继续 `NOT_RUN`。
+
 `IMPLEMENTED` 表示代码与自动化通过；`OFFLINE_PASS` 表示所有场景质量/成本合格；`LAB_PASS` 表示隔离TURN、输入、丢包通过；`PRODUCTION_PASS` 表示冻结版本的真实生产维护窗口通过。`BLOCKED` 说明设施/受控场景缺失；`INCONCLUSIVE` 说明测量或环境不可比。`USER_SCENARIO_PASS` 才表示原报告客户端场景也已验收；缺失为USER_SCENARIO_NOT_VERIFIED。任何前一层状态不能代替后一层，也不保证所有客户端/网络条件永不抖动。

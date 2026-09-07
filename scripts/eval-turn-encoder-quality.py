@@ -9,6 +9,7 @@ import importlib.util
 import json
 import math
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -34,6 +35,9 @@ class _PeakAmbientSampler:
 
     PRE_FLIGHT_SAMPLES = 30
     SAMPLE_HZ = 1
+    PRE_FLIGHT_INTERVAL_SECONDS = 1.0
+    PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS = (0.85, 1.15)
+    PRE_FLIGHT_LATE_TICK_SECONDS = 0.15
     MYSQL_STABILITY_THRESHOLDS = {
         "maximumCpuPercent": 95.0,
         "maximumCpuSwingPercent": 35.0,
@@ -53,8 +57,10 @@ class _PeakAmbientSampler:
         self._stop = threading.Event()
         self.ready = threading.Event()
         self.healthy = threading.Event()
-        self._sample_event = threading.Event()
-        self._lock = threading.Lock()
+        self.health_ready = threading.Event()
+        self._preflight_complete = threading.Event()
+        self._lock = threading.RLock()
+        self._requests: queue.Queue = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread_started = False
         self._preflight_samples: list[dict] = []
@@ -63,7 +69,10 @@ class _PeakAmbientSampler:
         self._coverage: list[dict] = []
         self._active_blocks: dict[str, dict] = {}
         self._missed_ticks = 0
+        self._late_ticks: list[dict] = []
         self._last_tick_ns: int | None = None
+        self._sequence = 0
+        self._health = {"status": "STARTING", "lastError": None}
 
     @staticmethod
     def _mysql_start_epoch(pid: int) -> str:
@@ -126,89 +135,73 @@ class _PeakAmbientSampler:
         if entry not in self.abort_reasons:
             self.abort_reasons.append(entry)
 
-    def _sample_once(self, *, phase: str) -> None:
+    def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
+        """Capture one snapshot.  The worker is the sole normal caller."""
         tick_ns = time.monotonic_ns()
         try:
-            snapshot = self._snapshot_reader()
-            processes = list(snapshot["processes"])
-            mysql = list(snapshot["mysqld"])
-            viewers = dict(snapshot["viewerStatus"])
-            forbidden = []
-            for process in processes:
-                process_class = self._forbidden_class(str(process["command"]))
-                if process_class is not None and "mysqld" not in str(process["command"]).lower():
-                    forbidden.append({
-                        "class": process_class,
-                        "pid": int(process["pid"]),
-                        "cpuPercent": float(process["cpuPercent"]),
-                    })
-            if forbidden:
+            with self._lock:  # snapshot through append is one strict sequence owner.
+                if self._last_tick_ns is not None and tick_ns <= self._last_tick_ns:
+                    self._abort("INCONCLUSIVE", "ambient monotonic sequence regression")
+                snapshot = self._snapshot_reader()
+                processes = list(snapshot["processes"])
+                mysql = list(snapshot["mysqld"])
+                viewers = dict(snapshot["viewerStatus"])
+                forbidden = []
+                for process in processes:
+                    process_class = self._forbidden_class(str(process["command"]))
+                    if process_class is not None and "mysqld" not in str(process["command"]).lower():
+                        forbidden.append({"class": process_class, "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])})
                 for offender in forbidden:
                     self._abort("CONTAMINATED", "non-allowlisted process present", **offender)
-            if viewers.get("viewerCount") != 0 or viewers.get("relayViewerCount") != 0:
-                self._abort("CONTAMINATED", "viewer activity", viewers=viewers)
-            if len(mysql) != 1:
-                self._abort("INCONCLUSIVE", "mysqld identity unavailable", observedCount=len(mysql))
-            else:
-                observed_identity = {
-                    "pid": int(mysql[0]["pid"]),
-                    "binaryPath": str(mysql[0]["binaryPath"]),
-                    "startEpoch": str(mysql[0]["startEpoch"]),
-                }
-                if self._mysql_identity is None:
-                    self._mysql_identity = observed_identity
-                elif observed_identity != self._mysql_identity:
-                    self._abort(
-                        "INCONCLUSIVE", "mysqld identity changed",
-                        expected=self._mysql_identity, observed=observed_identity,
-                    )
-            sample = {
-                "monotonicNs": tick_ns,
-                "phase": phase,
-                "loadavg": list(os.getloadavg()),
-                "mysqld": mysql,
-                "forbidden": forbidden,
-                "viewerStatus": viewers,
-            }
-            with self._lock:
+                if viewers.get("viewerCount") != 0 or viewers.get("relayViewerCount") != 0:
+                    self._abort("CONTAMINATED", "viewer activity", viewers=viewers)
+                if len(mysql) != 1:
+                    self._abort("INCONCLUSIVE", "mysqld identity unavailable", observedCount=len(mysql))
+                else:
+                    observed_identity = {"pid": int(mysql[0]["pid"]), "binaryPath": str(mysql[0]["binaryPath"]), "startEpoch": str(mysql[0]["startEpoch"])}
+                    if self._mysql_identity is None:
+                        self._mysql_identity = observed_identity
+                    elif observed_identity != self._mysql_identity:
+                        self._abort("INCONCLUSIVE", "mysqld identity changed", expected=self._mysql_identity, observed=observed_identity)
+                late_seconds = None if scheduled_ns is None else max(0.0, (tick_ns - scheduled_ns) / 1_000_000_000)
+                if late_seconds is not None and late_seconds > self.PRE_FLIGHT_LATE_TICK_SECONDS:
+                    late = {"scheduledMonotonicNs": scheduled_ns, "observedMonotonicNs": tick_ns, "lateSeconds": late_seconds}
+                    self._late_ticks.append(late)
+                    self._abort("INCONCLUSIVE", "ambient sampling tick late", **late)
+                self._sequence += 1
+                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "forbidden": forbidden, "viewerStatus": viewers}
                 if self._last_tick_ns is not None:
-                    elapsed = tick_ns - self._last_tick_ns
-                    missed = max(0, round(elapsed / (self._interval_seconds * 1_000_000_000)) - 1)
-                    self._missed_ticks += missed
-                    if missed:
-                        self._abort("INCONCLUSIVE", "ambient sampling tick missed", missedTicks=missed)
+                    elapsed_seconds = (tick_ns - self._last_tick_ns) / 1_000_000_000
+                    if phase == "PREFLIGHT" and not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= elapsed_seconds <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
+                        self._missed_ticks += 1
+                        self._abort("INCONCLUSIVE", "ambient preflight cadence outside bounds", elapsedSeconds=elapsed_seconds)
                 self._last_tick_ns = tick_ns
                 self.samples.append(sample)
                 if phase == "PREFLIGHT":
                     self._preflight_samples.append(sample)
-            self.healthy.set()
+                self._health = {"status": "HEALTHY", "lastError": None}
+                self.healthy.set()
+                self.health_ready.set()
+                return sample
         except Exception as exc:  # ps/status failures must make qualification impossible.
-            self._abort("INCONCLUSIVE", "ambient sampling failure", error=type(exc).__name__)
+            with self._lock:
+                self.healthy.clear()
+                self._health = {"status": "FAILED", "lastError": type(exc).__name__}
+                self._abort("INCONCLUSIVE", "ambient sampling failure", error=type(exc).__name__)
+                self.health_ready.set()
         finally:
-            self.ready.set()
-            self._sample_event.set()
+            if phase == "PREFLIGHT" and self.abort_reasons:
+                self._preflight_status = "FAILED"
+                self._preflight_complete.set()
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            self._sample_once(phase="PREFLIGHT" if self._preflight_status == "PENDING" else "RUNNING")
-            self._stop.wait(self._interval_seconds)
-
-    def start(self) -> None:
-        self._thread_started = True
-        self._thread.start()
-        if not self.ready.wait(timeout=5):
-            self._abort("INCONCLUSIVE", "ambient sampler did not become ready")
-
-    def run_preflight(self) -> bool:
-        """Require a continuous 30x1Hz stable mysqld identity before encoding."""
-        deadline = time.monotonic() + (self.PRE_FLIGHT_SAMPLES + 5) * self._interval_seconds
-        while len(self._preflight_samples) < self.PRE_FLIGHT_SAMPLES and not self.abort_reasons:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._abort("INCONCLUSIVE", "ambient preflight missing samples", observed=len(self._preflight_samples))
-                break
-            self._sample_event.clear()
-            self._sample_event.wait(timeout=min(self._interval_seconds + 0.2, remaining))
+    def _finish_preflight_if_ready(self) -> None:
+        if self._preflight_complete.is_set() or len(self._preflight_samples) < self.PRE_FLIGHT_SAMPLES:
+            return
+        timestamps = [sample["monotonicNs"] for sample in self._preflight_samples]
+        intervals = [(current - previous) / 1_000_000_000 for previous, current in zip(timestamps, timestamps[1:])]
+        for interval in intervals:
+            if not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= interval <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
+                self._abort("INCONCLUSIVE", "ambient preflight cadence outside bounds", elapsedSeconds=interval)
         cpu_values = [sample["mysqld"][0]["cpuPercent"] for sample in self._preflight_samples if len(sample["mysqld"]) == 1]
         if len(cpu_values) != self.PRE_FLIGHT_SAMPLES:
             self._abort("INCONCLUSIVE", "ambient preflight incomplete", observed=len(cpu_values))
@@ -216,18 +209,67 @@ class _PeakAmbientSampler:
             self._abort("INCONCLUSIVE", "mysqld CPU stability bound exceeded", maximum=max(cpu_values))
         elif max(cpu_values) - min(cpu_values) > self.MYSQL_STABILITY_THRESHOLDS["maximumCpuSwingPercent"]:
             self._abort("INCONCLUSIVE", "mysqld CPU swing stability bound exceeded", swing=max(cpu_values) - min(cpu_values))
-        self._preflight_status = "PASS" if not self.abort_reasons else "FAILED"
+        self._preflight_status = "PASS" if not self.abort_reasons and self.healthy.is_set() else "FAILED"
+        self._preflight_complete.set()
+
+    def _run(self) -> None:
+        next_deadline = time.monotonic()
+        self.ready.set()
+        while not self._stop.is_set():
+            timeout = max(0.0, next_deadline - time.monotonic())
+            try:
+                request = self._requests.get(timeout=timeout)
+            except queue.Empty:
+                phase = "PREFLIGHT" if self._preflight_status == "PENDING" else "RUNNING"
+                self._sample_once(phase=phase, scheduled_ns=int(next_deadline * 1_000_000_000))
+                if phase == "PREFLIGHT":
+                    self._finish_preflight_if_ready()
+                next_deadline += self._interval_seconds
+                continue
+            if request["kind"] == "stop":
+                break
+            sample = self._sample_once(phase="RUNNING")
+            request["result"] = sample
+            request["done"].set()
+
+    def start(self) -> None:
+        self._thread_started = True
+        self._thread.start()
+        if not self.ready.wait(timeout=5):
+            self._abort("INCONCLUSIVE", "ambient sampler did not become ready")
+        if not self.health_ready.wait(timeout=5) or not self.healthy.is_set():
+            self._abort("INCONCLUSIVE", "ambient sampler health check failed")
+
+    def run_preflight(self) -> bool:
+        """Require a continuous 30x1Hz stable mysqld identity before encoding."""
+        timeout = (self.PRE_FLIGHT_SAMPLES * self._interval_seconds) + self.PRE_FLIGHT_LATE_TICK_SECONDS
+        if not self._preflight_complete.wait(timeout=timeout):
+            self._abort("INCONCLUSIVE", "ambient preflight deadline missed", observed=len(self._preflight_samples))
+            self._preflight_status = "FAILED"
+        if len(self._preflight_samples) < self.PRE_FLIGHT_SAMPLES:
+            self._abort("INCONCLUSIVE", "ambient preflight incomplete", observed=len(self._preflight_samples))
+            self._preflight_status = "FAILED"
         return self._preflight_status == "PASS"
 
     def begin_block(self, block_id: str) -> None:
-        self._sample_once(phase="RUNNING")
-        self._active_blocks[block_id] = {"blockId": block_id, "startedMonotonicNs": time.monotonic_ns(), "startSampleCount": len(self.samples)}
+        request = {"kind": "begin", "blockId": block_id, "done": threading.Event()}
+        self._requests.put(request)
+        if not request["done"].wait(timeout=5) or request["result"] is None:
+            self._abort("INCONCLUSIVE", "ambient boundary sample unavailable", blockId=block_id)
+            return
+        sample = request["result"]
+        self._active_blocks[block_id] = {"blockId": block_id, "startedMonotonicNs": sample["monotonicNs"], "startSequence": sample["sequence"]}
 
     def end_block(self, block_id: str) -> dict:
-        self._sample_once(phase="RUNNING")
-        block = self._active_blocks.pop(block_id)
-        block["endedMonotonicNs"] = time.monotonic_ns()
-        block["sampleCount"] = max(0, len(self.samples) - block.pop("startSampleCount"))
+        request = {"kind": "end", "blockId": block_id, "done": threading.Event()}
+        self._requests.put(request)
+        if not request["done"].wait(timeout=5) or request["result"] is None:
+            self._abort("INCONCLUSIVE", "ambient boundary sample unavailable", blockId=block_id)
+            return {"blockId": block_id, "startedMonotonicNs": None, "endedMonotonicNs": None, "sampleCount": 0}
+        sample = request["result"]
+        block = self._active_blocks.pop(block_id, {"blockId": block_id, "startedMonotonicNs": None, "startSequence": sample["sequence"]})
+        block["endedMonotonicNs"] = sample["monotonicNs"]
+        block["sampleCount"] = sample["sequence"] - block.pop("startSequence") + 1
         self._coverage.append(block)
         if block["sampleCount"] == 0:
             self._abort("INCONCLUSIVE", "ambient block missing samples", blockId=block_id)
@@ -242,6 +284,7 @@ class _PeakAmbientSampler:
     def stop(self) -> None:
         self._stop.set()
         if self._thread_started:
+            self._requests.put({"kind": "stop"})
             self._thread.join(timeout=3)
             if self._thread.is_alive():
                 self._abort("INCONCLUSIVE", "ambient sampler did not stop")
@@ -266,9 +309,10 @@ class _PeakAmbientSampler:
             "rawGatesUnchanged": True,
             "relativeOnly": True,
             "noLoadBaseline": None,
-            "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status},
+            "health": dict(self._health),
+            "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status, "intervalSeconds": self.PRE_FLIGHT_INTERVAL_SECONDS, "intervalBoundsSeconds": list(self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
             "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
-            "coverage": list(self._coverage), "missedTicks": self._missed_ticks,
+            "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
             "forbidden": [
                 {key: reason[key] for key in ("class", "pid", "cpuPercent")}
                 for reason in self.abort_reasons
@@ -1359,6 +1403,41 @@ def _write_atomic_json(path: Path, evidence: dict) -> None:
     temporary.replace(path)
 
 
+def _peak_atomic_abort_artifact(error: Exception) -> dict:
+    """Use the peak schema even when setup fails before a matrix object exists."""
+    runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
+    source_paths = (Path(__file__).resolve(), PROBE_PATH, ROOT / "scripts/turn_encoder_experiments.py", ROOT / "scripts/turn_encoder_peak_headroom_experiments.py", ROOT / "python-host/h264_encoder_policy.py", ROOT / "python-host/h264_videotoolbox_encoder.py")
+    source_digests = {}
+    for path in source_paths:
+        label = str(path.relative_to(ROOT))
+        try:
+            source_digests[label] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except Exception as digest_error:
+            source_digests[label] = {"status": "UNAVAILABLE", "error": type(digest_error).__name__}
+    try:
+        revision = _execution_source_revision()
+    except Exception as revision_error:
+        revision = None
+        source_digests["executionRevisionError"] = type(revision_error).__name__
+    ambient = {
+        "status": "INCONCLUSIVE", "sampleHz": 1, "rawGatesUnchanged": True, "relativeOnly": True, "noLoadBaseline": None,
+        "health": {"status": "FAILED", "lastError": type(error).__name__},
+        "preflight": {"requiredSamples": _PeakAmbientSampler.PRE_FLIGHT_SAMPLES, "observedSamples": 0, "status": "NOT STARTED", "intervalSeconds": 1.0, "intervalBoundsSeconds": list(_PeakAmbientSampler.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
+        "mysqld": {"identity": None, "cpuPercent": {"p50": None, "p95": None, "max": None}, "stabilityThresholds": dict(_PeakAmbientSampler.MYSQL_STABILITY_THRESHOLDS)},
+        "coverage": [], "missedTicks": 0, "lateTicks": [], "forbidden": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
+        "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
+    }
+    candidate = {"id": "on-demand-peak-headroom-v1", "parameters": None, "prescreen": {"status": "NOT RUN"}, "offline": {"status": "NOT RUN"}, "runtime": runtime, "eligible": False, "ineligibleReason": list(ambient["abortReasons"]), "execution": {"prescreen": "ABORTED", "fullMatrix": "ABORTED"}}
+    return {
+        "kind": "relay-peak-headroom-v1", "status": "ABORTED_INCONCLUSIVE", "eligible": False,
+        "scope": "matrix raised before completion; this atomic abort artifact is not qualification evidence",
+        "defaultPolicy": "relay-legacy-v1", "candidate": candidate, "runtime": runtime,
+        "sourceDigests": source_digests, "executionSourceRevision": revision,
+        "ambientTelemetry": ambient, "selection": select_relay_candidate([]),
+        "error": {"type": type(error).__name__, "message": str(error)},
+    }
+
+
 def main() -> None:
     args = parse_args()
     try:
@@ -1377,7 +1456,7 @@ def main() -> None:
             else evaluate_peak_headroom_matrix(probe)
         )
     except Exception as exc:
-        evidence = {
+        evidence = _peak_atomic_abort_artifact(exc) if args.matrix == "relay-peak-headroom-v1" else {
             "kind": args.matrix or args.policy,
             "status": "ABORTED_INCONCLUSIVE",
             "eligible": False,

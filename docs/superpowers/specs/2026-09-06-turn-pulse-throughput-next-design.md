@@ -160,4 +160,26 @@ marker version=1、reserved=0；边框四角依次TL/TR/BL/BR=0/1/1/1；顶边�
 
 ## 10. 覆盖映射
 
+### T2 peak-headroom 环境可比性约束（2026-09-08）
+
+`on-demand-peak-headroom-v1` 的离线矩阵在编码前必须由单一 sampler 线程完成
+30 个 1Hz 预检样本。第一个样本没有前序间隔；其余相邻样本必须处于
+0.85–1.15 秒，且基于单调 deadline 排程。迟到、漏 tick、采样异常、缺少
+30 个样本、mysqld PID/二进制路径/启动 epoch 改变或稳定界限越界，均产生
+`ABORTED_INCONCLUSIVE`。mysqld 仅在身份稳定时允许作为背景项；pytest、
+sync_worker、Lab 或 docker compose 等非 allowlisted 干扰进程只要出现即为
+`ABORTED_CONTAMINATED`。Viewer 或 relay Viewer 非零同样中止。
+
+边界 sentinel 请求排入同一 sampler，不能从调用线程并发读取 `ps`。每个
+分辨率/场景前后使用相同静态输入和冻结 candidate，记录单调窗口、输入与配置
+digest、原始 encode P50/P95 和可选的同对相对环境因子。sentinel 仅描述环境
+漂移；`rawGatesUnchanged=true`、`relativeOnly=true`、`noLoadBaseline=null`，严禁
+把它写成 adjusted P95 或改变原始质量/成本门槛。
+
+所有正常或异常产物均采用同一可审计 schema：环境 health/preflight/mysqld
+identity/coverage/missed 与 late tick/脱敏 forbidden 类别 PID CPU、candidate、
+runtime、selection 和 source digests。通用加载、candidate、digest 或 hook 异常
+也必须原子写出完整 `ABORTED_INCONCLUSIVE` JSON，保留已有 partial 证据，但
+`eligible=false` 且不能产生 `OFFLINE_PASS_ONLY`。
+
 实际参数与编码候选→计划T1/T2；流水线耗时→T3；隔离验证桥接→T4；受控输入/画质→T5；网络丢包→T6；单变量性能实验→T7；推广、回归和证据→T8。T1–T3可先实施，T3实测依赖T4-legacy；T4-candidate依赖T2有离线胜者，T4-legacy可先开发；T5依赖T3的帧关联并可用legacy验证；T6设施前置条件未满足时不阻塞纯离线开发但阻塞推广。

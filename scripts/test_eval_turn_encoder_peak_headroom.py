@@ -7,8 +7,10 @@ import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -147,7 +149,8 @@ class PeakAmbientSamplerTest(unittest.TestCase):
     def test_sampler_exception_is_inconclusive_and_ready(self):
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: (_ for _ in ()).throw(OSError("ps unavailable")))
         sampler._sample_once(phase="PREFLIGHT")
-        self.assertTrue(sampler.ready.is_set())
+        self.assertTrue(sampler.health_ready.is_set())
+        self.assertFalse(sampler.healthy.is_set())
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
         self.assertEqual(sampler.abort_reasons[0]["reason"], "ambient sampling failure")
 
@@ -159,8 +162,44 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
         self.assertEqual(sampler.evidence()["forbidden"], [{"class": "pytest", "pid": 42, "cpuPercent": 6.0}])
 
+    def test_boundary_samples_use_the_single_worker_owner(self):
+        callers = []
+        snapshot = self._snapshot()
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: callers.append(threading.get_ident()) or snapshot)
+        sampler.start()
+        sampler.begin_block("sentinel")
+        coverage = sampler.end_block("sentinel")
+        sampler.stop()
+        self.assertEqual(len(set(callers)), 1)
+        self.assertGreaterEqual(coverage["sampleCount"], 2)
+        self.assertLess(coverage["startedMonotonicNs"], coverage["endedMonotonicNs"])
+
+    def test_preflight_cadence_outside_narrow_bounds_is_inconclusive(self):
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: self._snapshot())
+        with mock.patch.object(MODULE.time, "monotonic_ns", side_effect=(1_000_000_000, 3_000_000_000)):
+            sampler._sample_once(phase="PREFLIGHT")
+            sampler._sample_once(phase="PREFLIGHT")
+        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
+        self.assertIn("ambient preflight cadence outside bounds", [reason["reason"] for reason in sampler.abort_reasons])
+
 
 class AtomicAbortArtifactTest(unittest.TestCase):
+    def test_peak_abort_schema_covers_load_candidate_digest_and_hook_failures(self):
+        for stage in ("load", "candidate", "digest", "hook"):
+            with self.subTest(stage=stage):
+                artifact = MODULE._peak_atomic_abort_artifact(RuntimeError(stage))
+                self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
+                self.assertFalse(artifact["candidate"]["eligible"])
+                self.assertIn("sourceDigests", artifact)
+                self.assertEqual(artifact["ambientTelemetry"]["preflight"]["status"], "NOT STARTED")
+                self.assertEqual(artifact["selection"]["state"], "no-offline-winner")
+
+    def test_peak_abort_schema_survives_source_digest_failure(self):
+        with mock.patch.object(Path, "read_bytes", side_effect=OSError("digest unavailable")):
+            artifact = MODULE._peak_atomic_abort_artifact(RuntimeError("digest"))
+        self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
+        self.assertTrue(any(isinstance(value, dict) and value["status"] == "UNAVAILABLE" for value in artifact["sourceDigests"].values()))
+
     def test_main_writes_atomic_abort_artifact_when_probe_load_raises(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "abort.json"
@@ -173,6 +212,11 @@ class AtomicAbortArtifactTest(unittest.TestCase):
             artifact = json.loads(output.read_text())
         self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
         self.assertFalse(artifact["eligible"])
+        self.assertEqual(artifact["candidate"]["offline"]["status"], "NOT RUN")
+        self.assertEqual(artifact["runtime"]["status"], "NOT RUN")
+        self.assertEqual(artifact["selection"]["state"], "no-offline-winner")
+        self.assertIn("ambientTelemetry", artifact)
+        self.assertIn("sourceDigests", artifact)
 
     def test_main_writes_atomic_abort_artifact_when_matrix_hook_raises(self):
         with tempfile.TemporaryDirectory() as directory:
