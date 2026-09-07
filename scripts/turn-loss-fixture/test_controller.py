@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -1040,6 +1041,29 @@ def test_authority_selects_only_unique_receiver_observed_channel_media(tmp_path)
     authority.record_media_observation(second)
     with pytest.raises(RuntimeError, match="absent or ambiguous"):
         authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
+
+
+def test_authority_socket_accepts_only_capability_observation_and_seals_unique_binding(tmp_path):
+    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
+    short_root = Path(tempfile.mkdtemp(prefix="wrdta-", dir="/tmp"))
+    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=short_root / "verify.sock")
+    authority.start()
+    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
+    cap = authority._capture_capability_path.read_text().strip()
+    def request(path, body):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(path)); client.sendall((json.dumps(body) + "\n").encode()); return json.loads(client.recv(4096))
+    try:
+        denied = request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":"forged"})
+        assert denied["status"] == "BLOCKED"
+        assert request(authority.capture_socket_path, {"operation":"media-observation","runId":raw["runId"],"observation":row,"captureCapability":cap}) == {"status":"OBSERVED"}
+        chosen = request(authority.socket_path, {"operation":"select-media-binding","runId":raw["runId"],"expected":{"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}})
+        assert chosen == {"status":"SEALED","mediaBinding":row}
+        binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=row["outerEgress"], viewer_pair={"pairId":"v","localCandidateId":"r","remoteCandidateId":"h","local":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"},"remote":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"}}, host_pair={"pairId":"h","localCandidateId":"h","remoteCandidateId":"r","local":{"id":"h","candidateType":"host",**row["peer"],"protocol":"udp"},"remote":{"id":"r","candidateType":"relay",**row["allocationRelay"],"protocol":"udp"}}, media_binding=chosen["mediaBinding"])
+        path = tmp_path / "actual.json"; controller.write_runtime_relay_binding(path, binding)
+        assert path.stat().st_mode & 0o777 == 0o600
+    finally:
+        authority.close(); shutil.rmtree(short_root, ignore_errors=True)
 
 
 def test_lifecycle_cleanup_removes_precreated_capture_capability_when_factory_never_runs(tmp_path):
