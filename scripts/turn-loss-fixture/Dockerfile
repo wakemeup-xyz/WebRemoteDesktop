@@ -5,3 +5,4 @@ RUN apk add --no-cache iptables
 WORKDIR /fixture
 COPY controller.py /fixture/controller.py
 COPY udp_echo_peer.py /fixture/udp_echo_peer.py
+COPY receiver_capture.py /fixture/receiver_capture.py

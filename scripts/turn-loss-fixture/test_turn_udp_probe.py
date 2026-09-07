@@ -19,6 +19,13 @@ def test_allocate_probe_blocks_without_relay_attribute():
  try:p.allocate_probe('127.0.0.1',3478,'u','p',udp_socket=Bad())
  except RuntimeError:pass
  else:assert False
+
+
+def test_long_term_message_integrity_excludes_the_message_integrity_attribute():
+ request=p._authenticated(0x0003,b'0123456789ab','user','pass',b'realm',b'nonce',p._attr(0x0019,b'\x11\0\0\0'))
+ key=hashlib.md5(b'user:realm:pass').digest()
+ assert request[-24:-20] == b'\x00\x08\x00\x14'
+ assert hmac.compare_digest(request[-20:], hmac.new(key, request[:20] + request[20:-24], hashlib.sha1).digest())
 def test_relay_echo_requires_permission_transport_and_exact_nonce():
  class Echo(Sock):
   def turn_permission_echo(self,h,p,n,t): return n

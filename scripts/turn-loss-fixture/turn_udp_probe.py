@@ -27,9 +27,9 @@ def allocate_probe(host: str, port: int, username: str, password: str, *, timeou
         sock.settimeout(timeout); txid = os.urandom(12); request = _message(0x0003, txid, _attr(0x0019, b"\x11\0\0\0")); sock.sendto(request, (host, port)); data, _ = sock.recvfrom(4096)
         kind, received, attrs = _parse(data)
         if received != txid or kind != 0x0113 or 0x0014 not in attrs or 0x0015 not in attrs: raise RuntimeError("TURN Allocate did not return a credential challenge")
-        realm, nonce = attrs[0x0014], attrs[0x0015]; body = _attr(0x0019,b"\x11\0\0\0") + _attr(0x0006,username.encode()) + _attr(0x0014,realm) + _attr(0x0015,nonce)
-        second = os.urandom(12); prefix = _message(0x0003, second, body + _attr(0x0008, b"\0"*20)); key = hashlib.md5(username.encode()+b":"+realm+b":"+password.encode()).digest(); integrity = hmac.new(key, prefix, hashlib.sha1).digest()
-        sock.sendto(_message(0x0003, second, body + _attr(0x0008, integrity)), (host, port)); data, _ = sock.recvfrom(4096); kind, received, attrs = _parse(data)
+        realm, nonce = attrs[0x0014], attrs[0x0015]
+        second = os.urandom(12)
+        sock.sendto(_authenticated(0x0003, second, username, password, realm, nonce, _attr(0x0019, b"\x11\0\0\0")), (host, port)); data, _ = sock.recvfrom(4096); kind, received, attrs = _parse(data)
         if received != second or kind != 0x0103 or 0x0016 not in attrs: raise RuntimeError("TURN Allocate did not establish a relay allocation")
         return {"status":"READY", "relayAddressAttribute": attrs[0x0016].hex(), "realm": realm.decode(errors="strict")}
     except (OSError, UnicodeDecodeError) as exc: raise RuntimeError("TURN UDP Allocate probe failed") from exc
@@ -57,8 +57,12 @@ def relay_echo_probe(host: str, port: int, username: str, password: str, peer_ho
 def _authenticated(kind: int, txid: bytes, username: str, password: str, realm: bytes, nonce: bytes, extra: bytes) -> bytes:
     attrs=extra+_attr(0x0006,username.encode())+_attr(0x0014,realm)+_attr(0x0015,nonce)
     key=hashlib.md5(username.encode()+b':'+realm+b':'+password.encode()).digest()
-    prefix=_message(kind,txid,attrs+_attr(0x0008,b'\0'*20))
-    return _message(kind,txid,attrs+_attr(0x0008,hmac.new(key,prefix,hashlib.sha1).digest()))
+    # RFC 5389 computes HMAC over the message through the attribute *before*
+    # MESSAGE-INTEGRITY.  The header length nevertheless includes its 24-byte
+    # TLV, otherwise coturn rightfully returns 401 Unauthorized.
+    header=struct.pack("!HHI",kind,len(attrs)+24,COOKIE)+txid
+    integrity=hmac.new(key,header+attrs,hashlib.sha1).digest()
+    return header+attrs+_attr(0x0008,integrity)
 
 def permission_send_data_echo(host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, timeout: float=2.0, udp_socket: Any=None) -> dict[str,Any]:
     """Concrete TURN UDP CreatePermission -> Send -> Data indication exchange."""
@@ -67,7 +71,9 @@ def permission_send_data_echo(host: str, port: int, username: str, password: str
       sock.settimeout(timeout); tx=os.urandom(12); sock.sendto(_message(0x0003,tx,_attr(0x0019,b'\x11\0\0\0')),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
       if kind != 0x0113 or got != tx or 0x0014 not in a or 0x0015 not in a: raise RuntimeError('TURN allocation challenge unavailable')
       realm,nonce=a[0x0014],a[0x0015]; tx=os.urandom(12); sock.sendto(_authenticated(0x0003,tx,username,password,realm,nonce,_attr(0x0019,b'\x11\0\0\0')),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
-      if kind != 0x0103 or got != tx or 0x0016 not in a: raise RuntimeError('TURN allocation unavailable')
+      if kind != 0x0103 or got != tx or 0x0016 not in a:
+          error = a.get(0x0009, b"").decode(errors="replace")
+          raise RuntimeError(f'TURN allocation unavailable: {error or hex(kind)}')
       allocation=a[0x0016].hex(); peer=_xor_peer(peer_host,peer_port,tx); tx=os.urandom(12); sock.sendto(_authenticated(0x0008,tx,username,password,realm,nonce,_attr(0x0012,peer)),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
       if kind != 0x0108 or got != tx: raise RuntimeError('TURN CreatePermission failed')
       payload=os.urandom(24); sock.sendto(_message(0x0016,os.urandom(12),_attr(0x0012,_xor_peer(peer_host,peer_port,b''))+_attr(0x0013,payload)),(host,port)); raw,_=sock.recvfrom(4096); kind,_,a=_parse(raw)

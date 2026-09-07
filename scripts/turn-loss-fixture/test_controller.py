@@ -679,6 +679,49 @@ def test_generated_compose_is_syntactically_valid_without_user_environment(tmp_p
 def test_controller_image_contains_the_fixture_udp_echo_peer_source():
     dockerfile = (HERE / "Dockerfile").read_text()
     assert "COPY udp_echo_peer.py /fixture/udp_echo_peer.py" in dockerfile
+    assert "COPY receiver_capture.py /fixture/receiver_capture.py" in dockerfile
+
+
+def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_path):
+    """Exercise the generated fixture against a real coturn and UDP peer."""
+    if not shutil.which("docker"):
+        pytest.skip("Docker CLI is unavailable")
+    probe = controller.DockerRuntimeProbe()
+    if probe.status()["status"] != "READY":
+        pytest.skip("Docker daemon is unavailable")
+    try:
+        turn = probe.image_digests(["coturn/coturn:4.6.2"])["coturn/coturn:4.6.2"]
+        built = probe.build_local_controller_image("python:3.11-alpine")
+    except controller.RuntimeBlocked as exc:
+        pytest.skip(str(exc))
+    raw = manifest(imageDigests={"turn": turn, "controller": built["controllerImageId"]})
+    resolved = probe.resolve_fixture_images(raw["imageDigests"])
+    prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=resolved)
+    compose = HERE / "compose.yaml"
+    command = ["docker", "compose", "--project-name", prepared["projectName"], "-f", str(compose), "-f", prepared["composeOverride"]]
+    try:
+        assert subprocess.run([*command, "up", "-d"], text=True, capture_output=True, check=False).returncode == 0
+        expected = {"turn", "loss-controller", "receiver-capture", "udp-echo-peer", "loss-watchdog"}
+        deadline = time.monotonic() + 12
+        running: set[str | None] = set()
+        while time.monotonic() < deadline:
+            result = subprocess.run([*command, "ps", "--format", "json"], text=True, capture_output=True, check=False)
+            rows = [json.loads(line) for line in result.stdout.splitlines() if line] if result.returncode == 0 else []
+            running = {row.get("Service") for row in rows if row.get("State") == "running"}
+            if running == expected:
+                break
+            time.sleep(.25)
+        assert running == expected
+        echo = subprocess.run(["docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", f"{prepared['projectName']}-udp-echo-peer-1"], text=True, capture_output=True, check=False)
+        assert echo.returncode == 0 and echo.stdout.strip()
+        probe_spec = importlib.util.spec_from_file_location("real_turn_udp_probe", HERE / "turn_udp_probe.py")
+        assert probe_spec and probe_spec.loader
+        module = importlib.util.module_from_spec(probe_spec); probe_spec.loader.exec_module(module)
+        host, port = prepared["turnEndpoint"].rsplit(":", 1)
+        credentials = controller.load_fixture_credentials(tmp_path / "runtime" / raw["credentialsFile"], raw["realm"])
+        assert module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)["peer"].endswith(":59000")
+    finally:
+        subprocess.run([*command, "down", "-v"], text=True, capture_output=True, check=False)
 
 
 def test_loopback_control_server_runs_the_authenticated_open_command_then_closes_session():
