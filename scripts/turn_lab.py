@@ -430,7 +430,7 @@ class LabRun:
             # Guard immediately before fixture Signal process creation.
             self._production_preflight(proof, proof.epoch)
             parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
-            runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-fixture-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"fixture-lab-{run_id}"
+            runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-fixture-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"lab-{run_id}"
             with self._lock:
                 if not self._owns_locked(token, generation): raise RuntimeError("fixture Lab was closed during runtime setup")
                 self._runtime_dir = runtime_dir
@@ -438,7 +438,7 @@ class LabRun:
             proof_row = self._issue_lab_proof(lab)
             if lab.realm != realm or not isinstance(proof_row.get("epoch"), int) or not isinstance(proof_row.get("token"), str): raise RuntimeError("fixture Lab Signal did not issue an isolated proof")
             identity = LabIdentity(run_id, lab.origin, int(proof_row["epoch"]), realm, str(proof_row["token"]))
-            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch, "mode": "fixture-turn", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
+            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch, "mode": "legacy", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
             context["credential"] = self._issue_host_context(lab, context)
             self._production_preflight(proof, proof.epoch)
             with self._lock:

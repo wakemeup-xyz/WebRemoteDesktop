@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts")]
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent  # noqa: E402
-from turn_lab import (LabIdentity, LabRun, ProductionAdmissionClient, ProductionProof, _make_test_lab_run, _make_test_production_client, validate_lab_origin)  # noqa: E402
+from turn_lab import (LabIdentity, LabRun, LabTurnBootstrap, ProductionAdmissionClient, ProductionProof, _make_test_lab_run, _make_test_production_client, validate_lab_origin)  # noqa: E402
 import turn_lab as turn_lab_module  # noqa: E402
 import turn_lab_host as turn_lab_host_module  # noqa: E402
 from turn_lab_host import LabWebRemoteHost, VerifiedLabContext, _context_from_verified_binding, _test_verified_context, verify_candidate_manifest  # noqa: E402
@@ -773,3 +773,14 @@ def test_oversize_startup_output_is_rejected_and_reaped():
         with pytest.raises(RuntimeError, match="exceeded limit"): LabRun._read_startup_json(proc, proc.stdout, timeout_seconds=1)
     finally:
         _reap_group_and_close_stdout(proc)
+
+
+def test_fixture_turn_requires_production_zero_viewer_lease_and_watchdog(tmp_path, proof_fixture):
+    fixture_turn = LabTurnBootstrap("fixture-turn", "fixture-fingerprint", ("turn:127.0.0.1:57004?transport=udp",), "once", "secret")
+    with pytest.raises(RuntimeError, match="zero-viewer proof"):
+        LabRun(runtime_root=tmp_path).start_fixture_turn(fixture_turn)
+    run = _run(tmp_path, proof_fixture)
+    identity = run.start_fixture_turn(fixture_turn)
+    assert identity.realm.startswith("lab-") and proof_fixture.proofs == 1
+    proof_fixture.epoch += 1; _wait(lambda: run.closed); _wait(lambda: not proof_fixture.leases)
+    assert run.monitor() == "stopped:production-epoch-changed"
