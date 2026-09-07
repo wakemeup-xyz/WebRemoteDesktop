@@ -243,10 +243,14 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
         def fixture_probe() -> None:
-            from turn_udp_probe import allocate_probe
+            from turn_udp_probe import permission_send_data_echo
             endpoint_host, endpoint_port = str(prepared["turnEndpoint"]).rsplit(":", 1)
-            try: allocate_probe(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], timeout=2.0)
-            except Exception as exc: raise RuntimeBlocked("fixture TURN UDP Allocate/relay probe failed") from exc
+            echo_container = f"{prepared['projectName']}-udp-echo-peer-1"
+            code, peer_ip, _err = DockerRuntimeProbe._run_command(["docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", echo_container])
+            if code or not peer_ip.strip(): raise RuntimeBlocked("fixture UDP echo peer is not ready")
+            try:
+                permission_send_data_echo(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], peer_ip.strip(), 59000, timeout=2.0)
+            except Exception as exc: raise RuntimeBlocked("fixture TURN UDP permission/data echo probe failed") from exc
         def fixture_start() -> None:
             # Compose readiness was verified before this callback.  Signal,
             # Host, and Viewer receive only the generated fixture credential.
