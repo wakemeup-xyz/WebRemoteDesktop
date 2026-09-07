@@ -121,6 +121,8 @@ test('correlates input IDs without retaining secret payload fields', async () =>
 
 **Files:** 修改 `web-client/js/diagnostic.js`, `diagnostic.test.js`, `signal-server/lib/diagnostic.js`, `signal-server/test/diagnostic.test.js`, `signal-server/websocket/signaling.js`, `signaling.test.js`, `python-host/observability.py`, `test_observability.py`, `python-host/host.py`, `test_connection_diagnostics.py`；可新增 `signal-server/lib/observability/input.js` 与对应focused测试集中可靠输入摘要。需要其他代码应先向controller报告具体seam，不顺带重构控制面。
 
+**审查后限定扩展：** 允许修改 `python-host/input_handler.py` 及 `test_input_handler.py` 中实际输入执行链的异常日志边界，并通过真实 Host → InputAdapter → InputHandler、仅替换 native 操作的测试验证不泄露异常原文。现存 handler traceback 会绕过外层脱敏，属于本任务隐私验收的依赖；不改 native 执行、失败结果、序号、ACK、控制授权或启动/监视器逻辑。
+
 **Interfaces:** 消费 Task2 的inputState/inputTrace；manual/auto `buildConnectionDiagnostic()` 都带同样安全快照；`sendLogs()` 返回/等待 `sendConnectionDiagnostic()` 的真实结果。Signal event使用logger已支持 `{ domain, event, message, correlation, meta }`；Host输出 `host_input_received / host_input_rejected / host_input_result / host_input_ack_sent`，meta包括status/appliedSeq/hash，ACK sent表达队列接受，不声称客户端收到。
 
 - [ ] Step 1: RED manual与auto都带surface/draft/effectivegate/pendingMouseReset/desktopWriteRecovery与trace；核心→deferred历史不丢。手动socket断开时只发认证HTTP，断言io未调用、不改变Viewer连接/控制状态；HTTP失败入队/消息不假报成功，cooldown/replay上限保持。
