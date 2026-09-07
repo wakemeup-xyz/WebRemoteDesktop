@@ -228,6 +228,15 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         loud = self._snapshot(); loud["processes"].append({"pid": 42, "rssKiB": 1, "cpuPercent": 2.0, "command": "/usr/bin/pytest", "argv": "pytest"})
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: loud); sampler._sample_once(phase="PREFLIGHT")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+
+    def test_midrun_external_spike_aborts_and_schema_declares_policy(self):
+        quiet, spike = self._snapshot(), self._snapshot()
+        spike["processes"].append({"pid": 55, "rssKiB": 1, "cpuPercent": 1.1, "command": "/usr/bin/pytest", "argv": "pytest"})
+        snapshots = iter([quiet, spike]); sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: next(snapshots))
+        sampler._sample_once(phase="PREFLIGHT"); sampler._sample_once(phase="RUNNING")
+        evidence = sampler.evidence()
+        self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
+        self.assertEqual(evidence["externalProcessPolicy"]["aggregateCpuPercentMaximum"], 1.0)
         aggregate = self._snapshot(); aggregate["processes"] += [{"pid": 43, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}, {"pid": 44, "rssKiB": 1, "cpuPercent": .6, "command": "/usr/bin/pytest", "argv": "pytest"}]
         sampler = MODULE._PeakAmbientSampler(snapshot_reader=lambda: aggregate); sampler._sample_once(phase="RUNNING")
         self.assertEqual(sampler.abort_status(), "ABORTED_CONTAMINATED")
