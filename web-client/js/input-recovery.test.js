@@ -312,6 +312,33 @@ test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decis
   assert.equal(JSON.stringify(snapshot).includes('relY'), false);
 });
 
+test('visible controlled gate rejection records an unexpected incident without a business send', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({ onIncident: (reason) => incidents.push(reason) });
+  const showDock = makeTarget({ dataset: { action: 'showDock' } });
+  h.document.querySelectorAll = (selector) => (
+    selector === '.action-btn, [data-mobile-action]' ? [showDock] : []
+  );
+  h.Input.setupActionButtons();
+  showDock.dispatch('click');
+
+  const command = h.sent.find(({ payload }) => payload?.type === 'command' && payload.action === 'showDock');
+  assert.ok(command);
+  h.Input.acceptMouseAck({
+    schemaVersion: 2,
+    inputType: 'command',
+    inputIds: command.payload.inputIds,
+    leaseEpoch: command.payload.leaseEpoch,
+    appliedSeq: 0,
+    status: 'resync-required',
+  });
+
+  const before = h.writes().length;
+  h.keydown();
+  assert.equal(h.writes().length, before, 'blocked physical keydown must not emit a business write');
+  assert.deepEqual(incidents, ['input-gate-unexpected']);
+});
+
 test('tracked user release ACK loss remains eligible for mouse, physical key, and touch', () => {
   const scenarios = [
     {

@@ -596,10 +596,17 @@ const Input = {
   _beginInputTraceDom(inputType, action, phase, target = null, options = {}) {
     const focusKind = options.focusKind || this._traceFocusKind(target);
     const visibility = this._traceVisibility();
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
     const eligible = options.incidentEligible !== false
-      && this._traceIncidentEligible(focusKind, {
+      && ['desktop', 'mobile-text'].includes(focusKind)
+      && visibility === 'visible'
+      && this.isActive === true
+      && Boolean(this.activeControlLease)
+      && mobile.composing !== true
+      && mobile.deliveryUncertain !== true
+      && (options.refreshEligibility !== true || this._traceIncidentEligible(focusKind, {
         allowSurfacePending: options.allowSurfacePending === true,
-      });
+      }));
     this._inputTraceContext = {
       eventId: null,
       inputType,
@@ -1493,11 +1500,13 @@ const Input = {
     });
     document.addEventListener('keyup', (event) => {
       if (isMobileTextEvent(event)) return;
-      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target);
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target, {
+        refreshEligibility: true,
+      });
       this._withInputTraceEvent(eventId, () => {
         this._recordInputGate('keyboard', 'key', { allowed: true, blockedReasons: [] });
         this.keyboardController?.handleDomEvent(event);
-      }, { clearAfter: true });
+      }, { clearAfter: true, refreshEligibility: true });
     });
     video.addEventListener('click', (event) => {
       if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
@@ -2263,6 +2272,7 @@ const Input = {
         meta?.inputType || 'pointer', meta?.action || 'down', meta?.phase || 'down', element,
         {
           focusKind: 'desktop',
+          ...(meta?.action === 'up' ? { refreshEligibility: true } : {}),
           ...(meta?.action === 'up' ? { allowSurfacePending: true } : {}),
           ...(meta?.incidentEligible === false ? { incidentEligible: false } : {}),
         },
@@ -2331,7 +2341,7 @@ const Input = {
         && this._activePointerId === event.pointerId
         && this._pressedMouseButtons.has(button);
       const traceOptions = trackedRelease
-        ? { allowSurfacePending: true }
+        ? { refreshEligibility: true, allowSurfacePending: true }
         : { incidentEligible: false };
       const eventId = this._beginInputTraceDom(
         'pointer', 'up', 'up', event?.target || element, traceOptions,
