@@ -407,40 +407,53 @@ class LabRun:
             self._close_generation(token, generation); raise
 
     def start_fixture_turn(self, bootstrap: LabTurnBootstrap) -> LabIdentity:
-        """Start a disposable Lab from a fixture-owned TURN bootstrap.
+        """Start from fixture TURN only after the normal zero-viewer lease.
 
-        This path intentionally never creates a ProductionAdmissionClient or
-        reads production status/configuration.  The caller owns the ephemeral
-        TURN credentials and must have started the fixture first.
+        Admission and watchdog remain production-owned.  Only the TURN config
+        is substituted; this method never reads production WebRTC bootstrap.
         """
         if not isinstance(bootstrap, LabTurnBootstrap) or not bootstrap.selected_turn_server_id:
             raise ValueError("fixture TURN bootstrap is required")
+        if self._production_client is None: raise RuntimeError("production zero-viewer proof is required for fixture TURN")
         self.close()
         with self._lock:
-            self._generation += 1; generation, token = self._generation, object()
-            self._run_token, self.closed, self._last_status = token, False, "starting-fixture-turn"
-            self._fixture_turn_run = True
+            self._generation += 1; generation, token, cancel = self._generation, object(), threading.Event()
+            self._run_token, self._watch_stop, self._admission_token = token, cancel, token
+            self.closed, self._last_status, self._fixture_turn_run = False, "starting-fixture-turn", True
         try:
+            proof = self._production_client.admit()
+            if not isinstance(proof, ProductionProof): raise RuntimeError("production admission did not return a sealed proof")
+            with self._lock:
+                if not self._owns_locked(token, generation): raise RuntimeError("fixture Lab was closed during production admission")
+                self._production_proof, self._production_epoch, self._admission_token = proof, proof.epoch, None
+                self._state_changed.notify_all()
+            # Guard immediately before fixture Signal process creation.
+            self._production_preflight(proof, proof.epoch)
             parent = self._runtime_root or Path(tempfile.gettempdir()); parent.mkdir(parents=True, exist_ok=True)
             runtime_dir = Path(tempfile.mkdtemp(prefix="wrd-turn-fixture-lab-", dir=parent)); run_id = secrets.token_hex(12); realm = f"fixture-lab-{run_id}"
-            with self._lock: self._runtime_dir = runtime_dir
-            lab = self._spawn_signal(runtime_dir, realm, token, generation, bootstrap)
-            proof = self._issue_lab_proof(lab)
-            if lab.realm != realm or not isinstance(proof.get("epoch"), int) or not isinstance(proof.get("token"), str):
-                raise RuntimeError("fixture Lab Signal did not issue an isolated proof")
-            identity = LabIdentity(run_id, lab.origin, int(proof["epoch"]), realm, str(proof["token"]))
-            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch,
-                       "mode": "fixture-turn", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
-            context["credential"] = self._issue_host_context(lab, context)
             with self._lock:
+                if not self._owns_locked(token, generation): raise RuntimeError("fixture Lab was closed during runtime setup")
+                self._runtime_dir = runtime_dir
+            lab = self._spawn_signal(runtime_dir, realm, token, generation, bootstrap)
+            proof_row = self._issue_lab_proof(lab)
+            if lab.realm != realm or not isinstance(proof_row.get("epoch"), int) or not isinstance(proof_row.get("token"), str): raise RuntimeError("fixture Lab Signal did not issue an isolated proof")
+            identity = LabIdentity(run_id, lab.origin, int(proof_row["epoch"]), realm, str(proof_row["token"]))
+            context = {"origin": lab.origin, "realm": realm, "proofToken": identity._proof_token, "epoch": identity.epoch, "mode": "fixture-turn", "runId": run_id, "policyId": f"fixture/{secrets.token_hex(8)}"}
+            context["credential"] = self._issue_host_context(lab, context)
+            self._production_preflight(proof, proof.epoch)
+            with self._lock:
+                if not self._owns_locked(token, generation): raise RuntimeError("fixture Lab was closed during production preflight")
                 self.identity, self._context = identity, context
                 self._host_secret, self._viewer_password, self._context_secret, self._transcript_secret = lab.host_secret, lab.viewer_password, lab.context_secret, lab.transcript_secret
-                self._expected_identity = identity; self._expected_turn_applied_digest = bootstrap.applied_digest()
-                self._selected_turn_identity = {"id": bootstrap.selected_turn_server_id, "fingerprint": bootstrap.turn_fingerprint,
-                                                "digest": bootstrap.applied_digest(), "urls": list(bootstrap.turn_urls)}
+                self._expected_identity, self._expected_turn_applied_digest = identity, bootstrap.applied_digest()
+                self._selected_turn_identity = {"id": bootstrap.selected_turn_server_id, "fingerprint": bootstrap.turn_fingerprint, "digest": bootstrap.applied_digest(), "urls": list(bootstrap.turn_urls)}
                 self._last_status = "running-fixture-turn"
+                watch = threading.Thread(target=self._watchdog, args=(token, generation, cancel, identity, proof.epoch, proof), name=f"wrd-fixture-lab-watch-{run_id}", daemon=True)
+                self._watch_thread = watch; watch.start()
             return identity
         except Exception:
+            with self._state_changed:
+                if self._admission_token is token: self._admission_token = None; self._state_changed.notify_all()
             self._close_generation(token, generation); raise
 
     def _spawn_signal(self, runtime_dir: Path, realm: str, token: object, generation: int,

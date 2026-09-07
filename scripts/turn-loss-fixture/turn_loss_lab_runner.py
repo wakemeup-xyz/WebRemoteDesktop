@@ -234,7 +234,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     credentials = load_fixture_credentials(runtime / manifest.credentials_file, manifest.realm)
     host, port = str(prepared["turnEndpoint"]).rsplit(":", 1)
     bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"], (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
-    lab, holder = LabRun(), {"adapter": None, "authority": None, "scope": None}
+    lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
         def fixture_start() -> None:
             # Compose readiness was verified before this callback.  Signal,
