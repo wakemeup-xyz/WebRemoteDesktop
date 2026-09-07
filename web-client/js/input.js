@@ -13,6 +13,9 @@ const INPUT_DIAGNOSTIC_KEYBOARD_STATES = new Set([
   'INACTIVE', 'READY', 'BLOCKED', 'RESET_REQUIRED',
 ]);
 const INPUT_DIAGNOSTIC_ADAPTERS = new Set(['dataChannel', 'socket']);
+const INPUT_TRACE_FOCUS_KINDS = new Set([
+  'desktop', 'mobile-text', 'local-editor', 'terminal', 'other',
+]);
 const INPUT_DIAGNOSTIC_ACK_STATUSES = new Set([
   'applied', 'duplicate', 'stale-lease', 'invalid-input', 'unsupported-code',
   'execution-failed', 'sequence-gap', 'resync-required', 'stale', 'reacquire-required',
@@ -620,17 +623,26 @@ const Input = {
     if (typeof fn !== 'function') return false;
     const previous = this._inputTraceContext;
     const current = previous || {};
+    const hasFocusKind = Object.prototype.hasOwnProperty.call(options, 'focusKind');
+    const requestedFocusKind = hasFocusKind
+      ? safeDiagnosticEnum(options.focusKind, INPUT_TRACE_FOCUS_KINDS) : null;
+    const inheritedFocusKind = hasFocusKind
+      ? null : safeDiagnosticEnum(current.focusKind, INPUT_TRACE_FOCUS_KINDS);
+    const focusKind = requestedFocusKind || inheritedFocusKind;
     const hasIncidentEligibility = Object.prototype.hasOwnProperty.call(options, 'incidentEligible');
     const incidentEligible = hasIncidentEligibility
       ? options.incidentEligible === true
       : options.refreshEligibility === true
-        ? this._traceIncidentEligible(options.focusKind || current.focusKind)
+        ? this._traceIncidentEligible(focusKind)
         : current.incidentEligible === true;
-    this._inputTraceContext = {
+    const traceContext = {
       ...current,
       eventId: Number.isSafeInteger(eventId) ? eventId : null,
       incidentEligible,
     };
+    if (focusKind) traceContext.focusKind = focusKind;
+    else delete traceContext.focusKind;
+    this._inputTraceContext = traceContext;
     try {
       return fn();
     } finally {

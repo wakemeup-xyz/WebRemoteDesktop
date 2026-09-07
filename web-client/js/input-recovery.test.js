@@ -495,6 +495,49 @@ test('deferred touch send refreshes current visibility before incident eligibili
   assert.equal(incidents.length, 0);
 });
 
+test('deferred touch dispatch retains desktop focus through nested mobile scope', () => {
+  const h = loadRecoveryFixture({ touchPoints: 1 });
+  const nestedScopes = [];
+  const sendInput = h.WebRTC.sendInput;
+  h.WebRTC.sendInput = function tracedSendInput(payload) {
+    nestedScopes.push({
+      action: payload?.action,
+      eventId: h.Input._inputTraceContext?.eventId ?? null,
+      focusKind: h.Input._inputTraceContext?.focusKind,
+    });
+    return sendInput.call(this, payload);
+  };
+
+  h.video.dispatch('pointerdown', {
+    pointerType: 'touch', pointerId: 14, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 1,
+  });
+  assert.equal(h.Input._inputTraceContext, null);
+  h.advance(550);
+
+  const snapshot = h.trace.snapshot();
+  const dom = snapshot.events.find(({ stage, inputType, action }) => (
+    stage === 'dom-received' && inputType === 'pointer' && action === 'down'
+  ));
+  const down = nestedScopes.find(({ action }) => action === 'down');
+  assert.ok(dom);
+  assert.ok(down);
+  assert.equal(down.eventId, dom.eventId);
+  assert.equal(down.focusKind, 'desktop');
+});
+
+test('invalid nested focus categories are not retained for trace eligibility', () => {
+  const h = loadRecoveryFixture({ touchPoints: 1 });
+  let nestedContext = null;
+  h.Input._inputTraceContext = { focusKind: 'desktop', incidentEligible: true };
+  h.Input._withInputTraceEvent(99, () => {
+    nestedContext = { ...h.Input._inputTraceContext };
+  }, { refreshEligibility: true, focusKind: 'untrusted-focus' });
+
+  assert.equal(nestedContext.focusKind, undefined);
+  assert.equal(nestedContext.incidentEligible, false);
+});
+
 test('recovery API unlocks a click and key only after both owned reset ACKs', () => {
   const h = loadRecoveryFixture();
   h.pointer('pointerdown');
