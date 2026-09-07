@@ -1,6 +1,9 @@
 const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
 const MOBILE_VIEWPORT_UNSUPPORTED_HINT = '可用空间不足，请收起系统键盘或旋转设备';
 const INPUT_RECOVERY_TIMEOUT_MS = 3000;
+const RECOVERY_RESET_REJECTION_STATUSES = new Set([
+  'stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed',
+]);
 
 const Input = {
   socket: null,
@@ -247,13 +250,10 @@ const Input = {
     }
     const cycle = this._recoveryCycle;
     if (cycle?.state === 'waiting') {
-      const ownedFailure = this._isOwnedResetFailureAck(
-        ack, pendingReset, 'keyboard', cycle.leaseEpoch,
+      const ownedFailure = this._isOwnedResetRejectionAck(
+        ack, pendingReset, 'keyboard', cycle.leaseEpoch, result,
       );
-      const ownedEnvelope = this._isOwnedResetEnvelope(
-        ack, pendingReset, 'keyboard', cycle.leaseEpoch,
-      ) && ack.appliedSeq >= pendingReset.seq;
-      if ((ownedFailure || (ownedEnvelope && !['applied', 'duplicate'].includes(ack.status)))) {
+      if (ownedFailure) {
         this._markRecoveryFailure(`keyboard-reset-ack-${String(ack.status || 'rejected')}`);
       } else {
         this._handleRecoveryAck('keyboard', ack, result);
@@ -477,18 +477,36 @@ const Input = {
   },
 
   _isOwnedResetEnvelope(ack, reset, inputType, leaseEpoch) {
+    const resetAttemptId = reset?.attemptId ?? reset?.connectionAttemptId ?? null;
     return Boolean(reset && ack?.schemaVersion === 2
       && ack.inputType === inputType
       && ack.leaseEpoch === leaseEpoch
+      && reset.leaseEpoch === leaseEpoch
+      && resetAttemptId === this._currentConnectionAttemptId()
       && Array.isArray(ack.inputIds)
       && ack.inputIds.includes(reset.inputId)
       && Number.isSafeInteger(ack.appliedSeq));
   },
 
-  _isOwnedResetFailureAck(ack, reset, inputType, leaseEpoch) {
+  _isOwnedResetRejectionEnvelope(ack, reset, inputType, leaseEpoch) {
     return Boolean(this._isOwnedResetEnvelope(ack, reset, inputType, leaseEpoch)
-      && ack.status === 'execution-failed'
-      && ack.appliedSeq === reset.seq - 1);
+      && RECOVERY_RESET_REJECTION_STATUSES.has(ack.status)
+      // A rejection ACK is authoritative only for a prefix the same reset
+      // could have advanced to. It may skip unconfirmed writes, but a later
+      // prefix could belong to another write generation.
+      && ack.appliedSeq >= 0
+      && ack.appliedSeq <= reset.seq);
+  },
+
+  _isOwnedResetRejectionAck(ack, reset, inputType, leaseEpoch, transportResult) {
+    if (!this._isOwnedResetRejectionEnvelope(ack, reset, inputType, leaseEpoch)) return false;
+    if (inputType === 'keyboard') {
+      return transportResult?.status === 'reacquire-required';
+    }
+    if (ack.status === 'execution-failed') {
+      return ['execution-failed', 'reacquire-required'].includes(transportResult?.status);
+    }
+    return transportResult?.status === 'reacquire-required';
   },
 
   _captureMouseReset(inputId) {
@@ -545,9 +563,11 @@ const Input = {
     this._mobileResetPending = false;
     this._mobileResetAckInFlight = false;
     // The transport ready edge is suppressed while the keyboard reset belongs
-    // to this dual-reset cycle. Re-emit it only after both owners are confirmed
-    // so mobile text input can leave blocked without confirming too early.
-    this.mobileTextInputAdapter?.onTransportState('ready', { resetAcknowledged: true });
+    // to this dual-reset cycle. Re-emit it only after both owners are confirmed;
+    // empty-context confirmation stays separate so a pending/composing draft
+    // remains uncertain instead of inheriting reset acknowledgement.
+    this.mobileTextInputAdapter?.onTransportState('ready');
+    this.mobileTextInputAdapter?.confirmEmptyContextRecovery?.();
     this.updateKeyboardUI();
     return true;
   },
@@ -944,7 +964,7 @@ const Input = {
     }
     if (recoveryReset && inputIds.includes(recoveryReset.inputId)
       && ack?.status !== 'sequence-gap'
-      && !this._isOwnedResetFailureAck(
+      && !this._isOwnedResetRejectionEnvelope(
         ack, recoveryReset, 'mouse', this._recoveryCycle.leaseEpoch,
       )
       && (!Number.isSafeInteger(ack?.appliedSeq) || ack.appliedSeq < recoveryReset.seq)) {
@@ -966,13 +986,13 @@ const Input = {
     }
     if (inputType === 'mouse' && this._recoveryCycle?.state === 'waiting') {
       const reset = this._recoveryCycle.mouseReset;
-      const ownedFailure = this._isOwnedResetFailureAck(
-        ack, reset, 'mouse', this._recoveryCycle.leaseEpoch,
+      const ownedFailure = this._isOwnedResetRejectionAck(
+        ack, reset, 'mouse', this._recoveryCycle.leaseEpoch, desktopResult,
       );
       const ownedEnvelope = this._isOwnedResetEnvelope(
         ack, reset, 'mouse', this._recoveryCycle.leaseEpoch,
       ) && ack.appliedSeq >= reset.seq;
-      if ((ownedFailure || (ownedEnvelope && !['applied', 'duplicate'].includes(ack.status)))
+      if (ownedFailure
         && !recoverySequenceGapRetried) {
         this._markRecoveryFailure(`mouse-reset-ack-${String(ack.status || 'rejected')}`);
       } else if (ownedEnvelope && !recoverySequenceGapRetried) {

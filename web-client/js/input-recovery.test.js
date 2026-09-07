@@ -346,27 +346,65 @@ test('both recovery ACK orders restore mobile transport before fresh textarea in
   }
 });
 
-test('owned execution-failed reset ACK with the applied prefix fails recovery immediately', () => {
-  for (const type of ['mouse', 'keyboard']) {
-    const h = loadRecoveryFixture();
-    h.Input._markMobileSurfaceUncertain(`negative-${type}`);
-    assert.equal(h.Input.requestInputRecovery({ source: 'auto' }), true);
-    const reset = h.inputs().filter((payload) => payload.action === 'reset')
-      .find((payload) => payload.type === type);
-    const ack = {
-      schemaVersion: 2,
-      inputType: type,
-      inputIds: reset.inputIds,
-      leaseEpoch: reset.leaseEpoch,
-      appliedSeq: reset.seq - 1,
-      status: 'execution-failed',
-    };
-    const result = type === 'mouse'
-      ? h.Input.acceptMouseAck(ack)
-      : h.Input.acceptKeyboardAck(ack);
-    assert.ok(['execution-failed', 'reacquire-required'].includes(result.status), type);
-    assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed', type);
-    assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true, type);
+test('owned reset rejection ACK with a non-adjacent applied prefix fails recovery immediately', () => {
+  for (const status of ['execution-failed', 'invalid-input']) {
+    for (const type of ['mouse', 'keyboard']) {
+      const h = loadRecoveryFixture();
+      // Leave two keyboard writes unconfirmed. The next keyboard reset is
+      // therefore seq=3 while the Host may truthfully reject it at prefix 0.
+      h.keydown();
+      h.keyup();
+      h.Input._markMobileSurfaceUncertain(`negative-${type}-${status}`);
+      assert.equal(h.Input.requestInputRecovery({ source: 'auto' }), true);
+      const reset = h.inputs().filter((payload) => payload.action === 'reset')
+        .find((payload) => payload.type === type);
+      const ack = {
+        schemaVersion: 2,
+        inputType: type,
+        inputIds: reset.inputIds,
+        leaseEpoch: reset.leaseEpoch,
+        appliedSeq: 0,
+        status,
+      };
+      const result = type === 'mouse'
+        ? h.Input.acceptMouseAck(ack)
+        : h.Input.acceptKeyboardAck(ack);
+      assert.ok(['execution-failed', 'reacquire-required'].includes(result.status),
+        `${type}/${status}`);
+      assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed', `${type}/${status}`);
+      assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true, `${type}/${status}`);
+    }
+  }
+});
+
+test('dual reset does not authorize an uncertain surface-timeout draft to resend old text', () => {
+  for (const order of [['mouse', 'keyboard'], ['keyboard', 'mouse']]) {
+    const h = loadRecoveryFixture({ touchPoints: 5 });
+    h.pointer('pointerdown');
+    const mobile = h.elements.get('mobileTextInput');
+    h.elements.get('mobileTextInputBtn').dispatch('click');
+    mobile.value = 'old-surface-draft\u200b';
+    mobile.dispatch('input');
+    h.advance(3001);
+    assert.equal(h.Input.getDiagnosticState().surface.state, 'uncertain', order.join(' then '));
+    assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true,
+      order.join(' then '));
+    assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().retryable, false,
+      order.join(' then '));
+
+    assert.equal(h.Input.requestInputRecovery({ source: 'user' }), true, order.join(' then '));
+    const resets = h.inputs().filter((payload) => payload.action === 'reset');
+    const byType = Object.fromEntries(resets.map((payload) => [payload.type, payload]));
+    assert.equal(resets.length, 2, order.join(' then '));
+    for (const type of order) h.ack(byType[type]);
+
+    const snapshot = h.Input.mobileTextInputAdapter.getSnapshot();
+    assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered', order.join(' then '));
+    assert.equal(snapshot.deliveryUncertain, true, order.join(' then '));
+    assert.equal(snapshot.retryable, false, order.join(' then '));
+    const beforeRetry = h.inputs().length;
+    assert.equal(h.Input.mobileTextInputAdapter.retryPending(), false, order.join(' then '));
+    assert.equal(h.inputs().length, beforeRetry, order.join(' then '));
   }
 });
 
