@@ -713,12 +713,15 @@ class LabReceiverBridgeAuthority:
         if not isinstance(seal_id, str) or not isinstance(signature, str):
             raise RuntimeError("receiver seal is invalid")
         with self._lock:
-            receipt = self._receipts.pop(seal_id, None)
+            receipt = self._receipts.get(seal_id)
         if receipt is None or receipt["event"] != _event_binding(event):
             raise RuntimeError("receiver seal does not bind this loss event")
         expected = hmac.new(self._verifier, _canonical_evidence({key: receipt[key] for key in ("runId", "sealId", "event", "sequences")}), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected) or not hmac.compare_digest(receipt["signature"], expected):
             raise RuntimeError("receiver seal signature is invalid")
+        with self._lock:
+            if self._receipts.pop(seal_id, None) is None:
+                raise RuntimeError("receiver seal was already consumed")
         return {"status": "VERIFIED", "sequences": list(receipt["sequences"])}
 
     def start(self) -> None:
@@ -1180,11 +1183,13 @@ def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Pa
         verify_started_fixture(prepared, run=run)
         return dict(drive())
     finally:
-        run([*command, "down", "-v"])
-        authority.close()
-        bridge_dir = Path(prepared["bridgeSocket"]).parent
-        try: bridge_dir.rmdir()
-        except OSError: pass
+        try:
+            run([*command, "down", "-v"])
+        finally:
+            authority.close()
+            bridge_dir = Path(prepared["bridgeSocket"]).parent
+            try: bridge_dir.rmdir()
+            except OSError: pass
 
 
 def _main() -> None:
