@@ -132,6 +132,9 @@ class TurnProtocolObserver:
         matches = [row for row in self._observed if row["allocationRelay"] == dict(relay) and row["peer"] == dict(peer) and row["rtpSsrc"] == ssrc]
         return dict(matches[-1]) if len(matches) else None
 
+    @property
+    def observations(self) -> tuple[dict[str, Any], ...]: return tuple(dict(row) for row in self._observed)
+
 
 def _canonical(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
@@ -218,6 +221,18 @@ class FixtureCaptureService:
         self.observer, self.manifest, self.state_path, self.output, self.authority_socket, self.capture_capability, self.relay_binding = observer, dict(manifest), Path(state_path), Path(output), Path(authority_socket), capture_capability, Path(relay_binding)
         self._ring: list[dict[str, int]] = []; self._event: Mapping[str, Any] | None = None
         self._during: list[dict[str, int]] = []; self._after: list[dict[str, int]] = []
+        self._published_media = 0
+
+    def _publish_media_observations(self) -> None:
+        owner = self.observer.protocol_observer
+        if owner is None: return
+        rows = owner.observations
+        for row in rows[self._published_media:]:
+            request = {"operation": "media-observation", "runId": self.manifest["runId"], "observation": row, "captureCapability": self.capture_capability}
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(2); client.connect(str(self.authority_socket)); client.sendall((json.dumps(request, sort_keys=True) + "\n").encode()); reply = json.loads(client.recv(1_000_000))
+            if not isinstance(reply, Mapping) or reply.get("status") != "OBSERVED": raise RuntimeError("Lab authority refused media observation")
+            self._published_media += 1
     def _state(self) -> Mapping[str, Any] | None:
         try:
             row = json.loads(self.state_path.read_text(encoding="utf-8"))
@@ -230,8 +245,13 @@ class FixtureCaptureService:
         try:
             runtime = load_runtime_relay_binding(self.relay_binding, LossFixtureManifest.parse(self.manifest))
         except RuntimeBlocked:
+            # Before the runner has a sealed binding we still passively record
+            # TURN control/media frames and publish receiver-owned candidates.
+            self.observer.capture_once(timeout_s=.05)
+            self._publish_media_observations()
             time.sleep(.05)
             return
+        self._publish_media_observations()
         self.observer.selected_leg = dict(runtime["actualEgressSelector"])
         self.observer.media_binding = dict(runtime["mediaBinding"])
         previous = len(self.observer.rows); self.observer.capture_once(timeout_s=.25)
@@ -268,5 +288,5 @@ if __name__ == "__main__":
         # Canonical relay egress from manifest's sole relay port.
         leg = selector if selector["sourcePort"] in {57004, 57005} else {"protocol": "udp", "source": selector["destination"], "sourcePort": selector["destinationPort"], "destination": selector["source"], "destinationPort": selector["sourcePort"]}
         capability = args.capture_capability.read_text(encoding="utf-8").strip()
-        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg), manifest=raw, state_path=args.state, output=args.output, authority_socket=args.authority_socket, capture_capability=capability, relay_binding=args.relay_binding)
+        service = FixtureCaptureService(observer=ReceiverDirectedObserver(interface=raw["interface"], selected_leg=leg, protocol_observer=TurnProtocolObserver()), manifest=raw, state_path=args.state, output=args.output, authority_socket=args.authority_socket, capture_capability=capability, relay_binding=args.relay_binding)
         while True: service.poll()

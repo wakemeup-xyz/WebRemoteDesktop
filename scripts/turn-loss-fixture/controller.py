@@ -855,6 +855,7 @@ class LabReceiverBridgeAuthority:
         self._capture_capability_path = Path(capture_capability_path) if capture_capability_path is not None else self.capture_socket_path.with_name("capture-capability")
         self._actual_egress_selector = dict(actual_egress_selector) if actual_egress_selector is not None else dict(manifest.egress_selector)
         self._receipts: dict[str, dict[str, Any]] = {}
+        self._media_observations: list[dict[str, Any]] = []
         self._lock = threading.RLock()
         self._servers: list[socketserver.ThreadingUnixStreamServer] = []
 
@@ -864,6 +865,29 @@ class LabReceiverBridgeAuthority:
         if body.get("runId") != self.manifest.run_id or body.get("selectedLeg") != self._actual_egress_selector or body.get("direction") != "turn-to-viewer": raise RuntimeError("capture does not bind fixture selected leg")
         signature = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
         return {**body, "authoritySignature": signature}
+
+    def record_media_observation(self, observation: Mapping[str, Any]) -> dict[str, Any]:
+        """Accept only the receiver-capability's passive ChannelData evidence."""
+        try:
+            outer = _runtime_leg(observation.get("outerEgress"), "mediaBinding.outerEgress")
+            relay, peer = observation.get("allocationRelay"), observation.get("peer")
+            if (not isinstance(relay, Mapping) or set(relay) != {"address", "port"} or not isinstance(peer, Mapping) or set(peer) != {"address", "port"}
+                    or not isinstance(observation.get("channelNumber"), int) or not 0x4000 <= observation["channelNumber"] <= 0x7fff
+                    or observation.get("encapsulation") != "channel-data" or not isinstance(observation.get("rtpSsrc"), int) or not 0 <= observation["rtpSsrc"] <= 0xffffffff
+                    or observation.get("payloadType") != 96): raise ValueError("media observation schema")
+            row = {"outerEgress": outer, "allocationRelay": {"address": _require_fixture_ip(relay["address"], "relay.address"), "port": _require_port(relay["port"], "relay.port")}, "peer": {"address": _require_fixture_ip(peer["address"], "peer.address"), "port": _require_port(peer["port"], "peer.port")}, "channelNumber": observation["channelNumber"], "encapsulation": "channel-data", "rtpSsrc": observation["rtpSsrc"], "payloadType": 96}
+        except (KeyError, TypeError, ValueError, RuntimeBlocked) as exc: raise RuntimeError("receiver media observation is invalid") from exc
+        with self._lock:
+            if row not in self._media_observations: self._media_observations.append(row)
+        return {"status": "OBSERVED"}
+
+    def select_media_binding(self, expected: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(expected, Mapping) or set(expected) != {"allocationRelay", "peer", "rtpSsrc"}:
+            raise RuntimeError("media selection schema is invalid")
+        with self._lock:
+            matches = [row for row in self._media_observations if row["allocationRelay"] == expected.get("allocationRelay") and row["peer"] == expected.get("peer") and row["rtpSsrc"] == expected.get("rtpSsrc")]
+        if len(matches) != 1: raise RuntimeError("receiver media selection is absent or ambiguous")
+        return dict(matches[0])
 
     def seal(self, raw_bridge: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
         # The parent signs the raw bridge only after T3/T5 validation. The raw
@@ -923,6 +947,8 @@ class LabReceiverBridgeAuthority:
                         result = owner.seal(raw["bridge"], raw["event"])
                     elif raw["operation"] == "verify" and set(raw) == {"operation", "runId", "seal", "event"} and raw["runId"] == owner.manifest.run_id:
                         result = owner.verify(raw["seal"], raw["event"])
+                    elif raw["operation"] == "select-media-binding" and set(raw) == {"operation", "runId", "expected"} and raw["runId"] == owner.manifest.run_id:
+                        result = {"status": "SEALED", "mediaBinding": owner.select_media_binding(raw["expected"])}
                     else:
                         raise ValueError("bridge request schema is invalid")
                 except Exception as exc:
@@ -932,12 +958,15 @@ class LabReceiverBridgeAuthority:
             def handle(self) -> None:
                 try:
                     raw = json.loads(self.rfile.readline(1_000_000), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite JSON is forbidden")))
-                    if (not isinstance(raw, Mapping) or set(raw) != {"operation", "runId", "capture", "captureCapability"}
-                            or raw.get("operation") != "capture" or raw.get("runId") != owner.manifest.run_id
+                    if (not isinstance(raw, Mapping) or raw.get("runId") != owner.manifest.run_id
                             or not isinstance(raw.get("captureCapability"), str)
                             or not secrets.compare_digest(raw["captureCapability"], capture_capability)):
                         raise ValueError("receiver capture capability is invalid")
-                    result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
+                    if raw.get("operation") == "capture" and set(raw) == {"operation", "runId", "capture", "captureCapability"}:
+                        result = {"status": "ATTESTED", "capture": owner.attest_capture(raw["capture"])}
+                    elif raw.get("operation") == "media-observation" and set(raw) == {"operation", "runId", "observation", "captureCapability"}:
+                        result = owner.record_media_observation(raw["observation"])
+                    else: raise ValueError("receiver capture request schema is invalid")
                 except Exception as exc:
                     result = {"status": "BLOCKED", "reason": type(exc).__name__}
                 self.wfile.write((json.dumps(result, sort_keys=True) + "\n").encode())

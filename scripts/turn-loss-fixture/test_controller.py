@@ -1028,6 +1028,20 @@ def test_runtime_relay_binding_rejects_mismatched_host_selected_pair(tmp_path):
         controller.load_runtime_relay_binding(path, parsed)
 
 
+def test_authority_selects_only_unique_receiver_observed_channel_media(tmp_path):
+    raw = manifest(); parsed = controller.LossFixtureManifest.parse(raw)
+    authority = controller.LabReceiverBridgeAuthority(parsed, verifier=b"observer-secret", socket_path=tmp_path / "verify.sock")
+    row = {"outerEgress": {"protocol":"udp","source":"172.31.0.20","sourcePort":3478,"destination":"172.31.0.21","destinationPort":48000}, "allocationRelay":{"address":"172.31.0.9","port":51007}, "peer":{"address":"172.31.0.8","port":59000}, "channelNumber":0x4001,"encapsulation":"channel-data","rtpSsrc":0x10203040,"payloadType":96}
+    assert authority.record_media_observation(row)["status"] == "OBSERVED"
+    assert authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]}) == row
+    with pytest.raises(RuntimeError, match="absent or ambiguous"):
+        authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":9})
+    second = {**row, "outerEgress": {**row["outerEgress"], "destinationPort": 48001}}
+    authority.record_media_observation(second)
+    with pytest.raises(RuntimeError, match="absent or ambiguous"):
+        authority.select_media_binding({"allocationRelay":row["allocationRelay"],"peer":row["peer"],"rtpSsrc":row["rtpSsrc"]})
+
+
 def test_lifecycle_cleanup_removes_precreated_capture_capability_when_factory_never_runs(tmp_path):
     raw = manifest(); prepared = controller.prepare_runtime(raw, tmp_path / "runtime", resolved_images=controller._test_resolved_images(raw["imageDigests"]))
     verify, capture = Path(prepared["bridgeSocket"]), Path(prepared["captureSocket"])
