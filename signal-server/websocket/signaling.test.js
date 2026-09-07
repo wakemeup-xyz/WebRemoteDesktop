@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
@@ -2159,23 +2160,43 @@ test('Signal aggregates high-frequency mouse outcomes with normalized status key
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grant = viewer.sent.find((entry) => entry.event === 'control-grant').data;
 
-  for (let index = 0; index < 100; index += 1) {
-    viewer.trigger('input', {
-      schemaVersion: 2,
-      type: 'mouse',
-      action: 'move',
-      leaseId: grant.leaseId,
-      leaseEpoch: grant.leaseEpoch,
-      inputIds: ['mouse_fixture'],
-      payload: { relX: 0.5, relY: 0.5, buttons: 0 },
-    });
+  const originalCreateHash = crypto.createHash;
+  let hashCalls = 0;
+  crypto.createHash = () => {
+    hashCalls += 1;
+    throw new Error('HASH_CANARY');
+  };
+  try {
+    for (const action of ['move', 'wheel']) {
+      for (let index = 0; index < 100; index += 1) {
+        viewer.trigger('input', {
+          schemaVersion: 2,
+          type: 'mouse',
+          action,
+          leaseId: grant.leaseId,
+          leaseEpoch: grant.leaseEpoch,
+          inputIds: ['mouse_fixture'],
+          ...(action === 'wheel' ? { seq: index + 1 } : {}),
+          payload: action === 'move'
+            ? { relX: 0.5, relY: 0.5, buttons: 0 }
+            : { relX: 0.5, relY: 0.5, deltaX: 0, deltaY: 120 },
+        });
+      }
+    }
+  } finally {
+    crypto.createHash = originalCreateHash;
   }
 
   const aggregates = events.filter((event) => event.event === 'signal_input_aggregate');
-  assert.equal(aggregates.length, 1);
-  assert.equal(aggregates[0].meta.count, 100);
-  assert.equal(aggregates[0].meta.status, 'accepted');
-  assert.match(aggregates[0].meta.inputIdHash, /^[0-9a-f]{16}$/);
+  assert.equal(hashCalls, 0);
+  assert.equal(aggregates.length, 2);
+  assert.deepEqual(new Set(aggregates.map((event) => event.meta.action)), new Set(['move', 'wheel']));
+  assert.ok(aggregates.every((event) => event.meta.count === 100));
+  assert.ok(aggregates.every((event) => event.meta.status === 'accepted'));
+  assert.ok(aggregates.every((event) => !('inputIdHash' in event.meta)));
+  assert.ok(aggregates.every((event) => !('inputIdCount' in event.meta)));
+  assert.ok(aggregates.every((event) => !('seq' in event.meta)));
+  assert.ok(aggregates.every((event) => !('payloadBytes' in event.meta)));
   assert.equal(JSON.stringify(aggregates).includes('mouse_fixture'), false);
 });
 

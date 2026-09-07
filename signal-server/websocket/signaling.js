@@ -7,6 +7,7 @@ const { createRuntimeContext } = require('./runtime-context');
 const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
 const {
   isHighFrequencyInput,
+  summarizeHighFrequencyInput,
   summarizeInputEvent,
 } = require('../lib/observability/input');
 const {
@@ -178,7 +179,9 @@ function setupSignaling(io, options = {}) {
       ? { ...data, transport: 'socket' }
       : { transport: 'socket' };
     if (isHighFrequencyInput(data)) {
-      const summary = summarizeInputEvent(observedData, overrides);
+      // Move/wheel traffic is count-only. Do not inspect payload or input IDs
+      // before the aggregate threshold, and never compute a correlation hash.
+      const summary = summarizeHighFrequencyInput(observedData, overrides);
       const key = `${socket?.id || ''}:${summary.inputType}:${summary.action}:${summary.status}`;
       if (!inputAggregateCounts.has(key) && inputAggregateCounts.size >= 256) {
         inputAggregateCounts.delete(inputAggregateCounts.keys().next().value);
@@ -1076,8 +1079,9 @@ function setupSignaling(io, options = {}) {
           return;
         }
       }
-      const summary = summarizeInputEvent(data, { status: 'accepted' });
-      if (!isHighFrequencyInput(data)) {
+      const highFrequency = isHighFrequencyInput(data);
+      if (!highFrequency) {
+        const summary = summarizeInputEvent(data, { status: 'accepted' });
         logger.log?.(`[INPUT] relay viewer=${socket.id} type=${summary.inputType} action=${summary.action} transport=${summary.transport} payloadBytes=${summary.payloadBytes} inputIdHash=${summary.inputIdHash || '-'}`);
       }
       if (connections.host) {

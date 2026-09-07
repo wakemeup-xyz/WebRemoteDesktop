@@ -44,7 +44,12 @@ from h264_encoder_policy import (
     policy_version_from_environment,
 )
 from media_timing import RtpFrameClock
-from observability import configure_host_logging, emit_host_event, summarize_input_event
+from observability import (
+    configure_host_logging,
+    emit_host_event,
+    summarize_high_frequency_input_event,
+    summarize_input_event,
+)
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 
@@ -1666,19 +1671,30 @@ class WebRemoteHost:
         ack_accepted=None,
     ):
         """Emit bounded input metadata and aggregate move/wheel observations."""
-        summary_data = data if isinstance(data, dict) else {}
-        if isinstance(data, dict) and isinstance(data.get("inputIds"), (list, tuple)):
-            # A result may be the only owner of ids after adapter normalization;
-            # summarize those ids without ever putting them into the log payload.
-            summary_data = dict(data)
-        summary = summarize_input_event(
-            summary_data,
-            status=status,
-            reason=reason,
-            applied_seq=applied_seq,
-            local_execute_ms=local_execute_ms,
-            ack_accepted=ack_accepted,
+        high_frequency = (
+            isinstance(data, dict)
+            and data.get("type") == "mouse"
+            and isinstance(data.get("action"), str)
+            and data.get("action") in {"move", "wheel"}
         )
+        if high_frequency:
+            # Move/wheel traffic is count-only: do not inspect payload or input
+            # IDs before aggregation, so this path never computes a hash.
+            summary = summarize_high_frequency_input_event(data, status=status)
+        else:
+            summary_data = data if isinstance(data, dict) else {}
+            if isinstance(data, dict) and isinstance(data.get("inputIds"), (list, tuple)):
+                # A result may be the only owner of ids after adapter normalization;
+                # summarize those ids without ever putting them into the log payload.
+                summary_data = dict(data)
+            summary = summarize_input_event(
+                summary_data,
+                status=status,
+                reason=reason,
+                applied_seq=applied_seq,
+                local_execute_ms=local_execute_ms,
+                ack_accepted=ack_accepted,
+            )
         if summary["inputType"] == "mouse" and summary["action"] in {"move", "wheel"}:
             aggregates = getattr(self, "_input_observation_aggregates", None)
             if aggregates is None:

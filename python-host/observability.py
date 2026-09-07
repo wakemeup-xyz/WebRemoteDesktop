@@ -184,6 +184,18 @@ def summarize_input_event(
     return summary
 
 
+def summarize_high_frequency_input_event(data, *, status=None):
+    """Summarize move/wheel traffic without reading payload or input IDs."""
+    input_data = data if isinstance(data, dict) else {}
+    raw_status = status if status is not None else input_data.get("status")
+    return {
+        "inputType": _safe_enum(input_data.get("type"), _SAFE_INPUT_TYPES, "unknown"),
+        "action": _safe_enum(input_data.get("action"), _SAFE_INPUT_ACTIONS, "unknown"),
+        "transport": _safe_enum(input_data.get("transport"), _SAFE_INPUT_TRANSPORTS, "socket"),
+        "status": _safe_enum(raw_status, _SAFE_INPUT_STATUSES, "unknown"),
+    }
+
+
 def emit_host_event(logger, *, event, message, correlation=None, meta=None, level="info"):
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(),

@@ -4,8 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 import host as host_module
+import observability
 
+from adapters import InputAdapter
 from host import WebRemoteHost, build_ice_servers
+from input_handler import InputHandler
 
 
 class ListHandler(logging.Handler):
@@ -468,6 +471,51 @@ async def test_host_input_ack_enqueue_failure_is_reported_without_claiming_clien
 
 
 @pytest.mark.asyncio
+async def test_host_real_input_handler_exception_is_private_across_chain(caplog):
+    sent = []
+    handler = InputHandler()
+    handler._running = True
+
+    def boom(_action, _payload):
+        raise RuntimeError("CANARY")
+
+    handler._handle_mouse = boom
+    host = object.__new__(WebRemoteHost)
+    host.current_viewer_id = "viewer-1"
+    host.overlay = SimpleNamespace(send=lambda _payload: None)
+    host.screen_track = None
+    host.input_handler = handler
+    host.input_adapter = InputAdapter(handler)
+
+    async def emit(event, payload):
+        sent.append((event, payload))
+
+    host.sio = SimpleNamespace(emit=emit)
+    with caplog.at_level(logging.INFO):
+        await host.on_input({
+            "viewerId": "viewer-1",
+            "type": "mouse",
+            "action": "down",
+            "transport": "socket",
+            "inputIds": ["kbd_fixture_1"],
+            "payload": {"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+        })
+
+    records = [record for record in caplog.records if record.name in {"host", "input_handler"}]
+    formatted = "\n".join(logging.Formatter().format(record) for record in records)
+    host_events = [json.loads(record.getMessage()) for record in records if '"domain":"host"' in record.getMessage()]
+    result = next(event for event in host_events if event["event"] == "host_input_result")
+    ack = next(event for event in host_events if event["event"] == "host_input_ack_sent")
+    assert result["meta"]["status"] == "execution-failed"
+    assert ack["meta"]["status"] == "execution-failed"
+    assert ack["meta"]["ackAccepted"] is True
+    assert [event for event, _payload in sent] == ["input-ack"]
+    assert "CANARY" not in formatted
+    assert "Traceback" not in formatted
+    assert all(record.exc_info is None for record in records)
+
+
+@pytest.mark.asyncio
 async def test_host_stale_lease_and_datachannel_binding_rejections_are_structured_and_safe(caplog):
     host = object.__new__(WebRemoteHost)
     host.current_viewer_id = "viewer-1"
@@ -514,6 +562,11 @@ async def test_host_malformed_input_metadata_rejects_without_observation_error(c
     host.overlay = SimpleNamespace(send=lambda _payload: None)
     host.screen_track = None
 
+    async def handle_input(_data):
+        return {"inputIds": [], "status": "applied"}
+
+    host.input_adapter = SimpleNamespace(handle_input=handle_input)
+
     with caplog.at_level(logging.INFO, logger="host"):
         await host.on_input({
             "viewerId": "viewer-1",
@@ -524,6 +577,15 @@ async def test_host_malformed_input_metadata_rejects_without_observation_error(c
             "reason": ["REASON_CANARY"],
             "payload": {"text": "PAYLOAD_CANARY"},
         })
+        for action in (["move", "ACTION_CANARY"], {"name": "move"}):
+            await host.on_input({
+                "viewerId": "viewer-1",
+                "type": "mouse",
+                "action": action,
+                "transport": "socket",
+                "inputIds": ["mouse_fixture"],
+                "payload": {"relX": 0.2, "relY": 0.3},
+            })
 
     messages = [record.getMessage() for record in caplog.records if record.name == "host"]
     rejected = [json.loads(message) for message in messages if '"event":"host_input_rejected"' in message]
@@ -534,7 +596,7 @@ async def test_host_malformed_input_metadata_rejects_without_observation_error(c
 
 
 @pytest.mark.asyncio
-async def test_host_aggregates_high_frequency_mouse_outcomes(caplog):
+async def test_host_aggregates_high_frequency_mouse_outcomes_without_hashing(caplog, monkeypatch):
     host = object.__new__(WebRemoteHost)
     host.current_viewer_id = "viewer-1"
     host.overlay = SimpleNamespace(send=lambda _payload: None)
@@ -544,23 +606,41 @@ async def test_host_aggregates_high_frequency_mouse_outcomes(caplog):
         return {"inputIds": [], "status": "unordered"}
 
     host.input_adapter = SimpleNamespace(handle_input=handle_input)
+    def fail_hash(_input_ids):
+        raise AssertionError("high-frequency input must not hash")
+
+    monkeypatch.setattr(observability, "hash_input_ids", fail_hash)
     host.input_handler = host.input_adapter
     with caplog.at_level(logging.INFO, logger="host"):
-        for _index in range(100):
-            await host.on_input({
-                "viewerId": "viewer-1",
-                "type": "mouse",
-                "action": "move",
-                "transport": "socket",
-                "inputIds": ["mouse_fixture"],
-                "payload": {"relX": 0.5, "relY": 0.5, "buttons": 0},
-            })
+        for action in ("move", "wheel"):
+            for _index in range(100):
+                await host.on_input({
+                    "viewerId": "viewer-1",
+                    "type": "mouse",
+                    "action": action,
+                    "transport": "socket",
+                    "inputIds": ["mouse_fixture"],
+                    "payload": {
+                        "relX": 0.5,
+                        "relY": 0.5,
+                        **({"buttons": 0} if action == "move" else {"deltaX": 0, "deltaY": 120}),
+                    },
+                })
 
     messages = [record.getMessage() for record in caplog.records if record.name == "host"]
     aggregates = [json.loads(message) for message in messages if '"event":"host_input_aggregate"' in message]
-    assert len(aggregates) == 2
+    assert len(aggregates) == 4
+    assert {line["meta"]["action"] for line in aggregates} == {"move", "wheel"}
     assert {line["meta"]["count"] for line in aggregates} == {100}
     assert {line["meta"]["status"] for line in aggregates} == {"accepted", "unordered"}
+    assert all(
+        field not in line["meta"]
+        for line in aggregates
+        for field in (
+            "inputIdHash", "inputIdCount", "payloadBytes", "seq", "leaseEpoch",
+            "appliedSeq", "localExecuteMs", "timingScope", "timingIncludesQueueWait", "ackAccepted",
+        )
+    )
     text = "\n".join(messages)
     assert "mouse_fixture" not in text
 

@@ -91,6 +91,18 @@ function summarizeInputEvent(data = {}, overrides = {}) {
   return summary;
 }
 
+function summarizeHighFrequencyInput(data = {}, overrides = {}) {
+  const input = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const status = overrides.status ?? input.status;
+  return {
+    inputType: typeof input.type === 'string' && INPUT_TYPES.has(input.type) ? input.type : 'unknown',
+    action: typeof input.action === 'string' && INPUT_ACTIONS.has(input.action) ? input.action : 'unknown',
+    transport: typeof input.transport === 'string' && INPUT_TRANSPORTS.has(input.transport)
+      ? input.transport : 'socket',
+    status: typeof status === 'string' && INPUT_STATUSES.has(status) ? status : 'unknown',
+  };
+}
+
 function isHighFrequencyInput(data = {}) {
   return data?.type === 'mouse' && ['move', 'wheel'].includes(data?.action);
 }
@@ -105,6 +117,7 @@ module.exports = {
   hashInputIds,
   isHighFrequencyInput,
   payloadByteLength,
+  summarizeHighFrequencyInput,
   summarizeInputEvent,
   validInputIds,
 };

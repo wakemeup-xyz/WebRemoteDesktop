@@ -1,4 +1,5 @@
 import logging
+import observability
 
 from observability import (
     DEFAULT_LOG_BACKUP_COUNT,
@@ -6,6 +7,7 @@ from observability import (
     configure_host_logging,
     load_log_bounds,
     hash_input_ids,
+    summarize_high_frequency_input_event,
     summarize_input_event,
 )
 
@@ -104,3 +106,25 @@ def test_input_summary_rejects_unhashable_enum_fields_without_raising():
     assert summary["transport"] == "socket"
     assert summary["status"] == "unknown"
     assert summary["reason"] is None
+
+
+def test_high_frequency_input_summary_does_not_hash_or_copy_input_fields(monkeypatch):
+    def fail_hash(_input_ids):
+        raise AssertionError("high-frequency input must not hash")
+
+    monkeypatch.setattr(observability, "hash_input_ids", fail_hash)
+    summary = summarize_high_frequency_input_event({
+        "type": "mouse",
+        "action": "move",
+        "transport": "socket",
+        "inputIds": ["mouse-fixture"],
+        "seq": 17,
+        "payload": {"relX": 0.5, "relY": 0.5, "text": "PAYLOAD_CANARY"},
+    }, status="accepted")
+
+    assert summary == {
+        "inputType": "mouse",
+        "action": "move",
+        "transport": "socket",
+        "status": "accepted",
+    }
