@@ -84,11 +84,20 @@ class FrameTraceRegistry:
         clock_ns: Callable[[], int] = time.monotonic_ns,
         capacity: int = MAX_RECORDS,
         ttl_ns: int = TTL_NS,
+        lab_loss_trace: bool = False,
+        lab_loss_capacity: int = 512,
     ) -> None:
         self._clock_ns = clock_ns
         self._lock = threading.RLock()
         self._capacity = int(capacity)
         self._ttl_ns = int(ttl_ns)
+        # This higher-detail stream is exclusively for a disposable Lab run.
+        # It is off in ordinary detailed tracing and is bounded independently
+        # so a loss experiment cannot retain an unbounded packet history.
+        self._lab_loss_trace = bool(lab_loss_trace)
+        self._lab_loss_capacity = max(1, min(int(lab_loss_capacity), 2048))
+        self._lab_loss_events: deque[dict] = deque()
+        self._lab_loss_dropped = 0
         self._traces: dict[tuple[str, int, str], OrderedDict[int, FrameTrace]] = {}
         self._active_generation: OrderedDict[tuple[str, str], tuple[int, int]] = OrderedDict()
         self._wire: dict[tuple[str, int, str, int, int], FrameTrace] = {}
@@ -247,7 +256,69 @@ class FrameTraceRegistry:
             trace.idr_kind = None if idr_kind is None else str(idr_kind)
             trace.idr_reason = None if reason is None else str(reason)
             trace.policy_digest = None if policy_digest is None else str(policy_digest)
+            if trace.idr_kind is not None:
+                self._append_lab_loss_event({
+                    "type": "encoder_idr", "monotonicNs": int(self._clock_ns()),
+                    "frameKey": self._lab_frame_key(key), "idrKind": trace.idr_kind,
+                    "requestToken": trace.idr_reason, "policyDigest": trace.policy_digest,
+                })
             return True
+
+    @staticmethod
+    def _lab_frame_key(key: FrameKey) -> dict:
+        return {"attemptId": key.attempt_id, "generation": int(key.generation),
+                "streamId": key.stream_id, "captureSeq": int(key.capture_seq),
+                "encoderTimestamp": int(key.encoder_timestamp) & 0xFFFFFFFF}
+
+    def _append_lab_loss_event(self, event: dict) -> None:
+        if not self._lab_loss_trace:
+            return
+        if len(self._lab_loss_events) >= self._lab_loss_capacity:
+            self._lab_loss_events.popleft()
+            self._lab_loss_dropped += 1
+        self._lab_loss_events.append(event)
+
+    def record_lab_rtcp_feedback(self, kind: str, *, sender: object | None = None) -> None:
+        if kind not in {"PLI", "FIR"}:
+            return
+        with self._lock:
+            self._append_lab_loss_event({"type": "rtcp_feedback", "kind": kind,
+                                         "monotonicNs": int(self._clock_ns()),
+                                         "senderId": str(id(sender)) if sender is not None else None})
+
+    def record_lab_rtp_send(self, key: FrameKey, *, sequence: int, rtp_timestamp: int, ssrc: int) -> None:
+        if not (0 <= int(sequence) <= 0xFFFF and 0 <= int(rtp_timestamp) <= 0xFFFFFFFF):
+            return
+        with self._lock:
+            self._append_lab_loss_event({"type": "rtp_send", "monotonicNs": int(self._clock_ns()),
+                                         "frameKey": self._lab_frame_key(key), "sequence": int(sequence),
+                                         "rtpTimestamp": int(rtp_timestamp), "ssrc": int(ssrc)})
+
+    def record_lab_pc_state(self, *, identifier: str, state: str, width: int, height: int) -> None:
+        if not isinstance(identifier, str) or not identifier or not isinstance(state, str) or not state:
+            return
+        with self._lock:
+            self._append_lab_loss_event({"type": "pc_state", "monotonicNs": int(self._clock_ns()),
+                                         "pcId": identifier, "state": state,
+                                         "resolution": {"width": max(0, int(width)), "height": max(0, int(height))}})
+
+    def take_loss_lab_trace_batch(self, limit: int = 64) -> dict:
+        """Drain bounded raw Lab diagnostics; callers cannot synthesize rows."""
+        with self._lock:
+            rows = []
+            for _ in range(min(max(0, int(limit)), 64)):
+                if not self._lab_loss_events:
+                    break
+                rows.append(self._lab_loss_events.popleft())
+            dropped = self._lab_loss_dropped
+            self._lab_loss_dropped = 0
+            return {"type": "loss_lab_host_trace_batch", "schemaVersion": 1,
+                    "events": rows, "droppedEventCount": dropped}
+
+    def note_dropped_loss_lab_events(self, count: int) -> None:
+        with self._lock:
+            if self._lab_loss_trace:
+                self._lab_loss_dropped += max(0, int(count))
 
     def annotate_stage(self, key: FrameKey, stage: str, value_ms: float | None) -> bool:
         with self._lock:

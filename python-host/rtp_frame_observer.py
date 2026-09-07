@@ -17,6 +17,7 @@ from media_stage_metrics import FrameTraceRegistry
 EXPECTED_AIORCTC_VERSION = "1.14.0"
 EXPECTED_NEXT_SIGNATURE = "(self, codec: aiortc.rtcrtpparameters.RTCRtpCodecParameters) -> Optional[aiortc.rtcrtpsender.RTCEncodedFrame]"
 EXPECTED_SEND_SIGNATURE = "(self, data: bytes) -> None"
+EXPECTED_RTCP_SIGNATURE = "(self, packet: Union[aiortc.rtp.RtcpByePacket, aiortc.rtp.RtcpPsfbPacket, aiortc.rtp.RtcpRrPacket, aiortc.rtp.RtcpRtpfbPacket, aiortc.rtp.RtcpSdesPacket, aiortc.rtp.RtcpSrPacket]) -> None"
 
 
 def parse_rtp_timestamp(data: bytes) -> int | None:
@@ -41,13 +42,25 @@ def parse_rtp_timestamp(data: bytes) -> int | None:
     return int.from_bytes(raw[4:8], "big")
 
 
-def aiortc_observer_compatibility(*, version: str, next_signature: str, send_signature: str) -> tuple[bool, str]:
+def parse_rtp_sequence(data: bytes) -> int | None:
+    if not isinstance(data, (bytes, bytearray, memoryview)) or len(data) < 12:
+        return None
+    raw = bytes(data)
+    if raw[0] >> 6 != 2 or 192 <= raw[1] <= 223:
+        return None
+    return int.from_bytes(raw[2:4], "big")
+
+
+def aiortc_observer_compatibility(*, version: str, next_signature: str, send_signature: str,
+                                  rtcp_signature: str | None = None) -> tuple[bool, str]:
     if version != EXPECTED_AIORCTC_VERSION:
         return False, "aiortc-version-mismatch"
     if next_signature != EXPECTED_NEXT_SIGNATURE:
         return False, "next-encoded-frame-signature-mismatch"
     if send_signature != EXPECTED_SEND_SIGNATURE:
         return False, "send-rtp-signature-mismatch"
+    if rtcp_signature is not None and rtcp_signature != EXPECTED_RTCP_SIGNATURE:
+        return False, "handle-rtcp-signature-mismatch"
     return True, "ok"
 
 
@@ -112,7 +125,8 @@ class RtpFrameObserver:
             self.ignored_rtcp_count += 1
             return False
         timestamp = parse_rtp_timestamp(raw)
-        if timestamp is None:
+        sequence = parse_rtp_sequence(raw)
+        if timestamp is None or sequence is None:
             self.ignored_empty_count += 1
             return False
         if payload_type in self.rtx_payload_types:
@@ -146,7 +160,18 @@ class RtpFrameObserver:
             return False
         # Only the first new RTP packet for this encoded frame owns the wire ID.
         self._pending_by_task.pop(task, None)
-        return pending.registry.bind_wire(pending.key, packet_ssrc, timestamp)
+        bound = pending.registry.bind_wire(pending.key, packet_ssrc, timestamp)
+        if bound:
+            pending.registry.record_lab_rtp_send(pending.key, sequence=sequence,
+                                                 rtp_timestamp=timestamp, ssrc=packet_ssrc)
+        return bound
+
+    def observe_lab_rtcp_feedback(self, kind: str, *, sender: object) -> None:
+        """Called only by the pass-through aiortc RTCP receiver wrapper."""
+        context = getattr(sender, "_wrd_frame_trace_context", None)
+        registry = getattr(context, "registry", None) or self.registry
+        if registry is not None:
+            registry.record_lab_rtcp_feedback(kind, sender=sender)
 
     def snapshot(self) -> dict:
         return {
@@ -175,12 +200,14 @@ def install_aiortc_observer(observer: RtpFrameObserver):
             version=aiortc.__version__,
             next_signature=str(inspect.signature(sender_module.RTCRtpSender._next_encoded_frame)),
             send_signature=str(inspect.signature(dtls_module.RTCDtlsTransport._send_rtp)),
+            rtcp_signature=str(inspect.signature(sender_module.RTCRtpSender._handle_rtcp_packet)),
         )
         if not compatible:
             observer.enabled = False
             return False, reason
         original_next = sender_module.RTCRtpSender._next_encoded_frame
         original_send = dtls_module.RTCDtlsTransport._send_rtp
+        original_rtcp = sender_module.RTCRtpSender._handle_rtcp_packet
 
         async def observed_next(sender, codec):
             encoded = await original_next(sender, codec)
@@ -192,8 +219,22 @@ def install_aiortc_observer(observer: RtpFrameObserver):
             observer.observe_outgoing_rtp(data)
             return await original_send(transport, data)
 
+        async def observed_rtcp(sender, packet):
+            # PLI/FIR are identified by aiortc's parsed RTCP object at the
+            # actual sender receive boundary.  No Viewer-side request is
+            # promoted into this evidence class.
+            try:
+                if isinstance(packet, sender_module.RtcpPsfbPacket):
+                    if packet.fmt == sender_module.RTCP_PSFB_PLI:
+                        observer.observe_lab_rtcp_feedback("PLI", sender=sender)
+                    elif packet.fmt == sender_module.RTCP_PSFB_FIR:
+                        observer.observe_lab_rtcp_feedback("FIR", sender=sender)
+            finally:
+                return await original_rtcp(sender, packet)
+
         sender_module.RTCRtpSender._next_encoded_frame = observed_next
         dtls_module.RTCDtlsTransport._send_rtp = observed_send
+        sender_module.RTCRtpSender._handle_rtcp_packet = observed_rtcp
         return True, "ok"
     except Exception:
         observer.enabled = False

@@ -432,6 +432,9 @@ const WebRTC = {
   _keyframeEmitted: false,
   _keyframeRequestGeneration: '',
   _keyframeRequestSequence: 0,
+  // Disabled unless the isolated Lab adapter explicitly arms it.  The normal
+  // Viewer neither retains packet diagnostics nor calls getStats for this.
+  _lossLabTrace: null,
   _hostCaptureFps: 0,
   frameTraceCollector: null,
   adaptiveMediaEnabled: true,
@@ -3936,6 +3939,10 @@ const WebRTC = {
           this.acceptFrameTraceBatch(data);
           return;
         }
+        if (data.type === 'loss_lab_host_trace_batch') {
+          this.acceptLossLabHostTraceBatch(data);
+          return;
+        }
         if (data.type === 'clock_sync_resp') {
           if (typeof LatencyMonitor !== 'undefined') {
             LatencyMonitor.handleClockSyncResponse(data);
@@ -4802,6 +4809,7 @@ if (this.tunnelLastObjectUrl) {
         streamId: 'video',
         rtpTimestamp: metadata?.rtpTimestamp,
       }, { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
+      this.recordLossLabRvfc(metadata, video);
       this.observePaintFrame(now, metadata, video);
       if (this._mediaResumeFramePending) {
         this.observeFreshResumeFrame({
@@ -4865,6 +4873,66 @@ if (this.tunnelLastObjectUrl) {
 
   getFrameTraceDiagnostics() {
     return this.ensureFrameTraceCollector().diagnostics();
+  },
+
+  beginLossLabTrace() {
+    // Only an isolated Lab origin may enable detailed packet diagnostics.
+    if (!/^http:\/\/(127\.0\.0\.1|\[::1\]):\d+$/.test(String(window?.location?.origin || ''))) return false;
+    this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0 };
+    return true;
+  },
+
+  _appendLossLabTrace(kind, row) {
+    const trace = this._lossLabTrace;
+    if (!trace || !row || typeof row !== 'object') return false;
+    const entries = trace[kind];
+    if (!Array.isArray(entries)) return false;
+    if (entries.length >= 512) entries.shift();
+    entries.push(row);
+    return true;
+  },
+
+  recordLossLabRvfc(metadata, video) {
+    if (!this._lossLabTrace) return false;
+    const rtpTimestamp = Number(metadata?.rtpTimestamp);
+    if (!Number.isFinite(rtpTimestamp)) return false;
+    return this._appendLossLabTrace('rvfc', {
+      attemptId: this.currentConnectionAttemptId || '', generation: Number(this.connectionAttemptSequence) || 0,
+      rtpTimestamp: rtpTimestamp >>> 0, presentedFrames: Number(metadata?.presentedFrames) || 0,
+      monotonicMs: Number(performance.now()), pcId: this.pc ? `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}` : '',
+      resolution: { width: Number(video?.videoWidth) || 0, height: Number(video?.videoHeight) || 0 },
+    });
+  },
+
+  acceptLossLabHostTraceBatch(batch) {
+    const trace = this._lossLabTrace;
+    if (!trace || !batch || batch.type !== 'loss_lab_host_trace_batch' || batch.schemaVersion !== 1
+        || !Array.isArray(batch.events) || batch.events.length > 64
+        || !Number.isSafeInteger(batch.droppedEventCount) || batch.droppedEventCount < 0) return false;
+    trace.droppedHostEvents += batch.droppedEventCount;
+    for (const event of batch.events) {
+      if (!event || typeof event !== 'object' || !['rtcp_feedback', 'encoder_idr', 'rtp_send', 'pc_state'].includes(event.type)
+          || !Number.isSafeInteger(event.monotonicNs) || event.monotonicNs < 0) return false;
+      this._appendLossLabTrace('host', event);
+    }
+    return true;
+  },
+
+  async takeLossLabTraceSnapshot() {
+    const trace = this._lossLabTrace;
+    if (!trace || !this.pc?.getStats) return null;
+    const rows = [...(await this.pc.getStats()).values()];
+    const pair = rows.find((row) => row?.type === 'candidate-pair' && (row.selected === true || row.nominated === true) && row.state === 'succeeded');
+    const local = pair ? rows.find((row) => row?.id === pair.localCandidateId && row.type === 'local-candidate') : null;
+    const inbound = rows.find((row) => row?.type === 'inbound-rtp' && (row.kind === 'video' || row.mediaType === 'video'));
+    if (!pair || !local || local.candidateType !== 'relay' || !inbound) return null;
+    const result = { host: trace.host.splice(0), rvfc: trace.rvfc.splice(0), droppedHostEvents: trace.droppedHostEvents,
+      stats: { pcId: `viewer-pc-${String(this.pc.__wrdLabTraceId || (this.pc.__wrdLabTraceId = Math.random().toString(36).slice(2)))}`,
+        state: String(this.pc.connectionState || ''), selectedRelay: { address: local.address, port: local.port, protocol: local.protocol },
+        inbound: { packetsReceived: Number(inbound.packetsReceived) || 0, packetsLost: Number(inbound.packetsLost) || 0,
+          jitter: Number(inbound.jitter) || 0, width: Number(inbound.frameWidth) || 0, height: Number(inbound.frameHeight) || 0 } } };
+    trace.droppedHostEvents = 0;
+    return result;
   },
 
   observePaintFrame(now, metadata = {}, video) {

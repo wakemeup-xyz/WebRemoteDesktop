@@ -298,3 +298,26 @@ def test_selected_relay_stats_must_map_uniquely_to_catalog_and_raw_timeline_has_
     timeline = runner.RawLossTimelineCollector(started_ns=1, ended_ns=2); timeline.rtp_packet("before", sequence=1, rtp_timestamp=2); timeline.feedback_event("PLI", 2); timeline.idr_event(frame_id="f", wire_timestamp=3, monotonic_ns=3); timeline.rvfc_paint(frame_id="f", wire_timestamp=3, monotonic_ns=4); timeline.pc_snapshot(identifier="pc", state="connected", resolution={"width": 1, "height": 1})
     assert "recoveryMs" not in timeline.as_bridge_fields()["timeline"]
     assert runner.lifecycle_failure(RuntimeError("secret=must-not-persist")) == "lifecycle:RuntimeError"
+
+
+def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api():
+    calls = []
+    class Page:
+        def evaluate(self, script):
+            calls.append(script)
+            if "beginLossLabTrace" in script:
+                return True
+            return {"host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3}],
+                    "rvfc": [{"rtpTimestamp": 9, "monotonicMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
+                    "droppedHostEvents": 0,
+                    "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"},
+                              "inbound": {"packetsReceived": 4, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
+    adapter = object.__new__(runner.PlaywrightLabViewerAdapter); adapter.viewer_page = Page()
+    assert adapter.arm_loss_lab_taps() is True
+    raw = adapter.sample_loss_lab_taps()
+    timeline = runner.RawLossTimelineCollector(started_ns=1, ended_ns=10)
+    timeline.ingest_viewer_tap(raw)
+    assert timeline.feedback[0]["kind"] == "PLI"
+    assert timeline.paint["wireTimestamp"] == 9
+    assert timeline.pc[0]["id"] == "viewer-pc"
+    assert "beginLossLabTrace" in calls[0] and "takeLossLabTraceSnapshot" in calls[1]

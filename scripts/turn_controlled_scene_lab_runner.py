@@ -553,6 +553,18 @@ class PlaywrightLabViewerAdapter:
         }""")
         return selected_relay_leg_from_stats(rows, catalog) if isinstance(rows, list) else None
 
+    def arm_loss_lab_taps(self) -> bool:
+        """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""
+        return self.viewer_page.evaluate("() => window.WebRTC?.beginLossLabTrace?.() === true") is True
+
+    def sample_loss_lab_taps(self) -> dict[str, Any] | None:
+        """Read native rVFC/PC stats and Host DataChannel rows from this page."""
+        row = self.viewer_page.evaluate("""async () => {
+          const result = await window.WebRTC?.takeLossLabTraceSnapshot?.();
+          return result && typeof result === 'object' ? result : null;
+        }""")
+        return dict(row) if isinstance(row, Mapping) else None
+
     def close(self) -> None:
         self._browser.close(); self._playwright.stop()
 
@@ -652,6 +664,42 @@ class RawLossTimelineCollector:
     def idr_event(self, *, frame_id: str, wire_timestamp: int, monotonic_ns: int) -> None: self.idr = {"frameId": frame_id, "wireTimestamp": wire_timestamp, "monotonicNs": monotonic_ns}
     def rvfc_paint(self, *, frame_id: str, wire_timestamp: int, monotonic_ns: int) -> None: self.paint = {"frameId": frame_id, "wireTimestamp": wire_timestamp, "rvfcMonotonicNs": monotonic_ns}
     def pc_snapshot(self, *, identifier: str, state: str, resolution: Mapping[str, Any]) -> None: self.pc.append({"id": identifier, "state": state, "resolution": dict(resolution)})
+    def ingest_viewer_tap(self, raw: Mapping[str, Any] | None) -> None:
+        """Consume only the concrete browser adapter snapshot, never booleans."""
+        if not isinstance(raw, Mapping) or raw.get("droppedHostEvents") != 0:
+            raise ValueError("viewer loss tap is missing or dropped raw Host events")
+        stats = raw.get("stats")
+        if not isinstance(stats, Mapping) or stats.get("state") != "connected":
+            raise ValueError("viewer loss tap has no connected PeerConnection")
+        inbound = stats.get("inbound")
+        relay = stats.get("selectedRelay")
+        if (not isinstance(inbound, Mapping) or not isinstance(relay, Mapping)
+                or not isinstance(inbound.get("packetsReceived"), (int, float))
+                or not isinstance(inbound.get("packetsLost"), (int, float))):
+            raise ValueError("viewer loss tap lacks selected relay/inbound stats")
+        for event in raw.get("host", []):
+            if not isinstance(event, Mapping):
+                raise ValueError("invalid Host loss tap event")
+            if event.get("type") == "rtcp_feedback":
+                self.feedback_event(str(event.get("kind")), int(event.get("monotonicNs")))
+            elif event.get("type") == "encoder_idr" and isinstance(event.get("frameKey"), Mapping):
+                key = event["frameKey"]
+                # The actual wire timestamp arrives from the sender's RTP
+                # observer; retain the request token until that identity joins.
+                self.idr = {"frameId": json.dumps(dict(key), sort_keys=True), "wireTimestamp": None,
+                            "monotonicNs": int(event.get("monotonicNs")), "requestToken": event.get("requestToken")}
+            elif event.get("type") == "rtp_send":
+                key = event.get("frameKey")
+                if not isinstance(key, Mapping): raise ValueError("RTP loss tap lacks FrameKey")
+                self.rtp_packet("after", sequence=int(event.get("sequence")), rtp_timestamp=int(event.get("rtpTimestamp")))
+                if self.idr is not None and self.idr["frameId"] == json.dumps(dict(key), sort_keys=True):
+                    self.idr["wireTimestamp"] = int(event.get("rtpTimestamp"))
+            elif event.get("type") == "pc_state":
+                self.pc_snapshot(identifier=str(event.get("pcId")), state=str(event.get("state")), resolution=event.get("resolution") if isinstance(event.get("resolution"), Mapping) else {})
+        for event in raw.get("rvfc", []):
+            if not isinstance(event, Mapping): raise ValueError("invalid rVFC tap event")
+            self.rvfc_paint(frame_id="viewer-rvfc", wire_timestamp=int(event.get("rtpTimestamp")), monotonic_ns=int(float(event.get("monotonicMs")) * 1_000_000))
+            self.pc_snapshot(identifier=str(event.get("pcId")), state=str(stats.get("state")), resolution=event.get("resolution") if isinstance(event.get("resolution"), Mapping) else {})
     def as_bridge_fields(self) -> dict[str, Any]: return {"sequences": self.rtp, "timeline": {"feedback": self.feedback, "idr": self.idr, "paint": self.paint, "pc": self.pc}}
 
 

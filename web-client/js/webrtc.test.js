@@ -12,6 +12,28 @@ test.afterEach(() => {
   [...activeWebRtcFixtures].forEach((cleanup) => cleanup());
 });
 
+test('Lab-only loss taps retain rVFC and Host data-channel events with real getStats snapshots', async () => {
+  const { WebRTC } = loadWebRTC();
+  WebRTC.pc = {
+    connectionState: 'connected',
+    getStats: async () => new Map([
+      ['inbound', { id: 'inbound', type: 'inbound-rtp', kind: 'video', packetsReceived: 12, packetsLost: 1, jitter: 0.003, frameWidth: 1280, frameHeight: 720 }],
+      ['pair', { id: 'pair', type: 'candidate-pair', selected: true, state: 'succeeded', localCandidateId: 'local' }],
+      ['local', { id: 'local', type: 'local-candidate', candidateType: 'relay', address: '127.0.0.1', port: 51002, protocol: 'udp' }],
+    ]),
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt'; WebRTC.connectionAttemptSequence = 4;
+  assert.equal(WebRTC.beginLossLabTrace(), true);
+  WebRTC.recordLossLabRvfc({ rtpTimestamp: 42 }, { videoWidth: 1280, videoHeight: 720 });
+  WebRTC.acceptLossLabHostTraceBatch({ type: 'loss_lab_host_trace_batch', schemaVersion: 1, droppedEventCount: 0,
+    events: [{ type: 'rtcp_feedback', kind: 'PLI', monotonicNs: 1, senderId: 'host' }] });
+  const snapshot = await WebRTC.takeLossLabTraceSnapshot();
+  assert.equal(snapshot.rvfc[0].rtpTimestamp, 42);
+  assert.equal(snapshot.host[0].kind, 'PLI');
+  assert.equal(snapshot.stats.inbound.packetsLost, 1);
+  assert.equal(snapshot.stats.selectedRelay.address, '127.0.0.1');
+});
+
 function makeElement() {
   const classes = new Set();
   const listeners = new Map();

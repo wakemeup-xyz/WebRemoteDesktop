@@ -1438,18 +1438,24 @@ class ScreenCaptureTrack(VideoStreamTrack):
             return
         self._last_trace_send_ns = now_ns
         batch = context.registry.take_frame_trace_batch(limit=64)
-        if not batch["traces"]:
+        loss_batch = context.registry.take_loss_lab_trace_batch(limit=64)
+        if not batch["traces"] and not loss_batch["events"]:
             return
         batch["droppedTraceCount"] = context.registry.snapshot()["droppedTraceCount"]
         host = getattr(self, "_host_ref", None)
         dc = host.get_input_datachannel() if host is not None else None
         if dc is None or not hasattr(dc, "send"):
             context.registry.note_dropped_trace(len(batch["traces"]))
+            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
             return
         try:
-            dc.send(json.dumps(batch))
+            if batch["traces"]:
+                dc.send(json.dumps(batch))
+            if loss_batch["events"]:
+                dc.send(json.dumps(loss_batch))
         except Exception:
             context.registry.note_dropped_trace(len(batch["traces"]))
+            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
 
     def _frame_trace_summary(self, context):
         """Return one bounded five-second evidence window without cross-clock math."""
@@ -1682,7 +1688,8 @@ class WebRemoteHost:
         self._h264_policy_version = self._policy_selection.policy_id
         self._h264_policy_provider = H264SessionPolicyProvider(resolver=self._policy_selection.resolver)
         self._frame_trace_detail_enabled = detailed_frame_trace_enabled()
-        self._frame_trace_registry = FrameTraceRegistry() if self._frame_trace_detail_enabled else None
+        self._lab_loss_trace_enabled = os.environ.get("WRD_LAB_LOSS_TRACE") == "1" and os.environ.get("WRD_LAB_HOST_ENTRY") == "1"
+        self._frame_trace_registry = FrameTraceRegistry(lab_loss_trace=self._lab_loss_trace_enabled) if self._frame_trace_detail_enabled else None
         self._stage_metrics = StageMetrics(registry=self._frame_trace_registry) if self._frame_trace_detail_enabled else None
         self._frame_trace_context = None
         self.sio = None
@@ -2509,6 +2516,12 @@ class WebRemoteHost:
                                                  getattr(self, "_session_turn_override", None))
                 )
                 self.pc = RTCPeerConnection(configuration=config)
+                if self._frame_trace_registry is not None:
+                    self._frame_trace_registry.record_lab_pc_state(
+                        identifier=f"host-pc-{id(self.pc)}", state=str(self.pc.connectionState),
+                        width=int((self._user_resolution or {}).get("width", 0) or 0),
+                        height=int((self._user_resolution or {}).get("height", 0) or 0),
+                    )
                 try:
                     session_caps = (self._host_turn_capability(self._session_turn_server_id)
                                     if hasattr(self, "_host_turn_capability")
@@ -2554,6 +2567,12 @@ class WebRemoteHost:
                 @self.pc.on("connectionstatechange")
                 def on_connectionstatechange():
                     state = self.pc.connectionState
+                    if self._frame_trace_registry is not None:
+                        self._frame_trace_registry.record_lab_pc_state(
+                            identifier=f"host-pc-{id(self.pc)}", state=str(state),
+                            width=int((self._user_resolution or {}).get("width", 0) or 0),
+                            height=int((self._user_resolution or {}).get("height", 0) or 0),
+                        )
                     logger.info(f"Connection: {state}")
                     if state == 'connected':
                         logger.info("WebRTC CONNECTED!")
