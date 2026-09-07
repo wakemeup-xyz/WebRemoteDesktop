@@ -312,6 +312,229 @@ test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decis
   assert.equal(JSON.stringify(snapshot).includes('relY'), false);
 });
 
+test('tracked user release ACK loss remains eligible for mouse, physical key, and touch', () => {
+  const scenarios = [
+    {
+      kind: 'mouse-up',
+      touchPoints: 0,
+      send(h) { h.pointer('pointerdown'); h.pointer('pointerup'); },
+      isDown(payload) { return payload.type === 'mouse' && payload.action === 'down'; },
+      isRelease(payload) { return payload.type === 'mouse' && payload.action === 'up'; },
+      releaseAction: 'up',
+    },
+    {
+      kind: 'key-up',
+      touchPoints: 0,
+      send(h) { h.keydown(); h.keyup(); },
+      isDown(payload) {
+        return payload.type === 'keyboard' && payload.action === 'key'
+          && payload.payload?.phase === 'down';
+      },
+      isRelease(payload) {
+        return payload.type === 'keyboard' && payload.action === 'key'
+          && payload.payload?.phase === 'up';
+      },
+      releaseAction: 'key',
+    },
+    {
+      kind: 'touch-up',
+      touchPoints: 1,
+      send(h) {
+        h.video.dispatch('pointerdown', {
+          pointerType: 'touch', pointerId: 1, isPrimary: true,
+          clientX: 400, clientY: 300, buttons: 1,
+        });
+        h.video.dispatch('pointerup', {
+          pointerType: 'touch', pointerId: 1, isPrimary: true,
+          clientX: 400, clientY: 300, buttons: 0,
+        });
+      },
+      isDown(payload) {
+        return payload.type === 'mouse' && payload.action === 'down';
+      },
+      isRelease(payload) {
+        return payload.type === 'mouse' && payload.action === 'up';
+      },
+      releaseAction: 'up',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const incidents = [];
+    const h = loadRecoveryFixture({
+      touchPoints: scenario.touchPoints,
+      onIncident: (reason, identity) => incidents.push({ reason, identity }),
+    });
+    scenario.send(h);
+    const writes = h.writes().filter((payload) => scenario.isDown(payload) || scenario.isRelease(payload));
+    assert.equal(writes.length, 2, scenario.kind);
+    const down = writes.find(scenario.isDown);
+    const release = writes.find(scenario.isRelease);
+    assert.ok(down, scenario.kind);
+    assert.ok(release, scenario.kind);
+    h.ack(down);
+
+    const beforeTimeout = h.trace.snapshot();
+    const releaseDom = beforeTimeout.events.find(({ stage, inputType, action, phase }) => (
+      stage === 'dom-received'
+      && ((scenario.kind === 'key-up' && inputType === 'keyboard' && action === 'key' && phase === 'up')
+        || (scenario.kind !== 'key-up' && inputType === 'pointer' && action === 'up'))
+    ));
+    const releaseSend = beforeTimeout.events.find(({ stage, inputType, action, phase, accepted }) => (
+      stage === 'transport-send' && accepted === true
+      && ((scenario.kind === 'key-up' && inputType === 'keyboard' && action === 'key' && phase === 'up')
+        || (scenario.kind !== 'key-up' && inputType === 'pointer' && action === 'up'))
+    ));
+    assert.ok(releaseDom, scenario.kind);
+    assert.ok(releaseSend, scenario.kind);
+    assert.equal(releaseSend.eventId, releaseDom.eventId, scenario.kind);
+
+    h.advance(3001);
+    const snapshot = h.trace.snapshot();
+    assert.equal(snapshot.counters.ackTimeoutCount, 1, scenario.kind);
+    assert.equal(incidents.length, 1, scenario.kind);
+    assert.equal(incidents[0].reason, 'input-ack-timeout', scenario.kind);
+    const timeout = snapshot.events.find(({ stage, action }) => stage === 'ack-timeout' && action === scenario.releaseAction);
+    assert.ok(timeout, scenario.kind);
+    assert.equal(timeout.eventId, releaseDom.eventId, scenario.kind);
+  }
+});
+
+test('unmatched, cancelled, hidden, local-focus, revoked, paused, and uncertain releases do not incident', () => {
+  const cases = [
+    {
+      name: 'unmatched mouse release',
+      run(h) { h.pointer('pointerup'); },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'mouse' && payload.action === 'up').length, 1);
+      },
+    },
+    {
+      name: 'cancelled mouse release',
+      run(h) {
+        h.pointer('pointerdown');
+        const down = h.writes().find((payload) => payload.type === 'mouse' && payload.action === 'down');
+        h.ack(down);
+        h.pointer('pointercancel');
+        h.pointer('pointerup');
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'mouse' && payload.action === 'reset').length, 1);
+        assert.equal(h.writes().filter((payload) => payload.type === 'mouse' && payload.action === 'up').length, 1);
+      },
+    },
+    {
+      name: 'no-send mouse release',
+      options: { channels: 'none' },
+      run(h) { h.pointer('pointerdown'); h.pointer('pointerup'); },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'mouse').length, 0);
+      },
+    },
+    {
+      name: 'hidden before deferred touch send',
+      options: { touchPoints: 1 },
+      run(h) {
+        h.video.dispatch('pointerdown', {
+          pointerType: 'touch', pointerId: 2, isPrimary: true,
+          clientX: 400, clientY: 300, buttons: 1,
+        });
+        h.document.hidden = true;
+        h.advance(550);
+      },
+    },
+    {
+      name: 'media gate closes before tracked release',
+      run(h) {
+        h.pointer('pointerdown');
+        const down = h.writes().find((payload) => payload.type === 'mouse' && payload.action === 'down');
+        h.ack(down);
+        h.WebRTC.getDesktopInputGateSnapshot = () => ({ enabled: false, blockedReasons: ['media-gate'] });
+        h.pointer('pointerup');
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'mouse' && payload.action === 'up').length, 1);
+      },
+    },
+    {
+      name: 'terminal focus release',
+      run(h) {
+        h.keydown();
+        const down = h.writes().find((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'down');
+        h.ack(down);
+        const terminal = h.document.getElementById('terminalComposer');
+        terminal.id = 'terminalComposer';
+        h.keyup({ target: terminal });
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'up').length, 1);
+      },
+    },
+    {
+      name: 'local editor focus release',
+      run(h) {
+        h.keydown();
+        const down = h.writes().find((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'down');
+        h.ack(down);
+        const editor = h.document.getElementById('remoteTextInput');
+        editor.id = 'remoteTextInput';
+        h.keyup({ target: editor });
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'up').length, 1);
+      },
+    },
+    {
+      name: 'revoked lease release',
+      run(h) {
+        h.pointer('pointerdown');
+        const down = h.writes().find((payload) => payload.type === 'mouse' && payload.action === 'down');
+        h.ack(down);
+        h.Input.setControlLease(null);
+        h.pointer('pointerup');
+      },
+    },
+    {
+      name: 'manual keyboard pause release',
+      run(h) {
+        h.keydown();
+        const down = h.writes().find((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'down');
+        h.ack(down);
+        h.Input.parkKeyboard('manual-pause');
+        h.keyup();
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'up').length, 0);
+      },
+    },
+    {
+      name: 'uncertain draft release',
+      run(h) {
+        h.keydown();
+        const down = h.writes().find((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'down');
+        h.ack(down);
+        h.Input.mobileTextInputAdapter.invalidateContext('visibility-hidden');
+        h.keyup();
+      },
+      assertWrites(h) {
+        assert.equal(h.writes().filter((payload) => payload.type === 'keyboard' && payload.payload?.phase === 'up').length, 1);
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    const incidents = [];
+    const h = loadRecoveryFixture({
+      ...(scenario.options || {}),
+      onIncident: (reason, identity) => incidents.push({ reason, identity }),
+    });
+    scenario.run(h);
+    scenario.assertWrites?.(h);
+    h.advance(3001);
+    assert.equal(incidents.length, 0, scenario.name);
+  }
+});
+
 test('touch and IME reliable writes retain bounded attribution for timeout incidents', () => {
   const touchIncidents = [];
   const touch = loadRecoveryFixture({

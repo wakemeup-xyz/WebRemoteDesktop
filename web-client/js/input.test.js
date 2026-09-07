@@ -2605,6 +2605,93 @@ test('physical DOM sends retain nested mobile scope through real ACK correlation
   assert.ok(sends.every((send) => acks.some((ack) => ack.eventId === send.eventId)));
 });
 
+test('real user releases preserve current observer eligibility while unmatched safety releases stay ineligible', () => {
+  const scenarios = [
+    {
+      name: 'mouse',
+      setup(h) {
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const pointer = (type) => surface.listeners.get(type)({
+          pointerType: 'mouse', pointerId: 1, button: 0, detail: 1,
+          clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+          currentTarget: surface, timeStamp: 10, preventDefault() {},
+        });
+        pointer('pointerdown');
+        pointer('pointerup');
+      },
+      release(meta) { return meta.inputType === 'pointer' && meta.action === 'up'; },
+    },
+    {
+      name: 'physical keyboard',
+      setup(h) {
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const event = (type) => h.documentListeners.get(type)({
+          ...keyboard(type, { target: surface }),
+          type,
+        });
+        event('keydown');
+        event('keyup');
+      },
+      release(meta) { return meta.inputType === 'keyboard' && meta.action === 'key' && meta.phase === 'up'; },
+    },
+    {
+      name: 'touch',
+      setup(h) {
+        loadTouchAdapter(h.context);
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const touch = (type) => surface.listeners.get(type)({
+          pointerType: 'touch', pointerId: 1, isPrimary: true, button: 0,
+          clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+          currentTarget: surface, timeStamp: 10, preventDefault() {},
+        });
+        touch('pointerdown');
+        touch('pointerup');
+      },
+      release(meta) { return meta.inputType === 'pointer' && meta.action === 'up'; },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const h = loadInput();
+    const observed = [];
+    const record = h.context.Diagnostic.recordInputTrace;
+    h.context.Diagnostic.recordInputTrace = (stage, meta) => {
+      observed.push({ stage, meta: { ...meta } });
+      return record(stage, meta);
+    };
+    scenario.setup(h);
+    const release = observed.find(({ stage, meta }) => stage === 'transport-send' && meta.accepted === true && scenario.release(meta));
+    assert.ok(release, scenario.name);
+    assert.equal(release.meta.incidentEligible, true, scenario.name);
+  }
+
+  const h = loadInput();
+  const observed = [];
+  const record = h.context.Diagnostic.recordInputTrace;
+  h.context.Diagnostic.recordInputTrace = (stage, meta) => {
+    observed.push({ stage, meta: { ...meta } });
+    return record(stage, meta);
+  };
+  activate(h.Input, h.context);
+  h.Input.setupEventListeners();
+  const surface = h.elements.get('remoteVideo');
+  surface.listeners.get('pointerup')({
+    pointerType: 'mouse', pointerId: 9, button: 0, buttons: 0,
+    clientX: 40, clientY: 40, currentTarget: surface, timeStamp: 10, preventDefault() {},
+  });
+  const unmatched = observed.find(({ stage, meta }) => (
+    stage === 'transport-send' && meta.accepted === true && meta.inputType === 'pointer' && meta.action === 'up'
+  ));
+  assert.ok(unmatched);
+  assert.equal(unmatched.meta.incidentEligible, false);
+});
+
 test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {
   const { Input, context, socketEvents } = loadInput();
   Input.socket = context.WebRTC.socket;

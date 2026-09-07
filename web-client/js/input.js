@@ -511,7 +511,7 @@ const Input = {
     };
   },
 
-  _traceIncidentEligible(focusKind = this._inputTraceContext?.focusKind) {
+  _traceIncidentEligible(focusKind = this._inputTraceContext?.focusKind, options = {}) {
     if (!['desktop', 'mobile-text'].includes(focusKind)
       || this._traceVisibility() !== 'visible'
       || this.isActive !== true
@@ -519,8 +519,10 @@ const Input = {
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
     if (mobile.composing === true || mobile.deliveryUncertain === true) return false;
     const gate = this.getEffectiveInputGate?.() || {};
+    const allowSurfacePending = options.allowSurfacePending === true;
     const blockedReasons = (gate.blockedReasons || [])
-      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason));
+      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason))
+      .filter((reason) => !(allowSurfacePending && reason === 'surface-pending'));
     return gate.allowed === true || (gate.allowed === false
       && (gate.blockedReasons || []).length > 0 && blockedReasons.length === 0);
   },
@@ -594,14 +596,10 @@ const Input = {
   _beginInputTraceDom(inputType, action, phase, target = null, options = {}) {
     const focusKind = options.focusKind || this._traceFocusKind(target);
     const visibility = this._traceVisibility();
-    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
     const eligible = options.incidentEligible !== false
-      && ['desktop', 'mobile-text'].includes(focusKind)
-      && visibility === 'visible'
-      && this.isActive === true
-      && Boolean(this.activeControlLease)
-      && mobile.composing !== true
-      && mobile.deliveryUncertain !== true;
+      && this._traceIncidentEligible(focusKind, {
+        allowSurfacePending: options.allowSurfacePending === true,
+      });
     this._inputTraceContext = {
       eventId: null,
       inputType,
@@ -633,7 +631,9 @@ const Input = {
     const incidentEligible = hasIncidentEligibility
       ? options.incidentEligible === true
       : options.refreshEligibility === true
-        ? this._traceIncidentEligible(focusKind)
+        ? this._traceIncidentEligible(focusKind, {
+          allowSurfacePending: options.allowSurfacePending === true,
+        })
         : current.incidentEligible === true;
     const traceContext = {
       ...current,
@@ -1493,13 +1493,11 @@ const Input = {
     });
     document.addEventListener('keyup', (event) => {
       if (isMobileTextEvent(event)) return;
-      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target, {
-        incidentEligible: false,
-      });
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target);
       this._withInputTraceEvent(eventId, () => {
         this._recordInputGate('keyboard', 'key', { allowed: true, blockedReasons: [] });
         this.keyboardController?.handleDomEvent(event);
-      }, { clearAfter: true, incidentEligible: false });
+      }, { clearAfter: true });
     });
     video.addEventListener('click', (event) => {
       if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
@@ -2263,7 +2261,11 @@ const Input = {
       },
       onTraceDomEvent: (meta) => this._beginInputTraceDom(
         meta?.inputType || 'pointer', meta?.action || 'down', meta?.phase || 'down', element,
-        { focusKind: 'desktop', ...(meta?.incidentEligible === false ? { incidentEligible: false } : {}) },
+        {
+          focusKind: 'desktop',
+          ...(meta?.action === 'up' ? { allowSurfacePending: true } : {}),
+          ...(meta?.incidentEligible === false ? { incidentEligible: false } : {}),
+        },
       ),
       onTraceEventEnd: (eventId) => {
         if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
@@ -2324,9 +2326,16 @@ const Input = {
     });
     element.addEventListener('pointerup', (event) => {
       if (event.pointerType === 'touch') return;
-      const eventId = this._beginInputTraceDom('pointer', 'up', 'up', event?.target || element, {
-        incidentEligible: false,
-      });
+      const button = this.getMouseButton(event.button);
+      const trackedRelease = this._activePointerElement === element
+        && this._activePointerId === event.pointerId
+        && this._pressedMouseButtons.has(button);
+      const traceOptions = trackedRelease
+        ? { allowSurfacePending: true }
+        : { incidentEligible: false };
+      const eventId = this._beginInputTraceDom(
+        'pointer', 'up', 'up', event?.target || element, traceOptions,
+      );
       this._withInputTraceEvent(eventId, () => {
         if (this._geometryAbortedPointerId === event.pointerId) {
           this._geometryAbortedPointerId = null;
@@ -2335,7 +2344,7 @@ const Input = {
         if (!this.isActive && this._pressedMouseButtons.size === 0) return;
         if (!this.validateGeometry(element)) return;
         this._recordInputGate('pointer', 'up', { allowed: true, blockedReasons: [] });
-        event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
+        event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords;
         // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
         const id = coords
           ? this._sendMobileSurfaceUp({
@@ -2353,7 +2362,7 @@ const Input = {
         }
         if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
         this._pointerLifecycleGeneration += 1;
-      }, { clearAfter: true, incidentEligible: false });
+      }, { clearAfter: true, ...traceOptions });
     });
     element.addEventListener('pointercancel', (event) => {
       if (event.pointerType === 'touch') return;

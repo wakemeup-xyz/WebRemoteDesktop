@@ -232,7 +232,7 @@
     }
     function pointerup(event) {
       if (event.pointerType !== 'touch') return;
-      const traceEventId = traceDom(event, 'up', 'up', false);
+      const traceEventId = traceDom(event, 'up', 'up');
       try {
         const entryGeneration = generation;
         const p = pointers.get(event.pointerId); if (!p) return;
@@ -258,7 +258,7 @@
           if (generation !== entryGeneration) return;
           if (point) emit(
             'up', { ...point, button, clickCount: 1, buttons: 0 }, 'pointer-up-failed', traceEventId,
-            { incidentEligible: false },
+            { refreshEligibility: true, allowSurfacePending: true },
           );
         } else if (state === STATES.PRESSED && point && enabled()) {
           const clickCount = Number(getClickCount({ button: 0, timeStamp: event.timeStamp, clientX: event.clientX, clientY: event.clientY })) || 1;
@@ -270,7 +270,7 @@
           if (generation !== tapGeneration) return;
           if (id) emit(
             'up', { ...point, button: 'left', clickCount, buttons: 0 }, 'tap-up-failed', traceEventId,
-            { incidentEligible: false },
+            { refreshEligibility: true, allowSurfacePending: true },
           );
         }
         activeButton = null; primaryId = null; state = STATES.IDLE;
