@@ -53,3 +53,26 @@ def relay_echo_probe(host: str, port: int, username: str, password: str, peer_ho
     if not isinstance(echoed,bytes) or not hmac.compare_digest(echoed,nonce): raise RuntimeError('TURN relay echo payload mismatch')
     body={'allocation':allocation['relayAddressAttribute'],'peer':f'{peer_host}:{peer_port}','nonce':nonce.hex()}
     return {**allocation,'peer':body['peer'],'nonce':body['nonce'],'echoDigest':hashlib.sha256(repr(body).encode()).hexdigest()}
+
+def _authenticated(kind: int, txid: bytes, username: str, password: str, realm: bytes, nonce: bytes, extra: bytes) -> bytes:
+    attrs=extra+_attr(0x0006,username.encode())+_attr(0x0014,realm)+_attr(0x0015,nonce)
+    key=hashlib.md5(username.encode()+b':'+realm+b':'+password.encode()).digest()
+    prefix=_message(kind,txid,attrs+_attr(0x0008,b'\0'*20))
+    return _message(kind,txid,attrs+_attr(0x0008,hmac.new(key,prefix,hashlib.sha1).digest()))
+
+def permission_send_data_echo(host: str, port: int, username: str, password: str, peer_host: str, peer_port: int, *, timeout: float=2.0, udp_socket: Any=None) -> dict[str,Any]:
+    """Concrete TURN UDP CreatePermission -> Send -> Data indication exchange."""
+    sock=udp_socket or socket.socket(socket.AF_INET,socket.SOCK_DGRAM); own=udp_socket is None
+    try:
+      sock.settimeout(timeout); tx=os.urandom(12); sock.sendto(_message(0x0003,tx,_attr(0x0019,b'\x11\0\0\0')),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
+      if kind != 0x0113 or got != tx or 0x0014 not in a or 0x0015 not in a: raise RuntimeError('TURN allocation challenge unavailable')
+      realm,nonce=a[0x0014],a[0x0015]; tx=os.urandom(12); sock.sendto(_authenticated(0x0003,tx,username,password,realm,nonce,_attr(0x0019,b'\x11\0\0\0')),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
+      if kind != 0x0103 or got != tx or 0x0016 not in a: raise RuntimeError('TURN allocation unavailable')
+      allocation=a[0x0016].hex(); peer=_xor_peer(peer_host,peer_port,tx); tx=os.urandom(12); sock.sendto(_authenticated(0x0008,tx,username,password,realm,nonce,_attr(0x0012,peer)),(host,port)); raw,_=sock.recvfrom(4096); kind,got,a=_parse(raw)
+      if kind != 0x0108 or got != tx: raise RuntimeError('TURN CreatePermission failed')
+      payload=os.urandom(24); sock.sendto(_message(0x0016,os.urandom(12),_attr(0x0012,_xor_peer(peer_host,peer_port,b''))+_attr(0x0013,payload)),(host,port)); raw,_=sock.recvfrom(4096); kind,_,a=_parse(raw)
+      if kind != 0x0017 or 0x0012 not in a or 0x0013 not in a or _xor_decode(a[0x0012],b'') != (peer_host,peer_port) or not hmac.compare_digest(a[0x0013],payload): raise RuntimeError('TURN relay Data indication mismatch')
+      body={'allocation':allocation,'peer':f'{peer_host}:{peer_port}','nonce':payload.hex()}; return {**body,'digest':hashlib.sha256(repr(body).encode()).hexdigest()}
+    except OSError as exc: raise RuntimeError('TURN relay echo timed out') from exc
+    finally:
+      if own: sock.close()
