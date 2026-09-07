@@ -136,7 +136,10 @@ class ExecutableLabDriver:
                         raise RuntimeError(str(result.get("failure") or "five-way-evidence-failed"))
                     receipts.append({"inputId": input_id, "actionId": step.action_id, "logicalActionId": item.action_id, "markerActionId": step.action_id,
                                      "kind": item.kind, "phase": step.phase,
-                                     **({"text": item.text} if item.kind == "text" else {}),
+                                     # The exact T5 transcript carries text on
+                                     # the keyboard submission boundary only;
+                                     # focus steps are mouse actions.
+                                     **({"text": item.text} if step.kind == "text" and step.phase == "text" else {}),
                                      "reservation": dict(reservation),
                                      "binding": {"fixtureId": self.fixture_id, "leaseId": lease_id, "leaseEpoch": lease_epoch, "action": action},
                                      "claim": dict(claim), "ack": dict(ack), "native": dict(receipt), "visual": dict(visual)})
@@ -657,9 +660,10 @@ class RawLossTimelineCollector:
         self.started_ns, self.ended_ns = started_ns, ended_ns
         self.rtp = {"before": [], "during": [], "after": []}; self.phase = "before"; self.feedback = []; self.idr = None; self.paint = None; self.pc = []
     def set_phase(self, phase: str) -> None:
-        if phase not in self.rtp: raise ValueError("loss trace phase invalid")
+        if phase not in {*self.rtp, "recovery"}: raise ValueError("loss trace phase invalid")
         self.phase = phase
     def rtp_packet(self, phase: str, *, sequence: int, rtp_timestamp: int) -> None:
+        if phase == "recovery": return
         if phase not in self.rtp or not isinstance(sequence, int) or not isinstance(rtp_timestamp, int): raise ValueError("raw RTP event invalid")
         self.rtp[phase].append({"sequence": sequence, "rtpTimestamp": rtp_timestamp})
     def feedback_event(self, kind: str, monotonic_ns: int) -> None:

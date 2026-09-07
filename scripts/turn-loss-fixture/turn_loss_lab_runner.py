@@ -18,7 +18,8 @@ from controller import (DockerRuntimeProbe, LabReceiverBridgeAuthority, LossFixt
                         run_isolated_loss_lifecycle)
 
 
-def _collect_current_t3(*, lab: Any, adapter: Any, scope: Mapping[str, Any], selected_turn: Mapping[str, Any]) -> dict[str, Any]:
+def _collect_current_t3(*, lab: Any, adapter: Any, scope: Mapping[str, Any], selected_turn: Mapping[str, Any],
+                        now: Callable[[], float] = time.monotonic) -> dict[str, Any]:
     """Collect T3 from the already-open Lab, before any loss rule is applied."""
     import turn_t3_lab_collector as t3
     identity = lab.identity
@@ -40,12 +41,49 @@ def _collect_current_t3(*, lab: Any, adapter: Any, scope: Mapping[str, Any], sel
     artifact = t3.collect_fixed_60_seconds(
         identity={"runId": identity.run_id, "realm": identity.realm, "origin": identity.origin,
                   "epoch": identity.epoch, "selectedTurn": dict(selected_turn)}, sample=sample,
-        verifier=lab.transcript_verifier(), expected_viewer_session=expected,
+        verifier=lab.transcript_verifier(), now=now, expected_viewer_session=expected,
         wait=lambda seconds: adapter.viewer_page.wait_for_timeout(seconds * 1000))
     if (artifact.get("status") != "OBSERVED" or artifact.get("scope") != dict(scope)
             or not t3.verify_artifact(artifact, lab.transcript_verifier())):
         raise RuntimeBlocked("current Lab T3 evidence did not self-verify")
     return artifact
+
+
+def seal_and_verify_live_bridge(*, manifest: LossFixtureManifest, authority: Any, fixture: Any,
+                                seal_path: Path, transaction: Mapping[str, Any], timeline: Any,
+                                t3: Mapping[str, Any], t5: Mapping[str, Any]) -> dict[str, Any]:
+    """Use the Lab authority's one-shot seal before the controller's final verify.
+
+    The testable owner path deliberately accepts raw stages, never an already
+    assembled bridge; that prevents a harness from bypassing phase/tap output.
+    """
+    fields, events = timeline.as_bridge_fields(), transaction.get("events")
+    if not isinstance(events, list) or not events or not isinstance(events[-1], Mapping):
+        raise RuntimeBlocked("loss transaction has no cleared event")
+    # The control reply contains response-only fields.  Seal the controller's
+    # canonical cleared event so the authority's one-shot binding is exactly
+    # the event final verification will present back over its Unix socket.
+    last_event = getattr(fixture, "_last_event", None)
+    event = dict(last_event) if isinstance(last_event, Mapping) else dict(events[-1])
+    scope = transaction.get("scope")
+    if not isinstance(scope, Mapping):
+        raise RuntimeBlocked("loss transaction scope is unavailable")
+    bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": dict(t3), "t5": dict(t5),
+              "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": transaction.get("sessionId"),
+                       "attemptId": scope.get("attemptId"), "generation": scope.get("generation"), "streamId": scope.get("streamId"),
+                       "selectedTurn": manifest.selected_turn, "eventHandle": event.get("comment"),
+                       "startedMonotonicNs": event.get("startedMonotonicNs"), "endedMonotonicNs": event.get("endedMonotonicNs"),
+                       "sequences": fields["sequences"]}, "timeline": fields["timeline"]}
+    sealed = authority.seal(bridge, event)
+    if sealed.get("status") != "SEALED":
+        raise RuntimeBlocked("Lab authority did not seal the current bridge")
+    seal_path.write_text(json.dumps({"sealId": sealed["sealId"], "signature": sealed["signature"]}), encoding="utf-8")
+    from controller import UnixSealedReceiverEvidenceSource
+    fixture._receiver_source = UnixSealedReceiverEvidenceSource(authority.socket_path, seal_path)
+    final = fixture.verify_final_evidence(manifest.run_id)
+    if final.get("status") != "PASS":
+        raise RuntimeBlocked(f"sealed final loss verification did not pass: {final.get('reason', 'unknown')}")
+    return final
 
 
 def _collect_current_t5(*, lab: Any, adapter: Any, scope: Mapping[str, Any], selected_turn: Mapping[str, Any]) -> dict[str, Any]:
@@ -147,7 +185,8 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
         baseline = _sample(adapter, timeline)
         if baseline["stats"]["inbound"]["packetsLost"] != 0: raise RuntimeBlocked("Viewer reports loss before fixture injection")
         events = []
-        for pattern, duration in (("every_100th_for_30s", 30_000), ("all_for_200ms", 200)):
+        patterns = (("every_100th_for_30s", 30_000), ("all_for_200ms", 200))
+        for index, (pattern, duration) in enumerate(patterns):
             if events:
                 # Baselines are intentionally one-shot; re-observe the exact
                 # selected leg before every separately enumerated injection.
@@ -161,7 +200,10 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
                     or not isinstance(cleared.get("actualDropCount"), int) or cleared["actualDropCount"] <= 0):
                 raise RuntimeBlocked("fixture loss rule did not clear")
             events.append(cleared)
-            timeline.set_phase("after")
+            # Sample each clear's 10s health window.  Keep the first window
+            # distinct from the final after segment so a later loss cannot
+            # make the sealed RTP sequence non-chronological.
+            timeline.set_phase("after" if index == len(patterns) - 1 else "recovery")
             _wait_and_sample(seconds=recovery_seconds, adapter=adapter, timeline=timeline, wait=wait)
         if any(not timeline.rtp[phase] for phase in ("before", "during", "after")):
             raise RuntimeBlocked("raw RTP trace is missing a required loss phase")
