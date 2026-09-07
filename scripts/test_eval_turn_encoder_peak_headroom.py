@@ -154,6 +154,19 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
         self.assertEqual(sampler.abort_reasons[0]["reason"], "ambient sampling failure")
 
+    def test_sampler_health_stays_failed_after_a_later_recovery_sample(self):
+        snapshots = iter([OSError("ps unavailable"), self._snapshot()])
+        def reader():
+            item = next(snapshots)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        sampler = MODULE._PeakAmbientSampler(snapshot_reader=reader)
+        sampler._sample_once(phase="PREFLIGHT")
+        sampler._sample_once(phase="RUNNING")
+        self.assertFalse(sampler.healthy.is_set())
+        self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
+
     def test_forbidden_process_evidence_is_sanitized(self):
         snapshot = self._snapshot()
         snapshot["processes"].append({"pid": 42, "rssKiB": 2, "cpuPercent": 6.0, "command": "/usr/bin/pytest private-argument"})

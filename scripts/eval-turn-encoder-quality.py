@@ -73,6 +73,7 @@ class _PeakAmbientSampler:
         self._last_tick_ns: int | None = None
         self._sequence = 0
         self._health = {"status": "STARTING", "lastError": None}
+        self._health_failed = False
 
     @staticmethod
     def _mysql_start_epoch(pid: int) -> str:
@@ -179,13 +180,15 @@ class _PeakAmbientSampler:
                 self.samples.append(sample)
                 if phase == "PREFLIGHT":
                     self._preflight_samples.append(sample)
-                self._health = {"status": "HEALTHY", "lastError": None}
-                self.healthy.set()
+                if not self._health_failed:
+                    self._health = {"status": "HEALTHY", "lastError": None}
+                    self.healthy.set()
                 self.health_ready.set()
                 return sample
         except Exception as exc:  # ps/status failures must make qualification impossible.
             with self._lock:
                 self.healthy.clear()
+                self._health_failed = True
                 self._health = {"status": "FAILED", "lastError": type(exc).__name__}
                 self._abort("INCONCLUSIVE", "ambient sampling failure", error=type(exc).__name__)
                 self.health_ready.set()
