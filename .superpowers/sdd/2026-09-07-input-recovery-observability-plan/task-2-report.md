@@ -97,3 +97,52 @@ The parent-thread baseline for this isolated branch was Viewer **747/747** on BA
 - `2cf87431fec71a0646c2345e7f3b154168630158` — `feat(diagnostics): trace sanitized viewer input decisions`
 - `24f8d51` — `docs(diagnostics): record Task 2 input trace evidence` (this report).
 - No merge, push, or main-checkout mutation was performed.
+
+## Fix round 1 — review findings (FIX_BASE `ddede163f0af802cec0ffb4575b652dc52d8e0a7`)
+
+### Covering implementation and tests
+
+- `web-client/js/input.js`: exact reason canonicalization; current-gate/visibility/active-lease incident eligibility; nested trace-scope restoration; mobile dispatch gate before the real keyboard controller; touch adapter trace callbacks; touch-only listener ownership; and safe event-ID handoff for external mobile actions.
+- `web-client/js/mobile-text-input.js`: explicit trace options for external actions; at-most-once business callback behavior when tracing throws; and composition-end eligibility evaluated after `composing` is cleared while deferred drains retain only their active drain event ID.
+- `web-client/js/touch-input-adapter.js`: bounded per-pointer gesture attribution and trace wrappers around deferred down/up sends; intentionally unassociated move/wheel/toolbar sends remain null; hook failures never replay a business callback.
+- `web-client/js/input.test.js`: exact-prefix privacy canaries, accepted mobile gate-before-transport ordering, and real Input/adapter/collector physical DOM plus ACK correlation.
+- `web-client/js/input-recovery.test.js`: real touch and IME accepted writes retain event IDs and current-attempt/epoch timeout incidents without raw text/lease/coordinates.
+- `web-client/js/touch-input-adapter.test.js`: physical down/up attribution versus deliberate null toolbar attribution, and callback-after-send-throws non-replay.
+
+### RED evidence
+
+1. Finding 1: `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-trace-browser-probe.py` on reviewed HEAD reported `acceptedPointerSends=2`, `acceptedKeyboardSends=2`, but `allDomSendsHaveAssociatedAck=false`; the down records had `eventId=null` while the corresponding up records retained IDs. The direct regression `node --test --test-name-pattern='touch dispatch attributes' web-client/js/touch-input-adapter.test.js` failed with actual callback DOM phases `[]` instead of `['down','up']`.
+2. Finding 2: `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-mobile-incident-probe.py` reported physical `2 writes/2 timeouts/1 incident`, touch `2/2/0`, and IME `1/1/0`. The new real fixture test `node --test --test-name-pattern='touch and IME reliable writes retain' web-client/js/input-recovery.test.js` first failed its safe touch event-ID assertion, then (after touch attribution) failed because the IME timeout had no incident. The root probe remained the independent RED reproduction.
+3. Finding 3: `node --test web-client/js/input.test.js` after adding the prefix-attack test reported **103 tests, 102 pass, 1 fail**; `runtime-phase:active:PASSWORD_CANARY`, `media-state:active:TEXT_CANARY`, and a long suffix were retained. The targeted RED was the expected exact bounded reason list versus those leaked suffixes.
+4. Finding 4: `node --test --test-name-pattern='accepted mobile text records its gate' web-client/js/input.test.js` failed because the accepted sequence was `dom-received, transport-send`, missing `gate`.
+
+### GREEN evidence
+
+- `node --test web-client/js/input-trace.test.js web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/diagnostic.test.js web-client/js/webrtc.test.js`: **373 tests, 373 pass, 0 fail**.
+- `node --test web-client/js/mobile-text-input.test.js web-client/js/touch-input-adapter.test.js`: **57 tests, 57 pass, 0 fail**.
+- `NODE_PATH=/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/node_modules node --test signal-server/test/web-asset-build.test.js`: **5 tests, 5 pass, 0 fail**.
+- `set -o pipefail; node --test web-client/css/*.test.js web-client/js/*.test.js 2>&1 | tail -20`: **771 tests, 771 pass, 0 fail**.
+- `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-trace-browser-probe.py` now reports `allDomSendsHaveAssociatedAck=true`, four safe send/ACK pairs with event IDs `1..4`, and `pendingAckCount=0`.
+- `python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-mobile-incident-probe.py` now reports physical **2 accepted writes/2 ACK timeouts/1 `input-ack-timeout` incident**, touch **2/2/1**, and IME **1/1/1**. All incidents retain `connectionAttemptId='recovery-attempt-1'` and `leaseEpoch=7`.
+- `node --check` passed for all three changed production JavaScript files; `git diff --check` passed.
+
+### Privacy, stress, correlation, and handoff evidence
+
+- The new exact-prefix test rejects `PASSWORD_CANARY`, `TEXT_CANARY`, and a 100-repeat `SUFFIX_CANARY` from serialized diagnostic state. Existing collector and recovery tests continue to reject raw text, key/code, payload, coordinates, DOM labels/values, lease IDs, and tokens.
+- Existing collector regressions remain green for the 64 unresolved-hash slot bound under ring churn, 256-entry/64 KiB snapshot bounds, 256 reliable ACK waiters, actual receiver acceptance versus status, late ACK classification, and stale same-ID identity not clearing the current waiter.
+- Actual touch gesture sends retain only the active pointer’s event ID; mobile text retains only the active DOM event or one deferred drain ID. No event-ID history map or unbounded lifecycle structure was added. Intentional move/wheel and toolbar sends remain unassociated.
+- Nested physical keyboard/pointer sends restore their enclosing synchronous scope, while top-level DOM listeners clear it. Lifecycle/ACK/recovery records still clear context, preventing stale DOM attribution after dispatch. A trace hook that throws after a send leaves the original result intact and invokes the business callback once.
+- Accepted mobile text is verified through real Input + MobileTextInput + RemoteKeyboardController + collector hooks as `dom-received → gate(accepted) → transport-send`, with the same event ID on all three records. The touch/IME timeout test uses the real Input adapters and collector, not wrapper-only assertions.
+- Diagnostic deferred handoff, classic global Input resolution, and WebRTC lifecycle evidence from the initial Task 2 report remain unchanged; this round does not add upload, Host, Signal, Quartz, or live/public behavior.
+
+### Self-review and concerns
+
+- Changes remain tracing-only. Touch changes add callbacks and bounded attribution around existing sends; gesture recognition, send results, recovery ownership, control authorization, wire envelopes, lease behavior, and protocol fields are unchanged. The separate Task 1 normal-composition UI follow-up remains untouched.
+- All evidence is offline Node/VM or the supplied offline Chromium probes. Physical devices, system IME, native Quartz effects, live WebRTC, public origin/tunnel, and production watcher behavior are **NOT RUN** and are not claimed here.
+- The existing WebRTC VM `fetch is not defined` STUN fallback warning remains a baseline offline warning; it caused no test failure. Asset build uses the pre-existing `NODE_PATH` dependency tree; no dependency install or service operation was performed.
+- Parent review remains the acceptance gate. The report is append-only and the supplied probe fixtures were not modified.
+
+### Fix-round scoped commits
+
+- `53ad8bd` — `fix(diagnostics): preserve mobile input trace identity`.
+- Pending report commit: `docs(diagnostics): record Task 2 fix-round evidence`.
