@@ -65,7 +65,7 @@ DOM → Viewer gate → Viewer transport enqueue ─ DataChannel ─→ Host ing
 
 DataChannel 不经过 Signal；因此 Signal 无记录不能单独证明丢包。输入 enqueue 只表示本地接受排队；Host `applied` 表示 native adapter 返回成功，不冒充人眼看到系统效果。
 
-InputTrace 在 critical bundle 中加载，早于 Input；Diagnostic core 持有同一 collector，deferred diagnostic 加载不能清除历史。接口：`InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`。所有参数可省略，时钟/计时器默认使用当前环境、onIncident默认为noop。record 不等待哈希或网络，不影响输入结果；DOM阶段返回新分配的eventId，其他阶段返回关联eventId或null。snapshot为 `{ schemaVersion: 1, events, counters }`。计时器最多一个，处理最近ACK deadline；onIncident只回传有限reason，Diagnostic core决定是否满足自动上报条件，回调异常不得影响输入。
+InputTrace 在 critical bundle 中加载，早于 Input；Diagnostic core 持有同一 collector，deferred diagnostic 加载不能清除历史。接口：`InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`。所有参数可省略，时钟/计时器默认使用当前环境、onIncident默认为noop。record 不等待哈希或网络，不影响输入结果；DOM阶段返回新分配的eventId，其他阶段返回关联eventId或null。snapshot为 `{ schemaVersion: 1, events, counters }`。计时器最多一个，处理最近ACK deadline；`onIncident(reason, { connectionAttemptId, leaseEpoch })`只回传有限reason和触发报文的安全归属，Diagnostic core比较当前attempt/epoch并决定是否满足自动上报条件。旧会话超时可留轨迹，但不能误报为新连接故障；回调异常不得影响输入。
 
 stage 白名单：`dom-received, gate, transport-send, ack, ack-timeout, lifecycle, recovery`。DOM 记录分配递增 eventId，仅描述 keyboard/pointer/text/control 的类别和 phase；Input 将同步发送的 existing inputIds 映射到该 eventId，IME 延后发送使用单独事件关联，不虚构一一对应。
 
