@@ -862,11 +862,9 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
         # The gateway's fixed Lab capacity is one readiness allocation plus
         # distinct Viewer and Host allocations, all through the published
         # endpoint rather than coturn's private listener.
-        allocations = [reply]
-        for _ in range(1):
-            allocations.append(module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3))
-        assert len({row["allocation"] for row in allocations}) == 2
+        viewer = module.permission_send_data_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, timeout=3)
         binding = module.channel_media_binding_echo(host, int(port), credentials["turnUsername"], credentials["turnPassword"], echo.stdout.strip(), 59000, rtp_ssrc=0x10203040, timeout=3)
+        assert len({reply["allocation"], viewer["allocation"], binding["allocationRelay"]["port"]}) == 3
         assert isinstance(binding.get("allocationRelay"), dict)
         assert binding["encapsulation"] == "channel-data" and binding["rtpSsrc"] == 0x10203040
         assert binding["outerEgress"]["destinationPort"] > 0 and binding["allocationRelay"]["port"] >= 51000
