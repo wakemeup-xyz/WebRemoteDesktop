@@ -242,6 +242,11 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     bootstrap = LabTurnBootstrap(manifest.selected_turn["id"], manifest.selected_turn["fingerprint"], (f"turn:{host}:{port}?transport=udp",), credentials["turnUsername"], credentials["turnPassword"])
     lab, holder = LabRun(viewer_token=viewer_token), {"adapter": None, "authority": None, "scope": None}
     try:
+        def fixture_probe() -> None:
+            from turn_udp_probe import allocate_probe
+            endpoint_host, endpoint_port = str(prepared["turnEndpoint"]).rsplit(":", 1)
+            try: allocate_probe(endpoint_host, int(endpoint_port), credentials["turnUsername"], credentials["turnPassword"], timeout=2.0)
+            except Exception as exc: raise RuntimeBlocked("fixture TURN UDP Allocate/relay probe failed") from exc
         def fixture_start() -> None:
             # Compose readiness was verified before this callback.  Signal,
             # Host, and Viewer receive only the generated fixture credential.
@@ -284,7 +289,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             finally: verifier.close()
             if final.get("status") != "PASS": raise RuntimeBlocked("sealed final loss verification did not pass")
             return {"transaction": result, "final": final}
-        return run_isolated_loss_lifecycle(prepared=prepared, compose_file=Path(__file__).with_name("compose.yaml"), authority=None, authority_factory=make_authority, fixture_start=fixture_start, run=DockerRuntimeProbe._run_command, drive=drive)
+        return run_isolated_loss_lifecycle(prepared=prepared, compose_file=Path(__file__).with_name("compose.yaml"), authority=None, authority_factory=make_authority, fixture_start=fixture_start, fixture_probe=fixture_probe, run=DockerRuntimeProbe._run_command, drive=drive)
     finally:
         adapter = holder.get("adapter")
         if adapter is not None: adapter.close()

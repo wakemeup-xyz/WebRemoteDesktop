@@ -1245,6 +1245,7 @@ def verify_started_fixture(prepared: Mapping[str, str], *, run: Callable[[list[s
 def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Path, authority: LabReceiverBridgeAuthority | None,
                                 authority_factory: Callable[[], LabReceiverBridgeAuthority] | None = None,
                                 fixture_start: Callable[[], None] | None = None,
+                                fixture_probe: Callable[[], None] | None = None,
                                 run: Callable[[list[str]], tuple[int, str, str]], drive: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
     """Start the disposable TURN fixture before creating any Lab peer.
 
@@ -1258,6 +1259,7 @@ def run_isolated_loss_lifecycle(*, prepared: Mapping[str, str], compose_file: Pa
         code, _out, err = run([*command, "up", "-d"])
         if code: raise RuntimeBlocked(f"isolated compose up failed: {err}")
         verify_started_fixture(prepared, run=run)
+        if fixture_probe is not None: fixture_probe()
         if fixture_start is not None: fixture_start()
         if active_authority is None:
             if authority_factory is None: raise RuntimeBlocked("fixture authority is unavailable")
