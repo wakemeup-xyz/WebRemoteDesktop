@@ -369,6 +369,132 @@ test('touch and IME reliable writes retain bounded attribution for timeout incid
   assert.doesNotMatch(json, /ime-canary|recovery-lease-0001|relX|relY/);
 });
 
+test('deferred long-press retains the originating desktop focus for timeout incidents', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => incidents.push({ reason, identity }),
+  });
+  h.video.dispatch('pointerdown', {
+    pointerType: 'touch', pointerId: 11, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 1,
+  });
+  h.advance(550);
+
+  const snapshot = h.trace.snapshot();
+  const dom = snapshot.events.find(({ stage, inputType, action }) => (
+    stage === 'dom-received' && inputType === 'pointer' && action === 'down'
+  ));
+  const down = snapshot.events.find(({ stage, inputType, action, accepted }) => (
+    stage === 'transport-send' && inputType === 'pointer' && action === 'down' && accepted === true
+  ));
+  assert.ok(dom);
+  assert.ok(down);
+  assert.equal(down.eventId, dom.eventId);
+
+  h.advance(3001);
+  assert.equal(h.trace.snapshot().counters.ackTimeoutCount, 1);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].reason, 'input-ack-timeout');
+  assert.equal(incidents[0].identity.connectionAttemptId, 'recovery-attempt-1');
+  assert.equal(incidents[0].identity.leaseEpoch, 7);
+});
+
+test('deferred drag-start retains the originating desktop focus for timeout incidents', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => incidents.push({ reason, identity }),
+  });
+  h.video.dispatch('pointerdown', {
+    pointerType: 'touch', pointerId: 12, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 1,
+  });
+  h.video.dispatch('pointermove', {
+    pointerType: 'touch', pointerId: 12, isPrimary: true,
+    clientX: 430, clientY: 300, buttons: 1,
+  });
+
+  const snapshot = h.trace.snapshot();
+  const dom = snapshot.events.find(({ stage, inputType, action }) => (
+    stage === 'dom-received' && inputType === 'pointer' && action === 'down'
+  ));
+  const down = snapshot.events.find(({ stage, inputType, action, accepted }) => (
+    stage === 'transport-send' && inputType === 'pointer' && action === 'down' && accepted === true
+  ));
+  assert.ok(dom);
+  assert.ok(down);
+  assert.equal(down.eventId, dom.eventId);
+
+  h.advance(3001);
+  assert.equal(h.trace.snapshot().counters.ackTimeoutCount, 1);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].reason, 'input-ack-timeout');
+  assert.equal(incidents[0].identity.connectionAttemptId, 'recovery-attempt-1');
+  assert.equal(incidents[0].identity.leaseEpoch, 7);
+});
+
+test('deferred mobile text drain retains the originating mobile focus for timeout incidents', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => incidents.push({ reason, identity }),
+  });
+  const mobileInput = h.elements.get('mobileTextInput');
+  mobileInput.value = 'abcdefghijklmnopq';
+  mobileInput.dispatch('input');
+  const initialText = h.writes().find(({ action }) => action === 'text');
+  assert.ok(initialText);
+  h.ack(initialText);
+
+  mobileInput.value = '\u200b';
+  mobileInput.dispatch('input');
+  const immediateDeletes = h.writes().filter(({ action }) => action === 'batch');
+  assert.equal(immediateDeletes.length, 16);
+  immediateDeletes.forEach((payload) => h.ack(payload));
+  h.advance(0);
+
+  const snapshot = h.trace.snapshot();
+  const dom = snapshot.events.filter(({ stage, inputType, action }) => (
+    stage === 'dom-received' && inputType === 'text' && action === 'text'
+  )).at(-1);
+  const deletes = snapshot.events.filter(({ stage, inputType, action, accepted }) => (
+    stage === 'transport-send' && inputType === 'keyboard' && action === 'batch' && accepted === true
+  ));
+  assert.ok(dom);
+  assert.equal(deletes.length, 17);
+  assert.ok(deletes.every(({ eventId }) => eventId === dom.eventId));
+
+  h.advance(3001);
+  assert.equal(h.trace.snapshot().counters.ackTimeoutCount, 1);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].reason, 'input-ack-timeout');
+  assert.equal(incidents[0].identity.connectionAttemptId, 'recovery-attempt-1');
+  assert.equal(incidents[0].identity.leaseEpoch, 7);
+});
+
+test('deferred touch send refreshes current visibility before incident eligibility', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({
+    touchPoints: 1,
+    onIncident: (reason, identity) => incidents.push({ reason, identity }),
+  });
+  h.video.dispatch('pointerdown', {
+    pointerType: 'touch', pointerId: 13, isPrimary: true,
+    clientX: 400, clientY: 300, buttons: 1,
+  });
+  h.document.hidden = true;
+  h.advance(550);
+
+  const down = h.trace.snapshot().events.find(({ stage, inputType, action, accepted }) => (
+    stage === 'transport-send' && inputType === 'pointer' && action === 'down' && accepted === true
+  ));
+  assert.ok(down);
+  h.advance(3001);
+  assert.equal(h.trace.snapshot().counters.ackTimeoutCount, 1);
+  assert.equal(incidents.length, 0);
+});
+
 test('recovery API unlocks a click and key only after both owned reset ACKs', () => {
   const h = loadRecoveryFixture();
   h.pointer('pointerdown');

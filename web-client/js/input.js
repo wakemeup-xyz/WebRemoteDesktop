@@ -1245,8 +1245,10 @@ const Input = {
       || !this._isMobileEditingActionAllowed() || typeof send !== 'function') return false;
     if (this.mobileTextInputAdapter?.runExternalAction) {
       const context = this._inputTraceContext;
+      const focusKind = typeof context?.focusKind === 'string' ? context.focusKind : null;
       return this.mobileTextInputAdapter.runExternalAction(action, send, {
         eventId: Number.isSafeInteger(context?.eventId) ? context.eventId : null,
+        ...(focusKind ? { focusKind } : {}),
       });
     }
     let result;

@@ -74,8 +74,8 @@ test('touch dispatch attributes each physical send without inheriting an unassoc
       return ++nextEventId;
     },
     onTraceEventEnd(eventId) { calls.push({ kind: 'end', eventId }); },
-    withTraceEvent(eventId, send) {
-      calls.push({ kind: 'send', eventId });
+    withTraceEvent(eventId, send, options) {
+      calls.push({ kind: 'send', eventId, focusKind: options?.focusKind });
       return send();
     },
   });
@@ -87,8 +87,8 @@ test('touch dispatch attributes each physical send without inheriting an unassoc
   assert.deepEqual(calls.filter(({ kind }) => kind === 'dom').map(({ meta }) => meta.phase), [
     'down', 'up',
   ]);
-  assert.deepEqual(calls.filter(({ kind }) => kind === 'send').map(({ eventId }) => eventId), [
-    1, 2, null, null, null,
+  assert.deepEqual(calls.filter(({ kind }) => kind === 'send').map(({ eventId, focusKind }) => [eventId, focusKind]), [
+    [1, 'desktop'], [2, 'desktop'], [null, undefined], [null, undefined], [null, undefined],
   ]);
   assert.equal(calls.filter(({ kind }) => kind === 'end').length, 2);
 });

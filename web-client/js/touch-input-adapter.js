@@ -62,7 +62,9 @@
         }
       };
       const traceOptions = {
-        ...(eventId === null ? { incidentEligible: false } : { refreshEligibility: true }),
+        ...(eventId === null
+          ? { incidentEligible: false }
+          : { refreshEligibility: true, focusKind: 'desktop' }),
         ...options,
       };
       try {
@@ -97,14 +99,14 @@
       if (generation === before) clearGesture(reason || 'geometry-changed');
       return false;
     };
-    const commitDown = (payload, reason, eventId = null) => {
+    const commitDown = (payload, reason, eventId = null, traceOptions = {}) => {
       let attempted = false; let inputId = null;
       const send = () => {
         attempted = true;
         inputId = sendMouse('down', payload);
         return inputId;
       };
-      const accepted = Boolean(traced(eventId, () => commitGesture(send)));
+      const accepted = Boolean(traced(eventId, () => commitGesture(send), traceOptions));
       if (!accepted || !attempted || !inputId) {
         clearGesture(reason || 'down-rejected');
         if (attempted && !inputId) emitReset(reason || 'down-failed');
@@ -170,7 +172,8 @@
         const clientX = Number(event.clientX) || 0, clientY = Number(event.clientY) || 0;
         pointers.set(event.pointerId, {
           startPoint: { ...point }, point: { ...point }, startedAt: clock(),
-          startClientX: clientX, startClientY: clientY, clientX, clientY, traceEventId,
+          startClientX: clientX, startClientY: clientY, clientX, clientY,
+          traceEventId, traceFocusKind: 'desktop',
         });
         remember(point); element?.setPointerCapture?.(event.pointerId);
         if (pointers.size > 1) {
@@ -193,6 +196,7 @@
           const id = p && commitDown(
             { ...p, button: 'right', clickCount: 1, buttons: 2 },
             'long-press-down-failed', pointer?.traceEventId,
+            { focusKind: pointer?.traceFocusKind || 'desktop' },
           );
           if (id && generation === timerGeneration) activeButton = 'right';
         }, LONG_PRESS_MS);
@@ -221,6 +225,7 @@
       const id = commitDown(
         { ...p.startPoint, button: 'left', clickCount: 1, buttons: 1 },
         'drag-down-failed', p.traceEventId,
+        { focusKind: p.traceFocusKind || 'desktop' },
       );
       if (!id || generation !== downGeneration) return;
       activeButton = 'left'; state = STATES.DRAGGING; queueMove(point, 1);
@@ -259,7 +264,9 @@
           const clickCount = Number(getClickCount({ button: 0, timeStamp: event.timeStamp, clientX: event.clientX, clientY: event.clientY })) || 1;
           const down = { ...p.startPoint, button: 'left', clickCount, buttons: 1 };
           const tapGeneration = generation;
-          const id = commitDown(down, 'tap-down-failed', p.traceEventId);
+          const id = commitDown(down, 'tap-down-failed', p.traceEventId, {
+            focusKind: p.traceFocusKind || 'desktop',
+          });
           if (generation !== tapGeneration) return;
           if (id) emit(
             'up', { ...point, button: 'left', clickCount, buttons: 0 }, 'tap-up-failed', traceEventId,

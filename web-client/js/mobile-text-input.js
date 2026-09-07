@@ -8,6 +8,7 @@
   const SENTINEL = '\u200B';
   const CONTROL_KEYS = new Set(['Backspace', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   const TRANSPORT_STATES = new Set(['ready', 'blocked', 'revoked', 'reacquire-required']);
+  const TRACE_FOCUS_KIND = 'mobile-text';
 
   function create(options) {
     const config = options || {};
@@ -57,6 +58,7 @@
     let drainTimer = null;
     let activeTraceEventId = null;
     let drainTraceEventId = null;
+    let drainTraceFocusKind = null;
     let contextRecoveryRequired = false;
     const listeners = [];
 
@@ -198,6 +200,7 @@
       if (drainTimer !== null) clearTimeout(drainTimer);
       drainTimer = null;
       drainTraceEventId = null;
+      drainTraceFocusKind = null;
     }
 
     function cancelDrain() {
@@ -251,7 +254,9 @@
       };
       try {
         const traceOptions = {
-          ...(eventId === null ? { incidentEligible: false } : { refreshEligibility: true }),
+          ...(eventId === null
+            ? { incidentEligible: false }
+            : { refreshEligibility: true, focusKind: TRACE_FOCUS_KIND }),
           ...options,
         };
         return withTraceEvent(eventId, invoke, traceOptions);
@@ -357,20 +362,28 @@
       return false;
     }
 
-    function scheduleDrain(traceEventId = activeTraceEventId) {
+    function scheduleDrain(traceEventId = activeTraceEventId, traceFocusKind = TRACE_FOCUS_KIND) {
       if (drainTimer !== null || !drainActive) return;
       const scheduledGeneration = generation;
       drainTraceEventId = traceEventId;
+      drainTraceFocusKind = traceFocusKind || TRACE_FOCUS_KIND;
       drainTimer = setTimeout(() => {
         drainTimer = null;
         const deferredEventId = drainTraceEventId;
+        const deferredFocusKind = drainTraceFocusKind;
         drainTraceEventId = null;
+        drainTraceFocusKind = null;
         if (scheduledGeneration !== generation || !drainActive) return;
-        processDiff({ fromDrain: true, traceEventId: deferredEventId });
+        processDiff({
+          fromDrain: true, traceEventId: deferredEventId, traceFocusKind: deferredFocusKind,
+        });
       }, 0);
     }
 
-    function processDiff({ force = false, fromDrain = false, traceEventId = activeTraceEventId } = {}) {
+    function processDiff({
+      force = false, fromDrain = false, traceEventId = activeTraceEventId,
+      traceFocusKind = TRACE_FOCUS_KIND,
+    } = {}) {
       if (composing) {
         traceGate(false, 'draft-composing', 'composition');
         if (fromDrain || drainActive) {
@@ -458,7 +471,10 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendWithTrace(() => sendKey('Backspace'), traceEventId ?? activeTraceEventId);
+        const result = sendWithTrace(
+          () => sendKey('Backspace'), traceEventId ?? activeTraceEventId,
+          { focusKind: traceFocusKind },
+        );
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -478,7 +494,7 @@
 
       if (diff.deleted.length > sentDeletes) {
         drainActive = true;
-        scheduleDrain(traceEventId ?? activeTraceEventId);
+        scheduleDrain(traceEventId ?? activeTraceEventId, traceFocusKind);
         notifyState();
         return false;
       }
@@ -497,7 +513,10 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendWithTrace(() => sendText(inserted), traceEventId ?? activeTraceEventId);
+        const result = sendWithTrace(
+          () => sendText(inserted), traceEventId ?? activeTraceEventId,
+          { focusKind: traceFocusKind },
+        );
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -588,7 +607,9 @@
       // Evaluate commit eligibility after composition has ended. A real
       // composition commit is not the same as an ordinary composing draft.
       traceDom('composition', 'compositionend');
-      if (!retryRequired) flushDiff({ traceEventId: activeTraceEventId });
+      if (!retryRequired) flushDiff({
+        traceEventId: activeTraceEventId, traceFocusKind: TRACE_FOCUS_KIND,
+      });
       compositionBaseValue = '';
       notifyState();
     }
