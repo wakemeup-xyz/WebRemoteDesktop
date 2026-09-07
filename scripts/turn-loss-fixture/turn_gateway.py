@@ -233,9 +233,9 @@ class GatewayObservationAuthority:
                 "pairEvidence": pair_evidence, "pairEvidenceDigest": pair_digest, "observationCount": count}
         return {"status": "SEALED", **self._signed(body)}
 
-    def receipt(self, event_handle: str, store: GatewayCounterStore) -> dict:
+    def receipt(self, event_handle: str, store: GatewayCounterStore, binding_receipt_digest: str | None) -> dict:
         count = store.count(event_handle)
-        body = {**self.manifest(), "eventHandle": event_handle, "mediaBindingDigest": count["mediaBindingDigest"], "gatewayCounters": count}
+        body = {**self.manifest(), "eventHandle": event_handle, "mediaBindingDigest": count["mediaBindingDigest"], "bindingReceiptDigest": binding_receipt_digest, "gatewayCounters": count}
         return {"status": "SEALED", "receipt": self._signed(body)}
 
     def status(self) -> dict:
@@ -443,8 +443,9 @@ class InlineTurnGateway:
                     elif operation == "select-media-binding" and set(raw) == {"operation", "controlToken", "expected"}:
                         reply = authority.select(raw["expected"])
                         gateway._sealed_binding = dict(reply)
+                        gateway._sealed_binding["bindingReceiptDigest"] = hashlib.sha256(authority._canonical(reply)).hexdigest()
                     elif operation == "event-receipt" and set(raw) == {"operation", "controlToken", "eventHandle"} and isinstance(raw.get("eventHandle"), str) and gateway._counter_store is not None:
-                        reply = authority.receipt(raw["eventHandle"], gateway._counter_store)
+                        reply = authority.receipt(raw["eventHandle"], gateway._counter_store, gateway._sealed_binding.get("bindingReceiptDigest") if isinstance(gateway._sealed_binding, dict) else None)
                     else:
                         raise GatewayBlocked("gateway authority operation is unavailable")
                 except Exception as exc:

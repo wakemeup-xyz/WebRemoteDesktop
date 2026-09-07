@@ -336,7 +336,7 @@ def verify_gateway_binding(sealed: Mapping[str, Any], *, run_id: str, realm: str
             "pairEvidence": dict(pair_evidence), "pairEvidenceDigest": pair_digest}
 
 
-def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: str, event: Mapping[str, Any], expected_gateway_identity: Mapping[str, Any] | None = None, expected_binding_digest: str | None = None, seen_receipt_ids: set[str] | None = None) -> dict[str, Any]:
+def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: str, event: Mapping[str, Any], expected_gateway_identity: Mapping[str, Any] | None = None, expected_binding_digest: str | None = None, expected_binding_receipt_digest: str | None = None, seen_receipt_ids: set[str] | None = None) -> dict[str, Any]:
     """Verify the gateway's Ed25519 event receipt without trusting shared JSON."""
     if not isinstance(receipt, Mapping) or receipt.get("signatureAlgorithm") != "Ed25519":
         raise RuntimeError("gateway receipt signature is unavailable")
@@ -350,6 +350,8 @@ def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: st
         raise RuntimeError("gateway receipt identity changed")
     if expected_binding_digest is not None and receipt.get("mediaBindingDigest") != expected_binding_digest:
         raise RuntimeError("gateway receipt binding changed")
+    if expected_binding_receipt_digest is not None and receipt.get("bindingReceiptDigest") != expected_binding_receipt_digest:
+        raise RuntimeError("gateway receipt binding receipt changed")
     receipt_id = receipt.get("signature")
     if seen_receipt_ids is not None:
         if not isinstance(receipt_id, str) or receipt_id in seen_receipt_ids: raise RuntimeError("gateway receipt replayed")
@@ -410,7 +412,7 @@ class GatewayCounterBackend:
         receipt = reply.get("receipt")
         if not isinstance(receipt, dict):
             raise RuntimeError("gateway receipt is unavailable")
-        verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {})))
+        verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {})), expected_binding_receipt_digest=event.get("bindingReceiptDigest"))
         return receipt
 
     def _verified_receipt(self, event: Mapping[str, Any]) -> dict[str, Any]:
@@ -455,7 +457,7 @@ class GatewayCounterBackend:
                 or not isinstance(started, int) or not isinstance(ended, int) or ended < started):
             raise RuntimeError("gateway event binding is unavailable")
         receipt = self._receipt_for(event) if self._authority_endpoint is not None else None
-        count = (verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {}))) if receipt is not None else self._store.count(event_id))
+        count = (verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {})), expected_binding_receipt_digest=event.get("bindingReceiptDigest")) if receipt is not None else self._store.count(event_id))
         digest = GatewayCounterStore._digest_binding(media)
         if (count["eventHandle"] != event_id or count["mediaBindingDigest"] != digest
                 or count["startedMonotonicNs"] != started or count["deadlineMonotonicNs"] != event.get("deadlineMonotonicNs")
@@ -987,7 +989,7 @@ def _received_sequences_for_capture(value: Any, manifest: LossFixtureManifest, e
                 or event.get("actualDropCount") != counter["droppedCount"]):
             raise RuntimeError("gateway counter totals do not bind the cleared event")
     if has_receipt:
-        receipt_counter = verify_gateway_receipt(value["gatewayReceipt"], run_id=manifest.run_id, realm=manifest.realm, event=event)
+        receipt_counter = verify_gateway_receipt(value["gatewayReceipt"], run_id=manifest.run_id, realm=manifest.realm, event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {})), expected_binding_receipt_digest=event.get("bindingReceiptDigest"))
         if receipt_counter != counter:
             raise RuntimeError("gateway receipt does not bind capture counters")
     cursor, groups = value.get("cursor"), value.get("receivedRtp")
