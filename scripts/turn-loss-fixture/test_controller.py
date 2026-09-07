@@ -535,9 +535,27 @@ def _signed_receiver_bridge(raw_manifest, event, *, verifier=b"live-lab-verifier
     if isinstance(capture, dict) and not capture.get("authoritySignature"):
         capture["authoritySignature"] = __import__("hmac").new(verifier, json.dumps({key: value for key, value in capture.items() if key != "authoritySignature"}, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
     if isinstance(capture, dict):
-        archive = dict(capture); archive_handle = capture["eventHandle"] + "-archive"; archive["eventHandle"] = archive_handle
+        # Model two actual clears.  The prior event has its own loss interval,
+        # packet timestamps, capture digest, authority HMAC, and recovery row;
+        # a copied, signature-shaped archive is intentionally insufficient.
+        archive_handle = capture["eventHandle"] + "-prior"
+        archive_event = {key: value for key, value in event.items() if key != "cleared"}
+        archive_event.update({"comment": archive_handle, "startedMonotonicNs": event["startedMonotonicNs"] - 2_000_000, "endedMonotonicNs": event["endedMonotonicNs"] - 1_000_000})
+        archive = json.loads(json.dumps(capture))
+        archive["eventHandle"] = archive_handle
+        for phase in ("before", "during", "after"):
+            for row in archive["receivedRtp"][phase]:
+                row["fixtureClockNs"] -= 2_000_000
+        digest_body = {key: value for key, value in archive.items() if key not in {"captureDigest", "authoritySignature"}}
+        archive["captureDigest"] = hashlib.sha256(json.dumps(digest_body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         archive["authoritySignature"] = __import__("hmac").new(verifier, json.dumps({key: value for key, value in archive.items() if key != "authoritySignature"}, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
-        bridge["loss"]["eventHandles"] = [capture["eventHandle"], archive_handle]; bridge["loss"]["receiverCaptures"] = {capture["eventHandle"]: capture, archive_handle: archive}
+        bridge["loss"]["eventHandles"] = [capture["eventHandle"], archive_handle]
+        bridge["loss"]["receiverCaptures"] = {capture["eventHandle"]: capture, archive_handle: archive}
+        bridge["loss"]["eventBindings"] = {capture["eventHandle"]: {key: value for key, value in event.items() if key != "cleared"}, archive_handle: archive_event}
+        bridge["timeline"]["recovery"] = [
+            {"eventHandle": archive_handle, "clearReplyObservedNs": 1, "feedbackObservedNs": 2, "idrObservedNs": 3, "paintObservedNs": 4, "tapEpoch": 1},
+            {"eventHandle": capture["eventHandle"], "clearReplyObservedNs": 10, "feedbackObservedNs": 11, "idrObservedNs": 12, "paintObservedNs": 13, "tapEpoch": 2},
+        ]
     bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     return bridge
 
@@ -578,6 +596,69 @@ def test_authenticated_bridge_rejects_forgery_replay_cross_attempt_and_partial_r
     event = fixture.clear_loss(raw["runId"])
     bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
     mutation(bridge)  # Signature is intentionally not recomputed: persisted JSON is untrusted.
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_signature_shaped_archive_without_its_capture_binding():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    prior = next(handle for handle in bridge["loss"]["eventHandles"] if handle != event["comment"])
+    # Even a bridge re-signed by the Lab key cannot turn a retained archive
+    # into approved evidence when it lacks the original clear tuple binding.
+    bridge["loss"]["eventBindings"].pop(prior)
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_signature_shaped_archive_with_mismatched_recovery_set():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    bridge["timeline"]["recovery"] = bridge["timeline"]["recovery"][1:]
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_a_resigned_prior_event_with_wrong_scope_tuple():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    prior = next(handle for handle in bridge["loss"]["eventHandles"] if handle != event["comment"])
+    bridge["loss"]["eventBindings"][prior]["generation"] += 1
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
+    fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
+    assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
+
+
+def test_authenticated_bridge_rejects_a_distinct_final_capture_outside_the_approved_set():
+    raw, backend = manifest(), RecordingBackend()
+    fixture, event, verifier = _signed_fixture(raw, backend)
+    backend.counter = 1
+    fixture.collect_receiver_evidence(raw["runId"])
+    event = fixture.clear_loss(raw["runId"])
+    bridge = _signed_receiver_bridge(raw, event, verifier=verifier)
+    replacement = json.loads(json.dumps(bridge["loss"]["receiverCapture"]))
+    replacement["ssrc"] = 99
+    for phase in ("before", "during", "after"):
+        for row in replacement["receivedRtp"][phase]: row["ssrc"] = 99
+    digest_body = {key: value for key, value in replacement.items() if key not in {"captureDigest", "authoritySignature"}}
+    replacement["captureDigest"] = hashlib.sha256(json.dumps(digest_body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    replacement["authoritySignature"] = __import__("hmac").new(verifier, json.dumps({key: value for key, value in replacement.items() if key != "authoritySignature"}, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
+    bridge["loss"]["receiverCapture"] = replacement
+    bridge["signature"] = controller.sign_receiver_bridge(bridge, verifier)
     fixture._receiver_source = controller.SignedT3T5ReceiverEvidenceSource(bridge, verifier=verifier)
     assert fixture.verify_final_evidence(raw["runId"])["status"] == "BLOCKED"
 

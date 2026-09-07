@@ -668,6 +668,7 @@ class RawLossTimelineCollector:
         self.paint: dict[str, Any] | None = None; self.pc: list[dict[str, Any]] = []
         self.recovery: list[dict[str, Any]] = []; self.tap_epoch = 0; self.arrival_seq = 0
         self._clear: dict[str, Any] | None = None
+        self._seen_host_source_sequences: dict[int, set[int]] = {}
     def set_phase(self, phase: str) -> None:
         if phase not in {*self.rtp, "recovery"}: raise ValueError("loss trace phase invalid")
         self.phase = phase
@@ -717,9 +718,15 @@ class RawLossTimelineCollector:
         if (not isinstance(flush, Mapping) or flush.get("epoch") != raw_epoch or flush.get("accepted") is not True
                 or not isinstance(flush.get("sourceWatermark"), int) or flush["sourceWatermark"] < 0):
             raise ValueError("viewer loss tap has no flush acknowledgement")
+        source_watermark = flush["sourceWatermark"]
+        seen_sources = self._seen_host_source_sequences.setdefault(raw_epoch, set())
         self.arrival_seq += 1
         for event in raw.get("host", []):
-            if not isinstance(event, Mapping): raise ValueError("invalid Host loss tap event")
+            if (not isinstance(event, Mapping) or event.get("tapEpoch") != raw_epoch
+                    or not isinstance(event.get("sourceSeq"), int) or event["sourceSeq"] <= source_watermark
+                    or event["sourceSeq"] in seen_sources):
+                raise ValueError("Host loss tap event is stale, replayed, or outside the flush barrier")
+            seen_sources.add(event["sourceSeq"])
             if event.get("type") == "rtcp_feedback":
                 kind = str(event.get("kind"))
                 if kind not in {"PLI", "FIR"}: raise ValueError("feedback kind invalid")

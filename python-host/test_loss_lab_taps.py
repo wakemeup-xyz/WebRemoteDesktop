@@ -47,3 +47,15 @@ def test_lab_loss_trace_is_disabled_by_default_and_bounded():
     batch = bounded.take_loss_lab_trace_batch(limit=16)
     assert len(batch["events"]) == 2
     assert batch["droppedEventCount"] == 1
+
+
+def test_lab_loss_trace_begin_flushes_old_callbacks_and_returns_source_watermark():
+    registry = FrameTraceRegistry(lab_loss_trace=True)
+    registry.record_lab_rtcp_feedback("PLI")
+    barrier = registry.begin_loss_lab_trace(7)
+    assert barrier == {"epoch": 7, "sourceWatermark": 1}
+    assert registry.take_loss_lab_trace_batch()["events"] == []
+    registry.record_lab_rtcp_feedback("FIR")
+    batch = registry.take_loss_lab_trace_batch()
+    assert batch["tapEpoch"] == 7
+    assert batch["events"] == [{"type": "rtcp_feedback", "kind": "FIR", "monotonicNs": batch["events"][0]["monotonicNs"], "senderId": None, "tapEpoch": 7, "sourceSeq": 2}]

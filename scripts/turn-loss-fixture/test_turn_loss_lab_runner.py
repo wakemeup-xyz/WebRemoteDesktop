@@ -53,7 +53,10 @@ class Adapter:
         sequence = self.samples if self.samples == 1 else self.samples + 10
         host_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "encoderTimestamp": self.samples}
         viewer_key = {"attemptId": "attempt", "generation": 2, "streamId": "video", "captureSeq": self.samples, "wireTimestamp": self.samples}
-        return {"tapEpoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "flushAck": {"epoch": 1 if self.samples <= 31 else (2 if self.samples <= 42 else 3), "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request"}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "staleHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
+        # A new epoch exists only after the runner asks both Viewer and Host
+        # to begin a fresh trace.  Time/sample count must never fabricate it.
+        epoch = self.armed
+        return {"tapEpoch": epoch, "flushAck": {"epoch": epoch, "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": timestamp, "tapEpoch": epoch, "sourceSeq": self.samples * 3 - 2}, {"type": "encoder_idr", "monotonicNs": timestamp, "frameKey": host_key, "requestToken": "request", "tapEpoch": epoch, "sourceSeq": self.samples * 3 - 1}, {"type": "rtp_send", "monotonicNs": timestamp, "frameKey": host_key, "sequence": sequence, "rtpTimestamp": self.samples, "ssrc": 1, "tapEpoch": epoch, "sourceSeq": self.samples * 3}], "rvfc": [{**viewer_key, "rtpTimestamp": self.samples, "viewerAcceptedMs": self.samples, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}], "droppedHostEvents": 0, "staleHostEvents": 0, "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"}, "inbound": {"packetsReceived": self.samples, "packetsLost": 0, "jitter": 0, "width": 1280, "height": 720}}}
 
 
     def read_receiver_capture(self, *, manifest, event):
@@ -75,7 +78,7 @@ def test_runner_drives_loopback_controller_and_its_adapter_taps():
     assert len(result["events"]) == 2
     # Each clear begins a new Viewer/Host trace epoch.  A local collector
     # increment alone would allow stale callbacks from the prior loss.
-    assert adapter.armed == 3 and adapter.samples == 52
+    assert adapter.armed == 3 and adapter.samples == 54
     assert sum(waits) == 50.2 and waits.count(1.0) == 50 and waits.count(0.2) == 1
     assert len(timeline.recovery) == 2
     assert timeline.feedback and timeline.paint and timeline.pc
@@ -218,3 +221,13 @@ def test_runner_full_path_blocks_when_t5_static_callbacks_are_missing():
             assert False, "missing T5 static callback must block"
         except RuntimeError as error:
             assert "static" in str(error)
+
+
+def test_trace_barrier_blocks_until_host_viewer_flush_ack_is_present():
+    class PendingAdapter:
+        def sample_loss_lab_taps(self):
+            return {"tapEpoch": 1, "flushAck": None}
+    waits = []
+    with __import__("pytest").raises(controller.RuntimeBlocked, match="barrier did not acknowledge"):
+        runner._await_trace_flush(adapter=PendingAdapter(), timeline=RawLossTimelineCollector(started_ns=1, ended_ns=2), wait=waits.append, attempts=3)
+    assert waits == [0.05, 0.05, 0.05]

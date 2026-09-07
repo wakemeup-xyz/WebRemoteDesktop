@@ -308,9 +308,9 @@ def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api(
             if "beginLossLabTrace" in script:
                 return True
             key = {"attemptId": "attempt", "generation": 1, "streamId": "video", "captureSeq": 4, "wireTimestamp": 9}
-            return {"tapEpoch": 0, "flushAck": {"epoch": 0, "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3},
-                             {"type": "encoder_idr", "monotonicNs": 4, "frameKey": key, "requestToken": "token"},
-                             {"type": "rtp_send", "monotonicNs": 5, "frameKey": key, "sequence": 1, "rtpTimestamp": 9}],
+            return {"tapEpoch": 0, "flushAck": {"epoch": 0, "accepted": True, "sourceWatermark": 0}, "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3, "tapEpoch": 0, "sourceSeq": 1},
+                             {"type": "encoder_idr", "monotonicNs": 4, "frameKey": key, "requestToken": "token", "tapEpoch": 0, "sourceSeq": 2},
+                             {"type": "rtp_send", "monotonicNs": 5, "frameKey": key, "sequence": 1, "rtpTimestamp": 9, "tapEpoch": 0, "sourceSeq": 3}],
                     "rvfc": [{**key, "rtpTimestamp": 9, "viewerAcceptedMs": 4, "pcId": "viewer-pc", "resolution": {"width": 1280, "height": 720}}],
                     "droppedHostEvents": 0, "staleHostEvents": 0,
                     "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 51002, "protocol": "udp"},
@@ -324,3 +324,14 @@ def test_playwright_loss_tap_registration_and_sampling_uses_the_viewer_page_api(
     assert timeline.paint["wireTimestamp"] == 9
     assert timeline.pc[0]["id"] == "viewer-pc"
     assert "beginLossLabTrace" in calls[0] and "takeLossLabTraceSnapshot" in calls[1]
+
+
+def test_raw_timeline_rejects_host_callbacks_that_precede_the_flush_watermark():
+    timeline = runner.RawLossTimelineCollector(started_ns=1, ended_ns=2)
+    raw = {"tapEpoch": 1, "flushAck": {"epoch": 1, "accepted": True, "sourceWatermark": 4},
+           "host": [{"type": "rtcp_feedback", "kind": "PLI", "monotonicNs": 3, "tapEpoch": 1, "sourceSeq": 4}], "rvfc": [],
+           "droppedHostEvents": 0, "staleHostEvents": 0,
+           "stats": {"pcId": "viewer-pc", "state": "connected", "selectedRelay": {"address": "127.0.0.1", "port": 1, "protocol": "udp"},
+                     "inbound": {"packetsReceived": 1, "packetsLost": 0}}}
+    with pytest.raises(ValueError, match="flush barrier"):
+        timeline.ingest_viewer_tap(raw)

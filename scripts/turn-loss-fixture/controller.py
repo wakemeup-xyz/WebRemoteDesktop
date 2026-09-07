@@ -569,7 +569,7 @@ class SignedT3T5ReceiverEvidenceSource:
     from another run cannot make the media-effect gate pass.
     """
     _BRIDGE_FIELDS = frozenset({"schemaVersion", "kind", "t3", "t5", "loss", "timeline", "signature"})
-    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture", "receiverCaptures", "eventHandles"})
+    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture", "receiverCaptures", "eventHandles", "eventBindings"})
     _TIMELINE_FIELDS = frozenset({"feedback", "idr", "paint", "pc", "recovery"})
 
     def __init__(self, bridge: Mapping[str, Any] | Callable[[], Mapping[str, Any]], *, verifier: bytes) -> None:
@@ -659,20 +659,36 @@ class SignedT3T5ReceiverEvidenceSource:
             raise RuntimeError("receiver bridge FrameKey recovery join is invalid")
         pc_ids = {(row.get("id"), row.get("state"), json.dumps(row.get("resolution"), sort_keys=True)) for row in pc if isinstance(row, Mapping)}
         if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected": raise RuntimeError("receiver bridge PC identity or resolution changed")
-        captures, handles = loss.get("receiverCaptures"), loss.get("eventHandles")
+        captures, handles, bindings = loss.get("receiverCaptures"), loss.get("eventHandles"), loss.get("eventBindings")
         if (not isinstance(handles, list) or len(handles) != 2 or len(set(handles)) != 2 or not all(isinstance(item, str) and item for item in handles)
-                or not isinstance(captures, Mapping) or set(captures) != set(handles) or event.get("comment") not in captures
+                or not isinstance(captures, Mapping) or set(captures) != set(handles)
+                or not isinstance(bindings, Mapping) or set(bindings) != set(handles) or event.get("comment") not in captures
                 or any(not isinstance(value, Mapping) or value.get("eventHandle") != handle for handle, value in captures.items())):
             raise RuntimeError("receiver bridge does not contain one capture per approved event")
-        # Verify every authority-attested capture before accepting the final event.
+        # Every approved event has its own clear binding.  Signature-shaped
+        # archive rows cannot substitute for a real tuple/kernel/gap proof.
         for handle, capture in captures.items():
-            # Event-set membership and authority signature are exact; interval
-            # validation for the final event remains below.
-            if capture.get("runId") != manifest.run_id or capture.get("eventHandle") != handle or not isinstance(capture.get("authoritySignature"), str): raise RuntimeError("receiver capture archive is invalid")
+            binding = bindings.get(handle)
+            expected_binding_scope = {"runId": manifest.run_id, "sessionId": loss.get("sessionId"),
+                                      "attemptId": loss.get("attemptId"), "generation": loss.get("generation"),
+                                      "streamId": loss.get("streamId"), "comment": handle}
+            if (not isinstance(binding, Mapping) or any(binding.get(key) != value for key, value in expected_binding_scope.items())
+                    or not isinstance(binding.get("startedMonotonicNs"), int)
+                    or not isinstance(binding.get("endedMonotonicNs"), int)
+                    or binding["endedMonotonicNs"] < binding["startedMonotonicNs"]):
+                raise RuntimeError("receiver event binding is invalid")
+            if handle == event.get("comment") and dict(binding) != _event_binding(event):
+                raise RuntimeError("receiver bridge final binding is not the cleared control event")
+            sequences = _received_sequences_for_capture(capture, manifest, binding, self._verifier)
+            if not sequence_gaps(sequences):
+                raise RuntimeError("receiver capture has no verified gap")
+        if loss.get("receiverCapture") != captures.get(event.get("comment")):
+            raise RuntimeError("receiver bridge final capture is not its approved event capture")
         result = _received_sequences_for_capture(loss.get("receiverCapture"), manifest, event, self._verifier)
         recovery = timeline.get("recovery")
-        if not isinstance(recovery, list) or not recovery:
-            raise RuntimeError("receiver bridge lacks per-pattern clear recovery")
+        recovery_handles = [row.get("eventHandle") for row in recovery if isinstance(row, Mapping)] if isinstance(recovery, list) else []
+        if (len(recovery_handles) != len(handles) or set(recovery_handles) != set(handles)):
+            raise RuntimeError("receiver bridge lacks exactly one per-pattern clear recovery")
         for row in recovery:
             if (not isinstance(row, Mapping) or set(row) != {"eventHandle", "clearReplyObservedNs", "feedbackObservedNs", "idrObservedNs", "paintObservedNs", "tapEpoch"}
                     or not all(isinstance(row[key], int) for key in ("clearReplyObservedNs", "feedbackObservedNs", "idrObservedNs", "paintObservedNs", "tapEpoch"))

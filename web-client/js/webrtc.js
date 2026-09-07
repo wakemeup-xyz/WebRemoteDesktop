@@ -4899,8 +4899,8 @@ if (this.tunnelLastObjectUrl) {
     const channel = this.inputChannel;
     if (!channel || channel.readyState !== 'open') return false;
     this._lossLabTrace = { host: [], rvfc: [], droppedHostEvents: 0, staleHostEvents: 0, tapEpoch: epoch, sourceSeq: 0,
-      // `sourceWatermark` is the last accepted source sequence before this
-      // epoch.  A zero value proves both queues were newly created.
+      // `sourceWatermark` is supplied by Host after it atomically clears its
+      // queue.  Only later source sequences may enter this epoch.
       flushAck: null };
     try {
       channel.send(JSON.stringify({ type: 'loss_lab_trace_begin', schemaVersion: 1, epoch }));

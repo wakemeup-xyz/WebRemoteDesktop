@@ -285,9 +285,10 @@ class FrameTraceRegistry:
 
     def begin_loss_lab_trace(self, epoch: int) -> dict:
         """Atomically discard old Host taps and acknowledge a new Lab epoch."""
-        if not self._lab_loss_trace or not isinstance(epoch, int) or epoch <= self._lab_loss_epoch:
-            raise ValueError("loss trace epoch is invalid")
         with self._lock:
+            if (not self._lab_loss_trace or not isinstance(epoch, int)
+                    or epoch <= self._lab_loss_epoch):
+                raise ValueError("loss trace epoch is invalid")
             self._lab_loss_events.clear()
             self._lab_loss_dropped = 0
             self._lab_loss_epoch = epoch
