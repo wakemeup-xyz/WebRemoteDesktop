@@ -69,6 +69,8 @@ InputTrace 在 critical bundle 中加载，早于 Input；Diagnostic core 持有
 
 stage 白名单：`dom-received, gate, transport-send, ack, ack-timeout, lifecycle, recovery`。DOM 记录分配递增 eventId，仅描述 keyboard/pointer/text/control 的类别和 phase；Input 将同步发送的 existing inputIds 映射到该 eventId，IME 延后发送使用单独事件关联，不虚构一一对应。
 
+触控适配器与 IME 的实际手势/提交边界需保留安全归属和可靠输入超时资格，不能因为延后执行而一律禁用故障上报。同步外部桌面操作继承其真实 DOM 上下文，不能被空的移动输入上下文覆盖；正常组合输入仍不当作故障，组合结束后实际提交的可靠写入则应有完整 gate/send/ACK 轨迹。仅增加内部观察回调，不改变手势识别、输入结果或 wire schema。
+
 允许字段：eventId、stage、inputType、action、phase、transport、accepted、reason、status、seq、appliedSeq、leaseEpoch、connectionAttemptId、inputIdHash、inputIdCount、clientRttMs，以及本设计的有限状态字段。DOM额外记录 `focusKind: desktop | mobile-text | local-editor | terminal | other` 与 `visibility: visible | hidden`，不能把本地编辑/Terminal事件混算为远端输入尝试。类型/动作/原因/状态用枚举白名单，数值须 finite/有界，ID 格式/长度受限。禁止 key/code/keyCode、输入正文、payload、坐标、DOM label/value、完整 URL、token、password、raw leaseId、raw inputIds；不要只按字段名删几个词再任意扩展对象。
 
 关联哈希保持 Host 现有算法：UTF-8 的 `inputIds.join('\x1f')` 做 SHA-256，取小写 hex 前16位。浏览器用 Web Crypto 异步计算；无 crypto 或摘要失败时填 null 并增加 unavailable 计数，不记录明文、不退回弱哈希。异步结果只回填仍在本 ring 中的原记录。最多64个待摘要工作，超过明确计数丢弃，不阻塞实际输入。

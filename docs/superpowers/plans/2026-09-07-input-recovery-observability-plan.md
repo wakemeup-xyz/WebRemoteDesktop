@@ -79,7 +79,7 @@ function isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
 
 ### Task 2: Viewer 有界输入轨迹与真实门禁打点
 
-**Files:** 新增 `web-client/js/input-trace.js`, `input-trace.test.js`；修改 `input.js`, `input.test.js`, `input-recovery.test.js`, `mobile-text-input.js`, `mobile-text-input.test.js`, `diagnostic-core.js`, `diagnostic.test.js`, `webrtc.js`, `webrtc.test.js`, `web-client/viewer.html`, `signal-server/scripts/web-asset-graph.js`。只有为记录ACK deadline确需 transport hook 时才修改 `keyboard-transport.js` 和对应测试，必须在报告说明。
+**Files:** 新增 `web-client/js/input-trace.js`, `input-trace.test.js`；修改 `input.js`, `input.test.js`, `input-recovery.test.js`, `mobile-text-input.js`, `mobile-text-input.test.js`, `diagnostic-core.js`, `diagnostic.test.js`, `webrtc.js`, `webrtc.test.js`, `web-client/viewer.html`, `signal-server/scripts/web-asset-graph.js`。允许窄范围修改 `touch-input-adapter.js` 和对应测试，仅为实际触控手势/延后提交保留安全打点归属与故障资格，不修改手势识别、发送语义或 wire schema。只有为记录ACK deadline确需 transport hook 时才修改 `keyboard-transport.js` 和对应测试，必须在报告说明。
 
 **Interfaces:** 消费 Task 1 的有效gate与恢复snapshot；产出 `InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`（参数可选，默认环境时钟/WebCrypto/timer/noop）。record的DOM阶段返回新eventId，其他阶段返回关联eventId或null；snapshot为 `{ schemaVersion: 1, events, counters }`。最多一个deadline计时器，`onIncident(reason, { connectionAttemptId, leaseEpoch })`传有限reason和触发报文归属；core按当前身份匹配、可见/active/有权条件决定上报，旧attempt/epoch超时只留轨迹不误报新连接。Diagnostic core 暴露 `recordInputTrace(stage, meta)` 与 `getInputTraceSnapshot()`（同一 collector 不因deferred加载替换）。Input.getDiagnosticState 产出 Spec §4.2 的安全 inputState，供 Task 3 原样经严格 allowlist处理。record stage、focusKind/visibility和数值上限按Spec §4.1。
 
