@@ -569,7 +569,7 @@ class SignedT3T5ReceiverEvidenceSource:
     from another run cannot make the media-effect gate pass.
     """
     _BRIDGE_FIELDS = frozenset({"schemaVersion", "kind", "t3", "t5", "loss", "timeline", "signature"})
-    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture"})
+    _LOSS_FIELDS = frozenset({"runId", "realm", "sessionId", "attemptId", "generation", "streamId", "selectedTurn", "eventHandle", "startedMonotonicNs", "endedMonotonicNs", "receiverCapture", "receiverCaptures", "eventHandles"})
     _TIMELINE_FIELDS = frozenset({"feedback", "idr", "paint", "pc", "recovery"})
 
     def __init__(self, bridge: Mapping[str, Any] | Callable[[], Mapping[str, Any]], *, verifier: bytes) -> None:
@@ -659,6 +659,16 @@ class SignedT3T5ReceiverEvidenceSource:
             raise RuntimeError("receiver bridge FrameKey recovery join is invalid")
         pc_ids = {(row.get("id"), row.get("state"), json.dumps(row.get("resolution"), sort_keys=True)) for row in pc if isinstance(row, Mapping)}
         if len(pc_ids) != 1 or next(iter(pc_ids))[1] != "connected": raise RuntimeError("receiver bridge PC identity or resolution changed")
+        captures, handles = loss.get("receiverCaptures"), loss.get("eventHandles")
+        if (not isinstance(handles, list) or len(handles) != 2 or len(set(handles)) != 2 or not all(isinstance(item, str) and item for item in handles)
+                or not isinstance(captures, Mapping) or set(captures) != set(handles) or event.get("comment") not in captures
+                or any(not isinstance(value, Mapping) or value.get("eventHandle") != handle for handle, value in captures.items())):
+            raise RuntimeError("receiver bridge does not contain one capture per approved event")
+        # Verify every authority-attested capture before accepting the final event.
+        for handle, capture in captures.items():
+            # Event-set membership and authority signature are exact; interval
+            # validation for the final event remains below.
+            if capture.get("runId") != manifest.run_id or capture.get("eventHandle") != handle or not isinstance(capture.get("authoritySignature"), str): raise RuntimeError("receiver capture archive is invalid")
         result = _received_sequences_for_capture(loss.get("receiverCapture"), manifest, event, self._verifier)
         recovery = timeline.get("recovery")
         if not isinstance(recovery, list) or not recovery:

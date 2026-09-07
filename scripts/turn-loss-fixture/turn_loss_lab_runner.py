@@ -73,12 +73,13 @@ def seal_and_verify_live_bridge(*, manifest: LossFixtureManifest, authority: Any
     # Test orchestration may provide a fixture observer result, but only the
     # Lab authority can attach the acceptance capability used by final verify.
     if not isinstance(capture.get("authoritySignature"), str): capture = authority.attest_capture(capture)
+    captures = {handle: (value if isinstance(value, Mapping) and isinstance(value.get("authoritySignature"), str) else authority.attest_capture(value)) for handle, value in dict(transaction.get("receiverCaptures", {})).items()}
     bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": dict(t3), "t5": dict(t5),
               "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": transaction.get("sessionId"),
                        "attemptId": scope.get("attemptId"), "generation": scope.get("generation"), "streamId": scope.get("streamId"),
                        "selectedTurn": manifest.selected_turn, "eventHandle": event.get("comment"),
                        "startedMonotonicNs": event.get("startedMonotonicNs"), "endedMonotonicNs": event.get("endedMonotonicNs"),
-                       "receiverCapture": dict(capture)}, "timeline": fields["timeline"]}
+                       "receiverCapture": dict(capture), "receiverCaptures": captures, "eventHandles": [event.get("comment") for event in events]}, "timeline": fields["timeline"]}
     sealed = authority.seal(bridge, event)
     if sealed.get("status") != "SEALED":
         raise RuntimeBlocked("Lab authority did not seal the current bridge")
@@ -216,12 +217,14 @@ def run_controlled_loss_transaction(*, manifest: LossFixtureManifest, endpoint: 
             _wait_and_sample(seconds=recovery_seconds, adapter=adapter, timeline=timeline, wait=wait, now_ns=now_ns)
             if not any(row.get("eventHandle") == cleared.get("comment") for row in timeline.recovery):
                 raise RuntimeBlocked("clear did not produce a fresh PLI/FIR, IDR, and rVFC recovery")
-        result = {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline}
-        # The runner may only read a fixture-owned capture artifact; it never
-        # supplies packet rows or derives gaps from Host diagnostics.
-        reader = getattr(adapter, "read_receiver_capture", None)
-        if callable(reader): result["receiverCapture"] = reader(manifest=manifest, event=events[-1])
-        return result
+            reader = getattr(adapter, "read_receiver_capture", None)
+            if not callable(reader): raise RuntimeBlocked("fixture receiver capture reader is unavailable")
+            capture = reader(manifest=manifest, event=events[-1])
+            if not isinstance(capture, Mapping) or capture.get("eventHandle") != cleared.get("comment"):
+                raise RuntimeBlocked("fixture receiver capture did not bind the current event")
+            events[-1]["receiverCapture"] = dict(capture)
+        captures = {event["comment"]: event.pop("receiverCapture") for event in events}
+        return {"sessionId": session_id, "scope": dict(scope), "events": events, "baseline": baseline, "receiverCaptures": captures, "receiverCapture": captures[events[-1]["comment"]]}
     finally:
         client.close()
 
@@ -260,15 +263,18 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             t5 = _collect_current_t5(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             t3 = _collect_current_t3(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
-            result = run_controlled_loss_transaction(manifest=manifest, endpoint=prepared["controlEndpoint"], control_token=credentials["controlToken"], adapter=adapter, timeline=timeline)
             capture_path = runtime / manifest.receiver_evidence_file
-            try: result["receiverCapture"] = json.loads(capture_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, json.JSONDecodeError) as exc: raise RuntimeBlocked("fixture receiver-side RTP capture is unavailable") from exc
+            def read_receiver_capture(*, manifest: Any, event: Any) -> Mapping[str, Any]:
+                try: capture = json.loads(capture_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError) as exc: raise RuntimeBlocked("fixture receiver-side RTP capture is unavailable") from exc
+                return capture
+            adapter.read_receiver_capture = read_receiver_capture
+            result = run_controlled_loss_transaction(manifest=manifest, endpoint=prepared["controlEndpoint"], control_token=credentials["controlToken"], adapter=adapter, timeline=timeline)
             fields, last = timeline.as_bridge_fields(), result["events"][-1]
             bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
                       "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": result["sessionId"],
                                "attemptId": result["scope"]["attemptId"], "generation": result["scope"]["generation"], "streamId": result["scope"]["streamId"],
-                               "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"]}, "timeline": fields["timeline"]}
+                               "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"], "receiverCaptures": result["receiverCaptures"], "eventHandles": [event["comment"] for event in result["events"]]}, "timeline": fields["timeline"]}
             raw_path, event_path, seal_path = runtime / "raw-bridge.json", runtime / "cleared.json", runtime / manifest.receiver_bridge_file
             raw_path.write_text(json.dumps(bridge), encoding="utf-8"); event_path.write_text(json.dumps({key: value for key, value in last.items() if key != "clearReplyObservedNs"}), encoding="utf-8")
             from turn_controlled_scene_lab_runner import seal_loss_bridge_after_clear
