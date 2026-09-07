@@ -201,12 +201,15 @@ class GatewayObservationAuthority:
                 self._observations.append(dict(row))
 
     def select(self, expected: dict) -> dict:
-        required = {"allocationRelay", "peer", "rtpSsrc", "viewerPair", "hostPair"}
+        required = {"allocationRelay", "peer", "rtpSsrc", "viewerPair", "hostPair", "pairEvidence"}
         if not isinstance(expected, dict) or set(expected) != required:
             raise GatewayBlocked("gateway media expectation is invalid")
-        relay, peer, ssrc, viewer, host = expected["allocationRelay"], expected["peer"], expected["rtpSsrc"], expected["viewerPair"], expected["hostPair"]
+        relay, peer, ssrc, viewer, host, pair_evidence = expected["allocationRelay"], expected["peer"], expected["rtpSsrc"], expected["viewerPair"], expected["hostPair"], expected["pairEvidence"]
         if (not isinstance(relay, dict) or not isinstance(peer, dict) or not isinstance(ssrc, int)
-                or not isinstance(viewer, dict) or not isinstance(host, dict) or not isinstance(host.get("videoSsrc"), int)
+                or not isinstance(viewer, dict) or not isinstance(host, dict) or not isinstance(pair_evidence, dict)
+                or pair_evidence.get("viewerPair") != viewer or pair_evidence.get("hostPair") != host
+                or pair_evidence.get("viewerSsrc") != ssrc or pair_evidence.get("hostSsrc") != ssrc
+                or not isinstance(host.get("videoSsrc"), int)
                 or host["videoSsrc"] != ssrc):
             raise GatewayBlocked("gateway browser/Host media expectation is invalid")
         try:
@@ -225,7 +228,9 @@ class GatewayObservationAuthority:
         if len(matches) != 1:
             raise GatewayBlocked("gateway media observation is absent or ambiguous")
         digest = hashlib.sha256(self._canonical(matches[0])).hexdigest()
-        body = {**self.manifest(), "mediaBinding": matches[0], "mediaBindingDigest": digest, "observationCount": count}
+        pair_digest = hashlib.sha256(self._canonical(pair_evidence)).hexdigest()
+        body = {**self.manifest(), "mediaBinding": matches[0], "mediaBindingDigest": digest,
+                "pairEvidence": pair_evidence, "pairEvidenceDigest": pair_digest, "observationCount": count}
         return {"status": "SEALED", **self._signed(body)}
 
     def receipt(self, event_handle: str, store: GatewayCounterStore) -> dict:
@@ -382,6 +387,7 @@ class InlineTurnGateway:
         # must never retarget that event to a different ChannelData stream.
         # Leave the event unarmed until the exact sealed tuple is present.
         if (binding is None or event.get("mediaBinding") != binding.get("mediaBinding")
+                or event.get("gatewayIdentity") != {key: binding.get(key) for key in ("publicKey", "gatewayInstanceId", "instanceDigest")}
                 or self._target_from_binding(binding) is None):
             self.media.clear_on_control_disconnect()
             return
@@ -436,7 +442,7 @@ class InlineTurnGateway:
                         reply["baselineEvent"] = gateway._probe_event_id
                     elif operation == "select-media-binding" and set(raw) == {"operation", "controlToken", "expected"}:
                         reply = authority.select(raw["expected"])
-                        gateway._sealed_binding = {"mediaBinding": reply["mediaBinding"]}
+                        gateway._sealed_binding = dict(reply)
                     elif operation == "event-receipt" and set(raw) == {"operation", "controlToken", "eventHandle"} and isinstance(raw.get("eventHandle"), str) and gateway._counter_store is not None:
                         reply = authority.receipt(raw["eventHandle"], gateway._counter_store)
                     else:

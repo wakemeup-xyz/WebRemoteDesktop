@@ -886,11 +886,12 @@ def test_real_compose_smoke_runs_all_fixture_services_and_relays_udp_echo(tmp_pa
                 relay, peer = observed["allocationRelay"], observed["peer"]
                 viewer_pair = {"pairId":"viewer", "localCandidateId":"relay", "remoteCandidateId":"host", "local":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}, "remote":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}}
                 host_pair = {"pairId":"host", "localCandidateId":"host", "remoteCandidateId":"relay", "local":{"id":"host", "candidateType":"host", **peer, "protocol":"udp"}, "remote":{"id":"relay", "candidateType":"relay", **relay, "protocol":"udp"}, "videoSsrc":observed["rtpSsrc"]}
-                selected = authority_call({"operation":"select-media-binding", "expected":{**observation, "viewerPair":viewer_pair, "hostPair":host_pair}})
+                pair_evidence = {"receiptId":"docker-live-pair", "viewerPair":viewer_pair, "hostPair":host_pair, "viewerSsrc":observed["rtpSsrc"], "hostSsrc":observed["rtpSsrc"]}
+                selected = authority_call({"operation":"select-media-binding", "expected":{**observation, "viewerPair":viewer_pair, "hostPair":host_pair, "pairEvidence":pair_evidence}})
                 assert selected["status"] == "SEALED" and selected["observationCount"] > 0 and selected["realm"] == raw["realm"]
                 sealed = controller.verify_gateway_binding(selected, run_id=raw["runId"], realm=raw["realm"])
                 host_pair = {key:value for key,value in host_pair.items() if key != "videoSsrc"}
-                binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=sealed["outerEgress"], viewer_pair=viewer_pair, host_pair=host_pair, media_binding=sealed)
+                binding = controller.runtime_relay_binding(manifest=parsed, actual_egress=sealed["mediaBinding"]["outerEgress"], viewer_pair=viewer_pair, host_pair=host_pair, media_binding=sealed["mediaBinding"], gateway_identity=sealed["gatewayIdentity"], binding_receipt_digest=sealed["bindingReceiptDigest"], pair_evidence=sealed["pairEvidence"], pair_evidence_digest=sealed["pairEvidenceDigest"])
                 controller.write_runtime_relay_binding(tmp_path / "runtime" / "actual-relay.json", binding)
                 control_host, control_port = prepared["controlEndpoint"].rsplit(":", 1)
                 with socket.create_connection((control_host, int(control_port)), timeout=2) as control:

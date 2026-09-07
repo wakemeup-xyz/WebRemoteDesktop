@@ -180,7 +180,7 @@ class LossFixtureManifest:
         return cls(run_id, realm, namespace, interface, selector, egress_selector, endpoint, credentials_file, receiver_evidence_file, receiver_bridge_file, selected_turn, digest, image_digests)
 
 
-_RUNTIME_RELAY_FIELDS = frozenset({"schemaVersion", "runId", "expectedEgressSelector", "actualEgressSelector", "viewerPair", "hostPair", "mediaBinding"})
+_RUNTIME_RELAY_FIELDS = frozenset({"schemaVersion", "runId", "expectedEgressSelector", "actualEgressSelector", "viewerPair", "hostPair", "mediaBinding", "gatewayIdentity", "bindingReceiptDigest", "pairEvidence", "pairEvidenceDigest"})
 _PAIR_FIELDS = frozenset({"pairId", "localCandidateId", "remoteCandidateId", "local", "remote"})
 _CANDIDATE_FIELDS = frozenset({"id", "candidateType", "address", "port", "protocol"})
 
@@ -232,15 +232,19 @@ def _runtime_pair(value: Any, field: str) -> dict[str, Any]:
     return result
 
 
-def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mapping[str, Any], viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], media_binding: Mapping[str, Any]) -> dict[str, Any]:
+def runtime_relay_binding(*, manifest: LossFixtureManifest, actual_egress: Mapping[str, Any], viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], media_binding: Mapping[str, Any], gateway_identity: Mapping[str, Any] | None = None, binding_receipt_digest: str | None = None, pair_evidence: Mapping[str, Any] | None = None, pair_evidence_digest: str | None = None) -> dict[str, Any]:
     """Build a parent-owned binding from live Viewer and Host selected pairs.
 
     The manifest's static tuple is retained solely as an expected fixture map;
     the controller consumes only ``actualEgressSelector`` after this reciprocal
     pair proof has been validated and written read-only into the namespace.
     """
+    identity = dict(gateway_identity or {"publicKey": "unit", "gatewayInstanceId": "unit", "instanceDigest": "unit"})
+    evidence = dict(pair_evidence or {"viewerPair": dict(viewer_pair), "hostPair": dict(host_pair), "viewerSsrc": dict(media_binding).get("rtpSsrc"), "hostSsrc": dict(media_binding).get("rtpSsrc"), "receiptId": "unit"})
     return {"schemaVersion": 1, "runId": manifest.run_id, "expectedEgressSelector": dict(manifest.egress_selector),
-            "actualEgressSelector": dict(actual_egress), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair), "mediaBinding": dict(media_binding)}
+            "actualEgressSelector": dict(actual_egress), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair), "mediaBinding": dict(media_binding),
+            "gatewayIdentity": identity, "bindingReceiptDigest": binding_receipt_digest or hashlib.sha256(_canonical_evidence(dict(media_binding))).hexdigest(),
+            "pairEvidence": evidence, "pairEvidenceDigest": pair_evidence_digest or hashlib.sha256(_canonical_evidence(evidence)).hexdigest()}
 
 
 def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dict[str, Any]:
@@ -276,7 +280,14 @@ def load_runtime_relay_binding(path: Path, manifest: LossFixtureManifest) -> dic
     if ((viewer["local"]["address"], viewer["local"]["port"]) != relay
             or (viewer["remote"]["address"], viewer["remote"]["port"]) != peer_endpoint):
         raise RuntimeBlocked("selected relay pair does not match TURN allocation mapping")
-    return {"actualEgressSelector": actual, "viewerPair": viewer, "hostPair": host, "mediaBinding": dict(media)}
+    identity, binding_digest, evidence, evidence_digest = raw.get("gatewayIdentity"), raw.get("bindingReceiptDigest"), raw.get("pairEvidence"), raw.get("pairEvidenceDigest")
+    if (not isinstance(identity, Mapping) or set(identity) != {"publicKey", "gatewayInstanceId", "instanceDigest"}
+            or not all(isinstance(identity.get(key), str) and identity[key] for key in identity)
+            or not isinstance(binding_digest, str) or len(binding_digest) != 64
+            or not isinstance(evidence, Mapping) or not isinstance(evidence_digest, str)
+            or hashlib.sha256(_canonical_evidence(dict(evidence))).hexdigest() != evidence_digest):
+        raise RuntimeBlocked("gateway identity or pair evidence is invalid")
+    return {"actualEgressSelector": actual, "viewerPair": viewer, "hostPair": host, "mediaBinding": dict(media), "gatewayIdentity": dict(identity), "bindingReceiptDigest": binding_digest, "pairEvidence": dict(evidence), "pairEvidenceDigest": evidence_digest}
 
 
 def write_runtime_relay_binding(path: Path, binding: Mapping[str, Any]) -> None:
@@ -315,10 +326,17 @@ def verify_gateway_binding(sealed: Mapping[str, Any], *, run_id: str, realm: str
     media = dict(sealed["mediaBinding"])
     if GatewayCounterStore._digest_binding(media) != sealed["mediaBindingDigest"]:
         raise RuntimeBlocked("gateway media-binding digest is invalid")
-    return media
+    identity = {key: sealed[key] for key in ("publicKey", "gatewayInstanceId", "instanceDigest")}
+    pair_evidence, pair_digest = sealed.get("pairEvidence"), sealed.get("pairEvidenceDigest")
+    if (not isinstance(pair_evidence, Mapping) or not isinstance(pair_digest, str)
+            or hashlib.sha256(_canonical_evidence(dict(pair_evidence))).hexdigest() != pair_digest):
+        raise RuntimeBlocked("gateway pair evidence digest is invalid")
+    return {"mediaBinding": media, "gatewayIdentity": identity,
+            "bindingReceiptDigest": hashlib.sha256(_canonical_evidence(dict(sealed))).hexdigest(),
+            "pairEvidence": dict(pair_evidence), "pairEvidenceDigest": pair_digest}
 
 
-def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: str, event: Mapping[str, Any]) -> dict[str, Any]:
+def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: str, event: Mapping[str, Any], expected_gateway_identity: Mapping[str, Any] | None = None, expected_binding_digest: str | None = None, seen_receipt_ids: set[str] | None = None) -> dict[str, Any]:
     """Verify the gateway's Ed25519 event receipt without trusting shared JSON."""
     if not isinstance(receipt, Mapping) or receipt.get("signatureAlgorithm") != "Ed25519":
         raise RuntimeError("gateway receipt signature is unavailable")
@@ -327,6 +345,15 @@ def verify_gateway_receipt(receipt: Mapping[str, Any], *, run_id: str, realm: st
             or not isinstance(receipt.get("publicKey"), str) or not isinstance(receipt.get("signature"), str)
             or not isinstance(receipt.get("gatewayInstanceId"), str) or not isinstance(receipt.get("instanceDigest"), str)):
         raise RuntimeError("gateway receipt identity is invalid")
+    identity = {"publicKey": receipt["publicKey"], "gatewayInstanceId": receipt["gatewayInstanceId"], "instanceDigest": receipt["instanceDigest"]}
+    if expected_gateway_identity is not None and dict(expected_gateway_identity) != identity:
+        raise RuntimeError("gateway receipt identity changed")
+    if expected_binding_digest is not None and receipt.get("mediaBindingDigest") != expected_binding_digest:
+        raise RuntimeError("gateway receipt binding changed")
+    receipt_id = receipt.get("signature")
+    if seen_receipt_ids is not None:
+        if not isinstance(receipt_id, str) or receipt_id in seen_receipt_ids: raise RuntimeError("gateway receipt replayed")
+        seen_receipt_ids.add(receipt_id)
     manifest = {key: receipt[key] for key in ("runId", "realm", "gatewayInstanceId", "publicKey")}
     canonical = lambda value: json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode()
     if hashlib.sha256(canonical(manifest)).hexdigest() != receipt["instanceDigest"]:
@@ -383,7 +410,7 @@ class GatewayCounterBackend:
         receipt = reply.get("receipt")
         if not isinstance(receipt, dict):
             raise RuntimeError("gateway receipt is unavailable")
-        verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event)
+        verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {})))
         return receipt
 
     def _verified_receipt(self, event: Mapping[str, Any]) -> dict[str, Any]:
@@ -428,7 +455,7 @@ class GatewayCounterBackend:
                 or not isinstance(started, int) or not isinstance(ended, int) or ended < started):
             raise RuntimeError("gateway event binding is unavailable")
         receipt = self._receipt_for(event) if self._authority_endpoint is not None else None
-        count = (verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event) if receipt is not None else self._store.count(event_id))
+        count = (verify_gateway_receipt(receipt, run_id=str(self._run_id), realm=str(self._realm), event=event, expected_gateway_identity=event.get("gatewayIdentity"), expected_binding_digest=GatewayCounterStore._digest_binding(event.get("mediaBinding", {}))) if receipt is not None else self._store.count(event_id))
         digest = GatewayCounterStore._digest_binding(media)
         if (count["eventHandle"] != event_id or count["mediaBindingDigest"] != digest
                 or count["startedMonotonicNs"] != started or count["deadlineMonotonicNs"] != event.get("deadlineMonotonicNs")
@@ -861,6 +888,14 @@ class SignedT3T5ReceiverEvidenceSource:
                 or loss.get("endedMonotonicNs") != event.get("endedMonotonicNs")
                 or not isinstance(loss.get("endedMonotonicNs"), int) or loss["endedMonotonicNs"] < loss["startedMonotonicNs"]):
             raise RuntimeError("receiver bridge does not bind the active loss event")
+        pair = loss.get("pairEvidence")
+        if pair is not None:
+            body = {key: value for key, value in pair.items() if key != "authoritySignature"} if isinstance(pair, Mapping) else {}
+            expected_pair = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
+            if (not isinstance(pair, Mapping) or pair.get("runId") != manifest.run_id or pair.get("realm") != manifest.realm
+                    or pair.get("scope") != scope or pair.get("viewerSsrc") != pair.get("hostSsrc")
+                    or not hmac.compare_digest(str(pair.get("authoritySignature")), expected_pair)):
+                raise RuntimeError("Lab pair evidence receipt is invalid")
         feedback, idr, paint, pc = timeline["feedback"], timeline["idr"], timeline["paint"], timeline["pc"]
         if (not isinstance(feedback, list) or not feedback or not all(isinstance(row, Mapping) and row.get("kind") in {"PLI", "FIR"} and isinstance(row.get("runnerObservedNs", row.get("monotonicNs")), int) for row in feedback)
                 or not isinstance(idr, Mapping) or not isinstance(paint, Mapping) or not isinstance(pc, list) or len(pc) < 2):
@@ -1001,6 +1036,25 @@ class LabReceiverBridgeAuthority:
         self._lock = threading.RLock()
         self._servers: list[socketserver.ThreadingUnixStreamServer] = []
 
+    def seal_pair_evidence(self, *, viewer_pair: Mapping[str, Any], host_pair: Mapping[str, Any], viewer_ssrc: int, host_ssrc: int, scope: Mapping[str, Any]) -> dict[str, Any]:
+        if (not isinstance(viewer_ssrc, int) or not isinstance(host_ssrc, int) or viewer_ssrc != host_ssrc
+                or not isinstance(scope, Mapping) or set(scope) != {"attemptId", "generation", "streamId"}):
+            raise RuntimeError("pair evidence scope or SSRC is invalid")
+        body = {"receiptId": secrets.token_urlsafe(18), "runId": self.manifest.run_id, "realm": self.manifest.realm,
+                "scope": dict(scope), "viewerPair": dict(viewer_pair), "hostPair": dict(host_pair),
+                "viewerSsrc": viewer_ssrc, "hostSsrc": host_ssrc}
+        return {**body, "authoritySignature": hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()}
+
+    def verify_pair_evidence(self, receipt: Mapping[str, Any], *, scope: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(receipt, Mapping): raise RuntimeError("pair evidence is unavailable")
+        body = {key: value for key, value in receipt.items() if key != "authoritySignature"}
+        expected = hmac.new(self._verifier, _canonical_evidence(body), hashlib.sha256).hexdigest()
+        if (receipt.get("runId") != self.manifest.run_id or receipt.get("realm") != self.manifest.realm
+                or receipt.get("scope") != dict(scope) or receipt.get("viewerSsrc") != receipt.get("hostSsrc")
+                or not isinstance(receipt.get("receiptId"), str) or not hmac.compare_digest(str(receipt.get("authoritySignature")), expected)):
+            raise RuntimeError("pair evidence receipt is invalid")
+        return dict(receipt)
+
     def seal(self, raw_bridge: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
         # The parent signs the raw bridge only after T3/T5 validation. The raw
         # object itself is never accepted as a controller-side assertion.
@@ -1127,6 +1181,13 @@ class LossController:
                     "channelNumber": 0x4001, "encapsulation": "channel-data", "rtpSsrc": 7, "payloadType": 96}
         return dict(load_runtime_relay_binding(self._relay_binding_path, self.manifest)["mediaBinding"])
 
+    def _active_gateway_proof(self) -> dict[str, Any]:
+        if self._relay_binding_path is None:
+            media = self._active_media_binding()
+            return {"gatewayIdentity": {"publicKey": "unit", "gatewayInstanceId": "unit", "instanceDigest": "unit"}, "bindingReceiptDigest": hashlib.sha256(_canonical_evidence(media)).hexdigest(), "pairEvidence": {"receiptId": "unit"}, "pairEvidenceDigest": hashlib.sha256(_canonical_evidence({"receiptId": "unit"})).hexdigest()}
+        binding = load_runtime_relay_binding(self._relay_binding_path, self.manifest)
+        return {key: binding[key] for key in ("gatewayIdentity", "bindingReceiptDigest", "pairEvidence", "pairEvidenceDigest")}
+
     @staticmethod
     def _channel_rtp_classifier(media: Mapping[str, Any]) -> list[str]:
         channel, ssrc = media.get("channelNumber"), media.get("rtpSsrc")
@@ -1176,7 +1237,7 @@ class LossController:
             "schemaVersion": 1, "state": "armed", "mode": "baseline", "runId": self.manifest.run_id,
             "comment": comment, "startedMonotonicNs": started,
             "deadlineMonotonicNs": started + 2_000_000_000,
-            "mediaBinding": dict(media),
+            "mediaBinding": dict(media), **self._active_gateway_proof(),
             "probe": {"chain": chain, "jump": jump, "counterRule": counter_rule},
         }
         if isinstance(self._state_store, DeadlineStateStore):
@@ -1232,7 +1293,7 @@ class LossController:
             event = {
                 "schemaVersion": 1, "state": "installing", "mode": "loss", "comment": comment,
                 "runId": run_id, "realm": self.manifest.realm, "namespace": self.manifest.namespace,
-                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "mediaBinding": self._active_media_binding(), "expectedEgressSelector": dict(self.manifest.egress_selector),
+                "interface": self.manifest.interface, "selector": dict(self.manifest.selector), "egressSelector": self._active_egress_selector(), "mediaBinding": self._active_media_binding(), **self._active_gateway_proof(), "expectedEgressSelector": dict(self.manifest.egress_selector),
                 "sessionId": session.session_id, "attemptId": session.attempt_id, "streamId": session.stream_id, "generation": session.generation, "pattern": pattern, "durationMs": duration_ms, "baselinePackets": baseline["packetCount"],
                 "rule": rule, "startedMonotonicNs": now, "deadlineMonotonicNs": now + duration_ms * 1_000_000, "endedMonotonicNs": None,
                 "actualDropCount": 0, "receiverSequenceGaps": [], "clearReason": None, "dropCounterAtInstall": None,

@@ -276,7 +276,10 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
     try:
         def seal_gateway_media(inputs: Mapping[str, Any]) -> Mapping[str, Any]:
             endpoint_host, endpoint_port = str(prepared["gatewayAuthorityEndpoint"]).rsplit(":", 1)
-            expected = {**dict(inputs["expected"]), "viewerPair": dict(inputs["viewerPair"]), "hostPair": dict(inputs["hostPair"])}
+            authority = holder.get("authority")
+            if not isinstance(authority, LabReceiverBridgeAuthority): raise RuntimeBlocked("Lab pair authority is unavailable")
+            pair_evidence = authority.seal_pair_evidence(viewer_pair=inputs["viewerPair"], host_pair=inputs["hostPair"], viewer_ssrc=inputs["expected"]["rtpSsrc"], host_ssrc=inputs["hostPair"]["videoSsrc"], scope=holder["scope"])
+            expected = {**dict(inputs["expected"]), "viewerPair": dict(inputs["viewerPair"]), "hostPair": dict(inputs["hostPair"]), "pairEvidence": pair_evidence}
             request = {"controlToken": credentials["controlToken"], "operation": "select-media-binding", "expected": expected}
             with socket.create_connection((endpoint_host, int(endpoint_port)), timeout=3) as client:
                 client.sendall((json.dumps(request, sort_keys=True) + "\n").encode())
@@ -300,9 +303,11 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             # Compose readiness was verified before this callback.  Signal,
             # Host, and Viewer receive only the generated fixture credential.
             identity = lab.start_fixture_turn(bootstrap); lab.start_host()
+            holder["authority"] = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
             proof = ProducerProof(secrets.randbits(64), 1, identity.origin, "pending", 0, identity.realm, identity.run_id)
             adapter = PlaywrightLabViewerAdapter.open(lab, proof, headed_producer=True)
             scope, lab_turn = adapter.viewer_session_identity(), lab.selected_turn_identity()
+            holder["scope"] = scope
             deadline, inputs, media = time.monotonic() + 10, None, None
             while time.monotonic() < deadline:
                 candidate = adapter.gateway_media_inputs()
@@ -314,7 +319,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
                 adapter.close(); raise RuntimeBlocked("gateway did not seal a unique browser media mapping")
             from controller import runtime_relay_binding
             host_pair = {key: value for key, value in inputs["hostPair"].items() if key != "videoSsrc"}
-            binding = runtime_relay_binding(manifest=manifest, actual_egress=media["outerEgress"], viewer_pair=inputs["viewerPair"], host_pair=host_pair, media_binding=media)
+            binding = runtime_relay_binding(manifest=manifest, actual_egress=media["mediaBinding"]["outerEgress"], viewer_pair=inputs["viewerPair"], host_pair=host_pair, media_binding=media["mediaBinding"], gateway_identity=media["gatewayIdentity"], binding_receipt_digest=media["bindingReceiptDigest"], pair_evidence=media["pairEvidence"], pair_evidence_digest=media["pairEvidenceDigest"])
             if (not isinstance(scope, Mapping) or not isinstance(binding, Mapping)
                     or {key: lab_turn.get(key) for key in ("id", "fingerprint", "digest")} != manifest.selected_turn):
                 adapter.close(); raise RuntimeBlocked("Lab selected TURN does not bind the ready fixture manifest")
@@ -330,8 +335,8 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
             runtime_relay = holder.get("runtimeRelay")
             if not isinstance(runtime_relay, Mapping): raise RuntimeBlocked("actual TURN relay binding is unavailable")
-            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
-            holder["authority"] = authority
+            authority = holder.get("authority")
+            if not isinstance(authority, LabReceiverBridgeAuthority): raise RuntimeBlocked("Lab pair authority is unavailable")
             return authority
         def drive() -> Mapping[str, Any]:
             adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
@@ -344,7 +349,7 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             bridge = {"schemaVersion": 1, "kind": "turn-loss-receiver-bridge", "t3": t3, "t5": t5,
                       "loss": {"runId": manifest.run_id, "realm": manifest.realm, "sessionId": result["sessionId"],
                                "attemptId": result["scope"]["attemptId"], "generation": result["scope"]["generation"], "streamId": result["scope"]["streamId"],
-                               "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"], "receiverCaptures": result["receiverCaptures"], "eventHandles": [event["comment"] for event in result["events"]],
+                               "selectedTurn": manifest.selected_turn, "pairEvidence": holder["runtimeRelay"]["pairEvidence"], "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"], "receiverCaptures": result["receiverCaptures"], "eventHandles": [event["comment"] for event in result["events"]],
                                "eventBindings": {str(row.get("comment")): {key: value for key, value in row.items() if key not in {"cleared", "clearReplyObservedNs"}} for row in result["events"] if isinstance(row, Mapping) and isinstance(row.get("comment"), str)}}, "timeline": fields["timeline"]}
             # T3/T5 sealing stays in the host Lab process.  The controller
             # never connects back to this Unix socket, and gateway media rows

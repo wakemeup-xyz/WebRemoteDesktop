@@ -81,7 +81,8 @@ def test_gateway_authority_accepts_only_its_own_unique_observation(tmp_path):
     relay, peer = {"address": "127.0.0.1", "port": 51000}, {"address": "172.31.0.2", "port": 59000}
     viewer = {"local": {"candidateType": "relay", **relay}, "remote": {"candidateType": "host", **peer}}
     host = {"local": {"candidateType": "host", **peer}, "remote": {"candidateType": "relay", **relay}, "videoSsrc": 7}
-    expected = {"allocationRelay": relay, "peer": peer, "rtpSsrc": 7, "viewerPair": viewer, "hostPair": host}
+    pair_evidence = {"receiptId": "lab-pair", "viewerPair": viewer, "hostPair": host, "viewerSsrc": 7, "hostSsrc": 7}
+    expected = {"allocationRelay": relay, "peer": peer, "rtpSsrc": 7, "viewerPair": viewer, "hostPair": host, "pairEvidence": pair_evidence}
     with pytest.raises(gateway.GatewayBlocked):
         authority.select(expected)
     row = {"outerEgress": {"protocol": "udp", "source": "172.31.0.3", "sourcePort": 3478, "destination": "172.31.0.4", "destinationPort": 40000}, **expected, "channelNumber": 0x4001, "encapsulation": "channel-data", "payloadType": 96}
