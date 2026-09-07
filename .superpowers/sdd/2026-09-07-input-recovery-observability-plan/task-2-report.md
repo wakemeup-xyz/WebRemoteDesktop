@@ -95,4 +95,5 @@ The parent-thread baseline for this isolated branch was Viewer **747/747** on BA
 ## Scoped commits
 
 - `2cf87431fec71a0646c2345e7f3b154168630158` — `feat(diagnostics): trace sanitized viewer input decisions`
-- Report-only commit is intentionally deferred until this appendable report is written and verified; no merge, push, or main-checkout mutation was performed.
+- `24f8d51` — `docs(diagnostics): record Task 2 input trace evidence` (this report).
+- No merge, push, or main-checkout mutation was performed.
