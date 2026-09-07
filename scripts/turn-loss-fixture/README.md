@@ -73,23 +73,19 @@ store's cross-process lock across persisted probe/install intent and terminal
 state. A watchdog therefore cannot clear intent in the middle of a transaction.
 It reports `IDLE`, `ARMED`, `CLEARED`, or
 `CLEANUP_PENDING`; the fixture is unhealthy unless the expected deadline state
-is present. The final evidence verifier records monotonic start/end, actual
-drop count, successful forwarding, send failures, and strict ordered
-receiver-directed RTP sequence gaps from the gateway ledger. The live Lab parent starts `bridge-authority` with its inherited
-`LabRun.transcript_verifier()` and the generated short `bridgeSocket` path;
-that per-run mode-0600 Unix socket alone is bind-mounted at `/lab-bridge` for
-the controller. After `clear`, the T4/T5 runner invokes `seal-bridge` on the
-host with raw evidence. The authority validates and retains the HMAC seal; the
-container receives only the seal id/signature and calls the socket to verify it.
-Neither a verifier nor a secret is placed in Compose argv, environment, or an
-artifact. The authority verifies the sealed 60-second T3 artifact and T5
-five-way transcript, then binds
-binds run/realm/session/attempt/generation/stream, selected TURN id and
-fingerprint, event handle/timestamps, RTP before/during/after sequences, and
-PLI/FIR -> IDR -> new paint recovery within two seconds without a PC rebuild or
-resolution change. A JSON bridge mounted into Compose alone is diagnostic-only
-and final media-effect verification remains `BLOCKED`; the control connection
-cannot submit drop counts or sequences. Zero observed effect cannot pass.
+is present. The gateway signs its unique media binding and every event ledger with an
+in-process Ed25519 key. The host verifies the public material, instance digest,
+run, realm, binding digest, counters, and signature before it persists the
+selected binding or accepts final media evidence. The host cannot submit media
+observations or ledger rows. T3/T5 HMAC sealing remains in the host Lab process
+and may use its own short mode-0600 Unix socket, but that socket is never
+mounted into or contacted by Compose. The gateway receipt binds run/realm,
+instance, event handle, receiver-directed RTP before/during/after sequences,
+drop and send-failure counters. The host T3/T5 authority separately verifies
+the 60-second T3 artifact and five-way T5 transcript, then binds PLI/FIR ->
+IDR -> new paint recovery within two seconds without a PC rebuild or resolution
+change. The control connection cannot submit drop counts, packet rows, or
+sequences. Zero observed effect cannot pass.
 Credentials,
 TURN environment, and manifest are written with mode `0600`.
 

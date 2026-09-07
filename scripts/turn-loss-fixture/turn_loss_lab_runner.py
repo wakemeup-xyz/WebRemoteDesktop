@@ -330,10 +330,12 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
             if lab.identity is None: raise RuntimeBlocked("fixture Lab did not start after TURN readiness")
             runtime_relay = holder.get("runtimeRelay")
             if not isinstance(runtime_relay, Mapping): raise RuntimeBlocked("actual TURN relay binding is unavailable")
-            return LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
+            authority = LabReceiverBridgeAuthority(manifest, verifier=lab.transcript_verifier(), socket_path=Path(prepared["bridgeSocket"]))
+            holder["authority"] = authority
+            return authority
         def drive() -> Mapping[str, Any]:
-            adapter, scope = holder["adapter"], holder["scope"]
-            if adapter is None or not isinstance(scope, Mapping): raise RuntimeBlocked("fixture peers are unavailable")
+            adapter, scope, authority = holder["adapter"], holder["scope"], holder["authority"]
+            if adapter is None or not isinstance(scope, Mapping) or not isinstance(authority, LabReceiverBridgeAuthority): raise RuntimeBlocked("fixture peers or T3/T5 authority are unavailable")
             t5 = _collect_current_t5(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             t3 = _collect_current_t3(lab=lab, adapter=adapter, scope=scope, selected_turn=manifest.selected_turn)
             timeline = RawLossTimelineCollector(started_ns=time.monotonic_ns(), ended_ns=time.monotonic_ns())
@@ -344,15 +346,14 @@ def run_dedicated_desktop_lifecycle(*, manifest_path: Path, runtime: Path, viewe
                                "attemptId": result["scope"]["attemptId"], "generation": result["scope"]["generation"], "streamId": result["scope"]["streamId"],
                                "selectedTurn": manifest.selected_turn, "eventHandle": last["comment"], "startedMonotonicNs": last["startedMonotonicNs"], "endedMonotonicNs": last["endedMonotonicNs"], "receiverCapture": result["receiverCapture"], "receiverCaptures": result["receiverCaptures"], "eventHandles": [event["comment"] for event in result["events"]],
                                "eventBindings": {str(row.get("comment")): {key: value for key, value in row.items() if key not in {"cleared", "clearReplyObservedNs"}} for row in result["events"] if isinstance(row, Mapping) and isinstance(row.get("comment"), str)}}, "timeline": fields["timeline"]}
-            raw_path, event_path, seal_path = runtime / "raw-bridge.json", runtime / "cleared.json", runtime / manifest.receiver_bridge_file
-            raw_path.write_text(json.dumps(bridge), encoding="utf-8"); event_path.write_text(json.dumps({key: value for key, value in last.items() if key != "clearReplyObservedNs"}), encoding="utf-8")
-            from turn_controlled_scene_lab_runner import seal_loss_bridge_after_clear
-            seal_loss_bridge_after_clear(manifest_path=manifest_path, socket_path=Path(prepared["bridgeSocket"]), raw_bridge_path=raw_path, cleared_event_path=event_path, seal_path=seal_path)
-            verifier = LossControlClient(prepared["controlEndpoint"], credentials["controlToken"])
-            try: final = verifier.call("verify", runId=manifest.run_id)
-            finally: verifier.close()
-            if final.get("status") != "PASS": raise RuntimeBlocked("sealed final loss verification did not pass")
-            return {"transaction": result, "final": final}
+            # T3/T5 sealing stays in the host Lab process.  The controller
+            # never connects back to this Unix socket, and gateway media rows
+            # inside the bridge are independently Ed25519-verified receipts.
+            sealed = authority.seal(bridge, last)
+            verified = authority.verify({"sealId": sealed["sealId"], "signature": sealed["signature"]}, last)
+            if verified.get("status") != "VERIFIED":
+                raise RuntimeBlocked("host T3/T5 final seal did not verify")
+            return {"transaction": result, "final": {"status": "PASS", "receiverSequences": verified["sequences"]}}
         return run_isolated_loss_lifecycle(prepared=prepared, compose_file=Path(__file__).with_name("compose.yaml"), authority=None, authority_factory=make_authority, fixture_start=fixture_start, fixture_probe=fixture_probe, run=DockerRuntimeProbe._run_command, drive=drive)
     finally:
         adapter = holder.get("adapter")

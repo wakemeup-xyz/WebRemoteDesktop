@@ -1521,7 +1521,7 @@ def prepare_runtime(raw_manifest: Mapping[str, Any], runtime_dir: Path, *, resol
         "services:\n"
         f"  turn:\n    image: {manifest.image_digests['turn']}\n    env_file:\n      - {runtime_dir / 'turn.env'}\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  turn-gateway:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/turn_gateway.py\", \"--turn-host\", \"turn\", \"--turn-port\", \"3478\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--counters\", \"/state/gateway-counters.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--run-id\", \"{manifest.run_id}\", \"--authority-port\", \"19092\"]\n    ports:\n      - 127.0.0.1:{turn_port}:3478/udp\n      - 127.0.0.1:{authority_port}:19092/tcp\n      - 127.0.0.1:51000-51009:51000-51009/udp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
-        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/controller.py\", \"serve\", \"--manifest\", \"/runtime/manifest.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--gateway-counters\", \"/state/gateway-counters.json\", \"--gateway-authority-host\", \"turn-gateway\", \"--gateway-authority-port\", \"19092\"]\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n      - {verify_dir}:/lab-bridge:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
+        f"  loss-controller:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/controller.py\", \"serve\", \"--manifest\", \"/runtime/manifest.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--state\", \"/state/active-loss.json\", \"--relay-binding\", \"/runtime/actual-relay.json\", \"--gateway-counters\", \"/state/gateway-counters.json\", \"--gateway-authority-host\", \"turn-gateway\", \"--gateway-authority-port\", \"19092\"]\n    ports:\n      - 127.0.0.1:{control_port}:19091/tcp\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  loss-watchdog:\n    image: {manifest.image_digests['controller']}\n    command: [\"python\", \"/fixture/controller.py\", \"watchdog\", \"--manifest\", \"/runtime/manifest.json\", \"--credentials\", \"/runtime/credentials/turn.json\", \"--state\", \"/state/active-loss.json\", \"--gateway-counters\", \"/state/gateway-counters.json\", \"--gateway-authority-host\", \"turn-gateway\", \"--gateway-authority-port\", \"19092\"]\n    volumes:\n      - {runtime_dir}:/runtime:ro\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n"
         f"  udp-echo-peer:\n    image: {manifest.image_digests['controller']}\n    labels:\n      com.wrd.turn-loss-run-id: {manifest.run_id}\n",
         encoding="utf-8",
@@ -1606,10 +1606,7 @@ def _main() -> None:
         command.add_argument("--gateway-counters", type=Path, required=True)
         command.add_argument("--gateway-authority-host", default="turn-gateway")
         command.add_argument("--gateway-authority-port", type=int, default=19092)
-    subcommands.choices["serve"].add_argument("--receiver-bridge", type=Path, default=Path("/receiver/bridge.json"))
     subcommands.choices["serve"].add_argument("--relay-binding", type=Path, required=True)
-    subcommands.choices["serve"].add_argument("--receiver-verifier-fd", type=int,
-                                                help="inherited live-Lab verifier descriptor; never a path, argv secret, or environment variable")
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--manifest", type=Path, required=True)
     prepare.add_argument("--runtime", type=Path, required=True)
@@ -1676,18 +1673,10 @@ def _main() -> None:
         while True:
             recover_deadline_state(store, backend)
             time.sleep(0.1)
-    receiver_source: ReceiverEvidenceSource
-    if arguments.receiver_verifier_fd is None:
-        # The Compose mount is deliberately not authentication. A runtime that
-        # cannot inherit the still-live Lab verifier stays BLOCKED at final
-        # evidence verification.
-        receiver_source = UnixSealedReceiverEvidenceSource(Path("/lab-bridge/authority.sock"), arguments.receiver_bridge)
-    else:
-        verifier = os.read(arguments.receiver_verifier_fd, 4096)
-        if not verifier or len(verifier) >= 4096:
-            raise RuntimeError("inherited live Lab verifier is unavailable or oversized")
-        receiver_source = SignedT3T5ReceiverEvidenceSource.from_file(arguments.receiver_bridge, verifier=verifier)
-    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=receiver_source, relay_binding_path=arguments.relay_binding)
+    # Container final verification consumes the gateway Ed25519 receipt.
+    # T3/T5 HMAC sealing stays in the host Lab process; no container connects
+    # to a host-mounted Unix socket.
+    controller = LossController(manifest, backend=backend, state_store=store, receiver_source=None, relay_binding_path=arguments.relay_binding)
     # Docker forwards the loopback-published host port to the fixture bridge
     # address, not the container loopback. The Compose override restricts the
     # published side to 127.0.0.1; this listener still exists only in TURN's

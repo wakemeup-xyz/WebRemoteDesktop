@@ -1003,7 +1003,7 @@ def test_generated_override_binds_the_arbitrary_runtime_and_returns_manifest_der
     override = (tmp_path / "compose.generated.yaml").read_text()
     assert f"{tmp_path}:/runtime:ro" in override
     assert f"{tmp_path / 'turn.env'}" in override
-    assert ":/lab-bridge:ro" in override
+    assert ":/lab-bridge:ro" not in override
     # The echo peer participates in the real TURN readiness transaction.  It
     # must receive the same locally-built controller image as the other
     # fixture sidecars, so Compose never attempts its placeholder registry.
@@ -1094,7 +1094,7 @@ def test_controller_build_entrypoint_has_no_mutable_runtime_tag():
     assert '"--build-arg", f"CONTROLLER_BASE_IMAGE={base_digest}"' in source
     assert '"org.wrd.turn-loss.base-repodigest"' in source
     assert 'add_parser("bridge-authority")' in source and 'add_parser("seal-bridge")' in source
-    assert 'Path("/lab-bridge/authority.sock")' in source
+    assert 'Path("/lab-bridge/authority.sock")' not in source
 
 
 def test_runtime_probe_verifies_local_controller_id_labels_and_network_none_contents():
