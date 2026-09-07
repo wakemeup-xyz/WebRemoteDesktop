@@ -29,6 +29,14 @@
       : () => true;
     const onStateChange = typeof config.onStateChange === 'function' ? config.onStateChange : () => {};
     const refreshViewport = typeof config.refreshViewport === 'function' ? config.refreshViewport : () => {};
+    const onTraceDomEvent = typeof config.onTraceDomEvent === 'function'
+      ? config.onTraceDomEvent : () => null;
+    const onTraceGate = typeof config.onTraceGate === 'function'
+      ? config.onTraceGate : () => {};
+    const onTraceEventEnd = typeof config.onTraceEventEnd === 'function'
+      ? config.onTraceEventEnd : () => {};
+    const withTraceEvent = typeof config.withTraceEvent === 'function'
+      ? config.withTraceEvent : (_eventId, send) => send();
 
     let attached = false;
     let shown = false;
@@ -47,6 +55,8 @@
     let pendingGeneration = null;
     let drainActive = false;
     let drainTimer = null;
+    let activeTraceEventId = null;
+    let drainTraceEventId = null;
     let contextRecoveryRequired = false;
     const listeners = [];
 
@@ -187,6 +197,7 @@
     function clearDrainTimer() {
       if (drainTimer !== null) clearTimeout(drainTimer);
       drainTimer = null;
+      drainTraceEventId = null;
     }
 
     function cancelDrain() {
@@ -196,6 +207,60 @@
 
     function hasPending() {
       return draftValue !== acceptedValue || drainActive || retryRequired;
+    }
+
+    function traceDom(action, phase) {
+      activeTraceEventId = null;
+      try {
+        const eventId = onTraceDomEvent({
+          inputType: 'text', action, phase, focusKind: 'mobile-text', visibility: 'visible',
+        });
+        if (Number.isSafeInteger(eventId) && eventId > 0) activeTraceEventId = eventId;
+      } catch (_) {
+        activeTraceEventId = null;
+      }
+      const eventId = activeTraceEventId;
+      const clear = () => {
+        try { onTraceEventEnd(eventId); } catch (_) { /* observational */ }
+        if (activeTraceEventId === eventId) activeTraceEventId = null;
+      };
+      if (typeof queueMicrotask === 'function') queueMicrotask(clear);
+      else Promise.resolve().then(clear);
+      return activeTraceEventId;
+    }
+
+    function traceGate(acceptedValue, reason, action = 'text') {
+      try {
+        onTraceGate({
+          inputType: 'text', action, accepted: acceptedValue === true,
+          reason, focusKind: 'mobile-text', visibility: 'visible',
+          eventId: activeTraceEventId,
+        });
+      } catch (_) {
+        // The trace hook is strictly observational.
+      }
+    }
+
+    function sendWithTrace(send, eventId = activeTraceEventId) {
+      let invoked = false;
+      let businessResult;
+      const invoke = () => {
+        invoked = true;
+        businessResult = send();
+        return businessResult;
+      };
+      try {
+        return withTraceEvent(eventId, invoke);
+      } catch (_) {
+        // A tracing wrapper can throw either before or after invoking the
+        // business callback. Retry only the former so diagnostics can never
+        // duplicate a remote text/key write.
+        // Preserve the business callback's result if the wrapper failed after
+        // it had already returned. The trace layer must not turn an accepted
+        // write into a retryable failure.
+        if (invoked) return businessResult;
+        try { return invoke(); } catch (error) { return false; }
+      }
     }
 
     function deliverySettled() {
@@ -288,18 +353,22 @@
       return false;
     }
 
-    function scheduleDrain() {
+    function scheduleDrain(traceEventId = activeTraceEventId) {
       if (drainTimer !== null || !drainActive) return;
       const scheduledGeneration = generation;
+      drainTraceEventId = traceEventId;
       drainTimer = setTimeout(() => {
         drainTimer = null;
+        const deferredEventId = drainTraceEventId;
+        drainTraceEventId = null;
         if (scheduledGeneration !== generation || !drainActive) return;
-        processDiff({ fromDrain: true });
+        processDiff({ fromDrain: true, traceEventId: deferredEventId });
       }, 0);
     }
 
-    function processDiff({ force = false, fromDrain = false } = {}) {
+    function processDiff({ force = false, fromDrain = false, traceEventId = activeTraceEventId } = {}) {
       if (composing) {
+        traceGate(false, 'draft-composing', 'composition');
         if (fromDrain || drainActive) {
           cancelDrain();
           markPending();
@@ -317,20 +386,30 @@
         return true;
       }
       if (retryRequired && !force && !fromDrain) {
+        traceGate(false, 'draft-pending');
         notifyState();
         return false;
       }
       if (!contextValid || deliveryUncertain) {
+        traceGate(false, 'draft-uncertain');
         if (fromDrain || drainActive) cancelDrain();
         markPending({ uncertain: true });
         return false;
       }
       if (!surfaceSettled()) {
+        traceGate(false, 'surface-pending');
         if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
       }
       if (!isEnabled() || transportState !== 'ready') {
+        const reason = transportState === 'blocked'
+          ? 'keyboard-transport-blocked'
+          : transportState === 'reacquire-required'
+            ? 'keyboard-transport-reacquire-required'
+            : transportState === 'revoked'
+              ? 'keyboard-transport-revoked' : 'inactive';
+        traceGate(false, reason);
         if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
@@ -375,7 +454,7 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendKey('Backspace');
+        const result = sendWithTrace(() => sendKey('Backspace'), traceEventId ?? activeTraceEventId);
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -395,7 +474,7 @@
 
       if (diff.deleted.length > sentDeletes) {
         drainActive = true;
-        scheduleDrain();
+        scheduleDrain(traceEventId ?? activeTraceEventId);
         notifyState();
         return false;
       }
@@ -414,7 +493,7 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendText(inserted);
+        const result = sendWithTrace(() => sendText(inserted), traceEventId ?? activeTraceEventId);
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -460,6 +539,7 @@
     }
 
     function onCompositionStart() {
+      traceDom('composition', 'compositionstart');
       if (drainActive) {
         cancelDrain();
         markPending();
@@ -472,6 +552,7 @@
     }
 
     function onCompositionUpdate() {
+      traceDom('composition', 'compositionupdate');
       observedValue = getValue();
       draftValue = observedValue;
       notifyState();
@@ -479,6 +560,7 @@
 
     function onBeforeInput(event) {
       if (!event || event.target !== element || composing) return;
+      traceDom('beforeinput', 'beforeinput');
       if (!rawValue().endsWith(SENTINEL)) return;
       // Failed text is an editable local draft. Do not restore the accepted
       // prefix while the user is appending or correcting it.
@@ -496,15 +578,17 @@
     }
 
     function onCompositionEnd() {
+      traceDom('composition', 'compositionend');
       observedValue = getValue();
       draftValue = observedValue;
       composing = false;
-      if (!retryRequired) flushDiff();
+      if (!retryRequired) flushDiff({ traceEventId: activeTraceEventId });
       compositionBaseValue = '';
       notifyState();
     }
 
     function onInput() {
+      traceDom('text', 'input');
       const hadDrainTimer = drainTimer !== null;
       captureObservedValue();
       if (composing) {
@@ -515,7 +599,7 @@
         // A new edit supersedes the old target, but the current serial
         // transaction is allowed to finish one batch before recalculating.
         clearDrainTimer();
-        processDiff({ fromDrain: true });
+        processDiff({ fromDrain: true, traceEventId: activeTraceEventId });
         return;
       }
       if (!drainActive) flushDiff();
@@ -524,6 +608,7 @@
 
     function onKeydown(event) {
       if (!event || event.target !== element) return;
+      traceDom('key', 'down');
       event.stopPropagation?.();
       if (composing || !CONTROL_KEYS.has(event.key)) return;
       // A rejected draft remains a normal local editing surface. In
@@ -542,6 +627,7 @@
 
     function onKeyup(event) {
       if (event?.target !== element) return;
+      traceDom('key', 'up');
       try {
         releaseTrackedKey(event);
       } catch (_) {
@@ -614,7 +700,7 @@
         || !isEnabled()) return false;
       let result;
       try {
-        result = send();
+        result = sendWithTrace(send);
       } catch (_) {
         result = false;
       }
@@ -641,7 +727,7 @@
       }
       const modified = Object.values(flags).some(Boolean) || virtualModified;
       if (modified) return runExternalAction('context-change', () => sendKey(key, flags));
-      if (!isEnabled() || !accepted(sendKey(key, flags))) return false;
+      if (!isEnabled() || !accepted(sendWithTrace(() => sendKey(key, flags)))) return false;
       const content = contentPoints(acceptedValue);
       if (key === 'Backspace') {
         if (remoteCursor > 0) {
@@ -677,10 +763,12 @@
 
     function retryPending() {
       if (!retryable() || drainActive) return false;
-      return flushDiff({ force: true });
+      activeTraceEventId = null;
+      return flushDiff({ force: true, traceEventId: null });
     }
 
     function discardPending() {
+      activeTraceEventId = null;
       cancelDrain();
       generation += 1;
       resetHistory();
@@ -751,6 +839,7 @@
 
     function attach() {
       if (attached || !element) return;
+      activeTraceEventId = null;
       attached = true;
       acceptedValue = getValue();
       draftValue = acceptedValue;
@@ -771,6 +860,7 @@
     }
 
     function detach() {
+      activeTraceEventId = null;
       cancelDrain();
       generation += 1;
       while (listeners.length) {
@@ -783,6 +873,7 @@
     }
 
     function show() {
+      activeTraceEventId = null;
       shown = true;
       element?.focus?.();
       observedValue = getValue();
@@ -793,6 +884,7 @@
     }
 
     function hide() {
+      activeTraceEventId = null;
       shown = false;
       element?.blur?.();
       refreshViewport();
@@ -800,6 +892,7 @@
     }
 
     function reset(reason) {
+      activeTraceEventId = null;
       lastResetReason = reason || 'reset';
       cancelDrain();
       generation += 1;

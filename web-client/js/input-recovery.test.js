@@ -136,6 +136,17 @@ function loadRecoveryFixture({ touchPoints = 0, channels = 'both' } = {}) {
     clearInterval() {},
   });
   context.globalThis = context;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  const trace = context.InputTrace.create({
+    now: () => now,
+    hashInputIds: null,
+    setTimeoutFn: context.setTimeout,
+    clearTimeoutFn: context.clearTimeout,
+  });
+  context.Diagnostic = {
+    recordInputTrace(stage, meta) { return trace.record(stage, meta); },
+    getInputTraceSnapshot() { return trace.snapshot(); },
+  };
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-geometry.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'touch-input-adapter.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'keyboard-transport.js'), 'utf8'), context);
@@ -276,11 +287,29 @@ globalThis.__Input = Input;`, context);
 
   return {
     Input, WebRTC, document, window, video, elements, sent, timers, documentListeners, windowListeners,
-    advance, ack, writes, inputs: writes, pointer, keydown, keyup, blur, resume,
+    advance, ack, writes, inputs: writes, pointer, keydown, keyup, blur, resume, trace,
     setDataChannelOpen, latestMediaRequest, freshFrame, suspendAndResume,
     setNow(value) { now = value; },
   };
 }
+
+test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decisions', () => {
+  const h = loadRecoveryFixture();
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.advance(3001);
+
+  const snapshot = h.trace.snapshot();
+  const stages = new Set(snapshot.events.map(({ stage }) => stage));
+  assert.equal(stages.has('dom-received'), true);
+  assert.equal(stages.has('gate'), true);
+  assert.equal(stages.has('transport-send'), true);
+  assert.equal(stages.has('ack-timeout'), true);
+  assert.equal(stages.has('lifecycle'), true);
+  assert.equal(JSON.stringify(snapshot).includes('recovery-lease-0001'), false);
+  assert.equal(JSON.stringify(snapshot).includes('relX'), false);
+  assert.equal(JSON.stringify(snapshot).includes('relY'), false);
+});
 
 test('recovery API unlocks a click and key only after both owned reset ACKs', () => {
   const h = loadRecoveryFixture();

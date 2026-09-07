@@ -53,6 +53,81 @@ function makeTextHarness({enabled = true, refreshViewport = () => {}, sendTextRe
   };
 }
 
+test('IME DOM phases and deferred sends retain a safe trace event association', async () => {
+  const domEvents = [];
+  const gateEvents = [];
+  const associations = [];
+  const listeners = new Map();
+  const input = {
+    value: '', selectionStart: 0, selectionEnd: 0,
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener() {}, focus() {}, blur() {},
+  };
+  let nextEventId = 0;
+  const adapter = MobileTextInput.create({
+    element: input,
+    sendText: () => 'text-1',
+    sendKey: () => 'key-1',
+    isEnabled: () => true,
+    onTraceDomEvent(meta) {
+      domEvents.push(meta);
+      return ++nextEventId;
+    },
+    onTraceGate(meta) { gateEvents.push(meta); },
+    withTraceEvent(eventId, send) {
+      associations.push(eventId);
+      return send();
+    },
+  });
+  adapter.attach();
+  const emit = (type, overrides = {}) => listeners.get(type)?.({ type, target: input, ...overrides });
+
+  emit('compositionstart');
+  input.value = '中';
+  emit('compositionupdate');
+  emit('compositionend');
+  emit('input');
+
+  assert.deepEqual(domEvents.map(({ action, phase }) => `${action}:${phase}`), [
+    'composition:compositionstart', 'composition:compositionupdate',
+    'composition:compositionend', 'text:input',
+  ]);
+  assert.ok(associations.includes(3), 'the composition commit must retain its DOM event association');
+  assert.equal(gateEvents.length, 0, 'an accepted send is gated by Input, not a second adapter gate');
+  assert.equal(JSON.stringify(domEvents).includes('中'), false);
+
+  // Once the DOM dispatch microtask closes, a later toolbar action must not
+  // inherit the last text event's association.
+  await Promise.resolve();
+  adapter.runExternalAction('navigation', () => 'navigation-accepted');
+  assert.equal(associations.at(-1), null);
+});
+
+test('a tracing hook that throws after sending cannot replay the business callback', () => {
+  const listeners = new Map();
+  const input = {
+    value: '', selectionStart: 0, selectionEnd: 0,
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener() {}, focus() {}, blur() {},
+  };
+  let sends = 0;
+  const adapter = MobileTextInput.create({
+    element: input,
+    sendText: () => { sends += 1; return 'sent-once'; },
+    isEnabled: () => true,
+    onTraceDomEvent: () => 1,
+    withTraceEvent(_eventId, send) {
+      const result = send();
+      throw new Error(`trace-after-send:${result}`);
+    },
+  });
+  adapter.attach();
+  input.value = 'once';
+  listeners.get('input')({ type: 'input', target: input });
+  assert.equal(sends, 1);
+  assert.equal(adapter.getSnapshot().hasPending, false);
+});
+
 function withFakeTimers(run) {
   const nativeSetTimeout = global.setTimeout;
   const nativeClearTimeout = global.clearTimeout;

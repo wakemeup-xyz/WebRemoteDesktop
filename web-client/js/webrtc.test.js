@@ -196,6 +196,30 @@ test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   assert.equal(cleared, true);
 });
 
+test('connection attempt lifecycle is handed to the shared input trace', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const traceSource = fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8');
+  vm.runInContext(traceSource, context);
+  const trace = context.InputTrace.create({ hashInputIds: null, setTimeoutFn: () => null });
+  context.Diagnostic = {
+    recordInputTrace(stage, meta) { return trace.record(stage, meta); },
+  };
+  context.Input = { activeControlLease: { leaseEpoch: 9 }, onConnectionAttemptChanged() {} };
+  WebRTC.createConnectionAttemptId = () => 'attempt-trace-web-1';
+  WebRTC.ensureDesktopSessionState = () => null;
+  WebRTC.bindCurrentConnectionAttempt = () => {};
+  WebRTC.syncDesktopInputGate = () => {};
+  WebRTC.setUiPhase = () => {};
+
+  assert.equal(WebRTC.beginConnectionAttempt('viewer-open'), 'attempt-trace-web-1');
+  const snapshot = trace.snapshot();
+  const lifecycle = snapshot.events.find(({ stage, action }) => stage === 'lifecycle' && action === 'active');
+  assert.equal(lifecycle.connectionAttemptId, 'attempt-trace-web-1');
+  assert.equal(lifecycle.leaseEpoch, 9);
+  assert.equal(lifecycle.reason, 'attempt-changed');
+  assert.equal(JSON.stringify(snapshot).includes('viewer-open'), false);
+});
+
 test('chrome snapshot exposes blocked mobile text state to the layout capability bridge', () => {
   const { WebRTC, context } = loadWebRTC();
   const snapshot = { shown: true, composing: false, hasPending: true, status: 'uncertain', deliveryUncertain: true };

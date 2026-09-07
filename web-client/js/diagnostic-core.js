@@ -2,6 +2,8 @@
 // Full modal/panel attaches later via deferred diagnostic.js; the button must
 // never look enabled-and-inert while that load is pending or failed.
 (function installDiagnosticCore(global) {
+  const SAFE_CONNECTION_ATTEMPT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
+  const MAX_LEASE_EPOCH = 0x7fffffff;
   const existing = global.Diagnostic && typeof global.Diagnostic === 'object'
     ? global.Diagnostic
     : null;
@@ -21,6 +23,146 @@
     : [];
   Diagnostic._diagShellBound = Boolean(Diagnostic._diagShellBound);
   Diagnostic._consoleHijacked = Boolean(Diagnostic._consoleHijacked);
+  Diagnostic._pendingInputIncidents = Array.isArray(Diagnostic._pendingInputIncidents)
+    ? Diagnostic._pendingInputIncidents
+    : [];
+
+  function emptyInputTraceSnapshot() {
+    return {
+      schemaVersion: 1,
+      events: [],
+      counters: {
+        droppedEvents: 0,
+        sampledEvents: 0,
+        hashUnavailable: 0,
+        droppedHashCount: 0,
+        pendingHashCount: 0,
+        pendingAckCount: 0,
+        evictedPendingAcks: 0,
+        expiredPendingAcks: 0,
+        ackTimeoutCount: 0,
+        incidentCallbackErrors: 0,
+        mouseMoveCount: 0,
+        wheelCount: 0,
+      },
+    };
+  }
+
+  Diagnostic._getInputTraceApi = function _getInputTraceApi() {
+    return global.InputTrace && typeof global.InputTrace.create === 'function'
+      ? global.InputTrace
+      : null;
+  };
+
+  Diagnostic._ensureInputTrace = function _ensureInputTrace() {
+    if (this._inputTrace && typeof this._inputTrace.record === 'function'
+      && typeof this._inputTrace.snapshot === 'function') return this._inputTrace;
+    const api = this._getInputTraceApi();
+    if (!api) return null;
+    try {
+      this._inputTrace = api.create({
+        onIncident: (reason, identity) => this._handleInputTraceIncident(reason, identity),
+      });
+    } catch (_error) {
+      this._inputTrace = null;
+    }
+    return this._inputTrace;
+  };
+
+  Diagnostic._currentInput = function _currentInput() {
+    return global.Input && typeof global.Input === 'object' ? global.Input : null;
+  };
+
+  Diagnostic._inputTraceIdentityMatches = function _inputTraceIdentityMatches(identity = {}) {
+    const input = this._currentInput();
+    const webRtc = global.WebRTC && typeof global.WebRTC === 'object' ? global.WebRTC : null;
+    const currentAttempt = webRtc?.currentConnectionAttemptId || null;
+    const currentEpoch = Number.isSafeInteger(input?.activeControlLease?.leaseEpoch)
+      && input.activeControlLease.leaseEpoch >= 0
+      && input.activeControlLease.leaseEpoch <= MAX_LEASE_EPOCH
+      ? input.activeControlLease.leaseEpoch : null;
+    if (!currentAttempt || currentEpoch === null) return false;
+    const identityAttempt = typeof identity?.connectionAttemptId === 'string'
+      && SAFE_CONNECTION_ATTEMPT.test(identity.connectionAttemptId)
+      ? identity.connectionAttemptId : null;
+    const identityEpoch = Number.isSafeInteger(identity?.leaseEpoch)
+      && identity.leaseEpoch >= 0
+      && identity.leaseEpoch <= MAX_LEASE_EPOCH
+      ? identity.leaseEpoch : null;
+    return identityAttempt === currentAttempt && identityEpoch === currentEpoch;
+  };
+
+  Diagnostic._inputTraceIncidentCanSend = function _inputTraceIncidentCanSend(identity = {}) {
+    const input = this._currentInput();
+    const document = global.document;
+    if (!input || input.isActive !== true || !input.activeControlLease
+      || document?.hidden === true || !this._inputTraceIdentityMatches(identity)) return false;
+    const webRtc = global.WebRTC && typeof global.WebRTC === 'object' ? global.WebRTC : null;
+    if (typeof webRtc?.hasActiveControl === 'function') {
+      try {
+        if (webRtc.hasActiveControl() !== true) return false;
+      } catch (_error) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  Diagnostic._handleInputTraceIncident = function _handleInputTraceIncident(reason, identity = {}) {
+    if (reason !== 'input-ack-timeout' && reason !== 'input-gate-unexpected') return false;
+    const safeIdentity = {
+      connectionAttemptId: typeof identity?.connectionAttemptId === 'string'
+        && SAFE_CONNECTION_ATTEMPT.test(identity.connectionAttemptId)
+        ? identity.connectionAttemptId : null,
+      leaseEpoch: Number.isSafeInteger(identity?.leaseEpoch)
+        && identity.leaseEpoch >= 0
+        && identity.leaseEpoch <= MAX_LEASE_EPOCH
+        ? identity.leaseEpoch : null,
+    };
+    if (!this._inputTraceIncidentCanSend(safeIdentity)) return false;
+    if (!this.panelReady || typeof this.buildConnectionDiagnostic !== 'function') {
+      const exists = this._pendingInputIncidents.some((item) => (
+        item.reason === reason
+        && item.identity.connectionAttemptId === safeIdentity.connectionAttemptId
+        && item.identity.leaseEpoch === safeIdentity.leaseEpoch
+      ));
+      if (!exists) this._pendingInputIncidents.push({ reason, identity: safeIdentity });
+      while (this._pendingInputIncidents.length > 20) this._pendingInputIncidents.shift();
+      return false;
+    }
+    try {
+      this.autoSendFailure(reason);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  Diagnostic.flushPendingInputIncidents = function flushPendingInputIncidents() {
+    if (!Array.isArray(this._pendingInputIncidents) || !this._pendingInputIncidents.length) return;
+    const pending = this._pendingInputIncidents.splice(0, this._pendingInputIncidents.length);
+    pending.forEach((item) => this._handleInputTraceIncident(item.reason, item.identity));
+  };
+
+  Diagnostic.recordInputTrace = function recordInputTrace(stage, meta = {}) {
+    const trace = this._ensureInputTrace();
+    if (!trace) return null;
+    try {
+      return trace.record(stage, meta);
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  Diagnostic.getInputTraceSnapshot = function getInputTraceSnapshot() {
+    const trace = this._ensureInputTrace();
+    if (!trace) return emptyInputTraceSnapshot();
+    try {
+      return trace.snapshot();
+    } catch (_error) {
+      return emptyInputTraceSnapshot();
+    }
+  };
 
   Diagnostic.ensureBrowserSessionId = Diagnostic.ensureBrowserSessionId || function ensureBrowserSessionId() {
     if (this.browserSessionId) return this.browserSessionId;
@@ -157,6 +299,7 @@
       btn.title = '';
       if (btn.dataset.wrdDiagLabel) btn.textContent = btn.dataset.wrdDiagLabel;
     }
+    this.flushPendingInputIncidents();
   };
 
   Diagnostic.markDeferredFailed = function markDeferredFailed(retryFn) {

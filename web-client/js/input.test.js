@@ -92,11 +92,23 @@ function loadInput() {
   };
   context.globalThis = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.__InputTrace = context.InputTrace.create({
+    hashInputIds: null,
+    setTimeoutFn: () => null,
+  });
+  context.Diagnostic = {
+    recordInputTrace(stage, meta) { return context.__InputTrace.record(stage, meta); },
+    getInputTraceSnapshot() { return context.__InputTrace.snapshot(); },
+  };
   for (const filename of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'mobile-text-input.js', 'input.js']) {
     const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
     vm.runInContext(filename === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, context);
   }
-  return { Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents };
+  return {
+    Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents,
+    trace: context.__InputTrace,
+  };
 }
 
 function loadUi(context) {
@@ -2389,6 +2401,113 @@ test('mobile text and mouse input never place content or coordinates in diagnost
 
   const diagnostic = JSON.stringify(Input.getDiagnosticState());
   assert.doesNotMatch(diagnostic, /private-mobile-text|relX|relY|button|text/);
+});
+
+test('diagnostic input state uses bounded enums and never copies arbitrary source fields', () => {
+  const { Input, context } = loadInput();
+  Input.keyboardController = {
+    getSnapshot: () => ({
+      mode: 'MODE_CANARY', state: 'STATE_CANARY', pressedKeyCount: Number.MAX_SAFE_INTEGER,
+    }),
+  };
+  Input.keyboardTransport = {
+    getSnapshot: () => ({
+      adapter: 'ADAPTER_CANARY', epoch: -1, lastSent: Number.MAX_SAFE_INTEGER,
+      lastApplied: 'not-a-number', pendingCount: 9999,
+    }),
+  };
+  Input.lastKeyboardResetReason = 'RESET_REASON_CANARY';
+  Input._mobileSurfaceState = 'SURFACE_STATE_CANARY';
+  Input._mobileSurfaceGeneration = Number.MAX_SAFE_INTEGER;
+  Input._recoveryCycle = {
+    ...Input._recoveryCycle,
+    state: 'RECOVERY_STATE_CANARY', reason: 'RECOVERY_REASON_CANARY', generation: Number.MAX_SAFE_INTEGER,
+  };
+  Input._desktopWriteRecovery = {
+    state: 'WRITE_STATE_CANARY', status: 'WRITE_STATUS_CANARY', appliedSeq: Number.MAX_SAFE_INTEGER,
+  };
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: true, hasActiveControl: true, manualDisconnect: false,
+    mediaState: 'MEDIA_STATE_CANARY', runtimePhase: 'RUNTIME_PHASE_CANARY', inputIsActive: true,
+    blockedReasons: ['BLOCKED_REASON_CANARY'],
+  });
+
+  const state = Input.getDiagnosticState();
+  const json = JSON.stringify(state);
+  for (const canary of [
+    'MODE_CANARY', 'STATE_CANARY', 'ADAPTER_CANARY', 'RESET_REASON_CANARY',
+    'SURFACE_STATE_CANARY', 'RECOVERY_STATE_CANARY', 'RECOVERY_REASON_CANARY',
+    'WRITE_STATE_CANARY', 'WRITE_STATUS_CANARY', 'MEDIA_STATE_CANARY',
+    'RUNTIME_PHASE_CANARY', 'BLOCKED_REASON_CANARY',
+  ]) {
+    assert.equal(json.includes(canary), false, canary);
+  }
+  assert.equal(state.keyboard.epoch, 0);
+  assert.equal(state.keyboard.lastSent, 0x7fffffff);
+  assert.equal(state.keyboard.pendingCount, 256);
+  assert.equal(state.surface.state, 'settled');
+  assert.equal(state.recovery.state, 'idle');
+  assert.equal(state.gate.mediaState, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.effectiveGate.blockedReasons)), ['no-active-control']);
+});
+
+test('real keyboard gate rejection traces DOM and gate only', () => {
+  const { Input, context, elements, documentListeners, trace } = loadInput();
+  Input.videoElement = context.document.getElementById('remoteVideo');
+  Input.initKeyboardController();
+  Input.setControlLease({ leaseId: 'lease-trace-1', leaseEpoch: 3 });
+  Input.setActive(true);
+  Input._mobileSurfaceState = 'uncertain';
+  Input.setupEventListeners();
+
+  const event = keyboard('keydown', {
+    target: elements.get('remoteVideo'),
+    key: 'TRACE_KEY_CANARY', code: 'TRACE_CODE_CANARY',
+  });
+  documentListeners.get('keydown')(event);
+
+  const snapshot = trace.snapshot();
+  const gateEvents = snapshot.events.filter(({ stage }) => stage === 'dom-received' || stage === 'gate');
+  assert.equal(JSON.stringify(gateEvents.map(({ stage }) => stage)), JSON.stringify(['dom-received', 'gate']));
+  assert.equal(gateEvents[0].eventId, gateEvents[1].eventId);
+  assert.equal(gateEvents[1].accepted, false);
+  assert.equal(gateEvents[1].reason, 'surface-uncertain');
+  assert.equal(snapshot.events.some(({ stage }) => stage === 'transport-send'), false);
+  const json = JSON.stringify(snapshot);
+  assert.doesNotMatch(json, /TRACE_KEY_CANARY|TRACE_CODE_CANARY/);
+});
+
+test('real Input sends record DataChannel result, Socket fallback, and receiver ACK status', () => {
+  const { Input, context, elements, trace } = loadInput();
+  Input.videoElement = context.document.getElementById('remoteVideo');
+  Input.initKeyboardController();
+  Input.setControlLease({ leaseId: 'lease-trace-2', leaseEpoch: 3 });
+  Input.setActive(true);
+  context.WebRTC.currentConnectionAttemptId = 'attempt-trace';
+
+  context.WebRTC.sendInput = () => true;
+  const dataChannelId = Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', buttons: 1,
+  });
+  context.WebRTC.sendInput = () => false;
+  const socketId = Input.sendInput('mouse', 'up', {
+    relX: 0.2, relY: 0.3, button: 'left', buttons: 0,
+  });
+  const transport = trace.snapshot().events.filter(({ stage }) => stage === 'transport-send');
+  assert.equal(dataChannelId !== null, true);
+  assert.equal(socketId !== null, true);
+  assert.equal(JSON.stringify(transport.map(({ transport: path, accepted }) => [path, accepted])), JSON.stringify([
+    ['datachannel', true], ['datachannel', false], ['socket', true],
+  ]));
+
+  const ack = Input.acceptMouseAck({
+    schemaVersion: 2, inputType: 'mouse', leaseEpoch: 3, status: 'applied',
+    accepted: false, appliedSeq: 1, inputIds: [dataChannelId],
+  });
+  assert.equal(ack.status, 'applied');
+  const ackEvent = trace.snapshot().events.find(({ stage }) => stage === 'ack');
+  assert.equal(ackEvent.status, 'applied');
+  assert.equal(ackEvent.accepted, false);
 });
 
 test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {

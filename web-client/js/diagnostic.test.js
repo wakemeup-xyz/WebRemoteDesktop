@@ -34,6 +34,87 @@ function loadScript(filename, context, exportName) {
   return context.__exported;
 }
 
+test('diagnostic core keeps the critical input trace through deferred panel loading', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  const InputTrace = context.InputTrace;
+  context.window.InputTrace = InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  const firstSnapshot = Diagnostic.getInputTraceSnapshot();
+  assert.equal(firstSnapshot.schemaVersion, 1);
+  Diagnostic.recordInputTrace('dom-received', {
+    inputType: 'keyboard', action: 'key', phase: 'down',
+    focusKind: 'desktop', visibility: 'visible',
+  });
+  const beforeDeferred = Diagnostic.getInputTraceSnapshot();
+  assert.equal(beforeDeferred.events.length, 1);
+  assert.equal(typeof InputTrace.create, 'function');
+
+  const deferredDiagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const afterDeferred = deferredDiagnostic.getInputTraceSnapshot();
+  assert.equal(afterDeferred.events.length, 1);
+  assert.equal(afterDeferred.events[0].stage, 'dom-received');
+});
+
+test('diagnostic core resolves the live Input from a classic script export', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.window.InputTrace = context.InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Input = loadScript('input.js', context, 'Input');
+  const Diagnostic = context.window.Diagnostic;
+  const sent = [];
+  Diagnostic.autoSendFailure = (reason) => sent.push(reason);
+  Diagnostic.buildConnectionDiagnostic = () => ({});
+  Diagnostic.panelReady = true;
+  context.WebRTC.currentConnectionAttemptId = 'attempt-classic';
+  context.WebRTC.hasActiveControl = () => true;
+  context.window.WebRTC = context.WebRTC;
+  Input.isActive = true;
+  Input.activeControlLease = { leaseEpoch: 8 };
+
+  assert.equal(context.window.Input, Input);
+  assert.equal(Diagnostic._currentInput(), Input);
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-classic', leaseEpoch: 8,
+  });
+  assert.deepEqual(sent, ['input-ack-timeout']);
+});
+
+test('diagnostic core drops an input timeout from an old attempt or lease epoch', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.window.InputTrace = context.InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  const sent = [];
+  Diagnostic.autoSendFailure = (reason) => sent.push(reason);
+  Diagnostic.buildConnectionDiagnostic = () => ({ connectionAttemptId: 'attempt-new' });
+  Diagnostic.panelReady = true;
+  context.WebRTC.currentConnectionAttemptId = 'attempt-new';
+  context.Input = {
+    isActive: true,
+    activeControlLease: { leaseEpoch: 8 },
+    getEffectiveInputGate: () => ({ allowed: true, blockedReasons: [] }),
+  };
+  context.window.Input = context.Input;
+  context.window.WebRTC = context.WebRTC;
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-old', leaseEpoch: 7,
+  });
+  assert.deepEqual(sent, []);
+
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-new', leaseEpoch: 7,
+  });
+  assert.deepEqual(sent, []);
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-new', leaseEpoch: 8,
+  });
+  assert.deepEqual(sent, ['input-ack-timeout']);
+});
+
 function createDiagnosticContext(overrides = {}) {
   const elements = new Map();
   const ids = [

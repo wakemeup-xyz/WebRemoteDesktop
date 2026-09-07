@@ -4,6 +4,62 @@ const INPUT_RECOVERY_TIMEOUT_MS = 3000;
 const RECOVERY_RESET_REJECTION_STATUSES = new Set([
   'stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed',
 ]);
+const INPUT_DIAGNOSTIC_MEDIA_STATES = new Set(['active', 'suspended']);
+const INPUT_DIAGNOSTIC_RUNTIME_PHASES = new Set(['active', 'suspending', 'suspended', 'resuming']);
+const INPUT_DIAGNOSTIC_SURFACE_STATES = new Set(['settled', 'pending', 'uncertain']);
+const INPUT_DIAGNOSTIC_RECOVERY_STATES = new Set(['idle', 'waiting', 'recovered', 'failed']);
+const INPUT_DIAGNOSTIC_DRAFT_STATUSES = new Set(['idle', 'pending', 'composing', 'uncertain', 'blocked']);
+const INPUT_DIAGNOSTIC_KEYBOARD_STATES = new Set([
+  'INACTIVE', 'READY', 'BLOCKED', 'RESET_REQUIRED',
+]);
+const INPUT_DIAGNOSTIC_ADAPTERS = new Set(['dataChannel', 'socket']);
+const INPUT_DIAGNOSTIC_ACK_STATUSES = new Set([
+  'applied', 'duplicate', 'stale-lease', 'invalid-input', 'unsupported-code',
+  'execution-failed', 'sequence-gap', 'resync-required', 'stale', 'reacquire-required',
+]);
+const INPUT_DIAGNOSTIC_REASONS = new Set([
+  'no-active-control', 'manual-disconnect', 'media-not-ready-for-attempt', 'media-gate',
+  'surface-pending', 'surface-uncertain', 'mouse-reset-pending',
+  'desktop-write-reacquire-required', 'draft-composing', 'draft-pending', 'draft-uncertain',
+  'recovery-waiting', 'recovery-failed', 'keyboard-transport-blocked',
+  'keyboard-transport-revoked', 'keyboard-transport-reacquire-required',
+  'keyboard-reset-pending', 'keyboard-blocked', 'window-blur', 'visibility-hidden',
+  'lease-changed', 'control-lost', 'context-invalidated', 'reset', 'disconnect',
+  'pointer-cancel', 'lost-pointer-capture', 'unbind', 'validate-reentry', 'map-reentry',
+  'nested-reset', 'outer-reset', 'test-reset', 'reacquire-required', 'transport-change',
+  'manual', 'input-recovery-timeout', 'down-ack-timeout', 'up-send-failed', 'mouse-reset',
+  'keyboard-reset', 'recovery-timeout', 'lease-rebind', 'connection-attempt-changed',
+  'datachannel-open', 'datachannel-close', 'datachannel-error', 'manual-pause',
+  'page-hidden', 'resume', 'retry', 'blocked', 'revoked', 'ready', 'surface-ack-timeout',
+]);
+
+function safeDiagnosticInteger(value, maximum = 0x7fffffff) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, maximum) : 0;
+}
+
+function safeDiagnosticEnum(value, allowed, fallback = null) {
+  return typeof value === 'string' && allowed.has(value) ? value : fallback;
+}
+
+function safeDiagnosticReason(value) {
+  if (typeof value !== 'string') return null;
+  if (INPUT_DIAGNOSTIC_REASONS.has(value)) return value;
+  const [prefix, suffix] = value.split(':', 2);
+  if (prefix === 'runtime-phase' && INPUT_DIAGNOSTIC_RUNTIME_PHASES.has(suffix)) return value;
+  if (prefix === 'media-state' && INPUT_DIAGNOSTIC_MEDIA_STATES.has(suffix)) return value;
+  return null;
+}
+
+function safeDiagnosticReasons(values, limit = 16) {
+  if (!Array.isArray(values)) return [];
+  const result = [];
+  for (const value of values) {
+    const safe = safeDiagnosticReason(value);
+    if (safe && !result.includes(safe)) result.push(safe);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
 
 const Input = {
   socket: null,
@@ -79,6 +135,8 @@ const Input = {
   _lastPointerClickClientY: null,
   _pointerDoubleClickWindowMs: 500,
   _pointerDoubleClickDistancePx: 6,
+  _inputTraceContext: null,
+  _inputTraceFallback: null,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -161,6 +219,14 @@ const Input = {
   setKeyboardDataChannelAvailable(available) {
     this.initKeyboardController();
     if (!this.keyboardTransport) return;
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard',
+      action: available ? 'active' : 'inactive',
+      state: available ? 'active' : 'inactive',
+      reason: available ? 'datachannel-available' : 'datachannel-unavailable',
+      accepted: available === true,
+      source: 'lifecycle',
+    });
     if (available) {
       this.keyboardTransport.markAdapterAvailable('dataChannel');
       this._maybeAutoRecover('datachannel-available');
@@ -175,6 +241,18 @@ const Input = {
   sendKeyboardDataChannel(payload) {
     if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') return false;
     const accepted = WebRTC.sendInput(payload);
+    this._recordInputTrace('transport-send', {
+      inputType: 'keyboard',
+      action: this._traceKeyboardAction(payload?.action),
+      phase: payload?.payload?.phase,
+      transport: 'datachannel',
+      accepted: accepted === true,
+      inputIds: payload?.inputIds,
+      seq: payload?.seq,
+      leaseEpoch: payload?.leaseEpoch,
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      reliable: true,
+    });
     if (accepted) this.recordLatency(payload);
     return accepted;
   },
@@ -183,6 +261,18 @@ const Input = {
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (!socket || !socket.connected) return false;
     socket.emit('input', payload);
+    this._recordInputTrace('transport-send', {
+      inputType: 'keyboard',
+      action: this._traceKeyboardAction(payload?.action),
+      phase: payload?.payload?.phase,
+      transport: 'socket',
+      accepted: true,
+      inputIds: payload?.inputIds,
+      seq: payload?.seq,
+      leaseEpoch: payload?.leaseEpoch,
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      reliable: true,
+    });
     this.recordLatency(payload);
     return true;
   },
@@ -224,6 +314,17 @@ const Input = {
       }
     }
     this.activeControlLease = nextLease;
+    if (leaseChanged) {
+      this._recordInputTrace('lifecycle', {
+        inputType: 'control',
+        action: nextLease ? 'active' : 'inactive',
+        state: nextLease ? 'active' : 'inactive',
+        reason: 'lease-changed',
+        accepted: Boolean(nextLease),
+        source: 'lifecycle',
+        leaseEpoch: nextLease?.leaseEpoch,
+      });
+    }
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
     if (!nextLease) this.mobileTextInputAdapter?.onTransportState('revoked');
     this.updateKeyboardUI();
@@ -231,6 +332,22 @@ const Input = {
   },
 
   acceptKeyboardAck(ack) {
+    let result;
+    try {
+      result = this._acceptKeyboardAck(ack);
+    } catch (error) {
+      if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
+        this._recordInputAck('keyboard', ack, { status: 'stale' });
+      }
+      throw error;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
+      this._recordInputAck('keyboard', ack, result);
+    }
+    return result;
+  },
+
+  _acceptKeyboardAck(ack) {
     if (!this.keyboardTransport) return { status: 'stale' };
     const ownedResetPending = this._mobileResetPending;
     const pendingReset = this.keyboardTransport.getPendingReset?.();
@@ -341,6 +458,209 @@ const Input = {
       : null;
   },
 
+  _traceKeyboardAction(action) {
+    if (['key', 'text', 'batch', 'reset'].includes(action)) return action;
+    if (action === 'keydown' || action === 'keyup' || action === 'down' || action === 'up') return 'key';
+    return 'key';
+  },
+
+  _traceInputType(type) {
+    if (type === 'keyboard') return 'keyboard';
+    if (type === 'mouse') return 'pointer';
+    if (type === 'command') return 'control';
+    return 'text';
+  },
+
+  _traceVisibility() {
+    return typeof document !== 'undefined' && document.hidden === true ? 'hidden' : 'visible';
+  },
+
+  _traceFocusKind(target = null) {
+    const node = target || (typeof document !== 'undefined' ? document.activeElement : null);
+    const id = typeof node?.id === 'string' ? node.id : '';
+    if (id === 'mobileTextInput') return 'mobile-text';
+    if (id === 'terminalComposer' || id === 'terminalInput' || id === 'terminalPanel') return 'terminal';
+    try {
+      if (node?.closest?.('#terminalPanel, .terminal-panel, [data-terminal-input]')) return 'terminal';
+    } catch (_) {
+      // A DOM shim may not implement selector matching; fall through safely.
+    }
+    if (id === 'remoteTextInput' || node?.isContentEditable === true) return 'local-editor';
+    const tag = String(node?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return 'local-editor';
+    if (node === this.videoElement || id === 'remoteVideo' || id === 'relayImage' || tag === 'VIDEO') {
+      return 'desktop';
+    }
+    return 'other';
+  },
+
+  _traceIdentity() {
+    const epoch = Number.isSafeInteger(this.activeControlLease?.leaseEpoch)
+      ? this.activeControlLease.leaseEpoch : null;
+    return {
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      leaseEpoch: epoch,
+    };
+  },
+
+  _traceCollector() {
+    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.recordInputTrace === 'function') {
+      return Diagnostic;
+    }
+    if (this._inputTraceFallback) return this._inputTraceFallback;
+    if (typeof InputTrace === 'undefined' || typeof InputTrace.create !== 'function') return null;
+    try {
+      this._inputTraceFallback = InputTrace.create();
+    } catch (_) {
+      this._inputTraceFallback = null;
+    }
+    return this._inputTraceFallback;
+  },
+
+  _recordInputTrace(stage, meta = {}) {
+    const collector = this._traceCollector();
+    if (!collector) return null;
+    const context = this._inputTraceContext || {};
+    const identity = this._traceIdentity();
+    const safe = {};
+    const has = (key) => Object.prototype.hasOwnProperty.call(meta || {}, key);
+    const value = (key, fallback = undefined) => (has(key) ? meta[key] : fallback);
+    const inputType = value('inputType', context.inputType);
+    const action = value('action', context.action);
+    const phase = value('phase', context.phase);
+    const eventId = has('eventId') ? meta.eventId
+      : (stage === 'gate' || stage === 'transport-send' ? context.eventId : null);
+    if (inputType !== undefined) safe.inputType = inputType;
+    if (action !== undefined) safe.action = action;
+    if (phase !== undefined) safe.phase = phase;
+    if (eventId !== undefined && eventId !== null) safe.eventId = eventId;
+    for (const key of [
+      'transport', 'accepted', 'reason', 'status', 'seq', 'appliedSeq', 'clientRttMs',
+      'focusKind', 'visibility', 'state', 'source', 'generation', 'gateAllowed',
+      'surfaceState', 'recoveryState', 'pendingMouseReset', 'desktopWriteRecoveryState',
+      'reliable', 'ackTimeoutMs', 'unexpected',
+    ]) {
+      if (has(key)) safe[key] = meta[key];
+    }
+    if (has('inputIds')) safe.inputIds = Array.isArray(meta.inputIds) ? meta.inputIds.slice(0, 64) : [];
+    if (has('connectionAttemptId')) safe.connectionAttemptId = meta.connectionAttemptId;
+    else if (identity.connectionAttemptId !== null) safe.connectionAttemptId = identity.connectionAttemptId;
+    if (has('leaseEpoch')) safe.leaseEpoch = meta.leaseEpoch;
+    else if (identity.leaseEpoch !== null) safe.leaseEpoch = identity.leaseEpoch;
+    if (has('incidentEligible')) safe.incidentEligible = meta.incidentEligible === true;
+    else safe.incidentEligible = context.incidentEligible === true;
+    try {
+      let result = null;
+      if (typeof collector.recordInputTrace === 'function') result = collector.recordInputTrace(stage, safe);
+      else if (typeof collector.record === 'function') result = collector.record(stage, safe);
+      // Lifecycle/recovery/ACK callbacks are not DOM continuations. Drop the
+      // event context after each one so a later callback cannot inherit an old
+      // eventId, gate decision, or DOM phase.
+      if (['ack', 'ack-timeout', 'lifecycle', 'recovery'].includes(stage)) {
+        this._inputTraceContext = null;
+      }
+      return result;
+    } catch (_) {
+      // Diagnostics are strictly out-of-band from the input result.
+      if (['ack', 'ack-timeout', 'lifecycle', 'recovery'].includes(stage)) {
+        this._inputTraceContext = null;
+      }
+    }
+    return null;
+  },
+
+  _beginInputTraceDom(inputType, action, phase, target = null, options = {}) {
+    const focusKind = options.focusKind || this._traceFocusKind(target);
+    const visibility = this._traceVisibility();
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const eligible = options.incidentEligible === true
+      || (options.incidentEligible !== false
+        && ['desktop', 'mobile-text'].includes(focusKind)
+        && visibility === 'visible'
+        && this.isActive === true
+        && Boolean(this.activeControlLease)
+        && mobile.composing !== true
+        && mobile.hasPending !== true
+        && mobile.deliveryUncertain !== true);
+    this._inputTraceContext = {
+      eventId: null,
+      inputType,
+      action,
+      phase,
+      focusKind,
+      visibility,
+      incidentEligible: eligible,
+    };
+    const eventId = this._recordInputTrace('dom-received', {
+      inputType, action, phase, focusKind, visibility,
+      incidentEligible: eligible,
+    });
+    this._inputTraceContext.eventId = Number.isSafeInteger(eventId) ? eventId : null;
+    return this._inputTraceContext.eventId;
+  },
+
+  _withInputTraceEvent(eventId, fn, options = {}) {
+    if (typeof fn !== 'function') return false;
+    const previous = this._inputTraceContext;
+    const current = previous || {};
+    this._inputTraceContext = {
+      ...current,
+      eventId: Number.isSafeInteger(eventId) ? eventId : null,
+      incidentEligible: options.incidentEligible === undefined
+        ? current.incidentEligible === true : options.incidentEligible === true,
+    };
+    try {
+      return fn();
+    } finally {
+      // This wrapper scopes the collector context to one synchronous DOM
+      // dispatch. Deferred sends carry their explicit eventId through their
+      // own wrapper and must not revive this context afterward.
+      this._inputTraceContext = null;
+    }
+  },
+
+  _recordInputGate(inputType, action, gate, options = {}) {
+    const allowed = gate?.allowed === true;
+    const blockedReasons = Array.isArray(gate?.blockedReasons) ? gate.blockedReasons : [];
+    const reason = allowed ? undefined : (blockedReasons[0] || options.reason || 'media-gate');
+    const unexpected = options.unexpected === true || (!allowed
+      && this._inputTraceContext?.incidentEligible === true
+      && ['surface-uncertain', 'recovery-waiting', 'recovery-failed', 'desktop-write-reacquire-required']
+        .some((candidate) => blockedReasons.includes(candidate)));
+    const result = this._recordInputTrace('gate', {
+      inputType, action, accepted: allowed, gateAllowed: allowed, reason,
+      unexpected,
+    });
+    if (this._inputTraceContext) this._inputTraceContext.gateRecorded = true;
+    return result;
+  },
+
+  _recordInputAck(inputType, ack, result) {
+    const inputIds = Array.isArray(ack?.inputIds)
+      ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    const status = typeof ack?.status === 'string' ? ack.status : result?.status;
+    const accepted = typeof ack?.accepted === 'boolean'
+      ? ack.accepted : ['applied', 'duplicate'].includes(result?.status);
+    const pending = inputType === 'mouse'
+      ? inputIds.map((id) => this._desktopWritePending.get(id)).find(Boolean)
+      : null;
+    const identity = this._traceIdentity();
+    this._recordInputTrace('ack', {
+      eventId: null,
+      inputType: ack?.inputType === 'command'
+        ? 'control' : inputType === 'mouse' ? 'pointer' : 'keyboard',
+      action: 'ack',
+      accepted,
+      status,
+      appliedSeq: ack?.appliedSeq,
+      inputIds,
+      leaseEpoch: ack?.leaseEpoch,
+      connectionAttemptId: ack?.connectionAttemptId || pending?.connectionAttemptId
+        || identity.connectionAttemptId,
+      incidentEligible: false,
+    });
+  },
+
   _recoveryIdentity() {
     const lease = this.activeControlLease;
     return {
@@ -400,10 +720,9 @@ const Input = {
   _recoverySnapshot() {
     const cycle = this._recoveryCycle || {};
     return {
-      state: ['idle', 'waiting', 'recovered', 'failed'].includes(cycle.state)
-        ? cycle.state : 'idle',
-      generation: Number.isSafeInteger(cycle.generation) ? cycle.generation : 0,
-      reason: typeof cycle.reason === 'string' ? cycle.reason : null,
+      state: safeDiagnosticEnum(cycle.state, INPUT_DIAGNOSTIC_RECOVERY_STATES, 'idle'),
+      generation: safeDiagnosticInteger(cycle.generation),
+      reason: safeDiagnosticReason(cycle.reason),
       mouseConfirmed: cycle.mouseConfirmed === true,
       keyboardConfirmed: cycle.keyboardConfirmed === true,
       retryAvailable: cycle.retryAvailable === true,
@@ -418,6 +737,10 @@ const Input = {
     cycle.reason = String(reason || 'recovery-failed');
     cycle.retryAvailable = true;
     this._mobileResetAckInFlight = false;
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'failed',
+      reason: cycle.reason, generation: cycle.generation, source: cycle.source || 'recovery',
+    });
     this.updateKeyboardUI();
     return true;
   },
@@ -568,6 +891,10 @@ const Input = {
     // remains uncertain instead of inheriting reset acknowledgement.
     this.mobileTextInputAdapter?.onTransportState('ready');
     this.mobileTextInputAdapter?.confirmEmptyContextRecovery?.();
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'recovered',
+      reason: 'restore', generation: cycle.generation, source: cycle.source || 'recovery',
+    });
     this.updateKeyboardUI();
     return true;
   },
@@ -647,6 +974,11 @@ const Input = {
       mouseRetryUsed: false,
       deadline: Date.now() + INPUT_RECOVERY_TIMEOUT_MS,
     };
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'waiting',
+      reason: source === 'auto' ? 'automatic-recovery' : 'user-recovery',
+      generation, source,
+    });
 
     // Claim a reset already in flight (for example the reset emitted while a
     // pointer was parked); otherwise emit one fresh barrier for this cycle.
@@ -695,6 +1027,10 @@ const Input = {
       || this._recoveryCycle.attemptId === currentAttempt) return false;
     this._invalidateRecoveryIdentity('attempt-changed');
     this._recoveryAutoIdentity = null;
+    this._recordInputTrace('lifecycle', {
+      inputType: 'control', action: 'active', state: 'active',
+      reason: 'attempt-changed', source: 'lifecycle',
+    });
     return true;
   },
 
@@ -704,6 +1040,10 @@ const Input = {
     this._mobileSurfaceState = 'uncertain';
     this._mobileSurfaceGesture = null;
     this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+    this._recordInputTrace('recovery', {
+      inputType: 'pointer', action: 'recovery', state: 'uncertain',
+      reason: _reason, source: 'recovery',
+    });
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
   },
 
@@ -936,6 +1276,24 @@ const Input = {
   },
 
   acceptMouseAck(ack) {
+    let result;
+    try {
+      result = this._acceptMouseAck(ack);
+    } catch (error) {
+      if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
+        || ack.inputType === 'mouse' || ack.inputType === 'command') {
+        this._recordInputAck('mouse', ack, { status: 'stale' });
+      }
+      throw error;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
+      || ack.inputType === 'mouse' || ack.inputType === 'command') {
+      this._recordInputAck('mouse', ack, result);
+    }
+    return result;
+  },
+
+  _acceptMouseAck(ack) {
     const inputIds = Array.isArray(ack?.inputIds) ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
     const hasInputType = Boolean(ack && Object.prototype.hasOwnProperty.call(ack, 'inputType'));
     const inputType = ack?.inputType;
@@ -1041,7 +1399,12 @@ const Input = {
     const isMobileTextEvent = (event) => event?.target === document.getElementById('mobileTextInput');
     const isPhysicalModifierKey = (event) => /^(Control|Shift|Alt|Meta)(Left|Right)$/.test(event?.code || '');
     document.addEventListener('keydown', (event) => {
-      if (!isMobileTextEvent(event) && this._isDesktopInputActionAllowed()) {
+      if (isMobileTextEvent(event)) return;
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'down', event?.target);
+      this._withInputTraceEvent(eventId, () => {
+        const gate = this.getEffectiveInputGate();
+        this._recordInputGate('keyboard', 'key', gate);
+        if (!gate.allowed) return;
         if (isPhysicalModifierKey(event)) {
           this.keyboardController?.handleDomEvent(event);
           return;
@@ -1049,10 +1412,17 @@ const Input = {
         this.runMobileEditingAction('context-change', () => (
           this.keyboardController?.handleDomEvent(event) === true
         ));
-      }
+      });
     });
     document.addEventListener('keyup', (event) => {
-      if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
+      if (isMobileTextEvent(event)) return;
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target, {
+        incidentEligible: false,
+      });
+      this._withInputTraceEvent(eventId, () => {
+        this._recordInputGate('keyboard', 'key', { allowed: true, blockedReasons: [] });
+        this.keyboardController?.handleDomEvent(event);
+      });
     });
     video.addEventListener('click', (event) => {
       if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
@@ -1378,6 +1748,14 @@ const Input = {
       if (shouldResetKeyboard) this.resetKeyboard(reason);
     }
     this.isActive = next;
+    this._recordInputTrace('lifecycle', {
+      inputType: 'control',
+      action: next ? 'active' : 'inactive',
+      state: next ? 'active' : 'inactive',
+      reason: meta.reason || (next ? 'active' : 'inactive'),
+      accepted: next === true,
+      source: 'lifecycle',
+    });
     this.updateKeyboardUI();
     if (next) this._maybeAutoRecover('active');
   },
@@ -1395,6 +1773,10 @@ const Input = {
       this._mobileResetPending = false;
       this.mobileTextInputAdapter?.onTransportState('reacquire-required');
     }
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard', action: 'reset', state: accepted ? 'pending' : 'failed',
+      reason: reason || 'reset', accepted, source: 'lifecycle',
+    });
     return accepted;
   },
 
@@ -1406,9 +1788,17 @@ const Input = {
     this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
       this.keyboardController.park(reason);
+      this._recordInputTrace('lifecycle', {
+        inputType: 'keyboard', action: 'pause', state: 'paused',
+        reason: reason || 'manual', accepted: true, source: 'lifecycle',
+      });
       this.updateKeyboardUI();
       return true;
     }
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard', action: 'pause', state: 'paused',
+      reason: reason || 'manual', accepted: false, source: 'lifecycle',
+    });
     return false;
   },
 
@@ -1418,59 +1808,69 @@ const Input = {
     const rawGate = (typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopInputGateSnapshot === 'function')
       ? WebRTC.getDesktopInputGateSnapshot()
       : null;
+    const effectiveGate = this.getEffectiveInputGate();
     const gate = rawGate ? {
       enabled: rawGate.enabled === true,
       hasActiveControl: rawGate.hasActiveControl === true,
       manualDisconnect: rawGate.manualDisconnect === true,
-      mediaState: rawGate.mediaState || null,
-      runtimePhase: rawGate.runtimePhase || null,
+      mediaState: safeDiagnosticEnum(rawGate.mediaState, INPUT_DIAGNOSTIC_MEDIA_STATES),
+      runtimePhase: safeDiagnosticEnum(rawGate.runtimePhase, INPUT_DIAGNOSTIC_RUNTIME_PHASES),
       inputIsActive: rawGate.inputIsActive == null ? null : rawGate.inputIsActive === true,
-      blockedReasons: Array.isArray(rawGate.blockedReasons)
-        ? rawGate.blockedReasons.slice(0, 16).map((reason) => String(reason)).filter(Boolean)
-        : [],
+      blockedReasons: safeDiagnosticReasons(rawGate.blockedReasons),
     } : null;
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const desktopWriteRecovery = this._desktopWriteRecovery;
+    const safeDesktopWriteRecovery = desktopWriteRecovery ? {
+      state: safeDiagnosticEnum(desktopWriteRecovery.state,
+        new Set(['reacquire-required', 'reconciled']), 'reacquire-required'),
+      status: safeDiagnosticEnum(desktopWriteRecovery.status, INPUT_DIAGNOSTIC_ACK_STATUSES),
+      ...(Number.isSafeInteger(desktopWriteRecovery.appliedSeq) && desktopWriteRecovery.appliedSeq >= 0
+        ? { appliedSeq: safeDiagnosticInteger(desktopWriteRecovery.appliedSeq) } : {}),
+    } : null;
     return {
-      keyboardMode: controller.mode || this.keyboardMode || null,
+      keyboardMode: safeDiagnosticEnum(controller.mode || this.keyboardMode,
+        new Set(['windows', 'mac'])),
       isActive: this.isActive,
       hasLease: Boolean(this.activeControlLease),
-      leaseEpoch: this.activeControlLease?.leaseEpoch || 0,
+      leaseEpoch: safeDiagnosticInteger(this.activeControlLease?.leaseEpoch),
       gate,
-      effectiveGate: this.getEffectiveInputGate(),
+      effectiveGate: {
+        allowed: effectiveGate.allowed === true,
+        blockedReasons: safeDiagnosticReasons(effectiveGate.blockedReasons),
+        recovery: this._recoverySnapshot(),
+      },
       surface: {
-        state: this._mobileSurfaceState,
-        generation: Number(this._mobileSurfaceGeneration) || 0,
+        state: safeDiagnosticEnum(this._mobileSurfaceState, INPUT_DIAGNOSTIC_SURFACE_STATES, 'settled'),
+        generation: safeDiagnosticInteger(this._mobileSurfaceGeneration),
       },
       draft: {
         composing: mobile.composing === true,
         hasPending: mobile.hasPending === true,
         deliveryUncertain: mobile.deliveryUncertain === true,
-        status: typeof mobile.status === 'string' ? mobile.status : 'idle',
+        status: safeDiagnosticEnum(mobile.status, INPUT_DIAGNOSTIC_DRAFT_STATUSES, 'idle'),
       },
       viewport: { inputSupported: this._viewportInputSupported !== false },
       recovery: this._recoverySnapshot(),
       keyboard: {
-        leaseState: controller.state || 'INACTIVE',
-        epoch: transport.epoch || 0,
-        lastSent: transport.lastSent || 0,
-        lastApplied: transport.lastApplied || 0,
-        pendingCount: transport.pendingCount || 0,
-        pressedCount: controller.pressedKeyCount || 0,
-        modifierMask: this.modifierMask || 0,
-        adapter: transport.adapter || null,
-        lastResetReason: this.lastKeyboardResetReason || null,
+        leaseState: safeDiagnosticEnum(controller.state, INPUT_DIAGNOSTIC_KEYBOARD_STATES, 'INACTIVE'),
+        epoch: safeDiagnosticInteger(transport.epoch),
+        lastSent: safeDiagnosticInteger(transport.lastSent),
+        lastApplied: safeDiagnosticInteger(transport.lastApplied),
+        pendingCount: safeDiagnosticInteger(transport.pendingCount, 256),
+        pressedCount: safeDiagnosticInteger(controller.pressedKeyCount, 256),
+        modifierMask: safeDiagnosticInteger(this.modifierMask, 0x1fffff),
+        adapter: safeDiagnosticEnum(transport.adapter, INPUT_DIAGNOSTIC_ADAPTERS),
+        lastResetReason: safeDiagnosticReason(this.lastKeyboardResetReason),
       },
-      pressedMouseButtonCount: this._pressedMouseButtons.size,
-      pendingMouseReset: this._pendingMouseReset,
-      desktopWriteRecovery: this._desktopWriteRecovery
-        ? { ...this._desktopWriteRecovery }
-        : null,
+      pressedMouseButtonCount: safeDiagnosticInteger(this._pressedMouseButtons.size, 32),
+      pendingMouseReset: this._pendingMouseReset === true,
+      desktopWriteRecovery: safeDesktopWriteRecovery,
     };
   },
 
   sendInput(type, action, payload) {
     const lease = this.activeControlLease;
-    if (!lease) return null;
+    const traceInputType = this._traceInputType(type);
     // Mouse/DOM keyboard path requires the media gate (isActive). Toolbar commands
     // like showDock only need the control lease so they keep working across brief
     // 0-FPS / media-ready gaps on full-relay.
@@ -1479,6 +1879,22 @@ const Input = {
     const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
     const isAcceptedGestureMove = type === 'mouse' && action === 'move'
       && this._isAcceptedMobileSurfaceMove(payload);
+    const traceGateAlreadyRecorded = this._inputTraceContext?.inputType === traceInputType
+      && this._inputTraceContext?.gateRecorded === true;
+    if (!traceGateAlreadyRecorded) {
+      // Preserve the old no-lease fast path: collecting a rejection must not
+      // initialize media state or otherwise alter the business gate.
+      const effectiveGate = lease
+        ? this.getEffectiveInputGate()
+        : { allowed: false, blockedReasons: ['no-active-control'] };
+      const gateAllowed = lease && (type === 'command' || isMouseSafetyRelease || isAcceptedGestureMove
+        ? true : effectiveGate.allowed === true);
+      this._recordInputGate(traceInputType, action, {
+        allowed: gateAllowed,
+        blockedReasons: effectiveGate.blockedReasons,
+      });
+    }
+    if (!lease) return null;
     if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return null;
     if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
     // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
@@ -1509,7 +1925,21 @@ const Input = {
         connectionAttemptId: this._currentConnectionAttemptId(),
       });
     };
-    if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
+    const connectionAttemptId = this._currentConnectionAttemptId();
+    const dataChannelAccepted = typeof WebRTC !== 'undefined' && typeof WebRTC.sendInput === 'function'
+      ? Boolean(WebRTC.sendInput(data)) : false;
+    this._recordInputTrace('transport-send', {
+      inputType: traceInputType,
+      action,
+      transport: 'datachannel',
+      accepted: dataChannelAccepted,
+      inputIds: data.inputIds,
+      seq: data.seq,
+      leaseEpoch: data.leaseEpoch,
+      connectionAttemptId,
+      reliable: reliableWrite,
+    });
+    if (dataChannelAccepted) {
       commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
@@ -1517,10 +1947,32 @@ const Input = {
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
       socket.emit('input', data);
+      this._recordInputTrace('transport-send', {
+        inputType: traceInputType,
+        action,
+        transport: 'socket',
+        accepted: true,
+        inputIds: data.inputIds,
+        seq: data.seq,
+        leaseEpoch: data.leaseEpoch,
+        connectionAttemptId,
+        reliable: reliableWrite,
+      });
       commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
+    this._recordInputTrace('transport-send', {
+      inputType: traceInputType,
+      action,
+      transport: 'none',
+      accepted: false,
+      inputIds: data.inputIds,
+      seq: data.seq,
+      leaseEpoch: data.leaseEpoch,
+      connectionAttemptId,
+      reliable: reliableWrite,
+    });
     return null;
   },
 
@@ -1751,53 +2203,74 @@ const Input = {
       }
     });
     element.addEventListener('pointerdown', (event) => {
-      if (event.pointerType === 'touch') return;
-      if (!this._isDesktopInputActionAllowed()) {
-        event.preventDefault?.();
+      const eventId = this._beginInputTraceDom('pointer', 'down', 'down', event?.target || element);
+      if (event.pointerType === 'touch') {
+        // TouchInputAdapter owns touch dispatch and its deferred gesture timers;
+        // this listener cannot safely keep a synchronous DOM context alive
+        // across those callbacks. Adapter sends therefore remain unassociated
+        // rather than inheriting this event after a later lifecycle/ACK call.
+        this._inputTraceContext = null;
         return;
       }
-      if (!this.isActive || this._pendingMouseReset) {
-        event.preventDefault?.();
-        return;
-      }
-      this._pointerLifecycleGeneration += 1;
-      this._geometryAbortedPointerId = null;
-      event.preventDefault();
-      if (!this._isDesktopInputActionAllowed()) return;
-      this.focusDesktopSurface(element, 'surface-user');
-      if (!this.validateGeometry(element)) return;
-      const coords = this.getRelativeCoords(event); if (!coords) return;
-      element.setPointerCapture?.(event.pointerId);
-      const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
-      if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
-      this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
+      this._withInputTraceEvent(eventId, () => {
+        const gate = this.getEffectiveInputGate();
+        this._recordInputGate('pointer', 'down', gate);
+        if (!gate.allowed) {
+          event.preventDefault?.();
+          return;
+        }
+        if (!this.isActive || this._pendingMouseReset) {
+          event.preventDefault?.();
+          return;
+        }
+        this._pointerLifecycleGeneration += 1;
+        this._geometryAbortedPointerId = null;
+        event.preventDefault();
+        if (!this._isDesktopInputActionAllowed()) return;
+        this.focusDesktopSurface(element, 'surface-user');
+        if (!this.validateGeometry(element)) return;
+        const coords = this.getRelativeCoords(event); if (!coords) return;
+        element.setPointerCapture?.(event.pointerId);
+        const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
+        if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
+        this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
+      });
     });
     element.addEventListener('pointerup', (event) => {
-      if (event.pointerType === 'touch') return;
-      if (this._geometryAbortedPointerId === event.pointerId) {
-        this._geometryAbortedPointerId = null;
+      const eventId = this._beginInputTraceDom('pointer', 'up', 'up', event?.target || element, {
+        incidentEligible: false,
+      });
+      if (event.pointerType === 'touch') {
+        this._inputTraceContext = null;
         return;
       }
-      if (!this.isActive && this._pressedMouseButtons.size === 0) return;
-      if (!this.validateGeometry(element)) return;
-      event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
-      // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
-      const id = coords
-        ? this._sendMobileSurfaceUp({
-          ...coords,
-          button,
-          clickCount: this._activePointerClickCount,
-          buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
-        })
-        : null;
-      this._pressedMouseButtons.delete(button);
-      if (!id) {
-        this._pendingMouseReset = true;
-        const resetId = this._sendMobileSurfaceReset({ reason: 'pointer-up-failed' });
-        this._pendingMouseResetId = resetId || null;
-      }
-      if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
-      this._pointerLifecycleGeneration += 1;
+      this._withInputTraceEvent(eventId, () => {
+        if (this._geometryAbortedPointerId === event.pointerId) {
+          this._geometryAbortedPointerId = null;
+          return;
+        }
+        if (!this.isActive && this._pressedMouseButtons.size === 0) return;
+        if (!this.validateGeometry(element)) return;
+        this._recordInputGate('pointer', 'up', { allowed: true, blockedReasons: [] });
+        event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
+        // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
+        const id = coords
+          ? this._sendMobileSurfaceUp({
+            ...coords,
+            button,
+            clickCount: this._activePointerClickCount,
+            buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
+          })
+          : null;
+        this._pressedMouseButtons.delete(button);
+        if (!id) {
+          this._pendingMouseReset = true;
+          const resetId = this._sendMobileSurfaceReset({ reason: 'pointer-up-failed' });
+          this._pendingMouseResetId = resetId || null;
+        }
+        if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
+        this._pointerLifecycleGeneration += 1;
+      });
     });
     element.addEventListener('pointercancel', (event) => {
       if (event.pointerType === 'touch') return;
@@ -2031,6 +2504,23 @@ const Input = {
         },
         isSurfaceSettled: () => this._mobileSurfaceState === 'settled',
         onStateChange: (snapshot) => this.updateMobileTextInputState(snapshot),
+        onTraceDomEvent: (meta) => this._beginInputTraceDom(
+          meta?.inputType || 'text', meta?.action || 'text', meta?.phase || 'input',
+          mobileInput, { focusKind: 'mobile-text' },
+        ),
+        onTraceGate: (meta) => this._recordInputTrace('gate', {
+          inputType: meta?.inputType || 'text',
+          action: meta?.action || 'text',
+          accepted: meta?.accepted === true,
+          reason: meta?.reason,
+          eventId: meta?.eventId,
+          focusKind: 'mobile-text',
+          visibility: this._traceVisibility(),
+        }),
+        onTraceEventEnd: (eventId) => {
+          if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
+        },
+        withTraceEvent: (eventId, send) => this._withInputTraceEvent(eventId, send),
         refreshViewport: () => {
           if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
         },
@@ -2080,6 +2570,12 @@ const Input = {
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
   },
 };
+
+// Input is declared with a top-level const for source-mode safety. Publish the
+// same object on the classic-script global so diagnostic-core can inspect the
+// live lease/active gate without creating a second owner.
+if (typeof globalThis !== 'undefined') globalThis.Input = Input;
+if (typeof window !== 'undefined') window.Input = Input;
 
 document.addEventListener('DOMContentLoaded', () => {
   const video = document.getElementById('remoteVideo');

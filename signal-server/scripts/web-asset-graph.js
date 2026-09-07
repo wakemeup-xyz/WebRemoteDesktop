@@ -15,6 +15,7 @@ module.exports = Object.freeze({
     'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
     'js/terminal-loader.js',
+    'js/input-trace.js',
     'js/diagnostic-core.js',
     'js/presentation-budget.js',
     'js/webrtc.js',

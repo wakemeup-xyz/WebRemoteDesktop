@@ -819,10 +819,52 @@ const WebRTC = {
     return `wrd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   },
 
+  _recordInputTrace(stage, meta = {}) {
+    if (typeof Diagnostic === 'undefined' || typeof Diagnostic.recordInputTrace !== 'function') return null;
+    const inputTypes = new Set(['keyboard', 'pointer', 'text', 'control']);
+    const actions = new Set(['active', 'inactive', 'recovery', 'retry', 'reset', 'pause', 'resume']);
+    const states = new Set(['active', 'inactive', 'uncertain', 'pending', 'paused', 'resumed', 'ready', 'blocked']);
+    const reasons = new Set([
+      'attempt-changed', 'datachannel-available', 'datachannel-unavailable', 'transport-change',
+      'recovery-timeout', 'manual', 'manual-pause', 'page-hidden', 'resume', 'reacquire-required',
+    ]);
+    const sources = new Set(['lifecycle', 'transport', 'recovery', 'manual', 'auto', 'user']);
+    const transports = new Set(['datachannel', 'socket', 'none']);
+    const inputType = inputTypes.has(meta.inputType) ? meta.inputType : 'control';
+    const action = actions.has(meta.action) ? meta.action : 'recovery';
+    const state = states.has(meta.state) ? meta.state : null;
+    const reason = reasons.has(meta.reason) ? meta.reason : 'transport-change';
+    const source = sources.has(meta.source) ? meta.source : 'lifecycle';
+    const transport = transports.has(meta.transport) ? meta.transport : null;
+    const safe = { inputType, action, reason, source };
+    if (state) safe.state = state;
+    if (transport) safe.transport = transport;
+    if (typeof meta.accepted === 'boolean') safe.accepted = meta.accepted;
+    if (Number.isSafeInteger(meta.generation) && meta.generation >= 0) {
+      safe.generation = Math.min(meta.generation, 0x7fffffff);
+    }
+    if (typeof this.currentConnectionAttemptId === 'string'
+      && this.currentConnectionAttemptId.length > 0) {
+      safe.connectionAttemptId = this.currentConnectionAttemptId;
+    }
+    const leaseEpoch = typeof Input !== 'undefined' ? Input.activeControlLease?.leaseEpoch : null;
+    if (Number.isSafeInteger(leaseEpoch) && leaseEpoch >= 0) safe.leaseEpoch = leaseEpoch;
+    try {
+      return Diagnostic.recordInputTrace(stage, safe);
+    } catch (_) {
+      // Input diagnostics are observational and cannot affect reconnect behavior.
+      return null;
+    }
+  },
+
   beginConnectionAttempt(trigger = 'viewer-open') {
     this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this._recordInputTrace('lifecycle', {
+      inputType: 'control', action: 'active', state: 'active',
+      reason: 'attempt-changed', source: 'lifecycle', generation: this.connectionAttemptSequence,
+    });
     if (typeof Input !== 'undefined' && typeof Input.onConnectionAttemptChanged === 'function') {
       Input.onConnectionAttemptChanged(this.currentConnectionAttemptId);
     }
@@ -5091,6 +5133,10 @@ if (this.tunnelLastObjectUrl) {
       this.schedulePortSearchRetry(reason);
       return;
     }
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'retry', state: 'pending',
+      reason: 'transport-change', source: 'recovery',
+    });
     console.warn(`[RECOVERY] Scheduling WebRTC reconnect after ${reason}`);
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
       Diagnostic.autoSendFailure(reason);
