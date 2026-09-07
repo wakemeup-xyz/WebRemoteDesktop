@@ -2169,10 +2169,11 @@ class WebRemoteHost:
                 if not isinstance(host, str) or not isinstance(port, int) or protocol != "udp": return None
                 return {"id": identifier, "candidateType": kind, "address": host, "port": port, "protocol": protocol}
             local_row, remote_row = candidate(local, "host-local"), candidate(remote, "host-remote")
-            if local_row is None or remote_row is None: return None
+            ssrc = self._frame_trace_registry.latest_lab_rtp_ssrc() if self._frame_trace_registry is not None else None
+            if local_row is None or remote_row is None or not isinstance(ssrc, int): return None
             return {"type": "loss_lab_host_selected_pair", "schemaVersion": 1, "pairId": "host-nominated",
                     "localCandidateId": local_row["id"], "remoteCandidateId": remote_row["id"],
-                    "local": local_row, "remote": remote_row}
+                    "local": local_row, "remote": remote_row, "videoSsrc": ssrc}
         except Exception:
             return None
 

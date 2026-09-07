@@ -572,6 +572,7 @@ class PlaywrightLabViewerAdapter:
           try { return await window.WebRTC?.requestLossLabHostSelectedPair?.(); }
           catch (_error) { return null; }
         }""")
+        if isinstance(host_pair, Mapping): host_pair = {key: value for key, value in host_pair.items() if key != "videoSsrc"}
         return selected_relay_binding_from_stats(rows, manifest, host_pair, media_binding)
 
     def selected_media_expectation(self) -> dict[str, Any] | None:
@@ -580,7 +581,10 @@ class PlaywrightLabViewerAdapter:
           if (!pc?.getStats) return [];
           const stats = await pc.getStats(); return [...stats.values()];
         }""")
-        return selected_media_expectation_from_stats(rows) if isinstance(rows, list) else None
+        host = self.viewer_page.evaluate("""async () => { try { return await window.WebRTC?.requestLossLabHostSelectedPair?.(); } catch (_error) { return null; } }""")
+        expected = selected_media_expectation_from_stats(rows) if isinstance(rows, list) else None
+        if not isinstance(expected, Mapping) or not isinstance(host, Mapping) or host.get("videoSsrc") != expected.get("rtpSsrc"): return None
+        return dict(expected)
 
     def arm_loss_lab_taps(self) -> bool:
         """Arm the Viewer-owned, loopback-only raw loss tap before loss starts."""

@@ -100,6 +100,7 @@ class FrameTraceRegistry:
         self._lab_loss_dropped = 0
         self._lab_loss_epoch = 0
         self._lab_loss_source_sequence = 0
+        self._last_lab_rtp_ssrc: int | None = None
         self._traces: dict[tuple[str, int, str], OrderedDict[int, FrameTrace]] = {}
         self._active_generation: OrderedDict[tuple[str, str], tuple[int, int]] = OrderedDict()
         self._wire: dict[tuple[str, int, str, int, int], FrameTrace] = {}
@@ -306,9 +307,13 @@ class FrameTraceRegistry:
         if not (0 <= int(sequence) <= 0xFFFF and 0 <= int(rtp_timestamp) <= 0xFFFFFFFF):
             return
         with self._lock:
+            self._last_lab_rtp_ssrc = int(ssrc)
             self._append_lab_loss_event({"type": "rtp_send", "monotonicNs": int(self._clock_ns()),
                                          "frameKey": self._lab_frame_key(key), "sequence": int(sequence),
                                          "rtpTimestamp": int(rtp_timestamp), "ssrc": int(ssrc)})
+
+    def latest_lab_rtp_ssrc(self) -> int | None:
+        with self._lock: return self._last_lab_rtp_ssrc
 
     def record_lab_pc_state(self, *, identifier: str, state: str, width: int, height: int) -> None:
         if not isinstance(identifier, str) or not identifier or not isinstance(state, str) or not state:
