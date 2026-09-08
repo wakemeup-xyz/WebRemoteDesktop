@@ -8,6 +8,7 @@
   const SENTINEL = '\u200B';
   const CONTROL_KEYS = new Set(['Backspace', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   const TRANSPORT_STATES = new Set(['ready', 'blocked', 'revoked', 'reacquire-required']);
+  const TRACE_FOCUS_KIND = 'mobile-text';
 
   function create(options) {
     const config = options || {};
@@ -29,6 +30,14 @@
       : () => true;
     const onStateChange = typeof config.onStateChange === 'function' ? config.onStateChange : () => {};
     const refreshViewport = typeof config.refreshViewport === 'function' ? config.refreshViewport : () => {};
+    const onTraceDomEvent = typeof config.onTraceDomEvent === 'function'
+      ? config.onTraceDomEvent : () => null;
+    const onTraceGate = typeof config.onTraceGate === 'function'
+      ? config.onTraceGate : () => {};
+    const onTraceEventEnd = typeof config.onTraceEventEnd === 'function'
+      ? config.onTraceEventEnd : () => {};
+    const withTraceEvent = typeof config.withTraceEvent === 'function'
+      ? config.withTraceEvent : (_eventId, send) => send();
 
     let attached = false;
     let shown = false;
@@ -47,6 +56,10 @@
     let pendingGeneration = null;
     let drainActive = false;
     let drainTimer = null;
+    let activeTraceEventId = null;
+    let drainTraceEventId = null;
+    let drainTraceFocusKind = null;
+    let contextRecoveryRequired = false;
     const listeners = [];
 
     function accepted(result) {
@@ -186,6 +199,8 @@
     function clearDrainTimer() {
       if (drainTimer !== null) clearTimeout(drainTimer);
       drainTimer = null;
+      drainTraceEventId = null;
+      drainTraceFocusKind = null;
     }
 
     function cancelDrain() {
@@ -195,6 +210,66 @@
 
     function hasPending() {
       return draftValue !== acceptedValue || drainActive || retryRequired;
+    }
+
+    function traceDom(action, phase) {
+      activeTraceEventId = null;
+      try {
+        const eventId = onTraceDomEvent({
+          inputType: 'text', action, phase, focusKind: 'mobile-text', visibility: 'visible',
+        });
+        if (Number.isSafeInteger(eventId) && eventId > 0) activeTraceEventId = eventId;
+      } catch (_) {
+        activeTraceEventId = null;
+      }
+      const eventId = activeTraceEventId;
+      const clear = () => {
+        try { onTraceEventEnd(eventId); } catch (_) { /* observational */ }
+        if (activeTraceEventId === eventId) activeTraceEventId = null;
+      };
+      if (typeof queueMicrotask === 'function') queueMicrotask(clear);
+      else Promise.resolve().then(clear);
+      return activeTraceEventId;
+    }
+
+    function traceGate(acceptedValue, reason, action = 'text') {
+      try {
+        onTraceGate({
+          inputType: 'text', action, accepted: acceptedValue === true,
+          reason, focusKind: 'mobile-text', visibility: 'visible',
+          eventId: activeTraceEventId,
+        });
+      } catch (_) {
+        // The trace hook is strictly observational.
+      }
+    }
+
+    function sendWithTrace(send, eventId = activeTraceEventId, options = {}) {
+      let invoked = false;
+      let businessResult;
+      const invoke = () => {
+        invoked = true;
+        businessResult = send();
+        return businessResult;
+      };
+      try {
+        const traceOptions = {
+          ...(eventId === null
+            ? { incidentEligible: false }
+            : { refreshEligibility: true, focusKind: TRACE_FOCUS_KIND }),
+          ...options,
+        };
+        return withTraceEvent(eventId, invoke, traceOptions);
+      } catch (_) {
+        // A tracing wrapper can throw either before or after invoking the
+        // business callback. Retry only the former so diagnostics can never
+        // duplicate a remote text/key write.
+        // Preserve the business callback's result if the wrapper failed after
+        // it had already returned. The trace layer must not turn an accepted
+        // write into a retryable failure.
+        if (invoked) return businessResult;
+        try { return invoke(); } catch (error) { return false; }
+      }
     }
 
     function deliverySettled() {
@@ -287,18 +362,30 @@
       return false;
     }
 
-    function scheduleDrain() {
+    function scheduleDrain(traceEventId = activeTraceEventId, traceFocusKind = TRACE_FOCUS_KIND) {
       if (drainTimer !== null || !drainActive) return;
       const scheduledGeneration = generation;
+      drainTraceEventId = traceEventId;
+      drainTraceFocusKind = traceFocusKind || TRACE_FOCUS_KIND;
       drainTimer = setTimeout(() => {
         drainTimer = null;
+        const deferredEventId = drainTraceEventId;
+        const deferredFocusKind = drainTraceFocusKind;
+        drainTraceEventId = null;
+        drainTraceFocusKind = null;
         if (scheduledGeneration !== generation || !drainActive) return;
-        processDiff({ fromDrain: true });
+        processDiff({
+          fromDrain: true, traceEventId: deferredEventId, traceFocusKind: deferredFocusKind,
+        });
       }, 0);
     }
 
-    function processDiff({ force = false, fromDrain = false } = {}) {
+    function processDiff({
+      force = false, fromDrain = false, traceEventId = activeTraceEventId,
+      traceFocusKind = TRACE_FOCUS_KIND,
+    } = {}) {
       if (composing) {
+        traceGate(false, 'draft-composing', 'composition');
         if (fromDrain || drainActive) {
           cancelDrain();
           markPending();
@@ -316,20 +403,30 @@
         return true;
       }
       if (retryRequired && !force && !fromDrain) {
+        traceGate(false, 'draft-pending');
         notifyState();
         return false;
       }
       if (!contextValid || deliveryUncertain) {
+        traceGate(false, 'draft-uncertain');
         if (fromDrain || drainActive) cancelDrain();
         markPending({ uncertain: true });
         return false;
       }
       if (!surfaceSettled()) {
+        traceGate(false, 'surface-pending');
         if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
       }
       if (!isEnabled() || transportState !== 'ready') {
+        const reason = transportState === 'blocked'
+          ? 'keyboard-transport-blocked'
+          : transportState === 'reacquire-required'
+            ? 'keyboard-transport-reacquire-required'
+            : transportState === 'revoked'
+              ? 'keyboard-transport-revoked' : 'inactive';
+        traceGate(false, reason);
         if (fromDrain || drainActive) cancelDrain();
         markPending();
         return false;
@@ -374,7 +471,10 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendKey('Backspace');
+        const result = sendWithTrace(
+          () => sendKey('Backspace'), traceEventId ?? activeTraceEventId,
+          { focusKind: traceFocusKind },
+        );
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -394,7 +494,7 @@
 
       if (diff.deleted.length > sentDeletes) {
         drainActive = true;
-        scheduleDrain();
+        scheduleDrain(traceEventId ?? activeTraceEventId, traceFocusKind);
         notifyState();
         return false;
       }
@@ -413,7 +513,10 @@
           return stopDiffAt(diff, sentDeletes, { uncertain: !contextValid || deliveryUncertain });
         }
         const stepGeneration = generation;
-        const result = sendText(inserted);
+        const result = sendWithTrace(
+          () => sendText(inserted), traceEventId ?? activeTraceEventId,
+          { focusKind: traceFocusKind },
+        );
         if (stepGeneration !== generation) {
           drainActive = false;
           return false;
@@ -459,6 +562,7 @@
     }
 
     function onCompositionStart() {
+      traceDom('composition', 'compositionstart');
       if (drainActive) {
         cancelDrain();
         markPending();
@@ -471,6 +575,7 @@
     }
 
     function onCompositionUpdate() {
+      traceDom('composition', 'compositionupdate');
       observedValue = getValue();
       draftValue = observedValue;
       notifyState();
@@ -478,6 +583,7 @@
 
     function onBeforeInput(event) {
       if (!event || event.target !== element || composing) return;
+      traceDom('beforeinput', 'beforeinput');
       if (!rawValue().endsWith(SENTINEL)) return;
       // Failed text is an editable local draft. Do not restore the accepted
       // prefix while the user is appending or correcting it.
@@ -498,12 +604,18 @@
       observedValue = getValue();
       draftValue = observedValue;
       composing = false;
-      if (!retryRequired) flushDiff();
+      // Evaluate commit eligibility after composition has ended. A real
+      // composition commit is not the same as an ordinary composing draft.
+      traceDom('composition', 'compositionend');
+      if (!retryRequired) flushDiff({
+        traceEventId: activeTraceEventId, traceFocusKind: TRACE_FOCUS_KIND,
+      });
       compositionBaseValue = '';
       notifyState();
     }
 
     function onInput() {
+      traceDom('text', 'input');
       const hadDrainTimer = drainTimer !== null;
       captureObservedValue();
       if (composing) {
@@ -514,7 +626,7 @@
         // A new edit supersedes the old target, but the current serial
         // transaction is allowed to finish one batch before recalculating.
         clearDrainTimer();
-        processDiff({ fromDrain: true });
+        processDiff({ fromDrain: true, traceEventId: activeTraceEventId });
         return;
       }
       if (!drainActive) flushDiff();
@@ -523,6 +635,7 @@
 
     function onKeydown(event) {
       if (!event || event.target !== element) return;
+      traceDom('key', 'down');
       event.stopPropagation?.();
       if (composing || !CONTROL_KEYS.has(event.key)) return;
       // A rejected draft remains a normal local editing surface. In
@@ -541,6 +654,7 @@
 
     function onKeyup(event) {
       if (event?.target !== element) return;
+      traceDom('key', 'up');
       try {
         releaseTrackedKey(event);
       } catch (_) {
@@ -574,10 +688,38 @@
       pendingGeneration = null;
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       restoreAcceptedBuffer();
     }
 
-    function runExternalAction(kind, send) {
+    function invalidateContext(reason) {
+      const hadPending = hasPending();
+      lastResetReason = reason || 'context-invalidated';
+      cancelDrain();
+      generation += 1;
+      contextValid = false;
+      deliveryUncertain = true;
+      contextRecoveryRequired = true;
+      if (hadPending) {
+        retryRequired = true;
+        pendingGeneration = generation;
+      } else {
+        retryRequired = false;
+        pendingGeneration = null;
+      }
+      notifyState();
+      return true;
+    }
+
+    function confirmEmptyContextRecovery() {
+      if (composing || hasPending()) return false;
+      if (!contextRecoveryRequired && contextValid && !deliveryUncertain) return true;
+      resetAcceptedHistory();
+      notifyState();
+      return true;
+    }
+
+    function runExternalAction(kind, send, traceOptions = {}) {
       if (!['navigation', 'context-change'].includes(kind)
         || typeof send !== 'function'
         || composing || hasPending() || deliveryUncertain || !contextValid
@@ -585,7 +727,10 @@
         || !isEnabled()) return false;
       let result;
       try {
-        result = send();
+        const hasEventId = Object.prototype.hasOwnProperty.call(traceOptions, 'eventId');
+        const eventId = hasEventId ? traceOptions.eventId : activeTraceEventId;
+        const { eventId: _ignoredEventId, ...contextOptions } = traceOptions;
+        result = sendWithTrace(send, eventId, contextOptions);
       } catch (_) {
         result = false;
       }
@@ -612,7 +757,7 @@
       }
       const modified = Object.values(flags).some(Boolean) || virtualModified;
       if (modified) return runExternalAction('context-change', () => sendKey(key, flags));
-      if (!isEnabled() || !accepted(sendKey(key, flags))) return false;
+      if (!isEnabled() || !accepted(sendWithTrace(() => sendKey(key, flags)))) return false;
       const content = contentPoints(acceptedValue);
       if (key === 'Backspace') {
         if (remoteCursor > 0) {
@@ -648,15 +793,18 @@
 
     function retryPending() {
       if (!retryable() || drainActive) return false;
-      return flushDiff({ force: true });
+      activeTraceEventId = null;
+      return flushDiff({ force: true, traceEventId: null });
     }
 
     function discardPending() {
+      activeTraceEventId = null;
       cancelDrain();
       generation += 1;
       resetHistory();
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       notifyState();
     }
 
@@ -666,6 +814,18 @@
       const resetAcknowledged = next === 'ready' && options?.resetAcknowledged === true;
       transportState = next;
       if (resetAcknowledged) {
+        // A lifecycle invalidation owns a separate context recovery barrier.
+        // Keyboard ACK alone cannot prove that an empty/draft context still
+        // targets the same remote focus; Input confirms it after both reset
+        // barriers have been acknowledged.
+        if (contextRecoveryRequired) {
+          if (!surfaceSettled() || hasPending() || composing) {
+            notifyState();
+            return;
+          }
+          confirmEmptyContextRecovery();
+          return;
+        }
         if (!surfaceSettled()) {
           contextValid = false;
           deliveryUncertain = true;
@@ -709,6 +869,7 @@
 
     function attach() {
       if (attached || !element) return;
+      activeTraceEventId = null;
       attached = true;
       acceptedValue = getValue();
       draftValue = acceptedValue;
@@ -729,6 +890,7 @@
     }
 
     function detach() {
+      activeTraceEventId = null;
       cancelDrain();
       generation += 1;
       while (listeners.length) {
@@ -741,6 +903,7 @@
     }
 
     function show() {
+      activeTraceEventId = null;
       shown = true;
       element?.focus?.();
       observedValue = getValue();
@@ -751,6 +914,7 @@
     }
 
     function hide() {
+      activeTraceEventId = null;
       shown = false;
       element?.blur?.();
       refreshViewport();
@@ -758,6 +922,7 @@
     }
 
     function reset(reason) {
+      activeTraceEventId = null;
       lastResetReason = reason || 'reset';
       cancelDrain();
       generation += 1;
@@ -771,6 +936,7 @@
       pendingGeneration = null;
       contextValid = true;
       deliveryUncertain = false;
+      contextRecoveryRequired = false;
       if (element) element.value = SENTINEL;
       setCursorSelection(SENTINEL);
       hide();
@@ -786,6 +952,12 @@
       getSnapshot,
       retryPending,
       discardPending,
+      invalidateContext,
+      confirmEmptyContextRecovery,
+      // Input uses this internal predicate to distinguish a lifecycle/context
+      // invalidation from a normal edit or an ACK already in flight. Keep it
+      // out of the public diagnostic snapshot.
+      needsContextRecovery: () => contextRecoveryRequired,
       onTransportState,
       refreshDeliveryState,
       sendControlKey,

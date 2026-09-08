@@ -192,7 +192,7 @@
 
 ## 交付状态枚举
 
-### T2 环境准入实施清单（2026-09-08）
+### T2 历史环境准入实施清单（已被 2026-09-08 用户口径覆盖）
 
 - [x] 在唯一 sampler 时序所有者中按 monotonic deadline 采集 30×1Hz mysqld
   预检；第一样本无前序间隔，其余严格记录 0.85–1.15 秒窗口、late/missed tick。
@@ -207,5 +207,12 @@
   污染的 partial evidence 可保留，但不可选择候选或写 OFFLINE_PASS_ONLY。
 
 完整 peak matrix 仍待显式运行授权及干净环境；runtime burst 继续 `NOT_RUN`。
+
+### T2 本项目 CPU 采样实施清单（2026-09-08 用户授权）
+
+- [x] 删除 mysqld/sync worker 身份、稳定性和 CPU 要求，以及所有外部进程 CPU 预算或中止逻辑。历史清单只留作已覆盖的背景，不能再作为执行准入。
+- [x] 每个 1Hz 样本只记录矩阵及 descendants、主仓库和当前 worktree 的精确 Host/Signal 及 descendants 的 PID/RSS/raw CPU/合计；Host/Signal 只接受 cwd 或绝对脚本路径确认在这两个仓库根内的 `host.py`/`server.js`。
+- [x] 其他进程完全忽略，不扫描其 CPU 也不影响状态；项目 CPU 为原始遥测，不做阈值、扣减或 P95 归一化。
+- [x] 保留 Viewer 活动、采样健康、时序和 coverage 的状态机，以及 raw encoder quality/P95 验证。更新原子 abort schema 与聚焦测试。
 
 `IMPLEMENTED` 表示代码与自动化通过；`OFFLINE_PASS` 表示所有场景质量/成本合格；`LAB_PASS` 表示隔离TURN、输入、丢包通过；`PRODUCTION_PASS` 表示冻结版本的真实生产维护窗口通过。`BLOCKED` 说明设施/受控场景缺失；`INCONCLUSIVE` 说明测量或环境不可比。`USER_SCENARIO_PASS` 才表示原报告客户端场景也已验收；缺失为USER_SCENARIO_NOT_VERIFIED。任何前一层状态不能代替后一层，也不保证所有客户端/网络条件永不抖动。

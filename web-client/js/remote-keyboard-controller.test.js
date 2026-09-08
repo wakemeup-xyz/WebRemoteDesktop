@@ -374,9 +374,9 @@ test('mode change clears state through a reset barrier before exposing the new m
 });
 
 test('transport barrier timeout then new lease clears stale resetRequired', () => {
-  // Reproduces the "keyboard stuck at RESET_REQUIRED" bug:
+  // A genuinely new lease may recover after the previous reset deadline:
   // 1. DC dies → markAdapterUnavailable → sendReset → barrier deadline = now+3000ms
-  // 2. 3 seconds pass with no ack → expireBarrier → reacquireRequired=true, leaseId=null
+  // 2. 3 seconds pass with no ack → expireBarrier → reacquireRequired=true
   // 3. syncTransportState notifies controller: state='reacquire-required'
   //    → resetRequired=true, resetBarrierPending=false
   // 4. New lease arrives → setLease(newLease) → transport state='ready'
@@ -418,9 +418,11 @@ test('transport barrier timeout then new lease clears stale resetRequired', () =
     controller.handleDomEvent(keyEvent('keydown', { code: 'KeyA', key: 'a' })), true,
     'keydown must be accepted after fresh lease with no pending barrier'
   );
+  assert.equal(socket.at(-1).action, 'key', 'fresh lease sends a real key action');
+  assert.equal(socket.at(-1).seq, 1, 'fresh lease owns a fresh input sequence');
 });
 
-test('rebinding the same lease after barrier expiry clears RESET_REQUIRED', () => {
+test('rebinding the same lease after barrier expiry remains fail-closed', () => {
   let now = 0;
   const dataChannel = [];
   const socket = [];
@@ -439,9 +441,15 @@ test('rebinding the same lease after barrier expiry clears RESET_REQUIRED', () =
   now = 4000;
   transport.getSnapshot();
   assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+  const writesBeforeRebind = dataChannel.length + socket.length;
   controller.setLease(lease);
-  assert.equal(controller.getSnapshot().state, 'READY');
-  assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyA', key: 'a' })), true);
+  assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
+  assert.equal(
+    controller.handleDomEvent(keyEvent('keydown')),
+    false,
+    'same lease must not wash away expired reset ownership',
+  );
+  assert.equal(dataChannel.length + socket.length, writesBeforeRebind, 'blocked keydown sends nothing');
 });
 
 test('park clears local keys without entering RESET_REQUIRED', () => {

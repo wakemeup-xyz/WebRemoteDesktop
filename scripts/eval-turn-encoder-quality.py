@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
 import hashlib
 import importlib.util
 import json
@@ -28,11 +27,10 @@ if str(ROOT / "scripts") not in sys.path:
 
 
 class _PeakAmbientSampler:
-    """Fail-closed one-Hz environment monitor for the offline matrix.
+    """One-Hz project-CPU monitor for the offline matrix.
 
-    Its measurements describe ambient drift only.  They are deliberately kept
-    out of the encoder validator, so no normalized or adjusted P95 can become a
-    qualification result.
+    Only this matrix and WebRemoteDesktop's exact Host/Signal processes are
+    measured.  The raw values are telemetry; they never alter encoder gates.
     """
 
     PRE_FLIGHT_SAMPLES = 30
@@ -40,25 +38,14 @@ class _PeakAmbientSampler:
     PRE_FLIGHT_INTERVAL_SECONDS = 1.0
     PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS = (0.85, 1.15)
     PRE_FLIGHT_LATE_TICK_SECONDS = 0.15
-    QUIESCENT_EXTERNAL_CPU_PERCENT = 1.0
-    MYSQL_STABILITY_THRESHOLDS = {
-        "maximumCpuPercent": 95.0,
-        "maximumCpuSwingPercent": 35.0,
-    }
-    _FORBIDDEN_CLASSES = {
-        "pytest": ("pytest",),
-        "sync_worker": ("sync_worker",),
-        "lab": ("/lab", " lab"),
-        "docker": ("docker compose", "docker-compose"),
-    }
-    _SYSTEM_EXECUTABLE_ROOTS = ("/System/Library/", "/usr/lib/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/bin/")
-    _proc_library = None
-    _proc_pidpath = None
+    PROJECT_CPU_POLICY_VERSION = "webremotedesktop-project-cpu-v1"
 
-    def __init__(self, *, snapshot_reader=None, process_executable_resolver=None, interval_seconds: float = 1.0):
+    def __init__(self, *, snapshot_reader=None, process_cwds_resolver=None,
+                 project_roots: tuple[Path, ...] | None = None, interval_seconds: float = 1.0):
         self._snapshot_reader = snapshot_reader or self._read_snapshot
-        self._process_executable_resolver = process_executable_resolver or self._executed_binary_path
-        self._trusted_python_framework_root = self._python_framework_root(os.path.realpath(sys.executable))
+        self._uses_live_snapshot = snapshot_reader is None
+        self._process_cwds_resolver = process_cwds_resolver or self._process_cwds
+        self._project_roots = tuple(Path(root).resolve() for root in (project_roots or self._default_project_roots()))
         self._interval_seconds = interval_seconds
         self.samples: list[dict] = []
         self.abort_reasons: list[dict] = []
@@ -73,7 +60,6 @@ class _PeakAmbientSampler:
         self._thread_started = False
         self._preflight_samples: list[dict] = []
         self._preflight_status = "PENDING"
-        self._mysql_identity: dict | None = None
         self._coverage: list[dict] = []
         self._active_blocks: dict[str, dict] = {}
         self._missed_ticks = 0
@@ -82,62 +68,52 @@ class _PeakAmbientSampler:
         self._sequence = 0
         self._health = {"status": "STARTING", "lastError": None}
         self._health_failed = False
+        self._project_service_roots: dict[int, str] | None = None
 
     @staticmethod
-    def _mysql_start_epoch(pid: int) -> str:
-        completed = subprocess.run(
-            ("ps", "-p", str(pid), "-o", "lstart="),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        value = completed.stdout.strip()
-        if not value:
-            raise RuntimeError(f"mysqld {pid} has no start epoch")
-        return value
-
-    @classmethod
-    def _executed_binary_path(cls, pid: int) -> str:
-        """Read a process executable from the Darwin kernel, not its argv."""
-        if sys.platform != "darwin":
-            raise RuntimeError("kernel executable lookup is unavailable")
-        if cls._proc_pidpath is None:
-            cls._proc_library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-            cls._proc_pidpath = cls._proc_library.proc_pidpath
-            cls._proc_pidpath.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
-            cls._proc_pidpath.restype = ctypes.c_int
-        buffer = ctypes.create_string_buffer(4096)
-        size = cls._proc_pidpath(pid, buffer, len(buffer))
-        if size <= 0:
-            raise OSError(ctypes.get_errno(), f"proc_pidpath failed for pid {pid}")
-        path = os.fsdecode(buffer.value)
-        if not path or not os.path.isabs(path):
-            raise RuntimeError(f"proc_pidpath returned an invalid path for pid {pid}")
-        return path
-
-    @classmethod
-    def _forbidden_class(cls, command: str, argv: str = "") -> str | None:
-        lowered = f"{command} {argv}".lower()
-        for name, patterns in cls._FORBIDDEN_CLASSES.items():
-            if any(pattern in lowered for pattern in patterns):
-                return name
-        return None
-
-    @staticmethod
-    def _python_framework_root(path: str) -> str | None:
-        """Return the canonical Python.framework version root for a Python executable."""
-        parts = Path(os.path.realpath(path)).parts
+    def _default_project_roots() -> tuple[Path, ...]:
+        """Return this worktree plus its main worktree from Git's common dir."""
+        roots = {ROOT.resolve()}
         try:
-            framework_index = parts.index("Python.framework")
-        except ValueError:
-            return None
-        if len(parts) <= framework_index + 2 or parts[framework_index + 1] != "Versions":
-            return None
-        return str(Path(parts[0]).joinpath(*parts[1:framework_index + 3]))
+            completed = subprocess.run(
+                ("git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"),
+                text=True, capture_output=True, check=True,
+            )
+            common_dir = Path(completed.stdout.strip()).resolve()
+            if common_dir.name == ".git":
+                roots.add(common_dir.parent)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        return tuple(sorted(roots))
+
+    @staticmethod
+    def _process_cwds(pids: list[int]) -> dict[int, str]:
+        """Resolve all candidate service cwds in one bounded lsof invocation."""
+        if not pids:
+            return {}
+        completed = subprocess.run(
+            ("lsof", "-a", "-p", ",".join(str(pid) for pid in sorted(set(pids))), "-d", "cwd", "-Fpn"),
+            text=True, capture_output=True, check=False,
+        )
+        if completed.returncode not in (0, 1):
+            raise RuntimeError("lsof cwd lookup failed")
+        cwds = {}
+        current_pid = None
+        for line in completed.stdout.splitlines():
+            if line.startswith("p"):
+                try:
+                    current_pid = int(line[1:])
+                except ValueError as exc:
+                    raise RuntimeError("lsof cwd pid is unparseable") from exc
+            elif line.startswith("n") and line[1:] and current_pid is not None:
+                cwds[current_pid] = os.path.realpath(line[1:])
+        return cwds
 
     def _read_snapshot(self) -> dict:
+        if self._project_service_roots is not None:
+            return self._read_cached_project_snapshot()
         ps_process = subprocess.Popen(
-            ("ps", "-axo", "pid=,ppid=,rss=,%cpu=,command="),
+            ("ps", "-axo", "pid=,ppid=,rss=,command="),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -152,135 +128,163 @@ class _PeakAmbientSampler:
             )
         ps_child_pid = ps_process.pid
         parsed_processes = []
-        # Parse the complete ps result before resolving executables.  That lets
-        # us identify the matrix's own descendants from the same atomic-ish
-        # process listing, so a short-lived helper cannot disappear between
-        # ps and proc_pidpath and poison its parent measurement.
         for row in stdout.splitlines():
             if not row.strip():
                 continue
-            parts = row.split(None, 4)
-            if len(parts) != 5:
+            parts = row.split(None, 3)
+            if len(parts) != 4:
                 raise RuntimeError("ps snapshot row is malformed")
-            pid, ppid, rss, cpu, argv = parts
+            pid, ppid, rss, argv = parts
             try:
                 parsed_processes.append({
                     "pid": int(pid), "ppid": int(ppid), "rssKiB": int(rss),
-                    "cpuPercent": float(cpu), "argv": argv,
+                    "argv": argv,
                 })
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("ps snapshot row is unparseable") from exc
 
-        matrix_own_pids = {os.getpid()}
-        changed = True
-        while changed:
-            changed = False
-            for process in parsed_processes:
-                if process["ppid"] in matrix_own_pids and process["pid"] not in matrix_own_pids:
-                    matrix_own_pids.add(process["pid"])
-                    changed = True
+        candidate_service_pids = [process["pid"] for process in parsed_processes if self._service_kind_from_argv(process.get("argv", "")) is not None]
+        candidate_cwds = self._process_cwds_resolver(candidate_service_pids)
         processes = []
         for process in parsed_processes:
-            if process["pid"] == ps_child_pid or process["pid"] in matrix_own_pids:
+            if process["pid"] == ps_child_pid:
+                # ps is a matrix child; retain it so matrix CPU is measured.
+                processes.append(process)
                 continue
-            try:
-                executable_path = self._process_executable_resolver(process["pid"])
-                if not isinstance(executable_path, str) or not os.path.isabs(executable_path):
-                    raise RuntimeError("kernel executable lookup returned an invalid path")
-            except OSError:
-                # A parseable short-lived process may disappear between ps and
-                # proc_pidpath.  Keep it as unresolved external evidence, but
-                # do not let an unparseable argv through without an actual
-                # kernel executable to classify it conservatively.
-                try:
-                    argv_tokens = shlex.split(process["argv"])
-                except ValueError as exc:
-                    raise RuntimeError("kernel executable unavailable for unparseable argv") from exc
-                if not argv_tokens:
-                    raise RuntimeError("ps snapshot command is empty")
-                processes.append({**process, "command": argv_tokens[0], "executableResolution": "unavailable"})
-                continue
-            try:
-                argv_tokens = shlex.split(process["argv"])
-                if not argv_tokens:
-                    raise RuntimeError("ps snapshot command is empty")
-                processes.append({**process, "command": argv_tokens[0],
-                    "executablePath": executable_path,
-                    "canonicalExecutablePath": os.path.realpath(executable_path),
-                })
-            except ValueError:
-                processes.append({**process, "command": os.path.realpath(executable_path),
-                    "argvParseStatus": "UNPARSEABLE", "executablePath": executable_path,
-                    "canonicalExecutablePath": os.path.realpath(executable_path),
-                })
-            except TypeError as exc:
-                raise RuntimeError("ps snapshot row is unparseable") from exc
+            if self._service_kind_from_argv(process.get("argv", "")) is not None:
+                cwd = candidate_cwds.get(process["pid"])
+                if cwd:
+                    processes.append({**process, "cwd": os.path.realpath(cwd), "serviceCandidate": True})
+                elif self._is_project_service_process(process):
+                    processes.append({**process, "serviceCandidate": True})
+            else:
+                processes.append(process)
+        project_pids = self._project_process_kinds(processes)
+        self._project_service_roots = {
+            pid: kind for pid, kind in project_pids.items() if kind in {"host", "signal"}
+        }
+        cpu_by_pid = self._read_project_cpu(project_pids)
+        processes = [{**process, **cpu_by_pid[process["pid"]]} for process in processes if process["pid"] in cpu_by_pid]
         with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
             status = json.load(response)
         return {
             "processes": processes,
-            "mysqld": [],
             "viewerStatus": {
                 "viewerCount": status.get("viewerCount"),
                 "relayViewerCount": status.get("relayViewerCount"),
             },
         }
 
+    def _read_cached_project_snapshot(self) -> dict:
+        """Sample only known project roots and their descendants after warmup."""
+        project_kinds = dict(self._project_service_roots or {})
+        project_kinds[os.getpid()] = "matrix"
+        frontier = sorted(project_kinds)
+        while frontier:
+            completed = subprocess.run(
+                ("pgrep", "-P", ",".join(str(pid) for pid in frontier)),
+                text=True, capture_output=True, check=False,
+            )
+            if completed.returncode not in (0, 1):
+                raise RuntimeError("project descendant lookup failed")
+            children = []
+            for row in completed.stdout.splitlines():
+                try:
+                    pid = int(row.strip())
+                except ValueError as exc:
+                    raise RuntimeError("project descendant pid is unparseable") from exc
+                if pid not in project_kinds:
+                    project_kinds[pid] = "project-descendant"
+                    children.append(pid)
+            frontier = children
+        cpu_by_pid = self._read_project_cpu(project_kinds)
+        processes = [
+            {"pid": pid, "projectKind": project_kinds[pid], **values}
+            for pid, values in cpu_by_pid.items()
+        ]
+        with urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=1) as response:
+            status = json.load(response)
+        return {"processes": processes, "viewerStatus": {"viewerCount": status.get("viewerCount"), "relayViewerCount": status.get("relayViewerCount")}}
+
+    @staticmethod
+    def _read_project_cpu(project_pids: dict[int, str]) -> dict[int, dict]:
+        """Read CPU only for project PIDs selected from the metadata snapshot."""
+        if not project_pids:
+            return {}
+        completed = subprocess.run(
+            ("ps", "-p", ",".join(str(pid) for pid in sorted(project_pids)), "-o", "pid=,rss=,%cpu="),
+            text=True, capture_output=True, check=False,
+        )
+        if completed.returncode not in (0, 1):
+            raise RuntimeError("project CPU ps lookup failed")
+        cpu_by_pid = {}
+        for row in completed.stdout.splitlines():
+            parts = row.split()
+            if len(parts) != 3:
+                raise RuntimeError("project CPU ps row is malformed")
+            try:
+                pid, rss, cpu = parts
+                cpu_by_pid[int(pid)] = {"rssKiB": int(rss), "cpuPercent": float(cpu)}
+            except ValueError as exc:
+                raise RuntimeError("project CPU ps row is unparseable") from exc
+        return cpu_by_pid
+
     def _abort(self, category: str, reason: str, **details) -> None:
         entry = {"category": category, "reason": reason, **details}
         if entry not in self.abort_reasons:
             self.abort_reasons.append(entry)
 
-    def _exact_mysqld(self, process: dict) -> dict | None:
-        """Accept mysqld only when its kernel executable agrees with argv[0]."""
-        if process.get("argvParseStatus") == "UNPARSEABLE":
-            return None
-        argv = shlex.split(str(process.get("argv", "")))
-        if not argv or not argv[0].startswith("/"):
-            return None
-        actual_path = self._canonical_executable_path(process)
-        if actual_path is None or Path(actual_path).name != "mysqld":
-            return None
-        if os.path.realpath(argv[0]) != actual_path:
-            return None
-        result = dict(process)
-        result["binaryPath"] = actual_path
-        result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
-        return result
-
-    def _exact_sync_worker(self, process: dict) -> dict | None:
-        if process.get("argvParseStatus") == "UNPARSEABLE":
-            return None
-        argv = shlex.split(str(process.get("argv", "")))
-        if not argv or not argv[0].startswith("/") or not Path(argv[0]).name.lower().startswith("python"):
-            return None
-        if argv != [argv[0], "-m", "backend.scripts.sync_worker"]:
-            return None
-        actual_path = self._canonical_executable_path(process)
-        if actual_path is None or actual_path != os.path.realpath(argv[0]):
-            return None
-        framework_root = self._python_framework_root(actual_path)
-        expected_executable = None if framework_root is None else f"{framework_root}/Resources/Python.app/Contents/MacOS/Python"
-        if framework_root != self._trusted_python_framework_root or actual_path != expected_executable:
-            return None
-        result = dict(process)
-        result["binaryPath"] = actual_path
-        result["startEpoch"] = str(process.get("startEpoch") or self._mysql_start_epoch(int(process["pid"])))
-        return result
-
-    @classmethod
-    def _is_system_process(cls, process: dict) -> bool:
-        # A command line can claim a system location.  System exclusion is
-        # allowed only after the kernel supplied an executable path.
-        path = process.get("canonicalExecutablePath") or process.get("executablePath")
-        return isinstance(path, str) and os.path.isabs(path) and os.path.realpath(path).startswith(cls._SYSTEM_EXECUTABLE_ROOTS)
-
     @staticmethod
-    def _canonical_executable_path(process: dict) -> str | None:
-        path = process.get("canonicalExecutablePath") or process.get("executablePath")
-        if not isinstance(path, str) or not os.path.isabs(path):
+    def _service_kind_from_argv(argv: str) -> str | None:
+        try:
+            tokens = shlex.split(str(argv))
+        except ValueError:
             return None
-        return os.path.realpath(path)
+        if not tokens:
+            return None
+        names = {Path(token).name for token in tokens}
+        if "host.py" in names:
+            return "host"
+        if "server.js" in names:
+            return "signal"
+        return None
+
+    def _is_project_service_process(self, process: dict) -> bool:
+        kind = self._service_kind_from_argv(process.get("argv", ""))
+        cwd = process.get("cwd")
+        if kind is None:
+            return False
+        try:
+            tokens = shlex.split(str(process["argv"]))
+        except ValueError:
+            return False
+        resolved_cwd = Path(cwd).resolve() if isinstance(cwd, str) and os.path.isabs(cwd) else None
+        for root in self._project_roots:
+            if kind == "host" and resolved_cwd == root / "python-host":
+                return True
+            if kind == "signal" and resolved_cwd == root / "signal-server":
+                return True
+            expected = root / ("python-host/host.py" if kind == "host" else "signal-server/server.js")
+            if any(token.startswith("/") and Path(token).resolve() == expected for token in tokens):
+                return True
+        return False
+
+    def _project_process_kinds(self, processes: list[dict]) -> dict[int, str]:
+        kinds = {os.getpid(): "matrix"}
+        for process in processes:
+            if process.get("projectKind"):
+                kinds[int(process["pid"])] = str(process["projectKind"])
+            elif (process.get("serviceCandidate") or "cwd" in process) and self._is_project_service_process(process):
+                kinds[int(process["pid"])] = self._service_kind_from_argv(process["argv"]) or "service"
+        changed = True
+        while changed:
+            changed = False
+            for process in processes:
+                parent_kind = kinds.get(process.get("ppid"))
+                if parent_kind is not None and process["pid"] not in kinds:
+                    kinds[int(process["pid"])] = parent_kind if parent_kind == "matrix" else f"{parent_kind}-descendant"
+                    changed = True
+        return kinds
 
     def _sample_once(self, *, phase: str, scheduled_ns: int | None = None) -> dict | None:
         """Capture one snapshot.  The worker is the sole normal caller."""
@@ -291,60 +295,23 @@ class _PeakAmbientSampler:
                     self._abort("INCONCLUSIVE", "ambient monotonic sequence regression")
                 snapshot = self._snapshot_reader()
                 processes = list(snapshot["processes"])
-                mysql = [entry for process in processes if (entry := self._exact_mysqld(process)) is not None]
-                mysql_pids = {entry["pid"] for entry in mysql}
-                sync = [entry for process in processes if (entry := self._exact_sync_worker(process)) is not None]
-                sync_pids = {entry["pid"] for entry in sync}
-                own_pids = {os.getpid()}
-                changed = True
-                while changed:
-                    changed = False
-                    for process in processes:
-                        if process.get("ppid") in own_pids and process["pid"] not in own_pids:
-                            own_pids.add(process["pid"]); changed = True
+                project_kinds = self._project_process_kinds(processes)
                 viewers = dict(snapshot["viewerStatus"])
-                forbidden = []
+                project_processes = []
                 for process in processes:
-                    process_class = self._forbidden_class(str(process["command"]), str(process.get("argv", "")))
-                    if process["pid"] in mysql_pids | sync_pids | own_pids:
-                        continue
-                    if process_class is None and self._is_system_process(process):
-                        continue
-                    external = {"class": process_class or "external", "pid": int(process["pid"]), "cpuPercent": float(process["cpuPercent"])}
-                    if process.get("executableResolution") == "unavailable":
-                        external["executableResolution"] = "unavailable"
-                    if process.get("argvParseStatus") == "UNPARSEABLE":
-                        external["argvParseStatus"] = "UNPARSEABLE"
-                    forbidden.append(external)
-                external_cpu = sum(item["cpuPercent"] for item in forbidden)
-                for offender in forbidden:
-                    if offender["cpuPercent"] > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
-                        self._abort("CONTAMINATED", "non-allowlisted process exceeds quiescent CPU budget", **offender)
-                if external_cpu > self.QUIESCENT_EXTERNAL_CPU_PERCENT:
-                    self._abort("CONTAMINATED", "non-allowlisted aggregate exceeds quiescent CPU budget", totalCpuPercent=external_cpu)
+                    kind = project_kinds.get(process["pid"])
+                    if kind is not None:
+                        project_processes.append({"kind": kind, "pid": int(process["pid"]), "rssKiB": int(process["rssKiB"]), "cpuPercent": float(process["cpuPercent"])})
+                project_cpu = sum(item["cpuPercent"] for item in project_processes)
                 if viewers.get("viewerCount") != 0 or viewers.get("relayViewerCount") != 0:
                     self._abort("CONTAMINATED", "viewer activity", viewers=viewers)
-                if len(mysql) != 1:
-                    self._abort("INCONCLUSIVE", "mysqld identity unavailable", observedCount=len(mysql))
-                else:
-                    observed_identity = {"pid": int(mysql[0]["pid"]), "binaryPath": str(mysql[0]["binaryPath"]), "startEpoch": str(mysql[0]["startEpoch"])}
-                    if self._mysql_identity is None:
-                        self._mysql_identity = observed_identity
-                    elif observed_identity != self._mysql_identity:
-                        self._abort("INCONCLUSIVE", "mysqld identity changed", expected=self._mysql_identity, observed=observed_identity)
-                if len(sync) != 1:
-                    self._abort("INCONCLUSIVE", "sync_worker identity unavailable", observedCount=len(sync))
-                else:
-                    identity = {"pid": int(sync[0]["pid"]), "binaryPath": sync[0]["binaryPath"], "startEpoch": sync[0]["startEpoch"]}
-                    if getattr(self, "_sync_identity", None) is None: self._sync_identity = identity
-                    elif identity != self._sync_identity: self._abort("INCONCLUSIVE", "sync_worker identity changed", expected=self._sync_identity, observed=identity)
                 late_seconds = None if scheduled_ns is None else max(0.0, (tick_ns - scheduled_ns) / 1_000_000_000)
                 if late_seconds is not None and late_seconds > self.PRE_FLIGHT_LATE_TICK_SECONDS:
                     late = {"scheduledMonotonicNs": scheduled_ns, "observedMonotonicNs": tick_ns, "lateSeconds": late_seconds}
                     self._late_ticks.append(late)
                     self._abort("INCONCLUSIVE", "ambient sampling tick late", **late)
                 self._sequence += 1
-                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "loadavg": list(os.getloadavg()), "mysqld": mysql, "syncWorker": sync, "quiescentExternalProcesses": forbidden, "externalCpuPercent": external_cpu, "viewerStatus": viewers}
+                sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "projectProcesses": project_processes, "projectCpuPercent": project_cpu, "viewerStatus": viewers}
                 if self._last_tick_ns is not None:
                     elapsed_seconds = (tick_ns - self._last_tick_ns) / 1_000_000_000
                     if phase == "PREFLIGHT" and not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= elapsed_seconds <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
@@ -379,13 +346,6 @@ class _PeakAmbientSampler:
         for interval in intervals:
             if not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= interval <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
                 self._abort("INCONCLUSIVE", "ambient preflight cadence outside bounds", elapsedSeconds=interval)
-        cpu_values = [sample["mysqld"][0]["cpuPercent"] for sample in self._preflight_samples if len(sample["mysqld"]) == 1]
-        if len(cpu_values) != self.PRE_FLIGHT_SAMPLES:
-            self._abort("INCONCLUSIVE", "ambient preflight incomplete", observed=len(cpu_values))
-        elif max(cpu_values) > self.MYSQL_STABILITY_THRESHOLDS["maximumCpuPercent"]:
-            self._abort("INCONCLUSIVE", "mysqld CPU stability bound exceeded", maximum=max(cpu_values))
-        elif max(cpu_values) - min(cpu_values) > self.MYSQL_STABILITY_THRESHOLDS["maximumCpuSwingPercent"]:
-            self._abort("INCONCLUSIVE", "mysqld CPU swing stability bound exceeded", swing=max(cpu_values) - min(cpu_values))
         self._preflight_status = "PASS" if not self.abort_reasons and self.healthy.is_set() else "FAILED"
         self._preflight_complete.set()
 
@@ -410,6 +370,11 @@ class _PeakAmbientSampler:
             request["done"].set()
 
     def start(self) -> None:
+        if self._uses_live_snapshot:
+            try:
+                self._read_snapshot()  # Warm identity discovery outside 1Hz preflight sampling.
+            except Exception as exc:
+                self._abort("INCONCLUSIVE", "ambient sampler warmup failure", error=type(exc).__name__)
         self._thread_started = True
         self._thread.start()
         if not self.ready.wait(timeout=5):
@@ -418,7 +383,7 @@ class _PeakAmbientSampler:
             self._abort("INCONCLUSIVE", "ambient sampler health check failed")
 
     def run_preflight(self) -> bool:
-        """Require a continuous 30x1Hz stable mysqld identity before encoding."""
+        """Require a continuous 30x1Hz healthy sampling window before encoding."""
         timeout = (self.PRE_FLIGHT_SAMPLES * self._interval_seconds) + self.PRE_FLIGHT_LATE_TICK_SECONDS
         if not self._preflight_complete.wait(timeout=timeout):
             self._abort("INCONCLUSIVE", "ambient preflight deadline missed", observed=len(self._preflight_samples))
@@ -474,7 +439,7 @@ class _PeakAmbientSampler:
         return None
 
     def evidence(self) -> dict:
-        cpu_values = [sample["mysqld"][0]["cpuPercent"] for sample in self.samples if len(sample["mysqld"]) == 1]
+        cpu_values = [sample["projectCpuPercent"] for sample in self.samples]
         def percentile(values: list[float], p: float) -> float | None:
             if not values:
                 return None
@@ -488,13 +453,11 @@ class _PeakAmbientSampler:
             "noLoadBaseline": None,
             "health": dict(self._health),
             "preflight": {"requiredSamples": self.PRE_FLIGHT_SAMPLES, "observedSamples": len(self._preflight_samples), "status": self._preflight_status, "intervalSeconds": self.PRE_FLIGHT_INTERVAL_SECONDS, "intervalBoundsSeconds": list(self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
-            "mysqld": {"identity": self._mysql_identity, "cpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None}, "stabilityThresholds": dict(self.MYSQL_STABILITY_THRESHOLDS)},
-            "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": getattr(self, "_sync_identity", None)},
-            "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT, "aggregateCpuPercentMaximum": self.QUIESCENT_EXTERNAL_CPU_PERCENT},
+            "projectCpuPolicy": {"version": self.PROJECT_CPU_POLICY_VERSION, "roots": [str(root) for root in self._project_roots], "includes": ["matrix-and-descendants", "host-and-descendants", "signal-and-descendants"]},
+            "projectCpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
-            "quiescentExternalProcesses": [item for sample in self.samples for item in sample.get("quiescentExternalProcesses", [])],
             "abortReasons": list(self.abort_reasons), "samples": list(self.samples),
-            "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
+            "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
         }
 
 
@@ -1614,11 +1577,10 @@ def _peak_atomic_abort_artifact(error: Exception) -> dict:
         "status": "INCONCLUSIVE", "sampleHz": 1, "rawGatesUnchanged": True, "relativeOnly": True, "noLoadBaseline": None,
         "health": {"status": "FAILED", "lastError": type(error).__name__},
         "preflight": {"requiredSamples": _PeakAmbientSampler.PRE_FLIGHT_SAMPLES, "observedSamples": 0, "status": "NOT STARTED", "intervalSeconds": 1.0, "intervalBoundsSeconds": list(_PeakAmbientSampler.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
-        "mysqld": {"identity": None, "cpuPercent": {"p50": None, "p95": None, "max": None}, "stabilityThresholds": dict(_PeakAmbientSampler.MYSQL_STABILITY_THRESHOLDS)},
-        "acceptedBackgroundProcesses": ["mysqld", "sync_worker"], "syncWorker": {"identity": None},
-        "externalProcessPolicy": {"version": "quiescent-external-v1", "singleCpuPercentMaximum": 1.0, "aggregateCpuPercentMaximum": 1.0},
-        "coverage": [], "missedTicks": 0, "lateTicks": [], "quiescentExternalProcesses": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
-        "note": "Relative ambient telemetry does not adjust formal raw P95 gates. noLoadBaseline is null, so no absolute debiased P95 is available.",
+        "projectCpuPolicy": {"version": _PeakAmbientSampler.PROJECT_CPU_POLICY_VERSION, "roots": [str(root) for root in _PeakAmbientSampler._default_project_roots()], "includes": ["matrix-and-descendants", "host-and-descendants", "signal-and-descendants"]},
+        "projectCpuPercent": {"p50": None, "p95": None, "max": None},
+        "coverage": [], "missedTicks": 0, "lateTicks": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
+        "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
     }
     candidate = {"id": "on-demand-peak-headroom-v1", "parameters": None, "prescreen": {"status": "NOT RUN"}, "offline": {"status": "NOT RUN"}, "runtime": runtime, "eligible": False, "ineligibleReason": list(ambient["abortReasons"]), "execution": {"prescreen": "ABORTED", "fullMatrix": "ABORTED"}}
     return {

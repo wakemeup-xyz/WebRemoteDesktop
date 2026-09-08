@@ -253,14 +253,11 @@
     return 'candidate-check-needed';
   },
 
-  sendLogs(meta = {}) {
+  async sendLogs(meta = {}) {
     const latencyStats = (typeof LatencyMonitor !== 'undefined')
       ? LatencyMonitor.getStats()
       : null;
 
-    const inputState = (typeof Input !== 'undefined' && typeof Input.getDiagnosticState === 'function')
-      ? Input.getDiagnosticState()
-      : null;
     const terminalState = (typeof TerminalPanel !== 'undefined' && typeof TerminalPanel.getDiagnosticState === 'function')
       ? TerminalPanel.getDiagnosticState()
       : null;
@@ -276,55 +273,19 @@
     payload.latency = latencyStats;
     payload.logs = this.logs.slice(-120);
     payload.network = payload.network || this.getNetworkSnapshot();
-    payload.keyboardMode = inputState?.keyboardMode || null;
+    payload.keyboardMode = payload.inputState?.keyboardMode || null;
     payload.terminal = terminalState || payload.terminal;
-    payload.inputState = inputState ? {
-      keyboardMode: inputState.keyboardMode || null,
-      isActive: Boolean(inputState.isActive),
-      hasLease: Boolean(inputState.hasLease),
-      leaseEpoch: Number(inputState.leaseEpoch || 0),
-      gate: inputState.gate && typeof inputState.gate === 'object' ? { ...inputState.gate } : null,
-      keyboard: inputState.keyboard ? {
-        leaseState: inputState.keyboard.leaseState || null,
-        epoch: Number(inputState.keyboard.epoch || 0),
-        lastSent: Number(inputState.keyboard.lastSent || 0),
-        lastApplied: Number(inputState.keyboard.lastApplied || 0),
-        pendingCount: Number(inputState.keyboard.pendingCount || 0),
-        pressedCount: Number(inputState.keyboard.pressedCount || 0),
-        modifierMask: Number(inputState.keyboard.modifierMask || 0),
-        adapter: inputState.keyboard.adapter || null,
-        lastResetReason: inputState.keyboard.lastResetReason || null,
-      } : null,
-    } : null;
     payload.inputChannelTimeline = this.getInputChannelTimeline();
 
-    // Use WebRTC socket if available, otherwise try to emit directly
-    if (typeof WebRTC !== 'undefined' && WebRTC.socket && WebRTC.socket.connected) {
-      WebRTC.socket.emit('diagnostic', payload);
-      console.log('[Diagnostic] Logs sent via WebRTC socket');
+    const sent = await this.sendConnectionDiagnostic(payload);
+    if (sent) {
+      console.log('[Diagnostic] Logs sent');
       alert('日志已发送到服务端，请等待分析');
-    } else if (typeof io !== 'undefined') {
-      // Fallback: create a temporary socket connection just to send logs
-      const socketBase = (typeof RuntimeConfig !== 'undefined')
-        ? RuntimeConfig.getSocketBase()
-        : window.location.origin;
-      const tempSocket = io(socketBase, {
-        auth: { token: Auth.getToken(), role: 'viewer' }
-      });
-      tempSocket.on('connect', () => {
-        tempSocket.emit('diagnostic', payload);
-        console.log('[Diagnostic] Logs sent via temporary socket');
-        alert('日志已发送到服务端，请等待分析');
-        setTimeout(() => tempSocket.disconnect(), 500);
-      });
-      tempSocket.on('connect_error', (err) => {
-        console.error('[Diagnostic] Failed to send logs:', err);
-        alert('发送失败，请检查网络连接');
-      });
     } else {
-      console.error('[Diagnostic] No socket available to send logs');
-      alert('无法发送：Socket 未连接');
+      console.error('[Diagnostic] Failed to send logs; queued for retry');
+      alert('发送失败，日志已保存待重试');
     }
+    return sent;
   },
 
   buildConnectionDiagnostic(meta = {}) {
@@ -398,6 +359,26 @@
       freezeDelta: Number(lastStats.freezeDelta || 0),
     };
 
+    const inputState = (typeof Input !== 'undefined'
+      && typeof Input.getDiagnosticState === 'function')
+      ? (() => {
+        try {
+          return Input.getDiagnosticState();
+        } catch (_error) {
+          return null;
+        }
+      })()
+      : null;
+    const inputTrace = typeof this.getInputTraceSnapshot === 'function'
+      ? (() => {
+        try {
+          return this.getInputTraceSnapshot();
+        } catch (_error) {
+          return null;
+        }
+      })()
+      : null;
+
     return {
       type: 'connection-diagnostic',
       schemaVersion: 3,
@@ -409,6 +390,8 @@
       mode,
       recommendation,
       terminal: terminalState,
+      inputState,
+      inputTrace,
       network,
       events: redactedEvents,
       probeResults: Array.isArray(basePayload.probeResults) ? basePayload.probeResults.slice() : [],

@@ -160,7 +160,7 @@ marker version=1、reserved=0；边框四角依次TL/TR/BL/BR=0/1/1/1；顶边�
 
 ## 10. 覆盖映射
 
-### T2 peak-headroom 环境可比性约束（2026-09-08）
+### T2 历史 ambient 准入约束（已被 2026-09-08 用户口径覆盖）
 
 `on-demand-peak-headroom-v1` 的离线矩阵在编码前必须由单一 sampler 线程完成
 30 个 1Hz 预检样本。第一个样本没有前序间隔；其余相邻样本必须处于
@@ -186,3 +186,9 @@ runtime、selection 和 source digests。通用加载、candidate、digest 或 h
 `eligible=false` 且不能产生 `OFFLINE_PASS_ONLY`。
 
 实际参数与编码候选→计划T1/T2；流水线耗时→T3；隔离验证桥接→T4；受控输入/画质→T5；网络丢包→T6；单变量性能实验→T7；推广、回归和证据→T8。T1–T3可先实施，T3实测依赖T4-legacy；T4-candidate依赖T2有离线胜者，T4-legacy可先开发；T5依赖T3的帧关联并可用legacy验证；T6设施前置条件未满足时不阻塞纯离线开发但阻塞推广。
+
+### T2 本项目 CPU 采样口径（2026-09-08 用户授权，覆盖上述历史 ambient 准入）
+
+离线矩阵只报告 WebRemoteDesktop 项目的原始 CPU 占用，不观察、不分类也不限制其他进程。采样集合包括矩阵进程及其 PPID descendants，以及主仓库和当前 worktree 中精确确认的 Host/Signal 进程及其 descendants（例如 overlay window 或 encoder helper）。Host/Signal 通过 `host.py`/`server.js` 入口加其 cwd 或绝对脚本路径落在这两个仓库根中确认；同名进程属于其他仓库时不得计入。
+
+每秒记录逐进程 PID、RSS、原始 CPU 百分比和合计 `projectCpuPercent`，并汇总 P50/P95/max。该数据只是项目负载遥测：不得设置 CPU 阈值，不得因项目 CPU、MySQL、sync worker、Codex、pytest、Docker 或任何外部进程中止矩阵，也不得从 raw encoder quality、成本或 P95 中扣减/归一化。保留 Viewer/relay Viewer 活动、采样健康、单调时序/coverage 和 raw encoder quality/P95 的既有验证；采样异常仍为 `ABORTED_INCONCLUSIVE`，Viewer 活动仍为 `ABORTED_CONTAMINATED`。

@@ -138,6 +138,110 @@ async def test_failed_mouse_execute_does_not_commit_seq():
 
 
 @pytest.mark.asyncio
+async def test_native_executor_failure_does_not_log_exception_text_or_traceback(caplog):
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+
+    def boom(_action, _payload):
+        raise RuntimeError("CANARY")
+
+    handler._handle_mouse = boom
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        result = await handler.handle_input({
+            "type": "mouse",
+            "action": "down",
+            "payload": {"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+            "inputIds": ["native-failure"],
+        })
+
+    records = [record for record in caplog.records if record.name == "input_handler"]
+    formatted = "\n".join(logging.Formatter().format(record) for record in records)
+    assert result["status"] == "execution-failed"
+    assert "CANARY" not in formatted
+    assert "Traceback" not in formatted
+    assert all(record.exc_info is None for record in records)
+
+
+def test_show_dock_subprocess_failure_does_not_log_exception_text_or_traceback(caplog, monkeypatch):
+    calls = []
+
+    def boom(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        raise RuntimeError("CANARY")
+
+    monkeypatch.setattr(input_handler.subprocess, "run", boom)
+    handler = object.__new__(InputHandler)
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        result = handler._show_dock()
+
+    records = [record for record in caplog.records if record.name == "input_handler"]
+    formatted = "\n".join(logging.Formatter().format(record) for record in records)
+    assert result is False
+    assert calls == [(
+        ["open", "-a", "Launchpad"],
+        {"capture_output": True, "text": True, "timeout": 2.0, "check": False},
+    )]
+    assert "CANARY" not in formatted
+    assert "Traceback" not in formatted
+    assert all(record.exc_info is None for record in records)
+
+
+def test_show_dock_nonzero_result_does_not_log_stderr(caplog, monkeypatch):
+    calls = []
+
+    class Result:
+        returncode = 17
+        stderr = "CANARY"
+
+    def fake_run(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        return Result()
+
+    monkeypatch.setattr(input_handler.subprocess, "run", fake_run)
+    handler = object.__new__(InputHandler)
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        result = handler._show_dock()
+
+    records = [record for record in caplog.records if record.name == "input_handler"]
+    formatted = "\n".join(logging.Formatter().format(record) for record in records)
+    assert result is False
+    assert calls == [(
+        ["open", "-a", "Launchpad"],
+        {"capture_output": True, "text": True, "timeout": 2.0, "check": False},
+    )]
+    assert "rc=17" in formatted
+    assert "CANARY" not in formatted
+    assert "Traceback" not in formatted
+    assert all(record.exc_info is None for record in records)
+
+
+@pytest.mark.asyncio
+async def test_outer_input_failure_does_not_log_exception_text_or_traceback(caplog):
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+
+    def boom(_data):
+        raise RuntimeError("CANARY")
+
+    handler._desktop_writes.validate = boom
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        result = await handler.handle_input(desktop_envelope(
+            action="down",
+            seq=1,
+            input_id="outer-failure",
+            payload={"relX": 0.2, "relY": 0.3, "button": "left", "clickCount": 1, "buttons": 1},
+        ))
+
+    records = [record for record in caplog.records if record.name == "input_handler"]
+    formatted = "\n".join(logging.Formatter().format(record) for record in records)
+    assert result is None
+    assert handler._desktop_writes.snapshot().last_applied_seq == 0
+    assert "CANARY" not in formatted
+    assert "Traceback" not in formatted
+    assert all(record.exc_info is None for record in records)
+
+
+@pytest.mark.asyncio
 async def test_mouse_without_monitor_does_not_ack_applied():
     handler = InputHandler(keyboard_adapter=RecordingAdapter())
     handler._running = True

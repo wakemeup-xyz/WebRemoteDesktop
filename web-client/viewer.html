@@ -25,6 +25,13 @@
       <span id="fullscreenExitStatus" class="fullscreen-exit-status" role="status" aria-live="polite" hidden></span>
     </div>
   </div>
+  <div id="inputRecoveryNotice" class="input-recovery-notice" role="status" aria-live="polite" aria-busy="false" hidden>
+    <span id="inputRecoveryNoticeText"></span>
+    <div class="input-recovery-actions">
+      <button id="inputRecoveryRetryBtn" class="control-btn" type="button" hidden>重试恢复</button>
+      <button id="inputRecoveryDraftBtn" class="control-btn" type="button" hidden>检查草稿</button>
+    </div>
+  </div>
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
       <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
@@ -361,6 +368,7 @@
   <script src="js/startup-telemetry.js"></script>
   <script src="js/bootstrap-controller.js"></script>
   <script src="js/terminal-loader.js"></script>
+  <script src="js/input-trace.js"></script>
   <script src="js/diagnostic-core.js"></script>
   <script src="js/presentation-budget.js"></script>
   <script src="js/webrtc.js"></script>

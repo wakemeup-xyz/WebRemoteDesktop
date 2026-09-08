@@ -2,12 +2,31 @@ import json
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
 _SENSITIVE_INPUT_KEYS = {"data", "key", "code", "text", "payload", "x", "y"}
+_MAX_INPUT_IDS = 64
+_MAX_INPUT_ID_LENGTH = 128
+_MAX_PAYLOAD_BYTES = 64 * 1024
+_SAFE_INPUT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+_SAFE_INPUT_TYPES = frozenset({"keyboard", "mouse", "command"})
+_SAFE_INPUT_ACTIONS = frozenset({
+    "key", "keydown", "keyup", "text", "batch", "down", "up", "move", "wheel", "reset", "showDock", "switchInputMethod",
+})
+_SAFE_INPUT_TRANSPORTS = frozenset({"datachannel", "socket", "none"})
+_SAFE_INPUT_STATUSES = frozenset({
+    "applied", "duplicate", "stale", "late", "timeout", "stale-lease", "sequence-gap",
+    "resync-required", "invalid-input", "unsupported-code", "execution-failed", "rejected",
+    "accepted", "unordered", "failed", "pending", "unknown",
+})
+_SAFE_INPUT_REASONS = frozenset({
+    "invalid-envelope", "invalid-input", "stale-lease", "role-rejected", "inactive-viewer",
+    "protocol-too-old", "host-unavailable", "adapter-error", "ack-send-failed", "unbound-channel",
+})
 DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_LOG_BACKUP_COUNT = 3
 
@@ -77,34 +96,104 @@ def redact_host_value(value, key=""):
     return value
 
 
-def hash_input_ids(input_ids):
-    normalized = [str(value) for value in (input_ids or []) if value is not None]
-    if not normalized:
+def _valid_input_ids(input_ids):
+    if not isinstance(input_ids, (list, tuple)) or not 1 <= len(input_ids) <= _MAX_INPUT_IDS:
         return None
-    digest = hashlib.sha256("\x1f".join(normalized).encode("utf-8", errors="replace")).hexdigest()
+    if not all(
+        isinstance(value, str)
+        and 1 <= len(value) <= _MAX_INPUT_ID_LENGTH
+        and _SAFE_INPUT_ID.fullmatch(value)
+        for value in input_ids
+    ):
+        return None
+    return list(input_ids)
+
+
+def _safe_enum(value, allowed, default):
+    return value if isinstance(value, str) and value in allowed else default
+
+
+def hash_input_ids(input_ids):
+    normalized = _valid_input_ids(input_ids)
+    if normalized is None:
+        return None
+    digest = hashlib.sha256("\x1f".join(normalized).encode("utf-8")).hexdigest()
     return digest[:16]
 
 
-def summarize_input_event(data, *, local_execute_ms=None):
+def summarize_input_event(
+    data,
+    *,
+    local_execute_ms=None,
+    status=None,
+    applied_seq=None,
+    ack_accepted=None,
+    reason=None,
+):
     payload = data.get("payload", {}) if isinstance(data, dict) else {}
     try:
-        payload_bytes = len(
+        payload_bytes = min(_MAX_PAYLOAD_BYTES, len(
             json.dumps(payload, ensure_ascii=True, separators=(",", ":"), default=str).encode("utf-8")
-        )
+        ))
     except (TypeError, ValueError):
         payload_bytes = 0
     input_ids = data.get("inputIds", []) if isinstance(data, dict) else []
+    normalized_ids = _valid_input_ids(input_ids)
+    raw_type = data.get("type") if isinstance(data, dict) else None
+    raw_action = data.get("action") if isinstance(data, dict) else None
+    raw_transport = data.get("transport") if isinstance(data, dict) else None
+    raw_status = status if status is not None else (data.get("status") if isinstance(data, dict) else None)
+    raw_applied_seq = applied_seq if applied_seq is not None else (
+        data.get("appliedSeq") if isinstance(data, dict) else None
+    )
+    try:
+        bounded_seq = max(0, min(int(data.get("seq")), 0x7FFFFFFF)) if isinstance(data, dict) else 0
+    except (TypeError, ValueError, OverflowError):
+        bounded_seq = 0
+    try:
+        bounded_lease_epoch = max(0, min(int(data.get("leaseEpoch")), 0x7FFFFFFF)) if isinstance(data, dict) else 0
+    except (TypeError, ValueError, OverflowError):
+        bounded_lease_epoch = 0
+    try:
+        bounded_applied_seq = max(0, min(int(raw_applied_seq), 0x7FFFFFFF))
+    except (TypeError, ValueError, OverflowError):
+        bounded_applied_seq = 0
     summary = {
-        "inputType": str(data.get("type") or "unknown"),
-        "action": str(data.get("action") or "unknown"),
-        "transport": str(data.get("transport") or "socket"),
+        "inputType": _safe_enum(raw_type, _SAFE_INPUT_TYPES, "unknown"),
+        "action": _safe_enum(raw_action, _SAFE_INPUT_ACTIONS, "unknown"),
+        "transport": _safe_enum(raw_transport, _SAFE_INPUT_TRANSPORTS, "socket"),
         "payloadBytes": payload_bytes,
-        "inputIdCount": len(input_ids) if isinstance(input_ids, (list, tuple)) else 0,
-        "inputIdHash": hash_input_ids(input_ids),
+        "inputIdCount": len(normalized_ids) if normalized_ids is not None else 0,
+        "inputIdHash": hash_input_ids(normalized_ids),
+        "status": _safe_enum(raw_status, _SAFE_INPUT_STATUSES, "unknown"),
+        "seq": bounded_seq,
+        "leaseEpoch": bounded_lease_epoch,
+        "appliedSeq": bounded_applied_seq,
     }
+    raw_reason = reason if reason is not None else (data.get("reason") if isinstance(data, dict) else None)
+    summary["reason"] = _safe_enum(raw_reason, _SAFE_INPUT_REASONS, None)
     if local_execute_ms is not None:
-        summary["localExecuteMs"] = round(max(0.0, float(local_execute_ms)), 3)
+        try:
+            summary["localExecuteMs"] = round(max(0.0, min(float(local_execute_ms), _MAX_PAYLOAD_BYTES)), 3)
+        except (TypeError, ValueError, OverflowError):
+            pass
+        summary["timingScope"] = "host-adapter-await"
+        summary["timingIncludesQueueWait"] = True
+    if ack_accepted is not None:
+        summary["ackAccepted"] = ack_accepted is True
     return summary
+
+
+def summarize_high_frequency_input_event(data, *, status=None):
+    """Summarize move/wheel traffic without reading payload or input IDs."""
+    input_data = data if isinstance(data, dict) else {}
+    raw_status = status if status is not None else input_data.get("status")
+    return {
+        "inputType": _safe_enum(input_data.get("type"), _SAFE_INPUT_TYPES, "unknown"),
+        "action": _safe_enum(input_data.get("action"), _SAFE_INPUT_ACTIONS, "unknown"),
+        "transport": _safe_enum(input_data.get("transport"), _SAFE_INPUT_TRANSPORTS, "socket"),
+        "status": _safe_enum(raw_status, _SAFE_INPUT_STATUSES, "unknown"),
+    }
 
 
 def emit_host_event(logger, *, event, message, correlation=None, meta=None, level="info"):
