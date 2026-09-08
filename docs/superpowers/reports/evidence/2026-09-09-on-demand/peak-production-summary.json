@@ -1,0 +1,257 @@
+{
+  "attempt": "wrd-1788892787486-k4ns1l",
+  "runtimeJson": "/tmp/wrd-peak-runtime.json",
+  "hostLog": "back-debug.log",
+  "runtimeComplete": true,
+  "runtimeOk": true,
+  "interpretation": {
+    "encoder": "weighted mean is valid only over logged five-second windows; rollingP95Ms is min/max of native rolling P95 values and is explicitly not a pooled raw P95. Phase membership uses strict Viewer snapshot time only, so boundary windows can be partial.",
+    "viewer": "rVFC and inbound-rtp measurements are from the local Chromium TURN run; geometry changes are browser presentation geometry only.",
+    "cpu": "only runtime-captured projectCpu scope is reported; it is not used to debias encode timing.",
+    "missingData": "Absent source fields remain null; no missing metric is converted to zero."
+  },
+  "attemptEncoderTotals": {
+    "scope": "all matching encoder samples for this unique attempt, including samples outside strict Viewer phase windows (for example an initial IDR before the first snapshot)",
+    "sampleCount": 188,
+    "encodedFramesInWindows": 17839,
+    "weightedMeanMs": 14.102,
+    "rollingP95Ms": {
+      "min": 21.48,
+      "max": 103.199,
+      "valuesNotPooled": true,
+      "windowCount": 188
+    },
+    "keyframes": {
+      "initial": 3,
+      "periodic": 0,
+      "forced": 0,
+      "pli": 1,
+      "safety": 13
+    },
+    "keyframeReasons": {
+      "initial": 3,
+      "safety-net": 13,
+      "rtcp-or-unknown": 1
+    },
+    "effectiveBitrateBps": {
+      "min": 3200000,
+      "max": 5000000,
+      "values": [
+        3200000,
+        5000000
+      ]
+    },
+    "policyIds": [
+      "relay-peak-sliced-v1"
+    ],
+    "sizes": [
+      "1152x720",
+      "1728x1080",
+      "1792x1080"
+    ]
+  },
+  "phases": [
+    {
+      "height": 720,
+      "timeWindow": {
+        "startLocal": "2026-09-09T02:39:53.218000+08:00",
+        "endLocal": "2026-09-09T02:49:52.416000+08:00",
+        "boundaryMethod": "strict first/last persisted Viewer snapshot only; a native five-second encoder window can partially overlap a boundary; no settle/post-phase allowance"
+      },
+      "viewer": {
+        "sampleCount": 531,
+        "observedSeconds": 599.198,
+        "intervalDecodedFps": {
+          "p50": 19.102,
+          "p95": 19.881,
+          "count": 530
+        },
+        "overallDecodedFps": 19.136,
+        "rVfc": {
+          "phaseMaxGapMs": 433.4,
+          "intervalMaxGapMs": 433.4,
+          "geometryChangesMax": 0
+        },
+        "jitterBufferPerEmittedFrameMs": {
+          "meaning": "per-snapshot-interval average residence time: delta jitterBufferDelay / delta jitterBufferEmittedCount; p95/max describe the distribution of window averages, not a strict per-frame maximum",
+          "p95": 43.349,
+          "max": 140.674,
+          "count": 530
+        },
+        "deltas": {
+          "freezeCount": 17,
+          "totalFreezesDuration": 4.861,
+          "framesDropped": 0,
+          "packetsLost": 0,
+          "nackCount": 24,
+          "pliCount": 0,
+          "firCount": 0
+        }
+      },
+      "projectCpu": {
+        "sampleCount": 36,
+        "scope": [
+          "project Host Signal and this test/browser descendants only"
+        ],
+        "percentOfOneLogicalCore": {
+          "p50": 117.2,
+          "p95": 126.0,
+          "max": 130.6
+        }
+      },
+      "encoder": {
+        "sampleCount": 119,
+        "encodedFramesInWindows": 11451,
+        "weightedMeanMs": 9.732,
+        "rollingP95Ms": {
+          "min": 21.48,
+          "max": 31.824,
+          "valuesNotPooled": true,
+          "windowCount": 119
+        },
+        "keyframes": {
+          "initial": 0,
+          "periodic": 0,
+          "forced": 0,
+          "pli": 0,
+          "safety": 9
+        },
+        "keyframeReasons": {
+          "safety-net": 9
+        },
+        "effectiveBitrateBps": {
+          "min": 3200000,
+          "max": 3200000,
+          "values": [
+            3200000
+          ]
+        },
+        "policyIds": [
+          "relay-peak-sliced-v1"
+        ],
+        "sizes": [
+          "1152x720"
+        ]
+      }
+    },
+    {
+      "height": 1080,
+      "timeWindow": {
+        "startLocal": "2026-09-09T02:49:58.994000+08:00",
+        "endLocal": "2026-09-09T02:54:58.195000+08:00",
+        "boundaryMethod": "strict first/last persisted Viewer snapshot only; a native five-second encoder window can partially overlap a boundary; no settle/post-phase allowance"
+      },
+      "viewer": {
+        "sampleCount": 250,
+        "observedSeconds": 299.201,
+        "intervalDecodedFps": {
+          "p50": 18.797,
+          "p95": 19.83,
+          "count": 249
+        },
+        "overallDecodedFps": 18.402,
+        "rVfc": {
+          "phaseMaxGapMs": 899.934,
+          "intervalMaxGapMs": 899.934,
+          "geometryChangesMax": 0
+        },
+        "jitterBufferPerEmittedFrameMs": {
+          "meaning": "per-snapshot-interval average residence time: delta jitterBufferDelay / delta jitterBufferEmittedCount; p95/max describe the distribution of window averages, not a strict per-frame maximum",
+          "p95": 34.737,
+          "max": 44.654,
+          "count": 249
+        },
+        "deltas": {
+          "freezeCount": 7,
+          "totalFreezesDuration": 2.809,
+          "framesDropped": 0,
+          "packetsLost": 0,
+          "nackCount": 6,
+          "pliCount": 0,
+          "firCount": 0
+        }
+      },
+      "projectCpu": {
+        "sampleCount": 17,
+        "scope": [
+          "project Host Signal and this test/browser descendants only"
+        ],
+        "percentOfOneLogicalCore": {
+          "p50": 158.6,
+          "p95": 174.2,
+          "max": 174.2
+        }
+      },
+      "encoder": {
+        "sampleCount": 59,
+        "encodedFramesInWindows": 5459,
+        "weightedMeanMs": 22.387,
+        "rollingP95Ms": {
+          "min": 32.525,
+          "max": 103.199,
+          "valuesNotPooled": true,
+          "windowCount": 59
+        },
+        "keyframes": {
+          "initial": 0,
+          "periodic": 0,
+          "forced": 0,
+          "pli": 0,
+          "safety": 4
+        },
+        "keyframeReasons": {
+          "safety-net": 4
+        },
+        "effectiveBitrateBps": {
+          "min": 5000000,
+          "max": 5000000,
+          "values": [
+            5000000
+          ]
+        },
+        "policyIds": [
+          "relay-peak-sliced-v1"
+        ],
+        "sizes": [
+          "1728x1080"
+        ]
+      }
+    }
+  ],
+  "initialProductionTrend": {
+    "source": "docs/superpowers/reports/evidence/2026-09-09-on-demand/initial-production-summary.json",
+    "comparability": "NON_CONTROLLED_TREND_ONLY: different commit/session/desktop/network; no causal or strict A/B claim.",
+    "phases": [
+      {
+        "height": 720,
+        "baseline": {
+          "decodedFps": 16.596,
+          "freezeDelta": 9,
+          "maxPaintGapMs": 599.9400000000023,
+          "encoderWeightedMeanMs": 25.544
+        },
+        "current": {
+          "overallDecodedFps": 19.136,
+          "freezeDelta": 17,
+          "maxPaintGapMs": 433.4,
+          "encoderWeightedMeanMs": 9.732
+        }
+      },
+      {
+        "height": 1080,
+        "baseline": {
+          "decodedFps": 8.36,
+          "freezeDelta": 4,
+          "maxPaintGapMs": 700.0320000000065,
+          "encoderWeightedMeanMs": 67.518
+        },
+        "current": {
+          "overallDecodedFps": 18.402,
+          "freezeDelta": 7,
+          "maxPaintGapMs": 899.934,
+          "encoderWeightedMeanMs": 22.387
+        }
+      }
+    ]
+  }
+}

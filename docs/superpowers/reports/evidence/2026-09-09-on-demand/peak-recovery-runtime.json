@@ -1,0 +1,400 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-08T19:01:26Z",
+  "scope": "one proof-admitted owned Chromium relay Viewer; no desktop input, service change, or machine network change",
+  "ok": false,
+  "checks": {
+    "noExistingViewer": {
+      "viewerCount": 0,
+      "viewerEpoch": 3
+    },
+    "proofAdmission": {
+      "granted": true,
+      "epoch": 3
+    },
+    "initialRelay": {
+      "pageNowMs": 913.6000003814697,
+      "pcIdentity": 1,
+      "connection": "connected",
+      "status": "已连接",
+      "relayType": "relay",
+      "video": {
+        "width": 1152,
+        "height": 720
+      },
+      "inbound": {
+        "framesDecoded": 1,
+        "keyFramesDecoded": 1,
+        "framesReceived": 1,
+        "packetsLost": 0,
+        "packetsReceived": 9
+      },
+      "paint": {
+        "videoIdentity": 1,
+        "count": 1,
+        "last": {
+          "atMs": 902.33,
+          "presentedFrames": 1,
+          "mediaTime": 0
+        },
+        "marks": {}
+      }
+    },
+    "relay720": {
+      "pageNowMs": 1167.6999998092651,
+      "pcIdentity": 1,
+      "connection": "connected",
+      "status": "已连接",
+      "relayType": "relay",
+      "video": {
+        "width": 1152,
+        "height": 720
+      },
+      "inbound": {
+        "framesDecoded": 4,
+        "keyFramesDecoded": 1,
+        "framesReceived": 5,
+        "packetsLost": 0,
+        "packetsReceived": 21
+      },
+      "paint": {
+        "videoIdentity": 1,
+        "count": 3,
+        "last": {
+          "atMs": 1102.3,
+          "presentedFrames": 3,
+          "mediaTime": 0.201
+        },
+        "marks": {}
+      }
+    },
+    "postLossRelay": {
+      "pageNowMs": 15769.800000190735,
+      "pcIdentity": 2,
+      "connection": "connected",
+      "status": "已连接",
+      "relayType": "relay",
+      "video": {
+        "width": 1152,
+        "height": 720
+      },
+      "inbound": {
+        "framesDecoded": 213,
+        "keyFramesDecoded": 1,
+        "framesReceived": 214,
+        "packetsLost": 0,
+        "packetsReceived": 245
+      },
+      "paint": {
+        "videoIdentity": 1,
+        "count": 219,
+        "last": {
+          "atMs": 15735,
+          "presentedFrames": 212,
+          "mediaTime": 11.162
+        },
+        "marks": {
+          "resume": {
+            "actionAtMs": 3715.6000003814697,
+            "baselinePresentedFrames": 6,
+            "firstNewPaintAtMs": 3968.928,
+            "firstNewPaintPresentedFrames": 7
+          },
+          "refresh": {
+            "actionAtMs": 4023.3999996185303,
+            "baselinePresentedFrames": 9,
+            "firstNewPaintAtMs": 4102.198,
+            "firstNewPaintPresentedFrames": 10
+          }
+        }
+      }
+    }
+  },
+  "pause": {
+    "sampleIntervalMs": 75,
+    "durationMs": 2000,
+    "baselineFramesDecoded": 9,
+    "samples": [
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 1626.1000003814697
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 1707.3000001907349
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 1787.6000003814697
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 1868.1000003814697
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 1947.1999998092651
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2026.3000001907349
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2105.5
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2184.699999809265
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2263.800000190735
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2343.300000190735
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2423.199999809265
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2503.3999996185303
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2582.8999996185303
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2663.300000190735
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2743.5
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2824
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2904.800000190735
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 2984.800000190735
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3064
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3144.8999996185303
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3224.1000003814697
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3303.8999996185303
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3383.199999809265
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3464.5
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3543.8999996185303
+      },
+      {
+        "framesDecoded": 9,
+        "pageNowMs": 3623.300000190735
+      }
+    ],
+    "decodedStable": true
+  },
+  "resume": {
+    "actionAtMs": 3715.6000003814697,
+    "sampleIntervalMs": 75,
+    "limitMs": 2000,
+    "baselineFramesDecoded": 9,
+    "baselineKeyFramesDecoded": 1,
+    "baselinePeerConnection": 1,
+    "firstNewDecodedDelayMs": 281.9,
+    "firstNewPaintDelayMs": 253.33,
+    "firstNewKeyFrameDelayMs": 281.9,
+    "newPeerConnectionFirstFrameDelayMs": null,
+    "newPeerConnection": null,
+    "refreshEvidenceRequired": false,
+    "refreshEvidence": "same-peer-keyframe",
+    "decodedWithinLimit": true,
+    "paintWithinLimit": true,
+    "ok": true,
+    "refreshVerified": true,
+    "samples": [
+      {
+        "pageNowMs": 3753.6000003814697,
+        "peerConnection": 1,
+        "framesDecoded": 9,
+        "keyFramesDecoded": 1,
+        "paintPresentedFrames": 6,
+        "connection": "connected",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 3834.3999996185303,
+        "peerConnection": 1,
+        "framesDecoded": 9,
+        "keyFramesDecoded": 1,
+        "paintPresentedFrames": 6,
+        "connection": "connected",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 3915.3999996185303,
+        "peerConnection": 1,
+        "framesDecoded": 9,
+        "keyFramesDecoded": 1,
+        "paintPresentedFrames": 6,
+        "connection": "connected",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 3997.5,
+        "peerConnection": 1,
+        "framesDecoded": 13,
+        "keyFramesDecoded": 2,
+        "paintPresentedFrames": 7,
+        "connection": "connected",
+        "relayType": "relay"
+      }
+    ]
+  },
+  "refresh": {
+    "actionAtMs": 4023.3999996185303,
+    "sampleIntervalMs": 75,
+    "limitMs": 2000,
+    "baselineFramesDecoded": 13,
+    "baselineKeyFramesDecoded": 2,
+    "baselinePeerConnection": 1,
+    "firstNewDecodedDelayMs": 636.0,
+    "firstNewPaintDelayMs": 662.1,
+    "firstNewKeyFrameDelayMs": null,
+    "newPeerConnectionFirstFrameDelayMs": 636.0,
+    "newPeerConnection": 2,
+    "refreshEvidenceRequired": true,
+    "refreshEvidence": "new-peer-first-frame",
+    "decodedWithinLimit": true,
+    "paintWithinLimit": true,
+    "ok": true,
+    "refreshVerified": true,
+    "samples": [
+      {
+        "pageNowMs": 4091.3999996185303,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 9,
+        "connection": "new",
+        "relayType": ""
+      },
+      {
+        "pageNowMs": 4171.199999809265,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "new",
+        "relayType": ""
+      },
+      {
+        "pageNowMs": 4250.800000190735,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "new",
+        "relayType": ""
+      },
+      {
+        "pageNowMs": 4331.60000038147,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "connecting",
+        "relayType": ""
+      },
+      {
+        "pageNowMs": 4414.60000038147,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "connecting",
+        "relayType": ""
+      },
+      {
+        "pageNowMs": 4496.300000190735,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "connecting",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 4578.39999961853,
+        "peerConnection": 2,
+        "framesDecoded": null,
+        "keyFramesDecoded": null,
+        "paintPresentedFrames": 10,
+        "connection": "connected",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 4659.39999961853,
+        "peerConnection": 2,
+        "framesDecoded": 2,
+        "keyFramesDecoded": 1,
+        "paintPresentedFrames": 1,
+        "connection": "connected",
+        "relayType": "relay"
+      },
+      {
+        "pageNowMs": 4740.199999809265,
+        "peerConnection": 2,
+        "framesDecoded": 3,
+        "keyFramesDecoded": 1,
+        "paintPresentedFrames": 2,
+        "connection": "connected",
+        "relayType": "relay"
+      }
+    ]
+  },
+  "finiteLoss": {
+    "requestedPacketLossPercent": 2,
+    "durationMs": 10000,
+    "beforePacketsLost": 0,
+    "status": "NOT_VERIFIED",
+    "note": "CDP emulation alone is not evidence; inbound packetsLost must increase.",
+    "duringPacketsLost": 0,
+    "afterPacketsLost": 0,
+    "observedPacketsLostDelta": 0
+  },
+  "proofRelease": {
+    "attempted": true,
+    "httpStatus": 200,
+    "released": false
+  },
+  "endedAt": "2026-09-08T19:01:42Z"
+}
