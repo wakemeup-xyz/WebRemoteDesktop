@@ -1,0 +1,1061 @@
+{
+  "scope": "project processes only; live Viewer workload, not encoder qualification",
+  "cpuUnit": "100 percent equals one logical CPU core",
+  "samples": [
+    {
+      "monotonic": 5803954.93599907,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 76.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 8.4
+        }
+      ],
+      "cpuPercent": 85.7,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803955.936182481,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 76.3
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.5
+        }
+      ],
+      "cpuPercent": 77.89999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803956.936248459,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 76.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.4
+        }
+      ],
+      "cpuPercent": 78.50000000000001,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803957.937789694,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 76.2
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 0.9
+        }
+      ],
+      "cpuPercent": 77.4,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803958.944701073,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.5
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 83.2
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.5
+        }
+      ],
+      "cpuPercent": 85.5,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803959.942892691,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 77.3
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.4
+        }
+      ],
+      "cpuPercent": 79.0,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803960.944451974,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 78.0
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 79.89999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803961.936337984,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 85.8
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.4
+        }
+      ],
+      "cpuPercent": 87.8,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803962.943754245,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 79.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.2
+        }
+      ],
+      "cpuPercent": 81.4,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803963.938017983,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 78.3
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 79.69999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803964.939336719,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 84.4
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 0.9
+        }
+      ],
+      "cpuPercent": 85.60000000000001,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803965.937403964,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 80.5
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 2.5
+        }
+      ],
+      "cpuPercent": 83.3,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803966.936871367,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 70.7
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 2.5
+        }
+      ],
+      "cpuPercent": 73.7,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803967.936363703,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 67.4
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 69.1,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803968.940208389,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 7.6
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 13.7
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 0.1
+        }
+      ],
+      "cpuPercent": 21.8,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803970.638860716,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 31.2
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 33.3,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803972.412537875,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 72.6
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.0
+        }
+      ],
+      "cpuPercent": 74.2,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803973.337139978,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 67.0
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 68.8,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803974.28755024,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 78.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.7
+        }
+      ],
+      "cpuPercent": 80.9,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803975.105329755,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 73.5
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 2.2
+        }
+      ],
+      "cpuPercent": 75.89999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803975.840044307,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 83.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.8
+        }
+      ],
+      "cpuPercent": 86.4,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803976.502789306,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 79.2
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.8
+        }
+      ],
+      "cpuPercent": 81.6,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803977.143271285,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 72.7
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.0
+        }
+      ],
+      "cpuPercent": 73.9,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803978.038823355,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 80.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.6
+        }
+      ],
+      "cpuPercent": 83.0,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803978.942247207,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 80.9
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 0.9
+        }
+      ],
+      "cpuPercent": 82.2,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803979.940702558,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 75.2
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.5
+        }
+      ],
+      "cpuPercent": 77.1,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803980.936337954,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 72.0
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.4
+        }
+      ],
+      "cpuPercent": 73.8,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803981.936268849,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.1
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 71.8
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.2
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.3
+        }
+      ],
+      "cpuPercent": 73.39999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803982.941882564,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 79.8
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 1.2
+        }
+      ],
+      "cpuPercent": 81.6,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    },
+    {
+      "monotonic": 5803983.937297498,
+      "processes": [
+        {
+          "pid": 5556,
+          "kind": "signal",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5565,
+          "kind": "project-descendant",
+          "cpuPercent": 0.0
+        },
+        {
+          "pid": 5620,
+          "kind": "host",
+          "cpuPercent": 78.3
+        },
+        {
+          "pid": 5683,
+          "kind": "project-descendant",
+          "cpuPercent": 0.3
+        },
+        {
+          "pid": 5875,
+          "kind": "matrix",
+          "cpuPercent": 0.8
+        }
+      ],
+      "cpuPercent": 79.39999999999999,
+      "viewerStatus": {
+        "viewerCount": 1,
+        "relayViewerCount": 0
+      }
+    }
+  ],
+  "summary": {
+    "p50": 79.0,
+    "p95": 86.4,
+    "max": 87.8
+  }
+}

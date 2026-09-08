@@ -1,0 +1,209 @@
+{
+  "ambientTelemetry": {
+    "abortReasons": [
+      {
+        "category": "CONTAMINATED",
+        "reason": "viewer activity",
+        "viewers": {
+          "relayViewerCount": 0,
+          "viewerCount": 1
+        }
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "observed": 1,
+        "reason": "ambient preflight incomplete"
+      }
+    ],
+    "coverage": [],
+    "health": {
+      "lastError": null,
+      "status": "HEALTHY"
+    },
+    "lateTicks": [],
+    "missedTicks": 0,
+    "noLoadBaseline": null,
+    "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
+    "preflight": {
+      "firstSampleHasNoPredecessor": true,
+      "intervalBoundsSeconds": [
+        0.85,
+        1.15
+      ],
+      "intervalSeconds": 1.0,
+      "observedSamples": 1,
+      "requiredSamples": 30,
+      "status": "FAILED"
+    },
+    "projectCpuPercent": {
+      "max": 85.70000000000002,
+      "p50": 85.70000000000002,
+      "p95": 85.70000000000002
+    },
+    "projectCpuPolicy": {
+      "includes": [
+        "matrix-and-descendants",
+        "host-and-descendants",
+        "signal-and-descendants"
+      ],
+      "roots": [
+        "/Users/macstudio1/AI/Claude/WebRemoteDesktop"
+      ],
+      "version": "webremotedesktop-project-cpu-v1"
+    },
+    "rawGatesUnchanged": true,
+    "relativeOnly": true,
+    "sampleHz": 1,
+    "samples": [
+      {
+        "monotonicNs": 5803923486745325,
+        "phase": "PREFLIGHT",
+        "projectCpuPercent": 85.70000000000002,
+        "projectProcesses": [
+          {
+            "cpuPercent": 0.3,
+            "kind": "signal",
+            "pid": 5556,
+            "rssKiB": 87128
+          },
+          {
+            "cpuPercent": 0.1,
+            "kind": "project-descendant",
+            "pid": 5565,
+            "rssKiB": 35440
+          },
+          {
+            "cpuPercent": 77.4,
+            "kind": "host",
+            "pid": 5620,
+            "rssKiB": 407992
+          },
+          {
+            "cpuPercent": 0.2,
+            "kind": "project-descendant",
+            "pid": 5683,
+            "rssKiB": 38688
+          },
+          {
+            "cpuPercent": 7.7,
+            "kind": "matrix",
+            "pid": 5785,
+            "rssKiB": 66084
+          }
+        ],
+        "scheduledMonotonicNs": 5803923486654812,
+        "sequence": 1,
+        "viewerStatus": {
+          "relayViewerCount": 0,
+          "viewerCount": 1
+        }
+      }
+    ],
+    "sentinels": [],
+    "status": "CONTAMINATED"
+  },
+  "candidate": {
+    "eligible": false,
+    "execution": {
+      "fullMatrix": "ABORTED",
+      "prescreen": "NOT RUN"
+    },
+    "id": "on-demand-peak-headroom-v1",
+    "ineligibleReason": [
+      {
+        "category": "CONTAMINATED",
+        "reason": "viewer activity",
+        "viewers": {
+          "relayViewerCount": 0,
+          "viewerCount": 1
+        }
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "observed": 1,
+        "reason": "ambient preflight incomplete"
+      }
+    ],
+    "offline": {
+      "evidence": {
+        "partial": {
+          "sentinels": []
+        }
+      },
+      "status": "NOT RUN"
+    },
+    "parameters": {
+      "bitrateByResolution": {
+        "1152x720": 3200000,
+        "1728x1080": 5000000
+      },
+      "codec": "libx264",
+      "encoderParameterDigest": "bb333ea9410daac7fd9853ce47d19224fa438644be73f21833c557a66f76ee71",
+      "forcedIdr": 1,
+      "fps": 20,
+      "id": "on-demand-peak-headroom-v1",
+      "optionsDigest": "bb333ea9410daac7fd9853ce47d19224fa438644be73f21833c557a66f76ee71",
+      "periodicIdrFrames": 0,
+      "preset": "superfast",
+      "profile": "Baseline",
+      "submittedCodecOptionsByResolution": {
+        "1152x720": {
+          "forced-idr": "1",
+          "preset": "superfast",
+          "tune": "zerolatency",
+          "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=4800:vbv-bufsize=1000:vbv-init=1:nal-hrd=none"
+        },
+        "1728x1080": {
+          "forced-idr": "1",
+          "preset": "superfast",
+          "tune": "zerolatency",
+          "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=7200:vbv-bufsize=1300:vbv-init=1:nal-hrd=none"
+        }
+      },
+      "vbvBufsizeKbitsByResolution": {
+        "1152x720": 1000,
+        "1728x1080": 1300
+      },
+      "vbvInit": 1.0,
+      "vbvMaxrateByResolution": {
+        "1152x720": 4800000,
+        "1728x1080": 7200000
+      }
+    },
+    "runtime": {
+      "gates": {
+        "finiteLossRecovery": "NOT RUN",
+        "hostEventLoopAndInputAck": "NOT RUN",
+        "viewerBufferAndDecodeContinuity": "NOT RUN"
+      },
+      "status": "NOT RUN"
+    }
+  },
+  "defaultPolicy": "relay-legacy-v1",
+  "executionSourceRevision": "1537a7f852888a2f01d0e5907c7b408f862a3dbd",
+  "kind": "relay-peak-headroom-v1",
+  "runtime": {
+    "gates": {
+      "finiteLossRecovery": "NOT RUN",
+      "hostEventLoopAndInputAck": "NOT RUN",
+      "viewerBufferAndDecodeContinuity": "NOT RUN"
+    },
+    "status": "NOT RUN"
+  },
+  "scope": "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
+  "selection": {
+    "candidateId": null,
+    "defaultPolicy": "relay-legacy-v1",
+    "runtimeGateStatus": "PENDING",
+    "state": "no-offline-winner"
+  },
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "304624306fd17a8454012d47b27a516c3e0edd6fc566deb4ee8523dfabe63815",
+    "python-host/h264_encoder_policy.py": "e713cb1af9c800dce385d7148ef1be3c49b75f46de9ad54466520e80f6f372d3",
+    "python-host/h264_videotoolbox_encoder.py": "f922109e4804cd90ae9a1d5fc8aa1d51ca8c9b9fe00a930c396f41c3c162fe02",
+    "scripts/eval-turn-encoder-quality.py": "3e428056e2e527a73e1b487783602da67d5b5135f0757bbcc99444c5f4f5eed6",
+    "scripts/turn_encoder_experiments.py": "c54712eda2408f8ccdb96891c573e331231d6a2e857f0f94ad83cadcbec67b3e",
+    "scripts/turn_encoder_peak_headroom_experiments.py": "675b70707cdb18b963707a26c46aa26ccab2085ff811e8210e8533c3ea1255f5"
+  },
+  "status": "ABORTED_CONTAMINATED"
+}
