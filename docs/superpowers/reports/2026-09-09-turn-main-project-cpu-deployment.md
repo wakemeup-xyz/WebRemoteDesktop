@@ -11,3 +11,20 @@
 - The production encoder policy remains `relay-legacy-v1`; merging infrastructure does not promote an unqualified candidate. The 1-second quality pulse is not claimed resolved. Long-run 720p/1080p, dedicated desktop input, and isolated finite-loss runtime acceptance remain outstanding.
 
 Evidence: [matrix attempt](evidence/2026-09-09-project-cpu/peak-headroom-main.json), [30-s project CPU](evidence/2026-09-09-project-cpu/live-project-cpu.json).
+
+## Viewer-exited run
+
+After the user exited Viewer, a new run on `e41ec62` confirmed Viewer/relay Viewer both zero and completed the 30-s preflight. The two safety-net prescreens each contain 1,226 frames. Runtime collection took approximately 18 minutes; it collected 1,101 project-CPU samples.
+
+| Resolution | Encode P95 | Limit | Prescreen quality |
+| --- | ---: | ---: | --- |
+| 1152x720 | 34.478 ms | 25 ms | PASS |
+| 1728x1080 | 68.391 ms | 45 ms | PASS |
+
+Re-running the prescreen validator on the preserved raw evidence yields exactly two scenario cost failures. No external CPU was read or used as an abort reason. Project CPU P50/P95/max were 97.5%/101.6%/104.1% (one logical core = 100%), including the evaluator.
+
+The original artifact remains `ABORTED_INCONCLUSIVE`: the inherited ambient sampler still aborts on late ticks; 8 runtime ticks were 0.165–0.541 s late. This monitoring cadence gate is not evidence of an encoder failure. Separately, the actual raw encode P95 fails both existing cost limits, so this run cannot qualify the candidate even if cadence is treated as telemetry. The full five-scenario matrix and live TURN acceptance did not run; no candidate promotion occurred.
+
+Follow-up: runtime CPU timing should be observational under the user’s project-only telemetry instruction. Preserve health/error evidence while removing late CPU-tick timing as a candidate-admission gate. That correction must not relabel this artifact or erase its raw cost failures. Further encoder optimization is required before candidate promotion.
+
+Evidence: [raw run](evidence/2026-09-09-project-cpu/peak-headroom-viewer-exited.json), [independent recomputation summary](evidence/2026-09-09-project-cpu/peak-headroom-viewer-exited-summary.json).

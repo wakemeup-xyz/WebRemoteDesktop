@@ -1,0 +1,77 @@
+{
+  "source": "peak-headroom-viewer-exited.json",
+  "sha256": "41d7041896f65b4539f7e9181dc67f69a066fdcf8c9635c4f3865b67f1bc4936",
+  "originalStatus": "ABORTED_INCONCLUSIVE",
+  "rawPrescreenValidationErrors": [
+    "1152x720: safety-net: scenario cost failure",
+    "1728x1080: safety-net: scenario cost failure"
+  ],
+  "prescreen": [
+    {
+      "resolution": [
+        1152,
+        720
+      ],
+      "frameCount": 1226,
+      "rawEncodeP95Ms": 34.478,
+      "cost": {
+        "encodeMsP95": 34.478,
+        "status": "FAIL",
+        "thresholdMs": 25.0
+      },
+      "quality": {
+        "initialIdrPsnr": [
+          30.583
+        ],
+        "onDemandIdrPsnr": [],
+        "safetyNetPsnr": [
+          32.228
+        ],
+        "status": "PASS"
+      }
+    },
+    {
+      "resolution": [
+        1728,
+        1080
+      ],
+      "frameCount": 1226,
+      "rawEncodeP95Ms": 68.391,
+      "cost": {
+        "encodeMsP95": 68.391,
+        "status": "FAIL",
+        "thresholdMs": 45.0
+      },
+      "quality": {
+        "initialIdrPsnr": [
+          30.995
+        ],
+        "onDemandIdrPsnr": [],
+        "safetyNetPsnr": [
+          31.865
+        ],
+        "status": "PASS"
+      }
+    }
+  ],
+  "projectCpu": {
+    "max": 104.1,
+    "p50": 97.5,
+    "p95": 101.6
+  },
+  "sampleCount": 1101,
+  "preflight": {
+    "firstSampleHasNoPredecessor": true,
+    "intervalBoundsSeconds": [
+      0.85,
+      1.15
+    ],
+    "intervalSeconds": 1.0,
+    "observedSamples": 30,
+    "requiredSamples": 30,
+    "status": "PASS"
+  },
+  "lateTicks": 8,
+  "fullMatrix": "NOT RUN",
+  "qualification": "NOT QUALIFIED; partial raw pre-screen only"
+}
