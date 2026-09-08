@@ -1,0 +1,63 @@
+{
+  "sourceCommit": "d119b29",
+  "periodicIdrStatus": "ABSENT_IN_MEASURED_TURN_SESSION",
+  "overallPerformanceStatus": "NOT_PASSED",
+  "runtimeScope": "local Chromium actual TURN; desktop content uncontrolled; no desktop input injection",
+  "phases": [
+    {
+      "height": 720,
+      "observedSeconds": 598.952,
+      "decodedFps": 16.596,
+      "keyframeDelta": 8,
+      "freezeDelta": 9,
+      "droppedDelta": 0,
+      "lostDelta": 0,
+      "maxPaintGapMs": 599.9400000000023,
+      "encoderKeyframes": {
+        "forced": 0,
+        "initial": 1,
+        "periodic": 0,
+        "pli": 0,
+        "safety": 8
+      },
+      "encoderWeightedMeanMs": 25.544,
+      "cpuScope": "Host Signal and test/browser descendants only; 100%=one logical core",
+      "projectCpuP95": 190.3,
+      "projectCpuMax": 191.6
+    },
+    {
+      "height": 1080,
+      "observedSeconds": 295.682,
+      "decodedFps": 8.36,
+      "keyframeDelta": 2,
+      "freezeDelta": 4,
+      "droppedDelta": 0,
+      "lostDelta": 0,
+      "maxPaintGapMs": 700.0320000000065,
+      "encoderKeyframes": {
+        "forced": 0,
+        "initial": 1,
+        "periodic": 0,
+        "pli": 0,
+        "safety": 2
+      },
+      "encoderWeightedMeanMs": 67.518,
+      "cpuScope": "Host Signal and test/browser descendants only; 100%=one logical core",
+      "projectCpuP95": 191.1,
+      "projectCpuMax": 191.1
+    }
+  ],
+  "pause": {
+    "decodedBefore": 12631,
+    "decodedAfter4s": 12632,
+    "decodedAfter7s": 12632,
+    "resume": "NOT_PASSED: button outside viewport"
+  },
+  "limitations": [
+    "Uncontrolled desktop content",
+    "Local headless Chromium receiver",
+    "No physical-device or public-entry proof",
+    "No injected packet loss",
+    "Resume UI click timed out; not accepted"
+  ]
+}

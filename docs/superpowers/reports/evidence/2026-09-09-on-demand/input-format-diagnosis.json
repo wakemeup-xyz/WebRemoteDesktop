@@ -1,0 +1,292 @@
+{
+  "config": {
+    "bitrateByResolution": {
+      "1152x720": 3200000,
+      "1728x1080": 5000000
+    },
+    "codec": "libx264",
+    "encoderParameterDigest": "bb333ea9410daac7fd9853ce47d19224fa438644be73f21833c557a66f76ee71",
+    "forcedIdr": 1,
+    "fps": 20,
+    "id": "on-demand-peak-headroom-v1",
+    "optionsDigest": "bb333ea9410daac7fd9853ce47d19224fa438644be73f21833c557a66f76ee71",
+    "periodicIdrFrames": 0,
+    "preset": "superfast",
+    "profile": "Baseline",
+    "vbvBufsizeKbitsByResolution": {
+      "1152x720": 1000,
+      "1728x1080": 1300
+    },
+    "vbvInit": 1.0,
+    "vbvMaxrateByResolution": {
+      "1152x720": 4800000,
+      "1728x1080": 7200000
+    }
+  },
+  "font": {
+    "fallback": false,
+    "requested": "/System/Library/Fonts/Menlo.ttc",
+    "resolved": "Menlo 15"
+  },
+  "kind": "peak-headroom-input-format-diagnosis",
+  "method": {
+    "modes": [
+      "rgb24",
+      "bgra",
+      "yuv420p-from-bgra"
+    ],
+    "sequential": true,
+    "timing": "totalInputToPacket includes construction, explicit YUV conversion when applicable, direct encoder and packetizer"
+  },
+  "qualification": "NOT A QUALIFICATION: 80 frames/resolution, no frame-1201 safety IDR, Host, Viewer, TURN, or runtime gate.",
+  "runs": [
+    {
+      "formats": [
+        {
+          "declaredInputFormat": [
+            "rgb24"
+          ],
+          "directEncoder": {
+            "maxMs": 19.392,
+            "medianMs": 12.924,
+            "p95Ms": 14.996
+          },
+          "fixedPixelHash": "b2fa7b9e276707fb446bc32b47dbbf1c0a97bc7a2684a2de29ec93078812ed30",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 6.287,
+            "medianMs": 1.788,
+            "p95Ms": 4.191
+          },
+          "mode": "rgb24",
+          "packetize": {
+            "maxMs": 0.243,
+            "medianMs": 0.029,
+            "p95Ms": 0.057
+          },
+          "rawIdrPsnr": {
+            "initial": 30.583,
+            "onDemand": 32.228
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=4800:vbv-bufsize=1000:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 21.36,
+            "medianMs": 15.165,
+            "p95Ms": 18.524
+          },
+          "warmFrames": 75
+        },
+        {
+          "declaredInputFormat": [
+            "bgra"
+          ],
+          "directEncoder": {
+            "maxMs": 21.617,
+            "medianMs": 14.733,
+            "p95Ms": 19.735
+          },
+          "fixedPixelHash": "b2fa7b9e276707fb446bc32b47dbbf1c0a97bc7a2684a2de29ec93078812ed30",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 11.648,
+            "medianMs": 2.796,
+            "p95Ms": 10.04
+          },
+          "mode": "bgra",
+          "packetize": {
+            "maxMs": 0.186,
+            "medianMs": 0.032,
+            "p95Ms": 0.077
+          },
+          "rawIdrPsnr": {
+            "initial": 30.583,
+            "onDemand": 32.228
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=4800:vbv-bufsize=1000:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 30.584,
+            "medianMs": 17.885,
+            "p95Ms": 25.601
+          },
+          "warmFrames": 75
+        },
+        {
+          "declaredInputFormat": [
+            "yuv420p"
+          ],
+          "directEncoder": {
+            "maxMs": 28.333,
+            "medianMs": 10.01,
+            "p95Ms": 17.936
+          },
+          "fixedPixelHash": "b2fa7b9e276707fb446bc32b47dbbf1c0a97bc7a2684a2de29ec93078812ed30",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 55.677,
+            "medianMs": 9.833,
+            "p95Ms": 27.402
+          },
+          "mode": "yuv420p-from-bgra",
+          "packetize": {
+            "maxMs": 0.128,
+            "medianMs": 0.033,
+            "p95Ms": 0.073
+          },
+          "rawIdrPsnr": {
+            "initial": 30.583,
+            "onDemand": 32.228
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=4800:vbv-bufsize=1000:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 68.83,
+            "medianMs": 19.212,
+            "p95Ms": 41.225
+          },
+          "warmFrames": 75
+        }
+      ],
+      "resolution": [
+        1152,
+        720
+      ]
+    },
+    {
+      "formats": [
+        {
+          "declaredInputFormat": [
+            "rgb24"
+          ],
+          "directEncoder": {
+            "maxMs": 46.752,
+            "medianMs": 29.667,
+            "p95Ms": 36.713
+          },
+          "fixedPixelHash": "8b1d66ff7418ecc42c85cbfad4d87528a6eaa0f71890ffe99b2a8f9662884888",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 14.413,
+            "medianMs": 4.54,
+            "p95Ms": 10.808
+          },
+          "mode": "rgb24",
+          "packetize": {
+            "maxMs": 0.208,
+            "medianMs": 0.033,
+            "p95Ms": 0.066
+          },
+          "rawIdrPsnr": {
+            "initial": 30.995,
+            "onDemand": 31.865
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=7200:vbv-bufsize=1300:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 53.357,
+            "medianMs": 35.056,
+            "p95Ms": 45.056
+          },
+          "warmFrames": 75
+        },
+        {
+          "declaredInputFormat": [
+            "bgra"
+          ],
+          "directEncoder": {
+            "maxMs": 39.882,
+            "medianMs": 27.584,
+            "p95Ms": 33.49
+          },
+          "fixedPixelHash": "8b1d66ff7418ecc42c85cbfad4d87528a6eaa0f71890ffe99b2a8f9662884888",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 14.186,
+            "medianMs": 5.7,
+            "p95Ms": 12.657
+          },
+          "mode": "bgra",
+          "packetize": {
+            "maxMs": 0.168,
+            "medianMs": 0.033,
+            "p95Ms": 0.073
+          },
+          "rawIdrPsnr": {
+            "initial": 30.995,
+            "onDemand": 31.865
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=7200:vbv-bufsize=1300:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 45.91,
+            "medianMs": 33.789,
+            "p95Ms": 41.357
+          },
+          "warmFrames": 75
+        },
+        {
+          "declaredInputFormat": [
+            "yuv420p"
+          ],
+          "directEncoder": {
+            "maxMs": 36.949,
+            "medianMs": 18.375,
+            "p95Ms": 24.42
+          },
+          "fixedPixelHash": "8b1d66ff7418ecc42c85cbfad4d87528a6eaa0f71890ffe99b2a8f9662884888",
+          "inputConstructionPlusPreconvert": {
+            "maxMs": 28.0,
+            "medianMs": 18.908,
+            "p95Ms": 23.758
+          },
+          "mode": "yuv420p-from-bgra",
+          "packetize": {
+            "maxMs": 0.283,
+            "medianMs": 0.033,
+            "p95Ms": 0.082
+          },
+          "rawIdrPsnr": {
+            "initial": 30.995,
+            "onDemand": 31.865
+          },
+          "submittedOptions": {
+            "forced-idr": "1",
+            "preset": "superfast",
+            "tune": "zerolatency",
+            "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=7200:vbv-bufsize=1300:vbv-init=1:nal-hrd=none"
+          },
+          "totalInputToPacket": {
+            "maxMs": 59.081,
+            "medianMs": 37.033,
+            "p95Ms": 48.584
+          },
+          "warmFrames": 75
+        }
+      ],
+      "resolution": [
+        1728,
+        1080
+      ]
+    }
+  ],
+  "source": {
+    "encoderSha256": "ffd75c1ef2750b41fdcab7c3c0c0e11c057e2643dfda0d433ab167368233310a",
+    "gitHead": "d119b29bc5999aa279e32f47dd25be5e52e213bb"
+  }
+}

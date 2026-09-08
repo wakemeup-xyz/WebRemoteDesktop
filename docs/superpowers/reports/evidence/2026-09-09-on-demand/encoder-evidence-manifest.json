@@ -1,0 +1,14 @@
+[
+  {
+    "file": "peak-headroom-bgra-threads1.raw.json",
+    "sha256": "f4a80e91e803d3f7e07a559e6ea6fb509020e130411e9b0d3060b21595a8348e"
+  },
+  {
+    "file": "peak-headroom-bgra-threads1-cadence-v2.raw.json",
+    "sha256": "8448a57462bd26d3459e1dbaa9f32f4652234af58761fbe848c37df9f48c9781"
+  },
+  {
+    "file": "peak-headroom-bgra-sliced2-cadence-v2.raw.json",
+    "sha256": "ccfb07aec93e1b45a78ee0120edb167e7542fe39d264993bdcdd1d92579607c2"
+  }
+]

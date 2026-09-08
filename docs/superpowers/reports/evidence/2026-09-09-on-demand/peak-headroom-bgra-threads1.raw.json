@@ -1,0 +1,360 @@
+{
+  "ambientTelemetry": {
+    "abortReasons": [
+      {
+        "category": "INCONCLUSIVE",
+        "lateSeconds": 0.19467353,
+        "observedMonotonicNs": 5809486971608768,
+        "reason": "ambient sampling tick late",
+        "scheduledMonotonicNs": 5809486776935238
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "elapsedSeconds": 1.186808617,
+        "reason": "ambient preflight cadence outside bounds"
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "observed": 4,
+        "reason": "ambient preflight incomplete"
+      }
+    ],
+    "coverage": [],
+    "health": {
+      "lastError": null,
+      "status": "HEALTHY"
+    },
+    "lateTicks": [
+      {
+        "lateSeconds": 0.19467353,
+        "observedMonotonicNs": 5809486971608768,
+        "scheduledMonotonicNs": 5809486776935238
+      }
+    ],
+    "missedTicks": 1,
+    "noLoadBaseline": null,
+    "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
+    "preflight": {
+      "firstSampleHasNoPredecessor": true,
+      "intervalBoundsSeconds": [
+        0.85,
+        1.15
+      ],
+      "intervalSeconds": 1.0,
+      "observedSamples": 4,
+      "requiredSamples": 30,
+      "status": "FAILED"
+    },
+    "projectCpuPercent": {
+      "max": 3.5,
+      "p50": 2.1,
+      "p95": 3.5
+    },
+    "projectCpuPolicy": {
+      "includes": [
+        "matrix-and-descendants",
+        "host-and-descendants",
+        "signal-and-descendants"
+      ],
+      "roots": [
+        "/Users/macstudio1/AI/Claude/WebRemoteDesktop",
+        "/Users/macstudio1/AI/Claude/WebRemoteDesktop/.worktrees/turn-encoder-production-input"
+      ],
+      "version": "webremotedesktop-project-cpu-v1"
+    },
+    "rawGatesUnchanged": true,
+    "relativeOnly": true,
+    "sampleHz": 1,
+    "samples": [
+      {
+        "monotonicNs": 5809483777103513,
+        "phase": "PREFLIGHT",
+        "projectCpuPercent": 3.5,
+        "projectProcesses": [
+          {
+            "cpuPercent": 0.1,
+            "kind": "signal",
+            "pid": 25201,
+            "rssKiB": 56596
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "project-descendant",
+            "pid": 25221,
+            "rssKiB": 9836
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "host",
+            "pid": 25270,
+            "rssKiB": 65768
+          },
+          {
+            "cpuPercent": 0.2,
+            "kind": "project-descendant",
+            "pid": 25315,
+            "rssKiB": 19360
+          },
+          {
+            "cpuPercent": 3.2,
+            "kind": "matrix",
+            "pid": 33487,
+            "rssKiB": 65572
+          }
+        ],
+        "scheduledMonotonicNs": 5809483776935238,
+        "sequence": 1,
+        "viewerStatus": {
+          "relayViewerCount": 0,
+          "viewerCount": 0
+        }
+      },
+      {
+        "monotonicNs": 5809484784827246,
+        "phase": "PREFLIGHT",
+        "projectCpuPercent": 2.1,
+        "projectProcesses": [
+          {
+            "cpuPercent": 0.1,
+            "kind": "signal",
+            "pid": 25201,
+            "rssKiB": 56600
+          },
+          {
+            "cpuPercent": 0.1,
+            "kind": "project-descendant",
+            "pid": 25221,
+            "rssKiB": 9836
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "host",
+            "pid": 25270,
+            "rssKiB": 65768
+          },
+          {
+            "cpuPercent": 0.3,
+            "kind": "project-descendant",
+            "pid": 25315,
+            "rssKiB": 19360
+          },
+          {
+            "cpuPercent": 1.6,
+            "kind": "matrix",
+            "pid": 33487,
+            "rssKiB": 65580
+          }
+        ],
+        "scheduledMonotonicNs": 5809484776935238,
+        "sequence": 2,
+        "viewerStatus": {
+          "relayViewerCount": 0,
+          "viewerCount": 0
+        }
+      },
+      {
+        "monotonicNs": 5809485784800151,
+        "phase": "PREFLIGHT",
+        "projectCpuPercent": 0.8,
+        "projectProcesses": [
+          {
+            "cpuPercent": 0.0,
+            "kind": "signal",
+            "pid": 25201,
+            "rssKiB": 56604
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "project-descendant",
+            "pid": 25221,
+            "rssKiB": 9836
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "host",
+            "pid": 25270,
+            "rssKiB": 65768
+          },
+          {
+            "cpuPercent": 0.3,
+            "kind": "project-descendant",
+            "pid": 25315,
+            "rssKiB": 19360
+          },
+          {
+            "cpuPercent": 0.5,
+            "kind": "matrix",
+            "pid": 33487,
+            "rssKiB": 65580
+          }
+        ],
+        "scheduledMonotonicNs": 5809485776935238,
+        "sequence": 3,
+        "viewerStatus": {
+          "relayViewerCount": 0,
+          "viewerCount": 0
+        }
+      },
+      {
+        "monotonicNs": 5809486971608768,
+        "phase": "PREFLIGHT",
+        "projectCpuPercent": 2.7,
+        "projectProcesses": [
+          {
+            "cpuPercent": 0.1,
+            "kind": "signal",
+            "pid": 25201,
+            "rssKiB": 56604
+          },
+          {
+            "cpuPercent": 0.1,
+            "kind": "project-descendant",
+            "pid": 25221,
+            "rssKiB": 9836
+          },
+          {
+            "cpuPercent": 0.0,
+            "kind": "host",
+            "pid": 25270,
+            "rssKiB": 65768
+          },
+          {
+            "cpuPercent": 0.3,
+            "kind": "project-descendant",
+            "pid": 25315,
+            "rssKiB": 19360
+          },
+          {
+            "cpuPercent": 2.2,
+            "kind": "matrix",
+            "pid": 33487,
+            "rssKiB": 65580
+          }
+        ],
+        "scheduledMonotonicNs": 5809486776935238,
+        "sequence": 4,
+        "viewerStatus": {
+          "relayViewerCount": 0,
+          "viewerCount": 0
+        }
+      }
+    ],
+    "sentinels": [],
+    "status": "INCONCLUSIVE"
+  },
+  "candidate": {
+    "eligible": false,
+    "execution": {
+      "fullMatrix": "ABORTED",
+      "prescreen": "NOT RUN"
+    },
+    "id": "on-demand-peak-headroom-v1",
+    "ineligibleReason": [
+      {
+        "category": "INCONCLUSIVE",
+        "lateSeconds": 0.19467353,
+        "observedMonotonicNs": 5809486971608768,
+        "reason": "ambient sampling tick late",
+        "scheduledMonotonicNs": 5809486776935238
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "elapsedSeconds": 1.186808617,
+        "reason": "ambient preflight cadence outside bounds"
+      },
+      {
+        "category": "INCONCLUSIVE",
+        "observed": 4,
+        "reason": "ambient preflight incomplete"
+      }
+    ],
+    "offline": {
+      "evidence": {
+        "partial": {
+          "sentinels": []
+        }
+      },
+      "status": "NOT RUN"
+    },
+    "parameters": {
+      "bitrateByResolution": {
+        "1152x720": 3200000,
+        "1728x1080": 5000000
+      },
+      "codec": "libx264",
+      "encoderParameterDigest": "12d4bfdfe72009118432b228a5e3a50af9d1f6536bd8aec972578696fc04d084",
+      "forcedIdr": 1,
+      "fps": 20,
+      "id": "on-demand-peak-headroom-v1",
+      "inputContract": {
+        "colorConversionCost": "inside-direct-encoder-unless-a-candidate-records-it-separately",
+        "id": "production-screen-bgra-v1",
+        "pixelFormat": "bgra",
+        "referenceFormat": "rgb24"
+      },
+      "optionsDigest": "12d4bfdfe72009118432b228a5e3a50af9d1f6536bd8aec972578696fc04d084",
+      "periodicIdrFrames": 0,
+      "preset": "superfast",
+      "profile": "Baseline",
+      "sliceThreads": 1,
+      "submittedCodecOptionsByResolution": {
+        "1152x720": {
+          "forced-idr": "1",
+          "preset": "superfast",
+          "tune": "zerolatency",
+          "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=4800:vbv-bufsize=1000:vbv-init=1:nal-hrd=none"
+        },
+        "1728x1080": {
+          "forced-idr": "1",
+          "preset": "superfast",
+          "tune": "zerolatency",
+          "x264-params": "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:threads=1:sliced-threads=0:slices=1:sync-lookahead=0:rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:vbv-maxrate=7200:vbv-bufsize=1300:vbv-init=1:nal-hrd=none"
+        }
+      },
+      "vbvBufsizeKbitsByResolution": {
+        "1152x720": 1000,
+        "1728x1080": 1300
+      },
+      "vbvInit": 1.0,
+      "vbvMaxrateByResolution": {
+        "1152x720": 4800000,
+        "1728x1080": 7200000
+      }
+    },
+    "runtime": {
+      "gates": {
+        "finiteLossRecovery": "NOT RUN",
+        "hostEventLoopAndInputAck": "NOT RUN",
+        "viewerBufferAndDecodeContinuity": "NOT RUN"
+      },
+      "status": "NOT RUN"
+    }
+  },
+  "defaultPolicy": "relay-legacy-v1",
+  "executionSourceRevision": "d003367c1d6d6172765646d5191f5a7f8edd2d68",
+  "kind": "relay-peak-headroom-v1",
+  "runtime": {
+    "gates": {
+      "finiteLossRecovery": "NOT RUN",
+      "hostEventLoopAndInputAck": "NOT RUN",
+      "viewerBufferAndDecodeContinuity": "NOT RUN"
+    },
+    "status": "NOT RUN"
+  },
+  "scope": "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
+  "selection": {
+    "candidateId": null,
+    "defaultPolicy": "relay-legacy-v1",
+    "runtimeGateStatus": "PENDING",
+    "state": "no-offline-winner"
+  },
+  "sourceDigests": {
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": "e20abdecc079771d1c08b73f24db535a54dfe26cc4c51735c38ad56f01ad9496",
+    "python-host/h264_encoder_policy.py": "5fcde60c823d72d3577dc74f0fc7fae580409453124070c9156c4cd269a94816",
+    "python-host/h264_videotoolbox_encoder.py": "a97685093114ca5b01085650d05114ca088b057eeaf5e0c0e236888ef0ac800a",
+    "scripts/eval-turn-encoder-quality.py": "77f4318da2640014ea5193c9952d63abff6108b07c82cfb31c0ad8857e6e7b2f",
+    "scripts/turn_encoder_experiments.py": "c54712eda2408f8ccdb96891c573e331231d6a2e857f0f94ad83cadcbec67b3e",
+    "scripts/turn_encoder_peak_headroom_experiments.py": "56544fee2a96b29ae0c78f6a6ab21d04ccbb9fbe28dc050cea98f2b5dfaaef4b"
+  },
+  "status": "ABORTED_INCONCLUSIVE"
+}
