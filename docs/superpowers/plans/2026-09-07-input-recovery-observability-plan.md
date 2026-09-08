@@ -10,15 +10,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-07-input-recovery-observability-design.md`
 
-**执行状态（2026-09-08）：** 计划和主体实现已完成，开发代理为 `gpt-5.6-luna / max`。最终被审交付 `2b49d5918063ead78f0a52cc6941df0a09448de4`（实现代码 `cc9ef32915c2988215cf655f68efdcca329d1bf1`）；主线程 fresh Viewer791、Signal349+build、Python99、CLI4/4与22个场景全部通过。最终独立复审为 **7/8关闭，R4 Important/P2 未关闭，验收 FAIL**：modal `compositionend` 自动提交仍缺少 DOM/incident 关联，不能把绿测等同于完成。Task2 的入口覆盖步骤与最终验收门禁保留未勾选。具体测试、失败复现及五项 Rulings 见[最终验收裁定](../reports/2026-09-07-input-recovery-observability-acceptance.md)。main 原有 dirty 文件未动；没有合并、push、重启或现场连接。
+**执行状态（2026-09-08）：** 用户授权的 R4 继续修正已完成，`gpt-5.6-luna / max` 提交 `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`；独立 scoped re-review 与主线程均确认 R4 关闭，无新增破坏，原八项发现全部关闭。主线程 Viewer794、Signal349+build、Python99、CLI4/4与23个场景通过，原保留反例也由 RED 转 GREEN。此前 `2b49d59` 的 **7/8关闭、R4/P2导致 FAIL** 保留为历史事实。具体版本、测试及五项 Rulings 见[验收报告](../reports/2026-09-07-input-recovery-observability-acceptance.md)。开发/离线审查门禁通过，main 集成、push 和本地重启待下方 Task5 记录执行结果。
 
-**剩余最小修正：** 在 `Input.setupMobileTextInput` 让 submit click 与 compositionend 共用真实提交归属/finally 清理，保持原自动提交和至多一次发送；先运行[保留的 RED 反例](../reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py)，补 durable 回归并转 GREEN，再验证相关 gate、draft、Terminal/旧身份排除和完整验收。按本次 SDD 一次最终修正上限，该残余已明确记录，未启动第二个修正波次；不是需求取消或质量豁免。
+**已完成的最小修正：** 在 `Input.setupTextInput` 让 submit click 与 compositionend 共用真实提交归属/finally 清理，保持原自动提交和至多一次发送；先运行[保留的 RED 反例](../reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py)，补 durable 回归并转 GREEN，再验证相关 gate、draft、Terminal/旧身份排除和完整验收。上一轮按 SDD 一次最终修正上限保留该残余，并非需求取消或质量豁免；此次用户授权的继续修正已通过。
+
+**2026-09-08 继续授权：** 用户明确要求“解决残余问题，合入main push。重启服务”。仅续做 R4，开发代理仍为 `gpt-5.6-luna / max`，BASE 为 `a00a4c41c7b44e31b5d2e6d7180befca5581cc8f`。完成最小修正、独立 scoped re-review 和主线程全量验收后，主线程负责保留 main 原有改动、合入 main、push，并按安全服务流程只重启本地 Signal/Host。禁止重启或重建 tunnel；现场控制与真机验收不因本次授权自动标记通过。
 
 **Baseline:** `39fa1ea`。隔离分支 `codex/input-recovery-observability`；工作树 `.worktrees/input-recovery-observability`。已重新运行基线 Viewer 离线全量，exit 0；历史探针的四个失败反例是本次 RED 场景来源，不是修复验收。
 
 ## Global Constraints
 
-- 不修改 main 的 dirty 文件，不合并、不 push、不重启/启动本地服务或 tunnel，不新建连接现场服务的 Viewer；只运行隔离离线测试/构建。
+- 实现代理不修改 main 的 dirty 文件、不合并/push/操作服务，只运行隔离离线测试/构建；主线程在验收通过后可执行上述新授权的 main 合并、push、本地 Signal/Host 重启。所有代理均不得操作 tunnel 或新建连接现场服务的 Viewer。
 - input v2 与 ACK wire schema 不变；不增加 traceId/raw诊断字段，不改变控制授权，不自动夺取/释放控制权或重建 PeerConnection。
 - 自动恢复只解锁当前 lease/attempt 的新操作；需要本轮 mouse reset 与 keyboard reset 的拥有者 ID、seq 和正向 ACK。旧手势、旧 attempt、仅 READY/新帧/同 lease 重绑不能解锁。
 - 无草稿可在安全确认后恢复；有草稿/组合输入保留内容、不自动重发或清空。tracked keyup 与 mouse up/reset 保留安全释放通路。
@@ -88,8 +90,8 @@ function isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
 **Interfaces:** 消费 Task 1 的有效gate与恢复snapshot；产出 `InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`（参数可选，默认环境时钟/WebCrypto/timer/noop）。record的DOM阶段返回新eventId，其他阶段返回关联eventId或null；snapshot为 `{ schemaVersion: 1, events, counters }`。最多一个deadline计时器，`onIncident(reason, { connectionAttemptId, leaseEpoch })`传有限reason和触发报文归属；core按当前身份匹配、可见/active/有权条件决定上报，旧attempt/epoch超时只留轨迹不误报新连接。Diagnostic core 暴露 `recordInputTrace(stage, meta)` 与 `getInputTraceSnapshot()`（同一 collector 不因deferred加载替换）。Input.getDiagnosticState 产出 Spec §4.2 的安全 inputState，供 Task 3 原样经严格 allowlist处理。record stage、focusKind/visibility和数值上限按Spec §4.1。
 
 - [x] Step 1: RED 测试固定 inputIds 的已知SHA256 hash、异步回填、无crypto/摘要失败、超64待摘要、256条/64KiB/256个ACK/10秒等待上限；敏感字段用唯一金丝雀，序列化snapshot中必须完全不存在。move/wheel大量输入只能增加聚合计数，不逐条hash。
-- [ ] Step 2: 实现独立collector。record不得等待hash或抛出影响业务的异常；snapshot不得泄漏内部raw IDs或DOM对象；哈希淘汰/失败计数明确。真实Input发送旁路记录DOM eventId→现有inputIds，keyboard与pointer/text入口覆盖，IME异步事件另设准确关联。
-- [ ] Step 3: gate接受/拒绝记录effective原因、真实transport enqueue结果（含fallback/失败）、ACK接受/拒绝/timeout、生命周期与recovery。只在真实用户输入并且媒体active/可见/有权的unexpected不确定门禁，或可靠ACK deadline触发autoSendFailure；正常draft/只读/Terminal/manual-pause不触发。不要逐move/wheel触发故障。
+- [x] Step 2: 实现独立collector。record不得等待hash或抛出影响业务的异常；snapshot不得泄漏内部raw IDs或DOM对象；哈希淘汰/失败计数明确。真实Input发送旁路记录DOM eventId→现有inputIds，keyboard与pointer/text入口覆盖，IME异步事件另设准确关联。
+- [x] Step 3: gate接受/拒绝记录effective原因、真实transport enqueue结果（含fallback/失败）、ACK接受/拒绝/timeout、生命周期与recovery。只在真实用户输入并且媒体active/可见/有权的unexpected不确定门禁，或可靠ACK deadline触发autoSendFailure；正常draft/只读/Terminal/manual-pause不触发。不要逐move/wheel触发故障。
 - [x] Step 4: collector 放入critical graph且早于Input，Diagnostic core晚加载handoff保持既有轨迹。测试真实gate拒绝只产生DOM+gate不产生发送；DC和Socket各实际记录正确transport，迟到ACK不伪造成功，一次失败的3000ms计时与恢复不互相刷无限重试。
 - [x] Step 5: 运行 `node --test web-client/js/input-trace.test.js web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/diagnostic.test.js web-client/js/webrtc.test.js`，再运行Viewer全量；记录红绿与隐私/压力结果，提交 `feat(diagnostics): trace sanitized viewer input decisions`。
 
@@ -180,7 +182,7 @@ inputTrace: this.getInputTraceSnapshot?.() || null,
 - [x] Step 2: 新/既有离线Chromium脚本全部跑到PASS；禁止只因脚本exit0就把NOT RUN判PASS。输出schema标记 offline-synthetic，必须验证scenario全执行/全部PASS、无网络请求，无敏感payload。
 - [x] Step 3: 最终运行Viewer全量、Signal全量（含worktree构建）、Python输入/媒体/诊断回归；检查build graph与built Viewer无缺失模块。所有额外失败区分基线/新增，失败不能静默忽略。控制恢复专项测试需确实发送新的输入，而不只测active/READY。
 - [x] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/公网/系统IME仍NOT RUN，明确尚未合main/push/restart。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
-- [ ] Step 5: 自审文档链接、隐私金丝雀与 `git diff --check`，提交 `test(input): verify recovery interaction and document diagnostics`。根线程随后做whole-branch独立review与自己的验收，保留分支等待后续集成授权。
+- [x] Step 5: 自审文档链接、隐私金丝雀与 `git diff --check`，提交 `test(input): verify recovery interaction and document diagnostics`。根线程随后做whole-branch独立review与自己的验收；此前保留的 R4 在 Task5 用户授权继续修正后闭合，集成依新授权执行。
 
 浏览器验收复用`OfflineFixture`，只以真实locator动作和实际wire副作用判定；用可触发页面click的真实事件进入root fullscreen：
 
@@ -204,3 +206,12 @@ assert len(report["scenarios"]) >= 12
 assert all(item["status"] == "PASS" for item in report["scenarios"])
 assert all(all(item["checks"].values()) for item in report["scenarios"])
 ```
+
+### Task 5: 用户授权的 R4 残余闭环与集成
+
+**Files:** `web-client/js/input.js`、对应 Input 回归测试、`scripts/mobile_input_interaction_acceptance.py` 及其 CLI 测试；主线程同步本计划、设计、README、需求和验收报告。不得修改 Host/Signal/Terminal 行为。
+
+- [x] 先运行不变的 modal composition RED 探针；为自动提交、拒绝保留草稿、观察器异常/上下文清理及紧随其后的 submit 不重发建立实际入口回归。
+- [x] 最小共享提交归属 helper；保持 gate、身份、原自动提交、至多一次业务发送和隐私边界；把真实 compositionend 超时场景纳入 durable 离线套件。
+- [x] 独立审查仅覆盖 R4 与本修正引入的破坏；主线程运行原 RED、Viewer、Signal+build、Python、CLI/浏览器全量并验证安全产物。
+- [ ] 更新历史 FAIL 与本轮关闭证据；保留 main 原有 dirty/untracked 内容后合入、push，重启本地 Signal/Host，核对服务健康与 tunnel 地址/进程未变。

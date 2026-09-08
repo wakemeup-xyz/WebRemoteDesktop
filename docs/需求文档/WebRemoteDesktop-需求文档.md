@@ -139,12 +139,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
 - [x] **既有origin浏览器验收 harness（非离线）**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 会认证并连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。本轮没有运行此脚本或连接实际origin。
-- [x] **严格离线整改套件**：`scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`；2026-09-08 Chromium 运行的22个场景均为 `PASS`，且独立核对所有 checks 与网络安全字段。套件通过不代表最终验收通过：补充的 modal compositionend 归属反例仍为 FAIL（R4/P2）。结果见[输入恢复与诊断最终裁定](../superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)及此前的[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
+- [x] **严格离线整改套件**：`scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`；2026-09-08 Chromium 运行的23个场景均为 `PASS`，且独立核对所有 checks 与网络安全字段。新增 modal compositionend 归属/超时 incident 场景已覆盖此前 R4 反例，独立复审通过；不把离线通过等同于真机输入或部署。结果见[输入恢复与诊断验收报告](../superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)及此前的[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
 #### 3.4.1 整改分支当前操作与实现边界（2026-09-08）
 
-以下描述整改分支已提交的代码，不表示main或运行服务已经更新；22场景离线套件通过，主线程和独立 whole-branch/scoped review 已完成审查活动，但最终仍有 R4/P2：modal compositionend 自动提交缺少 DOM 归属与超时 incident。最终验收未通过；真机、公网及与新main的组合结果仍未验证。
+以下描述已提交的输入恢复整改代码；23场景离线套件通过，主线程和独立 scoped review 均确认 R4 归属缺口已关闭，原八项发现全部闭合。main/push/本地发布按本次用户授权执行，实际完成状态以验收报告为准；真机、系统 IME、Quartz 和实际公网 Viewer 输入不由服务健康推断。
 
 | 用户操作 | 当前行为 |
 |---|---|
@@ -174,8 +174,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] F4 拖拽起点：已保留初始坐标、取消旧几何工作；主审追加修复提示引起的自取消。
 - [x] F7 全屏控件缺失：已切换完整documentElement目标及全局退出，保留失败提示和焦点。
 - [x] Task7严格离线浏览器集成与其 scoped review：已完成；四项覆盖缺口及恢复的组合键检查通过复审，无未解决P1/P2。以上勾选表示分支代码/离线验收，不等于 whole-branch review、真机或公网全链路验收。
-- [x] 输入恢复与诊断离线套件：22个场景覆盖真实 click→blur→reset ACK→fresh input、重试/草稿入口、trace/timeout/deferred/blocked/release 负路径、browser→Signal、草稿精确保留、窄屏与 root fullscreen、Terminal 和 safe artifact/network checks；全部 `PASS`。这仍是 offline-synthetic 证据，不等于真机、Quartz、系统 IME 或公网全链路验收。
-- [ ] 最终诊断入口覆盖：modal compositionend 自动提交需要与 submit click 共用真实 DOM 归属及 finally 清理；当前补充反例为 1 send/1 timeout/0 incident，R4/P2 未关闭，不能标记本轮完全完成。
+- [x] 输入恢复与诊断离线套件：23个场景覆盖真实 click→blur→reset ACK→fresh input、重试/草稿入口、trace/timeout/deferred/blocked/release 负路径、browser→Signal、草稿精确保留、modal 自动组合提交、窄屏与 root fullscreen、Terminal 和 safe artifact/network checks；全部 `PASS`。这仍是 offline-synthetic 证据，不等于真机、Quartz、系统 IME 或公网全链路验收。
+- [x] 最终诊断入口覆盖：modal compositionend 自动提交与 submit click 共用真实 DOM 归属及 finally 清理；不变的反例转为 1 send/来源事件存在/1 timeout/1 incident。独立复审关闭 R4，原自动提交、失败草稿保留和不重放语义不变。
 
 按F编号的当前证据和剩余门槛见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。离线浏览器使用人工键盘inset和内存远端模型，没有连接真实Viewer/Host，不计入真实设备、Quartz或公网PASS。
 

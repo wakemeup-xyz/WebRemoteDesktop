@@ -3,6 +3,8 @@
 Date: 2026-09-08
 Scope: `offline-synthetic` only; local source fixture, no credentials, no origin, no service.
 
+Current continuation `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`: primary CLI 4/4, Chromium 23/23 scenarios, all checks true and network 0. The unchanged modal composition reproduction is now GREEN (one send, originating DOM present, one timeout, one incident); independent scoped review closed R4 with no new breakage. See [R4 closure evidence](r4-closure-summary.md). The results below retain earlier versions' history.
+
 Historical Task 4 delivery command (`2ddbc15`):
 
 ```bash
@@ -34,7 +36,7 @@ Required exact outcomes included in the run:
 
 This summary intentionally omits raw input IDs, text, key/code, payload, coordinates, URL, credentials and browser console bundles. See the durable [Task 4 acceptance report](../../2026-09-07-input-recovery-observability-acceptance.md).
 
-## Final primary verification and remaining FAIL
+## Historical primary verification and remaining FAIL at 2b49d59
 
 On implementation `cc9ef32915c2988215cf655f68efdcca329d1bf1` (reviewed delivery
 `2b49d5918063ead78f0a52cc6941df0a09448de4` changes only docs), the primary ran:
@@ -54,5 +56,5 @@ This green suite does **not** cover the final R4 residual:
 [reproduce-modal-composition.py](reproduce-modal-composition.py) drives actual
 modal DOM compositionend and reports one send, one timeout, zero incidents and
 missing originating eventId; exit 1. The independent reviewer confirmed the
-same defect with actual modules. Final acceptance remains **FAIL / R4 P2 open**,
-not merge-ready. No physical/system IME/Quartz/live/public evidence is claimed.
+same defect with actual modules. Acceptance at that revision was **FAIL / R4 P2 open**,
+not merge-ready; the authorized continuation above closes it without rewriting that history. No physical/system IME/Quartz/live/public input evidence is claimed.

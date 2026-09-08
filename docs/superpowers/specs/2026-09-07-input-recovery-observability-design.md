@@ -1,6 +1,6 @@
 # 暂停恢复后的输入连续性与脱敏链路诊断
 
-日期：2026-09-07；执行状态更新：2026-09-08。设计已自审，luna/max 完成主体实现；规定离线套件通过，但最终审查仍有 R4 Important/P2（modal compositionend 自动提交诊断归属缺失），最终验收未通过。保留分支，尚未合入 main/push/部署。详见下方验收报告的最终裁定。
+日期：2026-09-07；执行状态更新：2026-09-08。luna/max 已完成主体实现及用户授权的 R4 继续修正 `22771b6`；独立复审和主线程确认八项发现均关闭。Viewer794、Signal349+build、Python99、CLI4/23个离线场景通过，原 modal compositionend 反例未改动而转 GREEN。开发/离线审查通过；main/push/本地部署状态见下方验收报告，不能推断真机或实际公网输入已经验收。
 
 ## 1. 目标与证据
 
@@ -101,5 +101,5 @@ Signal Socket input relay 增加安全的 hash/seq/epoch/transport 及 accepted/
 - ACK 顺序互换、迟到旧 ACK、错误 reset ID/epoch/attempt、失败/超时、重复生命周期、断 DC Socket 复位、双通道断、同/新 lease、草稿/组合输入、tracked keyup、Terminal/暂停/全屏均有负向断言。
 - collector 的隐私金丝雀、ring字节/条目/哈希/等待上限、无 crypto、异常 callback、晚加载、cooldown/队列、固定 hash 跨 JS/Python 匹配均验证；无敏感明文进入 snapshot/日志。
 - 真实模块离线集成、Viewer全量、Signal全量、Python输入/诊断回归、构建与离线Chromium点击/键盘/overlay验收。测试不能只是源码字符串匹配或内部状态=READY。
-- 真机手机/iPad、系统 IME、Quartz实际效果、正式公网故障重现与 live watcher 本次不冒充已跑；不建立连接现有服务的新 Viewer、不操作现场控制、不启动/重启服务或 tunnel。
-- 本次只交付隔离分支代码、测试、设计/计划/报告。main 合并、push、部署后现场复验是后续授权步骤。TURN、Terminal/watch 的其他缺口不混入。
+- 真机手机/iPad、系统 IME、Quartz实际效果、正式公网故障重现与 live watcher 不冒充已跑；不建立连接现有服务的新 Viewer、不操作现场控制。2026-09-08 用户已另行明确授权验收后合入 main、push、只重启本地 Signal/Host；禁止操作 tunnel。
+- 最初只交付隔离分支代码、测试、设计/计划/报告；此次按新授权集成和本地发布，实际结果记录在验收报告。部署后的真实输入复验仍与服务健康分开；TURN、Terminal/watch 的其他缺口不混入。

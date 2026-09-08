@@ -1,14 +1,24 @@
 # 输入恢复与诊断验收报告
 
 日期：2026-09-08
-范围：`codex/input-recovery-observability` 的离线交互验收、当前输入恢复/诊断文档和安全证据摘要。
+范围：`codex/input-recovery-observability` 的输入恢复、离线交互验收、R4 继续修正与用户授权的 main 集成/本地服务发布。
 基线 SHA：`39fa1eadc89b00546e2bf66f1ed1d1e6f892ca42`。
 Task 4 历史交付版本：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 `cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae` 为父提交，随后 `0c05d6181df4acbd1ce82192a8af33bf9eedf748` 完成文档 provenance/link 修正。
 本报告随后记录的 ONE final fix wave（R1-R8）实现提交为：`cc9ef32915c2988215cf655f68efdcca329d1bf1`（`fix(input): close pause resume observability findings`）。该提交只包含 brief 允许的 Viewer/Signal/离线 acceptance 代码与 focused tests；本报告和 evidence 更新在该实现提交之后完成。
 
 本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划的 Task 4 锚点](../plans/2026-09-07-input-recovery-observability-plan.md#task-4-acceptance) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
 
-## 最终裁定：未通过（R4 Important/P2 未关闭）
+## 当前裁定：R4 关闭，开发及离线验收通过
+
+用户于 2026-09-08 明确要求“解决残余问题，合入main push。重启服务”，因此本次只续做此前未关闭的 R4，不重做已经接受的七项修正。`gpt-5.6-luna / max` 交付 `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`，`Input.setupTextInput` 的 submit click 与 `compositionend` 共用 `commitWithTrace`，原自动提交与业务门禁不变。
+
+主线程在该代码上验证：Viewer **794/794**、Signal **349/349 + build**、Python **99/99**、CLI **4/4**／离线 Chromium **23/23 场景**；checks 非空且全 true、网络请求为零。原保留反例未改动，结果转为 **1 send / originating DOM true / 1 timeout / 1 incident**；再次确认上下文清理和敏感金丝雀不外泄。实现 commit 的五个文件 blob 与主线程测试时一致。
+
+新增 durable `modal-composition-trace` 场景覆盖自动提交、send/timeout 的来源事件、只产生一份 incident、清理、关闭、后续 submit 不重放和隐私。主线程另用真实 Chromium DOM 检查立即 submit、不支持 viewport 拒绝保留草稿、观察器异常不影响单次发送、普通本地输入不发送，四项全部通过。详细命令和安全结果见 [R4 closure evidence](evidence/2026-09-07-input-recovery-observability/r4-closure-summary.md)。
+
+独立 scoped re-review（`gpt-5.6-sol / high`，依据小范围复审的模型分级）完整审查 `a00a4c4..22771b6`：**R4 ADDRESSED，无新增 Critical/Important/Minor 破坏**；主线程核对真实代码、测试版本及独立反例后接受，原八项发现全部关闭。Reviewer 注意到旧 CLI 总数门槛仍为 `>=22`；新第23项名称有独立必需断言，主线程实际核对23项全部执行，故不是 R4 遗漏或新增破坏，不扩展本次范围。尚未执行合并、push 或重启；实际集成/运行结果将在执行后记录。真机、系统 IME、Quartz、实际公网 Viewer 输入、live watcher 故障验收仍是 **NOT RUN**。
+
+## 历史裁定：上一轮未通过（R4 Important/P2）
 
 2026-09-08 主线程与独立 reviewer 对最终修正交付 `2b49d5918063ead78f0a52cc6941df0a09448de4` 的结论一致：R1、R2、R3、R5、R6、R7、R8 已关闭；R4 的 toolbar/submit click 已修，但 **文本弹窗 `compositionend` 自动提交仍缺少 originating DOM eventId，ACK timeout 不触发 incident**。`web-client/js/input.js:2714` 仍直接调用 `commit()`。这不是新发现的范围外需求，而是原 R4 的遗漏入口。
 
@@ -34,7 +44,7 @@ Task 4 历史交付版本：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 
 
 本地 built graph 33 个文件、manifest 5 个 asset 均存在，InputTrace 早于 Input，critical recovery、deferred Diagnostic、Terminal FSM、body recovery UI 和单一 external script 均验证通过。此项不证明线上资产已更新。既有 STUN `fetch is not defined` 与 Signal negative-path console 是基线噪音；新 counterexample FAIL 单独列出，不以绿测覆盖。
 
-### 唯一未关闭项的可保留复现
+### 上一轮唯一未关闭项的保留复现
 
 [reproduce-modal-composition.py](evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py) 复用现有 OfflineFixture，不复制浏览器 harness。它驱动实际 modal 打开、DOM compositionstart/fill/compositionend，扣留 ACK 3300ms；没有直接改生产 recovery 状态，也不取消自动提交行为。此处是 Chromium DOM 事件处理验证，**不是系统 IME 真机验收**。
 
@@ -50,7 +60,7 @@ exit=1
 
 后续最小修正应让 submit click 与 `compositionend` 共用真实提交归属和 finally 清理，保留已有自动提交、至多一次业务发送、草稿/Terminal/旧身份排除规则；将此反例转为 GREEN 并增加对应 durable 回归，再跑受影响测试及 scoped review。不得通过删除/跳过本反例、取消自动提交或放宽 privacy/gate 来声称关闭。
 
-## 结论与边界
+## 历史离线交付的结论与边界
 
 - 原 Task 4 delivery 的严格离线 Chromium 运行产出 `scope=offline-synthetic`，20/20 场景 `PASS`；本轮 final-fix 提交后的最新 durable 运行扩展为 22/22 场景 `PASS`，每个场景的每个 check 均为 `true`，进程 exit 0。
 - 离线页面只加载仓库源码；所有浏览器外发请求由 deny-by-default route abort，最终观察到 `network.requests=0`、`network.sensitivePayloads=0`。后一个字段只是请求 URL/body 的有界敏感标记计数，不是通用秘密检测；artifact 的隐私结论来自 allowlist 场景摘要测试和唯一敏感金丝雀不出现在序列化结果中的断言。
@@ -108,7 +118,7 @@ exit=0
 
 缺运行时和启动后异常仍由脚本区分：缺 Chromium/WebKit runtime 写 `NOT RUN` 并 exit 2；浏览器已经启动但场景异常写 `FAIL` 并 exit 1。严格测试还断言每个 scenario 都是 `PASS`，而不是只看 exit code。
 
-## ONE final fix wave：R1-R8
+## 历史 ONE final fix wave：R1-R8
 
 本轮先以 base `0c05d6181df4acbd1ce82192a8af33bf9eedf748` 的真实离线 Chromium/module seam 建立 RED，再在 `cc9ef32915c2988215cf655f68efdcca329d1bf1` 工作树验证 GREEN。所有探针只输出布尔值/计数；scratch probes 不属于交付命令，也未被提交。
 
@@ -154,7 +164,9 @@ freshly ran the complete 99/99 Python matrix on the same committed code, as
 recorded in the final ruling above. No service, tunnel, native action, live
 Socket, or public path was used.
 
-## 离线场景逐项结果
+## 历史 22 个离线场景结果
+
+本轮新增第 23 项 `modal-composition-trace`：实际 `compositionend` 产生 1 次发送、1 次超时、1 份 incident，send/timeout 均保留 originating DOM，后续 submit 无重放。其余下列 22 项已在本轮完整 CLI 中重新运行通过。
 
 | 场景 | 结果 | 关键实际证据 |
 |---|---|---|
@@ -282,7 +294,7 @@ This confirms graph inclusion and local build output only; it does not claim a l
 
 ## Controller Rulings（按时间顺序，及成本）
 
-前四项内部接口决定及其成本完整保留；第五项为最终残余问题裁定：
+前四项内部接口决定及其成本完整保留；第五项为上一轮残余问题裁定。本次用户的新明确授权允许继续修正，不把上一轮 FAIL 改写为当时已通过：
 
 1. Extend the internal KeyboardTransport reset seam with explicit nullable `connectionAttemptId` and a `getConnectionAttemptId` provider; do not use a non-enumerable hidden property — send-time attempt ownership is required by the spec, and the original three-field shape omitted necessary attribution; diagnostics use an explicit allowlist anyway — cost if wrong: one extra internal coupling/field to migrate, contained by contract tests and no wire change.
 2. Include safe triggering `connectionAttemptId`/`leaseEpoch` in the InputTrace `onIncident` callback and require current identity matching before auto upload — a reason-only callback cannot distinguish a previous connection's timeout from a current fault — cost if wrong: one extra internal callback argument and tests; no wire protocol or upload policy expansion.
@@ -304,7 +316,7 @@ focused tests, Signal diagnostic redaction and tests, and the existing offline
 acceptance script plus its CLI test. No Host, Terminal, media business logic,
 lease authorization, protocol schema or service code was changed.
 
-## Remaining concerns / NOT RUN
+## 历史收尾边界（a00a4c4；当前进展见报告顶部）
 
 - Final review closed R1/R2/R3/R5/R6/R7/R8; R4 remains Important/P2 at `2b49d59`. The green 22-scenario suite does not exercise this modal compositionend attribution failure. Final acceptance is FAIL, not complete or merge-ready. Nullable hash/reason values remain unavailable when omitted/null, by design; baseline warnings remain separately disclosed.
 - Real Android Chrome, iPhone Safari, iPad Safari, system IME/Emoji, native Quartz effect, public Viewer/tunnel, live Signal/Host recovery, watcher fault, and Terminal real PTY acceptance remain `NOT RUN`.
