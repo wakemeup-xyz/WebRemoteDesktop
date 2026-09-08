@@ -1759,6 +1759,26 @@ test('adaptive resolution toggle can allow profile size changes when enabled', (
   assert.equal(emitted.at(-1).payload.adaptiveResolution, true);
 });
 
+test('explicit resolution keeps the requested presentation size with adaptive resolution on or off', async () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '1280x720' };
+  WebRTC.linkQualityController = LinkQualityController.create({ path: 'relay' });
+
+  WebRTC.setAdaptiveResolutionEnabled(false, { persist: false });
+  await WebRTC.requestResolution(1920, 1080);
+  assert.deepEqual([emitted.at(-1).payload.width, emitted.at(-1).payload.height], [1920, 1080]);
+
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '1280x720' };
+  WebRTC.setAdaptiveResolutionEnabled(true, { persist: false });
+  await WebRTC.requestResolution(1920, 1080);
+  assert.deepEqual([emitted.at(-1).payload.width, emitted.at(-1).payload.height], [1920, 1080]);
+  assert.equal(emitted.at(-1).payload.adaptiveResolution, true);
+});
+
 test('media profile and resolution changes no-op without a lease and emit v2 envelopes when active', async () => {
   const { WebRTC } = loadWebRTC();
   const emitted = [];
@@ -1773,7 +1793,11 @@ test('media profile and resolution changes no-op without a lease and emit v2 env
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
   WebRTC.applyMediaProfile({ name: 'medium', width: 960, height: 540, fps: 15, bitrateKbps: 1400 }, 'test');
   await WebRTC.requestResolution(1280, 720);
-  assert.deepEqual(emitted.map(({ event }) => event), ['media-profile-change', 'resolution-change']);
+  // A user presentation change travels through the authenticated media-profile
+  // channel so Signal assigns and Host admits a real profileSequence.
+  assert.deepEqual(emitted.map(({ event }) => event), ['media-profile-change', 'media-profile-change']);
+  assert.equal(emitted[1].payload.profileSequence, emitted[0].payload.profileSequence + 1);
+  assert.deepEqual([emitted[1].payload.width, emitted[1].payload.height], [1280, 720]);
   emitted.forEach(({ payload }) => assert.deepEqual({ schemaVersion: payload.schemaVersion, leaseId: payload.leaseId, leaseEpoch: payload.leaseEpoch }, {
     schemaVersion: 2, leaseId: 'lease-000000000001', leaseEpoch: 9,
   }));
@@ -5520,7 +5544,7 @@ test('requestResolution 1600p on relay emits 720p session size', async () => {
   await WebRTC.requestResolution(1600, 900);
   assert.equal(WebRTC._explicitOverride1080, false);
   assert.equal(WebRTC.currentResolution.width, 1600);
-  assert.equal(context._last[0], 'resolution-change');
+  assert.equal(context._last[0], 'media-profile-change');
   assert.equal(context._last[1].width, 1280);
   assert.equal(context._last[1].height, 720);
 });

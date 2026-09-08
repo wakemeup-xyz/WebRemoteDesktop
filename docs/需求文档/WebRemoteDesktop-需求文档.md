@@ -79,7 +79,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **失焦输入安全语义**：窗口失焦或页面隐藏时，桌面输入 DataChannel 为 `open` 则发送 keyboard reset；DataChannel 已关闭或不可用则 park 本地输入状态。短暂失焦不释放控制租约，也不制造无法自动恢复的 reset barrier
 - [x] **手动 STUN 端口搜索**：控制栏「搜索端口」按钮是启动最多 500 轮全量 PeerConnection 重建的**唯一**触发；普通 WebRTC 失败不会自动进入该搜索。启动还要求当前 Viewer 持有 ACTIVE 控制租约；只读/切换中/reset-blocked/媒体暂停时严格无副作用。成功需 selected pair + 连续 3 次解码视频采样；UI 只显示数字 UDP 端口与轮次、不显示 IP；耗尽后不自动切 TURN 或 Socket.IO 媒体 tunnel。端口仍由系统分配（浏览器无本地 ICE UDP 端口选择 API，Host `aiortc` 绑定 0），不保证唯一端口，也不覆盖 Strict STUN 策略
 - [x] **网络建议浮窗**：右下角浮窗根据当前模式、候选链路和 0 FPS 状态提示适用场景
-- [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p
+- [x] **分辨率切换**：支持 540p / 720p / 1080p / 1440p；Viewer 必须将用户分辨率写入带会话身份和 `profileSequence` 的 media-profile 通道，Host 只接受该通道更新 capture 尺寸与 H.264 码率策略，避免尺寸与编码策略不同步。缓存 Viewer 的旧 resolution-change 由 Signal 在当前租约和 attempt 下转换为同一受序列约束的 profile 写入，不允许 Host 伪造序列
 - [x] **缩放模式**：自适应(contain) / 填充(cover) / 拉伸(fill)
 - [x] **状态显示**：顶部状态栏显示 FPS、延迟、分辨率和候选链路类型
 

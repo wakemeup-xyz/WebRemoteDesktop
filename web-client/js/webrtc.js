@@ -4457,7 +4457,31 @@ if (this.tunnelLastObjectUrl) {
       this.announcePaintIssue('explicit-1080');
     }
     const session = this.getSessionPresentation();
-    this.socket.emit('resolution-change', { ...lease, width: session.width, height: session.height });
+    // A presentation change affects the H.264 bitrate envelope. Route it
+    // through media-profile-change so Signal assigns a real profileSequence
+    // and Host refreshes its session-scoped encoder policy atomically with
+    // capture size. The legacy resolution-change path has no such admission.
+    const controller = this.ensureLinkQualityController();
+    const profileName = controller?.currentProfile || 'high';
+    const selectedProfile = typeof LinkQualityController !== 'undefined'
+      ? LinkQualityController.profiles?.[profileName]
+      : null;
+    const profile = selectedProfile ? {
+      ...selectedProfile,
+      // An explicit user presentation choice wins over an adaptive quality
+      // profile's source dimensions. The profile still supplies its fps/rate
+      // intent; applyMediaProfile owns the quality-lock floors.
+      width: session.width,
+      height: session.height,
+    } : {
+      name: profileName,
+      width: session.width,
+      height: session.height,
+      fps: this.qualityFloorsForResolution(session.width, session.height).targetFps,
+      bitrateKbps: this.qualityFloorsForResolution(session.width, session.height).minBitrateKbps,
+    };
+    const applied = this.applyMediaProfile(profile, 'presentation-change');
+    if (!applied) return false;
     if (this.networkMode === 'tunnel' && this.tunnelRelayActive) {
       this.startTunnelRelay();
     }

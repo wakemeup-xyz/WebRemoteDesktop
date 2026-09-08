@@ -3406,21 +3406,18 @@ class WebRemoteHost:
             logger.error(f"Error handling request-keyframe: {e}")
 
     async def on_resolution_change(self, data):
-        """Apply viewer requested max stream resolution."""
-        try:
-            width = clamp_int(data.get("width"), 320, 1920, MEDIA_PROFILE_DEFAULT["width"])
-            height = clamp_int(data.get("height"), 180, 1080, MEDIA_PROFILE_DEFAULT["height"])
-            width, height = self._set_user_resolution(width, height)
-            logger.info(
-                "Resolution request from viewer=%s max=%sx%s",
-                data.get("viewerId", "-"),
-                width,
-                height,
-            )
-            if self.screen_track:
-                self.screen_track.set_max_resolution(width, height)
-        except Exception as e:
-            logger.error(f"Error handling resolution change: {e}")
+        """Reject the legacy unprofiled presentation write.
+
+        Resolution changes alter the relay bitrate envelope.  The former
+        event has no profile sequence and therefore cannot safely mutate the
+        session policy alongside the capture size.  Current Viewers submit a
+        media-profile-change, which Signal sequences and this Host admits.
+        """
+        payload = data if isinstance(data, dict) else {}
+        logger.info(
+            "Ignoring deprecated unprofiled resolution change viewer=%s; media profile required",
+            payload.get("viewerId", "-"),
+        )
 
     def _admit_media_profile_change(self, payload, candidate_intent, next_profile):
         """Fail closed before any profile, capture, or encoder mutation."""
@@ -3671,6 +3668,7 @@ class WebRemoteHost:
                 "reopenRequired": False,
             }
         sender = getattr(self, "video_sender", None)
+        encoder = self._video_encoder()
         if policy is not None and sender is not None:
             # Lazy creation/rebuild uses the policy owned by this sender.
             sender._wrd_h264_policy = policy
@@ -3678,9 +3676,22 @@ class WebRemoteHost:
             sender._wrd_frame_trace_context = self._frame_trace_context
             if getattr(self, "screen_track", None) is not None:
                 self.screen_track._frame_trace_context = self._frame_trace_context
-            if hasattr(encoder := self._video_encoder(), "_frame_trace_context"):
+            if hasattr(encoder, "_frame_trace_context"):
                 encoder._frame_trace_context = self._frame_trace_context
-        encoder = self._video_encoder()
+            stage = getattr(encoder, "stage_policy_update", None)
+            if callable(stage) and stage(policy):
+                # A staged policy owns both its bitrate bounds and the safe
+                # next-frame codec reopen. Calling set_target_bitrate first
+                # would clamp against the old (for example 720p) policy and
+                # leave observability reporting that stale target.
+                return {
+                    "requested": bitrate_bps,
+                    "clamped": int(policy.target_bitrate_bps),
+                    "effective": int(getattr(getattr(encoder, "codec", None), "bit_rate", 0) or 0),
+                    "applied": False,
+                    "applyMode": "policy-staged",
+                    "reopenRequired": getattr(encoder, "codec", None) is not None,
+                }
         if encoder is None:
             return {
                 "requested": bitrate_bps,
