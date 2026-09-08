@@ -16,14 +16,14 @@ from h264_encoder_policy import (  # noqa: E402
 from host import WebRemoteHost  # noqa: E402
 
 
-def _intent(*, attempt="attempt-1", generation=1, path="relay", width=1280, height=720, bitrate=0):
+def _intent(*, attempt="attempt-1", generation=1, path="relay", width=1280, height=720, bitrate=0, fps=20):
     return MediaSessionIntent(
         connection_attempt_id=attempt,
         generation=generation,
         path=path,
         width=width,
         height=height,
-        target_fps=20,
+        target_fps=fps,
         requested_bitrate_bps=bitrate,
     )
 
@@ -83,6 +83,65 @@ def test_on_demand_relay_policy_leaves_direct_policy_unchanged():
     ) == (500_000, 2_500_000, 8_000_000, 100, "default")
 
 
+def test_peak_sliced_policy_uses_only_qualified_relay_resolutions():
+    relay_720 = resolve_h264_policy(
+        _intent(width=1152, height=720, bitrate=9_000_000),
+        "relay-peak-sliced-v1",
+    )
+    relay_1080 = resolve_h264_policy(
+        _intent(width=1728, height=1080),
+        "relay-peak-sliced-v1",
+    )
+    low_resolution = resolve_h264_policy(
+        _intent(width=960, height=540),
+        "relay-peak-sliced-v1",
+    )
+    unqualified_fps = resolve_h264_policy(
+        _intent(width=1152, height=720, fps=15),
+        "relay-peak-sliced-v1",
+    )
+    unqualified_resolution = resolve_h264_policy(
+        _intent(width=1600, height=900),
+        "relay-peak-sliced-v1",
+    )
+    direct = resolve_h264_policy(
+        _intent(path="direct", width=1920, height=1080),
+        "relay-peak-sliced-v1",
+    )
+
+    assert (
+        relay_720.policy_id,
+        relay_720.min_bitrate_bps,
+        relay_720.target_bitrate_bps,
+        relay_720.max_bitrate_bps,
+        relay_720.vbv_maxrate_bps,
+        relay_720.vbv_bufsize_kbits,
+        relay_720.vbv_init,
+        relay_720.preset,
+        relay_720.slice_threads,
+        relay_720.periodic_idr_frames,
+        relay_720.force_idr_option,
+    ) == (
+        "relay-peak-sliced-v1", 3_200_000, 3_200_000, 3_200_000,
+        4_800_000, 1_000, 1.0, "superfast", 2, 0, True,
+    )
+    assert (
+        relay_1080.min_bitrate_bps,
+        relay_1080.target_bitrate_bps,
+        relay_1080.max_bitrate_bps,
+        relay_1080.vbv_maxrate_bps,
+        relay_1080.vbv_bufsize_kbits,
+    ) == (5_000_000, 5_000_000, 5_000_000, 7_200_000, 1_300)
+    assert low_resolution.policy_id == "relay-on-demand-v1"
+    assert low_resolution.preset == "ultrafast"
+    assert low_resolution.slice_threads == 1
+    assert unqualified_fps.policy_id == "relay-on-demand-v1"
+    assert unqualified_fps.target_fps == 15
+    assert unqualified_resolution.policy_id == "relay-on-demand-v1"
+    assert direct.codec_name == "h264_videotoolbox"
+    assert direct.periodic_idr_frames == 40
+
+
 @pytest.mark.parametrize(
     ("intent", "expected"),
     [
@@ -102,17 +161,19 @@ def test_legacy_policy_resolves_explicit_bitrate_ranges(intent, expected):
 
 
 def test_policy_environment_fails_closed_when_v2_has_no_validated_selection():
-    assert policy_version_from_environment({}) == "relay-on-demand-v1"
+    assert policy_version_from_environment({}) == "relay-peak-sliced-v1"
+    assert policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-on-demand-v1"}) == "relay-on-demand-v1"
     assert policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-legacy-v1"}) == "relay-legacy-v1"
 
     with pytest.raises(ValueError, match="offline gate") as exc_info:
         policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-balanced-v2"})
+    assert "relay-peak-sliced-v1" in str(exc_info.value)
     assert "relay-on-demand-v1" in str(exc_info.value)
     assert "relay-legacy-v1" in str(exc_info.value)
 
     with pytest.raises(ValueError, match="WRD_RELAY_ENCODER_POLICY") as exc_info:
         policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "not-a-policy"})
-    assert "relay-on-demand-v1" in str(exc_info.value)
+    assert "relay-peak-sliced-v1" in str(exc_info.value)
 
 
 def test_host_constructor_rejects_unvalidated_v2_before_starting_host_resources(monkeypatch):

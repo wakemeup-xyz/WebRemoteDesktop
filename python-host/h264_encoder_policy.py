@@ -10,20 +10,22 @@ from typing import Callable, Mapping
 
 RELAY_LEGACY_V1 = "relay-legacy-v1"
 RELAY_ON_DEMAND_V1 = "relay-on-demand-v1"
+RELAY_PEAK_SLICED_V1 = "relay-peak-sliced-v1"
 RELAY_BALANCED_V2 = "relay-balanced-v2"
 SUPPORTED_POLICY_VERSIONS = frozenset({
     RELAY_LEGACY_V1,
     RELAY_ON_DEMAND_V1,
+    RELAY_PEAK_SLICED_V1,
     RELAY_BALANCED_V2,
 })
-DEFAULT_POLICY_VERSION = RELAY_ON_DEMAND_V1
-# The on-demand policy is the default production policy. Legacy remains an
-# explicit production rollback because it uses the former, proven encoder cost
-# envelope. Measured candidates remain resolver-only until they pass their
-# separate admission process.
-PRODUCTION_RELAY_POLICY_VERSION = RELAY_ON_DEMAND_V1
+DEFAULT_POLICY_VERSION = RELAY_PEAK_SLICED_V1
+# The peak sliced policy is the default after its fresh-codec offline gates
+# passed. On-demand and legacy remain explicit production rollbacks. The
+# balanced/superfast experiments remain resolver-only until separately admitted.
+PRODUCTION_RELAY_POLICY_VERSION = RELAY_PEAK_SLICED_V1
 PRODUCTION_RELAY_POLICY_VERSIONS = frozenset({
     PRODUCTION_RELAY_POLICY_VERSION,
+    RELAY_ON_DEMAND_V1,
     RELAY_LEGACY_V1,
 })
 
@@ -61,8 +63,8 @@ class H264SessionPolicy:
     vbv_bufsize_kbits: int | None = None
     vbv_init: float = 0.4
     force_idr_option: bool = False
-    # This is frozen to one thread for production policies. Candidates may use
-    # two or four slices only after the same raw encode and quality gates.
+    # Legacy and on-demand remain frozen to one thread. An admitted peak policy
+    # may use two slices only after the same raw encode and quality gates.
     slice_threads: int = 1
 
     def __post_init__(self) -> None:
@@ -154,6 +156,43 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
     path = str(intent.path or "auto").lower()
     relay = path == "relay"
     if relay:
+        if policy_version == RELAY_PEAK_SLICED_V1:
+            # Only the standard 20fps 720p / 1080p profile intents, including
+            # their verified 16:10 encoded counterparts, passed the complete
+            # offline matrix. Keep every other size or FPS on on-demand.
+            width, height = int(intent.width), int(intent.height)
+            qualified_720 = (width, height) in {(1152, 720), (1280, 720)}
+            qualified_1080 = (width, height) in {(1728, 1080), (1920, 1080)}
+            if int(intent.target_fps or 20) != 20 or not (qualified_720 or qualified_1080):
+                return resolve_h264_policy(intent, RELAY_ON_DEMAND_V1)
+            if qualified_1080:
+                fixed_bitrate = 5_000_000
+                vbv_maxrate_bps = 7_200_000
+                vbv_bufsize_kbits = 1_300
+            else:
+                fixed_bitrate = 3_200_000
+                vbv_maxrate_bps = 4_800_000
+                vbv_bufsize_kbits = 1_000
+            return H264SessionPolicy(
+                policy_id=policy_version,
+                codec_name="libx264",
+                target_fps=max(1, int(intent.target_fps or 20)),
+                periodic_idr_frames=0,
+                keyframe_cooldown_ms=1000,
+                min_bitrate_bps=fixed_bitrate,
+                target_bitrate_bps=fixed_bitrate,
+                max_bitrate_bps=fixed_bitrate,
+                vbv_buffer_ms=100,
+                preset="superfast",
+                profile="Baseline",
+                connection_attempt_id=intent.connection_attempt_id,
+                generation=intent.generation,
+                vbv_maxrate_bps=vbv_maxrate_bps,
+                vbv_bufsize_kbits=vbv_bufsize_kbits,
+                vbv_init=1.0,
+                force_idr_option=True,
+                slice_threads=2,
+            )
         if policy_version == RELAY_LEGACY_V1:
             minimum, target, maximum = _relay_legacy_bitrate_range(intent)
             vbv_buffer_ms = 100

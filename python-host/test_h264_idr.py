@@ -634,6 +634,54 @@ def test_real_peak_headroom_codec_uses_ffmpeg_forced_idr_and_aligned_rc_context(
     assert record.configured_rc_buffer_size_bits is None
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "bitrate", "maxrate", "bufsize"),
+    [
+        (1152, 720, 3_200_000, 4_800, 1_000),
+        (1728, 1080, 5_000_000, 7_200, 1_300),
+    ],
+)
+def test_real_peak_sliced_policy_submits_the_offline_qualified_options(
+    width,
+    height,
+    bitrate,
+    maxrate,
+    bufsize,
+):
+    import av
+    import numpy as np
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("peak-record", 1, "relay", width, height, 20, 0),
+        "relay-peak-sliced-v1",
+    )
+    frame = av.VideoFrame.from_ndarray(
+        np.zeros((48, 64, 4), dtype=np.uint8),
+        format="bgra",
+    )
+    encoder = H264VideoToolboxEncoder(policy=policy)
+    encoder._create_codec(frame, "libx264")
+    record = encoder.codec_creation_records[0]
+    options = dict(record.submitted_codec_options)
+
+    assert policy.target_fps == 20
+    assert record.configured_bitrate_bps == bitrate
+    assert record.configured_rc_max_rate_bps is None
+    assert record.configured_rc_buffer_size_bits is None
+    assert options == {
+        "preset": "superfast",
+        "tune": "zerolatency",
+        "forced-idr": "1",
+        "x264-params": (
+            "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
+            "threads=2:sliced-threads=1:slices=2:sync-lookahead=0:"
+            "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+            f"vbv-maxrate={maxrate}:vbv-bufsize={bufsize}:vbv-init=1:nal-hrd=none"
+        ),
+    }
+
+
 def _real_bgra_frame(frame_index, *, width=160, height=96):
     import av
     import numpy as np
