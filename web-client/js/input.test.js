@@ -1042,6 +1042,48 @@ test('composition submit sends one text, cancel sends none, and actions use one 
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'input.js'), 'utf8'), /setTimeout\([^)]*,\s*30\)/);
 });
 
+test('modal composition keeps one automatic send when trace observation throws', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+
+  context.Diagnostic.recordInputTrace = () => {
+    throw new Error('TRACE_OBSERVER_CANARY');
+  };
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  modalInput.value = 'observer-throw';
+  modalInput.listeners.get('compositionend')({ target: modalInput });
+
+  const textWrites = socketEvents.filter(({ event, payload }) => (
+    event === 'input' && payload.type === 'keyboard' && payload.action === 'text'
+  ));
+  assert.equal(textWrites.length, 1);
+  assert.equal(elements.get('textInputModal').hidden, true);
+  assert.equal(Input._inputTraceContext, null);
+});
+
+test('rejected modal composition retains its draft and does not replay it', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  Input.keyboardController.sendText = () => false;
+  modalInput.value = 'rejected-composition';
+  modalInput.listeners.get('compositionend')({ target: modalInput });
+
+  assert.equal(elements.get('textInputModal').hidden, false);
+  assert.equal(modalInput.value, 'rejected-composition');
+  assert.equal(socketEvents.filter(({ event, payload }) => (
+    event === 'input' && payload.type === 'keyboard' && payload.action === 'text'
+  )).length, 0);
+  assert.equal(Input._inputTraceContext, null);
+});
+
 test('mobile modifier toggles one controller key down and up without a direct WebRTC button send', () => {
   const { Input, context, socketEvents } = loadInput();
   const modifierButton = makeElement();

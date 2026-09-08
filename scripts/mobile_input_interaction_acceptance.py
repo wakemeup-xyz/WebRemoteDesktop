@@ -46,6 +46,7 @@ SCENARIO_NAMES = (
     "physical-keyup-release",
     "surface-confirmation-gate",
     "modal-context-change",
+    "modal-composition-trace",
     "collapse-reopen-context",
     "virtual-modifier-release",
     "unsupported-viewport-continuity",
@@ -1625,6 +1626,103 @@ def scenario_modal(browser: Any) -> dict[str, Any]:
                 "failureWrites": failure_settle_writes,
                 "cancelWrites": cancel_after["keyboardText"] - failure_after["keyboardText"],
                 "compositionWrites": composition_after["keyboardText"] - composition_before["keyboardText"],
+            },
+        )
+    finally:
+        fixture.close()
+
+
+def scenario_modal_composition_trace(browser: Any) -> dict[str, Any]:
+    """Trace an automatic modal composition commit through its real DOM event."""
+    fixture = OfflineFixture(
+        browser,
+        touch=False,
+        show_mobile=False,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-modal-composition'; }"
+        )
+        fixture.settle()
+        page.locator("#textInputBtn").click()
+        page.locator("#remoteTextInput").dispatch_event(
+            "compositionstart", {"bubbles": True}
+        )
+        page.locator("#remoteTextInput").fill("OFFLINE_MODAL_COMPOSITION_CANARY")
+        page.evaluate(
+            "() => { window.__offlineModalCompositionTraceStart = "
+            "Diagnostic.getInputTraceSnapshot().events.length; }"
+        )
+        before_composition = wire_counts(page)
+        page.locator("#remoteTextInput").dispatch_event(
+            "compositionend", {"bubbles": True}
+        )
+        after_composition = wire_counts(page)
+        page.wait_for_timeout(3200)
+        observed = page.evaluate(
+            """
+            () => {
+              const trace = Diagnostic.getInputTraceSnapshot();
+              const events = trace.events.slice(window.__offlineModalCompositionTraceStart || 0);
+              const sends = events.filter((event) => (
+                event.stage === 'transport-send'
+                  && event.accepted === true
+                  && event.inputType === 'keyboard'
+                  && event.action === 'text'
+              ));
+              const domIds = new Set(events
+                .filter((event) => event.stage === 'dom-received')
+                .map((event) => event.eventId));
+              const timeout = events.find((event) => (
+                event.stage === 'ack-timeout' && event.action === 'text'
+              ));
+              return {
+                sends: sends.length,
+                originatingDom: sends.length === 1
+                  && Number.isSafeInteger(sends[0].eventId)
+                  && domIds.has(sends[0].eventId),
+                timeouts: events.filter((event) => event.stage === 'ack-timeout').length,
+                incidentCount: Diagnostic._pendingInputIncidents.length,
+                hasTimeoutIncident: Diagnostic._pendingInputIncidents.some((item) => (
+                  item.reason === 'input-ack-timeout'
+                )),
+                contextCleared: Input._inputTraceContext === null,
+                modalClosed: document.getElementById('textInputModal')?.hidden === true,
+                artifactSafe: !JSON.stringify(trace).includes('OFFLINE_MODAL_COMPOSITION_CANARY'),
+                timeoutEventHasOriginatingDom: timeout
+                  && Number.isSafeInteger(timeout.eventId)
+                  && domIds.has(timeout.eventId),
+              };
+            }
+            """
+        )
+        page.locator("#textInputBtn").click()
+        page.locator("#textInputSubmitBtn").click()
+        after_submit = wire_counts(page)
+        checks = {
+            "automaticCompositionCommitsExactlyOnce": observed["sends"] == 1
+                and after_composition["keyboardText"] == before_composition["keyboardText"] + 1,
+            "compositionSendHasOriginatingDom": observed["originatingDom"],
+            "compositionTimeoutRecorded": observed["timeouts"] == 1,
+            "compositionTimeoutRetainsOriginatingDom": observed["timeoutEventHasOriginatingDom"],
+            "compositionTimeoutQueuesOneIncident": observed["incidentCount"] == 1
+                and observed["hasTimeoutIncident"],
+            "compositionContextCleared": observed["contextCleared"],
+            "compositionClosesModal": observed["modalClosed"],
+            "compositionThenSubmitDoesNotDuplicate": after_submit["keyboardText"]
+                == after_composition["keyboardText"],
+            "compositionTraceArtifactIsSafe": observed["artifactSafe"],
+        }
+        return result(
+            "modal-composition-trace",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "compositionWrites": observed["sends"],
+                "ackTimeouts": observed["timeouts"],
+                "incidents": observed["incidentCount"],
             },
         )
     finally:
@@ -4134,6 +4232,7 @@ def run_browser_suite(browser: Any) -> list[dict[str, Any]]:
         scenario_physical_keyup,
         scenario_surface_confirmation,
         scenario_modal,
+        scenario_modal_composition_trace,
         scenario_collapse_reopen,
         scenario_virtual_modifier,
         scenario_unsupported,

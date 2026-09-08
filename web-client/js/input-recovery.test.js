@@ -1146,6 +1146,52 @@ test('recovery notice distinguishes normal composition and ACK-pending drafts fr
   assert.equal(invalidated.inputs().length, beforeRetry);
 });
 
+test('modal compositionend attributes its automatic commit and timeout to the DOM event', () => {
+  const incidents = [];
+  const h = loadRecoveryFixture({
+    onIncident: (reason, identity) => incidents.push({ reason, identity }),
+  });
+  const modalButton = h.elements.get('textInputBtn');
+  const modalInput = h.elements.get('remoteTextInput');
+  const submitButton = h.elements.get('textInputSubmitBtn');
+
+  modalButton.dispatch('click');
+  modalInput.value = 'modal-composition';
+  modalInput.dispatch('compositionstart');
+  modalInput.dispatch('compositionend');
+
+  const textWrites = h.writes().filter((payload) => (
+    payload.type === 'keyboard' && payload.action === 'text'
+  ));
+  const initialTrace = h.trace.snapshot();
+  const domIds = new Set(initialTrace.events
+    .filter(({ stage }) => stage === 'dom-received')
+    .map(({ eventId }) => eventId));
+  const send = initialTrace.events.find(({ stage, action, accepted }) => (
+    stage === 'transport-send' && action === 'text' && accepted === true
+  ));
+
+  assert.equal(textWrites.length, 1);
+  assert.ok(send, 'compositionend must produce a traced text send');
+  assert.equal(Number.isSafeInteger(send.eventId), true);
+  assert.equal(domIds.has(send.eventId), true);
+  assert.equal(h.Input._inputTraceContext, null);
+
+  h.advance(3001);
+  const timedOut = h.trace.snapshot();
+  assert.equal(timedOut.counters.ackTimeoutCount, 1);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].reason, 'input-ack-timeout');
+
+  // Automatic composition closes and clears the modal. A later submit click
+  // is a new empty transaction and must not replay the prior write.
+  modalButton.dispatch('click');
+  submitButton.dispatch('click');
+  assert.equal(h.writes().filter((payload) => (
+    payload.type === 'keyboard' && payload.action === 'text'
+  )).length, 1);
+});
+
 test('keyboard UI reflects effective vetoes instead of reporting raw READY', () => {
   const uncertain = loadRecoveryFixture();
   const uncertainDisplay = uncertain.elements.get('keyInputDisplay');

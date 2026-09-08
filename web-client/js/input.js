@@ -2685,6 +2685,18 @@ const Input = {
       if (accepted) close();
       return accepted;
     };
+    const commitWithTrace = (event) => {
+      const eventId = this._beginInputTraceDom(
+        'text', 'text', 'input', event?.target || input,
+        { focusKind: 'other', remoteOperation: true },
+      );
+      return this._withInputTraceEvent(eventId, () => commit(), {
+        focusKind: 'other',
+        remoteOperation: true,
+        incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
+        clearAfter: true,
+      });
+    };
     if (!this._mobileTextInputModalBound) {
       button?.addEventListener('pointerdown', (event) => event.preventDefault?.());
       submit?.addEventListener('pointerdown', (event) => event.preventDefault?.());
@@ -2699,19 +2711,10 @@ const Input = {
       });
       submit?.addEventListener('click', (event) => {
         event.preventDefault();
-        const eventId = this._beginInputTraceDom(
-          'text', 'text', 'input', event?.target || submit,
-          { focusKind: 'other', remoteOperation: true },
-        );
-        this._withInputTraceEvent(eventId, () => commit(), {
-          focusKind: 'other',
-          remoteOperation: true,
-          incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
-          clearAfter: true,
-        });
+        commitWithTrace(event);
       });
       cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
-      input?.addEventListener('compositionend', () => commit());
+      input?.addEventListener('compositionend', (event) => commitWithTrace(event));
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
           event.preventDefault();

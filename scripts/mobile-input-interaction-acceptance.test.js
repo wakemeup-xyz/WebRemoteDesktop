@@ -42,6 +42,7 @@ test('offline acceptance CLI writes safe scenario summaries without secrets or p
     'blocked-gate-incident',
     'release-ack-loss',
     'desktop-draft-entry',
+    'modal-composition-trace',
     'browser-signal-ingestion',
     'draft-retention-exactness',
   ];
