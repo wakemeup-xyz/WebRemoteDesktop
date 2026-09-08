@@ -117,16 +117,23 @@ def test_adaptive_resolution_true_allows_size_change():
     assert host.media_profile["target_fps"] == 12
 
 
-def test_resolution_change_updates_user_size_truth():
+def test_unprofiled_resolution_change_cannot_mutate_session_policy_inputs():
     host = _make_host(1280, 720)
 
     import asyncio
     asyncio.run(
-        host.on_resolution_change({"viewerId": "viewer-1", "width": 1920, "height": 1080})
+        host.on_resolution_change({
+            "viewerId": "viewer-1",
+            "connectionAttemptId": "attempt-quality",
+            "connectionAttemptSequence": 1,
+            "generation": 1,
+            "width": 1920,
+            "height": 1080,
+        })
     )
-    assert host._user_resolution == {"width": 1920, "height": 1080}
-    assert host.media_profile["width"] == 1920
-    assert host.media_profile["height"] == 1080
+    assert host._user_resolution == {"width": 1280, "height": 720}
+    assert host.media_profile["width"] == 1280
+    assert host.media_profile["height"] == 720
 
     host.on_media_profile_change(_profile_event(host, {
         "profile": "medium",
@@ -136,9 +143,90 @@ def test_resolution_change_updates_user_size_truth():
         "videoBitrateKbps": 1400,
         "adaptiveResolution": False,
     }))
-    assert host.media_profile["width"] == 1920
-    assert host.media_profile["height"] == 1080
+    assert host.media_profile["width"] == 1280
+    assert host.media_profile["height"] == 720
     assert host.media_profile["target_fps"] == 15
+
+
+def test_profiled_resolution_change_refreshes_current_policy_and_encoder_rate_in_both_directions():
+    """A presentation write must not leave the sender on the prior rung policy."""
+
+    class FakeTrack:
+        def __init__(self):
+            self.sizes = []
+
+        def set_max_resolution(self, width, height):
+            self.sizes.append((width, height))
+
+        def apply_media_profile(self, profile):
+            self.set_max_resolution(profile["width"], profile["height"])
+            return {"sizeChanged": True}
+
+    class FakeEncoder:
+        def __init__(self):
+            self.staged = []
+            self.set_calls = []
+
+        def stage_policy_update(self, policy):
+            self.staged.append(policy)
+            return True
+
+        def set_target_bitrate(self, bitrate_bps):
+            # The next-frame policy must already be staged before a bitrate
+            # setter clamps the requested value.
+            self.set_calls.append((bitrate_bps, self.staged[-1] if self.staged else None))
+            return {
+                "requested": bitrate_bps,
+                "clamped": bitrate_bps,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "deferred",
+                "reopenRequired": False,
+            }
+
+    host = _make_host(1280, 720, attempt="attempt-quality")
+    host.media_profile["video_bitrate_kbps"] = 1800
+    host._h264_policy_version = "relay-on-demand-v1"
+    from h264_encoder_policy import MediaSessionIntent
+    host._h264_policy_provider.publish(
+        MediaSessionIntent("attempt-quality", 1, "relay", 1280, 720, 20, 1_800_000),
+        "relay-on-demand-v1",
+    )
+    track = FakeTrack()
+    encoder = FakeEncoder()
+    host.screen_track = track
+    host.video_sender = type("Sender", (), {"_encoder": encoder})()
+    host._frame_trace_context_for_policy = lambda _policy: None
+
+    current = host._h264_policy_provider.current().intent
+    envelope = {
+        "viewerId": "viewer-1",
+        "connectionAttemptId": current.connection_attempt_id,
+        "generation": current.generation,
+        "profile": "high",
+        "targetFps": 20,
+        "videoBitrateKbps": 1800,
+        "adaptiveResolution": False,
+    }
+    host.on_media_profile_change({**envelope, "profileSequence": 1, "width": 1920, "height": 1080})
+
+    updated = host._h264_policy_provider.current()
+    assert (updated.intent.width, updated.intent.height, updated.intent.profile_sequence) == (1920, 1080, 1)
+    assert updated.policy.target_bitrate_bps == 2_500_000
+    # A pending codec update must own the target. Calling the old encoder's
+    # setter first would clamp this 1080p request against the obsolete 720p
+    # policy and log the wrong effective target.
+    assert encoder.set_calls == []
+    assert encoder.staged[-1] == updated.policy
+    assert track.sizes[-1] == (1920, 1080)
+
+    host.on_media_profile_change({**envelope, "profileSequence": 2, "width": 1280, "height": 720})
+    reversed_policy = host._h264_policy_provider.current()
+    assert (reversed_policy.intent.width, reversed_policy.intent.height, reversed_policy.intent.profile_sequence) == (1280, 720, 2)
+    assert reversed_policy.policy.target_bitrate_bps == 1_800_000
+    assert encoder.set_calls == []
+    assert encoder.staged[-1] == reversed_policy.policy
+    assert track.sizes[-1] == (1280, 720)
 
 
 def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
