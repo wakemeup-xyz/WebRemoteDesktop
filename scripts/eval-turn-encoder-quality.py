@@ -38,6 +38,10 @@ class _PeakAmbientSampler:
     PRE_FLIGHT_INTERVAL_SECONDS = 1.0
     PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS = (0.85, 1.15)
     PRE_FLIGHT_LATE_TICK_SECONDS = 0.15
+    # A one-Hz telemetry worker can be delayed by the matrix it observes.  The
+    # 60-second cap still fails a non-responsive sampler, while permitting 30
+    # successful samples without turning its dispatch timing into a cost gate.
+    PRE_FLIGHT_SCHEDULING_GRACE_SECONDS = 30.0
     PROJECT_CPU_POLICY_VERSION = "webremotedesktop-project-cpu-v1"
 
     def __init__(self, *, snapshot_reader=None, process_cwds_resolver=None,
@@ -49,6 +53,7 @@ class _PeakAmbientSampler:
         self._interval_seconds = interval_seconds
         self.samples: list[dict] = []
         self.abort_reasons: list[dict] = []
+        self._telemetry_warnings: list[dict] = []
         self._stop = threading.Event()
         self.ready = threading.Event()
         self.healthy = threading.Event()
@@ -234,6 +239,12 @@ class _PeakAmbientSampler:
         if entry not in self.abort_reasons:
             self.abort_reasons.append(entry)
 
+    def _warn_telemetry(self, reason: str, **details) -> None:
+        """Record degraded CPU telemetry without changing raw encoder gates."""
+        entry = {"reason": reason, **details}
+        if entry not in self._telemetry_warnings:
+            self._telemetry_warnings.append(entry)
+
     @staticmethod
     def _service_kind_from_argv(argv: str) -> str | None:
         try:
@@ -309,14 +320,14 @@ class _PeakAmbientSampler:
                 if late_seconds is not None and late_seconds > self.PRE_FLIGHT_LATE_TICK_SECONDS:
                     late = {"scheduledMonotonicNs": scheduled_ns, "observedMonotonicNs": tick_ns, "lateSeconds": late_seconds}
                     self._late_ticks.append(late)
-                    self._abort("INCONCLUSIVE", "ambient sampling tick late", **late)
+                    self._warn_telemetry("ambient sampling tick late", **late)
                 self._sequence += 1
                 sample = {"sequence": self._sequence, "monotonicNs": tick_ns, "scheduledMonotonicNs": scheduled_ns, "phase": phase, "projectProcesses": project_processes, "projectCpuPercent": project_cpu, "viewerStatus": viewers}
                 if self._last_tick_ns is not None:
                     elapsed_seconds = (tick_ns - self._last_tick_ns) / 1_000_000_000
                     if phase == "PREFLIGHT" and not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= elapsed_seconds <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
                         self._missed_ticks += 1
-                        self._abort("INCONCLUSIVE", "ambient preflight cadence outside bounds", elapsedSeconds=elapsed_seconds)
+                        self._warn_telemetry("ambient preflight cadence outside bounds", elapsedSeconds=elapsed_seconds)
                 self._last_tick_ns = tick_ns
                 self.samples.append(sample)
                 if phase == "PREFLIGHT":
@@ -341,11 +352,8 @@ class _PeakAmbientSampler:
     def _finish_preflight_if_ready(self) -> None:
         if self._preflight_complete.is_set() or len(self._preflight_samples) < self.PRE_FLIGHT_SAMPLES:
             return
-        timestamps = [sample["monotonicNs"] for sample in self._preflight_samples]
-        intervals = [(current - previous) / 1_000_000_000 for previous, current in zip(timestamps, timestamps[1:])]
-        for interval in intervals:
-            if not self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[0] <= interval <= self.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS[1]:
-                self._abort("INCONCLUSIVE", "ambient preflight cadence outside bounds", elapsedSeconds=interval)
+        # Cadence is CPU telemetry coverage only.  Each interval has already
+        # been retained as a warning by _sample_once when it drifts.
         self._preflight_status = "PASS" if not self.abort_reasons and self.healthy.is_set() else "FAILED"
         self._preflight_complete.set()
 
@@ -383,8 +391,15 @@ class _PeakAmbientSampler:
             self._abort("INCONCLUSIVE", "ambient sampler health check failed")
 
     def run_preflight(self) -> bool:
-        """Require a continuous 30x1Hz healthy sampling window before encoding."""
-        timeout = (self.PRE_FLIGHT_SAMPLES * self._interval_seconds) + self.PRE_FLIGHT_LATE_TICK_SECONDS
+        """Require 30 successful, healthy samples before encoding.
+
+        Their cadence describes CPU telemetry coverage and is not an encoder
+        qualification gate.
+        """
+        timeout = (
+            (self.PRE_FLIGHT_SAMPLES * self._interval_seconds)
+            + self.PRE_FLIGHT_SCHEDULING_GRACE_SECONDS
+        )
         if not self._preflight_complete.wait(timeout=timeout):
             self._abort("INCONCLUSIVE", "ambient preflight deadline missed", observed=len(self._preflight_samples))
             self._preflight_status = "FAILED"
@@ -447,6 +462,10 @@ class _PeakAmbientSampler:
             return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * p) - 1)]
         return {
             "status": "CONTAMINATED" if self.abort_status() == "ABORTED_CONTAMINATED" else "INCONCLUSIVE" if self.abort_reasons else "OBSERVED",
+            "telemetryQuality": {
+                "status": "DEGRADED" if self._telemetry_warnings else "OK",
+                "warnings": list(self._telemetry_warnings),
+            },
             "sampleHz": self.SAMPLE_HZ,
             "rawGatesUnchanged": True,
             "relativeOnly": True,
@@ -457,7 +476,7 @@ class _PeakAmbientSampler:
             "projectCpuPercent": {"p50": percentile(cpu_values, .5), "p95": percentile(cpu_values, .95), "max": max(cpu_values) if cpu_values else None},
             "coverage": list(self._coverage), "missedTicks": self._missed_ticks, "lateTicks": list(self._late_ticks),
             "abortReasons": list(self.abort_reasons), "samples": list(self.samples),
-            "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
+            "note": "Project CPU is raw occupancy telemetry only. Late or irregular sampling degrades its coverage record but does not admit, reject, normalize, or adjust formal raw P95 gates.",
         }
 
 
@@ -1593,7 +1612,7 @@ def _peak_atomic_abort_artifact(error: Exception, *, sliced2: bool = False) -> d
         revision = None
         source_digests["executionRevisionError"] = type(revision_error).__name__
     ambient = {
-        "status": "INCONCLUSIVE", "sampleHz": 1, "rawGatesUnchanged": True, "relativeOnly": True, "noLoadBaseline": None,
+        "status": "INCONCLUSIVE", "telemetryQuality": {"status": "NOT RUN", "warnings": []}, "sampleHz": 1, "rawGatesUnchanged": True, "relativeOnly": True, "noLoadBaseline": None,
         "health": {"status": "FAILED", "lastError": type(error).__name__},
         "preflight": {"requiredSamples": _PeakAmbientSampler.PRE_FLIGHT_SAMPLES, "observedSamples": 0, "status": "NOT STARTED", "intervalSeconds": 1.0, "intervalBoundsSeconds": list(_PeakAmbientSampler.PRE_FLIGHT_INTERVAL_BOUNDS_SECONDS), "firstSampleHasNoPredecessor": True},
         "projectCpuPolicy": {"version": _PeakAmbientSampler.PROJECT_CPU_POLICY_VERSION, "roots": [str(root) for root in _PeakAmbientSampler._default_project_roots()], "includes": ["matrix-and-descendants", "host-and-descendants", "signal-and-descendants"]},

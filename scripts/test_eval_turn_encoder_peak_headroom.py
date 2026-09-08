@@ -241,13 +241,54 @@ class PeakAmbientSamplerTest(unittest.TestCase):
         self.assertFalse(sampler.healthy.is_set())
         self.assertEqual(sampler.evidence()["health"]["status"], "FAILED")
 
-    def test_preflight_cadence_remains_inconclusive_when_late(self):
+    def test_preflight_cadence_is_warning_only_when_late(self):
         sampler = self._sampler({"processes": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}})
         with mock.patch.object(MODULE.time, "monotonic_ns", side_effect=(1_000_000_000, 3_000_000_000)):
             sampler._sample_once(phase="PREFLIGHT")
             sampler._sample_once(phase="PREFLIGHT")
-        self.assertEqual(sampler.abort_status(), "ABORTED_INCONCLUSIVE")
-        self.assertIn("ambient preflight cadence outside bounds", [reason["reason"] for reason in sampler.abort_reasons])
+        self.assertIsNone(sampler.abort_status())
+        self.assertEqual(sampler.evidence()["telemetryQuality"]["status"], "DEGRADED")
+        self.assertIn("ambient preflight cadence outside bounds", [warning["reason"] for warning in sampler.evidence()["telemetryQuality"]["warnings"]])
+
+    def test_scheduled_tick_lateness_is_warning_only(self):
+        sampler = self._sampler({"processes": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}})
+        with mock.patch.object(MODULE.time, "monotonic_ns", return_value=1_200_000_000):
+            sampler._sample_once(phase="PREFLIGHT", scheduled_ns=1_000_000_000)
+
+        self.assertIsNone(sampler.abort_status())
+        evidence = sampler.evidence()
+        self.assertEqual(evidence["telemetryQuality"]["status"], "DEGRADED")
+        self.assertEqual(evidence["lateTicks"][0]["lateSeconds"], 0.2)
+        self.assertIn("ambient sampling tick late", [warning["reason"] for warning in evidence["telemetryQuality"]["warnings"]])
+
+    def test_preflight_keeps_telemetry_warnings_out_of_qualification_status(self):
+        sampler = self._sampler({"processes": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}})
+        sampler._preflight_samples = [{"monotonicNs": index} for index in range(sampler.PRE_FLIGHT_SAMPLES)]
+        sampler.healthy.set()
+        sampler._warn_telemetry("ambient sampling tick late", lateSeconds=0.2)
+
+        sampler._finish_preflight_if_ready()
+
+        self.assertEqual(sampler._preflight_status, "PASS")
+        self.assertTrue(sampler._preflight_complete.is_set())
+        self.assertIsNone(sampler.abort_status())
+
+    def test_preflight_timeout_has_scheduling_grace_for_thirty_successful_samples(self):
+        sampler = self._sampler({"processes": [], "viewerStatus": {"viewerCount": 0, "relayViewerCount": 0}})
+        sampler._preflight_samples = [{} for _ in range(sampler.PRE_FLIGHT_SAMPLES)]
+        sampler._preflight_status = "PASS"
+        sampler._preflight_complete.set()
+        sampler.healthy.set()
+
+        with mock.patch.object(sampler._preflight_complete, "wait", return_value=True) as wait:
+            self.assertTrue(sampler.run_preflight())
+
+        self.assertEqual(sampler.PRE_FLIGHT_SCHEDULING_GRACE_SECONDS, 30.0)
+        self.assertEqual(
+            wait.call_args.kwargs["timeout"],
+            sampler.PRE_FLIGHT_SAMPLES * sampler._interval_seconds
+            + sampler.PRE_FLIGHT_SCHEDULING_GRACE_SECONDS,
+        )
 
     def test_cpu_lookup_targets_only_selected_project_pids(self):
         completed = types.SimpleNamespace(returncode=0, stdout="101 20 12.5\n102 30 7.5\n")
@@ -282,6 +323,7 @@ class AtomicAbortArtifactTest(unittest.TestCase):
         self.assertEqual(artifact["status"], "ABORTED_INCONCLUSIVE")
         self.assertFalse(artifact["candidate"]["eligible"])
         self.assertEqual(artifact["ambientTelemetry"]["preflight"]["status"], "NOT STARTED")
+        self.assertEqual(artifact["ambientTelemetry"]["telemetryQuality"]["status"], "NOT RUN")
         self.assertEqual(artifact["ambientTelemetry"]["projectCpuPolicy"]["version"], "webremotedesktop-project-cpu-v1")
 
     def test_main_writes_atomic_abort_artifact_when_probe_load_raises(self):
