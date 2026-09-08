@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-07-input-recovery-observability-design.md`
 
+**执行状态（2026-09-08）：** 计划和主体实现已完成，开发代理为 `gpt-5.6-luna / max`。最终被审交付 `2b49d5918063ead78f0a52cc6941df0a09448de4`（实现代码 `cc9ef32915c2988215cf655f68efdcca329d1bf1`）；主线程 fresh Viewer791、Signal349+build、Python99、CLI4/4与22个场景全部通过。最终独立复审为 **7/8关闭，R4 Important/P2 未关闭，验收 FAIL**：modal `compositionend` 自动提交仍缺少 DOM/incident 关联，不能把绿测等同于完成。Task2 的入口覆盖步骤与最终验收门禁保留未勾选。具体测试、失败复现及五项 Rulings 见[最终验收裁定](../reports/2026-09-07-input-recovery-observability-acceptance.md)。main 原有 dirty 文件未动；没有合并、push、重启或现场连接。
+
+**剩余最小修正：** 在 `Input.setupMobileTextInput` 让 submit click 与 compositionend 共用真实提交归属/finally 清理，保持原自动提交和至多一次发送；先运行[保留的 RED 反例](../reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py)，补 durable 回归并转 GREEN，再验证相关 gate、draft、Terminal/旧身份排除和完整验收。按本次 SDD 一次最终修正上限，该残余已明确记录，未启动第二个修正波次；不是需求取消或质量豁免。
+
 **Baseline:** `39fa1ea`。隔离分支 `codex/input-recovery-observability`；工作树 `.worktrees/input-recovery-observability`。已重新运行基线 Viewer 离线全量，exit 0；历史探针的四个失败反例是本次 RED 场景来源，不是修复验收。
 
 ## Global Constraints
@@ -35,12 +39,12 @@ Task 1 → Task 2 → Task 3 → Task 4。共享 Input/diagnostic 接口必须�
 
 **Interfaces:** 产出 `Input.getEffectiveInputGate() -> { allowed, blockedReasons, recovery }`，`Input.requestInputRecovery({ source: 'auto'|'user' }) -> boolean`；`KeyboardTransport.getPendingReset() -> { inputId, seq, leaseEpoch, connectionAttemptId } | null`，create新增可选 `getConnectionAttemptId`（缺省返回null），在实际send时捕获reset归属。字段显式可见，不用non-enumerable属性；内部raw ID不进入getDiagnosticState。`MobileTextInput.invalidateContext(reason)` 和 `confirmEmptyContextRecovery() -> boolean`。恢复cycle和gate的语义按Spec §3，供Task 2调用。
 
-- [ ] Step 1: 从诊断反例提取可复用的真实 Input/KeyboardTransport/Controller/MobileTextInput/MediaActivityRuntime fixture，DOM/clock/transport 仅替代外部依赖。建立 RED：click未齐ACK后blur、drag取消、ACK超时、touch hidden/visible，reset确认后必须有实际新 mouse down/up 和 key down/up。两正常对照继续断言无多余复位。
-- [ ] Step 2: RED 覆盖 reset的两个ACK顺序、错误ID/seq/epoch/type、旧attempt、迟到gesture ACK、重入focus/ready不加预算、3000ms失败停止、用户重试、mouse sequence-gap reset-only重试、DC closed Socket可用/全断；同lease不能洗白已expired transport，newlease可以重新建立序号。执行 `node --test web-client/js/input-recovery.test.js`，报告预期失败断言。
-- [ ] Step 3: 实现 Spec §3：恢复 owner/cycle 使用真实 reset ID；在 Input 的focus/visible/active/DC和WebRTC lease/attempt重绑入口协调且幂等。只在安全确认后清 surface；不同身份撤销旧周期。transport 保留失效身份防止同lease绕过 reacquire；新身份清理仍按原隔离约束。
-- [ ] Step 4: lifecycle reset/park 使用 invalidateContext 保留 draft，不把普通“隐藏输入框”与“清内容”绑定。confirmEmptyContextRecovery 必须拒绝 pending/composing；真实新操作恢复与草稿不重放分开断言。保留旧失败 surface 不可直接发送文本的回归，按新“明确双reset才可解锁”补充期望，不删除安全断言。
-- [ ] Step 5: body fixed的 `inputRecoveryNotice`, `inputRecoveryRetryBtn`, `inputRecoveryDraftBtn` 实现真实按钮handler、role/status和隐藏规则；接入effective gate状态文案，桌面/mobile/fullscreen可达且不影响退出按钮和Terminal焦点。恢复失败指引现有控制操作，不自动调用夺取控制。测试点击事件带来的状态/发送结果，不只查HTML字符串。
-- [ ] Step 6: 运行 `node --test web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/mobile-text-input.test.js web-client/js/webrtc.test.js`，再运行 `node --test web-client/js/*.test.js web-client/css/*.test.js`。记录 RED/GREEN 命令、数量、实际输出、未跑物理边界；自审并提交 `fix(input): recover current-session controls after lifecycle reset`。
+- [x] Step 1: 从诊断反例提取可复用的真实 Input/KeyboardTransport/Controller/MobileTextInput/MediaActivityRuntime fixture，DOM/clock/transport 仅替代外部依赖。建立 RED：click未齐ACK后blur、drag取消、ACK超时、touch hidden/visible，reset确认后必须有实际新 mouse down/up 和 key down/up。两正常对照继续断言无多余复位。
+- [x] Step 2: RED 覆盖 reset的两个ACK顺序、错误ID/seq/epoch/type、旧attempt、迟到gesture ACK、重入focus/ready不加预算、3000ms失败停止、用户重试、mouse sequence-gap reset-only重试、DC closed Socket可用/全断；同lease不能洗白已expired transport，newlease可以重新建立序号。执行 `node --test web-client/js/input-recovery.test.js`，报告预期失败断言。
+- [x] Step 3: 实现 Spec §3：恢复 owner/cycle 使用真实 reset ID；在 Input 的focus/visible/active/DC和WebRTC lease/attempt重绑入口协调且幂等。只在安全确认后清 surface；不同身份撤销旧周期。transport 保留失效身份防止同lease绕过 reacquire；新身份清理仍按原隔离约束。
+- [x] Step 4: lifecycle reset/park 使用 invalidateContext 保留 draft，不把普通“隐藏输入框”与“清内容”绑定。confirmEmptyContextRecovery 必须拒绝 pending/composing；真实新操作恢复与草稿不重放分开断言。保留旧失败 surface 不可直接发送文本的回归，按新“明确双reset才可解锁”补充期望，不删除安全断言。
+- [x] Step 5: body fixed的 `inputRecoveryNotice`, `inputRecoveryRetryBtn`, `inputRecoveryDraftBtn` 实现真实按钮handler、role/status和隐藏规则；接入effective gate状态文案，桌面/mobile/fullscreen可达且不影响退出按钮和Terminal焦点。恢复失败指引现有控制操作，不自动调用夺取控制。测试点击事件带来的状态/发送结果，不只查HTML字符串。
+- [x] Step 6: 运行 `node --test web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/mobile-text-input.test.js web-client/js/webrtc.test.js`，再运行 `node --test web-client/js/*.test.js web-client/css/*.test.js`。记录 RED/GREEN 命令、数量、实际输出、未跑物理边界；自审并提交 `fix(input): recover current-session controls after lifecycle reset`。
 
 核心 RED 的可执行形状（`fixture()` 取自本仓诊断 `reproduce.cjs` 的真实模块fixture，复制为本测试文件的本地 helper，保留其 pointer/inputs/ack/resume/document 接口；不执行旧脚本的顶层反例）：
 
@@ -83,11 +87,11 @@ function isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
 
 **Interfaces:** 消费 Task 1 的有效gate与恢复snapshot；产出 `InputTrace.create({ now, hashInputIds, setTimeoutFn, clearTimeoutFn, onIncident }) -> { record(stage, meta), snapshot() }`（参数可选，默认环境时钟/WebCrypto/timer/noop）。record的DOM阶段返回新eventId，其他阶段返回关联eventId或null；snapshot为 `{ schemaVersion: 1, events, counters }`。最多一个deadline计时器，`onIncident(reason, { connectionAttemptId, leaseEpoch })`传有限reason和触发报文归属；core按当前身份匹配、可见/active/有权条件决定上报，旧attempt/epoch超时只留轨迹不误报新连接。Diagnostic core 暴露 `recordInputTrace(stage, meta)` 与 `getInputTraceSnapshot()`（同一 collector 不因deferred加载替换）。Input.getDiagnosticState 产出 Spec §4.2 的安全 inputState，供 Task 3 原样经严格 allowlist处理。record stage、focusKind/visibility和数值上限按Spec §4.1。
 
-- [ ] Step 1: RED 测试固定 inputIds 的已知SHA256 hash、异步回填、无crypto/摘要失败、超64待摘要、256条/64KiB/256个ACK/10秒等待上限；敏感字段用唯一金丝雀，序列化snapshot中必须完全不存在。move/wheel大量输入只能增加聚合计数，不逐条hash。
+- [x] Step 1: RED 测试固定 inputIds 的已知SHA256 hash、异步回填、无crypto/摘要失败、超64待摘要、256条/64KiB/256个ACK/10秒等待上限；敏感字段用唯一金丝雀，序列化snapshot中必须完全不存在。move/wheel大量输入只能增加聚合计数，不逐条hash。
 - [ ] Step 2: 实现独立collector。record不得等待hash或抛出影响业务的异常；snapshot不得泄漏内部raw IDs或DOM对象；哈希淘汰/失败计数明确。真实Input发送旁路记录DOM eventId→现有inputIds，keyboard与pointer/text入口覆盖，IME异步事件另设准确关联。
 - [ ] Step 3: gate接受/拒绝记录effective原因、真实transport enqueue结果（含fallback/失败）、ACK接受/拒绝/timeout、生命周期与recovery。只在真实用户输入并且媒体active/可见/有权的unexpected不确定门禁，或可靠ACK deadline触发autoSendFailure；正常draft/只读/Terminal/manual-pause不触发。不要逐move/wheel触发故障。
-- [ ] Step 4: collector 放入critical graph且早于Input，Diagnostic core晚加载handoff保持既有轨迹。测试真实gate拒绝只产生DOM+gate不产生发送；DC和Socket各实际记录正确transport，迟到ACK不伪造成功，一次失败的3000ms计时与恢复不互相刷无限重试。
-- [ ] Step 5: 运行 `node --test web-client/js/input-trace.test.js web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/diagnostic.test.js web-client/js/webrtc.test.js`，再运行Viewer全量；记录红绿与隐私/压力结果，提交 `feat(diagnostics): trace sanitized viewer input decisions`。
+- [x] Step 4: collector 放入critical graph且早于Input，Diagnostic core晚加载handoff保持既有轨迹。测试真实gate拒绝只产生DOM+gate不产生发送；DC和Socket各实际记录正确transport，迟到ACK不伪造成功，一次失败的3000ms计时与恢复不互相刷无限重试。
+- [x] Step 5: 运行 `node --test web-client/js/input-trace.test.js web-client/js/input-recovery.test.js web-client/js/input.test.js web-client/js/diagnostic.test.js web-client/js/webrtc.test.js`，再运行Viewer全量；记录红绿与隐私/压力结果，提交 `feat(diagnostics): trace sanitized viewer input decisions`。
 
 `snapshot()` 的接口为 `{ schemaVersion: 1, events, counters }`。条目包含允许的 stage/eventId/meta字段与本地相对时间；计数在counters下（包括pendingHashCount），JSON整体也受64KiB上限。固定向量测试使用真实Node WebCrypto，不用返回固定字符串的假hash：
 
@@ -125,11 +129,11 @@ test('correlates input IDs without retaining secret payload fields', async () =>
 
 **Interfaces:** 消费 Task2 的inputState/inputTrace；manual/auto `buildConnectionDiagnostic()` 都带同样安全快照；`sendLogs()` 返回/等待 `sendConnectionDiagnostic()` 的真实结果。Signal event使用logger已支持 `{ domain, event, message, correlation, meta }`；Host输出 `host_input_received / host_input_rejected / host_input_result / host_input_ack_sent`，meta包括status/appliedSeq/hash，ACK sent表达队列接受，不声称客户端收到。
 
-- [ ] Step 1: RED manual与auto都带surface/draft/effectivegate/pendingMouseReset/desktopWriteRecovery与trace；核心→deferred历史不丢。手动socket断开时只发认证HTTP，断言io未调用、不改变Viewer连接/控制状态；HTTP失败入队/消息不假报成功，cooldown/replay上限保持。
-- [ ] Step 2: 实现公共安全snapshot构建，删除临时Viewer Socket fallback。Signal对所有新nested字段枚举/数字/哈希长度/记录数/字节重新白名单裁剪，未知/恶意字段与金丝雀不得进入持久化或summary；summary默认保留安全gate/recovery和丢弃计数。
-- [ ] Step 3: RED跨语言hash fixture（相同 inputIds 给JS/Node/Python手算期望），Signal input validation/auth拒绝和relay；Host DC binding拒绝、Socket stalelease、真实adapter返回duplicate/execution-failed/applied、ACK发送false/成功都输出正确stage/status。mock在native/socket外部操作，不能mock掉待审的host.on_input或摘要函数。
-- [ ] Step 4: 实现Host/Signal安全日志。保留当前业务拒绝、reset、安全释放、ACK和seq原语义；不为未授权数据新增业务ACK。移除误导性unconditional executed成功表述，高频路径聚合。所有日志不得包含payload、键值或原始输入ID。
-- [ ] Step 5: 使用现有依赖（可给worktree单独设置NODE_PATH指向main已安装node_modules，禁止修改其内容）：`node --test web-client/js/diagnostic.test.js signal-server/test/diagnostic.test.js signal-server/websocket/signaling.test.js`；`python3 -m pytest -q python-host/test_observability.py python-host/test_connection_diagnostics.py python-host/test_input_handler.py python-host/test_remote_keyboard_state.py python-host/test_remote_desktop_write_state.py`。运行 `npm --prefix signal-server test`（构建仅worktree dist），记录完整结果；提交 `fix(diagnostics): correlate input outcomes without viewer takeover`。
+- [x] Step 1: RED manual与auto都带surface/draft/effectivegate/pendingMouseReset/desktopWriteRecovery与trace；核心→deferred历史不丢。手动socket断开时只发认证HTTP，断言io未调用、不改变Viewer连接/控制状态；HTTP失败入队/消息不假报成功，cooldown/replay上限保持。
+- [x] Step 2: 实现公共安全snapshot构建，删除临时Viewer Socket fallback。Signal对所有新nested字段枚举/数字/哈希长度/记录数/字节重新白名单裁剪，未知/恶意字段与金丝雀不得进入持久化或summary；summary默认保留安全gate/recovery和丢弃计数。
+- [x] Step 3: RED跨语言hash fixture（相同 inputIds 给JS/Node/Python手算期望），Signal input validation/auth拒绝和relay；Host DC binding拒绝、Socket stalelease、真实adapter返回duplicate/execution-failed/applied、ACK发送false/成功都输出正确stage/status。mock在native/socket外部操作，不能mock掉待审的host.on_input或摘要函数。
+- [x] Step 4: 实现Host/Signal安全日志。保留当前业务拒绝、reset、安全释放、ACK和seq原语义；不为未授权数据新增业务ACK。移除误导性unconditional executed成功表述，高频路径聚合。所有日志不得包含payload、键值或原始输入ID。
+- [x] Step 5: 使用现有依赖（可给worktree单独设置NODE_PATH指向main已安装node_modules，禁止修改其内容）：`node --test web-client/js/diagnostic.test.js signal-server/test/diagnostic.test.js signal-server/websocket/signaling.test.js`；`python3 -m pytest -q python-host/test_observability.py python-host/test_connection_diagnostics.py python-host/test_input_handler.py python-host/test_remote_keyboard_state.py python-host/test_remote_desktop_write_state.py`。运行 `npm --prefix signal-server test`（构建仅worktree dist），记录完整结果；提交 `fix(diagnostics): correlate input outcomes without viewer takeover`。
 
 跨语言固定测试向量与接收边界的RED形状：
 
@@ -172,10 +176,10 @@ inputTrace: this.getInputTraceSnapshot?.() || null,
 
 **Interfaces:** 消费全部生产模块和body恢复UI；报告记录基线SHA、分支HEAD、测试命令/结果/证据路径，区分测试级别。新脚本若有则支持 `--out PATH --browser chromium`，不读凭据、不访问网络/现场origin，不生成真实键值截图。
 
-- [ ] Step 1: 先运行既有脚本 `python3 scripts/mobile_input_interaction_acceptance.py --help`。通过真实浏览器DOM交互补上click→blur→reset ACK→resume→真实新click/keydown行为、草稿保留、失败retry按钮、无触控桌面入口、窄屏入口、原生root fullscreen入口可见且statusBar/chromeDocks仍隐藏、Terminal无焦点/按键穿透。先让当前缺失的验收断言失败，再最小完善fixture/脚本；若发现生产缺陷报告controller交回相应实现者，不在验收脚本伪造正确状态。
-- [ ] Step 2: 新/既有离线Chromium脚本全部跑到PASS；禁止只因脚本exit0就把NOT RUN判PASS。输出schema标记 offline-synthetic，必须验证scenario全执行/全部PASS、无网络请求，无敏感payload。
-- [ ] Step 3: 最终运行Viewer全量、Signal全量（含worktree构建）、Python输入/媒体/诊断回归；检查build graph与built Viewer无缺失模块。所有额外失败区分基线/新增，失败不能静默忽略。控制恢复专项测试需确实发送新的输入，而不只测active/READY。
-- [ ] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/公网/系统IME仍NOT RUN，明确尚未合main/push/restart。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
+- [x] Step 1: 先运行既有脚本 `python3 scripts/mobile_input_interaction_acceptance.py --help`。通过真实浏览器DOM交互补上click→blur→reset ACK→resume→真实新click/keydown行为、草稿保留、失败retry按钮、无触控桌面入口、窄屏入口、原生root fullscreen入口可见且statusBar/chromeDocks仍隐藏、Terminal无焦点/按键穿透。先让当前缺失的验收断言失败，再最小完善fixture/脚本；若发现生产缺陷报告controller交回相应实现者，不在验收脚本伪造正确状态。
+- [x] Step 2: 新/既有离线Chromium脚本全部跑到PASS；禁止只因脚本exit0就把NOT RUN判PASS。输出schema标记 offline-synthetic，必须验证scenario全执行/全部PASS、无网络请求，无敏感payload。
+- [x] Step 3: 最终运行Viewer全量、Signal全量（含worktree构建）、Python输入/媒体/诊断回归；检查build graph与built Viewer无缺失模块。所有额外失败区分基线/新增，失败不能静默忽略。控制恢复专项测试需确实发送新的输入，而不只测active/READY。
+- [x] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/公网/系统IME仍NOT RUN，明确尚未合main/push/restart。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
 - [ ] Step 5: 自审文档链接、隐私金丝雀与 `git diff --check`，提交 `test(input): verify recovery interaction and document diagnostics`。根线程随后做whole-branch独立review与自己的验收，保留分支等待后续集成授权。
 
 浏览器验收复用`OfflineFixture`，只以真实locator动作和实际wire副作用判定；用可触发页面click的真实事件进入root fullscreen：

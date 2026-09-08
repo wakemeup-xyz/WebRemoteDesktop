@@ -1,12 +1,54 @@
-# 输入恢复与诊断验收报告（Task 4）
+# 输入恢复与诊断验收报告
 
 日期：2026-09-08
 范围：`codex/input-recovery-observability` 的离线交互验收、当前输入恢复/诊断文档和安全证据摘要。
 基线 SHA：`39fa1eadc89b00546e2bf66f1ed1d1e6f892ca42`。
-Task 4 已提交测试实现版本（delivery commit）：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 Task 4 开始时的实现 HEAD `cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae` 为父提交。本轮仅作永久文档 provenance/link 修正，起点为 `FIX_BASE=2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`，不在自身报告中预写尚未产生的 docs-only commit hash。
+Task 4 历史交付版本：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 `cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae` 为父提交，随后 `0c05d6181df4acbd1ce82192a8af33bf9eedf748` 完成文档 provenance/link 修正。
 本报告随后记录的 ONE final fix wave（R1-R8）实现提交为：`cc9ef32915c2988215cf655f68efdcca329d1bf1`（`fix(input): close pause resume observability findings`）。该提交只包含 brief 允许的 Viewer/Signal/离线 acceptance 代码与 focused tests；本报告和 evidence 更新在该实现提交之后完成。
 
 本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划的 Task 4 锚点](../plans/2026-09-07-input-recovery-observability-plan.md#task-4-acceptance) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
+
+## 最终裁定：未通过（R4 Important/P2 未关闭）
+
+2026-09-08 主线程与独立 reviewer 对最终修正交付 `2b49d5918063ead78f0a52cc6941df0a09448de4` 的结论一致：R1、R2、R3、R5、R6、R7、R8 已关闭；R4 的 toolbar/submit click 已修，但 **文本弹窗 `compositionend` 自动提交仍缺少 originating DOM eventId，ACK timeout 不触发 incident**。`web-client/js/input.js:2714` 仍直接调用 `commit()`。这不是新发现的范围外需求，而是原 R4 的遗漏入口。
+
+因此：输入恢复主干及诊断主体已实现，规定套件均通过，但**最终验收 FAIL，不标记完成或可合并**。没有合入 main、push、重启/启动服务或 tunnel，也未读取凭据、连接现场 Viewer。主线程只读复核 main 仍为基线 `39fa1ea`，原 dirty/untracked 文件保持未动。
+
+完整审查采用 `39fa1ea..0c05d61`，一次最终修正采用 `0c05d61..2b49d59`；独立 scoped re-review 完整读取后者 1919 行，未发现新 fix-induced breakage 或范围外问题。Reviewer 实际模块探针与主线程独立 Chromium 反例均证明同一残余。按 `superpowers:subagent-driven-development` 的一次最终修正上限，本轮记录未关闭问题并保留分支/scratch，不再追加第二个修正波次；这不是将 P2 豁免为可接受完成。
+
+### 主线程独立验证
+
+下列 fresh runs 使用 `cc9ef32915c2988215cf655f68efdcca329d1bf1` 的已提交代码；已核对它到最终被审交付 `2b49d59` 仅变更两份文档，因此代码/测试版本一致。最终报告收尾也不修改生产代码。
+
+| 层级 | 基线 | 本轮主线程结果 | 边界 |
+|---|---:|---:|---|
+| Viewer Node | 718 | 791/791 PASS | 37 个 test 文件，dot 无失败/取消标记，exit 0 |
+| Signal Node + build | 339 | 349/349 PASS | 0 fail/cancel/skip，25.436s；本地 pretest build 成功 |
+| Python 输入/媒体/诊断 | 84 | 99/99 PASS | 2.78s，native/socket 外部边界替代，不是 Quartz 实效 |
+| 完整浏览器 CLI | 12 场景 | 4/4 tests，22/22 场景 PASS | 93.357s；checks 非空且全 true；network 0 |
+| 补充 modal compositionend | 未覆盖 | FAIL | 1 send / 1 timeout / 0 incident，eventId 缺失 |
+
+完整命令见下方 Required matrices；CLI 命令为 `node --test scripts/mobile-input-interaction-acceptance.test.js`，复用其一次实际浏览器运行核对 artifact，不为读取 artifact 再运行一套浏览器。
+
+主线程另外重新验证：Socket 断开/异常各一条失败 enqueue、无新 ACK waiter；五类 toolbar/submit 操作正确关联并仅生成一个 incident；合法 reset 失败原因经过 Input/trace/Signal/UI 保留；viewport veto 保留；空上下文提示非空、正常 composition 静默、失败草稿不重放；mouse/key/touch 的 release-only 丢 ACK 各为 2 sends/1 down ACK/1 timeout/1 incident；真实 blocked-gate 用户输入产生一次异常诊断且不发送；旧 cumulative ACK 不清理新 reset，双 owned ACK 后允许新输入；实际 Viewer reset 通过真实 Node/Python wire validators。
+
+本地 built graph 33 个文件、manifest 5 个 asset 均存在，InputTrace 早于 Input，critical recovery、deferred Diagnostic、Terminal FSM、body recovery UI 和单一 external script 均验证通过。此项不证明线上资产已更新。既有 STUN `fetch is not defined` 与 Signal negative-path console 是基线噪音；新 counterexample FAIL 单独列出，不以绿测覆盖。
+
+### 唯一未关闭项的可保留复现
+
+[reproduce-modal-composition.py](evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py) 复用现有 OfflineFixture，不复制浏览器 harness。它驱动实际 modal 打开、DOM compositionstart/fill/compositionend，扣留 ACK 3300ms；没有直接改生产 recovery 状态，也不取消自动提交行为。此处是 Chromium DOM 事件处理验证，**不是系统 IME 真机验收**。
+
+从仓库根目录执行：
+
+```text
+python3 docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py
+scope=offline-synthetic case=modal-compositionend
+writes=1 originatingDom=false timeouts=1 incidents=0
+contextCleared=true artifactSafe=true network.requests=0 network.sensitivePayloads=0
+exit=1
+```
+
+后续最小修正应让 submit click 与 `compositionend` 共用真实提交归属和 finally 清理，保留已有自动提交、至多一次业务发送、草稿/Terminal/旧身份排除规则；将此反例转为 GREEN 并增加对应 durable 回归，再跑受影响测试及 scoped review。不得通过删除/跳过本反例、取消自动提交或放宽 privacy/gate 来声称关闭。
 
 ## 结论与边界
 
@@ -75,7 +117,7 @@ exit=0
 | R1 failed enqueue | `root-final-enqueue-probe.py`：disconnected/throwing Socket 各 `failedEnqueues=1`，`acceptedWrites=0`、`pendingAcks=0`，emit `0/1`，无敏感 artifact；focused Input tests also cover missing/throwing DataChannel and generic mouse/command exceptions with original returns/rethrows. |
 | R2 reason/UI parity | `root-final-reason-probe.py`：真实 mouse reset `execution-failed` 的 producer/trace/Signal reason 与 UI execution explanation 均 `true`；真实 viewport veto 在 producer/receiver 均保留；新增 finite `unsupported-code`/reset-ACK mappings and suffix/object/list canaries are rejected. |
 | R3 lifecycle history | focused `input-recovery.test.js` drives real `markMediaAttemptReady` after click/ACK, repeats unchanged readiness 99 times without lifecycle flood or DOM-history eviction, then observes changed reason/attempt/state. |
-| R4 remote ownership | `root-final-remote-action-probe.py`：showDock/copy/enter/modal 各 1 write/1 timeout/1 incident，rightClick 2/2/1；每项 `originatingDom=true`、`contextCleared=true`、artifact safe，network 0。 |
+| R4 remote ownership — PARTIAL | `root-final-remote-action-probe.py`：showDock/copy/enter/modal submit 各 1 write/1 timeout/1 incident，rightClick 2/2/1；这些入口正确关联。最终新增的 actual compositionend 反例仍为 1/1/0、eventId 缺失，R4 未关闭，见最终裁定。 |
 | R5 empty context | `root-empty-context-ui-probe.py`：empty draft remains fail-closed, notice visible with `textLength=17`，retry/draft controls hidden；message is passive and does not request an unavailable button. |
 | R6 receiver drops | Signal focused tests prove 300 in → 256 out adds 44 receiver drops to client 7 (`51`), valid byte clipping increments actual drops while keeping `<256` events and `<=64 KiB`, and the counter saturates at `0x7fffffff`. |
 | R7 durable ingestion | `python3 scripts/mobile_input_interaction_acceptance.py --browser chromium --out /tmp/wrd-input-final-fix-cli-v2.json` includes a real producer→`ingestDiagnosticPayload` scenario with persistence disabled and deny-by-default network. Latest scenario: 5/5 accepted sends correlated, 18/18 trace events retained, recovery waiting/gate blocked and surface state preserved, `network.requests=0`, `sensitivePayloads=0`. |
@@ -107,10 +149,10 @@ node --test scripts/mobile-input-interaction-acceptance.test.js
 4 pass, 0 fail, 0 cancelled, exit 0
 ```
 
-The Python host suite was intentionally not rerun because this wave did not
-change Python; the previously recorded 99/99 result remains historical
-evidence. No service, tunnel, native action, live Socket, or public path was
-used.
+The final-fix implementer did not rerun unchanged Python. The primary later
+freshly ran the complete 99/99 Python matrix on the same committed code, as
+recorded in the final ruling above. No service, tunnel, native action, live
+Socket, or public path was used.
 
 ## 离线场景逐项结果
 
@@ -132,6 +174,8 @@ used.
 | `blocked-gate-incident` | PASS | toolbar `resync-required` ACK 后真实 video keydown fail-closed，无新 wire、无 draft/uncertainty，并留下 `input-gate-unexpected` |
 | `release-ack-loss` | PASS | mouse-up、physical key-up、touch-up 各 2 sends，仅 down ACK 1，release timeout 1，incident 1 |
 | `desktop-draft-entry` | PASS | non-touch desktop 初始隐藏移动 dock；实际点击固定 draft entry 后打开编辑器，保留 pending/uncertain，textWrites=0 且无额外 wire |
+| `browser-signal-ingestion` | PASS | actual click→blur/focus，5 sends/18 events 在 Signal 同数关联，waiting/gate blocked/surface 保留，禁持久化、network 0 |
+| `draft-retention-exactness` | PASS | reset 前后及取消 drain 后精确内容一致，16 batches 后无重放；仅导出布尔/计数 |
 | `layout-matrix` | PASS | 44 个矩阵页面、913 个安全布局/交互 checks 通过 |
 | `terminal-lifecycle` | PASS | Terminal 按需加载、无 admin credential 时不建 socket，切回 desktop 保持既有焦点/布局语义 |
 | `fullscreen-native-containment` | PASS | wide/narrow、带文本、Terminal、lease loss 等 root `documentElement` fullscreen containment 通过 |
@@ -236,14 +280,15 @@ This confirms graph inclusion and local build output only; it does not claim a l
 
 这份摘要保留 Task 2 report 的 RED/GREEN、review 修复顺序和边界，早期诊断反例仍以历史报告为准；不把离线/VM 结果扩展成 physical/Quartz/live 结论。
 
-## 四项 Controller Rulings（及成本）
+## Controller Rulings（按时间顺序，及成本）
 
-以下四项 Ruling 原文含义与成本均保留：
+前四项内部接口决定及其成本完整保留；第五项为最终残余问题裁定：
 
 1. Extend the internal KeyboardTransport reset seam with explicit nullable `connectionAttemptId` and a `getConnectionAttemptId` provider; do not use a non-enumerable hidden property — send-time attempt ownership is required by the spec, and the original three-field shape omitted necessary attribution; diagnostics use an explicit allowlist anyway — cost if wrong: one extra internal coupling/field to migrate, contained by contract tests and no wire change.
 2. Include safe triggering `connectionAttemptId`/`leaseEpoch` in the InputTrace `onIncident` callback and require current identity matching before auto upload — a reason-only callback cannot distinguish a previous connection's timeout from a current fault — cost if wrong: one extra internal callback argument and tests; no wire protocol or upload policy expansion.
 3. Extend Task2's allowed files to `touch-input-adapter.js` and its focused tests for diagnostic attribution only — the actual touch gesture/deferred-send owner otherwise has no way to preserve the spec-required user-event identity and reliable ACK incident eligibility — cost if wrong: an extra internal observation seam with cancellation/at-most-once test maintenance; gesture recognition, business input results and wire schema remain unchanged.
 4. Extend Task3's allowed files to InputHandler and focused tests for actual input-chain exception logging only — real Host->InputAdapter->InputHandler execution catches and logs exceptions before the new outer boundary, so its existing traceback defeats this task's end-to-end privacy requirement — cost if wrong: reduced raw-stack debugging detail and extra integration-test maintenance; native execution, results, sequencing, ACK and startup behavior must remain unchanged.
+5. Keep final R4 modal compositionend diagnostic ownership open as Important/P2 and mark final acceptance FAIL after the single final fix wave; preserve the branch and durable RED evidence without a second fix dispatch or integration — independent actual-module and Chromium probes confirm an original required entrypoint remains uncovered, and the SDD final-wave cap requires explicit residual adjudication — cost if wrong: an additional narrow follow-up is needed before delivery; this entrypoint still lacks event correlation and automatic timeout reporting, so this is not waived as acceptable completion.
 
 ## Task 4 implementation files
 
@@ -261,6 +306,6 @@ lease authorization, protocol schema or service code was changed.
 
 ## Remaining concerns / NOT RUN
 
-- The final-review R1-R8 findings are addressed by `cc9ef32915c2988215cf655f68efdcca329d1bf1`; the durable and focused evidence above supersedes the earlier deferred-Minor descriptions. Nullable hash/reason values remain unavailable when omitted/null, by design. Existing WebRTC VM `fetch is not defined` STUN fallback warnings remain baseline noise.
+- Final review closed R1/R2/R3/R5/R6/R7/R8; R4 remains Important/P2 at `2b49d59`. The green 22-scenario suite does not exercise this modal compositionend attribution failure. Final acceptance is FAIL, not complete or merge-ready. Nullable hash/reason values remain unavailable when omitted/null, by design; baseline warnings remain separately disclosed.
 - Real Android Chrome, iPhone Safari, iPad Safari, system IME/Emoji, native Quartz effect, public Viewer/tunnel, live Signal/Host recovery, watcher fault, and Terminal real PTY acceptance remain `NOT RUN`.
-- No service/tunnel/native process was started or restarted; no credentials, live URL, main checkout, dependency tree, push or merge was touched. The parent must still perform independent whole-branch review and acceptance before any integration authorization.
+- No service/tunnel/native process was started or restarted; no credentials, live URL, main checkout, dependency tree, push or merge was touched. Independent whole-branch review, one scoped re-review and primary acceptance are complete as review activities, but their final verdict is NOT PASS due to R4. The branch and this plan's audit scratch are retained for the remaining fix; integration is not authorized by this report.

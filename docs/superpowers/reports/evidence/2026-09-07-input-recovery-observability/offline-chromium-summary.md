@@ -3,7 +3,7 @@
 Date: 2026-09-08
 Scope: `offline-synthetic` only; local source fixture, no credentials, no origin, no service.
 
-Command:
+Historical Task 4 delivery command (`2ddbc15`):
 
 ```bash
 python3 scripts/mobile_input_interaction_acceptance.py --browser chromium \
@@ -33,3 +33,26 @@ Required exact outcomes included in the run:
 - mouse-up, physical key-up and touch-up release-only loss: 2 sends, 1 down ACK, 1 release timeout, 1 incident each.
 
 This summary intentionally omits raw input IDs, text, key/code, payload, coordinates, URL, credentials and browser console bundles. See the durable [Task 4 acceptance report](../../2026-09-07-input-recovery-observability-acceptance.md).
+
+## Final primary verification and remaining FAIL
+
+On implementation `cc9ef32915c2988215cf655f68efdcca329d1bf1` (reviewed delivery
+`2b49d5918063ead78f0a52cc6941df0a09448de4` changes only docs), the primary ran:
+
+```text
+node --test scripts/mobile-input-interaction-acceptance.test.js
+4 tests / 4 pass / 0 fail / 0 cancelled / 0 skipped
+duration_ms=93357.448399 exit=0
+22 scenarios, all PASS, checks nonempty and all true, network 0
+```
+
+The additional durable scenarios retain 5/5 accepted browser→Signal sends and
+18/18 events during recovery waiting/gate blocked, and prove exact draft content
+equality after reset and canceled 16-batch drain with no replay.
+
+This green suite does **not** cover the final R4 residual:
+[reproduce-modal-composition.py](reproduce-modal-composition.py) drives actual
+modal DOM compositionend and reports one send, one timeout, zero incidents and
+missing originating eventId; exit 1. The independent reviewer confirmed the
+same defect with actual modules. Final acceptance remains **FAIL / R4 P2 open**,
+not merge-ready. No physical/system IME/Quartz/live/public evidence is claimed.
