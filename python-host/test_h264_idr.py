@@ -866,6 +866,41 @@ def test_staged_policy_update_reopens_once_at_the_next_frame_boundary(monkeypatc
     assert opened == [("libx264", 1_800_000), ("libx264", 4_000_000)]
 
 
+def test_staged_1080p_resolution_policy_reopens_next_small_frame_at_its_2_5mbps_target(monkeypatch):
+    """A resolution policy applies as one next-frame codec reopen, not an old-rate setter."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy_720 = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 1_800_000),
+        "relay-on-demand-v1",
+    )
+    policy_1080 = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1920, 1080, 20, 1_800_000, 1),
+        "relay-on-demand-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy_720)
+    p_slice = bytes([0, 0, 0, 1, 0x41, 0])
+    opened = []
+
+    def fake_create(self, frame, codec_name):
+        opened.append({
+            "size": (frame.width, frame.height),
+            "bitrate": self._policy.target_bitrate_bps,
+            "policy": self._policy.policy_id,
+        })
+        return FakeCodec([p_slice], repeat=True)
+
+    monkeypatch.setattr(H264VideoToolboxEncoder, "_create_codec", fake_create)
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+    assert enc.stage_policy_update(policy_1080) is True
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert opened == [
+        {"size": (16, 16), "bitrate": 1_800_000, "policy": "relay-on-demand-v1"},
+        {"size": (16, 16), "bitrate": 2_500_000, "policy": "relay-on-demand-v1"},
+    ]
+
+
 def test_encoder_adopts_published_relay_policy(monkeypatch):
     from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
 

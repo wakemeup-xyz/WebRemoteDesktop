@@ -1759,6 +1759,26 @@ test('adaptive resolution toggle can allow profile size changes when enabled', (
   assert.equal(emitted.at(-1).payload.adaptiveResolution, true);
 });
 
+test('explicit resolution keeps the requested presentation size with adaptive resolution on or off', async () => {
+  const { LinkQualityController } = loadLinkQualityController();
+  const { WebRTC } = loadWebRTC({ LinkQualityController });
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 9 } };
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '1280x720' };
+  WebRTC.linkQualityController = LinkQualityController.create({ path: 'relay' });
+
+  WebRTC.setAdaptiveResolutionEnabled(false, { persist: false });
+  await WebRTC.requestResolution(1920, 1080);
+  assert.deepEqual([emitted.at(-1).payload.width, emitted.at(-1).payload.height], [1920, 1080]);
+
+  WebRTC.currentResolution = { width: 1280, height: 720, label: '1280x720' };
+  WebRTC.setAdaptiveResolutionEnabled(true, { persist: false });
+  await WebRTC.requestResolution(1920, 1080);
+  assert.deepEqual([emitted.at(-1).payload.width, emitted.at(-1).payload.height], [1920, 1080]);
+  assert.equal(emitted.at(-1).payload.adaptiveResolution, true);
+});
+
 test('media profile and resolution changes no-op without a lease and emit v2 envelopes when active', async () => {
   const { WebRTC } = loadWebRTC();
   const emitted = [];

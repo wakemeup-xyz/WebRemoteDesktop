@@ -544,6 +544,7 @@ function setupSignaling(io, options = {}) {
       generation: 0,
       profileSequence: 0,
       profileFingerprint: null,
+      profile: null,
     });
     return {
       ok: true,
@@ -631,6 +632,7 @@ function setupSignaling(io, options = {}) {
     }
     prior.profileSequence = sequence;
     prior.profileFingerprint = fingerprint;
+    prior.profile = { ...sanitized };
     return {
       ok: true,
       idempotent: false,
@@ -638,6 +640,47 @@ function setupSignaling(io, options = {}) {
       generation: prior.connectionAttemptSequence,
       profileSequence: sequence,
       profileGeneration: sequence,
+    };
+  }
+
+  function forwardSanitizedMediaProfile(socket, data, sanitized) {
+    const resolved = resolveProfileWrite(socket.id, data, sanitized);
+    if (!resolved.ok) {
+      emitControlEvent('media_profile_rejected', {
+        viewerId: socket.id,
+        reason: resolved.reason || 'profile-rejected',
+      });
+      socket.emit('media-profile-rejected', { reason: resolved.reason });
+      return false;
+    }
+    sanitized.connectionAttemptId = resolved.connectionAttemptId;
+    sanitized.generation = resolved.generation;
+    sanitized.profileSequence = resolved.profileSequence;
+    sanitized.profileGeneration = resolved.profileGeneration;
+    if (connections.host) {
+      connections.host.emit('media-profile-change', sanitized);
+    }
+    return true;
+  }
+
+  function legacyResolutionProfile(viewerId, width, height) {
+    const previous = mediaActivityProgress.get(viewerId)?.profile || {};
+    const is1080 = height >= 1000 || width * height >= 1920 * 1080;
+    const is720 = height >= 700 || width * height >= 1152 * 720;
+    const defaultBitrateKbps = is1080 ? 2500 : is720 ? 1800 : 1200;
+    return {
+      viewerId,
+      profile: ['high', 'medium', 'low', 'survival'].includes(previous.profile)
+        ? previous.profile
+        : 'high',
+      width,
+      height,
+      targetFps: clampInt(previous.targetFps, 5, 30, 20),
+      videoBitrateKbps: clampInt(previous.videoBitrateKbps, 250, 5000, defaultBitrateKbps),
+      reason: 'legacy-resolution-change',
+      mediaPolicy: previous.mediaPolicy === 'strict-stun' ? 'strict-stun' : 'unknown',
+      adaptiveResolution: false,
+      continuityAction: 'none',
     };
   }
 
@@ -1240,22 +1283,7 @@ function setupSignaling(io, options = {}) {
       // Every profile write derives its identity at Signal. Legacy payloads
       // receive the current binding and next profile generation; no binding is
       // rejected before anything reaches Host.
-      const resolved = resolveProfileWrite(socket.id, data, sanitized);
-      if (!resolved.ok) {
-        emitControlEvent('media_profile_rejected', {
-          viewerId: socket.id,
-          reason: resolved.reason || 'profile-rejected',
-        });
-        socket.emit('media-profile-rejected', { reason: resolved.reason });
-        return;
-      }
-      sanitized.connectionAttemptId = resolved.connectionAttemptId;
-      sanitized.generation = resolved.generation;
-      sanitized.profileSequence = resolved.profileSequence;
-      sanitized.profileGeneration = resolved.profileGeneration;
-      if (connections.host) {
-        connections.host.emit('media-profile-change', sanitized);
-      }
+      forwardSanitizedMediaProfile(socket, data, sanitized);
     });
 
     socket.on('request-keyframe', (data = {}) => {
@@ -1544,13 +1572,15 @@ function setupSignaling(io, options = {}) {
       }
       const width = clampInt(requestedWidth, 320, 1920, 960);
       const height = clampInt(requestedHeight, 180, 1080, 540);
-      if (connections.host) {
-        connections.host.emit('resolution-change', {
-          width,
-          height,
-          viewerId: socket.id
-        });
-      }
+      // Older cached Viewers use resolution-change. Convert it at Signal to
+      // the authoritative profile channel; resolveProfileWrite owns the next
+      // sequence and validates the current attempt instead of Host inventing
+      // a profile generation from an unsequenced size write.
+      forwardSanitizedMediaProfile(
+        socket,
+        data,
+        legacyResolutionProfile(socket.id, width, height),
+      );
     });
 
     socket.on('host-capabilities', (data = {}) => {

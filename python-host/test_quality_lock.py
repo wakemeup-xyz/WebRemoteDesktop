@@ -229,6 +229,48 @@ def test_profiled_resolution_change_refreshes_current_policy_and_encoder_rate_in
     assert track.sizes[-1] == (1280, 720)
 
 
+def test_staged_resolution_policy_reports_new_bound_and_old_live_effective_rate():
+    """A staged reopen must not claim its next-frame target is already live."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    class FakeEncoder:
+        codec = type("Codec", (), {"bit_rate": 1_800_000})()
+
+        def __init__(self):
+            self.staged = []
+            self.set_calls = []
+
+        def stage_policy_update(self, policy):
+            self.staged.append(policy)
+            return True
+
+        def set_target_bitrate(self, bitrate_bps):
+            self.set_calls.append(bitrate_bps)
+            raise AssertionError("old-policy setter must not run before staged reopen")
+
+    host = _make_host(1280, 720)
+    encoder = FakeEncoder()
+    host.video_sender = type("Sender", (), {"_encoder": encoder})()
+    host._frame_trace_context_for_policy = lambda _policy: None
+    policy_1080 = resolve_h264_policy(
+        MediaSessionIntent("attempt-quality", 1, "relay", 1920, 1080, 20, 1_800_000, 1),
+        "relay-on-demand-v1",
+    )
+
+    result = host._apply_encoder_bitrate_kbps(1800, policy=policy_1080)
+
+    assert result == {
+        "requested": 1_800_000,
+        "clamped": 2_500_000,
+        "effective": 1_800_000,
+        "applied": False,
+        "applyMode": "policy-staged",
+        "reopenRequired": True,
+    }
+    assert encoder.staged == [policy_1080]
+    assert encoder.set_calls == []
+
+
 def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     import asyncio
 

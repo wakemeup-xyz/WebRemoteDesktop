@@ -4466,7 +4466,14 @@ if (this.tunnelLastObjectUrl) {
     const selectedProfile = typeof LinkQualityController !== 'undefined'
       ? LinkQualityController.profiles?.[profileName]
       : null;
-    const profile = selectedProfile || {
+    const profile = selectedProfile ? {
+      ...selectedProfile,
+      // An explicit user presentation choice wins over an adaptive quality
+      // profile's source dimensions. The profile still supplies its fps/rate
+      // intent; applyMediaProfile owns the quality-lock floors.
+      width: session.width,
+      height: session.height,
+    } : {
       name: profileName,
       width: session.width,
       height: session.height,
