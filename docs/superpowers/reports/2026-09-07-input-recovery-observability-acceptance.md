@@ -8,7 +8,7 @@ Task 4 历史交付版本：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 
 
 本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划的 Task 4 锚点](../plans/2026-09-07-input-recovery-observability-plan.md#task-4-acceptance) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
 
-## 当前裁定：R4 关闭，开发及离线验收通过
+## 当前裁定：R4 关闭，已合入 main、push 并重启本地服务
 
 用户于 2026-09-08 明确要求“解决残余问题，合入main push。重启服务”，因此本次只续做此前未关闭的 R4，不重做已经接受的七项修正。`gpt-5.6-luna / max` 交付 `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`，`Input.setupTextInput` 的 submit click 与 `compositionend` 共用 `commitWithTrace`，原自动提交与业务门禁不变。
 
@@ -16,7 +16,43 @@ Task 4 历史交付版本：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 
 
 新增 durable `modal-composition-trace` 场景覆盖自动提交、send/timeout 的来源事件、只产生一份 incident、清理、关闭、后续 submit 不重放和隐私。主线程另用真实 Chromium DOM 检查立即 submit、不支持 viewport 拒绝保留草稿、观察器异常不影响单次发送、普通本地输入不发送，四项全部通过。详细命令和安全结果见 [R4 closure evidence](evidence/2026-09-07-input-recovery-observability/r4-closure-summary.md)。
 
-独立 scoped re-review（`gpt-5.6-sol / high`，依据小范围复审的模型分级）完整审查 `a00a4c4..22771b6`：**R4 ADDRESSED，无新增 Critical/Important/Minor 破坏**；主线程核对真实代码、测试版本及独立反例后接受，原八项发现全部关闭。Reviewer 注意到旧 CLI 总数门槛仍为 `>=22`；新第23项名称有独立必需断言，主线程实际核对23项全部执行，故不是 R4 遗漏或新增破坏，不扩展本次范围。尚未执行合并、push 或重启；实际集成/运行结果将在执行后记录。真机、系统 IME、Quartz、实际公网 Viewer 输入、live watcher 故障验收仍是 **NOT RUN**。
+独立 scoped re-review（`gpt-5.6-sol / high`，依据小范围复审的模型分级）完整审查 `a00a4c4..22771b6`：**R4 ADDRESSED，无新增 Critical/Important/Minor 破坏**；主线程核对真实代码、测试版本及独立反例后接受，原八项发现全部关闭。Reviewer 注意到旧 CLI 总数门槛仍为 `>=22`；新第23项名称有独立必需断言，主线程实际核对23项全部执行，故不是 R4 遗漏或新增破坏，不扩展本次范围。随后已完成下述 main 合并、push 和本地服务发布。真机、系统 IME、Quartz、实际公网 Viewer 输入、live watcher 故障验收仍是 **NOT RUN**。
+
+## main 集成与本地发布验证（2026-09-08）
+
+合并提交为 `83a9f79f5b7385706463026479e6c55ac3a7d19c`，父提交分别为原 main `39fa1eadc89b00546e2bf66f1ed1d1e6f892ca42` 和已验收分支 `c02de732aafde1c2e07b5d4ebd3f673a4ec875e5`；后者包含 R4 实现 `22771b6` 与验收文档。合并后的 tracked tree 与被审分支完全一致。`git push origin main` 成功，远端 main 已到达该合并提交；本节发布记录在其后的独立 docs-only 提交中补齐，不再改变已发布的生产代码。
+
+### 合并后主线程重新验证
+
+| 层级 | 合并后实际命令/验证 | 结果 |
+|---|---|---|
+| Viewer | `node --test --test-reporter=dot web-client/js/*.test.js web-client/css/*.test.js` | 794/794，exit 0 |
+| Signal | 在 `signal-server` 目录执行 `node --test --test-reporter=dot` | 349/349，exit 0 |
+| Build | 使用仓库导出的 `buildWebClient`，读取 main 的 `web-client`，输出到独立临时目录 | 构建成功，33 源文件/5 资源，core hash 与已审分支相同 |
+| Python | 与 R4 evidence 相同的六文件 `python3 -m pytest -q` 命令 | 99/99，2.70s，exit 0 |
+| Browser CLI | `node --test scripts/mobile-input-interaction-acceptance.test.js` | 4/4，95.802s；Chromium 23/23，checks 非空且全 true，network 0 |
+| 原始 R4 反例 | 不变的 `reproduce-modal-composition.py` | 1 send / originating DOM true / 1 timeout / 1 incident；清理与隐私通过，exit 0 |
+
+合并后没有提前在正在服务的 main 上运行 `npm test` 的 pretest 以替换线上资源：Signal 全套 Node 测试与临时输出构建分别执行，正式资源由授权的 restart-local 流程构建交付。离线测试不读取运行凭据、不连接现场 Viewer，也不调用 Quartz。CLI 的一次产物经独立解析核对，不为读取结果重复启动浏览器。
+
+### 重启与 HTTP/进程证据
+
+从 main 执行 `python3 skills/webremote-service/scripts/wrd_service.py restart-local`，exit 0；仅重启本地 Signal/Host，Host 由既有 `scripts/restart-host.sh` 管理。2026-09-08 16:07（Asia/Shanghai）后的检查结果：
+
+- Signal PID 从 `30999` 更新为 `31404`，Host 从 `31059` 更新为 `31455`；新进程 cwd 分别是 main 的 `signal-server` 和 `python-host`。旧进程已退出，唯一 overlay PID `31517` 的父进程是新 Host，无残留孤儿 overlay。
+- `/health` HTTP 200、`status=ok`；`/api/status` HTTP 200、`hostOnline=true`。服务状态命令确认两个本地进程与健康检查均正常。
+- Viewer HTML HTTP 200，引用 `assets/desktop-core.d6d92baf5dae0695.js`；实际经 HTTP 返回的五个 manifest 资源全部 200 且与 main 新构建逐字节一致。core SHA-256：`d6d92baf5dae06953af3985685fcc076ff570688f50e468ea3a27c7a05d5af47`。HTML 使用重新验证缓存策略，hash 资源使用 immutable 策略。
+- Viewer 与 Terminal admin 的登录及认证验证均 HTTP 200 且成功；仅验证角色认证，未新建 Viewer Socket、实际输入或 PTY。密码从本机运行配置读取并单独向用户交付，不写入本文或证据文件。
+- 正式入口 `https://link.stockhub.wiki` 经 `scripts/wrd_entry_health.py` 检查为 `state=deliverable`、HTTP 200、`reason=ok`；当前 safe URL 可达。此为 HTTP/服务就绪证据，**不是公网 Viewer 输入、媒体、Quartz 或 watcher 故障验收**。
+- `/tmp/wrd-safe-current-url.txt` 在前后均为 53 bytes，SHA-256 始终为 `be9045369c7a88a7cb2807b4792546c1a5f20d3a3ce7cc1ff767417e9c0ac166`。quick tunnel PID `3618` 及另一个既有 cloudflared PID `78259` 的 PID/启动时间均未变；没有停止、重启或重建任何 tunnel。
+
+helper 在已停止旧 LaunchAgent 后打印两条旧 Signal PID 的 `No such process`；以上新进程、健康和实际资源检查均通过，因此这是清理旧 PID 的非阻断提示，不是忽略启动失败。已有 Viewer 页面仍需用户刷新才能加载新 JS；服务重启不替换旧标签页内存中的代码。后续仅补文档，无需第二次重启。
+
+### 用户工作区保护
+
+main 原有 dirty 的 `docs/archive/worklogs/review-anchors.md` 保持逐字节不变，未纳入本次提交。四份原 untracked 诊断文件与待合入文件完全一致；先备份并逐字节验证，Git 因 untracked 覆盖保护拒绝第一次合并后，仅把这四份原件移入 `/tmp/wrd-main-input-preserve.8WeMbI/originals/`，再正常合并，并验证合并所得四文件与原件相同。备份及 dirty 文件副本可恢复；其余原有未跟踪证据、图片和浏览器产物未纳入提交。服务日志允许正常轮转，不宣称日志备份字节不变。
+
+本计划的 79 个 ignored 审计文件（含 scratch 排除规则）已归档至 `/tmp/wrd-main-input-preserve.8WeMbI/input-recovery-observability-audit.tar.gz`，逐文件与归档内容比对一致，且检查不含运行密码；归档 SHA-256 为 `ceb708ea513437bc9ac5f6a77df712ba1466dcab35fb8af8089741e0b2c5f1bf`。随后以普通 `git worktree remove` 和 `git branch -d` 清理本次 clean、已合并的工作树/分支；其提交保留在 main 历史，审计可从本机临时归档恢复，必要的长期安全证据与全部五项 Rulings 已留在版本化报告中。未清理其他工作树或用户产物。
 
 ## 历史裁定：上一轮未通过（R4 Important/P2）
 

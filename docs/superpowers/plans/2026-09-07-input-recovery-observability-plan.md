@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-07-input-recovery-observability-design.md`
 
-**执行状态（2026-09-08）：** 用户授权的 R4 继续修正已完成，`gpt-5.6-luna / max` 提交 `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`；独立 scoped re-review 与主线程均确认 R4 关闭，无新增破坏，原八项发现全部关闭。主线程 Viewer794、Signal349+build、Python99、CLI4/4与23个场景通过，原保留反例也由 RED 转 GREEN。此前 `2b49d59` 的 **7/8关闭、R4/P2导致 FAIL** 保留为历史事实。具体版本、测试及五项 Rulings 见[验收报告](../reports/2026-09-07-input-recovery-observability-acceptance.md)。开发/离线审查门禁通过，main 集成、push 和本地重启待下方 Task5 记录执行结果。
+**执行状态（2026-09-08）：** 用户授权的 R4 继续修正已完成，`gpt-5.6-luna / max` 提交 `22771b62ea9cbea0cc6e93cfde6a67a1622fa36e`；独立 scoped re-review 与主线程均确认 R4 关闭，无新增破坏，原八项发现全部关闭。主线程 Viewer794、Signal349+build、Python99、CLI4/4与23个场景通过，原保留反例也由 RED 转 GREEN。此前 `2b49d59` 的 **7/8关闭、R4/P2导致 FAIL** 保留为历史事实。具体版本、测试及五项 Rulings 见[验收报告](../reports/2026-09-07-input-recovery-observability-acceptance.md)。已合入并 push main（`83a9f79`），合并后完整复测通过；本地 Signal/Host 已重启，健康检查、Host 在线、新资源交付及 tunnel 地址/进程不变均已验证，Task5 完成。
 
 **已完成的最小修正：** 在 `Input.setupTextInput` 让 submit click 与 compositionend 共用真实提交归属/finally 清理，保持原自动提交和至多一次发送；先运行[保留的 RED 反例](../reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py)，补 durable 回归并转 GREEN，再验证相关 gate、draft、Terminal/旧身份排除和完整验收。上一轮按 SDD 一次最终修正上限保留该残余，并非需求取消或质量豁免；此次用户授权的继续修正已通过。
 
@@ -181,7 +181,7 @@ inputTrace: this.getInputTraceSnapshot?.() || null,
 - [x] Step 1: 先运行既有脚本 `python3 scripts/mobile_input_interaction_acceptance.py --help`。通过真实浏览器DOM交互补上click→blur→reset ACK→resume→真实新click/keydown行为、草稿保留、失败retry按钮、无触控桌面入口、窄屏入口、原生root fullscreen入口可见且statusBar/chromeDocks仍隐藏、Terminal无焦点/按键穿透。先让当前缺失的验收断言失败，再最小完善fixture/脚本；若发现生产缺陷报告controller交回相应实现者，不在验收脚本伪造正确状态。
 - [x] Step 2: 新/既有离线Chromium脚本全部跑到PASS；禁止只因脚本exit0就把NOT RUN判PASS。输出schema标记 offline-synthetic，必须验证scenario全执行/全部PASS、无网络请求，无敏感payload。
 - [x] Step 3: 最终运行Viewer全量、Signal全量（含worktree构建）、Python输入/媒体/诊断回归；检查build graph与built Viewer无缺失模块。所有额外失败区分基线/新增，失败不能静默忽略。控制恢复专项测试需确实发送新的输入，而不只测active/READY。
-- [x] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/公网/系统IME仍NOT RUN，明确尚未合main/push/restart。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
+- [x] Step 4: 文档说明现行恢复规则、用户看得懂的状态、重试/草稿按钮、诊断六阶段排查方式与DataChannel绕过Signal的事实；解释enqueued/applied/ACK/人眼效果的不同。交付报告逐项列PASS与真机/Quartz/实际公网输入/系统IME仍NOT RUN，并记录本步骤交付时尚未合main/push/restart；后续集成已由 Task5 完成。本报告与Spec/Plan相互链接，不覆盖早期诊断反例。
 - [x] Step 5: 自审文档链接、隐私金丝雀与 `git diff --check`，提交 `test(input): verify recovery interaction and document diagnostics`。根线程随后做whole-branch独立review与自己的验收；此前保留的 R4 在 Task5 用户授权继续修正后闭合，集成依新授权执行。
 
 浏览器验收复用`OfflineFixture`，只以真实locator动作和实际wire副作用判定；用可触发页面click的真实事件进入root fullscreen：
@@ -214,4 +214,4 @@ assert all(all(item["checks"].values()) for item in report["scenarios"])
 - [x] 先运行不变的 modal composition RED 探针；为自动提交、拒绝保留草稿、观察器异常/上下文清理及紧随其后的 submit 不重发建立实际入口回归。
 - [x] 最小共享提交归属 helper；保持 gate、身份、原自动提交、至多一次业务发送和隐私边界；把真实 compositionend 超时场景纳入 durable 离线套件。
 - [x] 独立审查仅覆盖 R4 与本修正引入的破坏；主线程运行原 RED、Viewer、Signal+build、Python、CLI/浏览器全量并验证安全产物。
-- [ ] 更新历史 FAIL 与本轮关闭证据；保留 main 原有 dirty/untracked 内容后合入、push，重启本地 Signal/Host，核对服务健康与 tunnel 地址/进程未变。
+- [x] 更新历史 FAIL 与本轮关闭证据；保留 main 原有 dirty/untracked 内容后合入、push，重启本地 Signal/Host，核对服务健康与 tunnel 地址/进程未变。实际合并 `83a9f79`，五项本地资源与新构建逐字节一致；服务/正式入口健康不代替真机或现场输入验收。

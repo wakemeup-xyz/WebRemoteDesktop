@@ -58,7 +58,7 @@
 
 手机、Pad 与桌面浏览器使用同一个正式 Viewer 入口：`https://link.stockhub.wiki`。移动端不会因为触控或软键盘而切换到另一套域名、端口、认证或信令协议。
 
-基本操作：单指点按/拖拽、550ms 长按右键、双指滚动；点击“移动键盘”使用本机输入法提交远端文本。虚拟复制/粘贴操作使用远端 Mac 的剪贴板。2026-09-08 输入恢复整改已补齐 modal compositionend 自动提交的事件关联和超时 incident（R4），23 场景离线恢复/诊断套件全部通过，独立复审与主线程验收结论一致；现进入用户授权的 main 集成与本地发布。部署状态、历史 FAIL 和全部证据见[输入恢复与诊断验收报告](docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)、[整改验收与剩余边界](docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)；[2026-09-05问题报告](docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)保留历史证据。真实手机/iPad、系统键盘、Quartz和实际公网 Viewer 输入仍未验收，不能据离线浏览器或服务健康宣称移动端全链路可用。
+基本操作：单指点按/拖拽、550ms 长按右键、双指滚动；点击“移动键盘”使用本机输入法提交远端文本。虚拟复制/粘贴操作使用远端 Mac 的剪贴板。2026-09-08 输入恢复整改已补齐 modal compositionend 自动提交的事件关联和超时 incident（R4），23 场景离线恢复/诊断套件全部通过，独立复审与主线程验收结论一致；已合入并 push main（`83a9f79`），本地 Signal/Host 已重启，健康检查、Host 在线及新构建资源交付通过，tunnel 保持不变。已有 Viewer 页面需刷新才能加载新代码。部署状态、历史 FAIL 和全部证据见[输入恢复与诊断验收报告](docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)、[整改验收与剩余边界](docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)；[2026-09-05问题报告](docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md)保留历史证据。真实手机/iPad、系统键盘、Quartz和实际公网 Viewer 输入仍未验收，不能据离线浏览器或服务健康宣称移动端全链路可用。
 
 - 正式对外访问：`https://link.stockhub.wiki`
 - 本机调试：`http://127.0.0.1:8080`
