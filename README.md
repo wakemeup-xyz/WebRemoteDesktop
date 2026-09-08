@@ -465,7 +465,7 @@ WebRemoteDesktop/
 - Host 已使用单调 90kHz RTP 时钟；Viewer 的 canonical FPS 是区间解码增量推导的 `derivedFps`，浏览器瞬时 FPS 只保留在诊断字段。
 - 关键帧恢复以当前 connection attempt 与 generation 作为 identity。`decodedDelta=0` 而 `receivedDelta>0` 是解码 stall 信号；同一恢复 episode 的请求受合并和冷却限制，暂停期间不触发。
 - 诊断按五秒聚合编码耗时、关键帧原因和字节数，以及 paint interval、最大 paint gap、presented-frame delta 与视频几何。没有直接实测边界的编码、RTP 发送和端到端视频耗时仍显示为 `null`，不能由 RTT 推算。
-- WRD_RELAY_ENCODER_POLICY 默认使用生产策略 relay-on-demand-v1：它保留 legacy 的 libx264 ultrafast、码率、VBV 和 FPS，只取消 20 帧周期 IDR，复用 keyint=1201 safety-net，并对显式恢复请求提交真实 forced IDR。可显式设为 relay-legacy-v1 回滚；relay-balanced-v2 及其未通过耗时门槛的 superfast 候选仍会在 Host 启动时被拒绝，不能标为通过。安全网仍会产生单次 IDR，自动化本机编码/解码通过不等于真实 TURN、Viewer、公网或物理设备验收。
+- WRD_RELAY_ENCODER_POLICY 默认使用 relay-peak-sliced-v1：已离线通过的标准 20fps 720p intent 为 1280x720 或验证的 1152x720 编码尺寸，固定 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，固定 5Mbps / 7.2Mbps / 1300kbit。两档均为 libx264 superfast、2 slice threads、keyint=1201 safety-net 和显式 forced IDR。其它分辨率或 FPS 会实际回退到 relay-on-demand-v1 ultrafast 单线程策略，不能标为 peak。可显式设为 relay-on-demand-v1 或 relay-legacy-v1 回滚；relay-balanced-v2 仍在 Host 启动时被拒绝。离线通过不等于真实 TURN、Viewer、公网、丢包或物理设备验收。
 - 采集倍率的离线结果未通过浏览器 paint 门禁，生产仍保持 target FPS 的 2 倍。真实 relay、正式公网与物理设备结果不由本节或自动化推断，保持 `NOT RUN`，等待 Task 9 和外部端验收。
 
 详细门禁和离线证据见 `docs/superpowers/reports/2026-09-05-turn-quality-latency-acceptance.md`。

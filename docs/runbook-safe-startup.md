@@ -440,7 +440,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 4. 若解码推进但画面仍不连续，查看 paint interval p50/p95/max、最大 paint gap、presented-frame delta 与视频几何。内容清晰度脉冲和页面几何抖动是两个独立问题。
 5. 未实测的编码、RTP 发送和端到端视频耗时必须保持 `null`；它们不能由 RTT、状态栏或脚本估算补齐。
 
-当前生产默认 relay-on-demand-v1，它仅取消 legacy relay 的 20 帧周期 IDR，保留 libx264 ultrafast、bitrate、VBV 与 FPS，并复用 keyint=1201 safety-net 和显式 forced IDR 恢复。环境变量可显式设置 relay-legacy-v1 回滚；Host 会在创建媒体资源前拒绝 relay-balanced-v2 及未通过耗时门槛的 superfast 候选，后者仅保留给 resolver/evaluator。安全网仍可能产生单次 IDR 质量谷，真实 TURN、正式公网和物理设备仍为 `NOT RUN`，必须另行确认无约 1Hz 脉冲、恢复正常且成本无回归；采集仍为 target FPS 的 2 倍，因为候选倍率尚未通过浏览器 paint 门禁。普通排障不得启动或重启 tunnel。
+当前生产默认 relay-peak-sliced-v1。已离线通过的标准 20fps 720p intent 为 1280x720 或 1152x720，使用 3.2Mbps、4.8Mbps VBV maxrate、1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，使用 5Mbps、7.2Mbps、1300kbit。两档均为 libx264 superfast、2 slice threads、零应用层周期 IDR、keyint=1201 safety-net 和显式 forced IDR。其它 resolution 或 FPS 会返回 relay-on-demand-v1 ultrafast 单线程 policy，不得标为 peak。环境变量可显式设置 relay-on-demand-v1 或 relay-legacy-v1 回滚；Host 会拒绝 relay-balanced-v2。离线结果不替代真实 TURN、正式公网、丢包或物理设备验收；主线程受控 rollout 后必须确认连续出画、恢复和成本，无通过证据保持 `NOT RUN`。普通排障不得启动或重启 tunnel。
 
 ### 场景：画面糊 / 秒级卡顿但 RTT 只有 ~100ms
 
