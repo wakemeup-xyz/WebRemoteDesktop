@@ -312,6 +312,43 @@ test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decis
   assert.equal(JSON.stringify(snapshot).includes('relY'), false);
 });
 
+test('repeated unchanged activity callbacks keep one lifecycle observation while state changes remain visible', () => {
+  const h = loadRecoveryFixture();
+  const lifecycleCount = () => h.trace.snapshot().events.filter(({ stage }) => stage === 'lifecycle').length;
+  const before = lifecycleCount();
+
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.writes().filter((payload) => payload.type === 'mouse').forEach((payload) => h.ack(payload));
+  const domBeforeFrames = h.trace.snapshot().events
+    .filter(({ stage }) => stage === 'dom-received').map(({ eventId }) => eventId);
+  assert.ok(domBeforeFrames.length >= 2, 'real click must establish DOM history before readiness callbacks');
+
+  h.Input.setActive(true, { reason: 'window-focus' });
+  const firstObservation = lifecycleCount();
+  h.WebRTC.markMediaAttemptReady('recovery-attempt-1');
+  const firstFrameObservation = lifecycleCount();
+  for (let index = 0; index < 99; index += 1) h.WebRTC.markMediaAttemptReady('recovery-attempt-1');
+  assert.equal(lifecycleCount(), firstFrameObservation, 'unchanged readiness must not flood lifecycle traces');
+  assert.equal(h.Input.isActive, true);
+  assert.deepEqual(
+    h.trace.snapshot().events.filter(({ stage }) => stage === 'dom-received').map(({ eventId }) => eventId),
+    domBeforeFrames,
+    'readiness callbacks must not evict the prior DOM observations',
+  );
+
+  h.Input.setActive(true, { reason: 'resume' });
+  assert.equal(lifecycleCount(), firstFrameObservation + 1, 'a changed lifecycle reason remains observable');
+  h.WebRTC.currentConnectionAttemptId = 'recovery-attempt-2';
+  h.Input.setActive(true, { reason: 'resume' });
+  assert.equal(lifecycleCount(), firstFrameObservation + 2, 'a new attempt remains observable');
+  h.Input.setActive(false, { reason: 'page-hidden', resetKeyboard: false });
+  const parked = lifecycleCount();
+  for (let index = 0; index < 30; index += 1) h.Input.setActive(false, { reason: 'page-hidden', resetKeyboard: false });
+  assert.equal(lifecycleCount(), parked, 'repeated parked callbacks must also be deduplicated');
+  assert.equal(before < firstObservation, true);
+});
+
 test('visible controlled gate rejection records an unexpected incident without a business send', () => {
   const incidents = [];
   const h = loadRecoveryFixture({ onIncident: (reason) => incidents.push(reason) });
@@ -853,7 +890,7 @@ test('both recovery ACK orders restore mobile transport before fresh textarea in
 });
 
 test('owned reset rejection ACK with a non-adjacent applied prefix fails recovery immediately', () => {
-  for (const status of ['execution-failed', 'invalid-input']) {
+  for (const status of ['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed']) {
     for (const type of ['mouse', 'keyboard']) {
       const h = loadRecoveryFixture();
       // Leave two keyboard writes unconfirmed. The next keyboard reset is

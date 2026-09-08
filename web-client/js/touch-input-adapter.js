@@ -284,21 +284,26 @@
     // leave this private latch set even after Input receives a fresh lease, so
     // expose the one state transition needed to re-arm touch delivery.
     function rearm() { resetSent = false; return true; }
-    function clickButton(button, coords) {
+    function clickButton(button, coords, traceOptions = {}) {
       if (!enabled()) return null;
       const p = coords && Number.isFinite(Number(coords.relX))
         ? { relX: Number(coords.relX), relY: Number(coords.relY) }
         : lastPoint;
       if (!p) return null;
       const b = button === 'right' || button === 2 ? 'right' : button === 'middle' || button === 1 ? 'middle' : 'left';
+      const traceEventId = Number.isSafeInteger(traceOptions?.eventId)
+        ? traceOptions.eventId : null;
+      const traceContext = {};
+      if (typeof traceOptions?.focusKind === 'string') traceContext.focusKind = traceOptions.focusKind;
+      if (traceOptions?.remoteOperation === true) traceContext.remoteOperation = true;
       let inputId = null;
-      const accepted = Boolean(traced(null, () => commitGesture(() => {
+      const accepted = Boolean(traced(traceEventId, () => commitGesture(() => {
         inputId = emit('down', { ...p, button: b, clickCount: 1, buttons: b === 'right' ? 2 : 1 }, 'button-down-failed');
         return inputId;
-      })));
+      }), traceContext));
       if (!accepted || !inputId) return null;
       activeButton = b;
-      const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed', null);
+      const up = emit('up', { ...p, button: b, clickCount: 1, buttons: 0 }, 'button-up-failed', traceEventId, traceContext);
       activeButton = null;
       return up || inputId;
     }

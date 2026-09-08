@@ -21,12 +21,14 @@ const INPUT_DIAGNOSTIC_ACK_STATUSES = new Set([
   'execution-failed', 'sequence-gap', 'resync-required', 'stale', 'reacquire-required',
 ]);
 const INPUT_DIAGNOSTIC_REASONS = new Set([
-  'no-active-control', 'manual-disconnect', 'media-not-ready-for-attempt', 'media-gate',
+  'no-active-control', 'inactive', 'viewport-unsupported', 'manual-disconnect', 'media-not-ready-for-attempt', 'media-gate',
   'surface-pending', 'surface-uncertain', 'mouse-reset-pending',
   'desktop-write-reacquire-required', 'draft-composing', 'draft-pending', 'draft-uncertain',
   'recovery-waiting', 'recovery-failed', 'keyboard-transport-blocked',
   'keyboard-transport-revoked', 'keyboard-transport-reacquire-required',
   'keyboard-reset-pending', 'keyboard-blocked', 'window-blur', 'visibility-hidden',
+  'automatic-recovery', 'user-recovery', 'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+  'mouse-reset-retry-failed', 'attempt-changed',
   'lease-changed', 'control-lost', 'context-invalidated', 'reset', 'disconnect',
   'pointer-cancel', 'lost-pointer-capture', 'unbind', 'validate-reentry', 'map-reentry',
   'nested-reset', 'outer-reset', 'test-reset', 'reacquire-required', 'transport-change',
@@ -54,6 +56,12 @@ function safeDiagnosticReason(value) {
   if (/^media-state:(active|suspended)$/.test(value)
     && INPUT_DIAGNOSTIC_MEDIA_STATES.has(value.slice('media-state:'.length))) {
     return `media-state:${value.slice('media-state:'.length)}`;
+  }
+  if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
+    return value;
+  }
+  if (/^mouse-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
+    return value;
   }
   return null;
 }
@@ -145,6 +153,7 @@ const Input = {
   _pointerDoubleClickDistancePx: 6,
   _inputTraceContext: null,
   _inputTraceFallback: null,
+  _lastActiveLifecycleObservation: null,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -247,9 +256,7 @@ const Input = {
   },
 
   sendKeyboardDataChannel(payload) {
-    if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') return false;
-    const accepted = WebRTC.sendInput(payload);
-    this._recordInputTrace('transport-send', {
+    const traceResult = (accepted) => this._recordInputTrace('transport-send', {
       inputType: 'keyboard',
       action: this._traceKeyboardAction(payload?.action),
       phase: payload?.payload?.phase,
@@ -261,26 +268,47 @@ const Input = {
       connectionAttemptId: this._currentConnectionAttemptId(),
       reliable: true,
     });
+    if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') {
+      traceResult(false);
+      return false;
+    }
+    let accepted;
+    try {
+      accepted = WebRTC.sendInput(payload);
+    } catch (error) {
+      traceResult(false);
+      throw error;
+    }
+    traceResult(accepted);
     if (accepted) this.recordLatency(payload);
     return accepted;
   },
 
   sendKeyboardSocket(payload) {
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
-    if (!socket || !socket.connected) return false;
-    socket.emit('input', payload);
-    this._recordInputTrace('transport-send', {
+    const traceResult = (accepted) => this._recordInputTrace('transport-send', {
       inputType: 'keyboard',
       action: this._traceKeyboardAction(payload?.action),
       phase: payload?.payload?.phase,
       transport: 'socket',
-      accepted: true,
+      accepted: accepted === true,
       inputIds: payload?.inputIds,
       seq: payload?.seq,
       leaseEpoch: payload?.leaseEpoch,
       connectionAttemptId: this._currentConnectionAttemptId(),
       reliable: true,
     });
+    if (!socket || !socket.connected) {
+      traceResult(false);
+      return false;
+    }
+    try {
+      socket.emit('input', payload);
+    } catch (error) {
+      traceResult(false);
+      throw error;
+    }
+    traceResult(true);
     this.recordLatency(payload);
     return true;
   },
@@ -512,12 +540,14 @@ const Input = {
   },
 
   _traceIncidentEligible(focusKind = this._inputTraceContext?.focusKind, options = {}) {
-    if (!['desktop', 'mobile-text'].includes(focusKind)
+    const remoteOperation = options.remoteOperation === true;
+    if (!remoteOperation && !['desktop', 'mobile-text'].includes(focusKind)
       || this._traceVisibility() !== 'visible'
       || this.isActive !== true
       || !this.activeControlLease) return false;
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
     if (mobile.composing === true || mobile.deliveryUncertain === true) return false;
+    if (remoteOperation) return true;
     const gate = this.getEffectiveInputGate?.() || {};
     const allowSurfacePending = options.allowSurfacePending === true;
     const blockedReasons = (gate.blockedReasons || [])
@@ -597,16 +627,20 @@ const Input = {
     const focusKind = options.focusKind || this._traceFocusKind(target);
     const visibility = this._traceVisibility();
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const remoteOperation = options.remoteOperation === true;
     const eligible = options.incidentEligible !== false
-      && ['desktop', 'mobile-text'].includes(focusKind)
+      && (remoteOperation || ['desktop', 'mobile-text'].includes(focusKind))
       && visibility === 'visible'
       && this.isActive === true
       && Boolean(this.activeControlLease)
       && mobile.composing !== true
       && mobile.deliveryUncertain !== true
-      && (options.refreshEligibility !== true || this._traceIncidentEligible(focusKind, {
-        allowSurfacePending: options.allowSurfacePending === true,
-      }));
+      && (options.refreshEligibility !== true
+        ? true
+        : this._traceIncidentEligible(focusKind, {
+          allowSurfacePending: options.allowSurfacePending === true,
+          remoteOperation,
+        }));
     this._inputTraceContext = {
       eventId: null,
       inputType,
@@ -615,6 +649,7 @@ const Input = {
       focusKind,
       visibility,
       incidentEligible: eligible,
+      ...(remoteOperation ? { remoteOperation: true } : {}),
     };
     const eventId = this._recordInputTrace('dom-received', {
       inputType, action, phase, focusKind, visibility,
@@ -634,18 +669,27 @@ const Input = {
     const inheritedFocusKind = hasFocusKind
       ? null : safeDiagnosticEnum(current.focusKind, INPUT_TRACE_FOCUS_KINDS);
     const focusKind = requestedFocusKind || inheritedFocusKind;
+    const remoteOperation = options.remoteOperation === true || current.remoteOperation === true;
+    // A mobile adapter may add an observational wrapper around an already
+    // attributed toolbar/modal action. Preserve that outer event id through
+    // the nested null-id wrapper; ordinary null-id sends remain ineligible.
+    const propagatedEventId = eventId === null && current.remoteOperation === true
+      && Number.isSafeInteger(current.eventId) ? current.eventId : eventId;
     const hasIncidentEligibility = Object.prototype.hasOwnProperty.call(options, 'incidentEligible');
     const incidentEligible = hasIncidentEligibility
       ? options.incidentEligible === true
+        || (eventId === null && current.remoteOperation === true && current.incidentEligible === true)
       : options.refreshEligibility === true
         ? this._traceIncidentEligible(focusKind, {
           allowSurfacePending: options.allowSurfacePending === true,
+          remoteOperation,
         })
         : current.incidentEligible === true;
     const traceContext = {
       ...current,
-      eventId: Number.isSafeInteger(eventId) ? eventId : null,
+      eventId: Number.isSafeInteger(propagatedEventId) ? propagatedEventId : null,
       incidentEligible,
+      ...(remoteOperation ? { remoteOperation: true } : {}),
     };
     if (focusKind) traceContext.focusKind = focusKind;
     else delete traceContext.focusKind;
@@ -1268,6 +1312,7 @@ const Input = {
       return this.mobileTextInputAdapter.runExternalAction(action, send, {
         eventId: Number.isSafeInteger(context?.eventId) ? context.eventId : null,
         ...(focusKind ? { focusKind } : {}),
+        ...(context?.remoteOperation === true ? { remoteOperation: true } : {}),
       });
     }
     let result;
@@ -1727,15 +1772,32 @@ const Input = {
     const draftBlocked = Boolean(mobile.hasPending && contextBlocked);
     const surfaceBlocked = gate.blockedReasons.includes('surface-uncertain');
     const show = waiting || failed || contextBlocked || surfaceBlocked;
+    const failedReasonMessages = {
+      'mouse-reset-send-failed': '鼠标状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'keyboard-reset-send-failed': '键盘状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'mouse-reset-retry-failed': '鼠标状态复位重试失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'recovery-timeout': '输入恢复确认超时，请点击“重试恢复”，或释放后重新获取控制。',
+      'mouse-reset-ack-stale-lease': '鼠标复位被旧控制租约拒绝，请释放后重新获取控制。',
+      'mouse-reset-ack-invalid-input': '鼠标复位输入无效，请释放后重新获取控制。',
+      'mouse-reset-ack-unsupported-code': '鼠标复位包含不支持的输入，请释放后重新获取控制。',
+      'mouse-reset-ack-execution-failed': '鼠标复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'keyboard-reset-ack-stale-lease': '键盘复位被旧控制租约拒绝，请释放后重新获取控制。',
+      'keyboard-reset-ack-invalid-input': '键盘复位输入无效，请释放后重新获取控制。',
+      'keyboard-reset-ack-unsupported-code': '键盘复位包含不支持的按键，请释放后重新获取控制。',
+      'keyboard-reset-ack-execution-failed': '键盘复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
+    };
     const message = waiting
       ? '正在安全复位输入，请稍候…'
       : failed
-        ? '输入恢复未确认，请点击“重试恢复”，或释放后重新获取控制。'
+        ? failedReasonMessages[recovery.reason]
+          || '输入恢复未确认，请点击“重试恢复”，或释放后重新获取控制。'
         : draftBlocked
           ? '本地草稿未自动发送，请打开草稿核对或放弃。'
           : surfaceBlocked
             ? '远程按键状态未确认，请重试恢复。'
-            : '';
+            : contextBlocked
+              ? '输入上下文未确认，已保持安全状态。'
+              : '';
     if (notice) {
       notice.hidden = !show;
       if (noticeText) noticeText.textContent = message;
@@ -1838,14 +1900,26 @@ const Input = {
       if (shouldResetKeyboard) this.resetKeyboard(reason);
     }
     this.isActive = next;
-    this._recordInputTrace('lifecycle', {
-      inputType: 'control',
-      action: next ? 'active' : 'inactive',
-      state: next ? 'active' : 'inactive',
-      reason: meta.reason || (next ? 'active' : 'inactive'),
-      accepted: next === true,
-      source: 'lifecycle',
-    });
+    const lifecycleReason = meta.reason || (next ? 'active' : 'inactive');
+    const lifecycleObservation = JSON.stringify([
+      next,
+      lifecycleReason,
+      this.activeControlLease?.leaseId || null,
+      Number.isInteger(this.activeControlLease?.leaseEpoch)
+        ? this.activeControlLease.leaseEpoch : null,
+      this._currentConnectionAttemptId(),
+    ]);
+    if (this._lastActiveLifecycleObservation !== lifecycleObservation) {
+      this._lastActiveLifecycleObservation = lifecycleObservation;
+      this._recordInputTrace('lifecycle', {
+        inputType: 'control',
+        action: next ? 'active' : 'inactive',
+        state: next ? 'active' : 'inactive',
+        reason: lifecycleReason,
+        accepted: next === true,
+        source: 'lifecycle',
+      });
+    }
     this.updateKeyboardUI();
     if (next) this._maybeAutoRecover('active');
   },
@@ -2016,8 +2090,25 @@ const Input = {
       });
     };
     const connectionAttemptId = this._currentConnectionAttemptId();
-    const dataChannelAccepted = typeof WebRTC !== 'undefined' && typeof WebRTC.sendInput === 'function'
-      ? Boolean(WebRTC.sendInput(data)) : false;
+    let dataChannelAccepted = false;
+    if (typeof WebRTC !== 'undefined' && typeof WebRTC.sendInput === 'function') {
+      try {
+        dataChannelAccepted = Boolean(WebRTC.sendInput(data));
+      } catch (error) {
+        this._recordInputTrace('transport-send', {
+          inputType: traceInputType,
+          action,
+          transport: 'datachannel',
+          accepted: false,
+          inputIds: data.inputIds,
+          seq: data.seq,
+          leaseEpoch: data.leaseEpoch,
+          connectionAttemptId,
+          reliable: reliableWrite,
+        });
+        throw error;
+      }
+    }
     this._recordInputTrace('transport-send', {
       inputType: traceInputType,
       action,
@@ -2036,7 +2127,22 @@ const Input = {
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
-      socket.emit('input', data);
+      try {
+        socket.emit('input', data);
+      } catch (error) {
+        this._recordInputTrace('transport-send', {
+          inputType: traceInputType,
+          action,
+          transport: 'socket',
+          accepted: false,
+          inputIds: data.inputIds,
+          seq: data.seq,
+          leaseEpoch: data.leaseEpoch,
+          connectionAttemptId,
+          reliable: reliableWrite,
+        });
+        throw error;
+      }
       this._recordInputTrace('transport-send', {
         inputType: traceInputType,
         action,
@@ -2451,6 +2557,22 @@ const Input = {
       button.addEventListener('click', (event) => {
         event.preventDefault();
         const action = button.dataset.action || button.dataset.mobileAction;
+        const chord = actions[action];
+        const traceAction = action === 'showDock' ? 'showDock'
+          : action === 'rightClick' ? 'click'
+            : chord || virtualModifiers.has(action) ? 'chord' : null;
+        if (!traceAction) return;
+        const eventId = this._beginInputTraceDom(
+          'control', traceAction, 'input', button,
+          { focusKind: 'other', remoteOperation: true },
+        );
+        const withRemoteTrace = (send) => this._withInputTraceEvent(eventId, send, {
+          focusKind: 'other',
+          remoteOperation: true,
+          incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
+          clearAfter: true,
+        });
+        withRemoteTrace(() => {
         if (virtualModifiers.has(action)) {
           const modifierName = action === 'control' ? 'ctrl' : action === 'command' ? 'meta' : action;
           const activeModifiers = this.keyboardController?.getSnapshot?.().virtualModifiers || [];
@@ -2466,11 +2588,14 @@ const Input = {
           const adapter = this._lastTouchAdapter
             || this._touchAdapters.get(this.videoElement)
             || this._touchAdapters.get(document.getElementById('relayImage'));
-          adapter?.clickButton('right');
+          adapter?.clickButton('right', undefined, {
+            eventId,
+            focusKind: 'other',
+            remoteOperation: true,
+          });
           return;
         }
         if (action === 'showDock') { this.sendInput('command', 'showDock', {}); return; }
-        const chord = actions[action];
         if (!chord) return;
         const physical = {
           shiftKey: Boolean(event.shiftKey),
@@ -2495,6 +2620,7 @@ const Input = {
           modifiers,
         }) === true);
         this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+        });
       });
     });
   },
@@ -2571,7 +2697,19 @@ const Input = {
         if (modal) modal.hidden = false;
         input?.focus();
       });
-      submit?.addEventListener('click', (event) => { event.preventDefault(); commit(); });
+      submit?.addEventListener('click', (event) => {
+        event.preventDefault();
+        const eventId = this._beginInputTraceDom(
+          'text', 'text', 'input', event?.target || submit,
+          { focusKind: 'other', remoteOperation: true },
+        );
+        this._withInputTraceEvent(eventId, () => commit(), {
+          focusKind: 'other',
+          remoteOperation: true,
+          incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
+          clearAfter: true,
+        });
+      });
       cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
       input?.addEventListener('compositionend', () => commit());
       document.addEventListener('keydown', (event) => {

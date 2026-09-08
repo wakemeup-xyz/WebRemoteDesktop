@@ -61,8 +61,9 @@ const INPUT_DIAGNOSTIC_REASONS = new Set([
   'unsupported-viewport', 'mouse-reset', 'up-send-failed', 'late-ack', 'context-invalidated',
   'input-ack-timeout', 'automatic-recovery', 'user-recovery', 'recovery-timeout',
   'mouse-reset-send-failed', 'keyboard-reset-send-failed', 'mouse-reset-retry-failed',
-  'batch-failed', 'reacquire-required', 'reset', 'active', 'inactive', 'focus', 'blur', 'pause',
-  'resume', 'draft', 'composition', 'retry', 'discard', 'surface-restore', 'input-gate-unexpected',
+  'batch-failed', 'reacquire-required', 'reset', 'keyboard-reset', 'active', 'inactive', 'blocked',
+  'revoked', 'ready', 'focus', 'blur', 'pause', 'resume', 'draft', 'composition', 'retry', 'discard',
+  'surface-restore', 'input-gate-unexpected',
   'control-lost', 'disconnect', 'unbind', 'validate-reentry', 'map-reentry', 'nested-reset',
   'outer-reset', 'test-reset', 'input-recovery-timeout', 'down-ack-timeout', 'up-ack-timeout',
   'connection-attempt-changed', 'datachannel-open', 'datachannel-close', 'datachannel-error',
@@ -101,7 +102,8 @@ function safeReason(value) {
   if (INPUT_DIAGNOSTIC_REASONS.has(value)) return value;
   if (/^runtime-phase:(active|suspending|suspended|resuming)$/.test(value)) return value;
   if (/^media-state:(active|suspended|unknown)$/.test(value)) return value;
-  if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|stale-lease)$/.test(value)) return value;
+  if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) return value;
+  if (/^mouse-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) return value;
   if (/^ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|stale-lease|unsupported-code|sequence-gap|resync-required)$/.test(value)) return value;
   return null;
 }
@@ -177,16 +179,26 @@ function redactInputTrace(inputTrace) {
     const value = safeInteger(inputTrace.counters?.[key], maximum);
     if (value !== null) counters[key] = value;
   });
-  const events = Array.isArray(inputTrace.events)
-    ? inputTrace.events.slice(-INPUT_TRACE_MAX_EVENTS).map(safeTraceEvent)
-    : [];
+  const rawEvents = Array.isArray(inputTrace.events) ? inputTrace.events : [];
+  const events = rawEvents.slice(-INPUT_TRACE_MAX_EVENTS).map(safeTraceEvent);
+  let receiverDroppedEvents = Math.max(0, rawEvents.length - events.length);
+  const clientDroppedEvents = safeInteger(inputTrace.counters?.droppedEvents) || 0;
+  const updateDroppedEvents = () => {
+    const total = clientDroppedEvents + receiverDroppedEvents;
+    counters.droppedEvents = Math.min(0x7fffffff, total);
+  };
+  if (receiverDroppedEvents > 0) updateDroppedEvents();
   const clean = {
     schemaVersion: safeInteger(inputTrace.schemaVersion, 10) || 1,
     events,
     counters,
   };
   const byteLength = () => Buffer.byteLength(JSON.stringify(clean), 'utf8');
-  while (events.length && byteLength() > INPUT_TRACE_MAX_BYTES) events.shift();
+  while (events.length && byteLength() > INPUT_TRACE_MAX_BYTES) {
+    events.shift();
+    receiverDroppedEvents += 1;
+    updateDroppedEvents();
+  }
   return clean;
 }
 

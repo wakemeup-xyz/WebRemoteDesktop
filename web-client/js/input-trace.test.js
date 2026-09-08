@@ -50,6 +50,34 @@ test('correlates input IDs without retaining secret payload fields', async () =>
   }
 });
 
+test('preserves finite reset ACK reasons and rejects suffix/object/list canaries', () => {
+  const trace = requireCollector().create({ now: () => 10 });
+  const valid = [
+    'keyboard-reset-ack-unsupported-code',
+    'mouse-reset-ack-invalid-input',
+    'ack-unsupported-code',
+    'keyboard-reset', 'blocked', 'revoked', 'ready',
+  ];
+  valid.forEach((reason) => trace.record('recovery', {
+    inputType: 'control', action: 'recovery', state: 'failed', reason,
+  }));
+  trace.record('recovery', {
+    inputType: 'control', action: 'recovery', state: 'failed',
+    reason: 'keyboard-reset-ack-unsupported-code:CANARY',
+  });
+  trace.record('recovery', {
+    inputType: 'control', action: 'recovery', state: 'failed',
+    reason: { value: 'keyboard-reset-ack-unsupported-code' },
+  });
+  trace.record('recovery', {
+    inputType: 'control', action: 'recovery', state: 'failed',
+    reason: ['keyboard-reset-ack-unsupported-code'],
+  });
+  const reasons = trace.snapshot().events.map((event) => event.reason || null);
+  assert.deepEqual(reasons.slice(0, valid.length), valid);
+  assert.deepEqual(reasons.slice(valid.length), [null, null, null]);
+});
+
 test('records hash unavailability and failed digests without blocking input tracing', async () => {
   const unavailable = requireCollector().create({
     now: () => 10,

@@ -42,8 +42,10 @@ test('offline acceptance CLI writes safe scenario summaries without secrets or p
     'blocked-gate-incident',
     'release-ack-loss',
     'desktop-draft-entry',
+    'browser-signal-ingestion',
+    'draft-retention-exactness',
   ];
-  assert.ok(artifact.scenarios.length >= 20);
+  assert.ok(artifact.scenarios.length >= 22);
   assert.deepEqual(
     requiredScenarios.every((name) => artifact.scenarios.some((scenario) => scenario.name === name)),
     true,

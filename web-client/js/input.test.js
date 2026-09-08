@@ -2448,7 +2448,7 @@ test('diagnostic input state uses bounded enums and never copies arbitrary sourc
   assert.equal(state.surface.state, 'settled');
   assert.equal(state.recovery.state, 'idle');
   assert.equal(state.gate.mediaState, null);
-  assert.deepEqual(JSON.parse(JSON.stringify(state.effectiveGate.blockedReasons)), ['no-active-control']);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.effectiveGate.blockedReasons)), ['no-active-control', 'inactive']);
 });
 
 test('diagnostic reason prefixes require an exact bounded value', () => {
@@ -2887,4 +2887,107 @@ test('video pause does not permanently disable input while media gate is active'
   context.WebRTC.canEnableDesktopInput = () => false;
   video.listeners.get('pause')();
   assert.equal(Input.isActive, false);
+});
+
+test('failed keyboard transports record one bounded failure without replaying the write', () => {
+  const { Input, context, trace } = loadInput();
+  const payload = {
+    type: 'keyboard', action: 'key', payload: { phase: 'down' },
+    inputIds: ['inp-keyboard-failure'], seq: 1, leaseEpoch: 3,
+  };
+  context.WebRTC.sendInput = undefined;
+  assert.equal(Input.sendKeyboardDataChannel(payload), false);
+  context.WebRTC.sendInput = () => { throw new Error('DATA_CHANNEL_FAILURE_CANARY'); };
+  assert.throws(() => Input.sendKeyboardDataChannel(payload), /DATA_CHANNEL_FAILURE_CANARY/);
+
+  context.WebRTC.socket = { connected: false, emit() { throw new Error('STALE_SOCKET_CANARY'); } };
+  assert.equal(Input.sendKeyboardSocket(payload), false);
+  context.WebRTC.socket = { connected: true, emit() { throw new Error('SOCKET_FAILURE_CANARY'); } };
+  assert.throws(() => Input.sendKeyboardSocket(payload), /SOCKET_FAILURE_CANARY/);
+
+  const sends = trace.snapshot().events
+    .filter(({ stage }) => stage === 'transport-send')
+    .map(({ transport, accepted }) => [transport, accepted]);
+  assert.deepEqual(JSON.parse(JSON.stringify(sends)), [
+    ['datachannel', false], ['datachannel', false],
+    ['socket', false], ['socket', false],
+  ]);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /CANARY/);
+});
+
+test('generic transport exceptions are traced before rethrow without consuming a reliable sequence', () => {
+  const { Input, context, trace } = loadInput();
+  activate(Input, context);
+  context.WebRTC.sendInput = () => { throw new Error('GENERIC_DATA_CHANNEL_CANARY'); };
+  assert.throws(() => Input.sendInput('command', 'showDock', {}), /GENERIC_DATA_CHANNEL_CANARY/);
+  assert.equal(Input._desktopWritePending.size, 0);
+
+  context.WebRTC.sendInput = () => false;
+  context.WebRTC.socket = { connected: true, emit() { throw new Error('GENERIC_SOCKET_CANARY'); } };
+  assert.throws(() => Input.sendInput('command', 'showDock', {}), /GENERIC_SOCKET_CANARY/);
+  assert.equal(Input._desktopWritePending.size, 0);
+
+  const sends = trace.snapshot().events
+    .filter(({ stage }) => stage === 'transport-send')
+    .map(({ transport, accepted }) => [transport, accepted]);
+  assert.deepEqual(JSON.parse(JSON.stringify(sends)), [
+    ['datachannel', false],
+    ['datachannel', false], ['socket', false],
+  ]);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /GENERIC_.*CANARY/);
+});
+
+test('diagnostic reason allowlist preserves bounded recovery and viewport decisions', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: false,
+    hasActiveControl: true,
+    inputIsActive: true,
+    blockedReasons: [
+      'viewport-unsupported', 'automatic-recovery', 'user-recovery',
+      'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+      'mouse-reset-retry-failed', 'attempt-changed',
+      'mouse-reset-ack-unsupported-code', 'keyboard-reset-ack-invalid-input',
+      'mouse-reset-ack-unsupported-code:UNSAFE_REASON_CANARY',
+    ],
+  });
+  Input._recoveryCycle = {
+    ...Input._recoveryCycle,
+    state: 'failed',
+    reason: 'mouse-reset-send-failed',
+    generation: 2,
+  };
+  Input.updateInputRecoveryUI();
+  const state = Input.getDiagnosticState();
+  assert.deepEqual(JSON.parse(JSON.stringify(state.gate.blockedReasons)), [
+    'viewport-unsupported', 'automatic-recovery', 'user-recovery',
+    'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+    'mouse-reset-retry-failed', 'attempt-changed',
+    'mouse-reset-ack-unsupported-code', 'keyboard-reset-ack-invalid-input',
+  ]);
+  assert.equal(state.recovery.reason, 'mouse-reset-send-failed');
+  assert.equal(elements.get('inputRecoveryNotice').hidden, false);
+  assert.ok(elements.get('inputRecoveryNoticeText').textContent.length > 0);
+  assert.doesNotMatch(JSON.stringify(state), /UNSAFE_REASON_CANARY/);
+});
+
+test('reset ACK rejection reasons remain bounded and actionable in recovery UI', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  const generic = '输入恢复未确认，请点击“重试恢复”，或释放后重新获取控制。';
+  for (const type of ['mouse', 'keyboard']) {
+    for (const status of ['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed']) {
+      Input._recoveryCycle = {
+        ...Input._recoveryCycle,
+        state: 'failed',
+        reason: `${type}-reset-ack-${status}`,
+        generation: 3,
+      };
+      Input.updateInputRecoveryUI();
+      const text = elements.get('inputRecoveryNoticeText').textContent;
+      assert.ok(text.length > 0, `${type}/${status} should be visible`);
+      assert.notEqual(text, generic, `${type}/${status} should not collapse to generic text`);
+    }
+  }
 });

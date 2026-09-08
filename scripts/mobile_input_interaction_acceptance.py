@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -60,6 +61,8 @@ SCENARIO_NAMES = (
     "blocked-gate-incident",
     "release-ack-loss",
     "desktop-draft-entry",
+    "browser-signal-ingestion",
+    "draft-retention-exactness",
 )
 
 OFFLINE_NETWORK_STATS = {
@@ -593,6 +596,131 @@ def dispatch_pending_mobile_draft(page: Any, suffix: str = "pending") -> None:
         """,
         suffix,
     )
+
+
+def ingest_browser_diagnostic(page: Any) -> dict[str, Any]:
+    """Send one real fixture snapshot through the Signal redaction boundary."""
+    payload = page.evaluate(
+        """
+        () => ({
+          schemaVersion: 2,
+          connectionAttemptId: WebRTC.currentConnectionAttemptId || null,
+          inputState: Input.getDiagnosticState(),
+          inputTrace: Diagnostic.getInputTraceSnapshot(),
+        })
+        """
+    )
+    node_program = r"""
+const fs = require('fs');
+const { ingestDiagnosticPayload } = require('./signal-server/lib/diagnostic');
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  const payload = JSON.parse(input);
+  const result = ingestDiagnosticPayload({
+    role: 'viewer',
+    viewerId: 'offline-browser-ingestion',
+    data: payload,
+    config: { enableDiagPersist: false },
+    logger: { log() {}, info() {}, warn() {}, error() {} },
+  });
+  const report = result.report || {};
+  const trace = report.inputTrace || {};
+  const events = Array.isArray(trace.events) ? trace.events : [];
+  const inputState = report.inputState;
+  const inputStateShape = inputState !== null && typeof inputState === 'object'
+    && !Array.isArray(inputState)
+    && inputState.effectiveGate !== null
+    && typeof inputState.effectiveGate === 'object'
+    && !Array.isArray(inputState.effectiveGate)
+    && inputState.surface !== null
+    && typeof inputState.surface === 'object'
+    && !Array.isArray(inputState.surface)
+    && inputState.draft !== null
+    && typeof inputState.draft === 'object'
+    && !Array.isArray(inputState.draft)
+    && inputState.recovery !== null
+    && typeof inputState.recovery === 'object'
+    && !Array.isArray(inputState.recovery);
+  const inputTraceShape = report.inputTrace !== null
+    && typeof report.inputTrace === 'object'
+    && !Array.isArray(report.inputTrace)
+    && Array.isArray(report.inputTrace.events)
+    && report.inputTrace.counters !== null
+    && typeof report.inputTrace.counters === 'object'
+    && !Array.isArray(report.inputTrace.counters);
+  const expectedSends = (payload.inputTrace?.events || []).filter((event) => (
+    event && event.stage === 'transport-send' && event.accepted === true
+  ));
+  const actualSends = events.filter((event) => (
+    event && event.stage === 'transport-send' && event.accepted === true
+  ));
+  const sendFields = [
+    'eventId', 'inputType', 'action', 'transport', 'seq', 'leaseEpoch',
+    'connectionAttemptId', 'inputIdHash', 'inputIdCount',
+  ];
+  const sendCorrelationPreserved = expectedSends.length === actualSends.length
+    && expectedSends.every((expected, index) => sendFields.every((field) => (
+      (actualSends[index][field] ?? null) === (expected[field] ?? null)
+    )));
+  const hashesSafe = events.every((event) => (
+    !Object.prototype.hasOwnProperty.call(event, 'inputIdHash')
+      || event.inputIdHash === null
+      || /^[0-9a-f]{16}$/.test(event.inputIdHash)
+  ));
+  const reasonsSafe = events.every((event) => (
+    !Object.prototype.hasOwnProperty.call(event, 'reason')
+      || event.reason === null
+      || (typeof event.reason === 'string' && event.reason.length <= 64)
+  ));
+  const summary = result.summaryEvent?.meta || {};
+  const sourceGateAllowed = payload.inputState?.effectiveGate?.allowed;
+  const sourceRecoveryState = payload.inputState?.recovery?.state;
+  const sourceSurfaceState = payload.inputState?.surface?.state;
+  process.stdout.write(JSON.stringify({
+    accepted: result.accepted === true,
+    attemptPreserved: result.connectionAttemptId === payload.connectionAttemptId,
+    inputStateRetained: inputStateShape,
+    inputTraceRetained: inputTraceShape,
+    gatePreserved: inputStateShape && inputState.effectiveGate.allowed === sourceGateAllowed,
+    recoveryPreserved: inputStateShape && inputState.recovery.state === sourceRecoveryState,
+    surfacePreserved: inputStateShape && inputState.surface.state === sourceSurfaceState,
+    summaryGatePresent: summary.inputGate !== null
+      && typeof summary.inputGate === 'object'
+      && summary.inputGate.allowed === sourceGateAllowed,
+    summaryTracePresent: summary.inputTrace !== null
+      && typeof summary.inputTrace === 'object'
+      && Number.isSafeInteger(summary.inputTrace.droppedEvents),
+    sendCorrelationPreserved,
+    acceptedSendCount: actualSends.length,
+    expectedSendCount: expectedSends.length,
+    hashesSafe,
+    reasonsSafe,
+    eventCount: events.length,
+    droppedEvents: Number.isSafeInteger(trace.counters?.droppedEvents)
+      ? trace.counters.droppedEvents : 0,
+    persisted: summary.persisted === true,
+  }));
+});
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_program],
+        cwd=REPO,
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("diagnostic ingestion helper failed")
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("diagnostic ingestion helper returned invalid summary") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("diagnostic ingestion helper returned non-object summary")
+    return parsed
 
 
 def scenario_focus(browser: Any) -> dict[str, Any]:
@@ -2619,6 +2747,176 @@ def scenario_desktop_draft_entry(browser: Any) -> dict[str, Any]:
         fixture.close()
 
 
+def scenario_browser_signal_ingestion(browser: Any) -> dict[str, Any]:
+    """Exercise the real browser producer through the Signal redaction seam."""
+    fixture = OfflineFixture(
+        browser,
+        touch=False,
+        show_mobile=False,
+        include_diagnostics=True,
+    )
+    network_before = OFFLINE_NETWORK_STATS.copy()
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-browser-ingestion'; }"
+        )
+        fixture.settle()
+        point = surface_point(page)
+        page.mouse.click(point["x"], point["y"])
+        page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        wire_writes = fixture.settle()
+        page.evaluate("() => window.dispatchEvent(new Event('focus'))")
+        page.wait_for_function(
+            "() => Diagnostic.getInputTraceSnapshot().counters.pendingHashCount === 0"
+        )
+        produced = page.evaluate(
+            """
+            () => {
+              const state = Input.getDiagnosticState();
+              const trace = Diagnostic.getInputTraceSnapshot();
+              const accepted = trace.events.filter((item) => (
+                item.stage === 'transport-send' && item.accepted === true
+              ));
+              return {
+                acceptedWrites: (globalThis.__offlineWire || []).filter((item) => (
+                  item.type === 'mouse' && item.action !== 'reset'
+                )).length,
+                acceptedSendEvents: accepted.length,
+                traceEvents: trace.events.length,
+                recoveryWaiting: state.recovery.state === 'waiting',
+                effectiveGateBlocked: state.effectiveGate.allowed === false,
+                surfaceState: state.surface.state,
+              };
+            }
+            """
+        )
+        ingested = ingest_browser_diagnostic(page)
+        checks = {
+            "realBrowserWriteProduced": wire_writes >= 2 and produced["acceptedWrites"] >= 1,
+            "recoveryWaitingAfterBlurFocus": produced["recoveryWaiting"],
+            "effectiveGateBlockedDuringRecovery": produced["effectiveGateBlocked"],
+            "signalIngestionAccepted": ingested.get("accepted") is True,
+            "attemptIdentityPreserved": ingested.get("attemptPreserved") is True,
+            "safeInputStateRetained": ingested.get("inputStateRetained") is True,
+            "safeInputTraceRetained": ingested.get("inputTraceRetained") is True,
+            "gateStatePreserved": ingested.get("gatePreserved") is True,
+            "recoveryStatePreserved": ingested.get("recoveryPreserved") is True,
+            "surfaceStatePreserved": ingested.get("surfacePreserved") is True,
+            "summaryGateAndTracePresent": ingested.get("summaryGatePresent") is True
+                and ingested.get("summaryTracePresent") is True,
+            "acceptedSendsCorrelated": ingested.get("sendCorrelationPreserved") is True
+                and ingested.get("acceptedSendCount") == produced["acceptedSendEvents"],
+            "nullableHashAndReasonAreSafe": ingested.get("hashesSafe") is True
+                and ingested.get("reasonsSafe") is True,
+            "diagnosticPersistenceDisabled": ingested.get("persisted") is False,
+            "networkDenied": OFFLINE_NETWORK_STATS["requests"] == network_before["requests"]
+                and OFFLINE_NETWORK_STATS["sensitivePayloads"] == network_before["sensitivePayloads"],
+        }
+        return result(
+            "browser-signal-ingestion",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={
+                "browserWrites": produced["acceptedWrites"],
+                "producerAcceptedSends": produced["acceptedSendEvents"],
+                "producerTraceEvents": produced["traceEvents"],
+                "ingestedAcceptedSends": int(ingested.get("acceptedSendCount", 0)),
+                "ingestedTraceEvents": int(ingested.get("eventCount", 0)),
+                "ingestedDroppedEvents": int(ingested.get("droppedEvents", 0)),
+            },
+        )
+    finally:
+        fixture.close()
+
+
+def scenario_draft_retention_exactness(browser: Any) -> dict[str, Any]:
+    """Keep the exact local draft through reset and canceled drain work."""
+    fixture = OfflineFixture(
+        browser,
+        touch=True,
+        show_mobile=True,
+        include_diagnostics=True,
+    )
+    page = fixture.page
+    try:
+        page.evaluate(
+            "() => { WebRTC.currentConnectionAttemptId = 'offline-draft-retention'; }"
+        )
+        fixture.settle()
+        dispatch_mobile_input(page, "retainedabcdefghijklmnopqrst")
+        fixture.settle()
+        probe = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const adapter = Input.mobileTextInputAdapter;
+              const countBatches = () => (globalThis.__offlineWire || [])
+                .filter((item) => item.type === 'keyboard' && item.action === 'batch').length;
+              const batchesBeforeDeletion = countBatches();
+              const content = input.value.replaceAll('\u200b', '');
+              input.value = `${content.slice(0, -20)}\u200b`;
+              input.dispatchEvent(new InputEvent('input', {
+                bubbles: true, inputType: 'deleteContentBackward',
+              }));
+              const beforeReset = input.value;
+              const beforeBatchCount = countBatches();
+              const pendingBeforeReset = adapter.getSnapshot().hasPending === true;
+              const resetAccepted = Input.resetKeyboard('offline-draft-retention') === true;
+              globalThis.__offlineDraftRetention = {
+                value: beforeReset,
+                batchCount: beforeBatchCount,
+                deletionBatchCount: beforeBatchCount - batchesBeforeDeletion,
+              };
+              return {
+                pendingBeforeReset,
+                resetAccepted,
+                sameAfterReset: input.value === beforeReset,
+                batchesBeforeReset: beforeBatchCount,
+                deletionBatchCount: beforeBatchCount - batchesBeforeDeletion,
+              };
+            }
+            """
+        )
+        fixture.settle()
+        wait_frames(page, 4)
+        after = page.evaluate(
+            """
+            () => {
+              const input = document.getElementById('mobileTextInput');
+              const adapter = Input.mobileTextInputAdapter;
+              const batchCount = (globalThis.__offlineWire || [])
+                .filter((item) => item.type === 'keyboard' && item.action === 'batch').length;
+              const retained = globalThis.__offlineDraftRetention || {};
+              return {
+                sameAfterCanceledDeferredCallback: input.value === retained.value,
+                noDeferredReplay: batchCount === retained.batchCount,
+                pendingRetained: adapter.getSnapshot().hasPending === true,
+                uncertaintyRetained: adapter.getSnapshot().deliveryUncertain === true,
+                batchCount,
+              };
+            }
+            """
+        )
+        checks = {
+            "draftPendingBeforeReset": probe["pendingBeforeReset"],
+            "resetAccepted": probe["resetAccepted"],
+            "exactDraftAfterReset": probe["sameAfterReset"],
+            "exactDraftAfterCanceledDeferredCallback": after["sameAfterCanceledDeferredCallback"],
+            "canceledDeferredCallbackDoesNotReplay": after["noDeferredReplay"],
+            "draftRemainsFailClosed": after["pendingRetained"] and after["uncertaintyRetained"],
+            "deferredDrainWasExercised": probe["deletionBatchCount"] >= 1,
+        }
+        return result(
+            "draft-retention-exactness",
+            "PASS" if all(checks.values()) else "FAIL",
+            checks=checks,
+            counts={"deletionBatches": probe["deletionBatchCount"]},
+        )
+    finally:
+        fixture.close()
+
+
 def geometry_page(
     browser: Any,
     width: int,
@@ -3847,6 +4145,8 @@ def run_browser_suite(browser: Any) -> list[dict[str, Any]]:
         scenario_blocked_gate_incident,
         scenario_release_ack_loss,
         scenario_desktop_draft_entry,
+        scenario_browser_signal_ingestion,
+        scenario_draft_retention_exactness,
         scenario_layout_matrix,
         scenario_terminal_lifecycle,
         scenario_fullscreen_native,

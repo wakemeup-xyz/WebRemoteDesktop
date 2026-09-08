@@ -365,3 +365,20 @@ test('explicit right click commits its real down through the navigation gate', (
   assert.equal(commits, 2, 'tap and explicit right click each commit one real down');
   assert.deepEqual(h.mouse.map(({action}) => action), ['down', 'up']);
 });
+
+test('explicit right click carries one originating event id across both physical sends', () => {
+  const calls = [];
+  const h = makeTouchHarness({
+    withTraceEvent(eventId, send) {
+      calls.push(eventId);
+      return send();
+    },
+  });
+  h.pointer('pointerdown', { pointerId: 1, clientX: 80, clientY: 60, buttons: 1 });
+  h.pointer('pointerup', { pointerId: 1, clientX: 80, clientY: 60, buttons: 0 });
+  h.mouse.length = 0;
+  calls.length = 0;
+  h.adapter.clickButton('right', undefined, { eventId: 73 });
+  assert.deepEqual(h.mouse.map(({ action }) => action), ['down', 'up']);
+  assert.deepEqual(calls.filter((eventId) => Number.isSafeInteger(eventId)), [73, 73]);
+});

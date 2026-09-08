@@ -54,8 +54,9 @@
     'unsupported-viewport', 'mouse-reset', 'up-send-failed', 'late-ack', 'context-invalidated',
     'input-ack-timeout', 'automatic-recovery', 'user-recovery', 'recovery-timeout',
     'mouse-reset-send-failed', 'keyboard-reset-send-failed', 'mouse-reset-retry-failed',
-    'batch-failed', 'reacquire-required', 'reset', 'active', 'inactive', 'focus', 'blur', 'pause',
-    'resume', 'draft', 'composition', 'retry', 'discard', 'surface-restore', 'input-gate-unexpected',
+    'batch-failed', 'reacquire-required', 'reset', 'keyboard-reset', 'active', 'inactive', 'blocked',
+    'revoked', 'ready', 'focus', 'blur', 'pause', 'resume', 'draft', 'composition', 'retry', 'discard',
+    'surface-restore', 'input-gate-unexpected',
     'control-lost', 'disconnect', 'unbind', 'validate-reentry', 'map-reentry', 'nested-reset',
     'outer-reset', 'test-reset', 'input-recovery-timeout', 'down-ack-timeout', 'up-ack-timeout',
     'connection-attempt-changed',
@@ -90,7 +91,10 @@
     if (REASONS.has(value)) return value;
     if (/^media-state:(active|suspended|unknown)$/.test(value)) return value;
     if (/^runtime-phase:(active|suspending|suspended|resuming)$/.test(value)) return value;
-    if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|stale-lease)$/.test(value)) {
+    if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
+      return value;
+    }
+    if (/^mouse-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
       return value;
     }
     if (/^ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|stale-lease|unsupported-code|sequence-gap|resync-required)$/.test(value)) {

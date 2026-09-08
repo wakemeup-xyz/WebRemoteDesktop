@@ -50,6 +50,88 @@ test('redactDiagnosticPayload trims logs and strips keyboard debug details', () 
   assert.equal(redacted.network.candidateSummary.samples.local[0].type, 'srflx');
 });
 
+test('diagnostic ingestion reports receiver-side trace drops in addition to client drops', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 7 },
+      events: Array.from({ length: 300 }, (_, index) => ({
+        eventId: index + 1,
+        stage: 'lifecycle',
+        inputType: 'control',
+        action: index % 2 ? 'inactive' : 'active',
+        state: index % 2 ? 'inactive' : 'active',
+        source: 'lifecycle',
+      })),
+    },
+  });
+  assert.equal(clean.inputTrace.events.length, 256);
+  assert.equal(clean.inputTrace.counters.droppedEvents, 51);
+});
+
+test('diagnostic trace byte clipping increments drops and saturates safely', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 5 },
+      events: Array.from({ length: 256 }, (_, index) => ({
+        eventId: index + 1,
+        stage: 'transport-send',
+        inputType: 'keyboard',
+        action: 'key',
+        phase: 'down',
+        transport: 'socket',
+        accepted: false,
+        reliable: true,
+        connectionAttemptId: `attempt-${'x'.repeat(78)}`,
+        inputIdHash: '0123456789abcdef',
+        seq: index + 1,
+        leaseEpoch: 3,
+        reason: 'keyboard-transport-blocked',
+      })),
+    },
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(clean), 'utf8') <= 64 * 1024);
+  assert.ok(clean.inputTrace.events.length < 256);
+  assert.equal(
+    clean.inputTrace.counters.droppedEvents,
+    5 + (256 - clean.inputTrace.events.length),
+  );
+
+  const saturated = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 0x7ffffffe },
+      events: Array.from({ length: 300 }, (_, index) => ({
+        eventId: index + 1, stage: 'lifecycle', inputType: 'control', action: 'active', state: 'active',
+      })),
+    },
+  });
+  assert.equal(saturated.inputTrace.counters.droppedEvents, 0x7fffffff);
+});
+
+test('diagnostic reason sanitizer keeps finite reset ACK values and rejects canaries', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      events: [
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset-ack-unsupported-code' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'mouse-reset-ack-invalid-input' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'blocked' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'revoked' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'ready' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset-ack-unsupported-code:CANARY' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: { value: 'blocked' } },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: ['blocked'] },
+      ],
+    },
+  });
+  assert.deepEqual(clean.inputTrace.events.map((event) => event.reason ?? null), [
+    'keyboard-reset-ack-unsupported-code', 'mouse-reset-ack-invalid-input',
+    'keyboard-reset', 'blocked', 'revoked', 'ready', null, null, null,
+  ]);
+});
+
 test('diagnostic ingestion strips nested input secrets but preserves final gate and bounded trace counters', () => {
   const clean = redactDiagnosticPayload({
     inputState: {
