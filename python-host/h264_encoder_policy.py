@@ -9,13 +9,23 @@ from typing import Callable, Mapping
 
 
 RELAY_LEGACY_V1 = "relay-legacy-v1"
+RELAY_ON_DEMAND_V1 = "relay-on-demand-v1"
 RELAY_BALANCED_V2 = "relay-balanced-v2"
-SUPPORTED_POLICY_VERSIONS = frozenset({RELAY_LEGACY_V1, RELAY_BALANCED_V2})
-DEFAULT_POLICY_VERSION = RELAY_LEGACY_V1
-# This is the sole production-admission gate. Change it only after the
-# versioned selection record has an eligible offline candidate and all required
-# runtime gates validate that candidate; resolvers may still exercise v2.
-PRODUCTION_RELAY_POLICY_VERSION = RELAY_LEGACY_V1
+SUPPORTED_POLICY_VERSIONS = frozenset({
+    RELAY_LEGACY_V1,
+    RELAY_ON_DEMAND_V1,
+    RELAY_BALANCED_V2,
+})
+DEFAULT_POLICY_VERSION = RELAY_ON_DEMAND_V1
+# The on-demand policy is the default production policy. Legacy remains an
+# explicit production rollback because it uses the former, proven encoder cost
+# envelope. Measured candidates remain resolver-only until they pass their
+# separate admission process.
+PRODUCTION_RELAY_POLICY_VERSION = RELAY_ON_DEMAND_V1
+PRODUCTION_RELAY_POLICY_VERSIONS = frozenset({
+    PRODUCTION_RELAY_POLICY_VERSION,
+    RELAY_LEGACY_V1,
+})
 
 
 @dataclass(frozen=True)
@@ -82,11 +92,12 @@ def policy_version_from_environment(environment: Mapping[str, str] | None = None
             "WRD_RELAY_ENCODER_POLICY must be one of "
             f"{allowed}; received {value!r}"
         )
-    if value != PRODUCTION_RELAY_POLICY_VERSION:
+    if value not in PRODUCTION_RELAY_POLICY_VERSIONS:
+        allowed_production = ", ".join(sorted(PRODUCTION_RELAY_POLICY_VERSIONS))
         raise ValueError(
             f"WRD_RELAY_ENCODER_POLICY={value!r} is not permitted because it did not pass "
-            "the offline gate; the only available production policy is "
-            f"{PRODUCTION_RELAY_POLICY_VERSION!r}"
+            "the offline gate; the available production policy values are "
+            f"{allowed_production}"
         )
     return value
 
@@ -139,17 +150,31 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
         if policy_version == RELAY_LEGACY_V1:
             minimum, target, maximum = _relay_legacy_bitrate_range(intent)
             vbv_buffer_ms = 100
+            periodic_idr_frames = 20
+            force_idr_option = False
+        elif policy_version == RELAY_ON_DEMAND_V1:
+            # Fix the production 1 Hz pulse without changing the legacy
+            # software encoder's preset, bitrate, VBV, or FPS budget. The
+            # encoder maps zero cadence to the existing keyint=1201 safety
+            # net and uses the accepted FFmpeg forced-IDR option for explicit
+            # recovery requests.
+            minimum, target, maximum = _relay_legacy_bitrate_range(intent)
+            vbv_buffer_ms = 100
+            periodic_idr_frames = 0
+            force_idr_option = True
         else:
             # Candidate only: Task 6 freezes the selected value after measurement.
             minimum, target, maximum = _relay_balanced_bitrate_range(intent)
             vbv_buffer_ms = 100
+            periodic_idr_frames = 20
+            force_idr_option = False
         requested = int(intent.requested_bitrate_bps or target)
         target = max(minimum, min(requested, maximum))
         return H264SessionPolicy(
             policy_id=policy_version,
             codec_name="libx264",
             target_fps=max(1, int(intent.target_fps or 20)),
-            periodic_idr_frames=20,
+            periodic_idr_frames=periodic_idr_frames,
             keyframe_cooldown_ms=1000,
             min_bitrate_bps=minimum,
             target_bitrate_bps=target,
@@ -159,6 +184,7 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
             profile="Baseline",
             connection_attempt_id=intent.connection_attempt_id,
             generation=intent.generation,
+            force_idr_option=force_idr_option,
         )
 
     minimum, target, maximum = _direct_bitrate_range(intent)

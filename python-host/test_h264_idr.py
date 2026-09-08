@@ -143,7 +143,9 @@ def test_encoder_emits_one_five_second_aggregate_with_policy_and_measured_fields
     assert sample["policyId"] == "relay-legacy-v1"
     assert sample["encode"] == {"count": 3, "avgMs": 10.0, "p95Ms": 12.5, "maxMs": 12.5}
     assert sample["bytes"] == {"total": 900, "idrCount": 1, "idrAvg": 400.0, "idrMax": 400}
-    assert sample["keyframes"] == {"forced": 1, "periodic": 1, "pli": 0}
+    assert sample["keyframes"] == {
+        "forced": 1, "periodic": 1, "pli": 0, "initial": 0, "safety": 0,
+    }
 
 
 def test_encoder_discards_partial_aggregate_when_policy_identity_changes(caplog):
@@ -376,6 +378,34 @@ def test_periodic_gop_forces_idr_without_host_keyframe(monkeypatch):
     assert enc.last_idr_recreated is False
 
 
+def test_on_demand_initial_and_safety_idr_are_not_reported_as_periodic(monkeypatch):
+    """Codec-start/keyint safety IDRs stay observable without looking 1 Hz."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("attempt-1", 1, "relay", 1280, 720, 20, 0),
+        "relay-on-demand-v1",
+    )
+    enc = H264VideoToolboxEncoder(policy=policy)
+    idr = bytes([0, 0, 0, 1, 0x65, 0])
+    monkeypatch.setattr(
+        H264VideoToolboxEncoder,
+        "_create_codec",
+        lambda self, frame, codec_name: FakeCodec([idr], repeat=True),
+    )
+
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert enc._last_encoded_keyframe_kind == "initial"
+    assert enc._last_encoded_keyframe_reason == "initial"
+
+    enc._frames_encoded = 1_201
+    list(enc._encode_frame(_fake_frame(), force_keyframe=False))
+
+    assert enc._last_encoded_keyframe_kind == "safety"
+    assert enc._last_encoded_keyframe_reason == "safety-net"
+
+
 def test_false_idr_scan_does_not_skip_software_gop(monkeypatch):
     """Cadence is encode-count, not bitstream scan; false IDRs must not skip I."""
     from dataclasses import replace
@@ -551,6 +581,125 @@ def test_real_peak_headroom_codec_uses_ffmpeg_forced_idr_and_aligned_rc_context(
     assert record.configured_bitrate_bps == 3_200_000
     assert record.configured_rc_max_rate_bps is None
     assert record.configured_rc_buffer_size_bits is None
+
+
+def _real_bgra_frame(frame_index, *, width=160, height=96):
+    import av
+    import numpy as np
+
+    pixels = np.empty((height, width, 4), dtype=np.uint8)
+    pixels[:, :, 0] = frame_index % 256
+    pixels[:, :, 1] = (frame_index * 3) % 256
+    pixels[:, :, 2] = (frame_index * 7) % 256
+    pixels[:, :, 3] = 255
+    return av.VideoFrame.from_ndarray(pixels, format="bgra")
+
+
+def _encode_and_decode_real_h264(policy, *, frame_count, force_at=None, request_at=None):
+    import av
+
+    encoder = H264VideoToolboxEncoder(policy=policy)
+    decoder = av.CodecContext.create("h264", "r")
+    decoded = 0
+    idr_indices = []
+    keyframe_events = []
+    forced_nals = []
+    recovery_annex_b = []
+    for frame_index in range(frame_count):
+        if frame_index == request_at:
+            encoder.note_keyframe_request(
+                "decoder-stalled",
+                policy.connection_attempt_id,
+                policy.generation,
+                9,
+            )
+        nals = list(encoder._encode_frame(
+            _real_bgra_frame(frame_index),
+            force_keyframe=frame_index == force_at or frame_index == request_at,
+        ))
+        if any((nal[0] & 0x1F) == 5 for nal in nals if nal):
+            idr_indices.append(frame_index)
+            keyframe_events.append((
+                frame_index,
+                encoder._last_encoded_keyframe_kind,
+                encoder._last_encoded_keyframe_reason,
+            ))
+        if frame_index == force_at:
+            forced_nals = nals
+        if nals:
+            annex_b = b"".join(b"\x00\x00\x00\x01" + nal for nal in nals)
+            decoded += len(decoder.decode(av.Packet(annex_b)))
+            if force_at is not None and frame_index >= force_at:
+                recovery_annex_b.append(annex_b)
+    decoded += len(decoder.decode(None))
+    recovery_decoded = 0
+    if force_at is not None:
+        recovery_decoder = av.CodecContext.create("h264", "r")
+        for annex_b in recovery_annex_b:
+            recovery_decoded += len(recovery_decoder.decode(av.Packet(annex_b)))
+        recovery_decoded += len(recovery_decoder.decode(None))
+    return (
+        idr_indices,
+        forced_nals,
+        decoded,
+        recovery_decoded,
+        keyframe_events,
+        encoder.last_keyframe_request_ack,
+    )
+
+
+def test_real_pyav_on_demand_policy_removes_legacy_1hz_idr_and_keeps_requested_idr_decodable():
+    """Exercise the real libx264 submission, NAL output, and decoder path."""
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    intent = MediaSessionIntent("real-on-demand", 1, "relay", 160, 96, 20, 0)
+    legacy = resolve_h264_policy(intent, "relay-legacy-v1")
+    on_demand = resolve_h264_policy(intent, "relay-on-demand-v1")
+
+    legacy_idrs, _, legacy_decoded, _, _, _ = _encode_and_decode_real_h264(
+        legacy,
+        frame_count=240,
+    )
+    on_demand_idrs, forced_nals, on_demand_decoded, recovery_decoded, _, request_ack = _encode_and_decode_real_h264(
+        on_demand,
+        frame_count=400,
+        force_at=173,
+        request_at=173,
+    )
+
+    # Legacy's 20-frame cadence is the measured ~1 Hz pulse at 20 fps.
+    assert legacy_idrs[:4] == [0, 20, 40, 60]
+    assert len(legacy_idrs) >= 12
+    assert legacy_decoded == 240
+
+    # There is no automatic 20-frame cadence under the new production policy.
+    # The one recovery request is accepted on the exact frame and is a real
+    # IDR NAL, while the complete stream still decodes.
+    assert on_demand_idrs == [0, 173]
+    assert any((nal[0] & 0x1F) == 5 for nal in forced_nals if nal)
+    assert on_demand_decoded == 400
+    assert request_ack == ("real-on-demand", 1, 9)
+    # Decode from the forced-IDR frame alone, as a decoder that lost prior
+    # references would. This is not an end-to-end packet-loss acceptance.
+    assert recovery_decoded == 400 - 173
+
+
+def test_real_pyav_on_demand_policy_uses_the_existing_1201_frame_safety_net():
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = resolve_h264_policy(
+        MediaSessionIntent("real-safety", 1, "relay", 160, 96, 20, 0),
+        "relay-on-demand-v1",
+    )
+
+    idrs, _, decoded, _, events, _ = _encode_and_decode_real_h264(
+        policy,
+        frame_count=1_226,
+    )
+
+    assert idrs == [0, 1_201]
+    assert events == [(0, "initial", "initial"), (1_201, "safety", "safety-net")]
+    assert decoded == 1_226
 
 
 def test_real_codec_creation_rejects_unknown_preset_before_opening_codec(monkeypatch):

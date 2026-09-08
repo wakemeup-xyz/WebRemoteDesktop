@@ -315,7 +315,9 @@ class H264VideoToolboxEncoder(Encoder):
         self._encoder_sample_durations_ms = []
         self._encoder_sample_total_bytes = 0
         self._encoder_sample_idr_bytes = []
-        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframes = {
+            "forced": 0, "periodic": 0, "pli": 0, "initial": 0, "safety": 0,
+        }
         self._encoder_sample_keyframe_reasons = {}
 
     @property
@@ -356,7 +358,9 @@ class H264VideoToolboxEncoder(Encoder):
         self._encoder_sample_durations_ms = []
         self._encoder_sample_total_bytes = 0
         self._encoder_sample_idr_bytes = []
-        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframes = {
+            "forced": 0, "periodic": 0, "pli": 0, "initial": 0, "safety": 0,
+        }
         self._encoder_sample_keyframe_reasons = {}
 
     def _clear_encoder_sample(self) -> None:
@@ -364,7 +368,9 @@ class H264VideoToolboxEncoder(Encoder):
         self._encoder_sample_durations_ms = []
         self._encoder_sample_total_bytes = 0
         self._encoder_sample_idr_bytes = []
-        self._encoder_sample_keyframes = {"forced": 0, "periodic": 0, "pli": 0}
+        self._encoder_sample_keyframes = {
+            "forced": 0, "periodic": 0, "pli": 0, "initial": 0, "safety": 0,
+        }
         self._encoder_sample_keyframe_reasons = {}
 
     def _record_encoder_sample(
@@ -621,6 +627,7 @@ class H264VideoToolboxEncoder(Encoder):
             self._frames_encoded = 0
 
         gop = int(self._policy.periodic_idr_frames)
+        frame_index_before_encode = self._frames_encoded
         # libx264 already emits IDR without a wait-window; waiting would
         # block GOP cadence and then miss delayed type-5 NALs.
         use_wait = self.codec_name != "libx264"
@@ -686,9 +693,23 @@ class H264VideoToolboxEncoder(Encoder):
                 "pli" if active_reason == "rtcp-or-unknown"
                 else "forced" if self._active_force_token is not None
                 else "pli" if force_keyframe
-                else "periodic"
+                # An initial libx264 IDR and its keyint safety-net IDR are
+                # codec behavior, not a policy-requested periodic refresh.
+                # Keep observability from labelling them as the old 1 Hz
+                # pulse. due is the policy cadence decision for this frame.
+                else "periodic" if due
+                else "initial" if frame_index_before_encode == 0
+                else "safety"
             )
-            self._last_encoded_keyframe_reason = active_reason or ("rtcp-or-unknown" if force_keyframe else "periodic")
+            self._last_encoded_keyframe_reason = (
+                active_reason
+                or (
+                    "rtcp-or-unknown" if force_keyframe
+                    else "periodic" if due
+                    else "initial" if frame_index_before_encode == 0
+                    else "safety-net"
+                )
+            )
             self._frames_since_idr = 0
             self._idr_wait_remaining = 0
             if waiting or want_idr:

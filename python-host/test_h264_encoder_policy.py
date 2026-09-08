@@ -33,11 +33,44 @@ def test_relay_policy_keeps_codec_independent_from_periodic_idr_cadence():
     assert policy.codec_name == "libx264"
     assert policy.periodic_idr_frames == 20
 
-    # A policy with another periodic cadence still describes the selected codec;
-    # GOP is a policy field, never a codec-selection input.
-    slower = resolve_h264_policy(_intent(path="relay", width=1280, height=720), "relay-balanced-v2")
-    assert slower.codec_name == "libx264"
-    assert slower.periodic_idr_frames == 20
+    # The production pulse fix changes only the periodic/recovery keyframe
+    # controls. Its codec and cost envelope remain the legacy relay values.
+    on_demand = resolve_h264_policy(_intent(), "relay-on-demand-v1")
+    assert on_demand.codec_name == "libx264"
+    assert on_demand.periodic_idr_frames == 0
+    assert on_demand.force_idr_option is True
+    assert (
+        on_demand.target_fps,
+        on_demand.min_bitrate_bps,
+        on_demand.target_bitrate_bps,
+        on_demand.max_bitrate_bps,
+        on_demand.vbv_buffer_ms,
+        on_demand.preset,
+        on_demand.profile,
+    ) == (
+        policy.target_fps,
+        policy.min_bitrate_bps,
+        policy.target_bitrate_bps,
+        policy.max_bitrate_bps,
+        policy.vbv_buffer_ms,
+        policy.preset,
+        policy.profile,
+    )
+
+
+def test_on_demand_relay_policy_leaves_direct_policy_unchanged():
+    direct = resolve_h264_policy(_intent(path="direct"), "relay-on-demand-v1")
+
+    assert direct.codec_name == "h264_videotoolbox"
+    assert direct.periodic_idr_frames == 40
+    assert direct.force_idr_option is False
+    assert (
+        direct.min_bitrate_bps,
+        direct.target_bitrate_bps,
+        direct.max_bitrate_bps,
+        direct.vbv_buffer_ms,
+        direct.preset,
+    ) == (500_000, 2_500_000, 8_000_000, 100, "default")
 
 
 @pytest.mark.parametrize(
@@ -59,16 +92,17 @@ def test_legacy_policy_resolves_explicit_bitrate_ranges(intent, expected):
 
 
 def test_policy_environment_fails_closed_when_v2_has_no_validated_selection():
-    assert policy_version_from_environment({}) == "relay-legacy-v1"
+    assert policy_version_from_environment({}) == "relay-on-demand-v1"
+    assert policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-legacy-v1"}) == "relay-legacy-v1"
 
     with pytest.raises(ValueError, match="offline gate") as exc_info:
         policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "relay-balanced-v2"})
+    assert "relay-on-demand-v1" in str(exc_info.value)
     assert "relay-legacy-v1" in str(exc_info.value)
-    assert "only available production policy" in str(exc_info.value)
 
     with pytest.raises(ValueError, match="WRD_RELAY_ENCODER_POLICY") as exc_info:
         policy_version_from_environment({"WRD_RELAY_ENCODER_POLICY": "not-a-policy"})
-    assert "relay-legacy-v1" in str(exc_info.value)
+    assert "relay-on-demand-v1" in str(exc_info.value)
 
 
 def test_host_constructor_rejects_unvalidated_v2_before_starting_host_resources(monkeypatch):
