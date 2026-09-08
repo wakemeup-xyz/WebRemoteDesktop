@@ -1,5 +1,81 @@
 const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
 const MOBILE_VIEWPORT_UNSUPPORTED_HINT = '可用空间不足，请收起系统键盘或旋转设备';
+const INPUT_RECOVERY_TIMEOUT_MS = 3000;
+const RECOVERY_RESET_REJECTION_STATUSES = new Set([
+  'stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed',
+]);
+const INPUT_DIAGNOSTIC_MEDIA_STATES = new Set(['active', 'suspended']);
+const INPUT_DIAGNOSTIC_RUNTIME_PHASES = new Set(['active', 'suspending', 'suspended', 'resuming']);
+const INPUT_DIAGNOSTIC_SURFACE_STATES = new Set(['settled', 'pending', 'uncertain']);
+const INPUT_DIAGNOSTIC_RECOVERY_STATES = new Set(['idle', 'waiting', 'recovered', 'failed']);
+const INPUT_DIAGNOSTIC_DRAFT_STATUSES = new Set(['idle', 'pending', 'composing', 'uncertain', 'blocked']);
+const INPUT_DIAGNOSTIC_KEYBOARD_STATES = new Set([
+  'INACTIVE', 'READY', 'BLOCKED', 'RESET_REQUIRED',
+]);
+const INPUT_DIAGNOSTIC_ADAPTERS = new Set(['dataChannel', 'socket']);
+const INPUT_TRACE_FOCUS_KINDS = new Set([
+  'desktop', 'mobile-text', 'local-editor', 'terminal', 'other',
+]);
+const INPUT_DIAGNOSTIC_ACK_STATUSES = new Set([
+  'applied', 'duplicate', 'stale-lease', 'invalid-input', 'unsupported-code',
+  'execution-failed', 'sequence-gap', 'resync-required', 'stale', 'reacquire-required',
+]);
+const INPUT_DIAGNOSTIC_REASONS = new Set([
+  'no-active-control', 'inactive', 'viewport-unsupported', 'manual-disconnect', 'media-not-ready-for-attempt', 'media-gate',
+  'surface-pending', 'surface-uncertain', 'mouse-reset-pending',
+  'desktop-write-reacquire-required', 'draft-composing', 'draft-pending', 'draft-uncertain',
+  'recovery-waiting', 'recovery-failed', 'keyboard-transport-blocked',
+  'keyboard-transport-revoked', 'keyboard-transport-reacquire-required',
+  'keyboard-reset-pending', 'keyboard-blocked', 'window-blur', 'visibility-hidden',
+  'automatic-recovery', 'user-recovery', 'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+  'mouse-reset-retry-failed', 'attempt-changed',
+  'lease-changed', 'control-lost', 'context-invalidated', 'reset', 'disconnect',
+  'pointer-cancel', 'lost-pointer-capture', 'unbind', 'validate-reentry', 'map-reentry',
+  'nested-reset', 'outer-reset', 'test-reset', 'reacquire-required', 'transport-change',
+  'manual', 'input-recovery-timeout', 'down-ack-timeout', 'up-send-failed', 'mouse-reset',
+  'keyboard-reset', 'recovery-timeout', 'lease-rebind', 'connection-attempt-changed',
+  'datachannel-open', 'datachannel-close', 'datachannel-error', 'manual-pause',
+  'page-hidden', 'resume', 'retry', 'blocked', 'revoked', 'ready', 'surface-ack-timeout',
+]);
+
+function safeDiagnosticInteger(value, maximum = 0x7fffffff) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, maximum) : 0;
+}
+
+function safeDiagnosticEnum(value, allowed, fallback = null) {
+  return typeof value === 'string' && allowed.has(value) ? value : fallback;
+}
+
+function safeDiagnosticReason(value) {
+  if (typeof value !== 'string') return null;
+  if (INPUT_DIAGNOSTIC_REASONS.has(value)) return value;
+  if (/^runtime-phase:(active|suspending|suspended|resuming)$/.test(value)
+    && INPUT_DIAGNOSTIC_RUNTIME_PHASES.has(value.slice('runtime-phase:'.length))) {
+    return `runtime-phase:${value.slice('runtime-phase:'.length)}`;
+  }
+  if (/^media-state:(active|suspended)$/.test(value)
+    && INPUT_DIAGNOSTIC_MEDIA_STATES.has(value.slice('media-state:'.length))) {
+    return `media-state:${value.slice('media-state:'.length)}`;
+  }
+  if (/^keyboard-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
+    return value;
+  }
+  if (/^mouse-reset-ack-(applied|duplicate|stale|late|rejected|execution-failed|invalid-input|unsupported-code|stale-lease)$/.test(value)) {
+    return value;
+  }
+  return null;
+}
+
+function safeDiagnosticReasons(values, limit = 16) {
+  if (!Array.isArray(values)) return [];
+  const result = [];
+  for (const value of values) {
+    const safe = safeDiagnosticReason(value);
+    if (safe && !result.includes(safe)) result.push(safe);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
 
 const Input = {
   socket: null,
@@ -22,10 +98,29 @@ const Input = {
   _mobileTextInputUiBound: false,
   _mobileTextInputToggleBound: false,
   _mobileTextInputModalBound: false,
+  _inputRecoveryUiBound: false,
   _mobileActionButtonListeners: new WeakSet(),
   _mobileTextReturnFocus: null,
   _mobileResetPending: false,
   _mobileResetAckInFlight: false,
+  _recoveryTimer: null,
+  _recoveryAutoIdentity: null,
+  _recoveryCycle: {
+    state: 'idle',
+    generation: 0,
+    reason: null,
+    source: null,
+    mouseConfirmed: false,
+    keyboardConfirmed: false,
+    retryAvailable: false,
+    leaseId: null,
+    leaseEpoch: null,
+    attemptId: null,
+    mouseReset: null,
+    keyboardReset: null,
+    mouseRetryUsed: false,
+    deadline: null,
+  },
   _lastSurfaceGeometry: null,
   _surfaceGeometryByElement: new WeakMap(),
   activeControlLease: null,
@@ -56,6 +151,9 @@ const Input = {
   _lastPointerClickClientY: null,
   _pointerDoubleClickWindowMs: 500,
   _pointerDoubleClickDistancePx: 6,
+  _inputTraceContext: null,
+  _inputTraceFallback: null,
+  _lastActiveLifecycleObservation: null,
 
   init() {
     this.videoElement = document.getElementById('remoteVideo');
@@ -81,6 +179,7 @@ const Input = {
     this.keyboardTransport = KeyboardTransport.create({
       sendDataChannel: (payload) => this.sendKeyboardDataChannel(payload),
       sendSocket: (payload) => this.sendKeyboardSocket(payload),
+      getConnectionAttemptId: () => this._currentConnectionAttemptId(),
     });
     this.keyboardController = RemoteKeyboardController.create({
       transport: this.keyboardTransport,
@@ -137,22 +236,79 @@ const Input = {
   setKeyboardDataChannelAvailable(available) {
     this.initKeyboardController();
     if (!this.keyboardTransport) return;
-    if (available) this.keyboardTransport.markAdapterAvailable('dataChannel');
-    else this.keyboardTransport.markAdapterUnavailable('dataChannel');
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard',
+      action: available ? 'active' : 'inactive',
+      state: available ? 'active' : 'inactive',
+      reason: available ? 'datachannel-available' : 'datachannel-unavailable',
+      accepted: available === true,
+      source: 'lifecycle',
+    });
+    if (available) {
+      this.keyboardTransport.markAdapterAvailable('dataChannel');
+      this._maybeAutoRecover('datachannel-available');
+    } else {
+      this.mobileTextInputAdapter?.invalidateContext?.('datachannel-unavailable');
+      this.keyboardTransport.markAdapterUnavailable('dataChannel');
+    }
+    this._syncMobileTextTransport();
     this.updateKeyboardUI();
   },
 
   sendKeyboardDataChannel(payload) {
-    if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') return false;
-    const accepted = WebRTC.sendInput(payload);
+    const traceResult = (accepted) => this._recordInputTrace('transport-send', {
+      inputType: 'keyboard',
+      action: this._traceKeyboardAction(payload?.action),
+      phase: payload?.payload?.phase,
+      transport: 'datachannel',
+      accepted: accepted === true,
+      inputIds: payload?.inputIds,
+      seq: payload?.seq,
+      leaseEpoch: payload?.leaseEpoch,
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      reliable: true,
+    });
+    if (typeof WebRTC === 'undefined' || typeof WebRTC.sendInput !== 'function') {
+      traceResult(false);
+      return false;
+    }
+    let accepted;
+    try {
+      accepted = WebRTC.sendInput(payload);
+    } catch (error) {
+      traceResult(false);
+      throw error;
+    }
+    traceResult(accepted);
     if (accepted) this.recordLatency(payload);
     return accepted;
   },
 
   sendKeyboardSocket(payload) {
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
-    if (!socket || !socket.connected) return false;
-    socket.emit('input', payload);
+    const traceResult = (accepted) => this._recordInputTrace('transport-send', {
+      inputType: 'keyboard',
+      action: this._traceKeyboardAction(payload?.action),
+      phase: payload?.payload?.phase,
+      transport: 'socket',
+      accepted: accepted === true,
+      inputIds: payload?.inputIds,
+      seq: payload?.seq,
+      leaseEpoch: payload?.leaseEpoch,
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      reliable: true,
+    });
+    if (!socket || !socket.connected) {
+      traceResult(false);
+      return false;
+    }
+    try {
+      socket.emit('input', payload);
+    } catch (error) {
+      traceResult(false);
+      throw error;
+    }
+    traceResult(true);
     this.recordLatency(payload);
     return true;
   },
@@ -173,6 +329,8 @@ const Input = {
     const leaseChanged = previousLease?.leaseId !== nextLease?.leaseId
       || previousLease?.leaseEpoch !== nextLease?.leaseEpoch;
     if (leaseChanged) {
+      this._invalidateRecoveryIdentity('lease-changed');
+      this._recoveryAutoIdentity = null;
       // Clear the mobile draft before the controller changes the transport
       // identity. The old generation must never cross a lease boundary.
       this._mobileResetPending = false;
@@ -192,14 +350,50 @@ const Input = {
       }
     }
     this.activeControlLease = nextLease;
+    if (leaseChanged) {
+      this._recordInputTrace('lifecycle', {
+        inputType: 'control',
+        action: nextLease ? 'active' : 'inactive',
+        state: nextLease ? 'active' : 'inactive',
+        reason: 'lease-changed',
+        accepted: Boolean(nextLease),
+        source: 'lifecycle',
+        leaseEpoch: nextLease?.leaseEpoch,
+      });
+    }
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
     if (!nextLease) this.mobileTextInputAdapter?.onTransportState('revoked');
     this.updateKeyboardUI();
+    if (nextLease) this._maybeAutoRecover('lease-rebind');
   },
 
   acceptKeyboardAck(ack) {
+    let result;
+    try {
+      result = this._acceptKeyboardAck(ack);
+    } catch (error) {
+      if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
+        this._recordInputAck('keyboard', ack, { status: 'stale' });
+      }
+      throw error;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
+      this._recordInputAck('keyboard', ack, result);
+    }
+    return result;
+  },
+
+  _acceptKeyboardAck(ack) {
     if (!this.keyboardTransport) return { status: 'stale' };
     const ownedResetPending = this._mobileResetPending;
+    const pendingReset = this.keyboardTransport.getPendingReset?.();
+    const currentAttempt = this._currentConnectionAttemptId();
+    // ACKs do not carry a WebRTC attempt in the v2 keyboard envelope. The
+    // transport records the attempt at send time, so reject an old barrier
+    // before it can clear the current lease's reset state.
+    if (pendingReset && pendingReset.connectionAttemptId !== currentAttempt) {
+      return { status: 'stale' };
+    }
     this._mobileResetAckInFlight = ownedResetPending;
     let result;
     try {
@@ -207,15 +401,30 @@ const Input = {
     } finally {
       this._mobileResetAckInFlight = false;
     }
-    if (ownedResetPending && this._mobileResetPending) {
+    const cycle = this._recoveryCycle;
+    if (cycle?.state === 'waiting') {
+      const ownedFailure = this._isOwnedResetRejectionAck(
+        ack, pendingReset, 'keyboard', cycle.leaseEpoch, result,
+      );
+      if (ownedFailure) {
+        this._markRecoveryFailure(`keyboard-reset-ack-${String(ack.status || 'rejected')}`);
+      } else {
+        this._handleRecoveryAck('keyboard', ack, result);
+      }
+    } else if (ownedResetPending && this._mobileResetPending) {
       const transportState = this.keyboardTransport.getSnapshot?.().state;
       const resetApplied = (result.status === 'applied' || result.status === 'duplicate')
+        && pendingReset
+        && (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard')
+        && Array.isArray(ack?.inputIds)
+        && ack.inputIds.includes(pendingReset.inputId)
+        && Number.isSafeInteger(ack?.appliedSeq)
+        && ack.appliedSeq >= pendingReset.seq
         && transportState === 'ready';
       if (resetApplied) {
         this._mobileResetPending = false;
         this.mobileTextInputAdapter?.onTransportState('ready', { resetAcknowledged: true });
-      } else if (transportState === 'reacquire-required' || transportState === 'revoked'
-        || (result.status === 'stale' && transportState === 'ready')) {
+      } else if (transportState === 'reacquire-required' || transportState === 'revoked') {
         this._mobileResetPending = false;
         this.mobileTextInputAdapter?.onTransportState('reacquire-required');
       } else if (result.status === 'stale' || result.status === 'resync-required') {
@@ -279,12 +488,647 @@ const Input = {
     }
   },
 
+  _currentConnectionAttemptId() {
+    return typeof WebRTC !== 'undefined'
+      ? (WebRTC.currentConnectionAttemptId || null)
+      : null;
+  },
+
+  _traceKeyboardAction(action) {
+    if (['key', 'text', 'batch', 'reset'].includes(action)) return action;
+    if (action === 'keydown' || action === 'keyup' || action === 'down' || action === 'up') return 'key';
+    return 'key';
+  },
+
+  _traceInputType(type) {
+    if (type === 'keyboard') return 'keyboard';
+    if (type === 'mouse') return 'pointer';
+    if (type === 'command') return 'control';
+    return 'text';
+  },
+
+  _traceVisibility() {
+    return typeof document !== 'undefined' && document.hidden === true ? 'hidden' : 'visible';
+  },
+
+  _traceFocusKind(target = null) {
+    const node = target || (typeof document !== 'undefined' ? document.activeElement : null);
+    const id = typeof node?.id === 'string' ? node.id : '';
+    if (id === 'mobileTextInput') return 'mobile-text';
+    if (id === 'terminalComposer' || id === 'terminalInput' || id === 'terminalPanel') return 'terminal';
+    try {
+      if (node?.closest?.('#terminalPanel, .terminal-panel, [data-terminal-input]')) return 'terminal';
+    } catch (_) {
+      // A DOM shim may not implement selector matching; fall through safely.
+    }
+    if (id === 'remoteTextInput' || node?.isContentEditable === true) return 'local-editor';
+    const tag = String(node?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return 'local-editor';
+    if (node === this.videoElement || id === 'remoteVideo' || id === 'relayImage' || tag === 'VIDEO') {
+      return 'desktop';
+    }
+    return 'other';
+  },
+
+  _traceIdentity() {
+    const epoch = Number.isSafeInteger(this.activeControlLease?.leaseEpoch)
+      ? this.activeControlLease.leaseEpoch : null;
+    return {
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      leaseEpoch: epoch,
+    };
+  },
+
+  _traceIncidentEligible(focusKind = this._inputTraceContext?.focusKind, options = {}) {
+    const remoteOperation = options.remoteOperation === true;
+    if (!remoteOperation && !['desktop', 'mobile-text'].includes(focusKind)
+      || this._traceVisibility() !== 'visible'
+      || this.isActive !== true
+      || !this.activeControlLease) return false;
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    if (mobile.composing === true || mobile.deliveryUncertain === true) return false;
+    if (remoteOperation) return true;
+    const gate = this.getEffectiveInputGate?.() || {};
+    const allowSurfacePending = options.allowSurfacePending === true;
+    const blockedReasons = (gate.blockedReasons || [])
+      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason))
+      .filter((reason) => !(allowSurfacePending && reason === 'surface-pending'));
+    return gate.allowed === true || (gate.allowed === false
+      && (gate.blockedReasons || []).length > 0 && blockedReasons.length === 0);
+  },
+
+  _traceCollector() {
+    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.recordInputTrace === 'function') {
+      return Diagnostic;
+    }
+    if (this._inputTraceFallback) return this._inputTraceFallback;
+    if (typeof InputTrace === 'undefined' || typeof InputTrace.create !== 'function') return null;
+    try {
+      this._inputTraceFallback = InputTrace.create();
+    } catch (_) {
+      this._inputTraceFallback = null;
+    }
+    return this._inputTraceFallback;
+  },
+
+  _recordInputTrace(stage, meta = {}) {
+    const collector = this._traceCollector();
+    if (!collector) return null;
+    const context = this._inputTraceContext || {};
+    const identity = this._traceIdentity();
+    const safe = {};
+    const has = (key) => Object.prototype.hasOwnProperty.call(meta || {}, key);
+    const value = (key, fallback = undefined) => (has(key) ? meta[key] : fallback);
+    const inputType = value('inputType', context.inputType);
+    const action = value('action', context.action);
+    const phase = value('phase', context.phase);
+    const eventId = has('eventId') ? meta.eventId
+      : (stage === 'gate' || stage === 'transport-send' ? context.eventId : null);
+    if (inputType !== undefined) safe.inputType = inputType;
+    if (action !== undefined) safe.action = action;
+    if (phase !== undefined) safe.phase = phase;
+    if (eventId !== undefined && eventId !== null) safe.eventId = eventId;
+    for (const key of [
+      'transport', 'accepted', 'reason', 'status', 'seq', 'appliedSeq', 'clientRttMs',
+      'focusKind', 'visibility', 'state', 'source', 'generation', 'gateAllowed',
+      'surfaceState', 'recoveryState', 'pendingMouseReset', 'desktopWriteRecoveryState',
+      'reliable', 'ackTimeoutMs', 'unexpected',
+    ]) {
+      if (has(key)) safe[key] = meta[key];
+    }
+    if (has('inputIds')) safe.inputIds = Array.isArray(meta.inputIds) ? meta.inputIds.slice(0, 64) : [];
+    if (has('connectionAttemptId')) safe.connectionAttemptId = meta.connectionAttemptId;
+    else if (identity.connectionAttemptId !== null) safe.connectionAttemptId = identity.connectionAttemptId;
+    if (has('leaseEpoch')) safe.leaseEpoch = meta.leaseEpoch;
+    else if (identity.leaseEpoch !== null) safe.leaseEpoch = identity.leaseEpoch;
+    if (has('incidentEligible')) safe.incidentEligible = meta.incidentEligible === true;
+    else safe.incidentEligible = context.incidentEligible === true;
+    try {
+      let result = null;
+      if (typeof collector.recordInputTrace === 'function') result = collector.recordInputTrace(stage, safe);
+      else if (typeof collector.record === 'function') result = collector.record(stage, safe);
+      // Lifecycle/recovery/ACK callbacks are not DOM continuations. Drop the
+      // event context after each one so a later callback cannot inherit an old
+      // eventId, gate decision, or DOM phase.
+      if (['ack', 'ack-timeout', 'lifecycle', 'recovery'].includes(stage)) {
+        this._inputTraceContext = null;
+      }
+      return result;
+    } catch (_) {
+      // Diagnostics are strictly out-of-band from the input result.
+      if (['ack', 'ack-timeout', 'lifecycle', 'recovery'].includes(stage)) {
+        this._inputTraceContext = null;
+      }
+    }
+    return null;
+  },
+
+  _beginInputTraceDom(inputType, action, phase, target = null, options = {}) {
+    const focusKind = options.focusKind || this._traceFocusKind(target);
+    const visibility = this._traceVisibility();
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const remoteOperation = options.remoteOperation === true;
+    const eligible = options.incidentEligible !== false
+      && (remoteOperation || ['desktop', 'mobile-text'].includes(focusKind))
+      && visibility === 'visible'
+      && this.isActive === true
+      && Boolean(this.activeControlLease)
+      && mobile.composing !== true
+      && mobile.deliveryUncertain !== true
+      && (options.refreshEligibility !== true
+        ? true
+        : this._traceIncidentEligible(focusKind, {
+          allowSurfacePending: options.allowSurfacePending === true,
+          remoteOperation,
+        }));
+    this._inputTraceContext = {
+      eventId: null,
+      inputType,
+      action,
+      phase,
+      focusKind,
+      visibility,
+      incidentEligible: eligible,
+      ...(remoteOperation ? { remoteOperation: true } : {}),
+    };
+    const eventId = this._recordInputTrace('dom-received', {
+      inputType, action, phase, focusKind, visibility,
+      incidentEligible: eligible,
+    });
+    this._inputTraceContext.eventId = Number.isSafeInteger(eventId) ? eventId : null;
+    return this._inputTraceContext.eventId;
+  },
+
+  _withInputTraceEvent(eventId, fn, options = {}) {
+    if (typeof fn !== 'function') return false;
+    const previous = this._inputTraceContext;
+    const current = previous || {};
+    const hasFocusKind = Object.prototype.hasOwnProperty.call(options, 'focusKind');
+    const requestedFocusKind = hasFocusKind
+      ? safeDiagnosticEnum(options.focusKind, INPUT_TRACE_FOCUS_KINDS) : null;
+    const inheritedFocusKind = hasFocusKind
+      ? null : safeDiagnosticEnum(current.focusKind, INPUT_TRACE_FOCUS_KINDS);
+    const focusKind = requestedFocusKind || inheritedFocusKind;
+    const remoteOperation = options.remoteOperation === true || current.remoteOperation === true;
+    // A mobile adapter may add an observational wrapper around an already
+    // attributed toolbar/modal action. Preserve that outer event id through
+    // the nested null-id wrapper; ordinary null-id sends remain ineligible.
+    const propagatedEventId = eventId === null && current.remoteOperation === true
+      && Number.isSafeInteger(current.eventId) ? current.eventId : eventId;
+    const hasIncidentEligibility = Object.prototype.hasOwnProperty.call(options, 'incidentEligible');
+    const incidentEligible = hasIncidentEligibility
+      ? options.incidentEligible === true
+        || (eventId === null && current.remoteOperation === true && current.incidentEligible === true)
+      : options.refreshEligibility === true
+        ? this._traceIncidentEligible(focusKind, {
+          allowSurfacePending: options.allowSurfacePending === true,
+          remoteOperation,
+        })
+        : current.incidentEligible === true;
+    const traceContext = {
+      ...current,
+      eventId: Number.isSafeInteger(propagatedEventId) ? propagatedEventId : null,
+      incidentEligible,
+      ...(remoteOperation ? { remoteOperation: true } : {}),
+    };
+    if (focusKind) traceContext.focusKind = focusKind;
+    else delete traceContext.focusKind;
+    this._inputTraceContext = traceContext;
+    try {
+      return fn();
+    } finally {
+      // Nested mobile/gesture dispatches restore their enclosing DOM scope.
+      // The top-level listener opts into clearAfter so a later callback cannot
+      // inherit an unrelated eventId or eligibility decision.
+      this._inputTraceContext = options.clearAfter === true ? null : previous;
+    }
+  },
+
+  _recordInputGate(inputType, action, gate, options = {}) {
+    const allowed = gate?.allowed === true;
+    const blockedReasons = Array.isArray(gate?.blockedReasons) ? gate.blockedReasons : [];
+    const reason = allowed ? undefined : (blockedReasons[0] || options.reason || 'media-gate');
+    const unexpected = options.unexpected === true || (!allowed
+      && this._inputTraceContext?.incidentEligible === true
+      && ['surface-uncertain', 'recovery-waiting', 'recovery-failed', 'desktop-write-reacquire-required']
+        .some((candidate) => blockedReasons.includes(candidate)));
+    const result = this._recordInputTrace('gate', {
+      inputType, action, accepted: allowed, gateAllowed: allowed, reason,
+      unexpected,
+    });
+    if (this._inputTraceContext) this._inputTraceContext.gateRecorded = true;
+    return result;
+  },
+
+  _recordInputAck(inputType, ack, result) {
+    const inputIds = Array.isArray(ack?.inputIds)
+      ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
+    const status = typeof ack?.status === 'string' ? ack.status : result?.status;
+    const accepted = typeof ack?.accepted === 'boolean'
+      ? ack.accepted : ['applied', 'duplicate'].includes(result?.status);
+    const pending = inputType === 'mouse'
+      ? inputIds.map((id) => this._desktopWritePending.get(id)).find(Boolean)
+      : null;
+    const identity = this._traceIdentity();
+    this._recordInputTrace('ack', {
+      eventId: null,
+      inputType: ack?.inputType === 'command'
+        ? 'control' : inputType === 'mouse' ? 'pointer' : 'keyboard',
+      action: 'ack',
+      accepted,
+      status,
+      appliedSeq: ack?.appliedSeq,
+      inputIds,
+      leaseEpoch: ack?.leaseEpoch,
+      connectionAttemptId: ack?.connectionAttemptId || pending?.connectionAttemptId
+        || identity.connectionAttemptId,
+      incidentEligible: false,
+    });
+  },
+
+  _recoveryIdentity() {
+    const lease = this.activeControlLease;
+    return {
+      leaseId: lease?.leaseId || null,
+      leaseEpoch: Number.isInteger(lease?.leaseEpoch) ? lease.leaseEpoch : null,
+      attemptId: this._currentConnectionAttemptId(),
+    };
+  },
+
+  _sameRecoveryIdentity(cycle = this._recoveryCycle) {
+    const identity = this._recoveryIdentity();
+    return Boolean(cycle
+      && cycle.leaseId === identity.leaseId
+      && cycle.leaseEpoch === identity.leaseEpoch
+      && cycle.attemptId === identity.attemptId);
+  },
+
+  _recoveryIdentityKey() {
+    const identity = this._recoveryIdentity();
+    // This key is internal only; never expose it through diagnostic state.
+    return `${identity.leaseId || ''}|${identity.leaseEpoch ?? ''}|${identity.attemptId || ''}`;
+  },
+
+  _clearRecoveryTimer() {
+    if (this._recoveryTimer !== null) clearTimeout(this._recoveryTimer);
+    this._recoveryTimer = null;
+  },
+
+  _resetRecoveryCycle(reason = null) {
+    this._clearRecoveryTimer();
+    this._recoveryCycle = {
+      state: 'idle',
+      generation: Number(this._recoveryCycle?.generation) || 0,
+      reason,
+      source: null,
+      mouseConfirmed: false,
+      keyboardConfirmed: false,
+      retryAvailable: false,
+      leaseId: null,
+      leaseEpoch: null,
+      attemptId: null,
+      mouseReset: null,
+      keyboardReset: null,
+      mouseRetryUsed: false,
+      deadline: null,
+    };
+  },
+
+  _invalidateRecoveryIdentity(reason = 'identity-changed') {
+    const cycle = this._recoveryCycle;
+    if (!cycle || cycle.state === 'idle') return false;
+    this._resetRecoveryCycle(reason);
+    this.updateKeyboardUI();
+    return true;
+  },
+
+  _recoverySnapshot() {
+    const cycle = this._recoveryCycle || {};
+    return {
+      state: safeDiagnosticEnum(cycle.state, INPUT_DIAGNOSTIC_RECOVERY_STATES, 'idle'),
+      generation: safeDiagnosticInteger(cycle.generation),
+      reason: safeDiagnosticReason(cycle.reason),
+      mouseConfirmed: cycle.mouseConfirmed === true,
+      keyboardConfirmed: cycle.keyboardConfirmed === true,
+      retryAvailable: cycle.retryAvailable === true,
+    };
+  },
+
+  _markRecoveryFailure(reason = 'recovery-failed') {
+    const cycle = this._recoveryCycle;
+    if (!cycle || cycle.state !== 'waiting') return false;
+    this._clearRecoveryTimer();
+    cycle.state = 'failed';
+    cycle.reason = String(reason || 'recovery-failed');
+    cycle.retryAvailable = true;
+    this._mobileResetAckInFlight = false;
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'failed',
+      reason: cycle.reason, generation: cycle.generation, source: cycle.source || 'recovery',
+    });
+    this.updateKeyboardUI();
+    return true;
+  },
+
+  _recoveryNeedsReset() {
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const keyboard = this.keyboardController?.getSnapshot?.() || {};
+    const transport = this.keyboardTransport?.getSnapshot?.() || {};
+    const pendingReset = this.keyboardTransport?.getPendingReset?.();
+    const currentAttempt = this._currentConnectionAttemptId();
+    const transportState = String(transport.state || '').toLowerCase();
+    const keyboardState = String(keyboard.state || '').toLowerCase();
+    // Composition belongs to the local editor. Do not spend a recovery budget
+    // while the IME is still composing; the next lifecycle/active callback can
+    // retry after compositionend.
+    if (mobile.composing) return false;
+
+    const surfaceUncertain = this._mobileSurfaceState === 'uncertain';
+    const keyboardBarrierWaiting = transportState === 'blocked'
+      && this._mobileResetPending
+      && pendingReset?.connectionAttemptId === currentAttempt;
+    const staleKeyboardBarrier = Boolean(
+      pendingReset && pendingReset.connectionAttemptId !== currentAttempt,
+    );
+    const contextNeedsRecovery = !keyboardBarrierWaiting && Boolean(
+      this.mobileTextInputAdapter?.needsContextRecovery?.()
+      || (mobile.deliveryUncertain && !mobile.hasPending),
+    );
+    const transportNeedsRecovery = ['reacquire-required', 'revoked'].includes(transportState);
+    const controllerNeedsRecovery = ['reset_required', 'reacquire-required', 'revoked']
+      .includes(keyboardState) && !keyboardBarrierWaiting;
+
+    // Ordinary surface ACKs, pending drafts, and an owned keyboard reset ACK
+    // already in flight are not failures. Only uncertainty or a failed/expired
+    // transport state can start a bounded dual-reset cycle.
+    return surfaceUncertain
+      || this._pendingMouseReset
+      || this._desktopWriteRecovery?.state === 'reacquire-required'
+      || (contextNeedsRecovery && !mobile.hasPending)
+      || transportNeedsRecovery
+      || staleKeyboardBarrier
+      || controllerNeedsRecovery;
+  },
+
+  _canAutoRecover() {
+    if (!this.activeControlLease || !this.isActive) return false;
+    if (typeof document !== 'undefined' && document.hidden) return false;
+    if (typeof WebRTC !== 'undefined' && typeof WebRTC.canEnableDesktopInput === 'function'
+      && !WebRTC.canEnableDesktopInput()) return false;
+    return true;
+  },
+
+  _isOwnedResetAck(ack, reset, inputType, leaseEpoch) {
+    return Boolean(this._isOwnedResetEnvelope(ack, reset, inputType, leaseEpoch)
+      && ['applied', 'duplicate'].includes(ack.status)
+      && ack.appliedSeq >= reset.seq);
+  },
+
+  _isOwnedResetEnvelope(ack, reset, inputType, leaseEpoch) {
+    const resetAttemptId = reset?.attemptId ?? reset?.connectionAttemptId ?? null;
+    return Boolean(reset && ack?.schemaVersion === 2
+      && ack.inputType === inputType
+      && ack.leaseEpoch === leaseEpoch
+      && reset.leaseEpoch === leaseEpoch
+      && resetAttemptId === this._currentConnectionAttemptId()
+      && Array.isArray(ack.inputIds)
+      && ack.inputIds.includes(reset.inputId)
+      && Number.isSafeInteger(ack.appliedSeq));
+  },
+
+  _isOwnedResetRejectionEnvelope(ack, reset, inputType, leaseEpoch) {
+    return Boolean(this._isOwnedResetEnvelope(ack, reset, inputType, leaseEpoch)
+      && RECOVERY_RESET_REJECTION_STATUSES.has(ack.status)
+      // A rejection ACK is authoritative only for a prefix the same reset
+      // could have advanced to. It may skip unconfirmed writes, but a later
+      // prefix could belong to another write generation.
+      && ack.appliedSeq >= 0
+      && ack.appliedSeq <= reset.seq);
+  },
+
+  _isOwnedResetRejectionAck(ack, reset, inputType, leaseEpoch, transportResult) {
+    if (!this._isOwnedResetRejectionEnvelope(ack, reset, inputType, leaseEpoch)) return false;
+    if (inputType === 'keyboard') {
+      return transportResult?.status === 'reacquire-required';
+    }
+    if (ack.status === 'execution-failed') {
+      return ['execution-failed', 'reacquire-required'].includes(transportResult?.status);
+    }
+    return transportResult?.status === 'reacquire-required';
+  },
+
+  _captureMouseReset(inputId) {
+    if (!inputId || !this.activeControlLease) return null;
+    const record = this._desktopWritePending.get(inputId);
+    if (!record || record.type !== 'mouse' || record.action !== 'reset') return null;
+    if (record.leaseId !== this.activeControlLease.leaseId
+      || record.leaseEpoch !== this.activeControlLease.leaseEpoch) return null;
+    if (record.connectionAttemptId !== this._currentConnectionAttemptId()) return null;
+    return {
+      inputId: record.inputId,
+      seq: record.seq,
+      leaseEpoch: record.leaseEpoch,
+      attemptId: record.connectionAttemptId,
+    };
+  },
+
+  _captureKeyboardReset() {
+    const reset = this.keyboardTransport?.getPendingReset?.();
+    if (!reset || !this.activeControlLease) return null;
+    if (reset.leaseEpoch !== this.activeControlLease.leaseEpoch) return null;
+    if (reset.connectionAttemptId !== this._currentConnectionAttemptId()) return null;
+    return {
+      inputId: reset.inputId,
+      seq: reset.seq,
+      leaseEpoch: reset.leaseEpoch,
+      attemptId: reset.connectionAttemptId,
+    };
+  },
+
+  _finishRecoveryIfReady() {
+    const cycle = this._recoveryCycle;
+    if (!cycle || cycle.state !== 'waiting'
+      || !cycle.mouseConfirmed || !cycle.keyboardConfirmed
+      || !this._sameRecoveryIdentity(cycle)) return false;
+
+    this._clearRecoveryTimer();
+    this._pendingMouseReset = false;
+    this._pendingMouseResetId = null;
+    this._touchAdapters.forEach((adapter) => adapter.rearm?.());
+    this._touchAdapters.forEach((adapter) => adapter.flushPending?.());
+    this._mobileSurfaceState = 'settled';
+    this._mobileSurfaceGesture = null;
+    this._clearMobileSurfaceTimer();
+    if (cycle.mouseReset?.inputId) {
+      this._desktopWritePending.delete(cycle.mouseReset.inputId);
+    }
+    cycle.state = 'recovered';
+    cycle.reason = null;
+    cycle.retryAvailable = false;
+    // A successful cycle closes this incident. A later blur or DataChannel
+    // failure in the same lease/attempt is a new generation with fresh budget.
+    this._recoveryAutoIdentity = null;
+    this._mobileResetPending = false;
+    this._mobileResetAckInFlight = false;
+    // The transport ready edge is suppressed while the keyboard reset belongs
+    // to this dual-reset cycle. Re-emit it only after both owners are confirmed;
+    // empty-context confirmation stays separate so a pending/composing draft
+    // remains uncertain instead of inheriting reset acknowledgement.
+    this.mobileTextInputAdapter?.onTransportState('ready');
+    this.mobileTextInputAdapter?.confirmEmptyContextRecovery?.();
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'recovered',
+      reason: 'restore', generation: cycle.generation, source: cycle.source || 'recovery',
+    });
+    this.updateKeyboardUI();
+    return true;
+  },
+
+  _handleRecoverySequenceGap(ack) {
+    const cycle = this._recoveryCycle;
+    const reset = cycle?.mouseReset;
+    if (!cycle || cycle.state !== 'waiting' || cycle.mouseConfirmed || !reset
+      || !this._sameRecoveryIdentity(cycle)
+      || ack?.schemaVersion !== 2 || ack?.inputType !== 'mouse'
+      || ack?.leaseEpoch !== reset.leaseEpoch
+      || !Array.isArray(ack?.inputIds) || !ack.inputIds.includes(reset.inputId)
+      || ack?.status !== 'sequence-gap'
+      || !Number.isSafeInteger(ack?.appliedSeq)
+      || ack.appliedSeq < 0 || ack.appliedSeq > this._desktopWriteSequence
+      || cycle.mouseRetryUsed) return false;
+
+    cycle.mouseRetryUsed = true;
+    this._desktopWriteSequence = ack.appliedSeq;
+    this._desktopWritePending.forEach((record, inputId) => {
+      if (record.seq > ack.appliedSeq) this._desktopWritePending.delete(inputId);
+    });
+    const newId = this.sendInput('mouse', 'reset', { reason: 'sequence-gap' });
+    const newReset = this._captureMouseReset(newId);
+    if (!newReset) {
+      this._markRecoveryFailure('mouse-reset-retry-failed');
+      return false;
+    }
+    cycle.mouseReset = newReset;
+    this._pendingMouseReset = true;
+    this._pendingMouseResetId = newId;
+    this.updateKeyboardUI();
+    return true;
+  },
+
+  _handleRecoveryAck(inputType, ack, transportResult) {
+    const cycle = this._recoveryCycle;
+    if (!cycle || cycle.state !== 'waiting' || !this._sameRecoveryIdentity(cycle)) return false;
+    const reset = inputType === 'mouse' ? cycle.mouseReset : cycle.keyboardReset;
+    if (!this._isOwnedResetAck(ack, reset, inputType, cycle.leaseEpoch)
+      || !['applied', 'duplicate'].includes(transportResult?.status)) return false;
+    if (inputType === 'mouse') cycle.mouseConfirmed = true;
+    else cycle.keyboardConfirmed = true;
+    this._finishRecoveryIfReady();
+    return true;
+  },
+
+  requestInputRecovery({ source } = {}) {
+    if (source !== 'auto' && source !== 'user') return false;
+    if (!this.activeControlLease || !this._recoveryNeedsReset()) return false;
+    const current = this._recoveryCycle;
+    if (current?.state === 'waiting') return false;
+    if (source === 'auto' && this._recoveryAutoIdentity === this._recoveryIdentityKey()) return false;
+    if (source === 'auto' && !this._canAutoRecover()) return false;
+    // Mark the current lease/attempt as having spent its automatic budget for
+    // this incident even when a user started the cycle. A later active/visible
+    // callback must not launch a second automatic cycle after timeout; an
+    // explicit user retry remains allowed below.
+    this._recoveryAutoIdentity = this._recoveryIdentityKey();
+
+    this._clearRecoveryTimer();
+    const identity = this._recoveryIdentity();
+    const generation = (Number(current?.generation) || 0) + 1;
+    this._recoveryCycle = {
+      state: 'waiting',
+      generation,
+      reason: source === 'auto' ? 'automatic-recovery' : 'user-recovery',
+      source,
+      mouseConfirmed: false,
+      keyboardConfirmed: false,
+      retryAvailable: false,
+      leaseId: identity.leaseId,
+      leaseEpoch: identity.leaseEpoch,
+      attemptId: identity.attemptId,
+      mouseReset: null,
+      keyboardReset: null,
+      mouseRetryUsed: false,
+      deadline: Date.now() + INPUT_RECOVERY_TIMEOUT_MS,
+    };
+    this._recordInputTrace('recovery', {
+      inputType: 'control', action: 'recovery', state: 'waiting',
+      reason: source === 'auto' ? 'automatic-recovery' : 'user-recovery',
+      generation, source,
+    });
+
+    // Claim a reset already in flight (for example the reset emitted while a
+    // pointer was parked); otherwise emit one fresh barrier for this cycle.
+    const wireResetReason = source === 'auto' ? 'transport-change' : 'manual';
+    const existingMouse = current?.state === 'failed' ? null : (this._pendingMouseResetId
+      ? this._captureMouseReset(this._pendingMouseResetId) : null);
+    const mouseId = existingMouse?.inputId
+      || this.sendInput('mouse', 'reset', { reason: wireResetReason });
+    this._recoveryCycle.mouseReset = existingMouse || this._captureMouseReset(mouseId);
+    if (this._recoveryCycle.mouseReset) {
+      this._pendingMouseReset = true;
+      this._pendingMouseResetId = this._recoveryCycle.mouseReset.inputId;
+    }
+
+    const keyboardAccepted = Boolean(this.keyboardController?.reset?.(wireResetReason));
+    this._recoveryCycle.keyboardReset = keyboardAccepted ? this._captureKeyboardReset() : null;
+    this._mobileResetPending = Boolean(this._recoveryCycle.keyboardReset);
+    if (!this._recoveryCycle.mouseReset) {
+      this._markRecoveryFailure('mouse-reset-send-failed');
+      return false;
+    }
+    if (!this._recoveryCycle.keyboardReset) {
+      this._markRecoveryFailure('keyboard-reset-send-failed');
+      return false;
+    }
+
+    const generationAtStart = generation;
+    this._recoveryTimer = setTimeout(() => {
+      if (this._recoveryCycle?.state === 'waiting'
+        && this._recoveryCycle.generation === generationAtStart) {
+        this._markRecoveryFailure('recovery-timeout');
+      }
+    }, INPUT_RECOVERY_TIMEOUT_MS);
+    this.updateKeyboardUI();
+    return true;
+  },
+
+  _maybeAutoRecover(reason = 'lifecycle') {
+    if (!this._recoveryNeedsReset()) return false;
+    return this.requestInputRecovery({ source: 'auto', reason });
+  },
+
+  onConnectionAttemptChanged(attemptId = null) {
+    const currentAttempt = attemptId || null;
+    if (this._recoveryCycle?.state !== 'waiting'
+      || this._recoveryCycle.attemptId === currentAttempt) return false;
+    this._invalidateRecoveryIdentity('attempt-changed');
+    this._recoveryAutoIdentity = null;
+    this._recordInputTrace('lifecycle', {
+      inputType: 'control', action: 'active', state: 'active',
+      reason: 'attempt-changed', source: 'lifecycle',
+    });
+    return true;
+  },
+
   _markMobileSurfaceUncertain(_reason) {
     this._clearMobileSurfaceTimer();
     this._mobileSurfaceGeneration += 1;
     this._mobileSurfaceState = 'uncertain';
     this._mobileSurfaceGesture = null;
     this.mobileTextInputAdapter?.onTransportState('reacquire-required');
+    this._recordInputTrace('recovery', {
+      inputType: 'pointer', action: 'recovery', state: 'uncertain',
+      reason: _reason, source: 'recovery',
+    });
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
   },
 
@@ -342,6 +1186,8 @@ const Input = {
 
   _handleMobileSurfaceAck(ack) {
     if (!this._mobileSurfaceGesture) return;
+    if (Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
+      && ack.inputType !== 'mouse') return;
     const gesture = this._mobileSurfaceGesture;
     if (ack?.leaseEpoch !== gesture.leaseEpoch
       || (ack?.leaseId !== undefined && ack.leaseId !== gesture.leaseId)
@@ -394,6 +1240,48 @@ const Input = {
       && this._mobileSurfaceState === 'settled' && !this._pendingMouseReset;
   },
 
+  _isDesktopInputActionAllowed() {
+    return this.getEffectiveInputGate().allowed;
+  },
+
+  _mobileDispatchGate(inputType, action) {
+    const gate = this.getEffectiveInputGate();
+    // MobileTextInput owns the local draft transaction. A live draft is
+    // expected while its accepted text is being committed, so draft reasons
+    // are not transport vetoes at this final dispatch boundary.
+    const rawBlockedReasons = Array.isArray(gate.blockedReasons) ? gate.blockedReasons : [];
+    const blockedReasons = rawBlockedReasons
+      .filter((reason) => !['draft-composing', 'draft-pending', 'draft-uncertain'].includes(reason));
+    const dispatchGate = {
+      allowed: gate.allowed === true || (gate.allowed === false && rawBlockedReasons.length > 0
+        && blockedReasons.length === 0),
+      blockedReasons,
+    };
+    if (!dispatchGate.allowed && !blockedReasons.length && rawBlockedReasons.length) {
+      dispatchGate.blockedReasons = rawBlockedReasons.slice(0, 16);
+    }
+    this._recordInputGate(inputType, action, dispatchGate);
+    return dispatchGate.allowed;
+  },
+
+  _sendMobileText(text) {
+    if (!this._mobileDispatchGate('text', 'text')) return false;
+    return this.keyboardController?.sendText(text) === true;
+  },
+
+  _sendMobileKey(key, modifiers = {}) {
+    if (!this._mobileDispatchGate('keyboard', 'key')) return false;
+    return this.keyboardController?.sendChord({
+      code: key,
+      modifiers: {
+        shift: Boolean(modifiers.shiftKey),
+        ctrl: Boolean(modifiers.ctrlKey),
+        alt: Boolean(modifiers.altKey),
+        meta: Boolean(modifiers.metaKey),
+      },
+    }) === true;
+  },
+
   _isAcceptedMobileSurfaceMove(payload = null) {
     const gesture = this._mobileSurfaceGesture;
     if (this._mobileSurfaceState !== 'pending'
@@ -419,7 +1307,13 @@ const Input = {
     if (!['navigation', 'context-change'].includes(action)
       || !this._isMobileEditingActionAllowed() || typeof send !== 'function') return false;
     if (this.mobileTextInputAdapter?.runExternalAction) {
-      return this.mobileTextInputAdapter.runExternalAction(action, send);
+      const context = this._inputTraceContext;
+      const focusKind = typeof context?.focusKind === 'string' ? context.focusKind : null;
+      return this.mobileTextInputAdapter.runExternalAction(action, send, {
+        eventId: Number.isSafeInteger(context?.eventId) ? context.eventId : null,
+        ...(focusKind ? { focusKind } : {}),
+        ...(context?.remoteOperation === true ? { remoteOperation: true } : {}),
+      });
     }
     let result;
     try {
@@ -453,7 +1347,10 @@ const Input = {
     return inputId;
   },
 
-  _acceptDesktopWriteAck(ack, inputIds) {
+  _acceptDesktopWriteAck(ack, inputIds, protectedInputIds = null) {
+    const protectedIds = protectedInputIds instanceof Set
+      ? protectedInputIds
+      : new Set(Array.isArray(protectedInputIds) ? protectedInputIds : []);
     const records = inputIds
       .map((inputId) => this._desktopWritePending.get(inputId))
       .filter(Boolean);
@@ -466,11 +1363,15 @@ const Input = {
 
     const status = ack?.status;
     if (status === 'applied' || status === 'duplicate') {
-      records.forEach(({ inputId }) => this._desktopWritePending.delete(inputId));
+      records.forEach(({ inputId }) => {
+        if (!protectedIds.has(inputId)) this._desktopWritePending.delete(inputId);
+      });
       const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
       if (appliedSeq !== null) {
         this._desktopWritePending.forEach((record, inputId) => {
-          if (record.seq <= appliedSeq) this._desktopWritePending.delete(inputId);
+          if (record.seq <= appliedSeq && !protectedIds.has(inputId)) {
+            this._desktopWritePending.delete(inputId);
+          }
         });
       }
       return { status, ...(appliedSeq === null ? {} : { appliedSeq }) };
@@ -495,21 +1396,96 @@ const Input = {
     // is never converted into an applied result.
     this._desktopWriteSequence = appliedSeq;
     this._desktopWritePending.forEach((record, inputId) => {
-      if (record.seq > appliedSeq) this._desktopWritePending.delete(inputId);
+      if (record.seq > appliedSeq && !protectedIds.has(inputId)) {
+        this._desktopWritePending.delete(inputId);
+      }
     });
     this._desktopWriteRecovery = { state: 'reconciled', status, appliedSeq };
     return { status, recovery: 'reconciled', appliedSeq };
   },
 
   acceptMouseAck(ack) {
+    let result;
+    try {
+      result = this._acceptMouseAck(ack);
+    } catch (error) {
+      if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
+        || ack.inputType === 'mouse' || ack.inputType === 'command') {
+        this._recordInputAck('mouse', ack, { status: 'stale' });
+      }
+      throw error;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
+      || ack.inputType === 'mouse' || ack.inputType === 'command') {
+      this._recordInputAck('mouse', ack, result);
+    }
+    return result;
+  },
+
+  _acceptMouseAck(ack) {
     const inputIds = Array.isArray(ack?.inputIds) ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
     const hasInputType = Boolean(ack && Object.prototype.hasOwnProperty.call(ack, 'inputType'));
     const inputType = ack?.inputType;
     if (hasInputType && inputType !== 'mouse' && inputType !== 'command') return { status: 'stale' };
+    // The fallback below is intentionally allowed to clear a non-recovery
+    // mouse reset only when its actual pending record still belongs to the
+    // current lease and connection attempt. A late ACK from an old attempt
+    // must not wash away the local safety barrier just because it repeats the
+    // same input ID.
+    if (this._pendingMouseReset && inputIds.includes(this._pendingMouseResetId)) {
+      const pendingReset = this._desktopWritePending.get(this._pendingMouseResetId);
+      if (pendingReset && (pendingReset.type !== 'mouse' || pendingReset.action !== 'reset'
+        || pendingReset.leaseId !== this.activeControlLease?.leaseId
+        || pendingReset.leaseEpoch !== this.activeControlLease?.leaseEpoch
+        || pendingReset.connectionAttemptId !== this._currentConnectionAttemptId())) {
+        return { status: 'stale' };
+      }
+      if (!pendingReset && Number.isInteger(ack?.leaseEpoch)
+        && ack.leaseEpoch !== this.activeControlLease?.leaseEpoch) return { status: 'stale' };
+    }
+    const recoveryReset = inputType === 'mouse' && this._recoveryCycle?.state === 'waiting'
+      ? this._recoveryCycle.mouseReset : null;
+    if (recoveryReset && inputIds.includes(recoveryReset.inputId)
+      && ack?.leaseEpoch !== this._recoveryCycle.leaseEpoch) {
+      return { status: 'stale' };
+    }
+    if (recoveryReset && inputIds.includes(recoveryReset.inputId)
+      && ack?.status !== 'sequence-gap'
+      && !this._isOwnedResetRejectionEnvelope(
+        ack, recoveryReset, 'mouse', this._recoveryCycle.leaseEpoch,
+      )
+      && (!Number.isSafeInteger(ack?.appliedSeq) || ack.appliedSeq < recoveryReset.seq)) {
+      // A matching reset ID with an older cumulative sequence is not an ACK
+      // for this barrier. Reject before the generic ledger can clear it.
+      return { status: 'stale' };
+    }
+    const protectedRecoveryReset = (inputType === 'mouse' || inputType === 'command')
+      && this._recoveryCycle?.state === 'waiting'
+      && this._sameRecoveryIdentity(this._recoveryCycle)
+      ? this._recoveryCycle.mouseReset?.inputId : null;
     const desktopResult = (inputType === 'mouse' || inputType === 'command')
-      ? this._acceptDesktopWriteAck(ack, inputIds)
+      ? this._acceptDesktopWriteAck(ack, inputIds, protectedRecoveryReset ? [protectedRecoveryReset] : null)
       : null;
     this._handleMobileSurfaceAck(ack);
+    let recoverySequenceGapRetried = false;
+    if (inputType === 'mouse' && ack?.status === 'sequence-gap') {
+      recoverySequenceGapRetried = this._handleRecoverySequenceGap(ack);
+    }
+    if (inputType === 'mouse' && this._recoveryCycle?.state === 'waiting') {
+      const reset = this._recoveryCycle.mouseReset;
+      const ownedFailure = this._isOwnedResetRejectionAck(
+        ack, reset, 'mouse', this._recoveryCycle.leaseEpoch, desktopResult,
+      );
+      const ownedEnvelope = this._isOwnedResetEnvelope(
+        ack, reset, 'mouse', this._recoveryCycle.leaseEpoch,
+      ) && ack.appliedSeq >= reset.seq;
+      if (ownedFailure
+        && !recoverySequenceGapRetried) {
+        this._markRecoveryFailure(`mouse-reset-ack-${String(ack.status || 'rejected')}`);
+      } else if (ownedEnvelope && !recoverySequenceGapRetried) {
+        this._handleRecoveryAck('mouse', ack, desktopResult);
+      }
+    }
     if (desktopResult && inputType === 'command') return desktopResult;
     if (desktopResult && desktopResult.status !== 'stale'
       && desktopResult.status !== 'reacquire-required') {
@@ -520,6 +1496,7 @@ const Input = {
     } else if (hasInputType && inputType === 'mouse' && !this._pendingMouseReset) {
       return { status: 'stale' };
     }
+    if (desktopResult?.status === 'stale') return desktopResult;
     if (!this._pendingMouseReset) return desktopResult || { status: 'stale' };
     if (!this._pendingMouseResetId || !inputIds.includes(this._pendingMouseResetId)) return { status: 'stale' };
     if (ack?.status !== 'applied' && ack?.status !== 'duplicate') return { status: 'stale' };
@@ -551,7 +1528,12 @@ const Input = {
     const isMobileTextEvent = (event) => event?.target === document.getElementById('mobileTextInput');
     const isPhysicalModifierKey = (event) => /^(Control|Shift|Alt|Meta)(Left|Right)$/.test(event?.code || '');
     document.addEventListener('keydown', (event) => {
-      if (!isMobileTextEvent(event) && this._isMobileEditingActionAllowed()) {
+      if (isMobileTextEvent(event)) return;
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'down', event?.target);
+      this._withInputTraceEvent(eventId, () => {
+        const gate = this.getEffectiveInputGate();
+        this._recordInputGate('keyboard', 'key', gate);
+        if (!gate.allowed) return;
         if (isPhysicalModifierKey(event)) {
           this.keyboardController?.handleDomEvent(event);
           return;
@@ -559,10 +1541,17 @@ const Input = {
         this.runMobileEditingAction('context-change', () => (
           this.keyboardController?.handleDomEvent(event) === true
         ));
-      }
+      }, { clearAfter: true });
     });
     document.addEventListener('keyup', (event) => {
-      if (!isMobileTextEvent(event)) this.keyboardController?.handleDomEvent(event);
+      if (isMobileTextEvent(event)) return;
+      const eventId = this._beginInputTraceDom('keyboard', 'key', 'up', event?.target, {
+        refreshEligibility: true,
+      });
+      this._withInputTraceEvent(eventId, () => {
+        this._recordInputGate('keyboard', 'key', { allowed: true, blockedReasons: [] });
+        this.keyboardController?.handleDomEvent(event);
+      }, { clearAfter: true, refreshEligibility: true });
     });
     video.addEventListener('click', (event) => {
       if (!this.focusDesktopSurface(video, 'surface-user')) event.preventDefault?.();
@@ -590,12 +1579,21 @@ const Input = {
       if (dcOpen) this.resetKeyboard('window-blur');
       else this.parkKeyboard('window-blur');
     });
+    window.addEventListener('focus', () => {
+      // A short focus loss does not necessarily produce a visibilitychange or
+      // a media frame. Reconcile a parked/uncertain surface at the focus edge,
+      // while _recoveryNeedsReset keeps a healthy ACK-pending blur idempotent.
+      this._maybeAutoRecover('window-focus');
+    });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) return;
-      this.releasePointer('visibility-hidden');
-      const dcOpen = typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open';
-      if (dcOpen) this.resetKeyboard('visibility-hidden');
-      else this.parkKeyboard('visibility-hidden');
+      if (document.hidden) {
+        this.releasePointer('visibility-hidden');
+        const dcOpen = typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open';
+        if (dcOpen) this.resetKeyboard('visibility-hidden');
+        else this.parkKeyboard('visibility-hidden');
+        return;
+      }
+      this._maybeAutoRecover('visibility-visible');
     });
   },
 
@@ -631,6 +1629,11 @@ const Input = {
       return;
     }
     const raw = this.keyboardController?.getSnapshot().state || 'INACTIVE';
+    const effectiveGate = this.getEffectiveInputGate();
+    // The controller can be READY while a downstream surface, draft, viewport,
+    // media, or recovery veto still blocks new input. Do not present that raw
+    // transport state as user-visible readiness.
+    const displayState = raw === 'READY' && !effectiveGate.allowed ? 'BLOCKED' : raw;
     const labels = {
       INACTIVE: '键盘：未激活',
       READY: '键盘：就绪',
@@ -641,11 +1644,65 @@ const Input = {
       blocked: '键盘：阻塞',
       ready: '键盘：就绪',
     };
-    display.textContent = labels[raw] || `键盘：${raw}`;
-    display.dataset.state = raw;
+    display.textContent = labels[displayState] || `键盘：${displayState}`;
+    display.dataset.state = displayState;
     this.updateMobileTextInputButton();
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
     this.updateMobileVirtualModifierButtons();
+  },
+
+  getEffectiveInputGate() {
+    const blockedReasons = [];
+    const add = (reason) => {
+      if (reason && !blockedReasons.includes(reason)) blockedReasons.push(reason);
+    };
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || null;
+    const controller = this.keyboardController?.getSnapshot?.() || {};
+    const transport = this.keyboardTransport?.getSnapshot?.() || {};
+    const cycle = this._recoveryCycle || {};
+
+    if (!this.activeControlLease) add('no-active-control');
+    if (!this.isActive) add('inactive');
+    if (!this._viewportInputSupported) add('viewport-unsupported');
+
+    if (typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopInputGateSnapshot === 'function') {
+      const mediaGate = WebRTC.getDesktopInputGateSnapshot();
+      if (!mediaGate?.enabled) {
+        const reasons = Array.isArray(mediaGate?.blockedReasons)
+          ? mediaGate.blockedReasons : [];
+        if (reasons.length) reasons.forEach((reason) => add(String(reason)));
+        else add('media-gate');
+      }
+    }
+
+    const transportState = String(transport.state || '').toLowerCase();
+    const controllerState = String(controller.state || '').toLowerCase();
+    if (['blocked', 'reacquire-required', 'revoked'].includes(transportState)) {
+      add(`keyboard-transport-${transportState}`);
+    }
+    if (controllerState === 'reset_required' || controllerState === 'reset-required') {
+      add('keyboard-reset-pending');
+    } else if (controllerState === 'blocked') {
+      add('keyboard-blocked');
+    }
+
+    if (this._mobileSurfaceState === 'pending') add('surface-pending');
+    if (this._mobileSurfaceState === 'uncertain') add('surface-uncertain');
+    if (this._pendingMouseReset) add('mouse-reset-pending');
+    if (this._desktopWriteRecovery?.state === 'reacquire-required') {
+      add('desktop-write-reacquire-required');
+    }
+    if (mobile?.composing) add('draft-composing');
+    if (mobile?.hasPending) add('draft-pending');
+    if (mobile?.deliveryUncertain) add('draft-uncertain');
+    if (cycle.state === 'waiting') add('recovery-waiting');
+    if (cycle.state === 'failed') add('recovery-failed');
+
+    return {
+      allowed: blockedReasons.length === 0,
+      blockedReasons,
+      recovery: this._recoverySnapshot(),
+    };
   },
 
   updateMobileVirtualModifierButtons() {
@@ -667,6 +1724,96 @@ const Input = {
     button.disabled = !this.isActive;
   },
 
+  setupInputRecoveryUi() {
+    if (this._inputRecoveryUiBound) return;
+    const notice = document.getElementById('inputRecoveryNotice');
+    const retry = document.getElementById('inputRecoveryRetryBtn');
+    const draft = document.getElementById('inputRecoveryDraftBtn');
+    if (!notice && !retry && !draft) return;
+    retry?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+    retry?.addEventListener('click', (event) => {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      this.requestInputRecovery({ source: 'user' });
+      this.updateInputRecoveryUI();
+    });
+    draft?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+    draft?.addEventListener('click', (event) => {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      // This button only opens the local editor for inspection.  It never
+      // discards or resends the retained draft and never requests control.
+      const dock = document.getElementById('mobileInputDock');
+      if (dock) dock.hidden = false;
+      document.body?.classList?.add?.('mobile-input-visible');
+      this.mobileTextInputAdapter?.show?.();
+      this.updateInputRecoveryUI();
+    });
+    this._inputRecoveryUiBound = true;
+  },
+
+  updateInputRecoveryUI() {
+    this.setupInputRecoveryUi();
+    const notice = document.getElementById('inputRecoveryNotice');
+    const noticeText = document.getElementById('inputRecoveryNoticeText');
+    const retry = document.getElementById('inputRecoveryRetryBtn');
+    const draft = document.getElementById('inputRecoveryDraftBtn');
+    const gate = this.getEffectiveInputGate();
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const recovery = gate.recovery || {};
+    const waiting = recovery.state === 'waiting';
+    const failed = recovery.state === 'failed';
+    // A pending/composing value is routine while an edit or reliable surface
+    // ACK is in flight. The recovery overlay is for a retained draft whose
+    // context is actually blocked/uncertain; the mobile status/retry controls
+    // continue to describe ordinary pending work in the dock.
+    const contextBlocked = mobile.deliveryUncertain === true
+      || ['blocked', 'uncertain'].includes(mobile.status);
+    const draftBlocked = Boolean(mobile.hasPending && contextBlocked);
+    const surfaceBlocked = gate.blockedReasons.includes('surface-uncertain');
+    const show = waiting || failed || contextBlocked || surfaceBlocked;
+    const failedReasonMessages = {
+      'mouse-reset-send-failed': '鼠标状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'keyboard-reset-send-failed': '键盘状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'mouse-reset-retry-failed': '鼠标状态复位重试失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'recovery-timeout': '输入恢复确认超时，请点击“重试恢复”，或释放后重新获取控制。',
+      'mouse-reset-ack-stale-lease': '鼠标复位被旧控制租约拒绝，请释放后重新获取控制。',
+      'mouse-reset-ack-invalid-input': '鼠标复位输入无效，请释放后重新获取控制。',
+      'mouse-reset-ack-unsupported-code': '鼠标复位包含不支持的输入，请释放后重新获取控制。',
+      'mouse-reset-ack-execution-failed': '鼠标复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
+      'keyboard-reset-ack-stale-lease': '键盘复位被旧控制租约拒绝，请释放后重新获取控制。',
+      'keyboard-reset-ack-invalid-input': '键盘复位输入无效，请释放后重新获取控制。',
+      'keyboard-reset-ack-unsupported-code': '键盘复位包含不支持的按键，请释放后重新获取控制。',
+      'keyboard-reset-ack-execution-failed': '键盘复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
+    };
+    const message = waiting
+      ? '正在安全复位输入，请稍候…'
+      : failed
+        ? failedReasonMessages[recovery.reason]
+          || '输入恢复未确认，请点击“重试恢复”，或释放后重新获取控制。'
+        : draftBlocked
+          ? '本地草稿未自动发送，请打开草稿核对或放弃。'
+          : surfaceBlocked
+            ? '远程按键状态未确认，请重试恢复。'
+            : contextBlocked
+              ? '输入上下文未确认，已保持安全状态。'
+              : '';
+    if (notice) {
+      notice.hidden = !show;
+      if (noticeText) noticeText.textContent = message;
+      else notice.textContent = message;
+      notice.setAttribute?.('aria-busy', String(waiting));
+    }
+    if (retry) {
+      retry.hidden = !(waiting || failed || surfaceBlocked);
+      retry.disabled = waiting || (!failed && !surfaceBlocked);
+    }
+    if (draft) {
+      draft.hidden = !draftBlocked;
+      draft.disabled = !draftBlocked;
+    }
+  },
+
   updateMobileTextInputState(snapshot = null) {
     const state = snapshot || this.mobileTextInputAdapter?.getSnapshot?.();
     const status = document.getElementById('mobileInputStatus');
@@ -680,6 +1827,7 @@ const Input = {
       }
       if (retry) retry.hidden = true;
       if (discard) discard.hidden = true;
+      this.updateInputRecoveryUI();
       return;
     }
     const labels = {
@@ -706,6 +1854,7 @@ const Input = {
       discard.hidden = !(hasDraft || hasRecovery);
       discard.disabled = !(hasDraft || hasRecovery);
     }
+    this.updateInputRecoveryUI();
   },
 
   clearMobileTextInputDock() {
@@ -719,7 +1868,7 @@ const Input = {
   focusDesktopSurface(element, reason) {
     if (!['surface-user', 'initial-ready', 'restore'].includes(reason)) return false;
     if (typeof document === 'undefined' || !this.isActive || !element?.isConnected) return false;
-    if (reason === 'surface-user' && !this._isMobileEditingActionAllowed()) return false;
+    if (reason === 'surface-user' && !this._isDesktopInputActionAllowed()) return false;
     const active = document.activeElement;
     const terminal = document.getElementById('terminalPanel');
     const editing = active?.matches?.('input,textarea,select,[contenteditable="true"]')
@@ -728,6 +1877,7 @@ const Input = {
     if (reason !== 'surface-user' && editing) return false;
     if (typeof element.focus !== 'function') return false;
     element.focus();
+    if (reason === 'restore') this._maybeAutoRecover('surface-restore');
     return document.activeElement === element;
   },
 
@@ -750,72 +1900,141 @@ const Input = {
       if (shouldResetKeyboard) this.resetKeyboard(reason);
     }
     this.isActive = next;
+    const lifecycleReason = meta.reason || (next ? 'active' : 'inactive');
+    const lifecycleObservation = JSON.stringify([
+      next,
+      lifecycleReason,
+      this.activeControlLease?.leaseId || null,
+      Number.isInteger(this.activeControlLease?.leaseEpoch)
+        ? this.activeControlLease.leaseEpoch : null,
+      this._currentConnectionAttemptId(),
+    ]);
+    if (this._lastActiveLifecycleObservation !== lifecycleObservation) {
+      this._lastActiveLifecycleObservation = lifecycleObservation;
+      this._recordInputTrace('lifecycle', {
+        inputType: 'control',
+        action: next ? 'active' : 'inactive',
+        state: next ? 'active' : 'inactive',
+        reason: lifecycleReason,
+        accepted: next === true,
+        source: 'lifecycle',
+      });
+    }
     this.updateKeyboardUI();
+    if (next) this._maybeAutoRecover('active');
   },
 
   resetKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
     this._mobileResetPending = true;
     this.clearMobileTextInputDock();
-    this.mobileTextInputAdapter?.reset(reason);
+    this.mobileTextInputAdapter?.invalidateContext?.(reason);
     this._resetMobileSurfaceContext({ preserveUncertainty: true });
     this.updateMobileTextInputButton();
     const accepted = Boolean(this.keyboardController?.reset(reason));
+    this._mobileResetPending = accepted && Boolean(this._captureKeyboardReset());
     if (!accepted) {
       this._mobileResetPending = false;
       this.mobileTextInputAdapter?.onTransportState('reacquire-required');
     }
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard', action: 'reset', state: accepted ? 'pending' : 'failed',
+      reason: reason || 'reset', accepted, source: 'lifecycle',
+    });
     return accepted;
   },
 
   parkKeyboard(reason) {
     this.lastKeyboardResetReason = reason;
     this.clearMobileTextInputDock();
-    this.mobileTextInputAdapter?.reset(reason);
+    this.mobileTextInputAdapter?.invalidateContext?.(reason);
     this._resetMobileSurfaceContext({ preserveUncertainty: true });
     this.updateMobileTextInputButton();
     if (this.keyboardController && typeof this.keyboardController.park === 'function') {
       this.keyboardController.park(reason);
+      this._recordInputTrace('lifecycle', {
+        inputType: 'keyboard', action: 'pause', state: 'paused',
+        reason: reason || 'manual', accepted: true, source: 'lifecycle',
+      });
       this.updateKeyboardUI();
       return true;
     }
+    this._recordInputTrace('lifecycle', {
+      inputType: 'keyboard', action: 'pause', state: 'paused',
+      reason: reason || 'manual', accepted: false, source: 'lifecycle',
+    });
     return false;
   },
 
   getDiagnosticState() {
     const controller = this.keyboardController?.getSnapshot() || {};
     const transport = this.keyboardTransport?.getSnapshot() || {};
-    const gate = (typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopInputGateSnapshot === 'function')
+    const rawGate = (typeof WebRTC !== 'undefined' && typeof WebRTC.getDesktopInputGateSnapshot === 'function')
       ? WebRTC.getDesktopInputGateSnapshot()
       : null;
+    const effectiveGate = this.getEffectiveInputGate();
+    const gate = rawGate ? {
+      enabled: rawGate.enabled === true,
+      hasActiveControl: rawGate.hasActiveControl === true,
+      manualDisconnect: rawGate.manualDisconnect === true,
+      mediaState: safeDiagnosticEnum(rawGate.mediaState, INPUT_DIAGNOSTIC_MEDIA_STATES),
+      runtimePhase: safeDiagnosticEnum(rawGate.runtimePhase, INPUT_DIAGNOSTIC_RUNTIME_PHASES),
+      inputIsActive: rawGate.inputIsActive == null ? null : rawGate.inputIsActive === true,
+      blockedReasons: safeDiagnosticReasons(rawGate.blockedReasons),
+    } : null;
+    const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
+    const desktopWriteRecovery = this._desktopWriteRecovery;
+    const safeDesktopWriteRecovery = desktopWriteRecovery ? {
+      state: safeDiagnosticEnum(desktopWriteRecovery.state,
+        new Set(['reacquire-required', 'reconciled']), 'reacquire-required'),
+      status: safeDiagnosticEnum(desktopWriteRecovery.status, INPUT_DIAGNOSTIC_ACK_STATUSES),
+      ...(Number.isSafeInteger(desktopWriteRecovery.appliedSeq) && desktopWriteRecovery.appliedSeq >= 0
+        ? { appliedSeq: safeDiagnosticInteger(desktopWriteRecovery.appliedSeq) } : {}),
+    } : null;
     return {
-      keyboardMode: controller.mode || this.keyboardMode || null,
+      keyboardMode: safeDiagnosticEnum(controller.mode || this.keyboardMode,
+        new Set(['windows', 'mac'])),
       isActive: this.isActive,
       hasLease: Boolean(this.activeControlLease),
-      leaseEpoch: this.activeControlLease?.leaseEpoch || 0,
+      leaseEpoch: safeDiagnosticInteger(this.activeControlLease?.leaseEpoch),
       gate,
-      keyboard: {
-        leaseState: controller.state || 'INACTIVE',
-        epoch: transport.epoch || 0,
-        lastSent: transport.lastSent || 0,
-        lastApplied: transport.lastApplied || 0,
-        pendingCount: transport.pendingCount || 0,
-        pressedCount: controller.pressedKeyCount || 0,
-        modifierMask: this.modifierMask || 0,
-        adapter: transport.adapter || null,
-        lastResetReason: this.lastKeyboardResetReason || null,
+      effectiveGate: {
+        allowed: effectiveGate.allowed === true,
+        blockedReasons: safeDiagnosticReasons(effectiveGate.blockedReasons),
+        recovery: this._recoverySnapshot(),
       },
-      pressedMouseButtonCount: this._pressedMouseButtons.size,
-      pendingMouseReset: this._pendingMouseReset,
-      desktopWriteRecovery: this._desktopWriteRecovery
-        ? { ...this._desktopWriteRecovery }
-        : null,
+      surface: {
+        state: safeDiagnosticEnum(this._mobileSurfaceState, INPUT_DIAGNOSTIC_SURFACE_STATES, 'settled'),
+        generation: safeDiagnosticInteger(this._mobileSurfaceGeneration),
+      },
+      draft: {
+        composing: mobile.composing === true,
+        hasPending: mobile.hasPending === true,
+        deliveryUncertain: mobile.deliveryUncertain === true,
+        status: safeDiagnosticEnum(mobile.status, INPUT_DIAGNOSTIC_DRAFT_STATUSES, 'idle'),
+      },
+      viewport: { inputSupported: this._viewportInputSupported !== false },
+      recovery: this._recoverySnapshot(),
+      keyboard: {
+        leaseState: safeDiagnosticEnum(controller.state, INPUT_DIAGNOSTIC_KEYBOARD_STATES, 'INACTIVE'),
+        epoch: safeDiagnosticInteger(transport.epoch),
+        lastSent: safeDiagnosticInteger(transport.lastSent),
+        lastApplied: safeDiagnosticInteger(transport.lastApplied),
+        pendingCount: safeDiagnosticInteger(transport.pendingCount, 256),
+        pressedCount: safeDiagnosticInteger(controller.pressedKeyCount, 256),
+        modifierMask: safeDiagnosticInteger(this.modifierMask, 0x1fffff),
+        adapter: safeDiagnosticEnum(transport.adapter, INPUT_DIAGNOSTIC_ADAPTERS),
+        lastResetReason: safeDiagnosticReason(this.lastKeyboardResetReason),
+      },
+      pressedMouseButtonCount: safeDiagnosticInteger(this._pressedMouseButtons.size, 32),
+      pendingMouseReset: this._pendingMouseReset === true,
+      desktopWriteRecovery: safeDesktopWriteRecovery,
     };
   },
 
   sendInput(type, action, payload) {
     const lease = this.activeControlLease;
-    if (!lease) return null;
+    const traceInputType = this._traceInputType(type);
     // Mouse/DOM keyboard path requires the media gate (isActive). Toolbar commands
     // like showDock only need the control lease so they keep working across brief
     // 0-FPS / media-ready gaps on full-relay.
@@ -824,6 +2043,22 @@ const Input = {
     const isMouseSafetyRelease = type === 'mouse' && (action === 'up' || action === 'reset');
     const isAcceptedGestureMove = type === 'mouse' && action === 'move'
       && this._isAcceptedMobileSurfaceMove(payload);
+    const traceGateAlreadyRecorded = this._inputTraceContext?.inputType === traceInputType
+      && this._inputTraceContext?.gateRecorded === true;
+    if (!traceGateAlreadyRecorded) {
+      // Preserve the old no-lease fast path: collecting a rejection must not
+      // initialize media state or otherwise alter the business gate.
+      const effectiveGate = lease
+        ? this.getEffectiveInputGate()
+        : { allowed: false, blockedReasons: ['no-active-control'] };
+      const gateAllowed = lease && (type === 'command' || isMouseSafetyRelease || isAcceptedGestureMove
+        ? true : effectiveGate.allowed === true);
+      this._recordInputGate(traceInputType, action, {
+        allowed: gateAllowed,
+        blockedReasons: effectiveGate.blockedReasons,
+      });
+    }
+    if (!lease) return null;
     if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return null;
     if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
     // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
@@ -851,20 +2086,89 @@ const Input = {
         action,
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
+        connectionAttemptId: this._currentConnectionAttemptId(),
       });
     };
-    if (typeof WebRTC !== 'undefined' && WebRTC.sendInput?.(data)) {
+    const connectionAttemptId = this._currentConnectionAttemptId();
+    let dataChannelAccepted = false;
+    if (typeof WebRTC !== 'undefined' && typeof WebRTC.sendInput === 'function') {
+      try {
+        dataChannelAccepted = Boolean(WebRTC.sendInput(data));
+      } catch (error) {
+        this._recordInputTrace('transport-send', {
+          inputType: traceInputType,
+          action,
+          transport: 'datachannel',
+          accepted: false,
+          inputIds: data.inputIds,
+          seq: data.seq,
+          leaseEpoch: data.leaseEpoch,
+          connectionAttemptId,
+          reliable: reliableWrite,
+        });
+        throw error;
+      }
+    }
+    this._recordInputTrace('transport-send', {
+      inputType: traceInputType,
+      action,
+      transport: 'datachannel',
+      accepted: dataChannelAccepted,
+      inputIds: data.inputIds,
+      seq: data.seq,
+      leaseEpoch: data.leaseEpoch,
+      connectionAttemptId,
+      reliable: reliableWrite,
+    });
+    if (dataChannelAccepted) {
       commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
-      socket.emit('input', data);
+      try {
+        socket.emit('input', data);
+      } catch (error) {
+        this._recordInputTrace('transport-send', {
+          inputType: traceInputType,
+          action,
+          transport: 'socket',
+          accepted: false,
+          inputIds: data.inputIds,
+          seq: data.seq,
+          leaseEpoch: data.leaseEpoch,
+          connectionAttemptId,
+          reliable: reliableWrite,
+        });
+        throw error;
+      }
+      this._recordInputTrace('transport-send', {
+        inputType: traceInputType,
+        action,
+        transport: 'socket',
+        accepted: true,
+        inputIds: data.inputIds,
+        seq: data.seq,
+        leaseEpoch: data.leaseEpoch,
+        connectionAttemptId,
+        reliable: reliableWrite,
+      });
       commitSequence();
       this.recordLatency(data);
       return data.inputIds[0];
     }
+    this._recordInputTrace('transport-send', {
+      inputType: traceInputType,
+      action,
+      transport: 'none',
+      accepted: false,
+      inputIds: data.inputIds,
+      seq: data.seq,
+      leaseEpoch: data.leaseEpoch,
+      connectionAttemptId,
+      reliable: reliableWrite,
+    });
     return null;
   },
 
@@ -1009,12 +2313,14 @@ const Input = {
   releasePointer(reason = 'pointer-release') {
     this._pointerLifecycleGeneration += 1;
     const wasPendingReset = this._pendingMouseReset;
+    const wasSurfacePending = this._mobileSurfaceState === 'pending';
     let adapterResetIssued = false;
     this._touchAdapters.forEach((adapter) => { if (adapter.reset?.(reason)) adapterResetIssued = true; });
     const element = this._activePointerElement; const pointerId = this._activePointerId;
     if (element?.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId);
     const needsReset = this._pressedMouseButtons.size > 0 || this._pendingMouseReset;
     this._pressedMouseButtons.clear(); this._activePointerId = null; this._activePointerElement = null; this._pendingMouseMove = null;
+    if (wasSurfacePending) this._markMobileSurfaceUncertain(reason);
     if (!needsReset || wasPendingReset || adapterResetIssued || this._pendingMouseReset) return null;
     const inputId = this._sendMobileSurfaceReset({ reason });
     this._pendingMouseReset = true;
@@ -1068,6 +2374,19 @@ const Input = {
         if (!accepted || !this._beginMobileSurfaceGesture(inputId)) return false;
         return true;
       },
+      onTraceDomEvent: (meta) => this._beginInputTraceDom(
+        meta?.inputType || 'pointer', meta?.action || 'down', meta?.phase || 'down', element,
+        {
+          focusKind: 'desktop',
+          ...(meta?.action === 'up' ? { refreshEligibility: true } : {}),
+          ...(meta?.action === 'up' ? { allowSurfacePending: true } : {}),
+          ...(meta?.incidentEligible === false ? { incidentEligible: false } : {}),
+        },
+      ),
+      onTraceEventEnd: (eventId) => {
+        if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
+      },
+      withTraceEvent: (eventId, send, options = {}) => this._withInputTraceEvent(eventId, send, options),
       validateGeometry: () => this.validateGeometry(element),
     });
     adapter.bind();
@@ -1093,53 +2412,73 @@ const Input = {
       }
     });
     element.addEventListener('pointerdown', (event) => {
+      // TouchInputAdapter is bound before this desktop listener and owns the
+      // physical touch event, including deferred gesture callbacks.
       if (event.pointerType === 'touch') return;
-      if (!this._isMobileEditingActionAllowed()) {
-        event.preventDefault?.();
-        return;
-      }
-      if (!this.isActive || this._pendingMouseReset) {
-        event.preventDefault?.();
-        return;
-      }
-      this._pointerLifecycleGeneration += 1;
-      this._geometryAbortedPointerId = null;
-      event.preventDefault();
-      if (!this._isMobileEditingActionAllowed()) return;
-      this.focusDesktopSurface(element, 'surface-user');
-      if (!this.validateGeometry(element)) return;
-      const coords = this.getRelativeCoords(event); if (!coords) return;
-      element.setPointerCapture?.(event.pointerId);
-      const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
-      if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
-      this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
+      const eventId = this._beginInputTraceDom('pointer', 'down', 'down', event?.target || element);
+      this._withInputTraceEvent(eventId, () => {
+        const gate = this.getEffectiveInputGate();
+        this._recordInputGate('pointer', 'down', gate);
+        if (!gate.allowed) {
+          event.preventDefault?.();
+          return;
+        }
+        if (!this.isActive || this._pendingMouseReset) {
+          event.preventDefault?.();
+          return;
+        }
+        this._pointerLifecycleGeneration += 1;
+        this._geometryAbortedPointerId = null;
+        event.preventDefault();
+        if (!this._isDesktopInputActionAllowed()) return;
+        this.focusDesktopSurface(element, 'surface-user');
+        if (!this.validateGeometry(element)) return;
+        const coords = this.getRelativeCoords(event); if (!coords) return;
+        element.setPointerCapture?.(event.pointerId);
+        const button = this.getMouseButton(event.button); const clickCount = this.getPointerClickCount(event);
+        if (!this._sendMobileSurfaceDown({ ...coords, button, clickCount, buttons: Number(event.buttons) || 0 })) return;
+        this._activePointerId = event.pointerId; this._activePointerElement = element; this._pressedMouseButtons.add(button); this._lastPointerCoords = coords; this._activePointerClickCount = clickCount;
+      }, { clearAfter: true });
     });
     element.addEventListener('pointerup', (event) => {
       if (event.pointerType === 'touch') return;
-      if (this._geometryAbortedPointerId === event.pointerId) {
-        this._geometryAbortedPointerId = null;
-        return;
-      }
-      if (!this.isActive && this._pressedMouseButtons.size === 0) return;
-      if (!this.validateGeometry(element)) return;
-      event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords; const button = this.getMouseButton(event.button);
-      // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
-      const id = coords
-        ? this._sendMobileSurfaceUp({
-          ...coords,
-          button,
-          clickCount: this._activePointerClickCount,
-          buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
-        })
-        : null;
-      this._pressedMouseButtons.delete(button);
-      if (!id) {
-        this._pendingMouseReset = true;
-        const resetId = this._sendMobileSurfaceReset({ reason: 'pointer-up-failed' });
-        this._pendingMouseResetId = resetId || null;
-      }
-      if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
-      this._pointerLifecycleGeneration += 1;
+      const button = this.getMouseButton(event.button);
+      const trackedRelease = this._activePointerElement === element
+        && this._activePointerId === event.pointerId
+        && this._pressedMouseButtons.has(button);
+      const traceOptions = trackedRelease
+        ? { refreshEligibility: true, allowSurfacePending: true }
+        : { incidentEligible: false };
+      const eventId = this._beginInputTraceDom(
+        'pointer', 'up', 'up', event?.target || element, traceOptions,
+      );
+      this._withInputTraceEvent(eventId, () => {
+        if (this._geometryAbortedPointerId === event.pointerId) {
+          this._geometryAbortedPointerId = null;
+          return;
+        }
+        if (!this.isActive && this._pressedMouseButtons.size === 0) return;
+        if (!this.validateGeometry(element)) return;
+        this._recordInputGate('pointer', 'up', { allowed: true, blockedReasons: [] });
+        event.preventDefault(); const coords = this.getRelativeCoords(event, true) || this._lastPointerCoords;
+        // up/reset bypass isActive so a mid-gesture gate flip cannot leave Host dragging.
+        const id = coords
+          ? this._sendMobileSurfaceUp({
+            ...coords,
+            button,
+            clickCount: this._activePointerClickCount,
+            buttons: Number.isFinite(Number(event.buttons)) ? Number(event.buttons) : 0,
+          })
+          : null;
+        this._pressedMouseButtons.delete(button);
+        if (!id) {
+          this._pendingMouseReset = true;
+          const resetId = this._sendMobileSurfaceReset({ reason: 'pointer-up-failed' });
+          this._pendingMouseResetId = resetId || null;
+        }
+        if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
+        this._pointerLifecycleGeneration += 1;
+      }, { clearAfter: true, ...traceOptions });
     });
     element.addEventListener('pointercancel', (event) => {
       if (event.pointerType === 'touch') return;
@@ -1218,6 +2557,22 @@ const Input = {
       button.addEventListener('click', (event) => {
         event.preventDefault();
         const action = button.dataset.action || button.dataset.mobileAction;
+        const chord = actions[action];
+        const traceAction = action === 'showDock' ? 'showDock'
+          : action === 'rightClick' ? 'click'
+            : chord || virtualModifiers.has(action) ? 'chord' : null;
+        if (!traceAction) return;
+        const eventId = this._beginInputTraceDom(
+          'control', traceAction, 'input', button,
+          { focusKind: 'other', remoteOperation: true },
+        );
+        const withRemoteTrace = (send) => this._withInputTraceEvent(eventId, send, {
+          focusKind: 'other',
+          remoteOperation: true,
+          incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
+          clearAfter: true,
+        });
+        withRemoteTrace(() => {
         if (virtualModifiers.has(action)) {
           const modifierName = action === 'control' ? 'ctrl' : action === 'command' ? 'meta' : action;
           const activeModifiers = this.keyboardController?.getSnapshot?.().virtualModifiers || [];
@@ -1233,11 +2588,14 @@ const Input = {
           const adapter = this._lastTouchAdapter
             || this._touchAdapters.get(this.videoElement)
             || this._touchAdapters.get(document.getElementById('relayImage'));
-          adapter?.clickButton('right');
+          adapter?.clickButton('right', undefined, {
+            eventId,
+            focusKind: 'other',
+            remoteOperation: true,
+          });
           return;
         }
         if (action === 'showDock') { this.sendInput('command', 'showDock', {}); return; }
-        const chord = actions[action];
         if (!chord) return;
         const physical = {
           shiftKey: Boolean(event.shiftKey),
@@ -1262,11 +2620,13 @@ const Input = {
           modifiers,
         }) === true);
         this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
+        });
       });
     });
   },
 
   setupTextInput() {
+    this.setupInputRecoveryUi();
     const modal = document.getElementById('textInputModal');
     const button = document.getElementById('textInputBtn');
     const input = document.getElementById('remoteTextInput');
@@ -1320,10 +2680,22 @@ const Input = {
       const text = Array.from(input?.value || '').slice(0, 4096).join('');
       if (!text) return false;
       const accepted = this.runMobileEditingAction('context-change', () => (
-        this.keyboardController?.sendText(text) === true
+        this._sendMobileText(text)
       ));
       if (accepted) close();
       return accepted;
+    };
+    const commitWithTrace = (event) => {
+      const eventId = this._beginInputTraceDom(
+        'text', 'text', 'input', event?.target || input,
+        { focusKind: 'other', remoteOperation: true },
+      );
+      return this._withInputTraceEvent(eventId, () => commit(), {
+        focusKind: 'other',
+        remoteOperation: true,
+        incidentEligible: this._traceIncidentEligible('other', { remoteOperation: true }),
+        clearAfter: true,
+      });
     };
     if (!this._mobileTextInputModalBound) {
       button?.addEventListener('pointerdown', (event) => event.preventDefault?.());
@@ -1337,9 +2709,12 @@ const Input = {
         if (modal) modal.hidden = false;
         input?.focus();
       });
-      submit?.addEventListener('click', (event) => { event.preventDefault(); commit(); });
+      submit?.addEventListener('click', (event) => {
+        event.preventDefault();
+        commitWithTrace(event);
+      });
       cancel?.addEventListener('click', (event) => { event.preventDefault(); close(); });
-      input?.addEventListener('compositionend', () => commit());
+      input?.addEventListener('compositionend', (event) => commitWithTrace(event));
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
           event.preventDefault();
@@ -1352,16 +2727,8 @@ const Input = {
     if (!this.mobileTextInputAdapter && mobileInput && typeof MobileTextInput !== 'undefined') {
       this.mobileTextInputAdapter = MobileTextInput.create({
         element: mobileInput,
-        sendText: (text) => this.keyboardController?.sendText(text),
-        sendKey: (key, modifiers = {}) => this.keyboardController?.sendChord({
-          code: key,
-          modifiers: {
-            shift: Boolean(modifiers.shiftKey),
-            ctrl: Boolean(modifiers.ctrlKey),
-            alt: Boolean(modifiers.altKey),
-            meta: Boolean(modifiers.metaKey),
-          },
-        }),
+        sendText: (text) => this._sendMobileText(text),
+        sendKey: (key, modifiers = {}) => this._sendMobileKey(key, modifiers),
         hasVirtualModifiers: () => (this.keyboardController?.getSnapshot()?.virtualModifiers || []).length > 0,
         releaseTrackedKey: (event) => this.keyboardController?.handleDomEvent(event) === true,
         isEnabled: () => this._viewportInputSupported
@@ -1372,6 +2739,23 @@ const Input = {
         },
         isSurfaceSettled: () => this._mobileSurfaceState === 'settled',
         onStateChange: (snapshot) => this.updateMobileTextInputState(snapshot),
+        onTraceDomEvent: (meta) => this._beginInputTraceDom(
+          meta?.inputType || 'text', meta?.action || 'text', meta?.phase || 'input',
+          mobileInput, { focusKind: 'mobile-text' },
+        ),
+        onTraceGate: (meta) => this._recordInputTrace('gate', {
+          inputType: meta?.inputType || 'text',
+          action: meta?.action || 'text',
+          accepted: meta?.accepted === true,
+          reason: meta?.reason,
+          eventId: meta?.eventId,
+          focusKind: 'mobile-text',
+          visibility: this._traceVisibility(),
+        }),
+        onTraceEventEnd: (eventId) => {
+          if (this._inputTraceContext?.eventId === eventId) this._inputTraceContext = null;
+        },
+        withTraceEvent: (eventId, send, options = {}) => this._withInputTraceEvent(eventId, send, options),
         refreshViewport: () => {
           if (typeof ChromeLayout !== 'undefined') ChromeLayout.recalculate?.();
         },
@@ -1421,6 +2805,12 @@ const Input = {
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
   },
 };
+
+// Input is declared with a top-level const for source-mode safety. Publish the
+// same object on the classic-script global so diagnostic-core can inspect the
+// live lease/active gate without creating a second owner.
+if (typeof globalThis !== 'undefined') globalThis.Input = Input;
+if (typeof window !== 'undefined') window.Input = Input;
 
 document.addEventListener('DOMContentLoaded', () => {
   const video = document.getElementById('remoteVideo');

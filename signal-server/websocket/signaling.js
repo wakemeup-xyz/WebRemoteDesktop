@@ -6,6 +6,11 @@ const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { createRuntimeContext } = require('./runtime-context');
 const { validateRemoteInput, summarizeRemoteInput } = require('../lib/remote-input-contract');
 const {
+  isHighFrequencyInput,
+  summarizeHighFrequencyInput,
+  summarizeInputEvent,
+} = require('../lib/observability/input');
+const {
   validateMediaActivityRequest,
   summarizeMediaActivity,
 } = require('../lib/media-activity-contract');
@@ -125,6 +130,7 @@ function setupSignaling(io, options = {}) {
   });
   const pendingOffers = new Map();
   const pendingInputs = new Map();
+  const inputAggregateCounts = new Map();
   let pendingControllerProtocolVersion = null;
   let legacyControllerViewerId = null;
   const legacyRelayCompanionByOwner = new Map();
@@ -166,6 +172,51 @@ function setupSignaling(io, options = {}) {
       structuredLogger.info(payload);
     }
     recentEventStore?.append?.(payload);
+  }
+
+  function emitInputEvent(event, socket, data = {}, overrides = {}) {
+    const observedData = data && typeof data === 'object' && !Array.isArray(data)
+      ? { ...data, transport: 'socket' }
+      : { transport: 'socket' };
+    if (isHighFrequencyInput(data)) {
+      // Move/wheel traffic is count-only. Do not inspect payload or input IDs
+      // before the aggregate threshold, and never compute a correlation hash.
+      const summary = summarizeHighFrequencyInput(observedData, overrides);
+      const key = `${socket?.id || ''}:${summary.inputType}:${summary.action}:${summary.status}`;
+      if (!inputAggregateCounts.has(key) && inputAggregateCounts.size >= 256) {
+        inputAggregateCounts.delete(inputAggregateCounts.keys().next().value);
+      }
+      const count = (inputAggregateCounts.get(key) || 0) + 1;
+      inputAggregateCounts.set(key, count);
+      // Mouse move/wheel traffic is deliberately aggregated. A periodic
+      // sample remains useful while preventing diagnostics from becoming the
+      // high-frequency path themselves.
+      if (count % 100 !== 0) return null;
+      summary.count = count;
+      summary.aggregated = true;
+      const aggregate = {
+        domain: 'input',
+        event: 'signal_input_aggregate',
+        message: 'Aggregated high-frequency input outcome',
+        correlation: { viewerId: socket?.id || null },
+        meta: summary,
+      };
+      recentEventStore?.append?.(aggregate);
+      structuredLogger?.info?.(aggregate);
+      return aggregate;
+    }
+    const payload = {
+      domain: 'input',
+      event,
+      message: event === 'signal_input_relayed'
+        ? 'Signal relayed remote input'
+        : 'Signal rejected remote input',
+      correlation: { viewerId: socket?.id || null },
+      meta: summarizeInputEvent(observedData, overrides),
+    };
+    recentEventStore?.append?.(payload);
+    structuredLogger?.info?.(payload);
+    return payload;
   }
 
   function isResetOnlyPending(snapshot = controlSnapshot()) {
@@ -980,15 +1031,18 @@ function setupSignaling(io, options = {}) {
     socket.on('input', (data) => {
       if (role !== 'viewer') {
         console.warn(`Input rejected: role=${role} from ${socket.id}`);
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'role-rejected' });
         return;
       }
       if (!isActiveViewerSocket(socket)) {
         console.warn(`Input rejected: disconnected viewer ${socket.id}`);
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'inactive-viewer' });
         return;
       }
       if (data?.schemaVersion === 2
         && (socket.inputProtocolVersion !== 2 || !hostSupportsV2Input())) {
         socket.emit('input-protocol-error', { reason: v2ProtocolError(socket) });
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'protocol-too-old' });
         return;
       }
       if (data?.schemaVersion !== 2) {
@@ -1012,21 +1066,23 @@ function setupSignaling(io, options = {}) {
       }
       if (data?.schemaVersion === 2) {
         const validation = validateRemoteInput(data);
-        if (!validation.ok || !authorizeViewer(socket, data, { legacy: false })) {
-          logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${validation.ok ? 'unauthorized' : validation.code}`);
+        const authorized = validation.ok && authorizeViewer(socket, data, { legacy: false });
+        if (!validation.ok || !authorized) {
+          const reason = validation.ok ? 'unauthorized' : validation.code;
+          logger.warn?.(`[INPUT] rejected viewer=${socket.id} ${reason}`);
+          emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason });
           return;
         }
         if (!['keyboard', 'mouse', 'command'].includes(data.type)) {
           logger.warn?.(`[INPUT] rejected viewer=${socket.id} INVALID_TYPE`);
+          emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'INVALID_TYPE' });
           return;
         }
       }
-      if (data.type !== 'mouse' || data.action !== 'move') {
-        const inputType = ['mouse', 'keyboard', 'command'].includes(data.type) ? data.type : 'unknown';
-        const action = /^[a-z-]{1,32}$/i.test(String(data.action || '')) ? String(data.action) : 'unknown';
-        const transport = data.transport === 'datachannel' ? 'datachannel' : 'socket';
-        const payloadBytes = Buffer.byteLength(JSON.stringify(data.payload || {}), 'utf8');
-        logger.log?.(`[INPUT] relay viewer=${socket.id} type=${inputType} action=${action} transport=${transport} payloadBytes=${payloadBytes}`);
+      const highFrequency = isHighFrequencyInput(data);
+      if (!highFrequency) {
+        const summary = summarizeInputEvent(data, { status: 'accepted' });
+        logger.log?.(`[INPUT] relay viewer=${socket.id} type=${summary.inputType} action=${summary.action} transport=${summary.transport} payloadBytes=${summary.payloadBytes} inputIdHash=${summary.inputIdHash || '-'}`);
       }
       if (connections.host) {
         connections.host.emit('input', {
@@ -1034,8 +1090,10 @@ function setupSignaling(io, options = {}) {
           transport: 'socket',
           viewerId: socket.id
         });
+        emitInputEvent('signal_input_relayed', socket, data, { status: 'accepted' });
       } else {
         console.warn('[INPUT] No host connected, dropping input');
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'host-unavailable' });
       }
     });
 

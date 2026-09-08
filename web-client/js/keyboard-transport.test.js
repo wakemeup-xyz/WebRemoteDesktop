@@ -7,6 +7,7 @@ const { validateRemoteInput } = require('../../signal-server/lib/remote-input-co
 function createHarness(options = {}) {
   let time = 1000;
   let nextId = 0;
+  let connectionAttemptId = options.connectionAttemptId || 'attempt-1';
   const dataChannel = [];
   const socket = [];
   const transport = KeyboardTransport.create({
@@ -24,6 +25,7 @@ function createHarness(options = {}) {
     },
     now: () => time,
     makeInputId: () => `input-${++nextId}`,
+    getConnectionAttemptId: () => connectionAttemptId,
     ackTimeoutMs: options.ackTimeoutMs || 3000,
   });
   transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
@@ -32,6 +34,7 @@ function createHarness(options = {}) {
     dataChannel,
     socket,
     advance(ms) { time += ms; },
+    setConnectionAttempt(id) { connectionAttemptId = id; },
   };
 }
 
@@ -174,6 +177,9 @@ test('expired reset barrier requires lease reacquisition before accepting new in
   assert.equal(expired.pendingCount, 0);
   assert.equal(JSON.stringify(expired).includes('lease-for-test'), false);
 
+  h.transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
+  assert.equal(h.transport.getSnapshot().state, 'reacquire-required');
+  assert.equal(h.transport.canSendNewInput(), false);
   h.transport.setLease({ leaseId: 'renewed-lease', leaseEpoch: 8 });
   assert.equal(h.transport.canSendNewInput(), true);
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyR' } }), 'input-2');
@@ -326,4 +332,47 @@ test('no-argument reset barrier uses the valid unspecified reason', () => {
 
   assert.deepEqual(h.socket[0].payload, { reason: 'unspecified' });
   assert.equal(validateRemoteInput(h.socket[0]).ok, true);
+});
+
+test('pending reset exposes only its safe identity fields and records send attempt internally', () => {
+  const h = createHarness();
+  const resetId = h.transport.resetBarrier('attempt-boundary');
+  assert.deepEqual(h.transport.getPendingReset(), {
+    inputId: resetId,
+    seq: 1,
+    leaseEpoch: 7,
+    connectionAttemptId: 'attempt-1',
+  });
+  assert.equal(h.transport.getPendingReset().connectionAttemptId, 'attempt-1');
+});
+
+test('a reset barrier from an old attempt is replaced instead of being relabeled', () => {
+  const h = createHarness();
+  const oldId = h.transport.resetBarrier('old-attempt');
+  h.setConnectionAttempt('attempt-2');
+
+  const newId = h.transport.resetBarrier('new-attempt');
+  assert.notEqual(newId, oldId);
+  assert.equal(h.socket.length, 2);
+  assert.equal(h.socket[0].seq, 1);
+  assert.equal(h.socket[1].seq, 2);
+  assert.equal(h.transport.getPendingReset().connectionAttemptId, 'attempt-2');
+  assert.equal(h.transport.acceptAck({
+    schemaVersion: 2,
+    inputType: 'keyboard',
+    inputIds: [oldId],
+    leaseEpoch: 7,
+    appliedSeq: 1,
+    status: 'applied',
+  }).status, 'stale');
+  assert.equal(h.transport.getPendingReset().inputId, newId);
+  assert.equal(h.transport.acceptAck({
+    schemaVersion: 2,
+    inputType: 'keyboard',
+    inputIds: [newId],
+    leaseEpoch: 7,
+    appliedSeq: 2,
+    status: 'applied',
+  }).status, 'applied');
+  assert.equal(h.transport.canSendNewInput(), true);
 });

@@ -37,6 +37,9 @@ function makeTouchHarness(options = {}) {
     setTimer: (fn, ms) => (timer = {fn, at: now + ms}), clearTimer: (id) => { if (timer === id) timer = null; },
     beforeGesture: options.beforeGesture,
     commitGesture: options.commitGesture,
+    onTraceDomEvent: options.onTraceDomEvent,
+    onTraceEventEnd: options.onTraceEventEnd,
+    withTraceEvent: options.withTraceEvent,
     validateGeometry: options.validateGeometry,
   });
   global.requestAnimationFrame = (fn) => { frame = fn; return 1; };
@@ -60,6 +63,51 @@ test('short touch emits one left click using mapped coordinates', () => {
     [['down', 'left', 1], ['up', 'left', 1]]);
   assert.deepEqual({relX: h.mouse[0].payload.relX, relY: h.mouse[0].payload.relY},
     {relX: 0.25, relY: 0.25});
+});
+
+test('touch dispatch attributes each physical send without inheriting an unassociated action', () => {
+  let nextEventId = 0;
+  const calls = [];
+  const h = makeTouchHarness({
+    onTraceDomEvent(meta) {
+      calls.push({ kind: 'dom', meta });
+      return ++nextEventId;
+    },
+    onTraceEventEnd(eventId) { calls.push({ kind: 'end', eventId }); },
+    withTraceEvent(eventId, send, options) {
+      calls.push({ kind: 'send', eventId, focusKind: options?.focusKind });
+      return send();
+    },
+  });
+
+  h.pointer('pointerdown', {pointerId: 1, clientX: 40, clientY: 30, buttons: 1});
+  h.pointer('pointerup', {pointerId: 1, clientX: 40, clientY: 30, buttons: 0});
+  h.adapter.clickButton('right');
+
+  assert.deepEqual(calls.filter(({ kind }) => kind === 'dom').map(({ meta }) => meta.phase), [
+    'down', 'up',
+  ]);
+  assert.deepEqual(calls.filter(({ kind }) => kind === 'send').map(({ eventId, focusKind }) => [eventId, focusKind]), [
+    [1, 'desktop'], [2, 'desktop'], [null, undefined], [null, undefined], [null, undefined],
+  ]);
+  assert.equal(calls.filter(({ kind }) => kind === 'end').length, 2);
+});
+
+test('a trace hook that throws after touch dispatch does not replay the send', () => {
+  let traceCalls = 0;
+  const h = makeTouchHarness({
+    withTraceEvent(_eventId, send) {
+      traceCalls += 1;
+      const result = send();
+      throw new Error(`trace-after-touch-send:${result}`);
+    },
+  });
+
+  h.pointer('pointerdown', {pointerId: 1, clientX: 40, clientY: 30, buttons: 1});
+  h.pointer('pointerup', {pointerId: 1, clientX: 40, clientY: 30, buttons: 0});
+
+  assert.deepEqual(h.mouse.map(({ action }) => action), ['down', 'up']);
+  assert.equal(traceCalls, 2);
 });
 
 test('second tap within 500ms emits clickCount 2 without a third click', () => {
@@ -316,4 +364,21 @@ test('explicit right click commits its real down through the navigation gate', (
   h.adapter.clickButton('right');
   assert.equal(commits, 2, 'tap and explicit right click each commit one real down');
   assert.deepEqual(h.mouse.map(({action}) => action), ['down', 'up']);
+});
+
+test('explicit right click carries one originating event id across both physical sends', () => {
+  const calls = [];
+  const h = makeTouchHarness({
+    withTraceEvent(eventId, send) {
+      calls.push(eventId);
+      return send();
+    },
+  });
+  h.pointer('pointerdown', { pointerId: 1, clientX: 80, clientY: 60, buttons: 1 });
+  h.pointer('pointerup', { pointerId: 1, clientX: 80, clientY: 60, buttons: 0 });
+  h.mouse.length = 0;
+  calls.length = 0;
+  h.adapter.clickButton('right', undefined, { eventId: 73 });
+  assert.deepEqual(h.mouse.map(({ action }) => action), ['down', 'up']);
+  assert.deepEqual(calls.filter((eventId) => Number.isSafeInteger(eventId)), [73, 73]);
 });

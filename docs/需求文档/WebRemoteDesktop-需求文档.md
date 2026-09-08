@@ -118,8 +118,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 键盘事件必须严格有序；不得以统一固定 sleep 取代状态机。只有 Quartz 实测证明需要时，才允许在 Host adapter 为特定 batch 步骤配置有界间隔
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
-- 输入链路需记录 `transport` 和端到端发送延迟，便于区分 DataChannel 与 Socket.IO 兜底路径
-- 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT
+- 输入链路需记录 `transport`、Viewer 本地 pending RTT 和 Host adapter-await 时间，便于区分 DataChannel 与 Socket.IO 兜底路径；这些是各自边界的耗时，不冒充跨机器单向延迟或可见原生效果。`dom-received`、`gate`、`transport-send`、`ack`/`ack-timeout`、`lifecycle`/`recovery` 六阶段摘要共用同一有界诊断轨迹
+- 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT。DataChannel 输入不经过 Signal；`enqueued` 只表示 Viewer 本地接受排队，`applied` 是 Host adapter 返回成功，业务 ACK 仍不等于操作者已经看到系统效果
 
 #### 3.3.1 键盘协议、映射与兼容契约
 
@@ -128,7 +128,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - **控制与认证**：Viewer 与 Host Socket.IO 都声明 `inputProtocolVersion`。v2 Viewer 只能在 Host 同样声明 v2 后获得控制；旧 Host 必须收到/返回 `host-protocol-too-old`，不得降级为无租约输入。direct WebRTC offer 和 tunnel Socket 输入都先经过已认证 Viewer 身份及 desktop-control lease。**严格单桌面 Viewer**：同一时刻只允许一个主 Viewer 会话；新 Viewer 连接会顶替旧 Viewer（旧页进入 superseded/断开，不得继续作为只读旁观者）。`relay-viewer` 只是主 Viewer 的媒体 relay companion，不能取得独立桌面控制权或发送输入。
 - **长按与释放**：合法长按不以固定 8 秒阈值强制 keyup；lease heartbeat、Viewer/transport teardown、模式切换、失焦和显式 release 都进入同一 reset 路径。v2 接管 legacy controller 时，Host 必须先完成 `legacy-takeover` reset，再发新 grant。
 - **v1 迁移**：`LEGACY_INPUT_COMPAT_ENABLED` 当前在 Signal Server 中固定为 `true`，不是环境变量，禁止用部署配置绕过 v2 约束。legacy direct/tunnel 的首个输入惰性申请同一 lease，只有 lease controller 的输入可转发；Host 的单个 `LegacyInputAdapter` 同时处理 legacy DataChannel 与 Socket 输入，transport 变化必须先应用 `transport-change` reset 再处理新事件。移除该常量的条件是：所有受支持 Viewer 和 Host 都声明 v2、连续发布周期内无 v1 连接、direct/tunnel/relay 的 v2 合约与真实 Host 验收均通过；移除后 v1 必须明确拒绝，不能恢复 env 开关。
-- **脱敏与运行剩余项**：日志、ack 和诊断只保留协议版本、lease epoch、seq、动作、transport、payload byte count、input ID hash 与本机耗时，不记录 key/code/text、lease token 或坐标。Task12 之前不把真实 Host/Quartz、长按、IME、ISO/JIS 和公网多 Viewer 运行验证标记为已完成。
+- **脱敏与运行剩余项**：日志与诊断只保留协议版本、lease epoch、seq、动作、transport、payload byte count、input ID hash 与本机耗时，不记录 key/code/text、lease token 或坐标；业务 ACK 为了按既有协议关联请求，仍携带原有 `inputIds`，这不等于把原始 ID 写入日志或诊断。Task12 之前不把真实 Host/Quartz、长按、IME、ISO/JIS 和公网多 Viewer 运行验证标记为已完成。
 
 > 2026-07-19 键盘专项整改：自动化状态机和协议迁移已覆盖 v2 lease、legacy 单控制者与跨 transport reset；完整真实运行证据和剩余门槛见 `docs/superpowers/reports/2026-07-19-remote-keyboard-mapping-stuck-key-systemic-analysis.md`。
 
@@ -139,12 +139,12 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **输入复用**：触控点击、拖拽、滚动、软键盘文本和虚拟修饰键都复用现有 ACTIVE desktop-control lease、v2 envelope、ACK 和 reset barrier；不建立第二套移动协议或 lease。
 - [x] **自动化回归**：触控点击/滚动与移动文本覆盖同一 `leaseId` / `leaseEpoch` v2 envelope；鼠标 move 不进入 keyboard pending；ACK 仅分别交给 mouse reset、keyboard transport 和 `LatencyMonitor` 一次；reset、隐藏/park、控制撤销和断连都会清理虚拟 modifier latch。
 - [x] **既有origin浏览器验收 harness（非离线）**：`scripts/mobile_viewer_acceptance.py --base-url URL --password-env VIEWER_ACCESS_PASSWORD --out artifacts/mobile-viewer-acceptance.json` 会认证并连接操作者已经运行的 origin。每个场景使用独立 Playwright context；JSON 原子替换后再计算 `*.sha256`。不创建截图，artifact 不写入文本、按键、坐标、URL、token 或凭据；应用文本 Dock 与系统键盘证据分开，未观察到真实 viewport 收缩时系统键盘保持 `NOT RUN`。本轮没有运行此脚本或连接实际origin。
-- [x] **严格离线整改验收**：新 `scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`。最终结果见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
+- [x] **严格离线整改套件**：`scripts/mobile_input_interaction_acceptance.py --out PATH [--browser chromium|webkit]` 只加载本地源码、阻断所有请求，不读取凭据、不提供base-url、不启动服务。`scope=offline-synthetic`；场景失败exit1，缺浏览器运行依赖exit2并写`NOT RUN`；2026-09-08 Chromium 运行的23个场景均为 `PASS`，且独立核对所有 checks 与网络安全字段。新增 modal compositionend 归属/超时 incident 场景已覆盖此前 R4 反例，独立复审通过；不把离线通过等同于真机输入或部署。结果见[输入恢复与诊断验收报告](../superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md)及此前的[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。
 - [ ] **真实设备验收**：Android Chrome、iPhone Safari、iPad Safari 必须由实机执行点击、长按、双指滚动、IME、Emoji、布局与 Socket fallback。桌面触控模拟和 Node 测试不是实机证据。
 
-#### 3.4.1 整改分支当前操作与实现边界（2026-09-06）
+#### 3.4.1 整改分支当前操作与实现边界（2026-09-08）
 
-以下描述整改分支已提交的代码，不表示main或运行服务已经更新；离线集成与最终主审已通过；真机、公网及与新main的组合结果仍未验证。
+以下描述已提交的输入恢复整改代码；23场景离线套件通过，主线程和独立 scoped review 均确认 R4 归属缺口已关闭，原八项发现全部闭合。main/push/本地发布按本次用户授权执行，实际完成状态以验收报告为准；真机、系统 IME、Quartz 和实际公网 Viewer 输入不由服务健康推断。
 
 | 用户操作 | 当前行为 |
 |---|---|
@@ -152,16 +152,16 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 | 拖动 / 长按 | 位移超过 8 CSS px 后在最初接触点down，再发当前位置move；550ms长按右键，抬手释放。外部几何变化取消旧手势并reset；空草稿的surface待确认提示不会撑高Dock、自取消拖拽 |
 | 双指滚动 | 使用触点质心位移发送远端滚轮；不提供双指缩放；留下一指时仍保持滚动态 |
 | 移动键盘 / 焦点 | 按触控能力显示入口；明确打开时聚焦textarea，连续帧/门禁同步不抢焦点。普通收起保留同一上下文草稿，只有原焦点仍有效且用户未另选焦点时恢复 |
-| 草稿 / 重试 | 非组合input、compositionend走已有Unicode发送；拒绝的未发草稿留在当前页。已接受前缀不重发；普通ACK在途不限制正常连续输入。已有拒绝草稿需确认稳定后显式重试，不确定投递只能核对远端后放弃；每轮至多16个Backspace并可取消 |
+| 草稿 / 重试 | 非组合input、compositionend走已有Unicode发送；拒绝的未发草稿留在当前页。已接受前缀不重发；普通ACK在途不限制正常连续输入。已有拒绝草稿需确认稳定后显式重试，不确定投递只能核对远端后放弃；恢复中的状态显示等待确认或失败，固定重试/草稿入口不会自动重放或清空；每轮至多16个Backspace并可取消 |
 | 导航 / 切换输入入口 | textarea和工具栏共用游标接口；被接受的外部实体键、带modifier导航、普通modal提交等失效旧基线，拒绝/取消不清历史。surface down/up均确认且手势结束前，不向不确定目标发文本；ACK仅刷新，不自动补发草稿 |
 | 虚拟修饰键 / 安全释放 | Shift/Ctrl/Alt/Cmd点击保持、再次点击沿原controller释放；pressed真相不由DOM替代。组合输入、pending或不确定状态不拦截已跟踪keyup/虚拟modifier OFF；文本提交前自动释放虚拟modifier |
 | 剪贴板与输入法 | 复制/粘贴使用远端 Mac 剪贴板；“输入法”按钮切换远端输入法，不切换手机系统输入法 |
 | 软键盘以外的文本入口 | 普通“文本输入”modal 可点发送，compositionend 也会自动提交并关闭；不是移动持续输入框 |
-| 失焦 / 隐藏 / 断连 | 立即清理指针；按 DC 状态 reset 或 park 键盘及移动文本框；页面后台持续 5 分钟才停止媒体采集 |
+| 失焦 / 隐藏 / 断连 | 立即清理指针；按 DC 状态 reset 或 park 键盘及移动文本框。只有当前 lease/connection attempt 所拥有的 mouse 与 keyboard reset 正向 ACK 才能结束恢复等待；页面后台持续 5 分钟才停止媒体采集 |
 | 手机 / 宽屏iPad布局 | ChromeLayout统一计算viewport、safe-area和Dock高度；触控且文本框可见时单行横滚键栏、普通控件收入更多。极小可用高度显示收起键盘/旋转提示，暂停新输入但保留安全释放和草稿；恢复尺寸不自动发草稿 |
 | 全屏 | 以documentElement容纳状态栏、文本Dock、键栏和modal；全局退出不依赖桌面控制租约。API缺失/拒绝保留普通视图及编辑焦点并显示提示，不使用iOS video-only回退 |
 
-触控最终转换为鼠标输入；软键盘最终发送 Unicode 文本；虚拟键/实体键发送物理键 code 或组合 batch。它们共享控制租约，鼠标与键盘各有自己的 seq、ACK 和 reset 状态。移动文本框的缓存不是远端文档或光标镜像。
+触控最终转换为鼠标输入；软键盘最终发送 Unicode 文本；虚拟键/实体键发送物理键 code 或组合 batch。它们共享控制租约，鼠标与键盘各有自己的 seq、ACK 和 reset 状态。移动文本框的缓存不是远端文档或光标镜像。用户可见状态依次区分“等待 reset ACK”“恢复失败”和“已恢复”；有 pending/uncertain 草稿时保留内容，显式重试前不自动补发。
 
 #### 3.4.2 历史发现与整改状态
 
@@ -173,11 +173,13 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] F3 导航/实体键/modal基线：已接统一事务及独立surface确认门禁。
 - [x] F4 拖拽起点：已保留初始坐标、取消旧几何工作；主审追加修复提示引起的自取消。
 - [x] F7 全屏控件缺失：已切换完整documentElement目标及全局退出，保留失败提示和焦点。
-- [x] Task7严格离线浏览器集成与最终主审：已完成；四项覆盖缺口及恢复的组合键检查通过复审，无未解决P1/P2。以上勾选表示分支代码/离线验收，不等于真机或公网全链路验收。
+- [x] Task7严格离线浏览器集成与其 scoped review：已完成；四项覆盖缺口及恢复的组合键检查通过复审，无未解决P1/P2。以上勾选表示分支代码/离线验收，不等于 whole-branch review、真机或公网全链路验收。
+- [x] 输入恢复与诊断离线套件：23个场景覆盖真实 click→blur→reset ACK→fresh input、重试/草稿入口、trace/timeout/deferred/blocked/release 负路径、browser→Signal、草稿精确保留、modal 自动组合提交、窄屏与 root fullscreen、Terminal 和 safe artifact/network checks；全部 `PASS`。这仍是 offline-synthetic 证据，不等于真机、Quartz、系统 IME 或公网全链路验收。
+- [x] 最终诊断入口覆盖：modal compositionend 自动提交与 submit click 共用真实 DOM 归属及 finally 清理；不变的反例转为 1 send/来源事件存在/1 timeout/1 incident。独立复审关闭 R4，原自动提交、失败草稿保留和不重放语义不变。
 
 按F编号的当前证据和剩余门槛见[整改验收报告](../superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md)。离线浏览器使用人工键盘inset和内存远端模型，没有连接真实Viewer/Host，不计入真实设备、Quartz或公网PASS。
 
-**验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、安全布局摘要、状态和无敏感原因；不得记录文本、按键、剪贴板、密码、token、URL、事件坐标或原始 bounding box。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
+**验收与隐私约束**：验收 JSON 只允许记录场景动作名称、transport、ACK 状态/RTT、pressed count、安全布局摘要、状态和无敏感原因；trace 的 input ID 只保留有界摘要/哈希，业务 ACK 仍按既有 wire contract 携带原有关联字段；不得记录文本、按键、剪贴板、密码、token、URL、事件坐标或原始 bounding box。网络拦截器的敏感标记计数只说明观察到的请求元数据，不替代 artifact allowlist 金丝雀验证。真实设备、实体键盘和 tunnel/public-path 结果必须与本地单元测试分开标记；没有操作者提供的既有 origin 时保持 `NOT RUN`，不得启动服务或重建 tunnel 来制造证据。
 
 ### 3.5 控制栏
 
@@ -187,6 +189,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **缩放切换**：循环切换 contain/cover/fill
 - [x] **显示/隐藏控件**：显式按钮隐藏/显示控制栏和虚拟按钮栏；已连接空闲时自动退避，退避不依赖 hover
 - [x] **诊断日志**：弹出模态框显示浏览器控制台捕获的日志，可一键发送到服务端；连接失败时自动附带网络环境和链路摘要上送一份诊断
+- [x] **输入恢复诊断**：按 `dom-received` → `gate` → `transport-send` → `ack`/`ack-timeout` → `lifecycle`/`recovery` 六阶段排查；DataChannel 输入绕过 Signal，不能以 Signal 无 relay 记录单独判定丢包。报告分别记录 Viewer enqueue、Host `applied`、业务 ACK 与 `visualFeedback`，不把它们混同为人眼效果
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复；会取消进行中的手动端口搜索
 - [x] **搜索端口**：仅在 `auto` / `stun`、信令与 Host 在线，且当前 Viewer 为 ACTIVE controller 时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）；失去控制立即停止
 - [x] **全屏控制**：网页端提供全屏按钮，全屏元素内提供退出按钮，Esc 仍可用
@@ -261,7 +264,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - Signal Server 默认记录结构化运行日志；Viewer 诊断、Terminal 审计、Host 摘要应共享稳定的事件包结构和关联 ID
 - Terminal 默认只记录结构化审计事件，不记录完整 IO 原文；仅在 `WRD_TERMINAL_RECORD_IO=1` 时允许详细 IO 记录
 - Host 默认只记录浏览器诊断摘要；仅在 `WRD_HOST_VERBOSE_DIAGNOSTICS=1` 时允许逐行输出 Viewer 详细日志
-- Viewer、Host 和 Signal Server 默认不记录 key、code、文本、鼠标坐标或完整 input payload；只保留 action、transport、payload byte count、input ID hash 和本机耗时。Viewer 控制台与自动诊断日志同样只保留输入元数据
+- Viewer、Host 和 Signal Server 默认不记录 key、code、文本、鼠标坐标或完整 input payload；日志与诊断只保留 action、transport、payload byte count、input ID hash 和本机耗时。既有业务 ACK 为关联请求仍携带原始 `inputIds`，但不得把它们写入日志、trace 或诊断持久化；Viewer 控制台与自动诊断日志同样只保留输入元数据
 - `inputProtocolVersion`、lease epoch 和 seq 可作为不含秘密的协议诊断元数据记录；lease token、键值、文本和坐标仍必须脱敏
 - Host/Signal/Terminal audit file 使用 `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 轮转，默认 10 MiB / 3 个备份
 - `host_event_loop_lag` 只记录有界状态/资源摘要，20ms 为 warning、100ms 为 critical，普通告警按 5 秒聚合
@@ -417,6 +420,9 @@ WebRemoteDesktop/
 │   └── js/
 │       ├── auth.js
 │       ├── webrtc.js
+│       ├── input-trace.js   # 有界、脱敏的关键路径轨迹
+│       ├── touch-input-adapter.js
+│       ├── mobile-text-input.js
 │       ├── input.js
 │       ├── ui.js
 │       ├── diagnostic-core.js # 关键路径日志采集 + 诊断按钮壳

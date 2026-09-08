@@ -33,7 +33,24 @@ test('offline acceptance CLI writes safe scenario summaries without secrets or p
   assert.equal(artifact.scope, 'offline-synthetic');
   assert.equal(artifact.browser, 'chromium');
   assert.ok(Array.isArray(artifact.scenarios));
-  assert.ok(artifact.scenarios.length >= 10);
+  const requiredScenarios = [
+    'recovery-layout',
+    'retry-button',
+    'trace-observability',
+    'timeout-incident-eligibility',
+    'deferred-incident-eligibility',
+    'blocked-gate-incident',
+    'release-ack-loss',
+    'desktop-draft-entry',
+    'modal-composition-trace',
+    'browser-signal-ingestion',
+    'draft-retention-exactness',
+  ];
+  assert.ok(artifact.scenarios.length >= 22);
+  assert.deepEqual(
+    requiredScenarios.every((name) => artifact.scenarios.some((scenario) => scenario.name === name)),
+    true,
+  );
   for (const scenario of artifact.scenarios) {
     assert.match(scenario.status, /^(PASS|FAIL|NOT RUN)$/);
     assert.equal(typeof scenario.name, 'string');
@@ -42,6 +59,14 @@ test('offline acceptance CLI writes safe scenario summaries without secrets or p
     assert.doesNotMatch(serialized, /hello|world|abc|clipboard|clientX|clientY/i);
     assert.doesNotMatch(serialized, /\bKey[A-Z]\b/);
   }
+  assert.ok(artifact.scenarios.every((scenario) => scenario.status === 'PASS'));
+  assert.ok(artifact.scenarios.every((scenario) => Object.keys(scenario.checks).length > 0));
+  assert.ok(artifact.scenarios.every((scenario) =>
+    Object.values(scenario.checks).every((check) => check === true)));
+  assert.deepEqual(artifact.network, {
+    requests: 0,
+    sensitivePayloads: 0,
+  });
 });
 
 test('missing browser runtime exits 2 and records NOT RUN scenarios', () => {

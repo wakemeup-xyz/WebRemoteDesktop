@@ -282,12 +282,12 @@ class InputHandler:
                         execution_result = await loop.run_in_executor(
                             self._input_thread_pool, self._handle_command, action, payload
                         )
-                except Exception:
+                except Exception as exc:
                     logger.error(
-                        "Error executing input: type=%s action=%s",
+                        "Error executing input: type=%s action=%s error=%s",
                         input_type,
                         action,
-                        exc_info=True,
+                        type(exc).__name__,
                     )
                     execution_result = False
                 to_thread_ms = (time.perf_counter() - to_thread_start) * 1000
@@ -333,8 +333,8 @@ class InputHandler:
                 result.update(status=desktop.status, appliedSeq=desktop.applied_seq)
             return result
 
-        except Exception as e:
-            logger.error("Error handling input: %s", type(e).__name__, exc_info=True)
+        except Exception as exc:
+            logger.error("Error handling input: %s", type(exc).__name__)
 
     def _handle_command(self, action, payload):
         """Handle special command actions."""
@@ -358,15 +358,14 @@ class InputHandler:
             )
             if result.returncode != 0:
                 logger.warning(
-                    "Show dock: open Launchpad failed rc=%s stderr=%s",
+                    "Show dock: open Launchpad failed rc=%s",
                     result.returncode,
-                    (result.stderr or "").strip(),
                 )
                 return False
             logger.info("Show dock: opened Launchpad")
             return True
-        except Exception as e:
-            logger.error("Show dock failed: %s", e, exc_info=True)
+        except Exception as exc:
+            logger.error("Show dock failed: %s", type(exc).__name__)
             return False
 
     def _handle_mouse(self, action, payload):

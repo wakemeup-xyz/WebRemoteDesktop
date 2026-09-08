@@ -6,7 +6,13 @@ const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { createServerApp } = require('../server');
 const { connections } = require('../websocket/signaling');
-const { redactDiagnosticPayload, getDiagDir, persistDiagnostic, ingestDiagnosticPayload } = require('../lib/diagnostic');
+const {
+  redactDiagnosticPayload,
+  getDiagDir,
+  persistDiagnostic,
+  ingestDiagnosticPayload,
+  buildDiagnosticSummaryEvent,
+} = require('../lib/diagnostic');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test-viewer-password';
@@ -42,6 +48,217 @@ test('redactDiagnosticPayload trims logs and strips keyboard debug details', () 
   assert.equal(redacted.inputState.recentInputEvents.length, 20);
   assert.equal(redacted.network.candidateSummary.local.srflx, 1);
   assert.equal(redacted.network.candidateSummary.samples.local[0].type, 'srflx');
+});
+
+test('diagnostic ingestion reports receiver-side trace drops in addition to client drops', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 7 },
+      events: Array.from({ length: 300 }, (_, index) => ({
+        eventId: index + 1,
+        stage: 'lifecycle',
+        inputType: 'control',
+        action: index % 2 ? 'inactive' : 'active',
+        state: index % 2 ? 'inactive' : 'active',
+        source: 'lifecycle',
+      })),
+    },
+  });
+  assert.equal(clean.inputTrace.events.length, 256);
+  assert.equal(clean.inputTrace.counters.droppedEvents, 51);
+});
+
+test('diagnostic trace byte clipping increments drops and saturates safely', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 5 },
+      events: Array.from({ length: 256 }, (_, index) => ({
+        eventId: index + 1,
+        stage: 'transport-send',
+        inputType: 'keyboard',
+        action: 'key',
+        phase: 'down',
+        transport: 'socket',
+        accepted: false,
+        reliable: true,
+        connectionAttemptId: `attempt-${'x'.repeat(78)}`,
+        inputIdHash: '0123456789abcdef',
+        seq: index + 1,
+        leaseEpoch: 3,
+        reason: 'keyboard-transport-blocked',
+      })),
+    },
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(clean), 'utf8') <= 64 * 1024);
+  assert.ok(clean.inputTrace.events.length < 256);
+  assert.equal(
+    clean.inputTrace.counters.droppedEvents,
+    5 + (256 - clean.inputTrace.events.length),
+  );
+
+  const saturated = redactDiagnosticPayload({
+    inputTrace: {
+      schemaVersion: 2,
+      counters: { droppedEvents: 0x7ffffffe },
+      events: Array.from({ length: 300 }, (_, index) => ({
+        eventId: index + 1, stage: 'lifecycle', inputType: 'control', action: 'active', state: 'active',
+      })),
+    },
+  });
+  assert.equal(saturated.inputTrace.counters.droppedEvents, 0x7fffffff);
+});
+
+test('diagnostic reason sanitizer keeps finite reset ACK values and rejects canaries', () => {
+  const clean = redactDiagnosticPayload({
+    inputTrace: {
+      events: [
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset-ack-unsupported-code' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'mouse-reset-ack-invalid-input' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'blocked' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'revoked' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'ready' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: 'keyboard-reset-ack-unsupported-code:CANARY' },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: { value: 'blocked' } },
+        { stage: 'recovery', inputType: 'control', action: 'recovery', state: 'failed', reason: ['blocked'] },
+      ],
+    },
+  });
+  assert.deepEqual(clean.inputTrace.events.map((event) => event.reason ?? null), [
+    'keyboard-reset-ack-unsupported-code', 'mouse-reset-ack-invalid-input',
+    'keyboard-reset', 'blocked', 'revoked', 'ready', null, null, null,
+  ]);
+});
+
+test('diagnostic ingestion strips nested input secrets but preserves final gate and bounded trace counters', () => {
+  const clean = redactDiagnosticPayload({
+    inputState: {
+      isActive: true,
+      hasLease: true,
+      leaseEpoch: 7,
+      effectiveGate: {
+        allowed: false,
+        blockedReasons: ['surface-uncertain', 'surface-uncertain:TEXT_CANARY'],
+        key: 'GATE_CANARY',
+        recovery: { state: 'failed', generation: 2, retryAvailable: true, leaseId: 'LEASE_CANARY' },
+      },
+      surface: { state: 'uncertain', generation: 2, text: 'TEXT_CANARY' },
+      draft: { hasPending: false, composing: false, deliveryUncertain: true, status: 'uncertain', text: 'TEXT_CANARY' },
+      viewport: { inputSupported: true, label: 'VIEWPORT_CANARY' },
+      pendingMouseReset: true,
+      leaseId: 'LEASE_CANARY',
+    },
+    inputTrace: {
+      schemaVersion: 1,
+      events: [{
+        stage: 'ack', status: 'applied', inputType: 'keyboard', action: 'key',
+        inputIdHash: '3e9fd6a21afbb55b', connectionAttemptId: 'attempt-safe-a',
+        seq: 9, leaseEpoch: 12, key: 'GATE_CANARY', reason: 'runtime-phase:active:TEXT_CANARY',
+      }, {
+        stage: 'ack', status: 'execution-failed', connectionAttemptId: 'attempt-safe-b',
+        seq: 10, leaseEpoch: 13, connectionAttemptIdSecret: 'ATTEMPT_CANARY',
+      }],
+      counters: { droppedEvents: 4, hashUnavailable: 1, pendingAckCount: 1, canary: 'TRACE_CANARY' },
+      raw: 'TRACE_CANARY',
+    },
+  });
+
+  assert.equal(clean.inputState.effectiveGate.allowed, false);
+  assert.equal(clean.inputState.effectiveGate.recovery.state, 'failed');
+  assert.equal(clean.inputState.surface.state, 'uncertain');
+  assert.equal(clean.inputState.pendingMouseReset, true);
+  assert.equal(clean.inputTrace.counters.droppedEvents, 4);
+  assert.equal(clean.inputTrace.events[0].status, 'applied');
+  assert.equal(clean.inputTrace.events[0].connectionAttemptId, 'attempt-safe-a');
+  assert.equal(clean.inputTrace.events[0].seq, 9);
+  assert.equal(clean.inputTrace.events[0].leaseEpoch, 12);
+  assert.equal(clean.inputTrace.events[1].connectionAttemptId, 'attempt-safe-b');
+  for (const secret of ['GATE_CANARY', 'TEXT_CANARY', 'LEASE_CANARY', 'VIEWPORT_CANARY', 'TRACE_CANARY']) {
+    assert.equal(JSON.stringify(clean).includes(secret), false);
+  }
+  assert.equal('key' in clean.inputState.effectiveGate, false);
+  assert.equal('raw' in clean.inputTrace, false);
+});
+
+test('diagnostic report and summary retain sanitized input state, trace, and drop counts only', () => {
+  const result = ingestDiagnosticPayload({
+    role: 'viewer',
+    viewerId: 'viewer-input-state',
+    data: {
+      connectionAttemptId: 'attempt-input-state',
+      inputState: {
+        effectiveGate: { allowed: false, blockedReasons: ['surface-uncertain'], recovery: { state: 'waiting' } },
+        recovery: { state: 'waiting', generation: 2 },
+        surface: { state: 'uncertain', generation: 3 },
+        draft: { hasPending: true, composing: false, deliveryUncertain: true, status: 'uncertain' },
+        pendingMouseReset: true,
+      },
+      inputTrace: {
+        schemaVersion: 1,
+        counters: { droppedEvents: 6, droppedHashCount: 2, expiredPendingAcks: 3 },
+        events: [],
+      },
+    },
+    config: { enableDiagPersist: false },
+    logger: { log() {}, info() {}, warn() {}, error() {} },
+  });
+
+  assert.equal(result.report.inputState.effectiveGate.allowed, false);
+  assert.equal(result.report.inputState.recovery.state, 'waiting');
+  assert.equal(result.report.inputState.pendingMouseReset, true);
+  assert.equal(result.report.inputTrace.counters.droppedEvents, 6);
+  assert.deepEqual(result.summaryEvent.meta.inputGate, {
+    allowed: false,
+    recoveryState: 'waiting',
+    surfaceState: 'uncertain',
+    pendingMouseReset: true,
+  });
+  assert.deepEqual(result.summaryEvent.meta.inputTrace, {
+    droppedEvents: 6,
+    droppedHashCount: 2,
+    expiredPendingAcks: 3,
+  });
+});
+
+test('diagnostic summary sanitizes direct input state and trace reports', () => {
+  const summary = buildDiagnosticSummaryEvent({
+    inputState: {
+      effectiveGate: {
+        allowed: false,
+        recovery: { state: 'failed:SUMMARY_CANARY', reason: 'recovery-failed:SUMMARY_CANARY' },
+        blockedReasons: ['surface-uncertain:SUMMARY_CANARY'],
+      },
+      surface: { state: 'uncertain:SUMMARY_CANARY', generation: 4 },
+      pendingMouseReset: true,
+    },
+    inputTrace: {
+      counters: { droppedEvents: 3, droppedHashCount: 1, expiredPendingAcks: 2 },
+      events: [{
+        stage: 'ack',
+        status: 'execution-failed',
+        connectionAttemptId: 'attempt-summary-safe',
+        seq: 5,
+        leaseEpoch: 9,
+        reason: 'runtime-phase:active:SUMMARY_CANARY',
+      }],
+      secret: 'SUMMARY_CANARY',
+    },
+  });
+
+  assert.deepEqual(summary.meta.inputGate, {
+    allowed: false,
+    recoveryState: null,
+    surfaceState: 'settled',
+    pendingMouseReset: true,
+  });
+  assert.deepEqual(summary.meta.inputTrace, {
+    droppedEvents: 3,
+    droppedHashCount: 1,
+    expiredPendingAcks: 2,
+  });
+  assert.equal(JSON.stringify(summary).includes('SUMMARY_CANARY'), false);
 });
 
 test('persistDiagnostic writes into stable /tmp/wrd-diag directory', () => {

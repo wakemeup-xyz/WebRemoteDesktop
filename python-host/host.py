@@ -44,7 +44,12 @@ from h264_encoder_policy import (
     policy_version_from_environment,
 )
 from media_timing import RtpFrameClock
-from observability import configure_host_logging, emit_host_event, summarize_input_event
+from observability import (
+    configure_host_logging,
+    emit_host_event,
+    summarize_high_frequency_input_event,
+    summarize_input_event,
+)
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 
@@ -1617,17 +1622,139 @@ class WebRemoteHost:
             logger.error(f"Connection failed: {e}")
             return False
 
+    @staticmethod
+    def _input_is_keepalive(data):
+        return isinstance(data, dict) and data.get("type") == "dc_keepalive"
+
+    @staticmethod
+    def _input_coordinate_is_valid(value):
+        return (
+            value is None
+            or (
+                isinstance(value, (int, float))
+                and value == value
+                and 0 <= value <= 1
+            )
+        )
+
+    @staticmethod
+    def _input_result_status(result, *, default="applied"):
+        if not isinstance(result, dict):
+            return "execution-failed"
+        status = result.get("status")
+        if status in V2_INPUT_ACK_STATUSES or status == "unordered":
+            return status
+        if result.get("dropped"):
+            return "rejected"
+        return default
+
+    @staticmethod
+    def _wire_execute_ms(result, fallback=None):
+        if isinstance(result, dict):
+            receive_time = result.get("receiveTime")
+            execute_time = result.get("executeTime")
+            if isinstance(receive_time, (int, float)) and isinstance(execute_time, (int, float)):
+                duration = (execute_time - receive_time) * 1000
+                if duration == duration and duration >= 0 and duration < float("inf"):
+                    return duration
+        return fallback
+
+    def _emit_input_observation(
+        self,
+        event,
+        data,
+        *,
+        status=None,
+        reason=None,
+        applied_seq=None,
+        local_execute_ms=None,
+        ack_accepted=None,
+    ):
+        """Emit bounded input metadata and aggregate move/wheel observations."""
+        high_frequency = (
+            isinstance(data, dict)
+            and data.get("type") == "mouse"
+            and isinstance(data.get("action"), str)
+            and data.get("action") in {"move", "wheel"}
+        )
+        if high_frequency:
+            # Move/wheel traffic is count-only: do not inspect payload or input
+            # IDs before aggregation, so this path never computes a hash.
+            summary = summarize_high_frequency_input_event(data, status=status)
+        else:
+            summary_data = data if isinstance(data, dict) else {}
+            if isinstance(data, dict) and isinstance(data.get("inputIds"), (list, tuple)):
+                # A result may be the only owner of ids after adapter normalization;
+                # summarize those ids without ever putting them into the log payload.
+                summary_data = dict(data)
+            summary = summarize_input_event(
+                summary_data,
+                status=status,
+                reason=reason,
+                applied_seq=applied_seq,
+                local_execute_ms=local_execute_ms,
+                ack_accepted=ack_accepted,
+            )
+        if summary["inputType"] == "mouse" and summary["action"] in {"move", "wheel"}:
+            aggregates = getattr(self, "_input_observation_aggregates", None)
+            if aggregates is None:
+                aggregates = self._input_observation_aggregates = {}
+            key = ":".join((event, summary["inputType"], summary["action"], summary["status"]))
+            item = aggregates.get(key)
+            if item is None:
+                if len(aggregates) >= 32:
+                    aggregates.pop(next(iter(aggregates)))
+                item = {"count": 0, "summary": summary}
+                aggregates[key] = item
+            item["count"] += 1
+            # Move/wheel telemetry is intentionally aggregated to keep the
+            # diagnostic log bounded under a busy pointer stream.
+            if item["count"] % 100:
+                return False
+            aggregate_meta = dict(summary)
+            aggregate_meta.update({"count": item["count"], "aggregated": True})
+            emit_host_event(
+                logger,
+                event="host_input_aggregate",
+                message="High-frequency input aggregated",
+                meta=aggregate_meta,
+            )
+            return True
+        emit_host_event(
+            logger,
+            event=event,
+            message={
+                "host_input_received": "Remote input received",
+                "host_input_rejected": "Remote input rejected",
+                "host_input_result": "Remote input result",
+                "host_input_ack_sent": "Remote input ACK enqueue result",
+            }.get(event, "Remote input observed"),
+            meta=summary,
+        )
+        return True
+
     async def on_input(self, data):
-        """Handle input commands from viewer"""
+        """Handle input commands from viewer while recording safe outcomes."""
+        accepted = False
+        result = None
+        adapter_started = None
         try:
-            # Basic validation
             if not isinstance(data, dict):
-                logger.warning(f"Invalid input data type: {type(data)}")
+                self._emit_input_observation(
+                    "host_input_rejected", {}, status="invalid-input", reason="invalid-envelope",
+                )
+                logger.warning("Ignoring input with invalid envelope type=%s", type(data).__name__)
                 return
+
+            input_type = data.get("type")
+            action = data.get("action")
+            # Keepalive is transport maintenance, not user input. Check it
+            # before binding validation so stale wrappers stay silent too.
+            if input_type == "dc_keepalive":
+                return
+
             viewer_id = data.get("viewerId")
             is_v2 = data.get("schemaVersion") == 2
-            input_type = data.get('type')
-            action = data.get('action')
             if is_v2:
                 binding = getattr(self, "_active_input_binding", None)
                 lease_ok = (
@@ -1641,13 +1768,10 @@ class WebRemoteHost:
                     # stale/mismatched lease so a lost-up cannot keep Host dragging
                     # after rebind or mid-transition.
                     if input_type == "mouse" and action in ("up", "reset"):
-                        logger.warning(
-                            "Applying mouse safety release despite lease mismatch "
-                            "type=%s action=%s viewer=%s",
-                            input_type,
-                            action,
-                            viewer_id,
+                        self._emit_input_observation(
+                            "host_input_rejected", data, status="stale-lease", reason="stale-lease",
                         )
+                        logger.warning("Applying mouse safety release despite lease mismatch")
                         try:
                             input_adapter = getattr(self, "input_adapter", None) or self.input_handler
                             reset_desktop = getattr(input_adapter, "reset_desktop_writes", None)
@@ -1655,83 +1779,101 @@ class WebRemoteHost:
                                 await reset_desktop(reason="stale-lease-safety")
                             else:
                                 input_adapter.release_all_mouse_buttons(reason="stale-lease-safety")
-                        except Exception:
-                            logger.exception("Mouse safety release failed")
+                        except Exception as exc:
+                            logger.error("Mouse safety release failed: %s", type(exc).__name__)
                         return
-                    logger.warning(
-                        "Ignoring input that does not match the active lease binding "
-                        "type=%s action=%s viewer=%s hasBinding=%s",
-                        input_type,
-                        action,
-                        viewer_id,
-                        isinstance(binding, dict),
+                    self._emit_input_observation(
+                        "host_input_rejected", data, status="stale-lease", reason="stale-lease",
                     )
+                    logger.warning("Ignoring input that does not match the active lease binding")
                     return
-            elif viewer_id and self.current_viewer_id and viewer_id != self.current_viewer_id:
-                logger.warning(
-                    "Ignoring input from stale viewer %s (current=%s)",
-                    viewer_id,
-                    self.current_viewer_id,
+            elif viewer_id and getattr(self, "current_viewer_id", None) and viewer_id != self.current_viewer_id:
+                self._emit_input_observation(
+                    "host_input_rejected", data, status="stale-lease", reason="stale-lease",
                 )
+                logger.warning("Ignoring input from stale viewer")
                 return
-            if input_type == 'dc_keepalive':
-                # Viewer-side keepalive ping to prevent SCTP idle timeout and
-                # maintain Chrome background-tab exemption. No action needed.
+
+            if input_type not in ("mouse", "keyboard", "command"):
+                self._emit_input_observation(
+                    "host_input_rejected", data, status="invalid-input", reason="invalid-input",
+                )
+                logger.warning("Ignoring input with unknown type")
                 return
-            if input_type not in ('mouse', 'keyboard', 'command'):
-                logger.warning("Unknown input type")
+            payload = data.get("payload", {})
+            if not isinstance(payload, dict):
+                self._emit_input_observation(
+                    "host_input_rejected", data, status="invalid-input", reason="invalid-input",
+                )
+                logger.warning("Ignoring input with invalid payload type=%s", type(payload).__name__)
                 return
-            payload = data.get('payload', {})
-            if input_type == 'mouse':
-                rel_x = payload.get('relX')
-                rel_y = payload.get('relY')
-                if rel_x is not None and not (0 <= rel_x <= 1):
-                    logger.warning("Invalid mouse coordinate field=relX")
+            if input_type == "mouse":
+                if not self._input_coordinate_is_valid(payload.get("relX")):
+                    self._emit_input_observation(
+                        "host_input_rejected", data, status="invalid-input", reason="invalid-input",
+                    )
+                    logger.warning("Ignoring input with invalid mouse coordinate field=relX")
                     return
-                if rel_y is not None and not (0 <= rel_y <= 1):
-                    logger.warning("Invalid mouse coordinate field=relY")
+                if not self._input_coordinate_is_valid(payload.get("relY")):
+                    self._emit_input_observation(
+                        "host_input_rejected", data, status="invalid-input", reason="invalid-input",
+                    )
+                    logger.warning("Ignoring input with invalid mouse coordinate field=relY")
                     return
+
             transport = data.get("transport", "socket")
-            input_ids = data.get("inputIds", [])
+            if not isinstance(transport, str) or transport not in {"datachannel", "socket", "none"}:
+                transport = "socket"
             self._input_event_count = int(getattr(self, "_input_event_count", 0) or 0) + 1
             self._last_input_at_monotonic = time.perf_counter()
-            if input_type == 'keyboard' or action != 'move':
-                emit_host_event(
-                    logger,
-                    event="host_input_received",
-                    message="Remote input received",
-                    meta=summarize_input_event(data),
-                )
-            else:
-                logger.debug("Input received: type=mouse action=move transport=%s", transport)
-            if input_type == 'keyboard' and action == 'reset':
+            accepted = True
+            self._emit_input_observation(
+                "host_input_received", data, status="accepted",
+            )
+            if input_type == "keyboard" and action == "reset":
                 logger.info("Keyboard reset observed transport=%s", transport)
-            if input_type == 'keyboard' and action != 'reset':
+            if input_type == "keyboard" and action != "reset":
                 self.overlay.send({
                     "type": "key",
                     "text": format_keyboard_command(action, payload),
                     "viewerId": data.get("viewerId")
                 })
-            if input_type == 'keyboard':
-                input_adapter = getattr(self, "input_adapter", None) or self.input_handler
-                result = await input_adapter.apply_keyboard(data, transport=transport)
-            else:
-                input_adapter = getattr(self, "input_adapter", None) or self.input_handler
-                result = await input_adapter.handle_input(data)
-            if result and isinstance(result, dict):
-                receive_time = result.get("receiveTime")
-                execute_time = result.get("executeTime")
-                local_execute_ms = None
-                if isinstance(receive_time, (int, float)) and isinstance(execute_time, (int, float)):
-                    local_execute_ms = (execute_time - receive_time) * 1000
-                if input_type == 'keyboard' or action != 'move':
-                    emit_host_event(
-                        logger,
-                        event="host_input_executed",
-                        message="Remote input executed",
-                        meta=summarize_input_event(data, local_execute_ms=local_execute_ms),
-                    )
-                await self._send_input_ack(data, result, local_execute_ms)
+
+            input_adapter = getattr(self, "input_adapter", None) or getattr(self, "input_handler", None)
+            adapter_started = time.perf_counter()
+            try:
+                if input_type == "keyboard":
+                    result = await input_adapter.apply_keyboard(data, transport=transport)
+                else:
+                    result = await input_adapter.handle_input(data)
+            except Exception as exc:
+                local_execute_ms = (time.perf_counter() - adapter_started) * 1000
+                self._emit_input_observation(
+                    "host_input_result",
+                    data,
+                    status="execution-failed",
+                    reason="adapter-error",
+                    local_execute_ms=local_execute_ms,
+                )
+                logger.error("Input adapter failed: %s", type(exc).__name__)
+                return
+
+            local_execute_ms = (time.perf_counter() - adapter_started) * 1000
+            result_data = dict(data)
+            if isinstance(result, dict) and isinstance(result.get("inputIds"), (list, tuple)):
+                result_data["inputIds"] = result["inputIds"]
+            result_status = self._input_result_status(result)
+            result_applied_seq = result.get("appliedSeq") if isinstance(result, dict) else None
+            self._emit_input_observation(
+                "host_input_result",
+                result_data,
+                status=result_status,
+                applied_seq=result_applied_seq,
+                local_execute_ms=local_execute_ms,
+            )
+            if isinstance(result, dict):
+                wire_execute_ms = self._wire_execute_ms(result, fallback=local_execute_ms)
+                await self._send_input_ack(data, result, wire_execute_ms)
             if result and isinstance(result, dict) and result.get("inputIds"):
                 if self.screen_track:
                     with self.screen_track._pending_input_lock:
@@ -1741,14 +1883,31 @@ class WebRemoteHost:
                             "receiveTime": result.get("receiveTime"),
                             "executeTime": result.get("executeTime"),
                         })
-        except Exception as e:
-            logger.error("Input handling error: %s", type(e).__name__, exc_info=True)
+        except Exception as exc:
+            if accepted:
+                self._emit_input_observation(
+                    "host_input_result",
+                    data if isinstance(data, dict) else {},
+                    status="execution-failed",
+                    reason="adapter-error",
+                    local_execute_ms=(time.perf_counter() - adapter_started) * 1000
+                    if adapter_started is not None else None,
+                )
+            else:
+                self._emit_input_observation(
+                    "host_input_rejected", data if isinstance(data, dict) else {},
+                    status="invalid-input", reason="invalid-input",
+                )
+            logger.error("Input handling error: %s", type(exc).__name__)
 
     async def _send_input_ack(self, data, result, local_execute_ms):
         input_ids = result.get("inputIds", []) if isinstance(result, dict) else []
         if not input_ids:
             return False
-        transport = str(data.get("transport") or "socket")
+        raw_transport = data.get("transport") if isinstance(data, dict) else None
+        transport = raw_transport if isinstance(raw_transport, str) and raw_transport in {
+            "datachannel", "socket", "none",
+        } else "socket"
         if data.get("schemaVersion") == 2 and data.get("type") == "mouse":
             # Mouse actions use the v2 envelope but intentionally do not share
             # the ordered keyboard sequence/state contract. Keep their ACK
@@ -1797,19 +1956,34 @@ class WebRemoteHost:
                 "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
                 "transport": transport,
             }
-        if transport == "datachannel":
-            channel = self.get_input_datachannel()
-            if channel is None or not hasattr(channel, "send"):
-                return False
-            channel.send(json.dumps(ack))
-            return True
-        if self.sio is None:
-            return False
-        await self.sio.emit("input-ack", {
-            **ack,
-            "viewerId": data.get("viewerId"),
-        })
-        return True
+        accepted = False
+        try:
+            if transport == "datachannel":
+                channel = self.get_input_datachannel()
+                if channel is None or not hasattr(channel, "send"):
+                    return False
+                channel.send(json.dumps(ack))
+                accepted = True
+            elif self.sio is not None:
+                await self.sio.emit("input-ack", {
+                    **ack,
+                    "viewerId": data.get("viewerId"),
+                })
+                accepted = True
+        except Exception as exc:
+            logger.error("Input ACK enqueue failed: %s", type(exc).__name__)
+            accepted = False
+        finally:
+            result_data = dict(data) if isinstance(data, dict) else {}
+            result_data["inputIds"] = input_ids
+            self._emit_input_observation(
+                "host_input_ack_sent",
+                result_data,
+                status=self._input_result_status(result),
+                applied_seq=result.get("appliedSeq") if isinstance(result, dict) else None,
+                ack_accepted=accepted,
+            )
+        return accepted
 
     async def on_connected(self, data):
         logger.info(f"Connected: {data}")
@@ -1928,6 +2102,14 @@ class WebRemoteHost:
             or channel is getattr(self, "_input_move_datachannel", None)
         )
 
+    @staticmethod
+    def _datachannel_observation(data):
+        if not isinstance(data, dict):
+            return {"transport": "datachannel"}
+        observation = dict(data)
+        observation["transport"] = "datachannel"
+        return observation
+
     def _prepare_bound_datachannel_input(self, binding, data, channel=None):
         """Stamp one DataChannel message with the current live lease.
 
@@ -1936,16 +2118,36 @@ class WebRemoteHost:
         snapshot from channel-open is only used to reject leftover channels.
         """
         if not isinstance(data, dict):
+            self._emit_input_observation(
+                "host_input_rejected", self._datachannel_observation(data),
+                status="invalid-input", reason="invalid-envelope",
+            )
+            return None
+        if self._input_is_keepalive(data):
             return None
         active = getattr(self, "_active_input_binding", None)
         if self._is_live_input_channel(channel) and isinstance(active, dict):
             binding = active
         elif not self._binding_matches(binding, active):
+            self._emit_input_observation(
+                "host_input_rejected", self._datachannel_observation(data),
+                status="stale-lease", reason="unbound-channel",
+            )
+            return None
+        if not isinstance(binding, dict):
+            self._emit_input_observation(
+                "host_input_rejected", self._datachannel_observation(data),
+                status="stale-lease", reason="unbound-channel",
+            )
             return None
         if data.get("schemaVersion") == 2 and (
-            data.get("leaseId") != binding["leaseId"]
-            or data.get("leaseEpoch") != binding["leaseEpoch"]
+            data.get("leaseId") != binding.get("leaseId")
+            or data.get("leaseEpoch") != binding.get("leaseEpoch")
         ):
+            self._emit_input_observation(
+                "host_input_rejected", self._datachannel_observation(data),
+                status="stale-lease", reason="stale-lease",
+            )
             return None
         bound = dict(data)
         bound.update({
@@ -2385,11 +2587,16 @@ class WebRemoteHost:
 
                             bound = self._prepare_bound_datachannel_input(binding, data, channel=channel)
                             if bound is None:
-                                logger.warning("Ignoring unbound or stale DataChannel input")
+                                if not self._input_is_keepalive(data):
+                                    logger.warning("Ignoring unbound or stale DataChannel input")
                                 return
                             self._schedule_input_lifecycle(self.on_input(bound))
                         except Exception as e:
-                            logger.error(f"DataChannel input parse error: {e}")
+                            self._emit_input_observation(
+                                "host_input_rejected", {"transport": "datachannel"},
+                                status="invalid-input", reason="invalid-envelope",
+                            )
+                            logger.error("DataChannel input parse error: %s", type(e).__name__)
 
                 # Add video track
                 self.screen_track = ScreenCaptureTrack(
@@ -3854,7 +4061,7 @@ class WebRemoteHost:
             logger.warning(f"Failed to set host H.264 codec preferences: {e}")
 
     def get_input_datachannel(self):
-        return self._input_datachannel
+        return getattr(self, "_input_datachannel", None)
 
     async def on_disconnect(self):
         logger.warning("Disconnected from signaling server")

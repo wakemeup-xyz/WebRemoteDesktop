@@ -34,6 +34,87 @@ function loadScript(filename, context, exportName) {
   return context.__exported;
 }
 
+test('diagnostic core keeps the critical input trace through deferred panel loading', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  const InputTrace = context.InputTrace;
+  context.window.InputTrace = InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  const firstSnapshot = Diagnostic.getInputTraceSnapshot();
+  assert.equal(firstSnapshot.schemaVersion, 1);
+  Diagnostic.recordInputTrace('dom-received', {
+    inputType: 'keyboard', action: 'key', phase: 'down',
+    focusKind: 'desktop', visibility: 'visible',
+  });
+  const beforeDeferred = Diagnostic.getInputTraceSnapshot();
+  assert.equal(beforeDeferred.events.length, 1);
+  assert.equal(typeof InputTrace.create, 'function');
+
+  const deferredDiagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const afterDeferred = deferredDiagnostic.getInputTraceSnapshot();
+  assert.equal(afterDeferred.events.length, 1);
+  assert.equal(afterDeferred.events[0].stage, 'dom-received');
+});
+
+test('diagnostic core resolves the live Input from a classic script export', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.window.InputTrace = context.InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Input = loadScript('input.js', context, 'Input');
+  const Diagnostic = context.window.Diagnostic;
+  const sent = [];
+  Diagnostic.autoSendFailure = (reason) => sent.push(reason);
+  Diagnostic.buildConnectionDiagnostic = () => ({});
+  Diagnostic.panelReady = true;
+  context.WebRTC.currentConnectionAttemptId = 'attempt-classic';
+  context.WebRTC.hasActiveControl = () => true;
+  context.window.WebRTC = context.WebRTC;
+  Input.isActive = true;
+  Input.activeControlLease = { leaseEpoch: 8 };
+
+  assert.equal(context.window.Input, Input);
+  assert.equal(Diagnostic._currentInput(), Input);
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-classic', leaseEpoch: 8,
+  });
+  assert.deepEqual(sent, ['input-ack-timeout']);
+});
+
+test('diagnostic core drops an input timeout from an old attempt or lease epoch', () => {
+  const { context } = createDiagnosticContext();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.window.InputTrace = context.InputTrace;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  const sent = [];
+  Diagnostic.autoSendFailure = (reason) => sent.push(reason);
+  Diagnostic.buildConnectionDiagnostic = () => ({ connectionAttemptId: 'attempt-new' });
+  Diagnostic.panelReady = true;
+  context.WebRTC.currentConnectionAttemptId = 'attempt-new';
+  context.Input = {
+    isActive: true,
+    activeControlLease: { leaseEpoch: 8 },
+    getEffectiveInputGate: () => ({ allowed: true, blockedReasons: [] }),
+  };
+  context.window.Input = context.Input;
+  context.window.WebRTC = context.WebRTC;
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-old', leaseEpoch: 7,
+  });
+  assert.deepEqual(sent, []);
+
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-new', leaseEpoch: 7,
+  });
+  assert.deepEqual(sent, []);
+  Diagnostic._handleInputTraceIncident('input-ack-timeout', {
+    connectionAttemptId: 'attempt-new', leaseEpoch: 8,
+  });
+  assert.deepEqual(sent, ['input-ack-timeout']);
+});
+
 function createDiagnosticContext(overrides = {}) {
   const elements = new Map();
   const ids = [
@@ -170,6 +251,73 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputState.keyboard.lastResetReason, 'window-blur');
   assert.equal(emitted[0].payload.inputChannelTimeline.length, 3);
   assert.equal(emitted[0].payload.inputChannelTimeline[0].kind, 'open');
+});
+
+test('manual and automatic diagnostics share the complete safe input snapshot and trace', () => {
+  const { context } = createDiagnosticContext();
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const safeInputState = {
+    keyboardMode: 'mac',
+    isActive: true,
+    hasLease: true,
+    effectiveGate: {
+      allowed: false,
+      blockedReasons: ['surface-uncertain'],
+      recovery: { state: 'waiting', generation: 2, retryAvailable: false },
+    },
+    surface: { state: 'uncertain', generation: 3 },
+    draft: { composing: false, hasPending: false, deliveryUncertain: true, status: 'uncertain' },
+    viewport: { inputSupported: true },
+    recovery: { state: 'waiting', generation: 2, retryAvailable: false },
+    pendingMouseReset: true,
+    desktopWriteRecovery: { state: 'reacquire-required', status: 'execution-failed' },
+  };
+  const inputTrace = {
+    schemaVersion: 1,
+    events: [{ stage: 'ack', inputType: 'keyboard', status: 'execution-failed', inputIdHash: '3e9fd6a21afbb55b' }],
+    counters: { droppedEvents: 4, pendingAckCount: 1 },
+  };
+  context.Input = { getDiagnosticState: () => safeInputState };
+  Diagnostic.getInputTraceSnapshot = () => inputTrace;
+
+  const manual = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual', reason: 'manual' });
+  const automatic = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'pc-failed' });
+
+  assert.deepEqual(manual.inputState, safeInputState);
+  assert.deepEqual(manual.inputTrace, inputTrace);
+  assert.deepEqual(automatic.inputState, safeInputState);
+  assert.deepEqual(automatic.inputTrace, inputTrace);
+});
+
+test('sendLogs waits for the shared sender, uses authenticated HTTP when disconnected, and reports failure', async () => {
+  const requests = [];
+  const alerts = [];
+  let ioCalls = 0;
+  const { context, storage } = createDiagnosticContext({
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: false, status: 503 };
+    },
+    io: () => {
+      ioCalls += 1;
+      throw new Error('temporary viewer socket must not be created');
+    },
+  });
+  context.alert = (message) => alerts.push(message);
+  context.Auth = { getToken: () => 'viewer-token' };
+  context.WebRTC.socket = { connected: false, emit() { throw new Error('socket must not be used'); } };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+
+  const result = await Diagnostic.sendLogs({ trigger: 'manual', reason: 'manual-disconnect' });
+
+  assert.equal(result, false);
+  assert.equal(ioCalls, 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer viewer-token');
+  assert.equal(alerts.some((message) => String(message).includes('失败')), true);
+  assert.equal(alerts.some((message) => String(message).includes('已发送')), false);
+  const queued = JSON.parse(storage.getItem('wrdPendingDiagnostics'));
+  assert.equal(queued.length, 1);
 });
 
 test('sendLogs includes paint continuity fields from the live WebRTC session', () => {

@@ -92,11 +92,23 @@ function loadInput() {
   };
   context.globalThis = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.__InputTrace = context.InputTrace.create({
+    hashInputIds: null,
+    setTimeoutFn: () => null,
+  });
+  context.Diagnostic = {
+    recordInputTrace(stage, meta) { return context.__InputTrace.record(stage, meta); },
+    getInputTraceSnapshot() { return context.__InputTrace.snapshot(); },
+  };
   for (const filename of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'mobile-text-input.js', 'input.js']) {
     const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
     vm.runInContext(filename === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, context);
   }
-  return { Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents };
+  return {
+    Input: context.__Input, context, elements, documentListeners, windowListeners, socketEvents,
+    trace: context.__InputTrace,
+  };
 }
 
 function loadUi(context) {
@@ -1028,6 +1040,48 @@ test('composition submit sends one text, cancel sends none, and actions use one 
   assert.deepEqual(keyboardPayloads.map(({ action }) => action), ['text', 'batch']);
   assert.equal(keyboardPayloads[0].payload.text, 'hello');
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'input.js'), 'utf8'), /setTimeout\([^)]*,\s*30\)/);
+});
+
+test('modal composition keeps one automatic send when trace observation throws', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+
+  context.Diagnostic.recordInputTrace = () => {
+    throw new Error('TRACE_OBSERVER_CANARY');
+  };
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  modalInput.value = 'observer-throw';
+  modalInput.listeners.get('compositionend')({ target: modalInput });
+
+  const textWrites = socketEvents.filter(({ event, payload }) => (
+    event === 'input' && payload.type === 'keyboard' && payload.action === 'text'
+  ));
+  assert.equal(textWrites.length, 1);
+  assert.equal(elements.get('textInputModal').hidden, true);
+  assert.equal(Input._inputTraceContext, null);
+});
+
+test('rejected modal composition retains its draft and does not replay it', () => {
+  const { Input, context, elements, socketEvents } = loadInput();
+  activate(Input, context);
+  Input.setupTextInput();
+  const modalButton = elements.get('textInputBtn');
+  const modalInput = elements.get('remoteTextInput');
+
+  modalButton.listeners.get('click')({ preventDefault() {} });
+  Input.keyboardController.sendText = () => false;
+  modalInput.value = 'rejected-composition';
+  modalInput.listeners.get('compositionend')({ target: modalInput });
+
+  assert.equal(elements.get('textInputModal').hidden, false);
+  assert.equal(modalInput.value, 'rejected-composition');
+  assert.equal(socketEvents.filter(({ event, payload }) => (
+    event === 'input' && payload.type === 'keyboard' && payload.action === 'text'
+  )).length, 0);
+  assert.equal(Input._inputTraceContext, null);
 });
 
 test('mobile modifier toggles one controller key down and up without a direct WebRTC button send', () => {
@@ -2213,7 +2267,7 @@ test('mobile input reset clears the reserved Dock state', () => {
   assert.equal(context.document.body.classList.contains('mobile-input-visible'), false);
 });
 
-test('owned keyboard reset ACK reopens mobile text only for the next explicit input', () => {
+test('owned keyboard reset ACK preserves lifecycle content until empty context is confirmed', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2226,7 +2280,7 @@ test('owned keyboard reset ACK reopens mobile text only for the next explicit in
 
   const reset = socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').at(-1).payload;
   assert.ok(reset);
-  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(mobileInput.value, 'old\u200b');
   assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
     .map(({ payload }) => payload.payload.text), ['old']);
@@ -2247,7 +2301,7 @@ test('owned keyboard reset ACK reopens mobile text only for the next explicit in
     .map(({ payload }) => payload.payload.text), ['old', 'fresh']);
 });
 
-test('owned reset ACK preserves a new draft entered while the barrier is pending', () => {
+test('owned reset ACK preserves a new draft until the mouse reset also confirms', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2273,11 +2327,11 @@ test('owned reset ACK preserves a new draft entered while the barrier is pending
     inputIds: reset.inputIds,
   });
   assert.equal(mobileInput.value, 'during-reset');
-  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, false);
+  assert.equal(Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
   assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text').length, 1);
-  assert.equal(Input.mobileTextInputAdapter.retryPending(), true);
+  assert.equal(Input.mobileTextInputAdapter.retryPending(), false);
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
-    .map(({ payload }) => payload.payload.text), ['old', 'during-reset']);
+    .map(({ payload }) => payload.payload.text), ['old']);
 });
 
 test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
@@ -2309,7 +2363,7 @@ test('failed or stale owned reset ACKs keep mobile input fail-closed', () => {
   }
 });
 
-test('park clears mobile draft without a reset barrier and permits later explicit input', () => {
+test('park preserves mobile draft without a reset barrier until explicit discard', () => {
   const { Input, context, elements, socketEvents } = loadInput();
   context.navigator.maxTouchPoints = 1;
   activate(Input, context);
@@ -2322,9 +2376,14 @@ test('park clears mobile draft without a reset barrier and permits later explici
   Input.parkKeyboard('visibility-hidden');
   assert.equal(socketEvents.length, eventsBeforePark);
   assert.equal(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'reset').length, 0);
-  assert.equal(mobileInput.value, '\u200b');
+  assert.equal(mobileInput.value, 'old\u200b');
 
   mobileButton.listeners.get('click')({ preventDefault() {} });
+  mobileInput.value = 'fresh';
+  mobileInput.listeners.get('input')({ target: mobileInput });
+  assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
+    .map(({ payload }) => payload.payload.text), ['old']);
+  elements.get('mobileInputDiscardBtn').listeners.get('click')({ preventDefault() {} });
   mobileInput.value = 'fresh';
   mobileInput.listeners.get('input')({ target: mobileInput });
   assert.deepEqual(socketEvents.filter(({ event, payload }) => event === 'input' && payload.action === 'text')
@@ -2384,6 +2443,295 @@ test('mobile text and mouse input never place content or coordinates in diagnost
 
   const diagnostic = JSON.stringify(Input.getDiagnosticState());
   assert.doesNotMatch(diagnostic, /private-mobile-text|relX|relY|button|text/);
+});
+
+test('diagnostic input state uses bounded enums and never copies arbitrary source fields', () => {
+  const { Input, context } = loadInput();
+  Input.keyboardController = {
+    getSnapshot: () => ({
+      mode: 'MODE_CANARY', state: 'STATE_CANARY', pressedKeyCount: Number.MAX_SAFE_INTEGER,
+    }),
+  };
+  Input.keyboardTransport = {
+    getSnapshot: () => ({
+      adapter: 'ADAPTER_CANARY', epoch: -1, lastSent: Number.MAX_SAFE_INTEGER,
+      lastApplied: 'not-a-number', pendingCount: 9999,
+    }),
+  };
+  Input.lastKeyboardResetReason = 'RESET_REASON_CANARY';
+  Input._mobileSurfaceState = 'SURFACE_STATE_CANARY';
+  Input._mobileSurfaceGeneration = Number.MAX_SAFE_INTEGER;
+  Input._recoveryCycle = {
+    ...Input._recoveryCycle,
+    state: 'RECOVERY_STATE_CANARY', reason: 'RECOVERY_REASON_CANARY', generation: Number.MAX_SAFE_INTEGER,
+  };
+  Input._desktopWriteRecovery = {
+    state: 'WRITE_STATE_CANARY', status: 'WRITE_STATUS_CANARY', appliedSeq: Number.MAX_SAFE_INTEGER,
+  };
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: true, hasActiveControl: true, manualDisconnect: false,
+    mediaState: 'MEDIA_STATE_CANARY', runtimePhase: 'RUNTIME_PHASE_CANARY', inputIsActive: true,
+    blockedReasons: ['BLOCKED_REASON_CANARY'],
+  });
+
+  const state = Input.getDiagnosticState();
+  const json = JSON.stringify(state);
+  for (const canary of [
+    'MODE_CANARY', 'STATE_CANARY', 'ADAPTER_CANARY', 'RESET_REASON_CANARY',
+    'SURFACE_STATE_CANARY', 'RECOVERY_STATE_CANARY', 'RECOVERY_REASON_CANARY',
+    'WRITE_STATE_CANARY', 'WRITE_STATUS_CANARY', 'MEDIA_STATE_CANARY',
+    'RUNTIME_PHASE_CANARY', 'BLOCKED_REASON_CANARY',
+  ]) {
+    assert.equal(json.includes(canary), false, canary);
+  }
+  assert.equal(state.keyboard.epoch, 0);
+  assert.equal(state.keyboard.lastSent, 0x7fffffff);
+  assert.equal(state.keyboard.pendingCount, 256);
+  assert.equal(state.surface.state, 'settled');
+  assert.equal(state.recovery.state, 'idle');
+  assert.equal(state.gate.mediaState, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.effectiveGate.blockedReasons)), ['no-active-control', 'inactive']);
+});
+
+test('diagnostic reason prefixes require an exact bounded value', () => {
+  const { Input, context } = loadInput();
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: false,
+    hasActiveControl: true,
+    manualDisconnect: false,
+    mediaState: 'active',
+    runtimePhase: 'active',
+    inputIsActive: true,
+    blockedReasons: [
+      'runtime-phase:active',
+      'runtime-phase:active:PASSWORD_CANARY',
+      'media-state:active',
+      'media-state:active:TEXT_CANARY',
+      `runtime-phase:active:${'SUFFIX_CANARY'.repeat(100)}`,
+    ],
+  });
+
+  const state = Input.getDiagnosticState();
+  assert.deepEqual(JSON.parse(JSON.stringify(state.gate.blockedReasons)), [
+    'runtime-phase:active', 'media-state:active',
+  ]);
+  const json = JSON.stringify(state);
+  for (const canary of ['PASSWORD_CANARY', 'TEXT_CANARY', 'SUFFIX_CANARY']) {
+    assert.equal(json.includes(canary), false, canary);
+  }
+});
+
+test('real keyboard gate rejection traces DOM and gate only', () => {
+  const { Input, context, elements, documentListeners, trace } = loadInput();
+  Input.videoElement = context.document.getElementById('remoteVideo');
+  Input.initKeyboardController();
+  Input.setControlLease({ leaseId: 'lease-trace-1', leaseEpoch: 3 });
+  Input.setActive(true);
+  Input._mobileSurfaceState = 'uncertain';
+  Input.setupEventListeners();
+
+  const event = keyboard('keydown', {
+    target: elements.get('remoteVideo'),
+    key: 'TRACE_KEY_CANARY', code: 'TRACE_CODE_CANARY',
+  });
+  documentListeners.get('keydown')(event);
+
+  const snapshot = trace.snapshot();
+  const gateEvents = snapshot.events.filter(({ stage }) => stage === 'dom-received' || stage === 'gate');
+  assert.equal(JSON.stringify(gateEvents.map(({ stage }) => stage)), JSON.stringify(['dom-received', 'gate']));
+  assert.equal(gateEvents[0].eventId, gateEvents[1].eventId);
+  assert.equal(gateEvents[1].accepted, false);
+  assert.equal(gateEvents[1].reason, 'surface-uncertain');
+  assert.equal(snapshot.events.some(({ stage }) => stage === 'transport-send'), false);
+  const json = JSON.stringify(snapshot);
+  assert.doesNotMatch(json, /TRACE_KEY_CANARY|TRACE_CODE_CANARY/);
+});
+
+test('real Input sends record DataChannel result, Socket fallback, and receiver ACK status', () => {
+  const { Input, context, elements, trace } = loadInput();
+  Input.videoElement = context.document.getElementById('remoteVideo');
+  Input.initKeyboardController();
+  Input.setControlLease({ leaseId: 'lease-trace-2', leaseEpoch: 3 });
+  Input.setActive(true);
+  context.WebRTC.currentConnectionAttemptId = 'attempt-trace';
+
+  context.WebRTC.sendInput = () => true;
+  const dataChannelId = Input.sendInput('mouse', 'down', {
+    relX: 0.2, relY: 0.3, button: 'left', buttons: 1,
+  });
+  context.WebRTC.sendInput = () => false;
+  const socketId = Input.sendInput('mouse', 'up', {
+    relX: 0.2, relY: 0.3, button: 'left', buttons: 0,
+  });
+  const transport = trace.snapshot().events.filter(({ stage }) => stage === 'transport-send');
+  assert.equal(dataChannelId !== null, true);
+  assert.equal(socketId !== null, true);
+  assert.equal(JSON.stringify(transport.map(({ transport: path, accepted }) => [path, accepted])), JSON.stringify([
+    ['datachannel', true], ['datachannel', false], ['socket', true],
+  ]));
+
+  const ack = Input.acceptMouseAck({
+    schemaVersion: 2, inputType: 'mouse', leaseEpoch: 3, status: 'applied',
+    accepted: false, appliedSeq: 1, inputIds: [dataChannelId],
+  });
+  assert.equal(ack.status, 'applied');
+  const ackEvent = trace.snapshot().events.find(({ stage }) => stage === 'ack');
+  assert.equal(ackEvent.status, 'applied');
+  assert.equal(ackEvent.accepted, false);
+});
+
+test('accepted mobile text records its gate before the real keyboard transport send', () => {
+  const { Input, context, elements, trace } = loadInput();
+  context.WebRTC.inputChannel = { readyState: 'open' };
+  context.WebRTC.sendInput = () => true;
+  activate(Input, context);
+  Input.setupTextInput();
+
+  const mobileInput = elements.get('mobileTextInput');
+  mobileInput.value = 'mobile-gate-canary';
+  mobileInput.listeners.get('input')({ type: 'input', target: mobileInput });
+
+  const events = trace.snapshot().events.filter(({ stage }) => (
+    stage === 'dom-received' || stage === 'gate' || stage === 'transport-send'
+  ));
+  assert.deepEqual(JSON.parse(JSON.stringify(events.map(({ stage }) => stage))), [
+    'dom-received', 'gate', 'transport-send',
+  ]);
+  assert.equal(events[1].accepted, true);
+  assert.equal(events[1].eventId, events[0].eventId);
+  assert.equal(events[2].eventId, events[0].eventId);
+  assert.doesNotMatch(JSON.stringify(events), /mobile-gate-canary/);
+});
+
+test('physical DOM sends retain nested mobile scope through real ACK correlation', () => {
+  const { Input, context, elements, documentListeners, trace } = loadInput();
+  const writes = [];
+  context.WebRTC.inputChannel = { readyState: 'open' };
+  context.WebRTC.sendInput = (payload) => { writes.push(payload); return true; };
+  activate(Input, context);
+  Input.setupTextInput();
+  Input.setupEventListeners();
+
+  const surface = elements.get('remoteVideo');
+  const pointer = (type) => surface.listeners.get(type)({
+    pointerType: 'mouse', pointerId: 1, button: 0,
+    detail: 1, clientX: 40, clientY: 40,
+    buttons: type === 'pointerup' ? 0 : 1,
+    currentTarget: surface, timeStamp: 10, preventDefault() {},
+  });
+  pointer('pointerdown');
+  pointer('pointerup');
+  for (const payload of writes.filter(({ type }) => type === 'mouse')) {
+    Input.acceptMouseAck({
+      schemaVersion: 2, inputType: 'mouse', leaseEpoch: 3,
+      status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds,
+    });
+  }
+  documentListeners.get('keydown')(keyboard('keydown', { target: surface }));
+  documentListeners.get('keyup')(keyboard('keyup', { target: surface }));
+
+  const sends = trace.snapshot().events.filter(({ stage, accepted, action }) => (
+    stage === 'transport-send' && accepted === true && action !== 'reset'
+  ));
+  assert.equal(sends.length, 4);
+  assert.ok(sends.every(({ eventId }) => Number.isSafeInteger(eventId)));
+
+  for (const payload of writes.filter(({ type }) => type === 'keyboard')) {
+    Input.acceptKeyboardAck({
+      schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 3,
+      status: 'applied', appliedSeq: payload.seq, inputIds: payload.inputIds,
+    });
+  }
+  const acks = trace.snapshot().events.filter(({ stage, accepted }) => stage === 'ack' && accepted === true);
+  assert.equal(acks.length, 4);
+  assert.ok(sends.every((send) => acks.some((ack) => ack.eventId === send.eventId)));
+});
+
+test('real user releases preserve current observer eligibility while unmatched safety releases stay ineligible', () => {
+  const scenarios = [
+    {
+      name: 'mouse',
+      setup(h) {
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const pointer = (type) => surface.listeners.get(type)({
+          pointerType: 'mouse', pointerId: 1, button: 0, detail: 1,
+          clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+          currentTarget: surface, timeStamp: 10, preventDefault() {},
+        });
+        pointer('pointerdown');
+        pointer('pointerup');
+      },
+      release(meta) { return meta.inputType === 'pointer' && meta.action === 'up'; },
+    },
+    {
+      name: 'physical keyboard',
+      setup(h) {
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const event = (type) => h.documentListeners.get(type)({
+          ...keyboard(type, { target: surface }),
+          type,
+        });
+        event('keydown');
+        event('keyup');
+      },
+      release(meta) { return meta.inputType === 'keyboard' && meta.action === 'key' && meta.phase === 'up'; },
+    },
+    {
+      name: 'touch',
+      setup(h) {
+        loadTouchAdapter(h.context);
+        activate(h.Input, h.context);
+        h.Input.setupEventListeners();
+        const surface = h.elements.get('remoteVideo');
+        const touch = (type) => surface.listeners.get(type)({
+          pointerType: 'touch', pointerId: 1, isPrimary: true, button: 0,
+          clientX: 40, clientY: 40, buttons: type === 'pointerup' ? 0 : 1,
+          currentTarget: surface, timeStamp: 10, preventDefault() {},
+        });
+        touch('pointerdown');
+        touch('pointerup');
+      },
+      release(meta) { return meta.inputType === 'pointer' && meta.action === 'up'; },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const h = loadInput();
+    const observed = [];
+    const record = h.context.Diagnostic.recordInputTrace;
+    h.context.Diagnostic.recordInputTrace = (stage, meta) => {
+      observed.push({ stage, meta: { ...meta } });
+      return record(stage, meta);
+    };
+    scenario.setup(h);
+    const release = observed.find(({ stage, meta }) => stage === 'transport-send' && meta.accepted === true && scenario.release(meta));
+    assert.ok(release, scenario.name);
+    assert.equal(release.meta.incidentEligible, true, scenario.name);
+  }
+
+  const h = loadInput();
+  const observed = [];
+  const record = h.context.Diagnostic.recordInputTrace;
+  h.context.Diagnostic.recordInputTrace = (stage, meta) => {
+    observed.push({ stage, meta: { ...meta } });
+    return record(stage, meta);
+  };
+  activate(h.Input, h.context);
+  h.Input.setupEventListeners();
+  const surface = h.elements.get('remoteVideo');
+  surface.listeners.get('pointerup')({
+    pointerType: 'mouse', pointerId: 9, button: 0, buttons: 0,
+    clientX: 40, clientY: 40, currentTarget: surface, timeStamp: 10, preventDefault() {},
+  });
+  const unmatched = observed.find(({ stage, meta }) => (
+    stage === 'transport-send' && meta.accepted === true && meta.inputType === 'pointer' && meta.action === 'up'
+  ));
+  assert.ok(unmatched);
+  assert.equal(unmatched.meta.incidentEligible, false);
 });
 
 test('desktop mouse and command input require the active lease and carry the v2 envelope', () => {
@@ -2581,4 +2929,107 @@ test('video pause does not permanently disable input while media gate is active'
   context.WebRTC.canEnableDesktopInput = () => false;
   video.listeners.get('pause')();
   assert.equal(Input.isActive, false);
+});
+
+test('failed keyboard transports record one bounded failure without replaying the write', () => {
+  const { Input, context, trace } = loadInput();
+  const payload = {
+    type: 'keyboard', action: 'key', payload: { phase: 'down' },
+    inputIds: ['inp-keyboard-failure'], seq: 1, leaseEpoch: 3,
+  };
+  context.WebRTC.sendInput = undefined;
+  assert.equal(Input.sendKeyboardDataChannel(payload), false);
+  context.WebRTC.sendInput = () => { throw new Error('DATA_CHANNEL_FAILURE_CANARY'); };
+  assert.throws(() => Input.sendKeyboardDataChannel(payload), /DATA_CHANNEL_FAILURE_CANARY/);
+
+  context.WebRTC.socket = { connected: false, emit() { throw new Error('STALE_SOCKET_CANARY'); } };
+  assert.equal(Input.sendKeyboardSocket(payload), false);
+  context.WebRTC.socket = { connected: true, emit() { throw new Error('SOCKET_FAILURE_CANARY'); } };
+  assert.throws(() => Input.sendKeyboardSocket(payload), /SOCKET_FAILURE_CANARY/);
+
+  const sends = trace.snapshot().events
+    .filter(({ stage }) => stage === 'transport-send')
+    .map(({ transport, accepted }) => [transport, accepted]);
+  assert.deepEqual(JSON.parse(JSON.stringify(sends)), [
+    ['datachannel', false], ['datachannel', false],
+    ['socket', false], ['socket', false],
+  ]);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /CANARY/);
+});
+
+test('generic transport exceptions are traced before rethrow without consuming a reliable sequence', () => {
+  const { Input, context, trace } = loadInput();
+  activate(Input, context);
+  context.WebRTC.sendInput = () => { throw new Error('GENERIC_DATA_CHANNEL_CANARY'); };
+  assert.throws(() => Input.sendInput('command', 'showDock', {}), /GENERIC_DATA_CHANNEL_CANARY/);
+  assert.equal(Input._desktopWritePending.size, 0);
+
+  context.WebRTC.sendInput = () => false;
+  context.WebRTC.socket = { connected: true, emit() { throw new Error('GENERIC_SOCKET_CANARY'); } };
+  assert.throws(() => Input.sendInput('command', 'showDock', {}), /GENERIC_SOCKET_CANARY/);
+  assert.equal(Input._desktopWritePending.size, 0);
+
+  const sends = trace.snapshot().events
+    .filter(({ stage }) => stage === 'transport-send')
+    .map(({ transport, accepted }) => [transport, accepted]);
+  assert.deepEqual(JSON.parse(JSON.stringify(sends)), [
+    ['datachannel', false],
+    ['datachannel', false], ['socket', false],
+  ]);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /GENERIC_.*CANARY/);
+});
+
+test('diagnostic reason allowlist preserves bounded recovery and viewport decisions', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  context.WebRTC.getDesktopInputGateSnapshot = () => ({
+    enabled: false,
+    hasActiveControl: true,
+    inputIsActive: true,
+    blockedReasons: [
+      'viewport-unsupported', 'automatic-recovery', 'user-recovery',
+      'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+      'mouse-reset-retry-failed', 'attempt-changed',
+      'mouse-reset-ack-unsupported-code', 'keyboard-reset-ack-invalid-input',
+      'mouse-reset-ack-unsupported-code:UNSAFE_REASON_CANARY',
+    ],
+  });
+  Input._recoveryCycle = {
+    ...Input._recoveryCycle,
+    state: 'failed',
+    reason: 'mouse-reset-send-failed',
+    generation: 2,
+  };
+  Input.updateInputRecoveryUI();
+  const state = Input.getDiagnosticState();
+  assert.deepEqual(JSON.parse(JSON.stringify(state.gate.blockedReasons)), [
+    'viewport-unsupported', 'automatic-recovery', 'user-recovery',
+    'mouse-reset-send-failed', 'keyboard-reset-send-failed',
+    'mouse-reset-retry-failed', 'attempt-changed',
+    'mouse-reset-ack-unsupported-code', 'keyboard-reset-ack-invalid-input',
+  ]);
+  assert.equal(state.recovery.reason, 'mouse-reset-send-failed');
+  assert.equal(elements.get('inputRecoveryNotice').hidden, false);
+  assert.ok(elements.get('inputRecoveryNoticeText').textContent.length > 0);
+  assert.doesNotMatch(JSON.stringify(state), /UNSAFE_REASON_CANARY/);
+});
+
+test('reset ACK rejection reasons remain bounded and actionable in recovery UI', () => {
+  const { Input, context, elements } = loadInput();
+  activate(Input, context);
+  const generic = '输入恢复未确认，请点击“重试恢复”，或释放后重新获取控制。';
+  for (const type of ['mouse', 'keyboard']) {
+    for (const status of ['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed']) {
+      Input._recoveryCycle = {
+        ...Input._recoveryCycle,
+        state: 'failed',
+        reason: `${type}-reset-ack-${status}`,
+        generation: 3,
+      };
+      Input.updateInputRecoveryUI();
+      const text = elements.get('inputRecoveryNoticeText').textContent;
+      assert.ok(text.length > 0, `${type}/${status} should be visible`);
+      assert.notEqual(text, generic, `${type}/${status} should not collapse to generic text`);
+    }
+  }
 });

@@ -1,0 +1,270 @@
+{
+  "capturedAt": "2026-09-07T07:34:34.260Z",
+  "scope": "read-only-sanitized-local-runtime-logs",
+  "sources": [
+    {
+      "file": "back-debug.log.3",
+      "sha256": "364acb7cb6b4ea4ec2257302c8bd33dc67f289967e85dbf12c3f2abce9ce31db"
+    },
+    {
+      "file": "back-debug.log.2",
+      "sha256": "aa970a1f53bfd8c01cef35ad81a45244c937ee1702cd5aadeaa00a3072c36a84"
+    },
+    {
+      "file": "back-debug.log.1",
+      "sha256": "28f6cf0075bae19e3f769cc17108faf13987b1a0c2d5ad38f01dac1acfbc57ef"
+    },
+    {
+      "file": "back-debug.log",
+      "sha256": "f1d6993599281253cd88e93b1b02448f092ef7983f2df204724b38ea7f51db59"
+    }
+  ],
+  "mediaAndDiagnosticEvents": [
+    {
+      "file": "back-debug.log.2",
+      "line": 42288,
+      "localTime": "2026-09-07 12:41:32",
+      "event": "host_media_suspended",
+      "attempt": "wrd-1788755475164-xpt410",
+      "generation": 1,
+      "reason": null,
+      "reasons": [
+        "page-hidden"
+      ],
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.2",
+      "line": 42598,
+      "localTime": "2026-09-07 12:43:14",
+      "event": "host_media_resumed",
+      "attempt": "wrd-1788755475164-xpt410",
+      "generation": 2,
+      "reason": null,
+      "reasons": null,
+      "senderEnabled": true,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.2",
+      "line": 42613,
+      "localTime": "2026-09-07 12:43:16",
+      "event": "host_media_resume_failed",
+      "attempt": "wrd-1788756195295-xsjhpr",
+      "generation": 2,
+      "reason": "closed",
+      "reasons": null,
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": false,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.2",
+      "line": 42648,
+      "localTime": "2026-09-07 12:43:16",
+      "event": "host_media_resumed",
+      "attempt": "wrd-1788756195295-xsjhpr",
+      "generation": 2,
+      "reason": null,
+      "reasons": null,
+      "senderEnabled": true,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.2",
+      "line": 43308,
+      "localTime": "2026-09-07 12:44:42",
+      "event": "host_viewer_diagnostic_summary",
+      "attempt": "wrd-1788756268355-rdghdm",
+      "generation": null,
+      "reason": "-",
+      "reasons": null,
+      "senderEnabled": null,
+      "steps": null
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 6280,
+      "localTime": "2026-09-07 13:03:12",
+      "event": "host_media_suspended",
+      "attempt": "wrd-1788756268355-rdghdm",
+      "generation": 1,
+      "reason": null,
+      "reasons": [
+        "page-hidden"
+      ],
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 16465,
+      "localTime": "2026-09-07 13:59:42",
+      "event": "host_media_resumed",
+      "attempt": "wrd-1788756268355-rdghdm",
+      "generation": 2,
+      "reason": null,
+      "reasons": null,
+      "senderEnabled": true,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 16479,
+      "localTime": "2026-09-07 13:59:42",
+      "event": "host_media_resume_failed",
+      "attempt": "wrd-1788760782387-peh8l2",
+      "generation": 2,
+      "reason": "closed",
+      "reasons": null,
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": false,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 16514,
+      "localTime": "2026-09-07 13:59:43",
+      "event": "host_media_resumed",
+      "attempt": "wrd-1788760782387-peh8l2",
+      "generation": 2,
+      "reason": null,
+      "reasons": null,
+      "senderEnabled": true,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 20707,
+      "localTime": "2026-09-07 14:09:44",
+      "event": "host_media_suspended",
+      "attempt": "wrd-1788760782387-peh8l2",
+      "generation": 3,
+      "reason": null,
+      "reasons": [
+        "page-hidden"
+      ],
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 39711,
+      "localTime": "2026-09-07 14:56:08",
+      "event": "host_viewer_diagnostic_summary",
+      "attempt": "wrd-1788763463197-a9tw5n",
+      "generation": null,
+      "reason": "ice-disconnected",
+      "reasons": null,
+      "senderEnabled": null,
+      "steps": null
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 40753,
+      "localTime": "2026-09-07 14:59:20",
+      "event": "host_media_suspended",
+      "attempt": "wrd-1788764182577-c8gjf6",
+      "generation": 1,
+      "reason": null,
+      "reasons": [
+        "page-hidden"
+      ],
+      "senderEnabled": false,
+      "steps": {
+        "input": true,
+        "sender": true,
+        "capture": true,
+        "relay": true
+      }
+    },
+    {
+      "file": "back-debug.log.1",
+      "line": 43035,
+      "localTime": "2026-09-07 15:17:48",
+      "event": "host_viewer_diagnostic_summary",
+      "attempt": "wrd-1788763463197-a9tw5n",
+      "generation": null,
+      "reason": "dc-stuck",
+      "reasons": null,
+      "senderEnabled": null,
+      "steps": null
+    }
+  ],
+  "unboundDataChannelWarningsByHour": {
+    "2026-09-07 15": 39
+  },
+  "inputWindows": [
+    {
+      "name": "after-135942-resume",
+      "from": "2026-09-07 13:59:42",
+      "to": "2026-09-07 14:01:42",
+      "counts": {
+        "host_input_received:keyboard:reset": 2,
+        "host_input_executed:keyboard:reset": 2
+      }
+    },
+    {
+      "name": "after-151748-reconnect",
+      "from": "2026-09-07 15:17:48",
+      "to": "2026-09-07 15:32:26",
+      "counts": {
+        "host_input_received:keyboard:key": 350,
+        "host_input_executed:keyboard:key": 350,
+        "host_input_received:mouse:wheel": 3164,
+        "host_input_executed:mouse:wheel": 3164,
+        "host_input_received:mouse:down": 23,
+        "host_input_executed:mouse:down": 23,
+        "host_input_received:mouse:up": 24,
+        "host_input_executed:mouse:up": 24,
+        "host_input_received:keyboard:reset": 16,
+        "host_input_executed:keyboard:reset": 16
+      }
+    }
+  ],
+  "note": "No ACK status, surface state or user intent can be inferred from these input counters."
+}

@@ -1,0 +1,78 @@
+{
+  "evidence": "offline-real-modules-simulated-dom-and-transport",
+  "results": [
+    {
+      "case": "all-click-acks-before-blur-control",
+      "editingAllowed": true,
+      "newKeyDownSent": true
+    },
+    {
+      "case": "idle-blur-and-resume-control",
+      "newMouseDownSent": true
+    },
+    {
+      "case": "completed-click-blur-before-acks-resume",
+      "mediaPhase": "active",
+      "commonGate": true,
+      "isActive": true,
+      "surfaceState": "uncertain",
+      "editingAllowed": false,
+      "pendingMouseReset": false,
+      "keyboardState": "READY",
+      "mobileAdapterPresent": true,
+      "hasPendingDraft": false,
+      "draftDeliveryUncertain": true,
+      "mobileDockHidden": true,
+      "mobileButtonHidden": true,
+      "newMouseOrKeyboardMessages": 0
+    },
+    {
+      "case": "drag-blur-all-reset-acks-resume",
+      "mediaPhase": "active",
+      "commonGate": true,
+      "isActive": true,
+      "surfaceState": "uncertain",
+      "editingAllowed": false,
+      "pendingMouseReset": false,
+      "keyboardState": "READY",
+      "mobileAdapterPresent": true,
+      "hasPendingDraft": false,
+      "draftDeliveryUncertain": true,
+      "mobileDockHidden": true,
+      "mobileButtonHidden": true,
+      "newMouseOrKeyboardMessages": 0
+    },
+    {
+      "case": "mouse-ack-timeout-and-late-acks",
+      "mediaPhase": "active",
+      "commonGate": true,
+      "isActive": true,
+      "surfaceState": "uncertain",
+      "editingAllowed": false,
+      "pendingMouseReset": false,
+      "keyboardState": "READY",
+      "mobileAdapterPresent": true,
+      "hasPendingDraft": false,
+      "draftDeliveryUncertain": true,
+      "mobileDockHidden": true,
+      "mobileButtonHidden": true,
+      "newMouseOrKeyboardMessages": 0
+    },
+    {
+      "case": "visibility-cycle-with-touch-capability",
+      "mediaPhase": "active",
+      "commonGate": true,
+      "isActive": true,
+      "surfaceState": "uncertain",
+      "editingAllowed": false,
+      "pendingMouseReset": false,
+      "keyboardState": "READY",
+      "mobileAdapterPresent": true,
+      "hasPendingDraft": false,
+      "draftDeliveryUncertain": true,
+      "mobileDockHidden": true,
+      "mobileButtonHidden": false,
+      "explicitDiscardHandlerRecovers": true
+    }
+  ]
+}
