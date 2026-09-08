@@ -1390,6 +1390,13 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
     )
 
     candidate = build_peak_headroom_candidate()
+    input_contract = candidate.to_dict().get("inputContract", {})
+    sentinel_input_digest = hashlib.sha256(
+        json.dumps(
+            {"content": "fixed-static-sentinel-v1", "contract": input_contract},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     ambient = _PeakAmbientSampler()
     execution_source_revision = _execution_source_revision()
     source_digests = {
@@ -1474,7 +1481,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
                 window = ambient.end_block(block_id)
             sentinels.append({
                 "phase": phase, "resolution": [width, height], "scenarioId": scenario_id,
-                "inputDigest": hashlib.sha256(b"fixed-static-sentinel-v1").hexdigest(),
+                "inputDigest": sentinel_input_digest,
                 "configurationDigest": candidate.options_digest,
                 "monotonicWindow": window,
                 "rawEncodeMs": {"p50": measurement["encodeMsMedian"], "p95": measurement["encodeMsP95"]},

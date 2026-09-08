@@ -21,6 +21,12 @@ REQUIRED_SCENARIOS = (
 _AVERAGE = MappingProxyType({"1152x720": 3_200_000, "1728x1080": 5_000_000})
 _MAXRATE = MappingProxyType({"1152x720": 4_800_000, "1728x1080": 7_200_000})
 _BUFSIZE = MappingProxyType({"1152x720": 1_000, "1728x1080": 1_300})
+PRODUCTION_BGRA_INPUT_CONTRACT = MappingProxyType({
+    "id": "production-screen-bgra-v1",
+    "pixelFormat": "bgra",
+    "referenceFormat": "rgb24",
+    "colorConversionCost": "inside-direct-encoder-unless-a-candidate-records-it-separately",
+})
 
 
 def _x264_params(*, maxrate_bps: int, bufsize_kbits: int) -> str:
@@ -48,6 +54,7 @@ class PeakHeadroomConfig:
     # Kept only for the shared probe's policy adapter: explicit buffer wins.
     vbv_ms: int
     periodic_idr_frames: int
+    input_contract: Mapping[str, str]
     options_digest: str
 
     def submitted_options(self, resolution: tuple[int, int]) -> dict[str, str]:
@@ -75,6 +82,7 @@ class PeakHeadroomConfig:
             "vbvInit": self.vbv_init,
             "forcedIdr": 1,
             "periodicIdrFrames": self.periodic_idr_frames,
+            "inputContract": dict(self.input_contract),
             "optionsDigest": self.options_digest,
             "encoderParameterDigest": self.options_digest,
         }
@@ -86,6 +94,7 @@ def build_peak_headroom_candidate() -> PeakHeadroomConfig:
         "profile": "Baseline", "fps": 20, "averageBitrateBps": dict(_AVERAGE),
         "vbvMaxrateBps": dict(_MAXRATE), "vbvBufsizeKbits": dict(_BUFSIZE),
         "vbvInit": 1, "periodicIdrFrames": 0,
+        "inputContract": dict(PRODUCTION_BGRA_INPUT_CONTRACT),
         "submittedOptionsByResolution": {
             key: {"preset": "superfast", "tune": "zerolatency", "forced-idr": "1", "x264-params": _x264_params(maxrate_bps=_MAXRATE[key], bufsize_kbits=_BUFSIZE[key])}
             for key in sorted(_AVERAGE)
@@ -95,6 +104,7 @@ def build_peak_headroom_candidate() -> PeakHeadroomConfig:
         id="on-demand-peak-headroom-v1", preset="superfast", codec="libx264", profile="Baseline", fps=20,
         bitrate_by_resolution=_AVERAGE, vbv_maxrate_by_resolution=_MAXRATE,
         vbv_bufsize_kbits_by_resolution=_BUFSIZE, vbv_init=1.0, force_idr_option=True, vbv_ms=1, periodic_idr_frames=0,
+        input_contract=PRODUCTION_BGRA_INPUT_CONTRACT,
         options_digest=sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
     )
 
@@ -192,6 +202,9 @@ def _validate(evidence: Mapping[str, Any], *, prescreen: bool) -> list[str]:
     config = build_peak_headroom_candidate()
     if not isinstance(evidence, Mapping) or evidence.get("config") != config.to_dict():
         return ["immutable config drift"]
+    input_data = evidence.get("input")
+    if not isinstance(input_data, Mapping) or input_data.get("contract") != dict(config.input_contract):
+        return ["input contract drift"]
     runs = evidence.get("runs")
     if not isinstance(runs, list) or {tuple(run.get("resolution", ())) for run in runs if isinstance(run, Mapping)} != set(RELAY_RESOLUTIONS):
         return ["incomplete dual-resolution runs"]

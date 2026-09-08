@@ -48,6 +48,22 @@ LEGACY_GOP_FRAMES = 20
 RESOLUTIONS = ((1152, 720), (1728, 1080))
 TEXT = "const desktopFrame = captureLatest(); // TURN video 0123456789 abcdefghijklmnopqrstuvwxyz"
 MENLO_FONT = Path("/System/Library/Fonts/Menlo.ttc")
+LEGACY_RGB_INPUT_CONTRACT = {
+    "id": "synthetic-rgb24-v1",
+    "pixelFormat": "rgb24",
+    "referenceFormat": "rgb24",
+    "colorConversionCost": "inside-direct-encoder-unless-a-candidate-records-it-separately",
+}
+PRODUCTION_BGRA_INPUT_CONTRACT = {
+    "id": "production-screen-bgra-v1",
+    "pixelFormat": "bgra",
+    "referenceFormat": "rgb24",
+    "colorConversionCost": "inside-direct-encoder-unless-a-candidate-records-it-separately",
+}
+INPUT_CONTRACTS = {
+    LEGACY_RGB_INPUT_CONTRACT["id"]: LEGACY_RGB_INPUT_CONTRACT,
+    PRODUCTION_BGRA_INPUT_CONTRACT["id"]: PRODUCTION_BGRA_INPUT_CONTRACT,
+}
 
 
 def load_probe_font() -> tuple[ImageFont.ImageFont, dict[str, Any]]:
@@ -73,6 +89,55 @@ def make_static_text_frame(width: int, height: int, font: ImageFont.ImageFont) -
     for row, y in enumerate(range(10, height - 20, 22)):
         draw.text((12, y), f"{row:03}  {TEXT}", font=font, fill=(25, 40, 60))
     return np.array(image)
+
+
+def input_contract_for(config) -> dict[str, str]:
+    """Return a versioned input contract, retaining RGB for non-peak history."""
+    declared = getattr(config, "input_contract", None)
+    if declared is None:
+        return dict(LEGACY_RGB_INPUT_CONTRACT)
+    contract = dict(declared)
+    contract_id = contract.get("id")
+    if contract_id not in INPUT_CONTRACTS or contract != INPUT_CONTRACTS[contract_id]:
+        raise ValueError("unsupported probe input contract")
+    return contract
+
+
+def prepare_probe_input(
+    rendered_rgb: np.ndarray, input_contract: str | dict[str, str]
+) -> tuple[np.ndarray, np.ndarray, dict[str, str]]:
+    """Map canonical RGB artwork to the exact codec input pixel contract."""
+    contract = (
+        dict(INPUT_CONTRACTS[input_contract])
+        if isinstance(input_contract, str)
+        else dict(input_contract)
+    )
+    if contract not in INPUT_CONTRACTS.values():
+        raise ValueError("unsupported probe input contract")
+    rgb = np.ascontiguousarray(rendered_rgb, dtype=np.uint8)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("rendered RGB source must have exactly three channels")
+    if contract["pixelFormat"] == "rgb24":
+        return rgb, rgb, contract
+    alpha = np.full((*rgb.shape[:2], 1), 255, dtype=np.uint8)
+    bgra = np.ascontiguousarray(np.concatenate((rgb[:, :, 2::-1], alpha), axis=2))
+    return bgra, rgb, contract
+
+
+def uint8_rgb_quality_metrics(
+    output_rgb: np.ndarray,
+    reference_rgb: np.ndarray,
+    previous_rgb: np.ndarray | None,
+) -> tuple[np.ndarray, float, float]:
+    """Compute the established full-frame metrics without repeated float64 sources."""
+    output_i16 = output_rgb.astype(np.int16, copy=False)
+    reference_i16 = reference_rgb.astype(np.int16, copy=False)
+    mse = float(np.mean(np.square(output_i16 - reference_i16, dtype=np.int32), dtype=np.float64))
+    if previous_rgb is None:
+        return output_i16, mse, 0.0
+    previous_i16 = previous_rgb.astype(np.int16, copy=False)
+    mae = float(np.mean(np.abs(output_i16 - previous_i16), dtype=np.float64))
+    return output_i16, mse, mae
 
 
 def serialize_codec_creation_record(record: CodecCreationRecord) -> dict[str, Any]:
@@ -330,13 +395,12 @@ def evaluate_legacy_policy() -> dict[str, Any]:
 
 
 def _scenario_source(
-    width: int, height: int, font: ImageFont.ImageFont, scenario_id: str, phase_index: int
+    static_source_rgb: np.ndarray, scenario_id: str, phase_index: int
 ) -> np.ndarray:
     """Keep a deterministic frame identity while making the scroll phase non-static."""
-    source = make_static_text_frame(width, height, font)
     if scenario_id == "scrolling-text":
-        return np.roll(source, -(phase_index % 220), axis=0)
-    return source
+        return np.roll(static_source_rgb, -(phase_index % 220), axis=0)
+    return static_source_rgb
 
 
 def _scenario_run(
@@ -379,14 +443,31 @@ def _scenario_run(
         decoder = av.CodecContext.create("h264", "r")
     assert decoder is not None
 
+    input_contract = input_contract_for(config)
+    static_source_rgb = make_static_text_frame(width, height, font)
+    static_encoded_source, static_reference_rgb, _ = prepare_probe_input(
+        static_source_rgb, input_contract
+    )
     previous: np.ndarray | None = None
     frames: list[dict[str, Any]] = []
     request_tokens: list[str] = []
     for phase_index in range(frame_count):
         index = phase_start_index + phase_index
-        source = _scenario_source(width, height, font, scenario_id, phase_index)
-        source_hash = hashlib.sha256(source.tobytes()).hexdigest()
-        frame = av.VideoFrame.from_ndarray(source, format="rgb24")
+        rendered_rgb = _scenario_source(static_source_rgb, scenario_id, phase_index)
+        if rendered_rgb is static_source_rgb:
+            encoded_source = static_encoded_source
+            reference_rgb = static_reference_rgb
+        else:
+            encoded_source, reference_rgb, _ = prepare_probe_input(
+                rendered_rgb, input_contract
+            )
+        source_hash = hashlib.sha256(encoded_source.tobytes()).hexdigest()
+        # Frame construction is intentionally outside direct_encoder_ms: Host's
+        # encoderMs begins at _encode_frame, while BGRA-to-YUV conversion happens
+        # inside libx264 during that timed call.
+        frame = av.VideoFrame.from_ndarray(
+            encoded_source, format=input_contract["pixelFormat"]
+        )
         frame.pts = index * (90_000 // FRAME_RATE)
         frame.time_base = Fraction(1, 90_000)
         request_token = None
@@ -408,9 +489,10 @@ def _scenario_run(
         decode_ms = (time.perf_counter() - decode_started) * 1000
         if not decoded:
             raise RuntimeError(f"decoder produced no frame at {scenario_id}:{index}")
-        output = decoded[-1].to_ndarray(format="rgb24").astype(float)
-        mse = float(np.mean((output - source.astype(float)) ** 2))
-        change_mae = 0.0 if previous is None else float(np.mean(np.abs(output - previous)))
+        output = decoded[-1].to_ndarray(format="rgb24")
+        previous, mse, change_mae = uint8_rgb_quality_metrics(
+            output, reference_rgb, previous
+        )
         idr = bitstream_contains_idr(bitstream)
         if idr and index == phase_start_index:
             idr_kind = "initial"
@@ -449,8 +531,6 @@ def _scenario_run(
             "quality": {"psnr": round(10 * math.log10(255**2 / max(mse, 1e-9)), 3), "changeMAE": round(change_mae, 3)},
             "qp": None,
         })
-        previous = output
-
     idr_frames = [frame for frame in frames if frame["idr"]]
     budget = 25.0 if (width, height) == (1152, 720) else 45.0
     on_demand = [frame for frame in idr_frames if frame["idrKind"] == "on-demand"]
@@ -553,6 +633,8 @@ def evaluate_preset_scenario_matrix(config, measurement_hook=None) -> dict[str, 
             "timeBase": "1/90000",
             "font": font_metadata,
             "content": "fixed static and deterministic scrolling synthetic text",
+            "contract": input_contract_for(config),
+            "historicalRgbEvidence": "preserved-not-requalified",
         },
         "versions": {"pyav": av.__version__, "aiortc": aiortc.__version__},
         "runs": resolution_runs,
@@ -588,6 +670,8 @@ def evaluate_peak_headroom_prescreen(config) -> dict[str, Any]:
             "timeBase": "1/90000",
             "font": font_metadata,
             "content": "fixed static text, fresh codec frames 0..1225",
+            "contract": input_contract_for(config),
+            "historicalRgbEvidence": "preserved-not-requalified",
         },
         "versions": {"pyav": av.__version__, "aiortc": aiortc.__version__},
         "runs": runs,
