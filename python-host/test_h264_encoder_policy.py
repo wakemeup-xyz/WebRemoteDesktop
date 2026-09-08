@@ -1,4 +1,5 @@
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,8 @@ def test_relay_policy_keeps_codec_independent_from_periodic_idr_cadence():
     assert on_demand.codec_name == "libx264"
     assert on_demand.periodic_idr_frames == 0
     assert on_demand.force_idr_option is True
+    assert policy.slice_threads == 1
+    assert on_demand.slice_threads == 1
     assert (
         on_demand.target_fps,
         on_demand.min_bitrate_bps,
@@ -56,6 +59,13 @@ def test_relay_policy_keeps_codec_independent_from_periodic_idr_cadence():
         policy.preset,
         policy.profile,
     )
+
+
+def test_session_policy_rejects_unmeasurable_slice_thread_counts():
+    policy = resolve_h264_policy(_intent(), "relay-legacy-v1")
+
+    with pytest.raises(ValueError, match="slice_threads"):
+        replace(policy, slice_threads=3)
 
 
 def test_on_demand_relay_policy_leaves_direct_policy_unchanged():

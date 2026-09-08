@@ -61,6 +61,13 @@ class H264SessionPolicy:
     vbv_bufsize_kbits: int | None = None
     vbv_init: float = 0.4
     force_idr_option: bool = False
+    # This is frozen to one thread for production policies. Candidates may use
+    # two or four slices only after the same raw encode and quality gates.
+    slice_threads: int = 1
+
+    def __post_init__(self) -> None:
+        if self.slice_threads not in {1, 2, 4}:
+            raise ValueError("slice_threads must be one of 1, 2, or 4")
 
 
 @dataclass(frozen=True)

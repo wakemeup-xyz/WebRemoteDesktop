@@ -438,6 +438,7 @@ def _scenario_run(
             vbv_bufsize_kbits=getattr(config, "vbv_bufsize_kbits_by_resolution", {}).get(resolution_key),
             vbv_init=getattr(config, "vbv_init", 0.4),
             force_idr_option=getattr(config, "force_idr_option", False),
+            slice_threads=getattr(config, "slice_threads", 1),
         )
         encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario_id)
         decoder = av.CodecContext.create("h264", "r")

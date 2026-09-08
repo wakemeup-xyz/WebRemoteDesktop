@@ -54,6 +54,16 @@ class PeakHeadroomMatrixCliTest(unittest.TestCase):
         )
         experiment = types.ModuleType("turn_encoder_peak_headroom_experiments")
         experiment.build_peak_headroom_candidate = lambda: self.candidate
+        self.sliced2_candidate = types.SimpleNamespace(
+            id="on-demand-peak-headroom-sliced2-v1",
+            options_digest="sliced2-digest",
+            to_dict=lambda: {
+                "id": "on-demand-peak-headroom-sliced2-v1",
+                "encoderParameterDigest": "sliced2-digest",
+                "inputContract": {"id": "production-screen-bgra-v1"},
+            },
+        )
+        experiment.build_peak_headroom_sliced2_candidate = lambda: self.sliced2_candidate
         experiment.submitted_options = lambda _config, resolution: {"resolution": str(resolution)}
         experiment.validate_prescreen = lambda _evidence: []
         experiment.validate_full_matrix = lambda _evidence: []
@@ -121,6 +131,36 @@ class PeakHeadroomMatrixCliTest(unittest.TestCase):
         self.assertEqual(result["status"], "OFFLINE_PASS_ONLY")
         self.assertEqual(result["candidate"]["offline"]["status"], "PASS")
         self.assertNotIn("adjusted", json.dumps(result))
+
+    def test_sliced2_matrix_selects_only_the_versioned_sliced_candidate(self):
+        MODULE._PeakAmbientSampler = AmbientStub
+        seen = []
+
+        class Probe:
+            def evaluate_peak_headroom_prescreen(self, config):
+                seen.append(("prescreen", config.id))
+                return {"config": config.to_dict(), "input": {"contract": config.to_dict()["inputContract"]}, "runs": []}
+
+            def evaluate_peak_headroom_sentinel(self, *_args):
+                return {"encodeMsMedian": 1.0, "encodeMsP95": 2.0}
+
+            def evaluate_preset_scenario_matrix(self, config, measurement_hook):
+                seen.append(("full", config.id))
+                measurement_hook("before", 1152, 720, "static")
+                measurement_hook("after", 1152, 720, "static")
+                return {"config": config.to_dict(), "input": {"contract": config.to_dict()["inputContract"]}, "runs": []}
+
+        result = MODULE.evaluate_peak_headroom_matrix(Probe(), sliced2=True)
+
+        self.assertEqual(
+            seen,
+            [
+                ("prescreen", "on-demand-peak-headroom-sliced2-v1"),
+                ("full", "on-demand-peak-headroom-sliced2-v1"),
+            ],
+        )
+        self.assertEqual(result["kind"], "relay-peak-headroom-sliced2-v1")
+        self.assertEqual(result["candidate"]["id"], "on-demand-peak-headroom-sliced2-v1")
 
 
 class PeakAmbientSamplerTest(unittest.TestCase):

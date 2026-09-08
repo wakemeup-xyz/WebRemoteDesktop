@@ -1380,7 +1380,7 @@ def evaluate_veryfast_matrix(probe) -> dict:
     return result
 
 
-def evaluate_peak_headroom_matrix(probe) -> dict:
+def evaluate_peak_headroom_matrix(probe, *, sliced2: bool = False) -> dict:
     """Run exactly one frozen candidate, with a fail-closed safety prescreen."""
     from turn_encoder_peak_headroom_experiments import (
         build_peak_headroom_candidate,
@@ -1389,7 +1389,19 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         validate_prescreen,
     )
 
-    candidate = build_peak_headroom_candidate()
+    if sliced2:
+        from turn_encoder_peak_headroom_experiments import (
+            build_peak_headroom_sliced2_candidate,
+        )
+
+        candidate = build_peak_headroom_sliced2_candidate()
+    else:
+        candidate = build_peak_headroom_candidate()
+    matrix_kind = (
+        "relay-peak-headroom-sliced2-v1"
+        if sliced2
+        else "relay-peak-headroom-v1"
+    )
     input_contract = candidate.to_dict().get("inputContract", {})
     sentinel_input_digest = hashlib.sha256(
         json.dumps(
@@ -1439,7 +1451,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         candidate_row["offline"] = {"status": "NOT RUN", "evidence": {"partial": partial}}
         candidate_row["execution"]["fullMatrix"] = "ABORTED"
         return {
-            "kind": "relay-peak-headroom-v1", "status": status,
+            "kind": matrix_kind, "status": status,
             "scope": "matrix exception retained partial offline evidence but cannot qualify a candidate" if error else "ambient admissibility failed; partial offline evidence is retained but cannot qualify a candidate",
             "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
             "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
@@ -1462,7 +1474,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
             candidate_row["offline"] = {"status": "NOT RUN"}
             candidate_row["ineligibleReason"] = list(prescreen_errors)
             return {
-                "kind": "relay-peak-headroom-v1", "status": "NO_QUALIFIED_CANDIDATE",
+                "kind": matrix_kind, "status": "NO_QUALIFIED_CANDIDATE",
                 "scope": "one offline candidate; failed safety prescreen stopped the full matrix and runtime remains NOT RUN",
                 "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
                 "sourceDigests": source_digests, "executionSourceRevision": execution_source_revision,
@@ -1519,7 +1531,7 @@ def evaluate_peak_headroom_matrix(probe) -> dict:
         candidate_row["eligible"] = not full_errors
         candidate_row["ineligibleReason"] = list(full_errors)
         return {
-            "kind": "relay-peak-headroom-v1",
+            "kind": matrix_kind,
             "status": "OFFLINE_PASS_ONLY" if not full_errors else "NO_QUALIFIED_CANDIDATE",
             "scope": "one offline candidate; no runtime policy change, desktop capture, Host startup, Viewer, or network connection",
             "defaultPolicy": "relay-legacy-v1", "candidate": candidate_row, "runtime": runtime,
@@ -1551,7 +1563,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--policy", choices=("relay-legacy-v1",))
-    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement", "relay-peak-headroom-v1"))
+    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement", "relay-peak-headroom-v1", "relay-peak-headroom-sliced2-v1"))
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
 
@@ -1564,7 +1576,7 @@ def _write_atomic_json(path: Path, evidence: dict) -> None:
     temporary.replace(path)
 
 
-def _peak_atomic_abort_artifact(error: Exception) -> dict:
+def _peak_atomic_abort_artifact(error: Exception, *, sliced2: bool = False) -> dict:
     """Use the peak schema even when setup fails before a matrix object exists."""
     runtime = {"status": "NOT RUN", "gates": dict(RUNTIME_GATES)}
     source_paths = (Path(__file__).resolve(), PROBE_PATH, ROOT / "scripts/turn_encoder_experiments.py", ROOT / "scripts/turn_encoder_peak_headroom_experiments.py", ROOT / "python-host/h264_encoder_policy.py", ROOT / "python-host/h264_videotoolbox_encoder.py")
@@ -1589,9 +1601,10 @@ def _peak_atomic_abort_artifact(error: Exception) -> dict:
         "coverage": [], "missedTicks": 0, "lateTicks": [], "abortReasons": [{"category": "INCONCLUSIVE", "reason": "matrix exception", "error": type(error).__name__}], "samples": [], "sentinels": [],
         "note": "Project CPU is raw occupancy telemetry only. It does not admit, reject, normalize, or adjust formal raw P95 gates.",
     }
-    candidate = {"id": "on-demand-peak-headroom-v1", "parameters": None, "prescreen": {"status": "NOT RUN"}, "offline": {"status": "NOT RUN"}, "runtime": runtime, "eligible": False, "ineligibleReason": list(ambient["abortReasons"]), "execution": {"prescreen": "ABORTED", "fullMatrix": "ABORTED"}}
+    matrix_kind = "relay-peak-headroom-sliced2-v1" if sliced2 else "relay-peak-headroom-v1"
+    candidate = {"id": "on-demand-peak-headroom-sliced2-v1" if sliced2 else "on-demand-peak-headroom-v1", "parameters": None, "prescreen": {"status": "NOT RUN"}, "offline": {"status": "NOT RUN"}, "runtime": runtime, "eligible": False, "ineligibleReason": list(ambient["abortReasons"]), "execution": {"prescreen": "ABORTED", "fullMatrix": "ABORTED"}}
     return {
-        "kind": "relay-peak-headroom-v1", "status": "ABORTED_INCONCLUSIVE", "eligible": False,
+        "kind": matrix_kind, "status": "ABORTED_INCONCLUSIVE", "eligible": False,
         "scope": "matrix raised before completion; this atomic abort artifact is not qualification evidence",
         "defaultPolicy": "relay-legacy-v1", "candidate": candidate, "runtime": runtime,
         "sourceDigests": source_digests, "executionSourceRevision": revision,
@@ -1615,12 +1628,16 @@ def main() -> None:
             if args.matrix == "relay-preset-refinement"
             else evaluate_veryfast_matrix(probe)
             if args.matrix == "relay-veryfast-refinement"
-            else evaluate_peak_headroom_matrix(probe)
+            else evaluate_peak_headroom_matrix(
+                probe, sliced2=args.matrix == "relay-peak-headroom-sliced2-v1"
+            )
         )
     except _PeakEvaluationAbort as exc:
         evidence = exc.evidence
     except Exception as exc:
-        evidence = _peak_atomic_abort_artifact(exc) if args.matrix == "relay-peak-headroom-v1" else {
+        evidence = _peak_atomic_abort_artifact(
+            exc, sliced2=args.matrix == "relay-peak-headroom-sliced2-v1"
+        ) if args.matrix in {"relay-peak-headroom-v1", "relay-peak-headroom-sliced2-v1"} else {
             "kind": args.matrix or args.policy,
             "status": "ABORTED_INCONCLUSIVE",
             "eligible": False,

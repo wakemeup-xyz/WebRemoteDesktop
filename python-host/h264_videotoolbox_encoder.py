@@ -97,6 +97,7 @@ def libx264_zerolatency_options(
     vbv_bufsize_kbits: int | None = None,
     vbv_init: float = 0.4,
     force_idr_option: bool = False,
+    slice_threads: int = 1,
 ) -> dict:
     preset_s = str(preset)
     if preset_s not in LIBX264_ALLOWED_PRESETS:
@@ -114,6 +115,9 @@ def libx264_zerolatency_options(
     init = float(vbv_init)
     if not 0.0 < init <= 1.0:
         raise ValueError("vbv_init must be in (0, 1]")
+    threads = int(slice_threads)
+    if threads not in {1, 2, 4}:
+        raise ValueError("slice_threads must be one of 1, 2, or 4")
     init_s = f"{init:g}"
     forced_idr_param = "" if force_idr_option else "forced-idr=1:"
     gop_s = str(
@@ -124,7 +128,7 @@ def libx264_zerolatency_options(
         "tune": "zerolatency",
         "x264-params": (
             f"keyint={gop_s}:min-keyint={gop_s}:scenecut=0:bframes=0:"
-            f"threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+            f"threads={threads}:sliced-threads={int(threads > 1)}:slices={threads}:sync-lookahead=0:"
             f"rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
             f"{forced_idr_param}vbv-maxrate={maxrate_kbps}:vbv-bufsize={bufsize}:"
             f"vbv-init={init_s}:nal-hrd=none"
@@ -831,6 +835,7 @@ class H264VideoToolboxEncoder(Encoder):
                 vbv_bufsize_kbits=self._policy.vbv_bufsize_kbits,
                 vbv_init=self._policy.vbv_init,
                 force_idr_option=self._policy.force_idr_option,
+                slice_threads=self._policy.slice_threads,
             )
         reopen_reason = self._consume_pending_codec_reopen_reason()
 

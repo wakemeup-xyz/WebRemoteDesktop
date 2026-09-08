@@ -29,10 +29,12 @@ PRODUCTION_BGRA_INPUT_CONTRACT = MappingProxyType({
 })
 
 
-def _x264_params(*, maxrate_bps: int, bufsize_kbits: int) -> str:
+def _x264_params(*, maxrate_bps: int, bufsize_kbits: int, slice_threads: int) -> str:
+    if slice_threads not in {1, 2, 4}:
+        raise ValueError("slice_threads must be one of 1, 2, or 4")
     return (
         "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
-        "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+        f"threads={slice_threads}:sliced-threads={int(slice_threads > 1)}:slices={slice_threads}:sync-lookahead=0:"
         "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
         f"vbv-maxrate={maxrate_bps // 1000}:vbv-bufsize={bufsize_kbits}:"
         "vbv-init=1:nal-hrd=none"
@@ -54,6 +56,7 @@ class PeakHeadroomConfig:
     # Kept only for the shared probe's policy adapter: explicit buffer wins.
     vbv_ms: int
     periodic_idr_frames: int
+    slice_threads: int
     input_contract: Mapping[str, str]
     options_digest: str
 
@@ -66,6 +69,7 @@ class PeakHeadroomConfig:
             "x264-params": _x264_params(
                 maxrate_bps=int(self.vbv_maxrate_by_resolution[key]),
                 bufsize_kbits=int(self.vbv_bufsize_kbits_by_resolution[key]),
+                slice_threads=self.slice_threads,
             ),
         }
 
@@ -82,30 +86,47 @@ class PeakHeadroomConfig:
             "vbvInit": self.vbv_init,
             "forcedIdr": 1,
             "periodicIdrFrames": self.periodic_idr_frames,
+            "sliceThreads": self.slice_threads,
             "inputContract": dict(self.input_contract),
             "optionsDigest": self.options_digest,
             "encoderParameterDigest": self.options_digest,
         }
 
 
-def build_peak_headroom_candidate() -> PeakHeadroomConfig:
+def _build_peak_headroom_candidate(*, candidate_id: str, slice_threads: int) -> PeakHeadroomConfig:
+    if slice_threads not in {1, 2, 4}:
+        raise ValueError("slice_threads must be one of 1, 2, or 4")
     canonical = {
-        "id": "on-demand-peak-headroom-v1", "codec": "libx264", "preset": "superfast",
+        "id": candidate_id, "codec": "libx264", "preset": "superfast",
         "profile": "Baseline", "fps": 20, "averageBitrateBps": dict(_AVERAGE),
         "vbvMaxrateBps": dict(_MAXRATE), "vbvBufsizeKbits": dict(_BUFSIZE),
-        "vbvInit": 1, "periodicIdrFrames": 0,
+        "vbvInit": 1, "periodicIdrFrames": 0, "sliceThreads": slice_threads,
         "inputContract": dict(PRODUCTION_BGRA_INPUT_CONTRACT),
         "submittedOptionsByResolution": {
-            key: {"preset": "superfast", "tune": "zerolatency", "forced-idr": "1", "x264-params": _x264_params(maxrate_bps=_MAXRATE[key], bufsize_kbits=_BUFSIZE[key])}
+            key: {"preset": "superfast", "tune": "zerolatency", "forced-idr": "1", "x264-params": _x264_params(maxrate_bps=_MAXRATE[key], bufsize_kbits=_BUFSIZE[key], slice_threads=slice_threads)}
             for key in sorted(_AVERAGE)
         },
     }
     return PeakHeadroomConfig(
-        id="on-demand-peak-headroom-v1", preset="superfast", codec="libx264", profile="Baseline", fps=20,
+        id=candidate_id, preset="superfast", codec="libx264", profile="Baseline", fps=20,
         bitrate_by_resolution=_AVERAGE, vbv_maxrate_by_resolution=_MAXRATE,
         vbv_bufsize_kbits_by_resolution=_BUFSIZE, vbv_init=1.0, force_idr_option=True, vbv_ms=1, periodic_idr_frames=0,
+        slice_threads=slice_threads,
         input_contract=PRODUCTION_BGRA_INPUT_CONTRACT,
         options_digest=sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+    )
+
+
+def build_peak_headroom_candidate() -> PeakHeadroomConfig:
+    return _build_peak_headroom_candidate(
+        candidate_id="on-demand-peak-headroom-v1", slice_threads=1
+    )
+
+
+def build_peak_headroom_sliced2_candidate() -> PeakHeadroomConfig:
+    """Return the non-production sliced-2 candidate for full offline gates."""
+    return _build_peak_headroom_candidate(
+        candidate_id="on-demand-peak-headroom-sliced2-v1", slice_threads=2
     )
 
 
@@ -199,8 +220,11 @@ def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, i
 
 
 def _validate(evidence: Mapping[str, Any], *, prescreen: bool) -> list[str]:
-    config = build_peak_headroom_candidate()
-    if not isinstance(evidence, Mapping) or evidence.get("config") != config.to_dict():
+    configs = (build_peak_headroom_candidate(), build_peak_headroom_sliced2_candidate())
+    if not isinstance(evidence, Mapping):
+        return ["immutable config drift"]
+    config = next((candidate for candidate in configs if evidence.get("config") == candidate.to_dict()), None)
+    if config is None:
         return ["immutable config drift"]
     input_data = evidence.get("input")
     if not isinstance(input_data, Mapping) or input_data.get("contract") != dict(config.input_contract):

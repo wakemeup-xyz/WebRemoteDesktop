@@ -502,6 +502,57 @@ def test_libx264_options_allow_veryfast_without_changing_frozen_on_demand_vbv_se
     )
 
 
+def test_libx264_sliced_threads_keep_the_zerolatency_contract():
+    options = libx264_zerolatency_options(5_000_000, 0, preset="superfast", slice_threads=2)
+    params = options["x264-params"].split(":")
+
+    assert options["preset"] == "superfast"
+    assert options["tune"] == "zerolatency"
+    assert {"threads=2", "sliced-threads=1", "slices=2"}.issubset(params)
+    assert {"bframes=0", "sync-lookahead=0", "rc-lookahead=0", "keyint=1201"}.issubset(params)
+
+    with pytest.raises(ValueError, match="slice_threads"):
+        libx264_zerolatency_options(5_000_000, 0, slice_threads=3)
+
+
+def test_real_codec_creation_records_sliced_thread_options():
+    from dataclasses import replace
+    from fractions import Fraction
+
+    import av
+    import numpy as np
+    from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+
+    policy = replace(
+        resolve_h264_policy(
+            MediaSessionIntent("sliced-test", 1, "relay", 1152, 720, 20, 0),
+            "relay-legacy-v1",
+        ),
+        slice_threads=2,
+    )
+    frame = av.VideoFrame.from_ndarray(
+        np.zeros((48, 64, 4), dtype=np.uint8), format="bgra"
+    )
+    encoder = H264VideoToolboxEncoder(policy=policy)
+    decoder = av.CodecContext.create("h264", "r")
+    decoded_frames = []
+    emitted_nals = []
+    for index in range(2):
+        frame.pts = index * 4_500
+        frame.time_base = Fraction(1, 90_000)
+        nals = list(encoder._encode_frame(frame, force_keyframe=False))
+        emitted_nals.extend(nals)
+        bitstream = b"".join(b"\x00\x00\x00\x01" + nal for nal in nals)
+        decoded_frames.extend(decoder.decode(av.Packet(bitstream)))
+
+    params = dict(encoder.codec_creation_records[0].submitted_codec_options)["x264-params"]
+    assert {"threads=2", "sliced-threads=1", "slices=2"}.issubset(params.split(":"))
+    assert any((nal[0] & 0x1F) == 5 for nal in emitted_nals)
+    assert decoded_frames
+    assert decoded_frames[0].width == 64
+    assert decoded_frames[0].height == 48
+
+
 def test_real_codec_creation_submits_policy_preset_and_preserves_frozen_legacy_options():
     """A policy preset must reach the real libx264 codec configuration."""
     from dataclasses import replace

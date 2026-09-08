@@ -30,6 +30,7 @@ class PeakHeadroomExperimentContractTest(unittest.TestCase):
         self.assertEqual(candidate.vbv_maxrate_by_resolution, {"1152x720": 4_800_000, "1728x1080": 7_200_000})
         self.assertEqual(candidate.vbv_bufsize_kbits_by_resolution, {"1152x720": 1_000, "1728x1080": 1_300})
         self.assertEqual(candidate.vbv_init, 1.0)
+        self.assertEqual(candidate.slice_threads, 1)
 
         options = MODULE.submitted_options(candidate, (1728, 1080))
         self.assertEqual(options["forced-idr"], "1")
@@ -37,6 +38,23 @@ class PeakHeadroomExperimentContractTest(unittest.TestCase):
             options["x264-params"],
             "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
             "threads=1:sliced-threads=0:slices=1:sync-lookahead=0:"
+            "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
+            "vbv-maxrate=7200:vbv-bufsize=1300:"
+            "vbv-init=1:nal-hrd=none",
+        )
+
+    def test_sliced2_candidate_is_versioned_and_changes_only_the_thread_contract(self):
+        candidate = MODULE.build_peak_headroom_candidate()
+        sliced2 = MODULE.build_peak_headroom_sliced2_candidate()
+
+        self.assertEqual(sliced2.id, "on-demand-peak-headroom-sliced2-v1")
+        self.assertEqual(sliced2.slice_threads, 2)
+        self.assertEqual(sliced2.to_dict()["sliceThreads"], 2)
+        self.assertNotEqual(sliced2.options_digest, candidate.options_digest)
+        self.assertEqual(
+            MODULE.submitted_options(sliced2, (1728, 1080))["x264-params"],
+            "keyint=1201:min-keyint=1201:scenecut=0:bframes=0:"
+            "threads=2:sliced-threads=1:slices=2:sync-lookahead=0:"
             "rc-lookahead=0:repeat-headers=1:open-gop=0:intra-refresh=0:"
             "vbv-maxrate=7200:vbv-bufsize=1300:"
             "vbv-init=1:nal-hrd=none",
