@@ -4,12 +4,13 @@
 范围：`codex/input-recovery-observability` 的离线交互验收、当前输入恢复/诊断文档和安全证据摘要。
 基线 SHA：`39fa1eadc89b00546e2bf66f1ed1d1e6f892ca42`。
 Task 4 已提交测试实现版本（delivery commit）：`2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`；它以 Task 4 开始时的实现 HEAD `cbefccbacb3c036c2a4cdc5cf1c3cfbde2bfabae` 为父提交。本轮仅作永久文档 provenance/link 修正，起点为 `FIX_BASE=2ddbc15a4a8a11f5a3d58a1cd0b473e882be7d6e`，不在自身报告中预写尚未产生的 docs-only commit hash。
+本报告随后记录的 ONE final fix wave（R1-R8）实现提交为：`cc9ef32915c2988215cf655f68efdcca329d1bf1`（`fix(input): close pause resume observability findings`）。该提交只包含 brief 允许的 Viewer/Signal/离线 acceptance 代码与 focused tests；本报告和 evidence 更新在该实现提交之后完成。
 
 本报告与 [输入恢复与诊断设计 Spec](../specs/2026-09-07-input-recovery-observability-design.md)、[执行计划的 Task 4 锚点](../plans/2026-09-07-input-recovery-observability-plan.md#task-4-acceptance) 相互对应。安全摘要见 [offline-chromium-summary.md](evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md) 和 [browser-ingestion-summary.md](evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md)。早期反例仍保留在 [resume-input-diagnosis](2026-09-07-overall-completion-and-resume-input-diagnosis.md)、[2026-09-05 mobile review](2026-09-05-mobile-touch-keyboard-logic-review.md) 和 [2026-09-06 remediation report](2026-09-06-mobile-input-interaction-remediation-acceptance.md)，没有被本报告改写为新代码的 PASS。
 
 ## 结论与边界
 
-- 严格离线 Chromium 运行产出 `scope=offline-synthetic`，20/20 场景 `PASS`，每个场景的每个 check 均为 `true`，进程 exit 0。
+- 原 Task 4 delivery 的严格离线 Chromium 运行产出 `scope=offline-synthetic`，20/20 场景 `PASS`；本轮 final-fix 提交后的最新 durable 运行扩展为 22/22 场景 `PASS`，每个场景的每个 check 均为 `true`，进程 exit 0。
 - 离线页面只加载仓库源码；所有浏览器外发请求由 deny-by-default route abort，最终观察到 `network.requests=0`、`network.sensitivePayloads=0`。后一个字段只是请求 URL/body 的有界敏感标记计数，不是通用秘密检测；artifact 的隐私结论来自 allowlist 场景摘要测试和唯一敏感金丝雀不出现在序列化结果中的断言。
 - 所有新增场景都通过真实 locator、真实 DOM 事件和实际 `__offlineWire` 副作用驱动；没有直接写生产 recovery 状态，也没有用模拟成功状态替代 ACK、timeout 或 incident。
 - 这不是 physical device、系统 IME、Quartz native effect、live/public Viewer、正式 tunnel、watcher fault、merge/push/restart/deployment 验收。它们保持 `NOT RUN`，不因 exit 0 或 VM/单测通过而升级为完成。
@@ -47,7 +48,7 @@ node --test --test-name-pattern='writes safe scenario summaries' scripts/mobile-
 再启动浏览器套件来重复检查同一 artifact。最终 artifact 的所有 scenario
 `checks` 非空且全为 `true`，由下方独立 JSON 解析核对。
 
-最终离线脚本：
+Task 4 delivery 的历史离线脚本：
 
 ```text
 python3 scripts/mobile_input_interaction_acceptance.py --browser chromium \
@@ -57,13 +58,59 @@ python3 scripts/mobile_input_interaction_acceptance.py --browser chromium \
 独立解析 JSON 的结果：
 
 ```text
-scope=offline-synthetic browser=chromium scenarios=20
+scope=offline-synthetic browser=chromium scenarios=20 (historical delivery run)
 network.requests=0 network.sensitivePayloads=0
 all_status_pass=True all_checks_true=True
 exit=0
 ```
 
 缺运行时和启动后异常仍由脚本区分：缺 Chromium/WebKit runtime 写 `NOT RUN` 并 exit 2；浏览器已经启动但场景异常写 `FAIL` 并 exit 1。严格测试还断言每个 scenario 都是 `PASS`，而不是只看 exit code。
+
+## ONE final fix wave：R1-R8
+
+本轮先以 base `0c05d6181df4acbd1ce82192a8af33bf9eedf748` 的真实离线 Chromium/module seam 建立 RED，再在 `cc9ef32915c2988215cf655f68efdcca329d1bf1` 工作树验证 GREEN。所有探针只输出布尔值/计数；scratch probes 不属于交付命令，也未被提交。
+
+| Finding | GREEN evidence in this wave |
+|---|---|
+| R1 failed enqueue | `root-final-enqueue-probe.py`：disconnected/throwing Socket 各 `failedEnqueues=1`，`acceptedWrites=0`、`pendingAcks=0`，emit `0/1`，无敏感 artifact；focused Input tests also cover missing/throwing DataChannel and generic mouse/command exceptions with original returns/rethrows. |
+| R2 reason/UI parity | `root-final-reason-probe.py`：真实 mouse reset `execution-failed` 的 producer/trace/Signal reason 与 UI execution explanation 均 `true`；真实 viewport veto 在 producer/receiver 均保留；新增 finite `unsupported-code`/reset-ACK mappings and suffix/object/list canaries are rejected. |
+| R3 lifecycle history | focused `input-recovery.test.js` drives real `markMediaAttemptReady` after click/ACK, repeats unchanged readiness 99 times without lifecycle flood or DOM-history eviction, then observes changed reason/attempt/state. |
+| R4 remote ownership | `root-final-remote-action-probe.py`：showDock/copy/enter/modal 各 1 write/1 timeout/1 incident，rightClick 2/2/1；每项 `originatingDom=true`、`contextCleared=true`、artifact safe，network 0。 |
+| R5 empty context | `root-empty-context-ui-probe.py`：empty draft remains fail-closed, notice visible with `textLength=17`，retry/draft controls hidden；message is passive and does not request an unavailable button. |
+| R6 receiver drops | Signal focused tests prove 300 in → 256 out adds 44 receiver drops to client 7 (`51`), valid byte clipping increments actual drops while keeping `<256` events and `<=64 KiB`, and the counter saturates at `0x7fffffff`. |
+| R7 durable ingestion | `python3 scripts/mobile_input_interaction_acceptance.py --browser chromium --out /tmp/wrd-input-final-fix-cli-v2.json` includes a real producer→`ingestDiagnosticPayload` scenario with persistence disabled and deny-by-default network. Latest scenario: 5/5 accepted sends correlated, 18/18 trace events retained, recovery waiting/gate blocked and surface state preserved, `network.requests=0`, `sensitivePayloads=0`. |
+| R8 exact draft | The same durable CLI compares the exact in-browser draft before reset, after reset, and after four canceled-drain frames; latest result has `deletionBatches=16`, equality/no-replay/fail-closed checks all `true`, with no raw text exported. |
+
+Targeted GREEN outputs included:
+
+```text
+node --test --test-name-pattern='diagnostic reason allowlist|reset ACK rejection reasons' web-client/js/input.test.js
+2 pass, 0 fail
+node --test --test-name-pattern='owned reset rejection ACK' web-client/js/input-recovery.test.js
+1 pass, 0 fail
+node --test --test-name-pattern='finite reset ACK reasons' web-client/js/input-trace.test.js
+1 pass, 0 fail
+NODE_PATH=/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/node_modules \
+  node --test --test-name-pattern='diagnostic reason sanitizer' signal-server/test/diagnostic.test.js
+1 pass, 0 fail
+```
+
+Required final matrices on the implementation commit:
+
+```text
+node --test --test-reporter=spec web-client/js/*.test.js web-client/css/*.test.js
+791 pass, 0 fail, 0 cancelled, exit 0
+NODE_PATH=/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/node_modules \
+  npm --prefix signal-server test
+349 pass, 0 fail, 0 cancelled, exit 0 (pretest build:web exit 0)
+node --test scripts/mobile-input-interaction-acceptance.test.js
+4 pass, 0 fail, 0 cancelled, exit 0
+```
+
+The Python host suite was intentionally not rerun because this wave did not
+change Python; the previously recorded 99/99 result remains historical
+evidence. No service, tunnel, native action, live Socket, or public path was
+used.
 
 ## 离线场景逐项结果
 
@@ -94,17 +141,21 @@ exit=0
 
 ## Browser → Signal 安全边界证据
 
-保留并重跑的 primary seed：
+当前可交付的 durable acceptance command：
 
 ```text
-python3 .superpowers/sdd/2026-09-07-input-recovery-observability-plan/root-browser-ingestion-probe.py
-{"scope":"offline-synthetic","accepted":true,"matchedSends":5,
- "recoveryState":"waiting","finalGateAllowed":false,"traceEvents":18,
- "persistenceEnabled":false}
+python3 scripts/mobile_input_interaction_acceptance.py --browser chromium \
+  --out /tmp/wrd-input-final-fix-cli-v2.json
+browser-signal-ingestion: PASS
+producerAcceptedSends=5 ingestedAcceptedSends=5
+producerTraceEvents=18 ingestedTraceEvents=18
+recoveryWaiting=true effectiveGateBlocked=true
+network.requests=0 network.sensitivePayloads=0
+persistenceEnabled=false
 exit=0
 ```
 
-这条 probe 由真实离线 DOM click → blur/focus 生产 Input/collector 事件，再调用实际 Signal `ingestDiagnosticPayload`，持久化明确关闭；它不是 live Socket、正式 origin 或 public path 证明。可选 `inputIdHash`/reason 遗漏或 `null` 仍表示 unavailable，不被强制成固定对象 shape。DataChannel 输入绕过 Signal，Signal 没有 relay 记录不能单独证明 DataChannel 丢包；Socket fallback 和诊断上传才经过 Signal。
+该 durable scenario 由真实离线 DOM click → blur/focus 生产 Input/collector 事件，再调用实际 Signal `ingestDiagnosticPayload`，并比较 producer/receiver 的安全 gate、recovery、surface 和 accepted-send 关联；持久化明确关闭。此前的 `root-browser-ingestion-probe.py` 仅作为历史 RED/GREEN seed 保留在 ignored scratch，不再是交付复现入口。该 evidence 不是 live Socket、正式 origin 或 public path 证明。可选 `inputIdHash`/reason 遗漏或 `null` 仍表示 unavailable，不被强制成固定对象 shape。DataChannel 输入绕过 Signal，Signal 没有 relay 记录不能单独证明 DataChannel 丢包；Socket fallback 和诊断上传才经过 Signal。
 
 ## Required final matrices and built graph
 
@@ -114,7 +165,7 @@ Viewer full suite:
 set -o pipefail; node --test --test-reporter=dot web-client/js/*.test.js web-client/css/*.test.js
 ```
 
-Exit `0`; the dot reporter produced **784 dots**, with no failure/cancel markers (`784/784` pass).
+此前 delivery run 的 dot reporter 产生 **784 dots**；本轮实现提交上的 fresh full Viewer run 为 **791/791 pass**, with no failure/cancel markers.
 
 Signal build and full suite:
 
@@ -127,7 +178,7 @@ NODE_PATH=/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/node_module
   npm --prefix signal-server test
 ```
 
-Build exit `0`; Signal output reported `346` tests, `346` pass, `0` fail, `0` cancelled, exit `0`. The pretest build used the existing installed dependency tree; no dependency was installed or edited.
+Build exit `0`;此前 delivery run reported `346` tests, while the final-fix implementation commit reports `349` tests, `349` pass, `0` fail, `0` cancelled, exit `0`. The pretest build used the existing installed dependency tree; no dependency was installed or edited.
 
 Python input/media/diagnostics regression:
 
@@ -202,9 +253,14 @@ This confirms graph inclusion and local build output only; it does not claim a l
 - `docs/需求文档/WebRemoteDesktop-需求文档.md`: synchronized current lifecycle, input/recovery, diagnostic and privacy wording; explicitly separated business ACK correlation fields from log/diagnostic redaction.
 - `docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/`: safe summaries only; no raw event data.
 
+The ONE final fix wave implementation files are the eleven paths in commit
+`cc9ef32915c2988215cf655f68efdcca329d1bf1`: Viewer Input/trace/touch seams and
+focused tests, Signal diagnostic redaction and tests, and the existing offline
+acceptance script plus its CLI test. No Host, Terminal, media business logic,
+lease authorization, protocol schema or service code was changed.
+
 ## Remaining concerns / NOT RUN
 
-- `root-empty-context-ui-probe.py` remains a known final-review Minor: with empty draft and DC closed, a visible recovery notice can still have blank text and no buttons. This report does not alter production or disguise that finding.
-- Repeated stable lifecycle records and Signal reason/drop accounting Minors remain deferred final-review findings; nullable hash/reason values remain unavailable when omitted/null. Existing WebRTC VM `fetch is not defined` STUN fallback warnings remain baseline noise.
+- The final-review R1-R8 findings are addressed by `cc9ef32915c2988215cf655f68efdcca329d1bf1`; the durable and focused evidence above supersedes the earlier deferred-Minor descriptions. Nullable hash/reason values remain unavailable when omitted/null, by design. Existing WebRTC VM `fetch is not defined` STUN fallback warnings remain baseline noise.
 - Real Android Chrome, iPhone Safari, iPad Safari, system IME/Emoji, native Quartz effect, public Viewer/tunnel, live Signal/Host recovery, watcher fault, and Terminal real PTY acceptance remain `NOT RUN`.
 - No service/tunnel/native process was started or restarted; no credentials, live URL, main checkout, dependency tree, push or merge was touched. The parent must still perform independent whole-branch review and acceptance before any integration authorization.
