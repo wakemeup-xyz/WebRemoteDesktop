@@ -860,6 +860,50 @@ test('recovery API unlocks a click and key only after both owned reset ACKs', ()
   ]);
 });
 
+test('in-flight surface ACKs after blur recover into fresh desktop mouse and key input', () => {
+  const h = loadRecoveryFixture();
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  const surfaceWrites = h.writes().filter((payload) => payload.type === 'mouse'
+    && ['down', 'up'].includes(payload.action));
+  assert.equal(surfaceWrites.length, 2);
+  assert.equal(h.Input.getDiagnosticState().surface.state, 'pending');
+  assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().hasPending, false);
+
+  // Blur parks the in-flight surface before either gesture ACK arrives. Focus
+  // starts one owned dual-reset cycle for the current lease/epoch/attempt.
+  h.blur();
+  h.window.dispatch('focus');
+  assert.equal(h.Input.getDiagnosticState().surface.state, 'uncertain');
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
+  const resets = h.writes().filter((payload) => payload.action === 'reset');
+  assert.equal(resets.length, 2);
+  const mouseReset = resets.find((payload) => payload.type === 'mouse');
+  const keyboardReset = resets.find((payload) => payload.type === 'keyboard');
+
+  // A late ACK from the pre-blur gesture cannot satisfy the new recovery
+  // owner, even though it uses the same lease and attempt.
+  for (const gesture of surfaceWrites) {
+    assert.equal(h.ack(gesture).status, 'stale');
+  }
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+
+  h.ack(mouseReset);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.ack(keyboardReset);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+
+  const freshStart = h.writes().length;
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.writes().slice(freshStart).forEach((payload) => h.ack(payload));
+  h.keydown();
+  h.keyup();
+  assert.deepEqual(h.writes().slice(freshStart).map((payload) => (
+    `${payload.type}:${payload.action}:${payload.payload?.phase || ''}`
+  )), ['mouse:down:', 'mouse:up:', 'keyboard:key:down', 'keyboard:key:up']);
+});
+
 test('both recovery ACK orders restore mobile transport before fresh textarea input', () => {
   for (const order of [['mouse', 'keyboard'], ['keyboard', 'mouse']]) {
     const h = loadRecoveryFixture({ touchPoints: 5 });
@@ -1540,4 +1584,30 @@ test('failed recovery UI retry invokes a user cycle without stealing the local e
   assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
   assert.equal(h.inputs().length > before, true);
   assert.equal(h.document.activeElement, null);
+});
+
+test('desktop recovery keeps an explicit release and request-control action reachable', () => {
+  const h = loadRecoveryFixture();
+  const controlButton = h.elements.get('inputRecoveryControlBtn');
+  h.Input._markMobileSurfaceUncertain('desktop-recovery-ui');
+
+  assert.equal(controlButton.hidden, false);
+  assert.equal(controlButton.textContent, '重新获取控制');
+  assert.equal(h.sent.filter(({ event }) => event === 'control-release').length, 0);
+  assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 0);
+
+  // The first click only releases the current lease. It must not immediately
+  // reacquire or replay the old pointer/keyboard context.
+  controlButton.dispatch('click');
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  assert.equal(h.Input.activeControlLease, null);
+  assert.equal(h.sent.filter(({ event }) => event === 'control-release').length, 1);
+  assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 0);
+  assert.equal(controlButton.hidden, false);
+  assert.equal(controlButton.textContent, '请求控制');
+
+  // A second, explicit click is the only action that asks the server for a
+  // fresh lease.
+  controlButton.dispatch('click');
+  assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 1);
 });

@@ -2005,3 +2005,19 @@ body.mobile-layout-managed.mobile-layout-ultra .mobile-input-actions {
     transition: none;
   }
 }
+
+@media (max-width: 560px) {
+  .input-recovery-notice {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .input-recovery-actions {
+    flex-wrap: wrap;
+  }
+
+  .input-recovery-actions .control-btn {
+    flex: 1 1 auto;
+  }
+}

@@ -110,6 +110,11 @@ const Input = {
   _mobileResetAckInFlight: false,
   _recoveryTimer: null,
   _recoveryAutoIdentity: null,
+  // A recovery overlay may release the current lease before asking the user
+  // to explicitly request a new one. Keep this small UI state local to Input
+  // so fullscreen/hidden chrome still has a reachable request action without
+  // silently taking control on the user's behalf.
+  _recoveryControlReacquireRequired: false,
   _recoveryCycle: {
     state: 'idle',
     generation: 0,
@@ -355,6 +360,7 @@ const Input = {
       }
     }
     this.activeControlLease = nextLease;
+    if (nextLease) this._recoveryControlReacquireRequired = false;
     if (leaseChanged) {
       this._recordInputTrace('lifecycle', {
         inputType: 'control',
@@ -1733,13 +1739,37 @@ const Input = {
     if (this._inputRecoveryUiBound) return;
     const notice = document.getElementById('inputRecoveryNotice');
     const retry = document.getElementById('inputRecoveryRetryBtn');
+    const control = document.getElementById('inputRecoveryControlBtn');
     const draft = document.getElementById('inputRecoveryDraftBtn');
-    if (!notice && !retry && !draft) return;
+    if (!notice && !retry && !control && !draft) return;
     retry?.addEventListener('pointerdown', (event) => event.preventDefault?.());
     retry?.addEventListener('click', (event) => {
       event.preventDefault?.();
       event.stopPropagation?.();
       this.requestInputRecovery({ source: 'user' });
+      this.updateInputRecoveryUI();
+    });
+    control?.addEventListener('pointerdown', (event) => event.preventDefault?.());
+    control?.addEventListener('click', (event) => {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      const webRtc = typeof WebRTC !== 'undefined' ? WebRTC : null;
+      if (!webRtc) return;
+      const hasActiveControl = Boolean(webRtc.hasActiveControl?.() || this.activeControlLease);
+      if (hasActiveControl) {
+        // Releasing is deliberately separate from acquiring. This prevents a
+        // recovery click from silently taking over a control lease again.
+        this._recoveryControlReacquireRequired = true;
+        webRtc.releaseControl?.('input-recovery-user');
+      } else if (this._recoveryControlReacquireRequired) {
+        // The second, explicit click is the only path that requests a lease.
+        webRtc.requestControl?.();
+      } else {
+        // A read-only viewer may still have a stale surface barrier; expose
+        // the same explicit request action without manufacturing a lease.
+        this._recoveryControlReacquireRequired = true;
+        webRtc.requestControl?.();
+      }
       this.updateInputRecoveryUI();
     });
     draft?.addEventListener('pointerdown', (event) => event.preventDefault?.());
@@ -1762,6 +1792,7 @@ const Input = {
     const notice = document.getElementById('inputRecoveryNotice');
     const noticeText = document.getElementById('inputRecoveryNoticeText');
     const retry = document.getElementById('inputRecoveryRetryBtn');
+    const control = document.getElementById('inputRecoveryControlBtn');
     const draft = document.getElementById('inputRecoveryDraftBtn');
     const gate = this.getEffectiveInputGate();
     const mobile = this.mobileTextInputAdapter?.getSnapshot?.() || {};
@@ -1776,7 +1807,12 @@ const Input = {
       || ['blocked', 'uncertain'].includes(mobile.status);
     const draftBlocked = Boolean(mobile.hasPending && contextBlocked);
     const surfaceBlocked = gate.blockedReasons.includes('surface-uncertain');
-    const show = waiting || failed || contextBlocked || surfaceBlocked;
+    const webRtc = typeof WebRTC !== 'undefined' ? WebRTC : null;
+    const hasActiveControl = Boolean(webRtc?.hasActiveControl?.() || this.activeControlLease);
+    const controlState = String(webRtc?.controlState?.state || '').toUpperCase();
+    const controlTransitioning = controlState === 'GRANTING' || controlState === 'REVOKING';
+    const reacquireRequired = this._recoveryControlReacquireRequired === true;
+    const show = waiting || failed || contextBlocked || surfaceBlocked || reacquireRequired;
     const failedReasonMessages = {
       'mouse-reset-send-failed': '鼠标状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
       'keyboard-reset-send-failed': '键盘状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
@@ -1791,7 +1827,11 @@ const Input = {
       'keyboard-reset-ack-unsupported-code': '键盘复位包含不支持的按键，请释放后重新获取控制。',
       'keyboard-reset-ack-execution-failed': '键盘复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
     };
-    const message = waiting
+    const message = reacquireRequired && !hasActiveControl
+      ? (controlTransitioning
+        ? '正在请求控制，请稍候…'
+        : '控制已释放，请点击“请求控制”恢复输入。旧输入不会自动重发。')
+      : waiting
       ? '正在安全复位输入，请稍候…'
       : failed
         ? failedReasonMessages[recovery.reason]
@@ -1812,6 +1852,16 @@ const Input = {
     if (retry) {
       retry.hidden = !(waiting || failed || surfaceBlocked);
       retry.disabled = waiting || (!failed && !surfaceBlocked);
+    }
+    if (control) {
+      const canOfferControl = show && !draftBlocked && !mobile.composing;
+      control.hidden = !canOfferControl;
+      // Releasing the current lease is a safe escape hatch even while the
+      // dual reset is waiting. Only an in-flight control transition disables
+      // the button; retry itself remains non-repeatable during `waiting`.
+      control.disabled = controlTransitioning;
+      control.textContent = reacquireRequired && !hasActiveControl ? '请求控制' : '重新获取控制';
+      control.setAttribute?.('aria-label', control.textContent);
     }
     if (draft) {
       draft.hidden = !draftBlocked;

@@ -3625,6 +3625,10 @@ const WebRTC = {
       }
     }
     this.syncChromeCapabilities();
+    // Recovery controls live in a body-level overlay so they remain usable
+    // while the normal chrome is hidden. Keep that overlay in sync with
+    // asynchronous grant/reject transitions as well as the status bar.
+    if (typeof Input !== 'undefined') Input.updateInputRecoveryUI?.();
   },
 
   STABLE_RECOVERY_RESET_MS: 5000,
