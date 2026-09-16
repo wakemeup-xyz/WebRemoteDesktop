@@ -77,7 +77,7 @@ wrd_safe_republish_live_connector_url() {
 }
 
 cd "$PROJECT_DIR"
-curl -fsS "http://127.0.0.1:8080/health" >/dev/null
+curl --noproxy '*' -fsS "http://127.0.0.1:8080/health" >/dev/null
 
 PID=""
 URL=""

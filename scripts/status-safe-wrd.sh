@@ -76,13 +76,13 @@ else
   echo 'safe url file: missing'
 fi
 
-if curl -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
+if curl --noproxy '*' -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
   echo 'local health: ok'
 else
   echo 'local health: down'
 fi
 
-if curl -fsS "http://127.0.0.1:8080/api/status" >/tmp/wrd-safe-status.json 2>/dev/null; then
+if curl --noproxy '*' -fsS "http://127.0.0.1:8080/api/status" >/tmp/wrd-safe-status.json 2>/dev/null; then
   echo "hostOnline summary: $(grep -Eo '"hostOnline":[^,}]+' /tmp/wrd-safe-status.json | head -n 1 || echo 'hostOnline:unknown')"
   echo "api status: $(cat /tmp/wrd-safe-status.json)"
   rm -f /tmp/wrd-safe-status.json

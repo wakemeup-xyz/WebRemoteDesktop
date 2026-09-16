@@ -85,7 +85,9 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 当前仓库唯一正确本地入口是 `http://127.0.0.1:8080`
 - **不要把** `http://127.0.0.1:5173` **当作当前仓库正式入口**；`5173` 只在显式配置 `dev.link.stockhub.wiki` 时作为可选开发映射存在
 - 重启 Host 时必须使用 `./scripts/restart-host.sh`，不要手工 `kill` 后重启
-- `./scripts/restart-host.sh` 的重启动作是重新注册并 kickstart `com.webremotedesktop.host`，这是预期行为
+- `./scripts/restart-host.sh` 的重启动作是复用已加载的 `com.webremotedesktop.host` 并 `kickstart -k`；只有已安装 plist 与仓库副本不一致、或该 agent 尚未加载时才重新注册（bootstrap）
+- 当 shell 上下文无法注册 LaunchAgent 时（agent/沙箱/ssh 下 `launchctl bootstrap` 会返回 `Bootstrap failed: 5: Input/output error`），`lib-host-launchctl.sh` 会先用 throwaway probe 验证能力；验证失败就直接拒绝卸载现有 agent 并给出提示，不会把原本健康的 Host 留在未加载状态。此时请在 GUI Terminal 会话中执行启动脚本
+- 仓库内脚本对本机 `127.0.0.1:8080` 的探活一律使用 `curl --noproxy '*'`，避免宿主机设置了 `HTTP_PROXY` 时把「本机健康」误判成 down
 
 ### 1. 一键安全启动
 

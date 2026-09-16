@@ -43,7 +43,7 @@ start_signal() {
 
 wait_signal() {
   for _ in $(seq 1 20); do
-    if curl -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
+    if curl --noproxy '*' -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -79,13 +79,16 @@ start_host() {
 }
 
 wait_host() {
+  local status_body=""
   for _ in $(seq 1 30); do
-    if curl -fsS "http://127.0.0.1:8080/api/status" | rg '"hostOnline":true' >/dev/null 2>&1; then
-      return 0
-    fi
+    status_body=$(curl --noproxy '*' -fsS "http://127.0.0.1:8080/api/status" 2>/dev/null || true)
+    case "$status_body" in
+      *'"hostOnline":true'*) return 0 ;;
+    esac
     sleep 1
   done
   echo "host failed to connect back to signal-server"
+  echo "hint: check /tmp/wrd-host-launch.log for the LaunchAgent preflight result"
   tail -n 80 "$PROJECT_DIR/back-debug.log" || true
   exit 1
 }
@@ -125,7 +128,7 @@ if [ -s "$SAFE_URL_FILE" ]; then
 else
   echo 'safe url: unavailable (diagnostic only; no automatic tunnel replacement)'
 fi
-echo "status: $(curl -fsS http://127.0.0.1:8080/api/status)"
+echo "status: $(curl --noproxy '*' -fsS http://127.0.0.1:8080/api/status 2>/dev/null || echo unavailable)"
 echo "signal pid file: $SIGNAL_PID_FILE"
 echo "host pid file: $HOST_PID_FILE"
 echo "tunnel url file: $SAFE_URL_FILE"

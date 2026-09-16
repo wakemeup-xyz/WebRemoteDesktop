@@ -29,11 +29,15 @@ done
 
 HOST_ONLINE=0
 if wrd_safe_pid_is_running "$NEW_PID"; then
+    HOST_STATUS_BODY=""
     for _ in $(seq 1 30); do
-        if curl -fsS "$HOST_STATUS_URL" 2>/dev/null | rg '"hostOnline":true' >/dev/null 2>&1; then
-            HOST_ONLINE=1
-            break
-        fi
+        HOST_STATUS_BODY=$(curl -fsS "$HOST_STATUS_URL" 2>/dev/null || true)
+        case "$HOST_STATUS_BODY" in
+            *'"hostOnline":true'*)
+                HOST_ONLINE=1
+                break
+                ;;
+        esac
         sleep 1
     done
 fi
