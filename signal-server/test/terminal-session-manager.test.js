@@ -3,7 +3,21 @@ const test = require('node:test');
 
 const path = require('node:path');
 
-const { buildTerminalEnv, createTerminalSessionManager } = require('../lib/terminal/session-manager');
+const {
+  buildTerminalEnv,
+  createReplayBuffer,
+  createTerminalSessionManager,
+} = require('../lib/terminal/session-manager');
+
+test('replay buffer enforces a hard UTF-8 byte limit for oversized chunks', () => {
+  const buffer = createReplayBuffer(10);
+  buffer.push('😀'.repeat(20));
+  const snapshot = buffer.snapshot();
+  const bytes = snapshot.reduce((total, entry) => total + Buffer.byteLength(entry.data, 'utf8'), 0);
+  assert.ok(bytes <= 10);
+  assert.equal(snapshot.length, 1);
+  assert.equal(snapshot[0].data.includes('\ufffd'), false);
+});
 
 function createFakePty() {
   const handlers = {
@@ -433,7 +447,7 @@ test('shared session manager retains the newest replay chunk even when it alone 
   pty.emitData('1234567890');
 
   const attached = manager.attachSession(created.sessionId, { clientId: 'browser-b' });
-  assert.deepEqual(attached.replay.map((entry) => entry.data), ['1234567890']);
+  assert.deepEqual(attached.replay.map((entry) => entry.data), ['67890']);
 });
 
 test('shared session manager keeps PTY alive after detach and requires reattach before explicit close', async () => {

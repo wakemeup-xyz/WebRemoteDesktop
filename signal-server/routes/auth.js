@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { loadConfig } = require('../lib/config');
 const { signAccessToken, verifyAccessToken, readBearerToken } = require('../lib/auth');
@@ -7,6 +8,12 @@ const { createTerminalAudit } = require('../lib/terminal/audit');
 const { TerminalMetrics } = require('../lib/terminal/metrics');
 
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
+
+function constantTimeSecretEqual(actual, expected) {
+  const actualDigest = crypto.createHash('sha256').update(String(actual || '')).digest();
+  const expectedDigest = crypto.createHash('sha256').update(String(expected || '')).digest();
+  return crypto.timingSafeEqual(actualDigest, expectedDigest);
+}
 
 function createLimiter(max, options = {}) {
   const {
@@ -132,7 +139,7 @@ function createAuthRouter(options = {}) {
       });
       return res.status(400).json({ error: 'Password required' });
     }
-    if (password !== terminalAdminPassword) {
+    if (!constantTimeSecretEqual(password, terminalAdminPassword)) {
       terminalMetrics.recordCounter('auth_rejected');
       terminalAudit.warn('terminal_admin_auth_failed', {
         ...meta,

@@ -33,18 +33,29 @@ function buildTerminalEnv(baseEnv = process.env) {
 }
 
 function createReplayBuffer(limitBytes = 262144) {
+  const maxBytes = Math.max(1, Number(limitBytes) || 262144);
   let totalBytes = 0;
   const entries = [];
   let seq = 0;
 
+  function fitToLimit(value) {
+    const bytes = Buffer.from(String(value || ''), 'utf8');
+    if (bytes.length <= maxBytes) return bytes.toString('utf8');
+    let result = bytes.subarray(bytes.length - maxBytes).toString('utf8');
+    // Drop a replacement character caused by starting in the middle of a
+    // multi-byte code point. The newest complete UTF-8 text remains replayable.
+    while (result.startsWith('\ufffd')) result = result.slice(1);
+    return result;
+  }
+
   return {
     push(data) {
-      const normalized = String(data || '');
+      const normalized = fitToLimit(data);
       const size = Buffer.byteLength(normalized, 'utf8');
       const entry = { seq: ++seq, data: normalized };
       entries.push(entry);
       totalBytes += size;
-      while (totalBytes > limitBytes && entries.length > 1) {
+      while (totalBytes > maxBytes && entries.length > 1) {
         const removed = entries.shift();
         totalBytes -= Buffer.byteLength(String(removed.data || ''), 'utf8');
       }
@@ -57,6 +68,15 @@ function createReplayBuffer(limitBytes = 262144) {
       return seq;
     },
   };
+}
+
+function normalizeSessionTitle(value, fallback) {
+  const cleaned = String(value || fallback || '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  const bytes = Buffer.from(cleaned, 'utf8');
+  if (bytes.length <= 128) return cleaned || fallback;
+  let result = bytes.subarray(0, 128).toString('utf8');
+  if (result.endsWith('\ufffd')) result = result.slice(0, -1);
+  return result || fallback;
 }
 
 function createTerminalSessionManager(options = {}) {
@@ -712,6 +732,37 @@ function createTerminalSessionManager(options = {}) {
       errorCode: error.code,
       processStatus: session.processStatus,
     });
+    const cleanupTimer = scheduleTimeout(() => Promise.resolve(cleanupPty(session)).then((cleanupResult) => {
+      if (cleanupResult.killed) return;
+      // Remove the failed session from the public pool while retaining the
+      // PTY in quarantine for bounded background cleanup retries.
+      session.status = 'detached';
+      session.detachedReason = 'startup-timeout-cleanup-pending';
+      for (const observerId of session.observers.keys()) {
+        session.outputDispatcher.detach(observerId);
+      }
+      session.observers.clear();
+      session.activePresenterClientId = null;
+      removeSessionFromPool(session.sessionId);
+      quarantineSession(session);
+    }).catch((cleanupError) => {
+      audit.error('terminal_pty_cleanup_failed', {
+        sessionId: session.sessionId,
+        clientId: session.creatorClientId,
+        code: cleanupError?.code || 'pty_cleanup_failed',
+      });
+      try {
+        removeSessionFromPool(session.sessionId);
+        quarantineSession(session);
+      } catch (quarantineError) {
+        audit.error('terminal_pty_cleanup_quarantine_failed', {
+          sessionId: session.sessionId,
+          clientId: session.creatorClientId,
+          code: quarantineError?.code || 'pty_cleanup_quarantine_failed',
+        });
+      }
+    }), Math.max(0, ptyKillWaitMs));
+    cleanupTimer?.unref?.();
   }
 
   function wirePty(session, pty) {
@@ -790,7 +841,7 @@ function createTerminalSessionManager(options = {}) {
     }
     const sessionId = 'term_' + crypto.randomBytes(8).toString('hex');
     const { cols, rows } = normalizeTerminalSize(input);
-    const title = String(input.title || 'Terminal ' + (sessions.size + 1));
+    const title = normalizeSessionTitle(input.title, 'Terminal ' + (sessions.size + 1));
     let pty;
     try {
       pty = ptyFactory(config.shell, getTerminalShellArgs(config.shell), {

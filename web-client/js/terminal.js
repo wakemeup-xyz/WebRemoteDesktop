@@ -309,6 +309,7 @@ const TerminalPanel = {
       newButton: document.getElementById('terminalNewBtn'),
       detachButton: document.getElementById('terminalDetachBtn'),
       closeButton: document.getElementById('terminalCloseBtn'),
+      takeoverButton: document.getElementById('terminalTakeoverBtn'),
       sessionTabs: document.getElementById('terminalSessionTabs'),
       status: document.getElementById('terminalStatus'),
       sessionInfo: document.getElementById('terminalSessionInfo'),
@@ -338,6 +339,10 @@ const TerminalPanel = {
     this.elements.closeButton?.addEventListener('click', () => {
       const active = this.state.activeSessionId();
       if (active) this.closeSession(active);
+    });
+    this.elements.takeoverButton?.addEventListener('click', () => {
+      const active = this.state.activeSessionId();
+      if (active) this.announceActivePresenter(active);
     });
     this.elements.composer?.addEventListener('input', () => this.handleComposerInput());
     this.elements.composer?.addEventListener('keydown', (event) => this.handleComposerKeydown(event));
@@ -646,6 +651,16 @@ const TerminalPanel = {
     const handleSessionAttached = (session) => this.dispatchAliasedEvent(
       'attached', session, () => this.attachSessionState(session),
     );
+    const handlePresenterChanged = (session) => {
+      if (!session?.sessionId) return;
+      this.ensureSession(session);
+      this.state.updateSession(session.sessionId, {
+        activePresenterClientId: session.activePresenterClientId ?? null,
+        isPresenter: Boolean(session.isPresenter ?? session.callerIsPresenter),
+        callerIsPresenter: Boolean(session.callerIsPresenter ?? session.isPresenter),
+      });
+      this.render();
+    };
     const handleSessionClosed = (session) => this.dispatchAliasedEvent(
       'closed', session, () => this.handleSessionClosed(session),
     );
@@ -659,6 +674,7 @@ const TerminalPanel = {
     this.socket.on('terminal:created', (session) => this.dispatchAliasedEvent('created', session, () => this.handleSessionCreated(session), { legacy: true }));
     this.socket.on('terminal:session_attached', (session) => handleSessionAttached(session));
     this.socket.on('terminal:attached', (session) => this.dispatchAliasedEvent('attached', session, () => this.attachSessionState(session), { legacy: true }));
+    this.socket.on('terminal:presenter_changed', (session) => handlePresenterChanged(session));
     this.socket.on('terminal:output', (payload, acknowledge) => {
       try {
         // While TURN DC output is preferred and healthy, suppress Socket.IO output
@@ -1078,10 +1094,22 @@ const TerminalPanel = {
     };
 
     const answerWaiter = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('webrtc answer timeout')), 10000);
-      const onAnswer = (payload) => {
+      let settled = false;
+      const cleanup = () => {
         clearTimeout(timer);
-        this.socket.off('terminal:webrtc_answer', onAnswer);
+        this.socket?.off?.('terminal:webrtc_answer', onAnswer);
+      };
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const timer = setTimeout(() => fail(new Error('webrtc answer timeout')), 10000);
+      const onAnswer = (payload) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         resolve(payload);
       };
       this.socket.on('terminal:webrtc_answer', onAnswer);
@@ -1557,7 +1585,6 @@ const TerminalPanel = {
     if (this.state.activeSessionId() === session.sessionId) {
       // F-01: after attach success for active session, rebind TURN DC if preferred.
       this.rebindTurnDataChannel(session.sessionId);
-      this.announceActivePresenter(session.sessionId);
     }
     this.render();
     this.releaseTerminalControlFocus();
@@ -1777,9 +1804,8 @@ const TerminalPanel = {
         this.rebindTurnDataChannel(activeSessionId);
       }
     }
-    if (options.announce !== false) {
-      this.announceActivePresenter(activeSessionId);
-    }
+    // Activating an already attached tab is observational. Presenter takeover
+    // is an explicit user action through the takeover control.
     this.render();
     this.fitActiveTerminal();
     this.scheduleFitActiveTerminal();
@@ -2199,6 +2225,11 @@ const TerminalPanel = {
       this.elements.detachButton.disabled = !connected || !activeAttached;
       this.elements.detachButton.textContent = activePresenter ? '离开控制' : '离开观察';
     }
+    if (this.elements.takeoverButton) {
+      const canTakeover = Boolean(authorized && connected && activeAttached && !activePresenter);
+      this.elements.takeoverButton.classList.toggle('hidden', !canTakeover);
+      this.elements.takeoverButton.disabled = !canTakeover;
+    }
     if (this.elements.closeButton) {
       const canClose = Boolean(authorized && activeAttached && activeSession);
       this.elements.closeButton.classList.toggle('hidden', !canClose);
@@ -2236,7 +2267,15 @@ const TerminalPanel = {
         close.textContent = '×';
         close.title = '离开此会话（detach，不销毁 PTY）';
         close.setAttribute?.('aria-label', '离开会话');
+        close.setAttribute?.('role', 'button');
+        close.setAttribute?.('tabindex', '0');
         close.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.detachSession(session.sessionId);
+        });
+        close.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
           event.stopPropagation();
           this.detachSession(session.sessionId);
         });

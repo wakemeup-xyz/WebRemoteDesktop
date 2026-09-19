@@ -227,13 +227,13 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [ ] **断网重连**：浏览器断网后自动重连到原来的 Terminal，会话和上下文保留
 - [x] **浏览器断开不销毁**：关闭 Terminal tab、关闭 Viewer 页面、桌面 `断开连接` 或网络模式切换，都只会断开当前浏览器，不会销毁共享 PTY
 - [x] **手动关闭才销毁**：共享 Terminal 会话默认一直保留，直到显式关闭或服务重启
-- [x] **presenter/observer 控制语义**：presenter 断开时显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。已附着会话再次激活不得无条件抢 presenter
+- [x] **presenter/observer 控制语义**：presenter 断开时显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。已将 presenter 更新从 `session_attached` 拆出，已附着会话再次激活不会自动抢 presenter；真实双浏览器交接仍需独立验收
 - [x] **断线状态文案**：Terminal Socket 断线显示「正在重新附着」；在真实单/双浏览器验收完成前，不把自动恢复承诺为已交付能力
 - [x] **运行时状态归属**：`TerminalPanel` 是 session、presenter、attach 和生命周期状态的运行时 owner；`createTerminalSessionFsm` 仅为确定性测试 seam，不是生产状态真相
-- [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，可配置 idle timeout 回收超时且无人附着的会话
+- [x] **资源保护**：会话数超过软阈值时提示；默认硬上限为 8 个 PTY session，达到上限拒绝新建但不影响现有会话。每会话 replay 默认 256 KiB，超大 output chunk 现在按 UTF-8 边界保持硬上限，可配置 idle timeout 回收超时且无人附着的会话
 - [x] **环境确定性**：PTY 使用 allowlist 环境和 no-rc interactive shell；PATH 固定包含 Homebrew Python 3.11 libexec，`WRD_TERMINAL_PATH_EXTRA` 仅允许已存在绝对目录，服务密钥和代理/API 凭据不继承
-- [x] **PTY 生命周期**：`starting/running/exited/failed/closed` 状态独立于 observer presence；非 running 状态禁止输入和成功 ack，spawn/timeout/exit/close 使用稳定错误码和一次性通知
-- [x] **流控与背压**：每 observer 输入 token bucket、64 KiB 单消息限制和 ack 驱动输出队列；慢 observer 单独 detach，replay 保留完整 chunk，其他 observer 与共享 PTY 不受影响
+- [x] **PTY 生命周期**：`starting/running/exited/failed/closed` 状态独立于 observer presence；非 running 状态禁止输入和成功 ack，spawn/timeout/exit/close 使用稳定错误码和一次性通知，startup timeout 已接入异步清理与 quarantine/retry
+- [x] **流控与背压**：每 observer 输入 token bucket、64 KiB 单消息限制和 ack 驱动输出队列；慢 observer 单独 detach，正常 replay chunk 完整保留，超大 chunk 按有界 UTF-8 策略处理，其他 observer 与共享 PTY 不受影响
 - [x] **有界指标**：admin-only `/api/admin/terminal/metrics` 返回固定计数器、有界 latency p50/p95、transport 分桶和 pool 容量，不包含原始 IO。`WRD_TERMINAL_RECORD_IO=1` 仅开启 metadata 记录
 - [x] **传输策略**：默认 WebSocket-only；`WRD_TERMINAL_ALLOW_POLLING=1` 才启用 polling，两个 transport 的延迟样本分开统计
 - [x] **桌面 Viewer 信令**：Socket.IO **WebSocket-first + polling fallback**（`transports: ['websocket', 'polling']`，connect timeout ≤5s）。Terminal 仍默认 WebSocket-only，仅 `WRD_TERMINAL_ALLOW_POLLING=1` 时启用 polling。
@@ -244,6 +244,17 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [ ] **开发映射**：开发页应通过受保护的 `https://dev.link.stockhub.wiki` 访问同一套 Terminal 服务；部署细节和代理契约以部署文档为准，更强的运行时隔离仍是后续工作
 - [x] **审计日志**：Signal Server 记录 Terminal admin 登录、socket 连接、创建、附着、断开、关闭、拒绝和错误的结构化审计事件
 - [ ] **独立实现**：优先使用 `@xterm/xterm` + `node-pty` + Socket.IO 的内嵌方案，不默认引入 WeTTY / ttyd 独立服务
+
+### 3.7.1 Terminal 优化 review（2026-09-19）
+
+本次代码和页面 review 已形成独立 Spec/Plan：
+
+- Spec：`docs/superpowers/specs/2026-09-19-terminal-review-optimization-design.md`
+- Plan：`docs/superpowers/plans/2026-09-19-terminal-review-optimization-plan.md`
+- Review 证据：`docs/superpowers/reports/2026-09-19-terminal-code-page-review.md`
+- 整改验收：`docs/superpowers/reports/2026-09-19-terminal-review-optimization-acceptance.md`
+
+代码整改已完成并通过自动化测试：presenter 事件回环、WebRTC answer listener 清理、replay 硬上限、PTY startup timeout 回收、admin 密码固定时间比较、session title 边界和移动端布局优化均已落地。真实双浏览器、公网入口、物理 macOS 输入和 tunnel 路径继续保持独立 `NOT RUN`/实际结果记录。
 
 **Terminal 安全约束**：
 - Terminal 默认关闭，必须显式开启
@@ -493,3 +504,4 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-09-02 | 统一移动端公网入口口径：手机、Pad 与桌面均使用 `https://link.stockhub.wiki`；`trycloudflare.com` 和 `/tmp/wrd-safe-current-url.txt` 明确限定为临时排障链路，不作为长期访问地址 |
 | 2026-09-03 | 修复生产 desktop bundle 未装配触控适配器、断连态网络模式入口被隐藏、延迟诊断 unavailable/0ms 混淆和状态栏指标宽度抖动；自动化验证与未执行的真实设备/公网验收见 `docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md` |
 | 2026-09-06 | TURN 媒体时钟、canonical FPS、恢复 identity 与 paint/编码观测完成自动化覆盖。离线 `relay-balanced-v2` 矩阵没有合格候选，默认保留 `relay-legacy-v1`，生产捕获仍为 target FPS 的 2 倍；周期清晰度脉冲、真实 TURN、正式公网和物理设备验收保持未关闭。|
+| 2026-09-19 | Terminal 代码与页面 review：发现 presenter 事件回环、replay 超大 chunk 突破硬上限、startup timeout 清理不完整、WebRTC answer listener 泄漏、admin 密码普通比较、session title 无界和移动端 Terminal 布局/可访问性问题；新增优化 Spec/Plan 和验收报告，真实双浏览器与公网验收继续保持 NOT RUN |

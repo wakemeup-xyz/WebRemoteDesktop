@@ -805,11 +805,54 @@ body.stream-connected .status-action-secondary:focus-visible {
   color: var(--text-muted);
   font-size: 14px;
   line-height: 18px;
+  cursor: pointer;
 }
 
 .terminal-session-close:hover {
   background: rgba(239, 68, 68, 0.18);
   color: #fecaca;
+}
+
+.terminal-session-close:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 1px;
+}
+
+@media (max-width: 640px) {
+  .terminal-panel {
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "auth"
+      "toolbar"
+      "status"
+      "workspace"
+      "composer";
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .terminal-pool-note,
+  .terminal-transport-row,
+  #terminalSessionInfo,
+  #terminalWarning,
+  #terminalLoadRetryBtn {
+    display: none;
+  }
+
+  .terminal-toolbar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .terminal-session-tabs {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-x: auto;
+  }
+
+  .terminal-composer textarea {
+    min-height: 58px;
+  }
 }
 
 .terminal-status,

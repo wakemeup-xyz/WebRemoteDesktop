@@ -1,6 +1,6 @@
 # Terminal 共享会话 UX 与协议治理设计
 
-**状态：** 已实施；Task 5 文档与验收边界已同步，真实单/双浏览器验收待执行
+**状态：** 基础协议与 UX 已实施；2026-09-19 review 发现 presenter 事件边界、资源硬上限和移动端可访问性仍需后续整改，真实单/双浏览器验收待执行
 **范围：** presenter/observer 可见性、PTY 生命周期提示、事件 canonical 化和旧输入路径治理
 **明确排除：** 新增 Terminal transport、独立 WSS、PTY 安全沙箱、桌面网络模式
 
@@ -33,6 +33,16 @@ PTY 清理使用 `WRD_TERMINAL_PTY_KILL_WAIT_MS`，默认 **200ms**，等待 nod
 ## 5.1 运行时状态归属
 
 `TerminalPanel` 是 session、presenter、attach、transport 与生命周期状态的唯一运行时 owner。`createTerminalSessionFsm` 保留为不依赖 DOM/Socket 的确定性测试 seam，用来验证状态迁移、pending operation correlation 和错误门禁；它不是生产状态真相，也不得与 Panel 各自维护一份可竞争的 session 状态。
+
+## 5.2 2026-09-19 review follow-up
+
+本设计的基础共享会话语义保持不变；2026-09-19 review 的代码整改已按 `docs/superpowers/specs/2026-09-19-terminal-review-optimization-design.md` 完成：
+
+- attach 成功不再自动 announce presenter；presenter 更新已拆为独立事件。
+- replay buffer、PTY startup timeout 和 WebRTC answer waiter 已增加硬边界和清理路径。
+- admin 密码比较、session title 输入和移动端 Terminal 控件已补充安全与可访问性边界。
+
+自动化验证已通过；真实双浏览器 presenter/observer 交接、公网入口、物理设备和断线恢复仍按验收章节单独执行。
 
 ## 6. 验收
 

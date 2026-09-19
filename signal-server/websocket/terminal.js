@@ -468,7 +468,10 @@ function setupTerminal(io, options = {}) {
           clientId,
           socketId,
         });
-        emitCanonical(socket, 'session_attached', updated);
+        emitCanonical(socket, 'presenter_changed', {
+          ...updated,
+          action: 'presenter',
+        });
         emitPresence(payload.sessionId);
         emitPoolSnapshot();
       } catch (err) {

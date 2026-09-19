@@ -2987,6 +2987,22 @@ test('TerminalPanel activateSession rebinds open TURN dc with preferDcOutput and
   assert.equal(TerminalPanel.shouldPreferWebRtcOutput('term_turn_a'), false);
 });
 
+test('TerminalPanel activation does not implicitly take presenter control', () => {
+  const { TerminalPanel, fakeSocket, sessionStorageMap, tokenKey, emitted } = loadTerminal();
+  sessionStorageMap.set(tokenKey, 'admin-token');
+  TerminalPanel.cacheElements();
+  TerminalPanel.connectSocket();
+  fakeSocket.connected = true;
+  TerminalPanel.ensureSession({ sessionId: 'term-observer', processStatus: 'running' });
+  TerminalPanel.attachedSessionIds.add('term-observer');
+
+  TerminalPanel.activateSession('term-observer');
+  assert.equal(emitted.some((entry) => entry.event === 'terminal:set_active_presenter'), false);
+
+  TerminalPanel.announceActivePresenter('term-observer');
+  assert.equal(emitted.filter((entry) => entry.event === 'terminal:set_active_presenter').length, 1);
+});
+
 test('TerminalPanel attach/close emit bounded operationId and store pending by operation', () => {
   const { TerminalPanel, fakeSocket, socketHandlers, sessionStorageMap, tokenKey, emitted } = loadTerminal();
   sessionStorageMap.set(tokenKey, 'admin-token');

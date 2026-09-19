@@ -326,14 +326,14 @@ http://127.0.0.1:8080
 - 切换到 Terminal 或手动暂停会立即停止远程桌面 capture、编码和视频 payload；页面进入后台必须持续 **5 分钟（300s）** 才停止采集。暂停时信令、ICE、DataChannel、Terminal Socket 和共享 PTY 保持连接
 - 窗口失焦或页面隐藏时，若桌面输入 DataChannel 为 `open` 则发送 keyboard reset；若 DataChannel 已关闭/不可用则 park 本地输入状态，避免把短暂失焦变成无法恢复的 reset barrier。恢复只接受当前 lease/connection attempt 所拥有的 mouse 与 keyboard reset 正向 ACK
 - presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。Socket 断线显示「正在重新附着」。恢复状态会明确显示等待确认或失败；失败不会自动重放/清空未发草稿，用户可点击固定的重试/草稿入口，在重新确认远端状态后显式继续
-- 已附着的 Terminal session 被再次激活时不得无条件抢 presenter；运行时 session/presenter/attach/lifecycle 真相由 `TerminalPanel` 持有，`createTerminalSessionFsm` 仅作为确定性测试 seam，不是生产状态 owner
+- 已附着的 Terminal session 被再次激活时不会无条件抢 presenter；presenter 更新已与 attach 事件拆分。真实双浏览器交接仍需独立验收。运行时 session/presenter/attach/lifecycle 真相由 `TerminalPanel` 持有，`createTerminalSessionFsm` 仅作为确定性测试 seam，不是生产状态 owner
 - 返回桌面或页面重新可见时只清除对应自动原因；手动暂停会继续生效，直到用户再次点击恢复。暂停和恢复期间的预期 0 FPS 不触发质量降档、ICE restart 或自动重连
 - `scripts/restart-host.sh` 或 signal-server 重启在 tunnel 仍存活时通常会保留当前公网地址，但共享 Terminal 会话保存在内存中，因此会在服务重启时结束
 - Terminal **默认**只走浏览器会话内的 Socket.IO / HTTPS 通道，不依赖 STUN / TURN / WebRTC 媒体链路；可选 `webrtc-turn`（DataChannel + 同一 TURN）见 TURN 接入设计 Phase 2，须显式选择且失败不得静默回退
 - Terminal 的 `socketRtt` 和 `inputAckRtt` 只使用浏览器本地 pending 时间；服务端 `serverProcessMs` 单独显示，不能跨机器相减 wall clock
 - password-safe echo 默认不可信：首批普通输入只作为隐藏 probe，只有远端 shell 确实回显后才对后续字符启用；Enter、控制键、alternate-screen、断线和重连都会清零，因此密码提示不会在浏览器显示输入字符
-- shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 默认 256 KiB，配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
-- PTY 清理等待 `WRD_TERMINAL_PTY_KILL_WAIT_MS` 默认 **200ms**，用于等待 node-pty 的异步 `onExit`；范围和配置校验由 Signal Server 执行
+- shared Terminal 默认最多 `8` 个 PTY session，达到上限后拒绝新建但不影响现有会话；可通过 `WRD_TERMINAL_MAX_SESSIONS` 调整。每会话 replay 硬上限为 256 KiB，超大单 chunk 按 UTF-8 边界裁剪；配置 `WRD_TERMINAL_IDLE_TIMEOUT_MS` 后会自动回收超时且无人附着的会话
+- PTY 清理等待 `WRD_TERMINAL_PTY_KILL_WAIT_MS` 默认 **200ms**，用于等待 node-pty 的异步 `onExit`；startup timeout 已接入 quarantine/retry，范围和配置校验由 Signal Server 执行
 - Terminal PTY 只继承 allowlist 环境，shell 使用 `/bin/zsh -f -i` 或 `/bin/bash --noprofile --norc -i`；`PATH` 由服务端固定注入 Homebrew Python 3.11 libexec 路径，不读取个人 shell rc。`WRD_TERMINAL_PATH_EXTRA` 只接受已存在的绝对目录，重复或空项会拒绝启动
 - Terminal 进程状态分为 `starting/running/exited/failed/closed`；starting、exited、failed 不接受输入，也不会发送成功 ack。输出按 observer 独立限流，慢 observer 会单独 detach，PTY 和其他 observer 继续运行并可通过 replay 恢复
 - `WRD_TERMINAL_RECORD_IO=1` 只记录 metadata（字节数、chunk 数、延迟和状态），不记录原始命令、密码或完整输出。管理员可读取 `GET /api/admin/terminal/metrics`，该接口只返回有界计数、p50/p95 摘要和 pool 容量

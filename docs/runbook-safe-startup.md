@@ -329,10 +329,10 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 - `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 控制 Host、Signal structured file sink 和 Terminal audit file，默认 10 MiB / 3 个备份
 - Host/Signal 默认不记录 key、code、文本、坐标或完整 input payload；只保留 action、transport、字节数、input ID hash 和本机耗时
 - Terminal `socketRtt` / `inputAckRtt` 只使用浏览器本地 pending 时钟；`serverProcessMs` 独立计算。password-safe echo 只有确认远端 shell 回显后才开启，Enter/控制键/alternate-screen/重连会立即关闭
-- shared Terminal 默认硬上限 8 个 session；`WRD_TERMINAL_IDLE_TIMEOUT_MS>0` 时回收超时且无人附着的 session
+- shared Terminal 默认硬上限 8 个 session；`WRD_TERMINAL_IDLE_TIMEOUT_MS>0` 时回收超时且无人附着的 session。replay 硬上限为 256 KiB，超大单 chunk 按 UTF-8 边界裁剪
 - Terminal 运行环境由服务端 allowlist 构造，zsh/bash 使用 no-rc interactive 参数；`PATH` 包含 Homebrew Python 3.11 libexec 目录，`WRD_TERMINAL_PATH_EXTRA` 只能配置已存在绝对目录。环境中不得出现 JWT、password、proxy credential、API key 或 token
 - Terminal 默认 WebSocket-only；`WRD_TERMINAL_ALLOW_POLLING=1` 才允许 polling。`WRD_TERMINAL_RECORD_IO=1` 仅为 metadata 记录，不提供原始 IO 回放
-- PTY 清理等待 `WRD_TERMINAL_PTY_KILL_WAIT_MS` 默认 **200ms**，用于等待 node-pty 异步 `onExit`；配置值由 Signal Server 做有界校验
+- PTY 清理等待 `WRD_TERMINAL_PTY_KILL_WAIT_MS` 默认 **200ms**，用于等待 node-pty 异步 `onExit`；startup timeout 已接入 quarantine/retry，配置值由 Signal Server 做有界校验
 - PTY `starting/exited/failed` 状态拒绝输入并不发送成功 ack；输入默认 64 KiB 单消息上限和每 observer token bucket，慢 observer 超过 512 KiB 队列会被单独 detach，下一次 attach 通过 replay 恢复
 - admin-only `GET /api/admin/terminal/metrics` 返回 bounded counters、p50/p95、transport 分桶和 pool 容量；不得把命令、密码或完整 PTY 输出写入日志
 - 可运行只读检查：`bash scripts/terminal-runtime-check.sh`。它只读取本地 health/status、`/tmp/wrd-safe-current-url.txt` 和可选 metrics/env probe；设置 `WRD_TERMINAL_PROBE_TOKEN` 时会创建并关闭一个临时 Terminal，验证 `command -v python3`、`/usr/bin/env python3`、敏感环境键和 exited-input 无 ack，并确认 safe URL 前后不变；不会调用 `stop-safe-wrd.sh`、重启脚本、`cloudflared` 或 `launchctl remove`
@@ -539,7 +539,7 @@ echo exit=$?
 - Terminal 是所有 admin 已授权用户共用的 shared shell session pool，而不是单浏览器私有会话
 - 多个浏览器可以同时附着到同一个共享 shell；输入是共享的，并会立即作用到同一个 PTY
 - 关闭某个 Terminal 标签页或整个 Viewer 页面，只会断开该浏览器，不会 kill 底层 PTY；会话会保留到显式关闭或服务重启
-- presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察。已附着会话再次激活不得无条件抢 presenter
+- presenter 断开时 UI 显示「控制权正在复位」，输入冻结直到 reset ack；非 presenter detach 只离开观察，已附着会话再次激活不会无条件抢 presenter，presenter 更新已与 attach 事件拆分。真实双浏览器交接仍需独立验收
 - Terminal Socket 断线时 UI 显示「正在重新附着」；在真实单/双浏览器验收完成前，不将自动恢复承诺为已交付能力
 - `TerminalPanel` 持有 session、presenter、attach 与生命周期运行时状态；`createTerminalSessionFsm` 仅是确定性测试 seam，不是生产状态 owner
 - 页面进入后台须持续 **5 分钟（300s）** 才暂停桌面 capture；切换 Terminal 或手动暂停仍可立即暂停。窗口失焦/页面隐藏时，桌面输入 DataChannel 为 `open` 则 reset，已关闭/不可用则 park 本地输入状态
