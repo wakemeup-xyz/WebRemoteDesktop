@@ -1790,6 +1790,7 @@ const Input = {
   updateInputRecoveryUI() {
     this.setupInputRecoveryUi();
     const notice = document.getElementById('inputRecoveryNotice');
+    const noticeStatus = document.getElementById('inputRecoveryNoticeStatus');
     const noticeText = document.getElementById('inputRecoveryNoticeText');
     const retry = document.getElementById('inputRecoveryRetryBtn');
     const control = document.getElementById('inputRecoveryControlBtn');
@@ -1845,9 +1846,10 @@ const Input = {
               : '';
     if (notice) {
       notice.hidden = !show;
+      notice.setAttribute?.('aria-hidden', String(!show));
       if (noticeText) noticeText.textContent = message;
-      else notice.textContent = message;
-      notice.setAttribute?.('aria-busy', String(waiting));
+      else if (noticeStatus) noticeStatus.textContent = message;
+      (noticeStatus || notice).setAttribute?.('aria-busy', String(waiting));
     }
     if (retry) {
       retry.hidden = !(waiting || failed || surfaceBlocked);

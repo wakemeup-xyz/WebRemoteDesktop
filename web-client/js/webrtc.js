@@ -726,6 +726,18 @@ const WebRTC = {
 
     this.sendMediaActivityRequest(desired, this._mediaIntent);
     this.syncDesktopInputGate();
+    // Terminal deliberately suspends desktop media while keeping the signaling
+    // session alive. Keep the chrome capability gate and status text in sync
+    // with that local reason immediately; no new video frame is expected to
+    // arrive while the Terminal owns the workspace.
+    this.syncChromeCapabilities();
+    if (this.uiPhase !== 'disconnected' && this.uiPhase !== 'signaling') {
+      if (this._mediaIntent.reasons.includes('terminal-active')) {
+        updateConnectionStatus('media-paused-terminal');
+      } else if (this.uiPhase) {
+        updateConnectionStatus(this.uiPhase);
+      }
+    }
     return snapshot;
   },
 
@@ -1615,7 +1627,10 @@ const WebRTC = {
     }
     const sessionPhase = session ? this.getDesktopSessionSnapshot().phase : phase;
     this.syncChromeCapabilities();
-    if (sessionPhase === 'signaling') {
+    const terminalPaused = this.getMediaActivitySnapshot()?.reasons?.includes?.('terminal-active');
+    if (terminalPaused && sessionPhase !== 'signaling' && sessionPhase !== 'disconnected') {
+      updateConnectionStatus('media-paused-terminal');
+    } else if (sessionPhase === 'signaling') {
       updateConnectionStatus('connecting');
     } else {
       updateConnectionStatus(sessionPhase || phase);
@@ -1646,6 +1661,9 @@ const WebRTC = {
   },
 
   getChromeSnapshot() {
+    const mediaActivity = this.getMediaActivitySnapshot();
+    const terminalActive = Array.isArray(mediaActivity?.reasons)
+      && mediaActivity.reasons.includes('terminal-active');
     const terminalAuthorized = typeof TerminalPanel !== 'undefined'
       && typeof TerminalPanel.hasAdminToken === 'function'
       && TerminalPanel.hasAdminToken();
@@ -1680,6 +1698,10 @@ const WebRTC = {
       modalOpen,
       transportReady,
       mobileInputMode,
+      terminalActive,
+      mediaActivityReasons: Array.isArray(mediaActivity?.reasons)
+        ? mediaActivity.reasons.slice(0, 8) : [],
+      mediaPausedReason: terminalActive ? 'terminal-active' : null,
     };
   },
 
@@ -5981,6 +6003,7 @@ function updateConnectionStatus(status) {
     connecting: '连接中',
     'media-pending': '正在出画',
     connected: '已连接',
+    'media-paused-terminal': 'Terminal 已暂停',
     'media-stalled': '画面卡顿',
     disconnected: '已断开',
   };

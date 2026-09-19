@@ -396,6 +396,42 @@ test('capability matrix requires active control and terminal authorization', () 
   assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'media-stalled', streamReady: true, activeControl: true, controlTransition: false }).canSendDesktopInput, false);
 });
 
+test('Terminal activity closes desktop capabilities while keeping Terminal available', () => {
+  const caps = ChromeLayout.getCapabilities({
+    uiPhase: 'connected', streamReady: true, activeControl: true,
+    terminalActive: true,
+  });
+  assert.equal(caps.canSendDesktopInput, false);
+  assert.equal(caps.canRefresh, false);
+  assert.equal(caps.canPause, false);
+  assert.equal(caps.canDisconnect, true);
+  assert.equal(caps.canOpenNetwork, false);
+  assert.equal(caps.canOpenResolution, false);
+  assert.equal(caps.canOpenTerminal, true);
+});
+
+test('Terminal active DOM state closes desktop controls without hiding Terminal', () => {
+  const make = (id) => ({ id, disabled: false, hidden: false, dataset: {} });
+  const ids = ['textInputBtn', 'keyboardModeBtn', 'refreshBtn', 'pauseBtn',
+    'disconnectBtn', 'networkModeBtn', 'resolutionBtn', 'scaleBtn',
+    'fullscreenBtn', 'moreActionsBtn', 'terminalTabBtn'];
+  const elements = new Map(ids.map((id) => [id, make(id)]));
+  const classes = new Set(['terminal-active']);
+  const root = {
+    body: { classList: { contains: (name) => classes.has(name) } },
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true }, root);
+  for (const id of ids.filter((id) => !['terminalTabBtn', 'disconnectBtn'].includes(id))) {
+    assert.equal(elements.get(id).disabled, true, `${id} should be disabled in Terminal`);
+  }
+  assert.equal(elements.get('terminalTabBtn').disabled, false);
+  assert.equal(elements.get('terminalTabBtn').hidden, false);
+  assert.equal(elements.get('disconnectBtn').disabled, false);
+});
+
 test('applyCapabilities updates capability-bound controls', () => {
   const make = (id) => ({ id, disabled: false, hidden: false, dataset: {} });
   const elements = new Map(['startBtn', 'requestControlBtn', 'refreshBtn', 'pauseBtn', 'disconnectBtn', 'networkModeBtn', 'resolutionBtn', 'terminalTabBtn'].map((id) => [id, make(id)]));

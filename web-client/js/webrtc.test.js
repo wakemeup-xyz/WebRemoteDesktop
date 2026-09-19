@@ -5847,6 +5847,33 @@ test('updateConnectionStatus exposes paint-gate labels', () => {
   assert.equal(statusEl.textContent, '已断开');
 });
 
+test('Terminal media suspension has an explicit status and chrome snapshot reason', () => {
+  const { WebRTC, context } = loadWebRTC();
+  const mediaControllerSource = fs.readFileSync(
+    path.join(__dirname, 'media-activity-controller.js'),
+    'utf8',
+  );
+  vm.runInContext(mediaControllerSource, context);
+  context.MediaActivityController = context.MediaActivityController
+    || context.window?.MediaActivityController;
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.initializeMediaActivity();
+  WebRTC.setMediaActivityReason('terminal-active', true);
+  const statusEl = context.document.getElementById('connectionStatus');
+  assert.equal(statusEl.textContent, 'Terminal 已暂停');
+  assert.equal(statusEl.className, 'status media-paused-terminal');
+  assert.deepEqual(Array.from(WebRTC.getChromeSnapshot().mediaActivityReasons), ['terminal-active']);
+  assert.equal(WebRTC.getChromeSnapshot().terminalActive, true);
+  assert.equal(WebRTC.getChromeSnapshot().mediaPausedReason, 'terminal-active');
+  WebRTC.setUiPhase('media-stalled', { reason: 'terminal-paused-stats' });
+  assert.equal(statusEl.textContent, 'Terminal 已暂停');
+
+  WebRTC.setMediaActivityReason('terminal-active', false);
+  assert.equal(statusEl.textContent, '画面卡顿');
+  assert.equal(WebRTC.getChromeSnapshot().terminalActive, false);
+});
+
 test('first-frame deadline is cancelled by painted-frame growth', () => {
   let timerCallback = null;
   const { WebRTC, context } = loadWebRTC({

@@ -173,12 +173,16 @@ html:fullscreen body.fullscreen-active .fullscreen-exit-panel {
   box-shadow: var(--shadow-md), 0 0 0 1px rgba(245, 158, 11, 0.08);
   font-size: 12px;
   line-height: 1.35;
-  pointer-events: auto;
+  /* The notice is a visual layer only.  Let controls below it (especially
+     Terminal auth and the fullscreen escape hatch) receive pointer events;
+     the explicit action group below opts back in. */
+  pointer-events: none;
 }
 
-.input-recovery-notice > span {
+.input-recovery-status {
   min-width: 0;
   flex: 1 1 auto;
+  pointer-events: none;
 }
 
 .input-recovery-actions {
@@ -186,6 +190,7 @@ html:fullscreen body.fullscreen-active .fullscreen-exit-panel {
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+  pointer-events: auto;
 }
 
 .input-recovery-actions .control-btn {

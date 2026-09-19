@@ -25,9 +25,11 @@
       <span id="fullscreenExitStatus" class="fullscreen-exit-status" role="status" aria-live="polite" hidden></span>
     </div>
   </div>
-  <div id="inputRecoveryNotice" class="input-recovery-notice" role="status" aria-live="polite" aria-busy="false" hidden>
-    <span id="inputRecoveryNoticeText"></span>
-    <div class="input-recovery-actions">
+  <div id="inputRecoveryNotice" class="input-recovery-notice" aria-hidden="true" hidden>
+    <div id="inputRecoveryNoticeStatus" class="input-recovery-status" role="status" aria-live="polite" aria-busy="false">
+      <span id="inputRecoveryNoticeText"></span>
+    </div>
+    <div class="input-recovery-actions" role="group" aria-label="输入恢复操作">
       <button id="inputRecoveryRetryBtn" class="control-btn" type="button" hidden>重试恢复</button>
       <button id="inputRecoveryControlBtn" class="control-btn" type="button" hidden
               aria-label="重新获取远程控制">重新获取控制</button>

@@ -11,6 +11,10 @@ const CAPABILITY_IDS = {
   canOpenResolution: ['resolutionBtn'],
   canOpenTerminal: ['terminalTabBtn'],
 };
+// These controls do not have their own capability key yet.  They are closed
+// alongside the keyed desktop controls below while Terminal owns the
+// workspace; the keyed controls retain their normal phase-specific behavior
+// in every other state.
 const MEDIA_CONTROL_IDS = ['scaleBtn', 'fullscreenBtn'];
 const MOBILE_LAYOUT_PROPERTIES = [
   '--mobile-visible-top',
@@ -23,6 +27,16 @@ const MOBILE_LAYOUT_CLASS = 'mobile-layout-managed';
 const MOBILE_LAYOUT_COMPACT_CLASS = 'mobile-layout-compact';
 const MOBILE_LAYOUT_ULTRA_CLASS = 'mobile-layout-ultra';
 const MOBILE_LAYOUT_UNSUPPORTED_CLASS = 'mobile-layout-unsupported';
+
+function terminalActiveFor(snapshot = {}, rootEl = null) {
+  const root = rootEl || (typeof document !== 'undefined' ? document : null);
+  const body = root?.body || root?.querySelector?.('body');
+  if (body?.classList?.contains?.('terminal-active')) return true;
+  if (snapshot.terminalActive === true || snapshot.mediaPausedReason === 'terminal-active') return true;
+  if (Array.isArray(snapshot.mediaActivityReasons)
+      && snapshot.mediaActivityReasons.includes('terminal-active')) return true;
+  return false;
+}
 
 const ChromeLayout = {
   IDLE_MS: 2500,
@@ -659,14 +673,17 @@ const ChromeLayout = {
     const mediaReady = snapshot.streamReady === true && phase === 'connected';
     const canConnect = phase === 'idle' || phase === 'disconnected';
     const canMediaActions = phase === 'media-pending' || phase === 'connected' || phase === 'media-stalled';
+    const terminalActive = terminalActiveFor(snapshot);
     return {
       canConnect,
-      canSendDesktopInput: mediaReady && active,
-      canRefresh: canMediaActions,
-      canPause: phase === 'connected' || phase === 'media-stalled',
+      canSendDesktopInput: !terminalActive && mediaReady && active,
+      canRefresh: !terminalActive && canMediaActions,
+      canPause: !terminalActive && (phase === 'connected' || phase === 'media-stalled'),
+      // Disconnect is a session-level escape hatch and must remain available
+      // from Terminal so an operator is never trapped in a live session.
       canDisconnect: canMediaActions,
-      canOpenNetwork: phase !== 'idle',
-      canOpenResolution: phase === 'connected' || phase === 'media-stalled',
+      canOpenNetwork: !terminalActive && phase !== 'idle',
+      canOpenResolution: !terminalActive && (phase === 'connected' || phase === 'media-stalled'),
       canOpenTerminal: phase !== 'idle' && phase !== 'disconnected',
     };
   },
@@ -675,7 +692,10 @@ const ChromeLayout = {
     const mobileSnapshot = this.getMobileCapabilitySnapshot(snapshot, root);
     this._mobileViewportSnapshot = mobileSnapshot;
     this.setMobileKeyboardBottom(mobileSnapshot.keyboardBottom, root);
-    const capabilities = this.getCapabilities(snapshot);
+    const terminalActive = terminalActiveFor(snapshot, root);
+    const capabilitySnapshot = terminalActive && snapshot.terminalActive !== true
+      ? { ...snapshot, terminalActive: true } : snapshot;
+    const capabilities = this.getCapabilities(capabilitySnapshot);
     const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
       .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     if (!root) return capabilities;
@@ -695,13 +715,34 @@ const ChromeLayout = {
         setNode(id, allowed, { hide: !['requestControlBtn', 'terminalTabBtn'].includes(id) });
       });
     });
-    setNode('requestControlBtn', snapshot.streamReady === true
+    setNode('requestControlBtn', !terminalActive && snapshot.streamReady === true
       && phase === 'connected'
       && snapshot.activeControl !== true && snapshot.controlTransition !== true);
     setNode('terminalTabBtn', capabilities.canOpenTerminal, { hide: false });
     const mediaReady = snapshot.streamReady === true && ['connected', 'media-stalled'].includes(snapshot.uiPhase);
-    MEDIA_CONTROL_IDS.forEach((id) => setNode(id, mediaReady));
-    setNode('moreActionsBtn', mediaReady, { hide: false });
+    MEDIA_CONTROL_IDS.forEach((id) => {
+      // `portSearchBtn` has a more specific controller-side gate.  Only force
+      // it closed for Terminal; otherwise leave its current visibility to that
+      // controller while still applying the shared media gate to everything
+      // else.
+      if (id === 'portSearchBtn' && !terminalActive) return;
+      setNode(id, mediaReady && !terminalActive);
+    });
+    setNode('moreActionsBtn', mediaReady && !terminalActive, { hide: false });
+    setNode('mobileTextInputBtn', mediaReady && !terminalActive && capabilities.canSendDesktopInput);
+    if (terminalActive) setNode('portSearchBtn', false);
+    if (terminalActive) {
+      // A modal opened immediately before switching tabs must not leave an
+      // actionable resolution/network surface over Terminal.  On exit the
+      // normal capability pass will restore the buttons; the user can reopen
+      // either modal explicitly.
+      ['resolutionModal', 'networkModal'].forEach((id) => {
+        const modal = root.getElementById?.(id) || root.querySelector?.(`#${id}`);
+        if (!modal) return;
+        modal.hidden = true;
+        modal.classList?.add?.('hidden');
+      });
+    }
     const actionNodes = root.querySelectorAll?.('[data-action]') || [];
     actionNodes.forEach((node) => {
       node.disabled = !capabilities.canSendDesktopInput;
