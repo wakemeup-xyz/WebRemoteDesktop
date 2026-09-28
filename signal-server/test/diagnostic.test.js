@@ -12,11 +12,30 @@ const {
   persistDiagnostic,
   ingestDiagnosticPayload,
   buildDiagnosticSummaryEvent,
+  deriveDiagnosticAlerts,
 } = require('../lib/diagnostic');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.VIEWER_ACCESS_PASSWORD = process.env.VIEWER_ACCESS_PASSWORD || 'test-viewer-password';
 process.env.HOST_SHARED_SECRET = process.env.HOST_SHARED_SECRET || 'test-host-secret';
+
+test('diagnostic alerts identify transport, reset, and media symptoms without raw input', () => {
+  const alerts = deriveDiagnosticAlerts({
+    reason: 'dc-error',
+    events: [{ fps: 0 }, { fps: 19 }],
+  }, {
+    safeInputState: { pendingMouseReset: true },
+    safeInputTrace: { counters: { expiredPendingAcks: 2, droppedEvents: 1200 } },
+  });
+
+  assert.deepEqual(alerts, [
+    'transport-dc-error',
+    'input-reset-ack-expired',
+    'input-events-dropped',
+    'control-reset-pending',
+    'media-zero-fps',
+  ]);
+});
 
 test('redactDiagnosticPayload trims logs and strips keyboard debug details', () => {
   const payload = {

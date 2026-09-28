@@ -123,7 +123,7 @@ def test_peak_sliced_policy_uses_only_qualified_relay_resolutions():
         relay_720.force_idr_option,
     ) == (
         "relay-peak-sliced-v1", 3_200_000, 3_200_000, 3_200_000,
-        4_800_000, 1_000, 1.0, "superfast", 2, 0, True,
+        4_800_000, 1_000, 1.0, "ultrafast", 2, 0, True,
     )
     assert (
         relay_1080.min_bitrate_bps,
@@ -140,6 +140,19 @@ def test_peak_sliced_policy_uses_only_qualified_relay_resolutions():
     assert unqualified_resolution.policy_id == "relay-on-demand-v1"
     assert direct.codec_name == "h264_videotoolbox"
     assert direct.periodic_idr_frames == 40
+
+
+def test_peak_policy_prefers_hardware_with_explicit_software_rollback(monkeypatch):
+    hardware = resolve_h264_policy(_intent(width=1152, height=720), "relay-peak-sliced-v1")
+    assert hardware.codec_name == "h264_videotoolbox"
+
+    monkeypatch.setenv("WRD_RELAY_PEAK_CODEC", "libx264")
+    software = resolve_h264_policy(_intent(width=1152, height=720), "relay-peak-sliced-v1")
+    assert software.codec_name == "libx264"
+
+    monkeypatch.setenv("WRD_RELAY_PEAK_CODEC", "invalid-codec")
+    safe_default = resolve_h264_policy(_intent(width=1152, height=720), "relay-peak-sliced-v1")
+    assert safe_default.codec_name == "h264_videotoolbox"
 
 
 @pytest.mark.parametrize(

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import threading
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
@@ -70,6 +72,48 @@ class H264SessionPolicy:
     def __post_init__(self) -> None:
         if self.slice_threads not in {1, 2, 4}:
             raise ValueError("slice_threads must be one of 1, 2, or 4")
+
+    @property
+    def fixed_bitrate(self) -> bool:
+        """Whether this policy intentionally owns one immutable bitrate.
+
+        Relay peak policies use this property to separate a quality signal from
+        encoder configuration.  A viewer may report a transient bitrate
+        estimate, but that estimate must not reopen a codec whose policy has a
+        single, validated target.
+        """
+        return (
+            self.min_bitrate_bps == self.target_bitrate_bps
+            and self.target_bitrate_bps == self.max_bitrate_bps
+        )
+
+    def fingerprint(self) -> str:
+        """Return a stable, redacted identity for one encoder policy.
+
+        The fingerprint deliberately excludes the mutable viewer request and
+        contains only values that change the codec configuration.  It is safe
+        to put in structured logs and is used for idempotent media apply.
+        """
+        payload = {
+            "policyId": self.policy_id,
+            "codec": self.codec_name,
+            "fps": int(self.target_fps),
+            "idr": int(self.periodic_idr_frames),
+            "cooldownMs": int(self.keyframe_cooldown_ms),
+            "min": int(self.min_bitrate_bps),
+            "target": int(self.target_bitrate_bps),
+            "max": int(self.max_bitrate_bps),
+            "vbvMs": int(self.vbv_buffer_ms),
+            "preset": self.preset,
+            "profile": self.profile,
+            "vbvMax": self.vbv_maxrate_bps,
+            "vbvBuffer": self.vbv_bufsize_kbits,
+            "vbvInit": self.vbv_init,
+            "forceIdr": bool(self.force_idr_option),
+            "sliceThreads": int(self.slice_threads),
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -173,9 +217,16 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
                 fixed_bitrate = 3_200_000
                 vbv_maxrate_bps = 4_800_000
                 vbv_bufsize_kbits = 1_000
+            # Prefer the platform hardware encoder for the fixed Relay peak
+            # profile.  macOS VideoToolbox is the only path that kept a 720p
+            # session within the 20fps CPU budget in the formal run; callers
+            # can explicitly pin libx264 for a controlled rollback.
+            peak_codec = str(os.environ.get("WRD_RELAY_PEAK_CODEC", "h264_videotoolbox")).strip()
+            if peak_codec not in {"h264_videotoolbox", "libx264"}:
+                peak_codec = "h264_videotoolbox"
             return H264SessionPolicy(
                 policy_id=policy_version,
-                codec_name="libx264",
+                codec_name=peak_codec,
                 target_fps=max(1, int(intent.target_fps or 20)),
                 periodic_idr_frames=0,
                 keyframe_cooldown_ms=1000,
@@ -183,7 +234,12 @@ def resolve_h264_policy(intent: MediaSessionIntent, policy_version: str) -> H264
                 target_bitrate_bps=fixed_bitrate,
                 max_bitrate_bps=fixed_bitrate,
                 vbv_buffer_ms=100,
-                preset="superfast",
+                # The formal relay run showed the superfast preset could block
+                # the Host loop for >200ms on a busy desktop.  Peak is a
+                # latency policy, so spend the CPU budget on cadence rather
+                # than compression efficiency.  The fixed bitrate/VBV contract
+                # remains unchanged.
+                preset="ultrafast",
                 profile="Baseline",
                 connection_attempt_id=intent.connection_attempt_id,
                 generation=intent.generation,

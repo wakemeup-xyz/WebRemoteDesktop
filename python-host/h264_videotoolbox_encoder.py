@@ -50,6 +50,45 @@ CODEC_REOPEN_REASONS = frozenset({
 })
 
 
+def warmup_videotoolbox() -> bool:
+    """Prime VideoToolbox outside the aiortc event loop.
+
+    The first hardware encode can spend close to a second loading the macOS
+    encoder.  Doing that during Host startup avoids turning the first real
+    video frame into an event-loop stall.  Unsupported platforms simply report
+    False; the normal codec path still falls back to libx264 on encode error.
+    """
+    try:
+        codec = av.CodecContext.create("h264_videotoolbox", "w")
+        # VideoToolbox rejects tiny arbitrary dimensions on this host.  Use the
+        # smallest production Relay presentation so the warmup exercises the
+        # same hardware path as the first real frame.
+        width, height = 1152, 720
+        codec.width = width
+        codec.height = height
+        codec.pix_fmt = "yuv420p"
+        # Match the actual Relay peak envelope.  A low-rate/low-FPS probe can
+        # leave VideoToolbox's first production IDR path cold and simply move
+        # the multi-hundred-millisecond stall into the first viewer session.
+        codec.bit_rate = 3_200_000
+        codec.framerate = fractions.Fraction(20, 1)
+        codec.time_base = fractions.Fraction(1, 20)
+        import numpy as np
+        frame = av.VideoFrame.from_ndarray(
+            np.zeros((height, width, 4), dtype=np.uint8), format="bgra"
+        )
+        frame.time_base = fractions.Fraction(1, 20)
+        for pts in range(3):
+            frame.pts = pts
+            codec.encode(frame)
+        codec.encode(None)
+        logger.info("WRD_VT_WARMUP success=true")
+        return True
+    except Exception as exc:
+        logger.info("WRD_VT_WARMUP success=false reason=%s", type(exc).__name__)
+        return False
+
+
 @dataclass(frozen=True)
 class CodecCreationRecord:
     """Immutable local evidence of one actual codec construction."""
@@ -298,6 +337,19 @@ class H264VideoToolboxEncoder(Encoder):
         self._codec_creation_records: list[CodecCreationRecord] = []
         self._pending_codec_reopen_reason = "initial"
         self._pending_policy: H264SessionPolicy | None = None
+        # Host installs a one-shot observer for a staged media policy.  The
+        # coordinator must advance only after this encoder has actually
+        # constructed the codec for that policy (rather than when a request is
+        # merely accepted or queued).
+        self._media_apply_observer = None
+        self._media_apply_identity = None
+        # Source counters make the Phase 0 setter audit useful without
+        # retaining payloads or input data.  ``set_target_bitrate`` is called
+        # from several aiortc paths, so keep the last source as a tiny label.
+        self._bitrate_source = "unknown"
+        self._bitrate_source_counts: dict[str, int] = {}
+        self._last_rate_log_at = 0.0
+        self._suppressed_rate_logs = 0
         self.gop_size = self._policy.periodic_idr_frames
         self.codec_name = self._policy.codec_name
         self.__target_bitrate = self._policy.target_bitrate_bps
@@ -458,10 +510,64 @@ class H264VideoToolboxEncoder(Encoder):
 
     def stage_policy_update(self, policy: H264SessionPolicy) -> bool:
         """Queue one verified policy replacement for the next encoded frame."""
-        if policy == self._policy or policy == self._pending_policy:
+        # Policy identity excludes the viewer's transient bitrate estimate.
+        # This is the important guard for relay-peak: profile storms must not
+        # tear down and reopen the same libx264 configuration.
+        policy_identity = (
+            str(policy.connection_attempt_id), int(policy.generation), policy.fingerprint()
+        )
+        current_identity = (
+            str(self._policy.connection_attempt_id), int(self._policy.generation), self._policy.fingerprint()
+        )
+        if (
+            policy_identity == current_identity
+            or (
+                self._pending_policy is not None
+                and policy_identity == (
+                    str(self._pending_policy.connection_attempt_id),
+                    int(self._pending_policy.generation),
+                    self._pending_policy.fingerprint(),
+                )
+            )
+        ):
             return False
         self._pending_policy = policy
         return True
+
+    def set_media_apply_observer(self, observer, identity=None) -> None:
+        """Observe the next real codec construction for a staged policy.
+
+        ``observer`` is deliberately a tiny callback instead of a dependency
+        on the Host/coordinator module.  This keeps the encoder usable in
+        offline tests while allowing Host to mark a policy applied at the
+        first frame that creates the codec.
+        """
+        self._media_apply_observer = observer
+        self._media_apply_identity = identity
+
+    def _notify_media_apply_observer(self) -> None:
+        observer = self._media_apply_observer
+        identity = self._media_apply_identity
+        # One-shot semantics prevent a later decoder-refresh/reopen from
+        # incorrectly advancing the same coordinator identity twice.
+        self._media_apply_observer = None
+        self._media_apply_identity = None
+        if observer is None or identity is None:
+            return
+        try:
+            observer(identity, self)
+        except Exception:
+            logger.exception("WRD_MEDIA_APPLY observer failed")
+
+    def note_bitrate_request(self, source: str) -> None:
+        """Attach a bounded source label to the next bitrate request."""
+        normalized = str(source or "unknown").strip()[:40] or "unknown"
+        self._bitrate_source = normalized
+        self._bitrate_source_counts[normalized] = self._bitrate_source_counts.get(normalized, 0) + 1
+
+    @property
+    def bitrate_source_counts(self) -> dict[str, int]:
+        return dict(self._bitrate_source_counts)
 
     def _adopt_pending_policy(self) -> None:
         policy = self._pending_policy
@@ -660,6 +766,9 @@ class H264VideoToolboxEncoder(Encoder):
 
         if self.codec is None:
             self.codec = self._create_codec(frame, self.codec_name)
+            # This is the first point at which the staged policy is truly in
+            # use.  Do not mark it applied from the signalling/request path.
+            self._notify_media_apply_observer()
 
         if due:
             self.last_force_emitted_idr = False
@@ -821,7 +930,9 @@ class H264VideoToolboxEncoder(Encoder):
 
     def _create_codec(self, frame: av.VideoFrame, codec_name: str) -> VideoCodecContext:
         gop = int(self._policy.periodic_idr_frames)
-        codec_name = self._policy.codec_name
+        # Callers may explicitly request a codec while probing/falling back;
+        # otherwise use the policy's preferred codec.
+        codec_name = codec_name or self._policy.codec_name
         bitrate = self._clamp_bitrate(self._policy, self.__target_bitrate)
         self.__target_bitrate = bitrate
         codec_options = None
@@ -968,13 +1079,33 @@ class H264VideoToolboxEncoder(Encoder):
 
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
+        # aiortc's RTCRtpSender writes REMB feedback through this property.
+        # Keep that source distinct from an explicit Host media-profile apply
+        # so an incident can identify the feedback path without a traceback.
+        self.note_bitrate_request("aiortc-remb")
         self.set_target_bitrate(bitrate)
 
     def set_target_bitrate(self, bitrate: int) -> dict:
         """Set bitrate only when the active codec can prove the update applied."""
         requested = int(bitrate)
         clamped = self._clamp_bitrate(self._policy, requested)
+        previous_target = int(self.__target_bitrate)
         self.__target_bitrate = clamped
+        # A fixed policy already owns the requested target.  Returning an
+        # explicit no-op keeps ``applied`` honest while preventing an encoder
+        # reopen on every quality sample.  The same guard is safe for dynamic
+        # policies when the effective target has not changed.
+        if clamped == previous_target:
+            result = {
+                "requested": requested,
+                "clamped": clamped,
+                "effective": int(getattr(self.codec, "bit_rate", 0) or 0),
+                "applied": False,
+                "applyMode": "no-op",
+                "reopenRequired": False,
+            }
+            self._log_rate_result(result)
+            return result
         if self.codec is None:
             result = {
                 "requested": requested,
@@ -1004,10 +1135,28 @@ class H264VideoToolboxEncoder(Encoder):
                 "applyMode": "reopen-required",
                 "reopenRequired": True,
             }
-        logger.info("WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s", *(
-            result["requested"], result["clamped"], result["effective"], result["applied"], result["applyMode"], result["reopenRequired"],
-        ))
+        self._log_rate_result(result)
         return result
+
+    def _log_rate_result(self, result: dict) -> None:
+        """Rate-limit repetitive setter evidence while retaining counters."""
+        now = time.monotonic()
+        should_log = (
+            result.get("applyMode") != "no-op"
+            or self._last_rate_log_at <= 0
+            or now - self._last_rate_log_at >= 5.0
+        )
+        if not should_log:
+            self._suppressed_rate_logs += 1
+            return
+        suppressed = self._suppressed_rate_logs
+        self._suppressed_rate_logs = 0
+        self._last_rate_log_at = now
+        logger.info(
+            "WRD_ENCODER_RATE requested=%s clamped=%s effective=%s applied=%s applyMode=%s reopenRequired=%s source=%s suppressed=%s",
+            result["requested"], result["clamped"], result["effective"], result["applied"],
+            result["applyMode"], result["reopenRequired"], self._bitrate_source, suppressed,
+        )
 
 
 def h264_depayload(payload: bytes) -> bytes:

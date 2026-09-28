@@ -36,6 +36,7 @@ const {
   loadRecentDiagnostics,
   dedupeDiagnosticsByAttempt,
   buildConnectionSummary,
+  getDiagDir,
   ingestDiagnosticPayload,
 } = require('./lib/diagnostic');
 const { setupTerminal } = require('./websocket/terminal');
@@ -76,6 +77,10 @@ function createServerApp(options = {}) {
   // embedders may inject an isolated context explicitly.
   const signalingRuntime = options.signalingRuntimeContext || defaultSignalingRuntime;
   const logger = options.logger || console;
+  logger.info?.('[DIAGNOSTIC] persistence=%s source=%s path=%s',
+    config.enableDiagPersist ? 'enabled' : 'disabled',
+    process.env.WRD_ENABLE_DIAG_PERSIST != null ? 'environment' : 'config',
+    getDiagDir());
   const recentEventStore = options.recentEventStore || createRecentEventStore();
   const structuredFileSink = createRotatingFileSink({
     filePath: config.logDir ? path.join(config.logDir, 'signal-server.jsonl') : '',

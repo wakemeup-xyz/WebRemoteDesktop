@@ -540,6 +540,8 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     });
     meta.inputTrace = inputTrace;
   }
+  const alerts = deriveDiagnosticAlerts(report, { safeInputState, safeInputTrace });
+  if (alerts.length) meta.alerts = alerts;
   return {
     domain: 'viewer',
     event: 'diagnostic_uploaded',
@@ -552,6 +554,24 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     },
     meta,
   };
+}
+
+function deriveDiagnosticAlerts(report = {}, { safeInputState = null, safeInputTrace = null } = {}) {
+  const alerts = [];
+  const reason = String(report.reason || report.traceSummary?.reason || '').trim();
+  const transportReasons = new Set(['dc-error', 'dc-stuck', 'ice-disconnected', 'pc-failed', 'pc-disconnected']);
+  if (transportReasons.has(reason)) alerts.push(`transport-${reason}`);
+  const counters = safeInputTrace?.counters || {};
+  if (Number(counters.expiredPendingAcks) > 0) alerts.push('input-reset-ack-expired');
+  if (Number(counters.droppedEvents) >= 1000) alerts.push('input-events-dropped');
+  if (safeInputState?.pendingMouseReset === true) alerts.push('control-reset-pending');
+  if (Array.isArray(report.events)) {
+    const hasZeroFps = report.events.some((event) => (
+      event && typeof event === 'object' && Number(event.fps) === 0
+    ));
+    if (hasZeroFps) alerts.push('media-zero-fps');
+  }
+  return [...new Set(alerts)].slice(0, 8);
 }
 
 function ingestDiagnosticPayload(options = {}) {
@@ -673,5 +693,6 @@ module.exports = {
   dedupeDiagnosticsByAttempt,
   buildConnectionSummary,
   buildDiagnosticSummaryEvent,
+  deriveDiagnosticAlerts,
   ingestDiagnosticPayload,
 };

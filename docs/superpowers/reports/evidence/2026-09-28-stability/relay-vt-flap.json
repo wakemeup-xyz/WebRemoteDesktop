@@ -1,0 +1,146 @@
+{
+  "origin": "https://link.stockhub.wiki",
+  "networkMode": "relay",
+  "startedAt": 1790612209.386793,
+  "loginUrl": "https://link.stockhub.wiki/",
+  "viewerUrl": "https://link.stockhub.wiki/viewer.html",
+  "turnStatusBefore": "固定入口：https://link.stockhub.wiki。TURN 已配置 · 节点 阿里云节点(aliyun)（source=json · fp d0ec8e6760fa）：turn:8.129.25.34:3478?transport=udp。Host ready · 节点 aliyun · fp d0ec8e6760fa。失败时请手动切换外网中继，不会自动改写模式。",
+  "initial": {
+    "connection": "连接中",
+    "candidate": "链路 -",
+    "fps": "0 FPS",
+    "control": "只读",
+    "advisor": "推荐"
+  },
+  "video": {
+    "paused": true,
+    "readyState": 0
+  },
+  "flap": {
+    "started": 1790612229.134314,
+    "offline": {
+      "connection": "已断开",
+      "control": "只读"
+    },
+    "online": {
+      "connection": "已断开",
+      "candidate": "-",
+      "fps": "- FPS",
+      "control": "已控制"
+    }
+  },
+  "final": {
+    "connection": "已断开",
+    "candidate": "-",
+    "fps": "- FPS",
+    "control": "已控制",
+    "advisor": "建议：外网中继",
+    "video": {
+      "paused": true,
+      "readyState": 0
+    }
+  },
+  "screenshot": "docs/superpowers/reports/evidence/2026-09-28-stability/relay-vt-flap.png",
+  "console": [
+    {
+      "type": "log",
+      "text": "[Diagnostic] core collector ready"
+    },
+    {
+      "type": "log",
+      "text": "[Diagnostic] Log collector initialized"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s signaling start-button false"
+    },
+    {
+      "type": "log",
+      "text": "Creating RTCPeerConnection with config: {iceServers: Array(2), iceTransportPolicy: all, iceCandidatePoolSize: 4, bundlePolicy: max-bundle, rtcpMuxPolicy: require}"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s false true new"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s true false true new"
+    },
+    {
+      "type": "log",
+      "text": "Signaling disconnected transport close"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s disconnected signal-disconnect false"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Loaded WebRTC config: {stunUrls: Array(2), turnConfigured: true, turnSource: json, turnFingerprint: d0ec8e6760fa08628d4e8a036a7c129da79274967c02a91de80599b15cca7be8, hostTurnReady: true}"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s signaling manual-mode-switch false"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_INTERNET_DISCONNECTED"
+    },
+    {
+      "type": "warning",
+      "text": "[NETWORK] Failed to load WebRTC config, using built-in STUN only: TypeError: Failed to fetch\n    at Object.loadServerConfig (https://link.stockhub.wiki/assets/desktop-core.906d40dbcf1671bd.js:7:28910)\n    at Object.init (https://link.stockhub.wiki/assets/desktop-core.906d40dbcf1671bd.js:7:19934)\n    at Object.setNetworkMode (https://link.stockhub.wiki/assets/desktop-core.906d40dbcf1671bd.js:7:82549)\n    at b (https://link.stockhub.wiki/assets/desktop-core.906d40dbcf1671bd.js:7:81052)\n    at <anonymous>"
+    },
+    {
+      "type": "warning",
+      "text": "[NETWORK] Relay mode requested without TURN; keeping relay selection and surfacing guidance"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s disconnected relay-unavailable false"
+    },
+    {
+      "type": "log",
+      "text": "[INPUT-DC] Move DataChannel closed"
+    },
+    {
+      "type": "error",
+      "text": "WebSocket connection to 'wss://link.stockhub.wiki/socket.io/?EIO=4&transport=websocket' failed: Error in connection establishment: net::ERR_INTERNET_DISCONNECTED"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_INTERNET_DISCONNECTED"
+    },
+    {
+      "type": "error",
+      "text": "WebSocket connection to 'wss://link.stockhub.wiki/socket.io/?EIO=4&transport=websocket' failed: Error in connection establishment: net::ERR_INTERNET_DISCONNECTED"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_INTERNET_DISCONNECTED"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s false false undefined"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s signaling signal-connected false"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s disconnected relay-unavailable false"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Created new PC on reconnect, pcState=%s undefined"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s true false false undefined"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s relay false false"
+    }
+  ]
+}

@@ -38,6 +38,7 @@ import screeninfo
 from input_handler import InputHandler
 from h264_videotoolbox_encoder import (
     H264VideoToolboxEncoder,
+    warmup_videotoolbox,
 )
 from h264_encoder_policy import (
     H264SessionPolicyProvider,
@@ -46,6 +47,7 @@ from h264_encoder_policy import (
     policy_version_from_environment,
     resolve_h264_policy,
 )
+from media_apply_coordinator import MediaApplyCoordinator, MediaApplyIdentity
 from media_timing import RtpFrameClock
 from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
@@ -1055,6 +1057,13 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._last_frame_time = 0
         self._target_fps = target_fps
         self._capture_strategy = capture_strategy
+        # A production Relay session must not let OpenCV's worker pool compete
+        # with libx264 on every frame.  The isolated capture experiment already
+        # carries this setting; apply it before the first resize.
+        if HAS_CV2 and capture_strategy is not None:
+            opencv_threads = getattr(capture_strategy, "opencv_threads", None)
+            if opencv_threads is not None:
+                cv2.setNumThreads(int(opencv_threads))
         self._frame_interval = 1.0 / target_fps
         self._max_width = max_width
         self._max_height = max_height
@@ -1211,6 +1220,34 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 await asyncio.to_thread(self.sct.close)
             except Exception:
                 pass
+        # Release the last captured image and correlation buffers after the
+        # worker has stopped.  A reconnect creates a fresh track; retaining
+        # these references on the old track needlessly keeps a large BGRA
+        # frame and pending input metadata alive across offers.
+        with self._capture_lock:
+            self._capture_buffer = None
+            self._capture_bounds_ns.clear()
+        with self._pending_input_lock:
+            self._pending_input_ids.clear()
+            self._pending_input_data.clear()
+        self._last_img = None
+        self._last_img_shape = (0, 0)
+        self._frame_trace_context = None
+        self.sct = None
+
+    def resource_snapshot(self) -> dict:
+        """Return bounded lifecycle counters for disconnect/reconnect audits."""
+        executor = getattr(self, "_process_executor", None)
+        return {
+            "captureRunning": bool(getattr(self, "_capture_running", False)),
+            "captureThreadAlive": bool(
+                getattr(getattr(self, "_capture_thread", None), "is_alive", lambda: False)()
+            ),
+            "captureSeq": int(getattr(self, "_capture_seq", 0) or 0),
+            "targetGeneration": int(getattr(self, "_target_generation", 0) or 0),
+            "pendingInputIds": len(getattr(self, "_pending_input_ids", ()) or ()),
+            "executorShutdown": bool(getattr(executor, "_shutdown", False)),
+        }
 
     async def next_timestamp(self):
         return self._frame_clock.next_timestamp()
@@ -1755,6 +1792,12 @@ class WebRemoteHost:
         self._media_activity_binding = None
         self._media_activity_suspended = False
         self._session_turn_server_id = None
+        # Media policy application is session scoped.  The coordinator only
+        # admits identities; the encoder remains the authority for the honest
+        # ``applied`` result and next-frame reopen.
+        self._media_apply_coordinator = MediaApplyCoordinator()
+        self._media_apply_last_decision = None
+        self._media_profile_sequence = 0
 
     def _create_policy_selection(self):
         """The only production selection path: its parser remains fail-closed."""
@@ -1777,10 +1820,16 @@ class WebRemoteHost:
         )
 
     def _create_screen_track(self):
-        """Production construction retains the legacy capture strategy."""
+        """Create a bounded Relay capture pipeline.
+
+        Capturing twice as fast as the negotiated media rate wasted work while
+        the encoder was CPU-bound.  One capture per output plus a single frame
+        of headroom keeps the latest-frame semantics without starving encode.
+        """
         return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"],
                                   max_width=self.media_profile["width"], max_height=self.media_profile["height"],
-                                  frame_trace_context=self._frame_trace_context, capture_strategy=None)
+                                  frame_trace_context=self._frame_trace_context,
+                                  capture_strategy=CaptureExperiment(1.0, 1))
 
     async def authenticate(self):
         try:
@@ -2623,6 +2672,7 @@ class WebRemoteHost:
     async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
         closing_pc = getattr(self, "pc", None)
         closing_track = getattr(self, "screen_track", None)
+        closing_sender = getattr(self, "video_sender", None)
         closing_channel = getattr(self, "_input_datachannel", None)
         closing_move_channel = getattr(self, "_input_move_datachannel", None)
         closing_candidates = getattr(self, "pending_candidates", None)
@@ -2634,7 +2684,7 @@ class WebRemoteHost:
 
         # Freeze this connection's lease before yielding to the reset worker.
         self._active_input_binding = None
-        if self._input_datachannel is closing_channel:
+        if getattr(self, "_input_datachannel", None) is closing_channel:
             self._input_datachannel = None
         if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
             self._input_move_datachannel = None
@@ -2651,8 +2701,38 @@ class WebRemoteHost:
             await closing_track.shutdown()
         if self.screen_track is closing_track:
             self.screen_track = None
+        if getattr(self, "video_sender", None) is closing_sender:
+            self.video_sender = None
+        media_sender = getattr(self, "media_sender", None)
+        if media_sender is not None and closing_sender is not None:
+            bound_sender = getattr(media_sender, "sender", None)
+            if bound_sender is closing_sender:
+                invalidate = getattr(media_sender, "invalidate", None)
+                if callable(invalidate):
+                    invalidate()
+        if getattr(self, "capture_adapter", None) is not None and closing_track is not None:
+            if getattr(self.capture_adapter, "track", None) is closing_track:
+                self.capture_adapter = None
 
-        if self.pending_candidates is closing_candidates:
+        # Drop recovery and trace references after the owner closes.  Keeping
+        # these objects alive across a new offer retains old generation state
+        # and makes task/resource leaks look like a control failure.
+        if owns_peer:
+            self._keyframe_recovery_state = {}
+            self._frame_trace_context = None
+            coordinator = getattr(self, "_media_apply_coordinator", None)
+            if coordinator is not None:
+                coordinator.cancel_pending()
+            logger.info(
+                "WRD_MEDIA_RESOURCES reason=%s peerClosed=%s senderReleased=%s track=%s tasks=%s",
+                reason,
+                bool(closing_pc),
+                bool(closing_sender),
+                closing_track.resource_snapshot() if closing_track and hasattr(closing_track, "resource_snapshot") else None,
+                len(getattr(self, "_input_lifecycle_tasks", ()) or ()),
+            )
+
+        if getattr(self, "pending_candidates", None) is closing_candidates:
             self.pending_candidates = []
 
         if reset_offer_state and owns_peer:
@@ -2699,6 +2779,11 @@ class WebRemoteHost:
                         "connectionGeneration": self._connection_generation,
                         "connectionAttemptId": connection_attempt_id,
                     }
+                    coordinator = getattr(self, "_media_apply_coordinator", None)
+                    if coordinator is None:
+                        coordinator = self._media_apply_coordinator = MediaApplyCoordinator()
+                    coordinator.bind_attempt(connection_attempt_id)
+                    self._media_profile_sequence = 0
                     if isinstance(offer_sequence, int) and offer_sequence >= 1:
                         binding["connectionAttemptSequence"] = offer_sequence
                     result = await self.input_handler.transition_keyboard(
@@ -3555,6 +3640,7 @@ class WebRemoteHost:
             if adaptive_resolution or (requested_width, requested_height) in PRESENTATION_RUNGS:
                 self._set_user_resolution(width, height)
             self.media_profile = next_profile
+            self._media_profile_sequence = int(payload.get("profileSequence") or 0)
             logger.info(
                 "WRD_MEDIA_PROFILE viewer=%s profile=%s size=%sx%s fps=%s bitrate_kbps=%s reason=%s adaptiveResolution=%s",
                 viewer_id,
@@ -3654,6 +3740,34 @@ class WebRemoteHost:
             return False
         return self._observe_decoder_stall(data, received=received, decoded=decoded)
 
+    def _on_media_policy_applied(self, identity, encoder=None):
+        """Advance media-apply state after the encoder opens the policy.
+
+        Requests are admitted earlier, but the coordinator is intentionally
+        not advanced until ``H264VideoToolboxEncoder`` has created the codec
+        while encoding a real first frame.  This keeps stale/reopened policy
+        requests from being reported as applied before media exists.
+        """
+        coordinator = getattr(self, "_media_apply_coordinator", None)
+        if coordinator is None:
+            return False
+        applied = coordinator.mark_applied(identity)
+        if applied:
+            logger.info(
+                "WRD_MEDIA_APPLY decision=applied source=codec-open attempt=%s generation=%s fingerprint=%s",
+                identity.attempt_id,
+                identity.generation,
+                identity.fingerprint,
+            )
+        else:
+            logger.warning(
+                "WRD_MEDIA_APPLY decision=apply-mismatch source=codec-open attempt=%s generation=%s fingerprint=%s",
+                getattr(identity, "attempt_id", ""),
+                getattr(identity, "generation", 0),
+                getattr(identity, "fingerprint", ""),
+            )
+        return applied
+
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
         """Return an honest bitrate-application result for the current encoder."""
         try:
@@ -3669,6 +3783,61 @@ class WebRemoteHost:
             }
         sender = getattr(self, "video_sender", None)
         encoder = self._video_encoder()
+        if encoder is None:
+            return {
+                "requested": bitrate_bps,
+                "clamped": bitrate_bps,
+                "effective": 0,
+                "applied": False,
+                "applyMode": "no-encoder",
+                "reopenRequired": False,
+            }
+
+        apply_identity = None
+        coordinator = getattr(self, "_media_apply_coordinator", None)
+        if policy is not None:
+            if coordinator is None:
+                coordinator = self._media_apply_coordinator = MediaApplyCoordinator()
+            attempt_id = str(getattr(policy, "connection_attempt_id", "") or "")
+            if attempt_id:
+                if coordinator._attempt_id != attempt_id:
+                    coordinator.bind_attempt(attempt_id)
+                apply_identity = MediaApplyIdentity(
+                    attempt_id=attempt_id,
+                    generation=int(getattr(policy, "generation", 0) or 0),
+                    profile_sequence=int(getattr(self, "_media_profile_sequence", 0) or 0),
+                    fingerprint=policy.fingerprint(),
+                )
+                decision = coordinator.admit(apply_identity)
+                self._media_apply_last_decision = decision
+                if decision.decision == "reject":
+                    logger.warning(
+                        "WRD_MEDIA_APPLY decision=reject reason=%s source=media-profile attempt=%s generation=%s fingerprint=%s",
+                        decision.reason, attempt_id, apply_identity.generation, apply_identity.fingerprint,
+                    )
+                    return {
+                        "requested": bitrate_bps,
+                        "clamped": int(policy.target_bitrate_bps),
+                        "effective": int(getattr(getattr(encoder, "codec", None), "bit_rate", 0) or 0),
+                        "applied": False,
+                        "applyMode": "stale",
+                        "reopenRequired": False,
+                    }
+                if decision.decision == "no-op":
+                    result = {
+                        "requested": bitrate_bps,
+                        "clamped": int(policy.target_bitrate_bps),
+                        "effective": int(getattr(getattr(encoder, "codec", None), "bit_rate", 0) or 0),
+                        "applied": False,
+                        "applyMode": "no-op",
+                        "reopenRequired": False,
+                    }
+                    logger.info(
+                        "WRD_MEDIA_APPLY decision=no-op reason=%s source=media-profile attempt=%s generation=%s fingerprint=%s",
+                        decision.reason, attempt_id, apply_identity.generation, apply_identity.fingerprint,
+                    )
+                    return result
+
         if policy is not None and sender is not None:
             # Lazy creation/rebuild uses the policy owned by this sender.
             sender._wrd_h264_policy = policy
@@ -3679,7 +3848,21 @@ class WebRemoteHost:
             if hasattr(encoder, "_frame_trace_context"):
                 encoder._frame_trace_context = self._frame_trace_context
             stage = getattr(encoder, "stage_policy_update", None)
-            if callable(stage) and stage(policy):
+            staged = bool(callable(stage) and stage(policy))
+            observer = getattr(encoder, "set_media_apply_observer", None)
+            if apply_identity is not None:
+                if staged or getattr(encoder, "codec", None) is None:
+                    # A queued policy is applied by the next real codec open;
+                    # this also covers an initial policy whose encoder has not
+                    # produced its first frame yet.
+                    if callable(observer):
+                        observer(self._on_media_policy_applied, apply_identity)
+                else:
+                    # The encoder already owns this exact policy and codec, so
+                    # the request is demonstrably applied even though no
+                    # reopen was needed.
+                    self._on_media_policy_applied(apply_identity, encoder)
+            if staged:
                 # A staged policy owns both its bitrate bounds and the safe
                 # next-frame codec reopen. Calling set_target_bitrate first
                 # would clamp against the old (for example 720p) policy and
@@ -3692,16 +3875,10 @@ class WebRemoteHost:
                     "applyMode": "policy-staged",
                     "reopenRequired": getattr(encoder, "codec", None) is not None,
                 }
-        if encoder is None:
-            return {
-                "requested": bitrate_bps,
-                "clamped": bitrate_bps,
-                "effective": 0,
-                "applied": False,
-                "applyMode": "no-encoder",
-                "reopenRequired": False,
-            }
         try:
+            note_source = getattr(encoder, "note_bitrate_request", None)
+            if callable(note_source):
+                note_source("media-profile")
             setter = getattr(encoder, "set_target_bitrate", None)
             if callable(setter):
                 result = setter(bitrate_bps)
@@ -4257,6 +4434,12 @@ class WebRemoteHost:
                 return
             binding["connectionAttemptSequence"] = sequence
         binding["connectionAttemptId"] = attempt_id
+        coordinator = getattr(self, "_media_apply_coordinator", None)
+        if coordinator is None:
+            coordinator = self._media_apply_coordinator = MediaApplyCoordinator()
+        if coordinator._attempt_id != attempt_id:
+            coordinator.bind_attempt(attempt_id)
+        self._media_profile_sequence = 0
         # Tunnel path has no offer networkMode; keep explicit tunnel when bound this way.
         if data.get("networkMode") in ("tunnel", "stun", "relay", "auto"):
             binding["networkMode"] = data.get("networkMode")
@@ -4484,6 +4667,8 @@ class WebRemoteHost:
 if __name__ == "__main__":
     host = WebRemoteHost()
     try:
+        if os.environ.get("WRD_DISABLE_VT_WARMUP") != "1":
+            warmup_videotoolbox()
         asyncio.run(host.run())
     except Exception as e:
         logger.error(f"Fatal: {e}", exc_info=True)

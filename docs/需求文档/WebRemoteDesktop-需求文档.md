@@ -60,7 +60,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **帧率控制**：默认 30fps，带帧间隔 sleep 控制
 - [x] **媒体时钟与延迟基础**：浏览器端继续使用 `jitterBufferTarget = 0`；Host 视频帧使用单调的 90kHz RTP 时钟，避免 wall-clock 调整造成异常 PTS 跳跃。历史的「GOP 1 秒即延迟优化」不是完成结论。
 - [x] **Canonical 统计与恢复身份**：Viewer 以区间 `decodedDelta` 计算 `derivedFps`，浏览器报告的 FPS 只作诊断；恢复请求携带当前 connection attempt 与 generation，旧会话事件不得影响当前会话。
-- [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。默认 relay-peak-sliced-v1 的已测标准 20fps relay intent 使用 superfast 双 slice、零应用层周期 IDR、keyint=1201 safety-net 与显式请求 IDR：1280x720 或 1152x720 为 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit，1920x1080 或 1728x1080 为 5Mbps / 7.2Mbps / 1300kbit。其它 resolution 或 FPS 实际回退 relay-on-demand-v1 ultrafast 单线程；on-demand、legacy 可显式回滚，balanced 仍禁止生产。真实 TURN/Viewer、丢包和物理设备验收未由离线通过替代。
+- [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。默认 relay-peak-sliced-v1 的已测标准 20fps relay intent 使用 VideoToolbox 优先、双 slice、零应用层周期 IDR、keyint=1201 safety-net 与显式请求 IDR：1280x720 或 1152x720 为 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit，1920x1080 或 1728x1080 为 5Mbps / 7.2Mbps / 1300kbit；硬件编码不可用时回退 libx264 ultrafast。其它 resolution 或 FPS 实际回退 relay-on-demand-v1 ultrafast 单线程；on-demand、legacy 可显式回滚，balanced 仍禁止生产。真实 TURN/Viewer、丢包和物理设备验收未由离线通过替代。
 - [x] **捕获节奏边界**：离线采集实验没有通过浏览器 paint 门禁，生产捕获仍保持 target FPS 的 2 倍；不得把离线采集结果当成真实 relay 画面验收。
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
@@ -279,6 +279,16 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - `inputProtocolVersion`、lease epoch 和 seq 可作为不含秘密的协议诊断元数据记录；lease token、键值、文本和坐标仍必须脱敏
 - Host/Signal/Terminal audit file 使用 `WRD_LOG_MAX_BYTES` / `WRD_LOG_BACKUP_COUNT` 轮转，默认 10 MiB / 3 个备份
 - `host_event_loop_lag` 只记录有界状态/资源摘要，20ms 为 warning、100ms 为 critical，普通告警按 5 秒聚合
+
+### 3.8 稳定性整改约束（2026-09-28）
+
+- [x] Host H.264 policy 提供稳定 fingerprint；固定 Relay policy 的瞬时码率请求必须返回有界 `no-op`，不得反复重开同一编码器
+- [x] 媒体应用按 `connectionAttemptId + generation + fingerprint` 去重，旧 attempt/generation/profile sequence 不得覆盖当前编码器
+- [x] `applied=false` 继续表示尚未由真实 codec 首帧证明生效；日志增加 setter 来源和抑制计数，不把赋值当作成功
+- [x] Peer、capture track、sender、frame trace 和生命周期任务在断连/新 offer 后释放；资源摘要只保留计数和状态
+- [x] 控制恢复继续使用双 reset、当前 attempt/lease epoch/input id/seq 校验和 fail-closed barrier；reset retry 有界且 blocked 原因可观测
+- [x] 诊断 summary 对 transport failure、reset ACK 过期、输入事件丢弃和控制复位等待提供脱敏告警码
+- [x] 公网、真实 TURN、浏览器和物理 macOS 输入仍以独立验收结果记录，未执行项必须标记 `NOT RUN`
 
 ---
 

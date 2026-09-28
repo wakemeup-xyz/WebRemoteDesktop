@@ -670,7 +670,7 @@ def test_real_peak_sliced_policy_submits_the_offline_qualified_options(
     assert record.configured_rc_max_rate_bps is None
     assert record.configured_rc_buffer_size_bits is None
     assert options == {
-        "preset": "superfast",
+        "preset": "ultrafast",
         "tune": "zerolatency",
         "forced-idr": "1",
         "x264-params": (

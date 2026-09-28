@@ -84,7 +84,7 @@ def test_capture_strategy_keeps_none_at_legacy_two_times_and_candidate_at_target
     assert ScreenCaptureTrack.capture_fps_for_target(12) == 24
 
 
-def test_normal_host_track_factory_passes_immutable_legacy_capture_strategy(monkeypatch):
+def test_normal_host_track_factory_uses_bounded_capture_strategy(monkeypatch):
     created = {}
 
     class StubTrack:
@@ -98,7 +98,9 @@ def test_normal_host_track_factory_passes_immutable_legacy_capture_strategy(monk
 
     remote_host._create_screen_track()
 
-    assert created["capture_strategy"] is None
+    strategy = created["capture_strategy"]
+    assert strategy.capture_multiplier == 1.0
+    assert strategy.opencv_threads == 1
 
 
 @pytest.mark.asyncio

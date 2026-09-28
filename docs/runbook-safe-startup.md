@@ -442,7 +442,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 4. 若解码推进但画面仍不连续，查看 paint interval p50/p95/max、最大 paint gap、presented-frame delta 与视频几何。内容清晰度脉冲和页面几何抖动是两个独立问题。
 5. 未实测的编码、RTP 发送和端到端视频耗时必须保持 `null`；它们不能由 RTT、状态栏或脚本估算补齐。
 
-当前生产默认 relay-peak-sliced-v1。已离线通过的标准 20fps 720p intent 为 1280x720 或 1152x720，使用 3.2Mbps、4.8Mbps VBV maxrate、1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，使用 5Mbps、7.2Mbps、1300kbit。两档均为 libx264 superfast、2 slice threads、零应用层周期 IDR、keyint=1201 safety-net 和显式 forced IDR。其它 resolution 或 FPS 会返回 relay-on-demand-v1 ultrafast 单线程 policy，不得标为 peak。环境变量可显式设置 relay-on-demand-v1 或 relay-legacy-v1 回滚；Host 会拒绝 relay-balanced-v2。离线结果不替代真实 TURN、正式公网、丢包或物理设备验收；主线程受控 rollout 后必须确认连续出画、恢复和成本，无通过证据保持 `NOT RUN`。普通排障不得启动或重启 tunnel。
+当前生产默认 relay-peak-sliced-v1。已离线通过的标准 20fps 720p intent 为 1280x720 或 1152x720，使用 3.2Mbps、4.8Mbps VBV maxrate、1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，使用 5Mbps、7.2Mbps、1300kbit。两档优先使用 VideoToolbox，保留 2 slice、零应用层周期 IDR、keyint=1201 safety-net 和显式 forced IDR；VideoToolbox 不可用时回退 libx264 ultrafast。其它 resolution 或 FPS 会返回 relay-on-demand-v1 ultrafast 单线程 policy，不得标为 peak。环境变量可显式设置 `WRD_RELAY_PEAK_CODEC=libx264`、relay-on-demand-v1 或 relay-legacy-v1 回滚；Host 会拒绝 relay-balanced-v2。离线结果不替代真实 TURN、正式公网、丢包或物理设备验收；主线程受控 rollout 后必须确认连续出画、恢复和成本，无通过证据保持 `NOT RUN`。普通排障不得启动或重启 tunnel。
 
 ### 场景：画面糊 / 秒级卡顿但 RTT 只有 ~100ms
 
@@ -554,3 +554,19 @@ echo exit=$?
 - 若 Viewer 显示「Host 输入复位未确认，控制已安全锁定」：表示 reset barrier 仍在 `REVOKING/reset-blocked`。不要反复点请求控制；优先检查 Host 是否在线并完成 reset，或按既有流程重启本地 Host（不重建 tunnel）。
 - 暂停桌面媒体不会断开 Terminal；恢复后需等待首帧渲染再写入输入。
 - 正式用户入口仍是 `https://link.stockhub.wiki`；`/tmp/wrd-safe-current-url.txt` 仅记录临时 quick tunnel 的排障地址，不是正式入口；本闭环不授权重建 tunnel。
+
+## 媒体稳定性与控制恢复排障（2026-09-28）
+
+遇到画面冻结、老师控制权消失或反复断连时，先保存同一时间窗口的以下证据：
+
+```bash
+tail -300 /tmp/signal-server.log
+tail -300 back-debug.log
+find /tmp/wrd-diag -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | tail -20
+```
+
+重点字段是 `WRD_MEDIA_APPLY`、`WRD_ENCODER_RATE`、`WRD_ENCODER_SAMPLE`、`host_event_loop_lag`、`dc-error`、`ice-disconnected` 和 `control_reset_blocked`。固定 Relay policy 下，相同 fingerprint 的 `WRD_ENCODER_RATE` 应为有界 `no-op`；持续出现 `reopen-required`、critical event-loop lag 或 `pendingMouseReset` 时，停止继续调网络参数，先排查 Host 编码器和资源回收。
+
+启动日志会输出诊断持久化的 `enabled/disabled`、来源和目录。只有 `WRD_ENABLE_DIAG_PERSIST=1` 时才会把脱敏 bundle 写入 `/tmp/wrd-diag`；该目录只保存有限数量和期限的 JSON 文件，不包含密码、token、SDP 或原始输入正文。
+
+控制恢复保持 fail-closed：`Host 输入复位未确认，控制已安全锁定` 表示复位 ACK 尚未匹配当前 attempt、lease epoch 和 input id。不要绕过锁定；确认 Host 在线后等待有界重试，仍 blocked 时只重启本地 Signal/Host，绝不重启或重建 tunnel。

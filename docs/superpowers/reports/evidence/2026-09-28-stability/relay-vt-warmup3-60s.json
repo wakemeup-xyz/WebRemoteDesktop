@@ -1,0 +1,717 @@
+{
+  "origin": "https://link.stockhub.wiki",
+  "networkMode": "relay",
+  "startedAt": 1790612907.970626,
+  "loginUrl": "https://link.stockhub.wiki/",
+  "viewerUrl": "https://link.stockhub.wiki/viewer.html",
+  "turnStatusBefore": "固定入口：https://link.stockhub.wiki。TURN 已配置 · 节点 阿里云节点(aliyun)（source=json · fp d0ec8e6760fa）：turn:8.129.25.34:3478?transport=udp。Host ready · 节点 aliyun · fp d0ec8e6760fa。失败时请手动切换外网中继，不会自动改写模式。",
+  "initial": {
+    "connection": "连接中",
+    "candidate": "链路 -",
+    "fps": "0 FPS",
+    "control": "已控制",
+    "advisor": "最稳"
+  },
+  "video": {
+    "paused": true,
+    "readyState": 0
+  },
+  "final": {
+    "connection": "已连接",
+    "candidate": "当前链路：TURN中继 · 58 ms",
+    "fps": "13 FPS",
+    "control": "已控制",
+    "advisor": "最稳",
+    "video": {
+      "paused": false,
+      "readyState": 4
+    }
+  },
+  "screenshot": "docs/superpowers/reports/evidence/2026-09-28-stability/relay-vt-warmup3-60s.png",
+  "console": [
+    {
+      "type": "log",
+      "text": "[Diagnostic] core collector ready"
+    },
+    {
+      "type": "log",
+      "text": "[Diagnostic] Log collector initialized"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s signaling start-button false"
+    },
+    {
+      "type": "log",
+      "text": "Creating RTCPeerConnection with config: {iceServers: Array(2), iceTransportPolicy: all, iceCandidatePoolSize: 4, bundlePolicy: max-bundle, rtcpMuxPolicy: require}"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Socket connect: offerInProgress=%s pc=%s pcState=%s false true new"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s true false true new"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Loaded WebRTC config: {stunUrls: Array(2), turnConfigured: true, turnSource: json, turnFingerprint: d0ec8e6760fa08628d4e8a036a7c129da79274967c02a91de80599b15cca7be8, hostTurnReady: true}"
+    },
+    {
+      "type": "log",
+      "text": "Refreshing WebRTC connection... manual-mode-switch"
+    },
+    {
+      "type": "log",
+      "text": "Creating RTCPeerConnection with config: {iceServers: Array(1), iceTransportPolicy: relay, iceCandidatePoolSize: 4, bundlePolicy: max-bundle, rtcpMuxPolicy: require}"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s relay true false"
+    },
+    {
+      "type": "log",
+      "text": "[INPUT-DC] Move DataChannel closed"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s relay true false"
+    },
+    {
+      "type": "log",
+      "text": "[LATENCY] Preferred H.264 for video offer: [level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f, level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f, level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f, level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f, level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f, level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f, level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=f4001f, level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=f4001f]"
+    },
+    {
+      "type": "log",
+      "text": "Viewer Signaling state: have-local-offer"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE candidate: RTCIceCandidate"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE gathering state: gathering"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE gathering state: complete"
+    },
+    {
+      "type": "log",
+      "text": "[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d true 2"
+    },
+    {
+      "type": "log",
+      "text": "Offer sent (epoch=%d attempt=%s) 2 wrd-1790612928014-6wtbt4"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE candidate: null"
+    },
+    {
+      "type": "log",
+      "text": "Received answer"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE connection state: checking"
+    },
+    {
+      "type": "log",
+      "text": "Viewer Signaling state: stable"
+    },
+    {
+      "type": "log",
+      "text": "Received remote track: video streams: 1"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s media-pending remote-track false"
+    },
+    {
+      "type": "log",
+      "text": "Track: video enabled: true state: live"
+    },
+    {
+      "type": "log",
+      "text": "Viewer Connection state: connecting"
+    },
+    {
+      "type": "log",
+      "text": "Viewer ICE connection state: connected"
+    },
+    {
+      "type": "log",
+      "text": "Viewer Connection state: connected"
+    },
+    {
+      "type": "log",
+      "text": "WebRTC connected, initializing input..."
+    },
+    {
+      "type": "warning",
+      "text": "[MEDIA] applying profile high size=1280x720 fps=20 bitrate=2500kbps adaptiveRes=off reason=connection-sync"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=0.0, RTT=38ms, Jitter=0ms, Codec=unknown, Candidate=relay, RecvDelta=0, DecodedDelta=0, LostDelta=0, Dropped=0, Packets=0, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=0.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[INPUT-DC] DataChannel open"
+    },
+    {
+      "type": "log",
+      "text": "[INPUT-DC] Move DataChannel open"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=0.0, RTT=38ms, Jitter=0ms, Codec=unknown, Candidate=relay, RecvDelta=0, DecodedDelta=0, LostDelta=0, Dropped=0, Packets=0, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=0.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[PAINT-GATE] uiPhase=%s reason=%s painted=%s connected media-ready true"
+    },
+    {
+      "type": "log",
+      "text": "Video metadata loaded: 1152 x 720"
+    },
+    {
+      "type": "log",
+      "text": "Video is now playing"
+    },
+    {
+      "type": "log",
+      "text": "Video playback started (promise)"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=10.1, RTT=57ms, Jitter=4.3ms, Codec=video/H264, Candidate=relay, RecvDelta=10, DecodedDelta=10, LostDelta=0, Dropped=0, Packets=72, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=78.7KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[LatencyMonitor] Clock synced: RTT= 37.0 ms, offset= -1.6 ms"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.0, RTT=57ms, Jitter=30.9ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=25, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=20.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.8, RTT=57ms, Jitter=40.2ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=13.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.1, RTT=39ms, Jitter=36.4ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.6KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=19.0, RTT=39ms, Jitter=50.7ms, Codec=video/H264, Candidate=relay, RecvDelta=19, DecodedDelta=19, LostDelta=0, Dropped=0, Packets=19, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=13.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 183.32600000000093, presentedFramesDelta: 68, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.9, RTT=39ms, Jitter=42.8ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=11.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "warning",
+      "text": "[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s painted=%s 4 false 1152 720 true"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=19.0, RTT=71ms, Jitter=52.1ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=19, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.0, RTT=71ms, Jitter=53ms, Codec=video/H264, Candidate=relay, RecvDelta=19, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=19, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.1, RTT=46ms, Jitter=52.9ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=11.8KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.9, RTT=46ms, Jitter=62.1ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 149.99399999999878, presentedFramesDelta: 69, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.1, RTT=46ms, Jitter=65.5ms, Codec=video/H264, Candidate=relay, RecvDelta=19, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=19, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.0, RTT=51ms, Jitter=68.8ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.9, RTT=51ms, Jitter=69.4ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=19, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.1, RTT=51ms, Jitter=61.3ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.1, RTT=49ms, Jitter=68.3ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.4KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 166.65999999999985, presentedFramesDelta: 78, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.9, RTT=49ms, Jitter=59.5ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.1, RTT=50ms, Jitter=65ms, Codec=video/H264, Candidate=relay, RecvDelta=18, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=18, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.0, RTT=50ms, Jitter=78.9ms, Codec=video/H264, Candidate=relay, RecvDelta=19, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=19, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=11.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.0, RTT=50ms, Jitter=83.3ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=11.7KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.9, RTT=56ms, Jitter=77.3ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 200, presentedFramesDelta: 70, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.1, RTT=56ms, Jitter=78.7ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=14.6KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.0, RTT=56ms, Jitter=95.8ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=11.6KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=18.0, RTT=38ms, Jitter=98.2ms, Codec=video/H264, Candidate=relay, RecvDelta=19, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=19, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=13.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.9, RTT=38ms, Jitter=104.2ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.1, RTT=85ms, Jitter=100.8ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=12.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 233.32800000000134, presentedFramesDelta: 66, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=12.0, RTT=85ms, Jitter=95.6ms, Codec=video/H264, Candidate=relay, RecvDelta=12, DecodedDelta=12, LostDelta=0, Dropped=0, Packets=49, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=47.9KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=11.9, RTT=85ms, Jitter=98.2ms, Codec=video/H264, Candidate=relay, RecvDelta=12, DecodedDelta=12, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=9.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=12.1, RTT=80ms, Jitter=168.7ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=12, LostDelta=0, Dropped=0, Packets=37, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=35.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.9, RTT=80ms, Jitter=159.4ms, Codec=video/H264, Candidate=relay, RecvDelta=15, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=15, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.0, RTT=80ms, Jitter=144.6ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=9.4KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 266.6560000000027, presentedFramesDelta: 57, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.0, RTT=42ms, Jitter=152.2ms, Codec=video/H264, Candidate=relay, RecvDelta=15, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=15, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[LatencyMonitor] Clock synced: RTT= 57.0 ms, offset= 0.1 ms"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.8, RTT=42ms, Jitter=143.3ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.8KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.3, RTT=60ms, Jitter=132.7ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.4KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.0, RTT=60ms, Jitter=143.2ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=13.8, RTT=60ms, Jitter=138.2ms, Codec=video/H264, Candidate=relay, RecvDelta=15, DecodedDelta=14, LostDelta=0, Dropped=0, Packets=15, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 199.99199999999837, presentedFramesDelta: 68, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.2, RTT=34ms, Jitter=146.6ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.8KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.1, RTT=34ms, Jitter=149.3ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.6KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.0, RTT=34ms, Jitter=144.2ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.9, RTT=35ms, Jitter=149.6ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.2, RTT=35ms, Jitter=144.4ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 199.99199999999837, presentedFramesDelta: 72, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.9, RTT=38ms, Jitter=149.4ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=18, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.1, RTT=38ms, Jitter=144.2ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.9KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.9, RTT=38ms, Jitter=145.2ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.9KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.0, RTT=46ms, Jitter=139.3ms, Codec=video/H264, Candidate=relay, RecvDelta=15, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=15, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.0, RTT=46ms, Jitter=139.4ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.8KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.9, RTT=46ms, Jitter=141ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.4KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 216.6579999999958, presentedFramesDelta: 65, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=16.0, RTT=67ms, Jitter=130.4ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=16, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.8KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=17.1, RTT=67ms, Jitter=144ms, Codec=video/H264, Candidate=relay, RecvDelta=17, DecodedDelta=17, LostDelta=0, Dropped=0, Packets=17, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=6.9KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.9, RTT=76ms, Jitter=135.2ms, Codec=video/H264, Candidate=relay, RecvDelta=14, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=14, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.1, RTT=76ms, Jitter=137.2ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.4KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.9, RTT=76ms, Jitter=140.7ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 216.6579999999958, presentedFramesDelta: 68, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.0, RTT=166ms, Jitter=106.1ms, Codec=video/H264, Candidate=relay, RecvDelta=16, DecodedDelta=14, LostDelta=0, Dropped=0, Packets=16, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=9.2KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.0, RTT=166ms, Jitter=156ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=14, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=7.3KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=12.0, RTT=56ms, Jitter=132.9ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=12, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=10.0KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=15.0, RTT=56ms, Jitter=150.3ms, Codec=video/H264, Candidate=relay, RecvDelta=14, DecodedDelta=15, LostDelta=0, Dropped=0, Packets=14, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.6KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=14.0, RTT=56ms, Jitter=161.8ms, Codec=video/H264, Candidate=relay, RecvDelta=15, DecodedDelta=14, LostDelta=0, Dropped=0, Packets=15, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=9.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "info",
+      "text": "[WRD_PAINT_SAMPLE] {connectionAttemptId: wrd-1790612928014-6wtbt4, intervalMs: Object, maxGapMs: 233.3000000000029, presentedFramesDelta: 57, video: Object}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=13.0, RTT=58ms, Jitter=161.7ms, Codec=video/H264, Candidate=relay, RecvDelta=13, DecodedDelta=13, LostDelta=0, Dropped=0, Packets=13, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.1KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    },
+    {
+      "type": "log",
+      "text": "[STATS] DerivedFPS=12.0, RTT=58ms, Jitter=139.7ms, Codec=video/H264, Candidate=relay, RecvDelta=10, DecodedDelta=12, LostDelta=0, Dropped=0, Packets=11, NACK=0, PLI=0, FIR=0, Freeze=0, BytesDelta=8.5KiB"
+    },
+    {
+      "type": "log",
+      "text": "[NETWORK] Selected candidate pair: {localType: relay, remoteType: relay, protocol: udp, localAddress: 8.129.25.34:63723, remoteAddress: 8.129.25.34:64684}"
+    }
+  ]
+}
