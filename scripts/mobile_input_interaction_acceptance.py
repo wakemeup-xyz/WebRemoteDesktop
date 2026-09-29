@@ -2622,6 +2622,10 @@ def scenario_blocked_gate_incident(browser: Any) -> dict[str, Any]:
             "() => { WebRTC.currentConnectionAttemptId = 'offline-blocked-gate'; }"
         )
         fixture.settle()
+        # Secondary desktop actions now live in the grouped More menu; open it
+        # before exercising the show-dock command's blocked ACK path.
+        page.locator('#moreActionsBtn').click()
+        wait_frames(page, 2)
         page.locator('[data-action="showDock"]').click()
         page.evaluate(
             """
@@ -3411,7 +3415,7 @@ def exercise_899_boundary_context(browser: Any) -> dict[str, bool]:
               return {
                 menuOpen: menu?.hidden === false,
                 actionMoved: Boolean(menu?.contains(document.querySelector('[data-action="copy"]'))),
-                controlStayedOut: !menu?.contains(document.getElementById('scaleBtn')),
+                controlMoved: Boolean(menu?.contains(document.getElementById('scaleBtn'))),
               };
             }
             """
@@ -3428,7 +3432,7 @@ def exercise_899_boundary_context(browser: Any) -> dict[str, bool]:
         )
         checks.update({
             "desktop899ManagedExit": before["managed"] is False and before["hasManagedViewerStyle"] is False,
-            "desktop899MoreActionWorks": opened["menuOpen"] and opened["actionMoved"] and opened["controlStayedOut"]
+            "desktop899MoreActionWorks": opened["menuOpen"] and opened["actionMoved"] and opened["controlMoved"]
                 and closed["menuClosed"] and closed["actionRestored"],
         })
     finally:
@@ -3656,7 +3660,11 @@ def prepare_fullscreen_button(page: Any) -> dict[str, bool]:
         }
         """
     )
-    if not fullscreen_button.bounding_box() and not menu_state["menuOpen"]:
+    # A hidden menu item can still report a layout box because it remains in
+    # the DOM.  Use Playwright's visibility probe before deciding whether the
+    # More menu must be opened; otherwise a compact touch fixture cannot reach
+    # the fullscreen action through its measured hit target.
+    if not fullscreen_button.is_visible() and not menu_state["menuOpen"]:
         page.locator('#moreActionsBtn').click(timeout=1000)
         wait_frames(page, 1)
         menu_state = page.evaluate(
@@ -3713,7 +3721,7 @@ def prepare_fullscreen_button(page: Any) -> dict[str, bool]:
 
 
 def fullscreen_exit_probe(page: Any) -> dict[str, bool]:
-    """Probe the safe-edge reveal handle and the expanded exit button separately."""
+    """Probe the single document-level fullscreen exit button."""
     return page.evaluate(
         """
         () => {
@@ -3745,74 +3753,21 @@ def fullscreen_exit_probe(page: Any) -> dict[str, bool]:
               available: target44 && fullViewportBounds && hitTarget,
             };
           };
-          const reveal = probe('#fullscreenExitRevealBtn');
           const exit = probe('#exitFullscreenBtn');
           return {
-            revealVisible: reveal.rendered,
-            revealTarget44: reveal.target44,
-            revealInsideViewport: reveal.fullViewportBounds,
-            revealHitTarget: reveal.hitTarget,
-            revealAvailable: reveal.available,
-            exitVisibleAfterReveal: exit.rendered,
-            exitTarget44AfterReveal: exit.target44,
-            exitInsideViewportAfterReveal: exit.fullViewportBounds,
-            exitHitTargetAfterReveal: exit.hitTarget,
-            exitAvailableAfterReveal: exit.available,
+            exitVisible: exit.rendered,
+            exitTarget44: exit.target44,
+            exitInsideViewport: exit.fullViewportBounds,
+            exitHitTarget: exit.hitTarget,
+            exitAvailable: exit.available,
           };
         }
         """
     )
-
-
-def click_fullscreen_reveal(page: Any) -> dict[str, bool]:
-    """Click the measured reveal handle through its native pointer path."""
-    target = page.evaluate(
-        """
-        () => {
-          const node = document.getElementById('fullscreenExitRevealBtn');
-          const rect = node?.getBoundingClientRect();
-          const style = node ? getComputedStyle(node) : null;
-          const rendered = Boolean(node && !node.hidden && style
-            && style.display !== 'none' && style.visibility !== 'hidden'
-            && rect && rect.width > 0 && rect.height > 0);
-          const centerInViewport = Boolean(rendered
-            && rect.left + rect.width / 2 >= 0
-            && rect.left + rect.width / 2 <= innerWidth
-            && rect.top + rect.height / 2 >= 0
-            && rect.top + rect.height / 2 <= innerHeight);
-          const hit = rect && centerInViewport
-            ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-            : null;
-          return {
-            available: Boolean(rendered && rect.width >= 44 && rect.height >= 44
-              && rect.top >= -1 && rect.left >= -1
-              && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1
-              && node && (hit === node || node.contains(hit))),
-            x: rendered ? rect.left + rect.width / 2 : 0,
-            y: rendered ? rect.top + rect.height / 2 : 0,
-          };
-        }
-        """
-    )
-    if not target["available"]:
-        return {
-            "revealHandleClicked": False,
-            "exitAvailableAfterHandle": False,
-        }
-    page.mouse.click(float(target["x"]), float(target["y"]))
-    wait_frames(page, 1)
-    after = fullscreen_exit_probe(page)
-    return {
-        "revealHandleClicked": True,
-        "exitAvailableAfterHandle": after["exitAvailableAfterReveal"],
-    }
 
 
 def click_fullscreen_exit(page: Any) -> dict[str, bool]:
-    """Reveal the exit control explicitly, then click its measured hit target."""
-    reveal = click_fullscreen_reveal(page)
-    if not reveal["exitAvailableAfterHandle"]:
-        return {**reveal, "exitButtonClicked": False, "exitLeavesFullscreen": False}
+    """Click the always-visible exit control through its measured hit target."""
     target = page.evaluate(
         """
         () => {
@@ -3842,10 +3797,10 @@ def click_fullscreen_exit(page: Any) -> dict[str, bool]:
         """
     )
     if not target["available"]:
-        return {**reveal, "exitButtonClicked": False, "exitLeavesFullscreen": False}
+        return {"exitButtonClicked": False, "exitLeavesFullscreen": False}
     page.mouse.click(float(target["x"]), float(target["y"]))
     page.wait_for_function("() => document.fullscreenElement === null", timeout=3000)
-    return {**reveal, "exitButtonClicked": True, "exitLeavesFullscreen": True}
+    return {"exitButtonClicked": True, "exitLeavesFullscreen": True}
 
 
 def enter_native_fullscreen(page: Any) -> dict[str, bool]:
@@ -3914,13 +3869,10 @@ def fullscreen_containment(page: Any, *, expect_text_visible: bool = False) -> d
     )
     return {
         **geometry,
-        "revealTarget44": exit_probe["revealTarget44"],
-        "revealHitTarget": exit_probe["revealHitTarget"],
-        "revealInsideViewport": exit_probe["revealInsideViewport"],
-        "exitTarget44AfterReveal": exit_probe["exitTarget44AfterReveal"],
-        "exitHitTargetAfterReveal": exit_probe["exitHitTargetAfterReveal"],
-        "exitInsideViewportAfterReveal": exit_probe["exitInsideViewportAfterReveal"],
-        "exitAvailableAfterReveal": exit_probe["exitAvailableAfterReveal"],
+        "exitTarget44": exit_probe["exitTarget44"],
+        "exitHitTarget": exit_probe["exitHitTarget"],
+        "exitInsideViewport": exit_probe["exitInsideViewport"],
+        "exitAvailable": exit_probe["exitAvailable"],
     }
 
 
@@ -3987,10 +3939,9 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             })
             """
         )
-        terminal_reveal = click_fullscreen_reveal(page)
+        terminal_exit = fullscreen_exit_probe(page)
         terminal.update({
-            "revealHandleClicked": terminal_reveal["revealHandleClicked"],
-            "exitAvailableAfterHandle": terminal_reveal["exitAvailableAfterHandle"],
+            "exitButtonAvailable": terminal_exit["exitAvailable"],
         })
         page.evaluate("() => document.getElementById('desktopTabBtn')?.click()")
         wait_frames(page, 4)
@@ -4021,10 +3972,9 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             }
             """
         )
-        idle_reveal = click_fullscreen_reveal(page)
+        idle_exit = fullscreen_exit_probe(page)
         idle.update({
-            "revealHandleClicked": idle_reveal["revealHandleClicked"],
-            "exitAvailableAfterHandle": idle_reveal["exitAvailableAfterHandle"],
+            "exitButtonAvailable": idle_exit["exitAvailable"],
         })
 
         # A lease loss cannot tear down documentElement fullscreen or remove
@@ -4042,8 +3992,6 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
         )
         first_exit = click_fullscreen_exit(page)
         lease_loss.update({
-            "revealHandleClicked": first_exit["revealHandleClicked"],
-            "exitAvailableAfterHandle": first_exit["exitAvailableAfterHandle"],
             "exitButtonClicked": first_exit["exitButtonClicked"],
         })
 
@@ -4086,10 +4034,8 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
             "narrowFullscreenButtonMenuScrollChangedOrNotNeeded": narrow_button[
                 "fullscreenButtonMenuScrollChangedOrNotNeeded"
             ],
-            "firstExitRevealHandleClicked": first_exit["revealHandleClicked"],
             "firstExitButtonClicked": first_exit["exitButtonClicked"],
             "firstExitClickLeavesFullscreen": first_exit["exitLeavesFullscreen"],
-            "secondExitRevealHandleClicked": second_exit["revealHandleClicked"],
             "secondExitButtonClicked": second_exit["exitButtonClicked"],
             "secondExitClickLeavesFullscreen": second_exit["exitLeavesFullscreen"],
         }
@@ -4105,10 +4051,8 @@ def scenario_fullscreen_native(browser: Any) -> dict[str, Any]:
                 probe = fullscreen_exit_probe(page)
                 checks = {
                     "nativeFullscreenFlow": False,
-                    "revealTarget44": probe["revealTarget44"],
-                    "revealHitTarget": probe["revealHitTarget"],
-                    "exitTarget44AfterReveal": probe["exitTarget44AfterReveal"],
-                    "exitHitTargetAfterReveal": probe["exitHitTargetAfterReveal"],
+                    "exitTarget44": probe["exitTarget44"],
+                    "exitHitTarget": probe["exitHitTarget"],
                 }
             except Exception:
                 checks = {"nativeFullscreenFlow": False}
@@ -4207,7 +4151,6 @@ def scenario_fullscreen_fallback(browser: Any) -> dict[str, Any]:
             "missingApiMenuScrollChangedOrNotNeeded": target_before_click[
                 "menuScrollChangedOrNotNeeded"
             ],
-            "missingApiMenuScrollChanged": target_before_click["menuScrollChanged"],
             "rejectedButtonHitTargetBeforeClick": bool(rejection_target["visible"] and rejection_target["hitTarget"]),
             "rejectedButtonFullyInsideBeforeLocatorAutoscroll": rejection_target[
                 "preAutoscrollTarget"

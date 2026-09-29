@@ -1,8 +1,11 @@
 const OVERFLOW_ACTION_SELECTOR = '.action-btn:not(.action-more):not([data-pin="always"])';
 const IDLE_EDGE_PX = 80;
+const UI_PHASES = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
+const CONTROL_PHASES = ['connected', 'media-stalled'];
 
 const CAPABILITY_IDS = {
   canConnect: ['startBtn'],
+  canRequestControl: ['requestControlBtn'],
   canSendDesktopInput: ['textInputBtn', 'keyboardModeBtn'],
   canRefresh: ['refreshBtn'],
   canPause: ['pauseBtn'],
@@ -10,6 +13,10 @@ const CAPABILITY_IDS = {
   canOpenNetwork: ['networkModeBtn'],
   canOpenResolution: ['resolutionBtn'],
   canOpenTerminal: ['terminalTabBtn'],
+  canOpenDiagnostics: ['diagBtn'],
+  canOpenPortSearch: ['portSearchBtn'],
+  canToggleControls: ['toggleControlsBtn'],
+  canOpenMore: ['moreActionsBtn'],
 };
 // These controls do not have their own capability key yet.  They are closed
 // alongside the keyed desktop controls below while Terminal owns the
@@ -504,10 +511,18 @@ const ChromeLayout = {
     const wasCompact = body?.classList?.contains?.(MOBILE_LAYOUT_COMPACT_CLASS) === true;
     const moreButton = this._getElement(root, 'moreActionsBtn');
     const moreOpen = moreButton?.getAttribute?.('aria-expanded') === 'true';
+    const actionBar = root?.querySelector?.('.action-bar');
+    const controlBar = root?.querySelector?.('.control-bar');
     this._applyBodyClass(body, MOBILE_LAYOUT_CLASS, managed);
     this._applyBodyClass(body, MOBILE_LAYOUT_COMPACT_CLASS, managed && layout.compact);
     this._applyBodyClass(body, MOBILE_LAYOUT_ULTRA_CLASS, managed && layout.ultraCompact);
     this._applyBodyClass(body, MOBILE_LAYOUT_UNSUPPORTED_CLASS, managed && layout.unsupportedViewport);
+
+    // Compact touch layouts hide the secondary control bar to preserve one
+    // stable Dock row. Keep the primary media actions reachable beside More,
+    // then restore their original home when compact mode ends.
+    if (managed && layout.compact) this.movePrimaryControlsIntoActionBar(controlBar, actionBar);
+    else this.restorePrimaryControlsToControlBar(controlBar, actionBar);
 
     // Reparented compact controls belong to the existing More overlay only
     // while that layout is active.  Restore them before Terminal/non-touch or
@@ -667,24 +682,44 @@ const ChromeLayout = {
     return cleanup;
   },
   getCapabilities(snapshot = {}) {
-    const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
-      .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
+    const phase = UI_PHASES.includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     const active = snapshot.activeControl === true && snapshot.controlTransition !== true;
-    const mediaReady = snapshot.streamReady === true && phase === 'connected';
+    const mediaReady = snapshot.streamReady === true && CONTROL_PHASES.includes(phase);
     const canConnect = phase === 'idle' || phase === 'disconnected';
-    const canMediaActions = phase === 'media-pending' || phase === 'connected' || phase === 'media-stalled';
+    const canMediaActions = ['media-pending', ...CONTROL_PHASES].includes(phase);
     const terminalActive = terminalActiveFor(snapshot);
+    const controlPhase = CONTROL_PHASES.includes(phase);
+    const paused = snapshot.mediaPausedReason === 'manual-pause'
+      || (Array.isArray(snapshot.mediaActivityReasons)
+        && snapshot.mediaActivityReasons.includes('manual-pause'));
+    const transitioning = snapshot.controlTransition === true;
     return {
       canConnect,
+      canRequestControl: !terminalActive && controlPhase && !active && !transitioning,
       canSendDesktopInput: !terminalActive && mediaReady && active,
       canRefresh: !terminalActive && canMediaActions,
-      canPause: !terminalActive && (phase === 'connected' || phase === 'media-stalled'),
+      canPause: !terminalActive && controlPhase,
       // Disconnect is a session-level escape hatch and must remain available
       // from Terminal so an operator is never trapped in a live session.
-      canDisconnect: canMediaActions,
-      canOpenNetwork: !terminalActive && phase !== 'idle',
-      canOpenResolution: !terminalActive && (phase === 'connected' || phase === 'media-stalled'),
-      canOpenTerminal: phase !== 'idle' && phase !== 'disconnected',
+      canDisconnect: ['signaling', 'media-pending', ...CONTROL_PHASES].includes(phase),
+      canOpenNetwork: !terminalActive && ['disconnected', ...CONTROL_PHASES].includes(phase),
+      canOpenResolution: !terminalActive && controlPhase,
+      // The active Terminal tab remains reachable while it owns the media
+      // session so users can return to the desktop or disconnect safely.
+      canOpenTerminal: controlPhase,
+      canOpenDiagnostics: ['disconnected', ...CONTROL_PHASES].includes(phase),
+      // The port-search controller applies its own host/lease/mode gate.  This
+      // phase gate prevents an operator tool from appearing before a session
+      // exists; the controller may still disable it with a useful reason.
+      canOpenPortSearch: !terminalActive && ['disconnected', 'media-stalled'].includes(phase)
+        && active && !transitioning && !paused,
+      canToggleControls: !terminalActive && controlPhase,
+      // A disconnected attempt still needs a secondary recovery surface for
+      // network mode, port search, and diagnostics; idle remains CTA-only.
+      canOpenMore: !terminalActive && (controlPhase || phase === 'disconnected'),
+      controlPhase,
+      mediaReady,
+      terminalActive,
     };
   },
   applyCapabilities(snapshot = {}, rootEl) {
@@ -696,41 +731,76 @@ const ChromeLayout = {
     const capabilitySnapshot = terminalActive && snapshot.terminalActive !== true
       ? { ...snapshot, terminalActive: true } : snapshot;
     const capabilities = this.getCapabilities(capabilitySnapshot);
-    const phase = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected']
-      .includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
+    const phase = UI_PHASES.includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     if (!root) return capabilities;
-    const setNode = (id, allowed, { hide = true } = {}) => {
+    const setNode = (id, allowed, { hide = true, disabled = !allowed, title = '' } = {}) => {
       const node = root.getElementById?.(id) || root.querySelector?.(`#${id}`);
       if (!node) return;
-      node.disabled = !allowed;
+      node.disabled = disabled;
+      node.setAttribute?.('aria-disabled', String(disabled));
       if (hide) node.hidden = !allowed;
+      if (title && disabled) node.title = title;
     };
     Object.entries(CAPABILITY_IDS).forEach(([capability, ids]) => {
       ids.forEach((id) => {
-        let allowed = capabilities[capability] === true;
-        if (id === 'requestControlBtn') {
-          allowed = ['connected', 'media-stalled'].includes(snapshot.uiPhase)
-            && snapshot.activeControl !== true && snapshot.controlTransition !== true;
-        }
-        setNode(id, allowed, { hide: !['requestControlBtn', 'terminalTabBtn'].includes(id) });
+        const allowed = capabilities[capability] === true;
+        const visible = (() => {
+          if (id === 'requestControlBtn') return capabilities.canRequestControl === true;
+          if (id === 'textInputBtn' || id === 'keyboardModeBtn') return capabilities.controlPhase === true;
+          if (id === 'networkModeBtn') return capabilities.canOpenNetwork === true;
+          if (id === 'diagBtn') return capabilities.canOpenDiagnostics === true;
+          if (id === 'portSearchBtn') return capabilities.canOpenPortSearch === true;
+          if (id === 'terminalTabBtn') return capabilities.canOpenTerminal === true;
+          return allowed;
+        })();
+        const isRequestControl = id === 'requestControlBtn';
+        const isDesktopInput = ['textInputBtn', 'keyboardModeBtn'].includes(id);
+        // Requesting a lease is the recovery action when the viewer is
+        // connected but read-only.  It must stay enabled without an active
+        // lease; text/keyboard actions remain gated by the lease itself.
+        const disabled = isRequestControl
+          ? !capabilities.canRequestControl || snapshot.activeControl === true || snapshot.controlTransition === true
+          : isDesktopInput ? !capabilities.canSendDesktopInput : !allowed;
+        setNode(id, visible, {
+          hide: true,
+          disabled,
+          title: disabled && visible ? '当前阶段暂不可操作' : '',
+        });
       });
     });
-    setNode('requestControlBtn', !terminalActive && snapshot.streamReady === true
-      && phase === 'connected'
-      && snapshot.activeControl !== true && snapshot.controlTransition !== true);
-    setNode('terminalTabBtn', capabilities.canOpenTerminal, { hide: false });
-    const mediaReady = snapshot.streamReady === true && ['connected', 'media-stalled'].includes(snapshot.uiPhase);
+    // A request-control button is a visible phase action while no lease is
+    // active.  updateControlUI may hide it once the lease becomes active.
+    const request = root.getElementById?.('requestControlBtn') || root.querySelector?.('#requestControlBtn');
+    if (request) {
+      const leaseFree = capabilities.canRequestControl === true;
+      request.hidden = !leaseFree && snapshot.activeControl === true;
+      request.disabled = !leaseFree;
+      request.setAttribute?.('aria-disabled', String(request.disabled));
+      if (request.disabled) request.title = snapshot.controlTransition === true ? '控制权正在切换' : '当前已由其他观察者控制';
+    }
+    const terminalTab = root.getElementById?.('terminalTabBtn') || root.querySelector?.('#terminalTabBtn');
+    if (terminalTab) {
+      terminalTab.hidden = !capabilities.canOpenTerminal;
+      terminalTab.disabled = !capabilities.canOpenTerminal;
+      terminalTab.setAttribute?.('aria-disabled', String(terminalTab.disabled));
+    }
+    const mediaReady = capabilities.mediaReady;
     MEDIA_CONTROL_IDS.forEach((id) => {
-      // `portSearchBtn` has a more specific controller-side gate.  Only force
-      // it closed for Terminal; otherwise leave its current visibility to that
-      // controller while still applying the shared media gate to everything
-      // else.
-      if (id === 'portSearchBtn' && !terminalActive) return;
-      setNode(id, mediaReady && !terminalActive);
+      setNode(id, mediaReady && !terminalActive, {
+        hide: true,
+        disabled: !(mediaReady && !terminalActive),
+      });
     });
-    setNode('moreActionsBtn', mediaReady && !terminalActive, { hide: false });
-    setNode('mobileTextInputBtn', mediaReady && !terminalActive && capabilities.canSendDesktopInput);
-    if (terminalActive) setNode('portSearchBtn', false);
+    setNode('moreActionsBtn', capabilities.canOpenMore, { hide: true });
+    setNode('toggleControlsBtn', capabilities.canToggleControls, { hide: true });
+    setNode('mobileTextInputBtn', mediaReady && !terminalActive, {
+      hide: true,
+      disabled: !capabilities.canSendDesktopInput,
+      title: !capabilities.canSendDesktopInput ? '需要可用的桌面输入控制' : '',
+    });
+    if (!capabilities.canOpenPortSearch) {
+      setNode('portSearchBtn', false, { hide: true });
+    }
     if (terminalActive) {
       // A modal opened immediately before switching tabs must not leave an
       // actionable resolution/network surface over Terminal.  On exit the
@@ -795,19 +865,66 @@ const ChromeLayout = {
       btn.setAttribute('data-control-home-index', String(index));
     });
   },
+  movePrimaryControlsIntoActionBar(controlBar, bar) {
+    if (!controlBar || !bar) return;
+    const moreBtn = bar.querySelector?.('#moreActionsBtn') || bar.querySelector?.('.action-more');
+    if (!moreBtn) return;
+    Array.from(controlBar.querySelectorAll?.('.control-btn.primary-control') || [])
+      .forEach((btn) => {
+        if (!btn.getAttribute?.('data-primary-home-index')) {
+          btn.setAttribute?.('data-primary-home-index', String(
+            btn.getAttribute?.('data-control-home-index') || 0,
+          ));
+        }
+        bar.insertBefore(btn, moreBtn);
+      });
+  },
+  restorePrimaryControlsToControlBar(controlBar, bar) {
+    if (!controlBar || !bar) return;
+    const items = Array.from(bar.querySelectorAll?.('.control-btn.primary-control[data-primary-home-index]') || [])
+      .sort((a, b) => Number(a.getAttribute('data-primary-home-index'))
+        - Number(b.getAttribute('data-primary-home-index')));
+    items.forEach((btn) => {
+      const target = Number(btn.getAttribute?.('data-primary-home-index'));
+      btn.removeAttribute?.('data-primary-home-index');
+      const children = Array.from(controlBar.children || []);
+      const ref = Number.isFinite(target) ? (children[target] || null) : null;
+      controlBar.insertBefore(btn, ref);
+    });
+  },
   moveOverflowIntoMenu(bar, menu) {
     if (!bar || !menu) return;
+    const appendToGroup = (btn) => {
+      const groupName = btn.getAttribute?.('data-more-group') || 'input';
+      const selector = `.more-actions-group[data-more-group="${groupName}"]`;
+      const group = menu.querySelector?.(selector);
+      (group || menu).appendChild(btn);
+    };
     const overflow = Array.from(bar.querySelectorAll(OVERFLOW_ACTION_SELECTOR));
     overflow.forEach((btn) => {
       btn.setAttribute?.('role', 'menuitem');
-      menu.appendChild(btn);
+      appendToGroup(btn);
     });
   },
   moveControlBarIntoMenu(controlBar, menu) {
     if (!controlBar || !menu) return;
-    Array.from(controlBar.querySelectorAll?.('.control-btn') || []).forEach((btn) => {
+    const appendToGroup = (btn) => {
+      const groupName = btn.getAttribute?.('data-more-group') || 'display';
+      const group = menu.querySelector?.(`.more-actions-group[data-more-group="${groupName}"]`);
+      (group || menu).appendChild(btn);
+    };
+    Array.from(controlBar.querySelectorAll?.('.control-btn.secondary-control') || []).forEach((btn) => {
       btn.setAttribute?.('role', 'menuitem');
-      menu.appendChild(btn);
+      appendToGroup(btn);
+    });
+  },
+  updateMoreMenuGroups(menu) {
+    if (!menu?.querySelectorAll) return;
+    menu.querySelectorAll('.more-actions-group').forEach((group) => {
+      const hasAction = Array.from(group.querySelectorAll?.('.action-btn, .control-btn') || [])
+        .some((node) => !node.hidden && node.getAttribute?.('aria-hidden') !== 'true');
+      group.hidden = !hasAction;
+      group.setAttribute?.('aria-hidden', String(!hasAction));
     });
   },
   restoreOverflowToBar(bar, menu) {
@@ -824,10 +941,11 @@ const ChromeLayout = {
       const ref = Number.isFinite(target) ? (current[target] || moreBtn) : moreBtn;
       bar.insertBefore(btn, ref || null);
     });
+    this.updateMoreMenuGroups(menu);
   },
   restoreControlBarFromMenu(controlBar, menu) {
     if (!controlBar || !menu) return;
-    const items = Array.from(menu.querySelectorAll?.('.control-btn') || [])
+    const items = Array.from(menu.querySelectorAll?.('.control-btn.secondary-control') || [])
       .sort((a, b) => Number(a.getAttribute('data-control-home-index'))
         - Number(b.getAttribute('data-control-home-index')));
     items.forEach((btn) => {
@@ -837,6 +955,7 @@ const ChromeLayout = {
       const ref = Number.isFinite(target) ? (children[target] || null) : null;
       controlBar.insertBefore(btn, ref);
     });
+    this.updateMoreMenuGroups(menu);
   },
   _isManagedCompact(root) {
     const body = root?.body || root?.querySelector?.('body');
@@ -859,7 +978,12 @@ const ChromeLayout = {
     body?.classList?.toggle?.('more-open', nextOpen);
     if (nextOpen) {
       this.moveOverflowIntoMenu(bar, menu);
-      if (this._isManagedCompact(root)) this.moveControlBarIntoMenu(controlBar, menu);
+      // The More menu is the single secondary-action surface on desktop and
+      // compact touch layouts.  Move display/network/diagnostic controls from
+      // the control bar together with keyboard shortcuts so the primary row
+      // remains stable at every width.
+      this.moveControlBarIntoMenu(controlBar, menu);
+      this.updateMoreMenuGroups(menu);
     } else {
       this.restoreControlBarFromMenu(controlBar, menu);
       this.restoreOverflowToBar(bar, menu);

@@ -2441,6 +2441,7 @@ test('selecting relay without TURN keeps relay persisted and shows recommendatio
     publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
   };
   WebRTC.socket = { connected: false };
+  WebRTC.uiPhase = 'disconnected';
 
   WebRTC.setNetworkMode('relay');
 
@@ -2768,6 +2769,7 @@ test('auto without TURN shows recommendation-only copy instead of auto fallback 
     iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
     publicEntry: { formalEntryUrl: 'https://link.stockhub.wiki' },
   };
+  WebRTC.uiPhase = 'connected';
 
   WebRTC.updateNetworkUI('网络模式已就绪');
 
@@ -2780,7 +2782,7 @@ test('auto without TURN shows recommendation-only copy instead of auto fallback 
   assert.match(turnStatus, /固定入口.*link\.stockhub\.wiki/);
 });
 
-test('network advisor expands on update then auto-collapses to the right edge tab', () => {
+test('network advisor stays compact for routine connected status and expands warnings', () => {
   const timers2 = [];
   const { WebRTC, context } = loadWebRTC({
     setTimeout: (fn, ms) => {
@@ -2803,17 +2805,21 @@ test('network advisor expands on update then auto-collapses to the right edge ta
   WebRTC.getPublicEntryUrl = () => '';
   WebRTC.getRecommendationMessage = () => '';
   WebRTC.getDefaultNetworkGuidance = () => '外网中继已就绪';
+  WebRTC.uiPhase = 'connected';
 
   WebRTC.updateNetworkUI('外网中继已连接', '');
   const advisor = context.document.getElementById('networkAdvisor');
   const handleLabel = context.document.getElementById('networkAdvisorHandleLabel');
   assert.equal(advisor.classList.contains('visible'), true);
-  assert.equal(advisor.classList.contains('collapsed'), false);
+  assert.equal(advisor.classList.contains('collapsed'), true);
   assert.equal(handleLabel.textContent, '中继');
-  assert.equal(advisor.getAttribute('aria-expanded'), 'true');
+  assert.equal(advisor.getAttribute('aria-expanded'), 'false');
 
-  const collapseTimers = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_COLLAPSE_MS['']);
-  assert.ok(collapseTimers.length >= 1, 'should schedule auto-collapse');
+  WebRTC.updateNetworkUI('外网中继暂时不可用，请切换隧道中继。', 'warning');
+  assert.equal(advisor.classList.contains('collapsed'), false);
+  assert.equal(advisor.getAttribute('aria-expanded'), 'true');
+  const collapseTimers = timers2.filter((t) => !t.cleared && t.ms === WebRTC.NETWORK_ADVISOR_COLLAPSE_MS.warning);
+  assert.ok(collapseTimers.length >= 1, 'warning should schedule auto-collapse');
   collapseTimers.at(-1).fn();
   assert.equal(advisor.classList.contains('collapsed'), true);
   assert.equal(advisor.getAttribute('aria-expanded'), 'false');
@@ -2850,6 +2856,7 @@ test('narrow viewport keeps info advisor collapsed on first show', () => {
     matchMedia: (query) => ({ matches: String(query).includes('max-width: 768px') }),
   });
   prepareRelayAdvisor(WebRTC);
+  WebRTC.uiPhase = 'connected';
 
   WebRTC.updateNetworkUI('外网中继已连接', '');
   const advisor = context.document.getElementById('networkAdvisor');
@@ -2867,6 +2874,7 @@ test('narrow viewport still expands danger advisor on first show', () => {
     matchMedia: (query) => ({ matches: String(query).includes('max-width: 768px') }),
   });
   prepareRelayAdvisor(WebRTC);
+  WebRTC.uiPhase = 'connected';
 
   WebRTC.updateNetworkUI('端口搜索已达上限，未自动切换 TURN 或媒体隧道。', 'danger');
   const advisor = context.document.getElementById('networkAdvisor');
@@ -6163,7 +6171,9 @@ test('relay stats tick keeps media-pending copy', () => {
   WebRTC.setUiPhase('media-pending', { reason: 'pc-connected' });
   WebRTC.announcePaintIssue('media-pending-3s');
   const advisorText = () => context.document.getElementById('networkAdvisorText').textContent;
-  assert.match(advisorText(), /链路已通，正在等待第一帧/);
+  const advisor = context.document.getElementById('networkAdvisor');
+  assert.equal(advisor.hidden, true);
+  assert.equal(advisor.getAttribute('aria-hidden'), 'true');
 
   WebRTC.processStatsSnapshot({
     fps: 0,
@@ -6180,7 +6190,8 @@ test('relay stats tick keeps media-pending copy', () => {
   });
 
   assert.equal(WebRTC.uiPhase, 'media-pending');
-  assert.match(advisorText(), /链路已通，正在等待第一帧/);
+  assert.equal(advisor.hidden, true);
+  assert.equal(advisor.getAttribute('aria-hidden'), 'true');
   assert.doesNotMatch(advisorText(), /当前通过 TURN 中继传输/);
 });
 

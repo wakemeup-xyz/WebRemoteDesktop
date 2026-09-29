@@ -370,17 +370,43 @@ test('observeStatusBar falls back to the default chrome height without ResizeObs
 
 test('capability matrix gates actions by connection phase', () => {
   const expected = {
-    idle: { canConnect: true, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
-    signaling: { canConnect: false, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
+    idle: { canConnect: true, canRequestControl: false, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
+    signaling: { canConnect: false, canRequestControl: false, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: true },
     'media-pending': { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: false, canDisconnect: true },
     connected: { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: true, canDisconnect: true },
     'media-stalled': { canConnect: false, canSendDesktopInput: false, canRefresh: true, canPause: true, canDisconnect: true },
     disconnected: { canConnect: true, canSendDesktopInput: false, canRefresh: false, canPause: false, canDisconnect: false },
   };
+  const defaults = {
+    canRequestControl: false,
+    canOpenNetwork: false,
+    canOpenResolution: false,
+    canOpenTerminal: false,
+    canOpenDiagnostics: false,
+    canOpenPortSearch: false,
+    canToggleControls: false,
+    canOpenMore: false,
+    controlPhase: false,
+    mediaReady: false,
+    terminalActive: false,
+  };
   for (const [phase, values] of Object.entries(expected)) {
+    const actual = ChromeLayout.getCapabilities({ uiPhase: phase, streamReady: phase === 'connected', activeControl: false });
+    const phaseDefaults = {
+      ...defaults,
+      canRequestControl: ['connected', 'media-stalled'].includes(phase),
+      canOpenNetwork: ['connected', 'media-stalled', 'disconnected'].includes(phase),
+      canOpenResolution: ['connected', 'media-stalled'].includes(phase),
+      canOpenTerminal: ['connected', 'media-stalled'].includes(phase),
+      canOpenDiagnostics: ['connected', 'media-stalled', 'disconnected'].includes(phase),
+      canOpenMore: ['connected', 'media-stalled', 'disconnected'].includes(phase),
+      canToggleControls: ['connected', 'media-stalled'].includes(phase),
+      controlPhase: ['connected', 'media-stalled'].includes(phase),
+      mediaReady: phase === 'connected',
+    };
     assert.deepEqual(
-      ChromeLayout.getCapabilities({ uiPhase: phase, streamReady: phase === 'connected', activeControl: false }),
-      { ...values, canOpenNetwork: phase !== 'idle', canOpenResolution: phase === 'connected' || phase === 'media-stalled', canOpenTerminal: phase !== 'idle' && phase !== 'disconnected' },
+      actual,
+      { ...phaseDefaults, ...values },
     );
   }
 });
@@ -393,7 +419,7 @@ test('capability matrix requires active control and terminal authorization', () 
   assert.equal(caps.canSendDesktopInput, true);
   assert.equal(caps.canOpenTerminal, true);
   assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true, controlTransition: true }).canSendDesktopInput, false);
-  assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'media-stalled', streamReady: true, activeControl: true, controlTransition: false }).canSendDesktopInput, false);
+  assert.equal(ChromeLayout.getCapabilities({ uiPhase: 'media-stalled', streamReady: true, activeControl: true, controlTransition: false }).canSendDesktopInput, true);
 });
 
 test('Terminal activity closes desktop capabilities while keeping Terminal available', () => {
@@ -609,6 +635,9 @@ function createMoreMenuDom() {
     if (selector === '.action-bar') return /\baction-bar\b/.test(el.className);
     if (selector === '.control-bar') return /\bcontrol-bar\b/.test(el.className);
     if (selector === '.control-btn') return /\bcontrol-btn\b/.test(el.className);
+    if (selector === '.control-btn.secondary-control') {
+      return /\bcontrol-btn\b/.test(el.className) && /\bsecondary-control\b/.test(el.className);
+    }
     if (selector === '.action-more' || selector === '#moreActionsBtn') {
       return el.id === 'moreActionsBtn' || /\baction-more\b/.test(el.className);
     }
@@ -692,7 +721,7 @@ function createMoreMenuDom() {
   bar.appendChild(menu);
   body.appendChild(bar);
   ['scale', 'fullscreen'].forEach((name, index) => {
-    const control = el('control-btn', {}, `${name}Btn`);
+    const control = el('control-btn secondary-control', {}, `${name}Btn`);
     control.name = name;
     controlBar.appendChild(control);
     control.setAttribute('data-control-home-index', String(index));
@@ -722,7 +751,7 @@ test('toggleMoreMenu moves overflow nodes and restores original order', () => {
   assert.equal(menu.hidden, false);
   assert.match(root.body.className, /\bmore-open\b/);
   assert.deepEqual(names(), ['enter', 'keyboard', 'more']);
-  assert.deepEqual(menu.children.map((child) => child.name), ['up', 'down', 'copy']);
+  assert.deepEqual(menu.children.map((child) => child.name), ['up', 'down', 'copy', 'scale', 'fullscreen']);
 
   const closed = ChromeLayout.toggleMoreMenu(false, root);
   assert.equal(closed.open, false);
@@ -740,10 +769,10 @@ test('compact more overlay temporarily contains ordinary control-bar buttons', (
 
   ChromeLayout.toggleMoreMenu(true, root);
   assert.equal(controlBar.children.length, 0);
-  assert.deepEqual(menu.children.filter((child) => child.className === 'control-btn').map((child) => child.name), [
+  assert.deepEqual(menu.children.filter((child) => /\bcontrol-btn\b/.test(child.className)).map((child) => child.name), [
     'scale', 'fullscreen',
   ]);
-  assert.deepEqual(menu.children.filter((child) => child.className === 'control-btn')
+  assert.deepEqual(menu.children.filter((child) => /\bcontrol-btn\b/.test(child.className))
     .map((child) => child.getAttribute('role')), ['menuitem', 'menuitem']);
 
   ChromeLayout.toggleMoreMenu(false, root);

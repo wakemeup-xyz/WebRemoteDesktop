@@ -1809,11 +1809,27 @@ const Input = {
     const draftBlocked = Boolean(mobile.hasPending && contextBlocked);
     const surfaceBlocked = gate.blockedReasons.includes('surface-uncertain');
     const webRtc = typeof WebRTC !== 'undefined' ? WebRTC : null;
+    const sessionSnapshot = webRtc?.getDesktopSessionSnapshot?.() || null;
+    const uiPhase = String(sessionSnapshot?.uiPhase || webRtc?.uiPhase || '').toLowerCase();
+    const attemptId = this._currentConnectionAttemptId();
+    // Transport instances are initialized before a viewer has started a
+    // session.  Their revoked/uncertain state is an implementation detail and
+    // must not create a recovery notice on the idle landing page.  A phase,
+    // connection attempt, lease, or retained draft is the evidence that the
+    // user has real session context.
+    const hasSessionContext = uiPhase && uiPhase !== 'idle'
+      || Boolean(attemptId)
+      || Boolean(this.activeControlLease)
+      || Boolean(mobile.hasPending || mobile.composing || mobile.deliveryUncertain);
     const hasActiveControl = Boolean(webRtc?.hasActiveControl?.() || this.activeControlLease);
     const controlState = String(webRtc?.controlState?.state || '').toUpperCase();
     const controlTransitioning = controlState === 'GRANTING' || controlState === 'REVOKING';
     const reacquireRequired = this._recoveryControlReacquireRequired === true;
-    const show = waiting || failed || contextBlocked || surfaceBlocked || reacquireRequired;
+    const recoveryContext = hasSessionContext && (waiting || failed);
+    const retainedDraftContext = Boolean(mobile.hasPending || mobile.composing || mobile.deliveryUncertain)
+      && (contextBlocked || surfaceBlocked);
+    const leaseRecoveryContext = hasSessionContext && reacquireRequired;
+    const show = recoveryContext || retainedDraftContext || leaseRecoveryContext;
     const failedReasonMessages = {
       'mouse-reset-send-failed': '鼠标状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',
       'keyboard-reset-send-failed': '键盘状态复位发送失败，请点击“重试恢复”，或释放后重新获取控制。',

@@ -274,9 +274,13 @@ test('narrow overflow menu exists', () => {
   assert.match(html, /id="moreActionsBtn"/);
   assert.match(html, /id="moreActionsMenu"/);
   assert.match(css, /min-height\s*:\s*var\(--touch-min\)/);
-  assert.match(html, /data-action="enter"[^>]*data-pin="always"/);
-  assert.match(html, /id="keyboardModeBtn"[^>]*data-pin="always"/);
-  assert.match(html, /id="portSearchBtn"[^>]*class="control-btn"/);
+  assert.match(html, /data-action="enter"[^>]*data-more-group="input"/);
+  assert.match(html, /id="keyboardModeBtn"[^>]*data-more-group="input"/);
+  for (const group of ['input', 'display', 'network', 'diagnostics']) {
+    assert.match(html, new RegExp(`data-more-group="${group}"`));
+    assert.match(html, new RegExp(`class="more-actions-group"[^>]*data-more-group="${group}"`));
+  }
+  assert.match(html, /id="portSearchBtn"[^>]*class="control-btn[^"]*"|class="control-btn[^"]*"[^>]*id="portSearchBtn"/);
   assert.match(css, /#moreActionsMenu\s+\.action-btn\s*\{[^}]*display\s*:\s*flex/);
   assert.match(css, /@media\s*\(max-width:\s*899px\)/);
 });
@@ -312,9 +316,9 @@ test('fullscreen chrome hides independently while exit overlay stays interactive
   assert.doesNotMatch(html.slice(statusActionsStart, statusActionsEnd), /id="exitFullscreenBtn"/);
   assert.match(html.slice(statusActionsStart, statusActionsEnd), /id="fullscreenStatus"/);
   assert.match(html, /id="fullscreenStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
-  assert.match(html, /id="fullscreenExitPanel"[^>]*hidden/);
+  assert.match(html, /id="fullscreenExitOverlay"[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(html, /fullscreenExitPanel|fullscreenExitRevealBtn/);
   assert.match(html, /id="fullscreenExitStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
-  assert.match(html, /id="fullscreenExitRevealBtn"[^>]*aria-controls="fullscreenExitPanel"[^>]*aria-expanded="false"/);
 
   assert.match(css, /html:fullscreen body\.fullscreen-active #statusBar,\s*html:fullscreen body\.fullscreen-active #chromeDocks\s*\{[\s\S]*?visibility:\s*hidden[\s\S]*?pointer-events:\s*none/);
   assert.match(css, /html:fullscreen body\.fullscreen-active:not\(\.mobile-layout-managed\):not\(\.mobile-input-visible\) \.viewer-container\s*\{[\s\S]*?height:\s*100vh[\s\S]*?height:\s*100dvh/);
@@ -323,27 +327,20 @@ test('fullscreen chrome hides independently while exit overlay stays interactive
 
   const overlay = getBlock('.fullscreen-exit-overlay');
   assert.match(overlay, /position:\s*fixed/);
-  assert.match(overlay, /inset:\s*0/);
+  assert.match(overlay, /top:\s*0/);
+  assert.match(overlay, /right:\s*0/);
+  assert.match(overlay, /min-height:\s*calc\([^;]*env\(safe-area-inset-top/);
   assert.match(overlay, /z-index:\s*400/);
   assert.match(overlay, /pointer-events:\s*none/);
   assert.match(css, /html:fullscreen body\.fullscreen-active \.fullscreen-exit-overlay\s*\{[\s\S]*?visibility:\s*visible/);
 
-  const reveal = css.match(/\.fullscreen-exit-reveal\s*\{([^}]*)\}/)?.[1] || '';
-  assert.match(reveal, /position:\s*fixed/);
-  assert.match(reveal, /top:\s*calc\([^;]*env\(safe-area-inset-top/);
-  assert.match(reveal, /right:\s*calc\([^;]*env\(safe-area-inset-right/);
-  assert.match(reveal, /min-width:\s*var\(--touch-min\)/);
-  assert.match(reveal, /min-height:\s*var\(--touch-min\)/);
-  assert.match(css, /\.fullscreen-exit-reveal,\s*\.fullscreen-exit-panel\s*\{[^}]*pointer-events:\s*auto/);
+  assert.doesNotMatch(css, /fullscreen-exit-reveal|fullscreen-exit-panel|FULLSCREEN_EXIT_REVEAL/);
 
   const exitButton = getBlock('.fullscreen-exit-btn');
   assert.match(exitButton, /min-width:\s*var\(--touch-min\)/);
   assert.match(exitButton, /min-height:\s*var\(--touch-min\)/);
   assert.match(exitButton, /pointer-events:\s*auto/);
-  assert.match(css, /\.fullscreen-exit-panel\s*\{[\s\S]*?top:\s*calc\([^;]*env\(safe-area-inset-top/);
-  assert.match(css, /\.fullscreen-exit-panel\s*\{[\s\S]*?right:\s*calc\([^;]*env\(safe-area-inset-right/);
-  assert.match(css, /\.fullscreen-exit-panel\[hidden\]\s*\{[^}]*display:\s*none/);
-  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.fullscreen-exit-reveal[\s\S]*?\.fullscreen-exit-panel/);
+  assert.match(css, /\.fullscreen-exit-overlay\[hidden\]\s*\{[^}]*display:\s*none/);
 });
 
 test('managed fullscreen without the mobile text dock fills from viewer top to viewport', () => {

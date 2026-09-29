@@ -240,8 +240,6 @@ function makeHarness({ requestFullscreen, exitFullscreen } = {}) {
   document.getElementById('chromeDocks');
   document.getElementById('terminalPanel');
   document.getElementById('fullscreenExitOverlay');
-  document.getElementById('fullscreenExitPanel');
-  document.getElementById('fullscreenExitRevealBtn');
   document.getElementById('fullscreenExitStatus');
   video.focus = () => {
     videoFocusCount += 1;
@@ -340,55 +338,30 @@ test('fullscreenchange synchronizes immersive chrome without reusing chrome stat
   assert.deepEqual(h.chromeLayoutCalls.recalculate, []);
 });
 
-test('fullscreen edge reveal uses an isolated four second panel lifecycle', async () => {
+test('fullscreen shows one direct exit button with no reveal timer', async () => {
   const h = makeHarness();
   h.context.__UI.setupControlButtons();
-  h.chromeLayoutCalls.setFullscreenActive.length = 0;
-  h.chromeLayoutCalls.recalculate.length = 0;
   h.document.fullscreenElement = h.document.documentElement;
   h.dispatchDocument('fullscreenchange');
 
-  const panel = h.elements.get('fullscreenExitPanel');
-  const revealButton = h.elements.get('fullscreenExitRevealBtn');
-  assert.equal(panel.hidden, false);
-  assert.equal(revealButton.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(h.timerDelays, [4000]);
+  const overlay = h.elements.get('fullscreenExitOverlay');
+  const exitButton = h.elements.get('exitFullscreenBtn');
+  assert.equal(overlay.hidden, false);
+  assert.equal(overlay.getAttribute('aria-hidden'), 'false');
+  assert.equal(h.pendingTimerCount, 0);
 
-  h.flushTimers();
-  assert.equal(panel.hidden, true);
-  assert.equal(revealButton.getAttribute('aria-expanded'), 'false');
-
-  const pointerDown = h.pointerDown('fullscreenExitRevealBtn');
-  assert.equal(pointerDown.prevented, true);
+  const pointerDown = h.pointerDown('exitFullscreenBtn');
   assert.equal(pointerDown.stopped, true);
-  assert.equal(panel.hidden, false);
   assert.equal(h.videoFocusCount, 0);
 
-  const click = await h.click('fullscreenExitRevealBtn');
+  const click = await h.click('exitFullscreenBtn');
   assert.equal(click.prevented, true);
   assert.equal(click.stopped, true);
-  assert.equal(panel.hidden, false);
-  assert.equal(h.videoFocusCount, 0);
+  assert.equal(h.exitCount, 1);
+  assert.equal(h.document.fullscreenElement, null);
 });
 
-test('fullscreen reveal handle focus reopens the hidden exit panel', () => {
-  const h = makeHarness();
-  h.context.__UI.setupControlButtons();
-  h.document.fullscreenElement = h.document.documentElement;
-  h.dispatchDocument('fullscreenchange');
-  h.flushTimers();
-
-  const panel = h.elements.get('fullscreenExitPanel');
-  const revealButton = h.elements.get('fullscreenExitRevealBtn');
-  revealButton.focus();
-
-  assert.equal(h.document.activeElement, revealButton);
-  assert.equal(panel.hidden, false);
-  assert.equal(revealButton.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(h.timerDelays, [4000]);
-});
-
-test('fullscreen reveal exit preserves Terminal, mobile editor, and lease-loss focus', async () => {
+test('fullscreen direct exit preserves Terminal, mobile editor, and lease-loss focus', async () => {
   const scenarios = [
     {
       name: 'mobile editor',
@@ -424,7 +397,6 @@ test('fullscreen reveal exit preserves Terminal, mobile editor, and lease-loss f
     h.dispatchDocument('fullscreenchange');
     const focused = scenario.prepare(h);
 
-    h.pointerDown('fullscreenExitRevealBtn');
     const exitEvent = await h.click('exitFullscreenBtn');
 
     assert.equal(exitEvent.stopped, true, `${scenario.name} exit must stay out of global input handling`);
@@ -434,7 +406,7 @@ test('fullscreen reveal exit preserves Terminal, mobile editor, and lease-loss f
   }
 });
 
-test('fullscreen exit API failures announce in both status surfaces and keep the panel open', async () => {
+test('fullscreen exit API failures announce in both status surfaces and keep the button visible', async () => {
   const cases = [
     {
       label: 'missing',
@@ -464,11 +436,11 @@ test('fullscreen exit API failures announce in both status surfaces and keep the
     assert.match(h.elements.get('fullscreenStatus').textContent, /不支持全屏，可继续操作/);
     assert.equal(h.elements.get('fullscreenExitStatus').hidden, false);
     assert.match(h.elements.get('fullscreenExitStatus').textContent, /不支持全屏，可继续操作/);
-    assert.equal(h.elements.get('fullscreenExitPanel').hidden, false, `${label} API must keep panel visible`);
+    assert.equal(h.elements.get('fullscreenExitOverlay').hidden, false, `${label} API must keep exit button visible`);
   }
 });
 
-test('fullscreenchange exit clears reveal timer and restores only UI-owned inert state', () => {
+test('fullscreenchange exit hides the direct button and restores only UI-owned inert state', () => {
   const h = makeHarness();
   h.context.__UI.setupControlButtons();
   h.chromeLayoutCalls.setFullscreenActive.length = 0;
@@ -482,7 +454,7 @@ test('fullscreenchange exit clears reveal timer and restores only UI-owned inert
   h.dispatchDocument('fullscreenchange');
   assert.equal(statusBar.inert, true);
   assert.equal(chromeDocks.inert, true);
-  assert.equal(h.pendingTimerCount, 1);
+  assert.equal(h.pendingTimerCount, 0);
 
   h.document.fullscreenElement = null;
   h.dispatchDocument('fullscreenchange');
@@ -490,8 +462,8 @@ test('fullscreenchange exit clears reveal timer and restores only UI-owned inert
   assert.equal(h.document.body.classList.contains('fullscreen-active'), false);
   assert.equal(h.document.body.classList.contains('controls-hidden'), true);
   assert.equal(h.document.body.classList.contains('chrome-idle'), true);
-  assert.equal(h.elements.get('fullscreenExitPanel').hidden, true);
-  assert.equal(h.elements.get('fullscreenExitRevealBtn').getAttribute('aria-expanded'), 'false');
+  assert.equal(h.elements.get('fullscreenExitOverlay').hidden, true);
+  assert.equal(h.elements.get('fullscreenExitOverlay').getAttribute('aria-hidden'), 'true');
   assert.equal(h.pendingTimerCount, 0);
   assert.equal(statusBar.inert, true);
   assert.equal(statusBar.hasAttribute('inert'), true);
@@ -501,7 +473,7 @@ test('fullscreenchange exit clears reveal timer and restores only UI-owned inert
   assert.deepEqual(h.chromeLayoutCalls.recalculate, []);
 
   h.flushTimers();
-  assert.equal(h.elements.get('fullscreenExitPanel').hidden, true);
+  assert.equal(h.elements.get('fullscreenExitOverlay').hidden, true);
 });
 
 test('fullscreen uses documentElement and fullscreenchange preserves mobile focus', async () => {
@@ -519,7 +491,7 @@ test('fullscreen uses documentElement and fullscreenchange preserves mobile focu
   h.dispatchDocument('fullscreenchange');
   assert.equal(h.videoFocusCount, 0);
   assert.equal(h.document.activeElement, field);
-  assert.equal(h.fullscreenButton.textContent, '退出全屏');
+  assert.equal(h.fullscreenButton.textContent, '全屏');
   assert.equal(h.context.document.body.classList.contains('fullscreen-active'), true);
 });
 
@@ -535,7 +507,7 @@ test('non-root fullscreen never activates immersive chrome when the root target 
   assert.equal(h.fullscreenButton.textContent, '全屏');
   assert.equal(h.elements.get('statusBar').inert, false);
   assert.equal(h.elements.get('chromeDocks').inert, false);
-  assert.equal(h.elements.get('fullscreenExitPanel').hidden, true);
+  assert.equal(h.elements.get('fullscreenExitOverlay').hidden, true);
 });
 
 test('fullscreen overlay events do not reach the modeled global remote-input listener', async () => {
@@ -550,8 +522,6 @@ test('fullscreen overlay events do not reach the modeled global remote-input lis
   h.dispatchDocument('fullscreenchange');
   h.flushTimers();
 
-  h.pointerDown('fullscreenExitRevealBtn');
-  await h.click('fullscreenExitRevealBtn');
   await h.click('exitFullscreenBtn');
 
   assert.deepEqual(h.remoteInputEvents, []);

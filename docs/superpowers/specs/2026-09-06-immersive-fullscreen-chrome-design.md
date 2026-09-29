@@ -4,6 +4,15 @@
 状态：Task 1–3 已实施；Task 4 已提交（完整 SHA `0a5e5caf1d53b3a82d24110c58649220b8982ab6`），并在 Task 2 的 viewport 修复提交 `8682589` 后通过 12/12 场景的 offline Chromium、Node wrapper、Viewer 全量与 Signal build/test。真实设备、WebKit、Quartz、公网与 live watcher 仍为 NOT RUN；详见 Task 4 report。
 关联：docs/superpowers/specs/2026-09-06-mobile-input-interaction-remediation-design.md §8（其中退出按钮位于状态栏的放置方案由本文取代；document-root、焦点与失败处理约束保留）
 
+> **Superseded by the 2026-09-30 Viewer interaction optimization design.** The
+> document-level fullscreen target, geometry, inert handling, focus protection,
+> and failure semantics in this historical design remain normative. Its
+> reveal handle, expandable exit panel, and four-second reveal timer are
+> superseded by `docs/superpowers/specs/2026-09-30-viewer-interaction-optimization-design.md`:
+> fullscreen now keeps one directly visible `exitFullscreenBtn` in the safe
+> area and exits in a single click. The historical DOM/CSS and acceptance
+> evidence below is retained for traceability and is not a current UI contract.
+
 ## 1. 问题与目标
 
 当前 Viewer 进入 document.documentElement 全屏后，只会写入 body.fullscreen-active。固定顶部 #statusBar 和底部 #chromeDocks 仍可见，且 --chrome-top 仍保留状态栏高度，画面无法真正吃满可视区。现有 #exitFullscreenBtn 位于 #statusBar .status-actions，所以直接隐藏顶部栏会连同唯一退出入口一起隐藏。

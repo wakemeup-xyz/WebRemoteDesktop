@@ -17,13 +17,10 @@
 </head>
 <body>
   <div id="mobileSafeAreaProbe" aria-hidden="true"></div>
-  <div id="fullscreenExitOverlay" class="fullscreen-exit-overlay" aria-label="全屏控制">
-    <button id="fullscreenExitRevealBtn" class="fullscreen-exit-reveal" type="button"
-            aria-label="显示退出全屏入口" aria-controls="fullscreenExitPanel" aria-expanded="false">退出</button>
-    <div id="fullscreenExitPanel" class="fullscreen-exit-panel" hidden>
-      <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button">退出全屏</button>
-      <span id="fullscreenExitStatus" class="fullscreen-exit-status" role="status" aria-live="polite" hidden></span>
-    </div>
+  <div id="fullscreenExitOverlay" class="fullscreen-exit-overlay" aria-label="全屏控制" aria-hidden="true">
+    <button id="exitFullscreenBtn" class="fullscreen-exit-btn" type="button"
+            aria-label="退出全屏">退出全屏</button>
+    <span id="fullscreenExitStatus" class="fullscreen-exit-status" role="status" aria-live="polite" hidden></span>
   </div>
   <div id="inputRecoveryNotice" class="input-recovery-notice" aria-hidden="true" hidden>
     <div id="inputRecoveryNoticeStatus" class="input-recovery-status" role="status" aria-live="polite" aria-busy="false">
@@ -39,25 +36,24 @@
   <div id="statusBar" class="status-bar">
     <div class="view-tabs" role="tablist" aria-label="Viewer workspace">
       <button id="desktopTabBtn" class="view-tab-btn active" type="button" role="tab" aria-controls="desktopPanel" aria-selected="true">桌面</button>
-      <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control role="tab" aria-controls="terminalPanel" aria-selected="false">Terminal</button>
+      <button id="terminalTabBtn" class="view-tab-btn" type="button" data-core-control role="tab" aria-controls="terminalPanel" aria-selected="false">终端</button>
     </div>
-    <span id="connectionStatus" class="status disconnected">未连接</span>
+    <span id="connectionStatus" class="status idle">未开始</span>
     <div class="status-metrics" aria-label="链路指标">
       <span id="resolutionDisplay" class="status-metric" title="分辨率">-</span>
-      <span id="fpsDisplay" class="status-metric" title="帧率">0 FPS</span>
-      <span id="latencyDisplay" class="status-metric" title="网络 RTT 与播放缓冲">RTT - ms</span>
-      <span id="candidateDisplay" class="status-metric" title="候选链路">链路 -</span>
+      <span id="fpsDisplay" class="status-metric" title="帧率">未开始</span>
+      <span id="latencyDisplay" class="status-metric" title="网络 RTT 与播放缓冲">未开始</span>
+      <span id="candidateDisplay" class="status-metric" title="候选链路">未开始</span>
     </div>
     <span id="keyInputDisplay" class="key-input-display" title="远程键盘状态">键盘：未激活</span>
     <span id="controlStatus" class="control-status">只读</span>
     <div class="status-actions">
       <span id="fullscreenStatus" class="fullscreen-status" role="status" aria-live="polite" hidden></span>
-      <button id="toggleControlsBtn" class="control-btn" type="button" data-core-control>隐藏控件</button>
-      <button id="requestControlBtn" class="control-btn" data-core-control>请求控制</button>
-      <button id="textInputBtn" class="control-btn status-action-secondary" data-core-control>文本输入</button>
-      <button id="mobileTextInputBtn" class="control-btn status-action-secondary" type="button" hidden aria-pressed="false">移动键盘</button>
-      <button id="refreshBtn" class="control-btn" data-core-control>刷新画面</button>
-      <button id="diagBtn" class="control-btn status-action-secondary" type="button" disabled aria-busy="true" title="诊断组件加载中…">诊断日志</button>
+      <button id="toggleControlsBtn" class="control-btn secondary-control" type="button" data-core-control aria-label="隐藏控件">隐藏控件</button>
+      <button id="requestControlBtn" class="control-btn primary-control" data-primary-action data-core-control aria-label="请求控制">请求控制</button>
+      <button id="textInputBtn" class="control-btn status-action-secondary primary-control" data-primary-action data-core-control aria-label="文本输入">文本输入</button>
+      <button id="mobileTextInputBtn" class="control-btn status-action-secondary primary-control" type="button" hidden aria-pressed="false" aria-label="移动键盘">移动键盘</button>
+      <button id="refreshBtn" class="control-btn primary-control" data-primary-action data-core-control aria-label="刷新画面">刷新画面</button>
     </div>
   </div>
   
@@ -83,24 +79,37 @@
 
     <div id="chromeDocks" class="chrome-docks" aria-label="桌面控件">
       <div class="action-bar">
-        <button class="action-btn" data-action="enter" data-core-control data-pin="always">回车</button>
-        <button class="action-btn" data-action="up" data-core-control>上</button>
-        <button class="action-btn" data-action="down" data-core-control>下</button>
-        <button class="action-btn" data-action="left" data-core-control>左</button>
-        <button class="action-btn" data-action="right" data-core-control>右</button>
-        <button id="keyboardModeBtn" class="action-btn" title="切换 Windows / Mac 键盘映射" data-core-control data-pin="always">键盘：-</button>
-        <button class="action-btn" data-action="copy" data-core-control>复制</button>
-        <button class="action-btn" data-action="paste" data-core-control>粘贴</button>
-        <button class="action-btn" data-action="cut" data-core-control>剪切</button>
-        <button class="action-btn" data-action="undo" data-core-control>撤销</button>
-        <button class="action-btn" data-action="selectAll" data-core-control>全选</button>
-        <button class="action-btn" data-action="save" data-core-control>保存</button>
-        <button class="action-btn" data-action="find" data-core-control>查找</button>
-        <button class="action-btn" data-action="showDock" data-core-control>显示程序坞</button>
-        <button class="action-btn" data-action="screenshot" data-core-control>截屏</button>
-        <button class="action-btn" data-action="switchInputMethod" data-core-control>切换输入法</button>
-        <button id="moreActionsBtn" class="action-btn action-more" type="button" data-core-control aria-expanded="false" aria-controls="moreActionsMenu">更多</button>
-        <div id="moreActionsMenu" class="more-actions-menu" hidden role="menu"></div>
+        <button class="action-btn" data-action="enter" data-more-group="input" data-core-control>回车</button>
+        <button class="action-btn" data-action="up" data-more-group="input" data-core-control>上</button>
+        <button class="action-btn" data-action="down" data-more-group="input" data-core-control>下</button>
+        <button class="action-btn" data-action="left" data-more-group="input" data-core-control>左</button>
+        <button class="action-btn" data-action="right" data-more-group="input" data-core-control>右</button>
+        <button id="keyboardModeBtn" class="action-btn secondary-control" data-more-group="input" title="切换 Windows / Mac 键盘映射" data-core-control>键盘：-</button>
+        <button class="action-btn" data-action="copy" data-more-group="input" data-core-control>复制</button>
+        <button class="action-btn" data-action="paste" data-more-group="input" data-core-control>粘贴</button>
+        <button class="action-btn" data-action="cut" data-more-group="input" data-core-control>剪切</button>
+        <button class="action-btn" data-action="undo" data-more-group="input" data-core-control>撤销</button>
+        <button class="action-btn" data-action="selectAll" data-more-group="input" data-core-control>全选</button>
+        <button class="action-btn" data-action="save" data-more-group="input" data-core-control>保存</button>
+        <button class="action-btn" data-action="find" data-more-group="input" data-core-control>查找</button>
+        <button class="action-btn" data-action="showDock" data-more-group="display" data-core-control>显示程序坞</button>
+        <button class="action-btn" data-action="screenshot" data-more-group="diagnostics" data-core-control>截屏</button>
+        <button class="action-btn" data-action="switchInputMethod" data-more-group="input" data-core-control>切换输入法</button>
+        <button id="moreActionsBtn" class="action-btn action-more" type="button" data-core-control aria-expanded="false" aria-controls="moreActionsMenu" aria-label="更多操作">更多</button>
+        <div id="moreActionsMenu" class="more-actions-menu" hidden role="menu" aria-label="更多操作">
+          <div class="more-actions-group" data-more-group="input" role="group" aria-label="输入">
+            <span class="more-actions-heading" aria-hidden="true">输入</span>
+          </div>
+          <div class="more-actions-group" data-more-group="display" role="group" aria-label="显示">
+            <span class="more-actions-heading" aria-hidden="true">显示</span>
+          </div>
+          <div class="more-actions-group" data-more-group="network" role="group" aria-label="网络">
+            <span class="more-actions-heading" aria-hidden="true">网络</span>
+          </div>
+          <div class="more-actions-group" data-more-group="diagnostics" role="group" aria-label="诊断">
+            <span class="more-actions-heading" aria-hidden="true">诊断</span>
+          </div>
+        </div>
       </div>
 
       <div id="mobileKeySurface" aria-label="移动远程控制按键">
@@ -133,25 +142,26 @@
       </div>
 
       <div class="control-bar">
-        <button id="scaleBtn" class="control-btn" data-core-control>
+        <button id="scaleBtn" class="control-btn secondary-control" data-more-group="display" data-core-control aria-label="缩放">
           缩放：自适应
         </button>
-        <button id="resolutionBtn" class="control-btn" data-core-control>
+        <button id="resolutionBtn" class="control-btn secondary-control" data-more-group="display" data-core-control aria-label="分辨率设置">
           分辨率设置
         </button>
-        <button id="fullscreenBtn" class="control-btn" data-core-control aria-pressed="false">
+        <button id="fullscreenBtn" class="control-btn primary-control" data-primary-action data-core-control aria-label="全屏" aria-pressed="false">
           全屏
         </button>
-        <button id="networkModeBtn" class="control-btn" data-core-control>
-          网络：自动
+        <button id="networkModeBtn" class="control-btn secondary-control" data-more-group="network" data-core-control aria-label="网络">
+          网络
         </button>
-        <button id="portSearchBtn" class="control-btn" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search">
+        <button id="portSearchBtn" class="control-btn secondary-control" data-more-group="network" type="button" disabled aria-busy="true" title="端口搜索组件加载中…" data-wrd-operator-tool="port-search" aria-label="搜索端口">
           搜索端口
         </button>
-        <button id="pauseBtn" class="control-btn" data-core-control>
+        <button id="diagBtn" class="control-btn secondary-control" data-more-group="diagnostics" type="button" disabled aria-busy="true" title="诊断组件加载中…" aria-label="诊断日志">诊断日志</button>
+        <button id="pauseBtn" class="control-btn primary-control" data-primary-action data-core-control aria-label="暂停">
           暂停
         </button>
-        <button id="disconnectBtn" class="control-btn danger" data-core-control>
+        <button id="disconnectBtn" class="control-btn primary-control danger" data-primary-action data-core-control aria-label="断开连接">
           断开连接
         </button>
       </div>
@@ -160,7 +170,7 @@
 
   <section id="terminalPanel" class="terminal-panel hidden" hidden role="tabpanel" aria-labelledby="terminalTabBtn" aria-label="Web terminal">
     <form id="terminalAuthForm" class="terminal-auth-form">
-      <input id="terminalAdminPassword" type="password" autocomplete="current-password" placeholder="Admin password" aria-label="Admin password">
+      <input id="terminalAdminPassword" type="password" autocomplete="current-password" placeholder="管理员密码" aria-label="管理员密码">
       <button id="terminalAuthBtn" class="terminal-primary-btn" type="submit">授权</button>
     </form>
     <div class="terminal-toolbar">
@@ -171,7 +181,7 @@
       <button id="terminalCloseBtn" class="terminal-primary-btn danger hidden" type="button">关闭会话</button>
     </div>
     <div class="terminal-pool-note">共享控制台：输入会进入共享 PTY，所有观察者可见；离开只会 detach，关闭会话才会销毁 shell。</div>
-    <div class="terminal-transport-row" aria-label="Terminal transport">
+    <div class="terminal-transport-row" aria-label="终端传输">
       <label for="terminalTransportSelect">传输</label>
       <select id="terminalTransportSelect" class="terminal-transport-select">
         <option value="socketio" selected>Socket.IO（默认）</option>
@@ -192,7 +202,7 @@
         spellcheck="false"
         autocomplete="off"
         placeholder="输入命令；Shift+Enter 换行，Enter 发送"
-        aria-label="Terminal command editor"
+        aria-label="终端命令编辑器"
         aria-describedby="terminalComposerHint"
         disabled
       ></textarea>
@@ -238,16 +248,16 @@
     </div>
   </div>
 
-  <div id="networkAdvisor" class="network-advisor" aria-live="polite" aria-expanded="true" role="status">
+  <div id="networkAdvisor" class="network-advisor" aria-live="polite" aria-expanded="false" aria-hidden="true" role="status" hidden>
     <button type="button" id="networkAdvisorHandle" class="network-advisor__handle" aria-label="展开或收起网络状态">
-      <span id="networkAdvisorHandleLabel" class="network-advisor__handle-label">自动</span>
+      <span id="networkAdvisorHandleLabel" class="network-advisor__handle-label">网络</span>
     </button>
     <div class="network-advisor__body">
       <div class="network-advisor__top">
-        <span id="networkAdvisorTitle">网络模式：自动</span>
-        <span id="networkAdvisorState" class="network-advisor__state">检测中</span>
+        <span id="networkAdvisorTitle">当前链路</span>
+        <span id="networkAdvisorState" class="network-advisor__state">未开始</span>
       </div>
-      <p id="networkAdvisorText">自动优先直连，失败时使用可用中继。</p>
+      <p id="networkAdvisorText">连接后显示链路建议。</p>
     </div>
   </div>
 

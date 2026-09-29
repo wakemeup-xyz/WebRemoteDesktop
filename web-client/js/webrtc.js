@@ -4787,6 +4787,20 @@ if (this.tunnelLastObjectUrl) {
     const handleLabel = document.getElementById('networkAdvisorHandleLabel');
     const turnStatus = document.getElementById('networkTurnStatus');
 
+    // Network guidance is meaningful only once a connection attempt has
+    // reached a session phase.  Boot-time config and mode updates must not
+    // place a diagnostic card over the landing CTA.
+    const advisorPhaseVisible = ['connected', 'media-stalled', 'disconnected'].includes(this.uiPhase);
+    if (advisor && !advisorPhaseVisible) {
+      this.clearNetworkAdvisorCollapseTimer();
+      advisor.classList.remove('visible', 'collapsed', 'warning', 'danger');
+      advisor.hidden = true;
+      advisor.setAttribute('aria-hidden', 'true');
+      advisor.setAttribute('aria-expanded', 'false');
+      this._networkAdvisorLastSignature = '';
+      this._networkAdvisorSeverity = '';
+    }
+
     if (modeBtn) {
       modeBtn.textContent = `网络：${mode.label}`;
     }
@@ -4799,17 +4813,22 @@ if (this.tunnelLastObjectUrl) {
     if (!advisor || !title || !state || !text) {
       return;
     }
+    if (!advisorPhaseVisible) {
+      // Keep mode/turn status synchronized above, but leave the advisor out
+      // of the idle, signaling, and first-frame landing states.  The caller
+      // will render the same content once a real session phase is reached.
+      return;
+    }
 
     const recommendation = this.recommendationState;
     const genericMessage = message === '网络模式已就绪' || message === '网络模式已切换，正在重连...';
     const baseMessage = (!message || genericMessage)
       ? (this.getDefaultNetworkGuidance() || message || mode.hint)
       : message;
-    const detail = [
-      this.getPublicEntryUrl() ? `固定入口：${this.getPublicEntryUrl()}。` : '',
-      baseMessage,
-      this.getRecommendationMessage(),
-    ].filter(Boolean).join(' ');
+    // Keep local URLs, candidate addresses, and transport implementation
+    // names in the network/diagnostic panels.  The compact advisor speaks in
+    // terms of the current path, suggested action, and reason.
+    const detail = [baseMessage, this.getRecommendationMessage()].filter(Boolean).join(' ');
     const effectiveSeverity = severity || recommendation?.severity || (this.networkMode === 'relay' && !this.hasTurnConfigured() ? 'warning' : '');
     const stateLabel = recommendation?.nextSuggestedMode
       ? `建议：${this.networkModes[recommendation.nextSuggestedMode]?.label || recommendation.nextSuggestedMode}`
@@ -4838,10 +4857,13 @@ if (this.tunnelLastObjectUrl) {
     advisor.classList.toggle('warning', effectiveSeverity === 'warning');
     advisor.classList.toggle('danger', effectiveSeverity === 'danger');
     state.classList.toggle('recommended', Boolean(recommendation?.nextSuggestedMode));
+    advisor.hidden = false;
+    advisor.setAttribute('aria-hidden', 'false');
     advisor.classList.add('visible');
 
     const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 768px)').matches;
-    const shouldExpand = (firstShow
+    const meaningfulWarning = effectiveSeverity === 'warning' || effectiveSeverity === 'danger';
+    const shouldExpand = ((firstShow && meaningfulWarning)
       || severityUp
       || (meaningfulChange && (effectiveSeverity === 'warning' || effectiveSeverity === 'danger'
         || genericMessage || !message
@@ -4851,6 +4873,10 @@ if (this.tunnelLastObjectUrl) {
     if (shouldExpand) {
       this._networkAdvisorPinned = false;
       this.expandNetworkAdvisor({ reschedule: true });
+    } else if (firstShow) {
+      // A healthy first connected update is a compact status chip.  Only a
+      // warning/danger or an explicit user interaction opens the full card.
+      this.collapseNetworkAdvisor();
     } else if (narrow && (effectiveSeverity === 'info' || effectiveSeverity === '')) {
       this.collapseNetworkAdvisor();
     } else if (!advisor.classList.contains('collapsed') && !this._networkAdvisorHover && !this._networkAdvisorPinned) {
@@ -6000,6 +6026,7 @@ function updateConnectionStatus(status) {
   statusEl.className = 'status ' + status;
   
   const statusText = {
+    idle: '未开始',
     connecting: '连接中',
     'media-pending': '正在出画',
     connected: '已连接',

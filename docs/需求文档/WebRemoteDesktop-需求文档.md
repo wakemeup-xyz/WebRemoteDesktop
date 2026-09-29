@@ -192,9 +192,9 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **输入恢复诊断**：按 `dom-received` → `gate` → `transport-send` → `ack`/`ack-timeout` → `lifecycle`/`recovery` 六阶段排查；DataChannel 输入绕过 Signal，不能以 Signal 无 relay 记录单独判定丢包。报告分别记录 Viewer enqueue、Host `applied`、业务 ACK 与 `visualFeedback`，不把它们混同为人眼效果
 - [x] **刷新画面**：手动断开并重连 WebRTC，用于画面卡顿时快速恢复；会取消进行中的手动端口搜索
 - [x] **搜索端口**：仅在 `auto` / `stun`、信令与 Host 在线，且当前 Viewer 为 ACTIVE controller 时可用；点击后变为「停止搜索」，最多 500 轮；状态区展示轮次与 Viewer/Host 数字端口（无 IP）；失去控制立即停止
-- [x] **全屏控制**：网页端提供全屏按钮，全屏元素内提供退出按钮，Esc 仍可用
-- [x] **顶栏与底部工具条**：顶栏高度与内容区起点绑定；非compact底栏保持既有布局，触控文本compact模式使用单行横滚键栏与更多浮层
-- [x] **Viewer Chrome 门禁**：连接前仅保留“开始学习助手”CTA；signaling、媒体待出画、已连接、媒体卡顿和断开阶段按 capability 门禁刷新、暂停、断开、分辨率、网络、Terminal 与桌面输入动作。控制租约仍由 WebRTC 真相维护，控制切换中 fail-closed。
+- [x] **全屏控制**：网页端提供全屏按钮；documentElement 全屏时右上安全区始终保留唯一、至少 44px 的“退出全屏”按钮，一次点击即可退出，Esc 仍可用。API 缺失或拒绝时保留普通视图、编辑焦点和失败提示。
+- [x] **顶栏与底部工具条**：顶栏高度与内容区起点绑定；已连接时第一层 Dock 只保留请求控制、文本输入、刷新、暂停/恢复、全屏和断开等主操作，缩放、分辨率、网络、端口、诊断和快捷键按输入/显示/网络/诊断分组进入“更多”；触控文本 compact 模式保持单行横滚键栏与 44px 命中区。
+- [x] **Viewer Chrome 门禁**：连接前仅保留“开始学习助手”CTA，并以“未开始”显示初始状态和指标；signaling、媒体待出画、已连接、媒体卡顿和断开阶段按 capability 门禁刷新、暂停、断开、分辨率、网络、Terminal 与桌面输入动作。控制租约仍由 WebRTC 真相维护，控制切换中 fail-closed；网络顾问仅在真实连接后显示。
 - [x] **Viewer 几何与空闲退避**：顶栏实际高度与画面/Terminal起点关联，非managed布局保留`dvh`/`vh`回退；touch桌面managed模式统一计算五个定位属性，不重复扣键盘占高。已连接且无菜单/弹窗/移动编辑状态时2.5秒无底部活动自动退避；移动文本visible/composing/pending/blocked暂停退避。
 - [x] **自动重连**：WebRTC ICE / PeerConnection 断开或失败后，Viewer 自动重建连接；自动/外网直连模式先降载和 ICE 恢复，自动恢复耗尽后明确失败，不自动切 TURN 或媒体 tunnel，也**不**自动启动 500 轮端口搜索
 - [x] **Host 控制面恢复**：Signal Server 重启后，Host 丢弃旧 Socket.IO client，重新登录获取新的 15 分钟 Host token 并自动注册；不得要求人工重启 Host
