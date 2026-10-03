@@ -567,6 +567,12 @@ find /tmp/wrd-diag -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | tail 
 
 重点字段是 `WRD_MEDIA_APPLY`、`WRD_ENCODER_RATE`、`WRD_ENCODER_SAMPLE`、`host_event_loop_lag`、`dc-error`、`ice-disconnected` 和 `control_reset_blocked`。固定 Relay policy 下，相同 fingerprint 的 `WRD_ENCODER_RATE` 应为有界 `no-op`；持续出现 `reopen-required`、critical event-loop lag 或 `pendingMouseReset` 时，停止继续调网络参数，先排查 Host 编码器和资源回收。
 
+### 信令短断线与上下文连续性（2026-10-04）
+
+Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂断线先等待 Socket.IO 自动恢复，页面从后台、休眠或网络切换回来时会复用现有 socket；媒体仍健康时保留现有 PeerConnection，只有媒体不健康才刷新 offer。手动断开和 viewer 被 supersede 不会触发自动恢复。
+
+快速滚动产生的 wheel 事件只保留 Host 聚合诊断，不应在 `back-debug.log` 中逐条出现 `mouse_input action=wheel` 或 `Input timing: type=mouse action=wheel`。如果仍出现大量逐条 wheel 日志，说明运行的是旧 Host，按 `scripts/restart-host.sh` 重载；如果同时看到 `aioice TransactionTimeout` 和 critical `host_event_loop_lag`，先降低输入日志与系统 CPU 争用，再判断 TURN 稳定性。
+
 启动日志会输出诊断持久化的 `enabled/disabled`、来源和目录。只有 `WRD_ENABLE_DIAG_PERSIST=1` 时才会把脱敏 bundle 写入 `/tmp/wrd-diag`；该目录只保存有限数量和期限的 JSON 文件，不包含密码、token、SDP 或原始输入正文。
 
 控制恢复保持 fail-closed：`Host 输入复位未确认，控制已安全锁定` 表示复位 ACK 尚未匹配当前 attempt、lease epoch 和 input id。不要绕过锁定；确认 Host 在线后等待有界重试，仍 blocked 时只重启本地 Signal/Host，绝不重启或重建 tunnel。

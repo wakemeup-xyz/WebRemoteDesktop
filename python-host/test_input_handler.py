@@ -980,3 +980,25 @@ def test_input_handler_logs_no_keyboard_values_or_mouse_coordinates(monkeypatch,
     assert "screen=(" not in text
     assert "keyboard_input action=keydown" in text
     assert "mouse_input action=down" in text
+
+
+def test_wheel_input_does_not_emit_per_event_info_logs(monkeypatch, caplog):
+    """High-frequency wheel samples stay observable through host aggregates."""
+    posted = []
+    monkeypatch.setattr(
+        input_handler,
+        "CGEventCreateScrollWheelEvent",
+        lambda *_args: {"event_type": input_handler.kCGEventScrollWheel},
+    )
+    monkeypatch.setattr(input_handler, "CGEventPost", lambda _tap, event: posted.append(event))
+
+    handler = InputHandler()
+    handler.monitor = type("Monitor", (), {"x": 0, "y": 0, "width": 1000, "height": 800})()
+    with caplog.at_level(logging.INFO, logger="input_handler"):
+        result = handler._handle_mouse("wheel", {"deltaX": 0, "deltaY": 120})
+
+    assert result is True
+    assert posted
+    text = "\n".join(record.getMessage() for record in caplog.records if record.name == "input_handler")
+    assert "mouse_input action=wheel" not in text
+    assert "Input timing: type=mouse action=wheel" not in text

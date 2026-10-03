@@ -459,6 +459,16 @@ const WebRTC = {
   _autoFailCount: 0,
   _iceRestartAttempts: 0,
   _reconnectAttempt: 0,
+  // A Socket.IO reconnect is independent from the WebRTC peer.  Keep a small
+  // supervisor so a transient signaling outage cannot leave a connected-looking
+  // peer with a dead control/session context forever.
+  _signalRecoveryTimer: null,
+  _signalRecoveryStartedAt: 0,
+  _signalRecoveryPending: false,
+  SIGNAL_RECOVERY_RETRY_MS: 1500,
+  SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
+  _pageLifecycleRecoveryBound: false,
+  _pageLifecycleHidden: false,
   _relayHardRefreshCount: 0,
   _rebuildingDc: false,
   _noRelayReceiveCount: 0,
@@ -3192,6 +3202,13 @@ const WebRTC = {
       this.renderPortSearchStatus();
       this.bindCurrentConnectionAttempt();
       this.replayMediaActivityIntent('socket-connect');
+      this.handleSignalingRecoveryConnected();
+    });
+
+    onCurrentSocket('connect_error', (error) => {
+      if (this._superseded || this.manualDisconnect) return;
+      console.warn('[RECOVERY] Signaling connect error:', error?.message || error || 'unknown');
+      this.scheduleSignalingRecovery('signal-connect-error');
     });
 
     onCurrentSocket('connected', (data) => {
@@ -3313,9 +3330,10 @@ const WebRTC = {
       } else {
         this.renderPortSearchStatus();
       }
-      if (this.networkMode === 'tunnel' && !this.manualDisconnect && !this._superseded) {
-        this.scheduleReconnect('signal-disconnected');
-      }
+      // All media modes depend on signaling for offers, lease recovery and
+      // media-activity acknowledgements. Tunnel used to recover here while
+      // Relay/STUN could remain stuck until a manual refresh.
+      this.scheduleSignalingRecovery('signal-disconnected');
     });
 
     onCurrentSocket('relay-frame', (data) => {
@@ -3599,7 +3617,57 @@ const WebRTC = {
       this.ensureMediaActiveIfVisible('visibility-visible');
       this.rebindActiveKeyboardLease('visibility-visible');
     });
+    // Visibility events cover ordinary tab switching.  pageshow/pagehide are
+    // needed for bfcache, mobile browser suspension, and OS sleep where the
+    // document can return visible while Socket.IO still owns a dead transport.
+    if (!this._pageLifecycleRecoveryBound) {
+      this._pageLifecycleRecoveryBound = true;
+      window.addEventListener?.('pagehide', (event) => {
+        this.handlePageLifecycle('pagehide', event);
+      });
+      window.addEventListener?.('pageshow', (event) => {
+        this.handlePageLifecycle('pageshow', event);
+      });
+      window.addEventListener?.('online', () => {
+        this.handlePageLifecycle('online');
+      });
+    }
     window.addEventListener?.('beforeunload', () => this.releaseControl('viewer-disconnect'));
+  },
+
+  handlePageLifecycle(kind = 'pageshow', _event = null) {
+    if (this.manualDisconnect || this._superseded) return false;
+    if (kind === 'pagehide') {
+      this._pageLifecycleHidden = true;
+      if (!this.socket?.connected) this.scheduleSignalingRecovery('pagehide');
+      return true;
+    }
+
+    this._pageLifecycleHidden = false;
+    if (kind === 'pageshow') {
+      this.ensureMediaActiveIfVisible('pageshow');
+      this.rebindActiveKeyboardLease('pageshow');
+    }
+
+    if (this.socket?.connected) {
+      if (this._signalRecoveryPending) this.handleSignalingRecoveryConnected();
+      return true;
+    }
+
+    // Prefer Socket.IO's existing manager so an in-flight backoff is reused;
+    // recreate only when the socket no longer exposes connect().
+    let started = false;
+    try {
+      if (this.socket && typeof this.socket.connect === 'function') {
+        this.socket.connect();
+        started = true;
+      }
+    } catch (error) {
+      console.warn('[RECOVERY] Failed to resume signaling socket:', error);
+    }
+    if (!started) this.createSignalingSocket(true);
+    this.scheduleSignalingRecovery(kind === 'online' ? 'network-online' : 'pageshow');
+    return true;
   },
 
   isControlResetBlocked() {
@@ -5517,6 +5585,69 @@ if (this.tunnelLastObjectUrl) {
     this.hideReconnectHud();
   },
 
+  clearSignalingRecovery() {
+    if (this._signalRecoveryTimer != null) {
+      clearTimeout(this._signalRecoveryTimer);
+      this._signalRecoveryTimer = null;
+    }
+    this._signalRecoveryStartedAt = 0;
+    this._signalRecoveryPending = false;
+  },
+
+  handleSignalingRecoveryConnected() {
+    if (!this._signalRecoveryPending || this.manualDisconnect || this._superseded) return false;
+    this.clearSignalingRecovery();
+
+    // The peer may have survived the signaling outage. Reuse it when media is
+    // still moving so reconnecting the control plane does not cause a visible
+    // black frame. A stale/closed peer gets a fresh attempt and offer.
+    const pcState = this.pc?.connectionState;
+    const peerHealthy = pcState === 'connected'
+      && (this.isInboundVideoHealthy(5000) || this.hasPaintedFrame === true);
+    if (!peerHealthy || !this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
+      this.refresh({ reason: 'signal-reconnected' });
+      return true;
+    }
+
+    this.ensureMediaActiveIfVisible('signal-reconnected');
+    this.replayMediaActivityIntent('signal-reconnected');
+    this.rebindActiveKeyboardLease('signal-reconnected');
+    this.syncDesktopInputGate();
+    return true;
+  },
+
+  scheduleSignalingRecovery(reason = 'signal-disconnected') {
+    if (this.manualDisconnect || this._superseded) return false;
+    this._signalRecoveryPending = true;
+    if (!this._signalRecoveryStartedAt) this._signalRecoveryStartedAt = Date.now();
+    if (this._signalRecoveryTimer != null) return true;
+
+    const elapsed = Date.now() - this._signalRecoveryStartedAt;
+    const remaining = Math.max(0, this.SIGNAL_RECOVERY_MAX_WAIT_MS - elapsed);
+    const delay = Math.min(this.SIGNAL_RECOVERY_RETRY_MS, remaining || this.SIGNAL_RECOVERY_RETRY_MS);
+    this._signalRecoveryTimer = setTimeout(() => {
+      this._signalRecoveryTimer = null;
+      if (this.manualDisconnect || this._superseded) return;
+      if (this.socket?.connected) {
+        this.handleSignalingRecoveryConnected();
+        return;
+      }
+
+      const waited = Date.now() - this._signalRecoveryStartedAt;
+      if (waited >= this.SIGNAL_RECOVERY_MAX_WAIT_MS) {
+        // Socket.IO's manager can remain attached to a dead transport after a
+        // laptop sleep or proxy reset. Recreate only the signaling socket;
+        // the current media context is retained until the new socket connects.
+        console.warn('[RECOVERY] Recreating signaling socket after %sms reason=%s', waited, reason);
+        this.createSignalingSocket(true);
+        this._signalRecoveryStartedAt = Date.now();
+      }
+      this.scheduleSignalingRecovery(reason);
+    }, delay);
+    this._signalRecoveryTimer?.unref?.();
+    return true;
+  },
+
   async refresh(options = {}) {
     let reason = null;
     if (typeof options === 'string') {
@@ -5528,6 +5659,7 @@ if (this.tunnelLastObjectUrl) {
     if (this._superseded) {
       return;
     }
+    this.clearSignalingRecovery();
     this.clearRefreshDcWaitTimer();
     if (this.isForcedRefreshReason(reason)) {
       if (this._refreshSettleTimer) {
@@ -5842,6 +5974,7 @@ if (this.tunnelLastObjectUrl) {
 
   disconnect() {
     this.markRefreshSettled('disconnect');
+    this.clearSignalingRecovery();
     this.stopPortSearch('disconnect');
     this.manualDisconnect = true;
     this.offerInProgress = false;
@@ -5898,6 +6031,7 @@ if (this.tunnelLastObjectUrl) {
     this.manualDisconnect = true;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.clearSignalingRecovery();
     this.clearRefreshDcWaitTimer();
 
     try {

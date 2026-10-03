@@ -2181,6 +2181,102 @@ test('signaling disconnect in tunnel mode schedules same-page recovery even afte
   assert.equal(refreshCalls, 1);
 });
 
+test('signaling disconnect in relay mode also waits for the socket before refreshing media', async () => {
+  const handlers = new Map();
+  let scheduledRecovery = null;
+  const socket = {
+    connected: true,
+    on(event, callback) {
+      handlers.set(event, callback);
+    },
+    emit() {},
+    disconnect() {},
+    connect() {},
+  };
+  const { WebRTC } = loadWebRTC({
+    setTimeout(callback) {
+      scheduledRecovery = callback;
+      return 1;
+    },
+    clearTimeout() {},
+  });
+
+  let refreshCalls = 0;
+  WebRTC.networkMode = 'relay';
+  WebRTC.socket = socket;
+  WebRTC.refresh = () => { refreshCalls += 1; };
+  WebRTC.setupSocketListeners();
+
+  socket.connected = false;
+  handlers.get('disconnect')('transport close');
+  assert.equal(WebRTC._signalRecoveryPending, true);
+  scheduledRecovery();
+  assert.equal(refreshCalls, 0);
+
+  socket.connected = true;
+  await handlers.get('connect')();
+  assert.equal(WebRTC._signalRecoveryPending, false);
+  assert.equal(refreshCalls, 1);
+});
+
+test('direct signaling recovery is armed while manual disconnect stays inert', () => {
+  let timerCalls = 0;
+  const { WebRTC } = loadWebRTC({
+    setTimeout() {
+      timerCalls += 1;
+      return 1;
+    },
+    clearTimeout() {},
+  });
+
+  WebRTC.networkMode = 'stun';
+  WebRTC.manualDisconnect = false;
+  assert.equal(WebRTC.scheduleSignalingRecovery('direct-disconnect'), true);
+  assert.equal(timerCalls, 1);
+
+  WebRTC.clearSignalingRecovery();
+  WebRTC.manualDisconnect = true;
+  assert.equal(WebRTC.scheduleSignalingRecovery('manual-disconnect'), false);
+  assert.equal(WebRTC._signalRecoveryPending, false);
+});
+
+test('pageshow resumes a disconnected signaling socket and arms recovery', () => {
+  const listeners = {};
+  let connectCalls = 0;
+  const socket = {
+    connected: false,
+    connect() { connectCalls += 1; },
+    on() {},
+    emit() {},
+    disconnect() {},
+  };
+  const { WebRTC } = loadWebRTC({
+    document: {
+      hidden: false,
+      body: makeElement(),
+      addEventListener() {},
+      getElementById() { return makeElement(); },
+      querySelector: () => null,
+    },
+    window: {
+      location: { origin: 'http://127.0.0.1:8080' },
+      addEventListener(type, callback) { listeners[type] = callback; },
+    },
+    setTimeout() { return 1; },
+    clearTimeout() {},
+  });
+
+  WebRTC.socket = socket;
+  WebRTC.manualDisconnect = false;
+  WebRTC.bindControlLifecycle();
+  listeners.pagehide({ persisted: true });
+  listeners.pageshow({ persisted: true });
+
+  assert.equal(connectCalls, 1);
+  assert.equal(WebRTC._pageLifecycleHidden, false);
+  assert.equal(WebRTC._signalRecoveryPending, true);
+});
+
 test('stale createOffer completion does not clear newer offer progress', async () => {
   const { WebRTC } = loadWebRTC();
   let resolveOffer;

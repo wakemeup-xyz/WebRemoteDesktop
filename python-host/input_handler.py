@@ -317,8 +317,14 @@ class InputHandler:
             i2 = time.perf_counter()
             total_ms = (i2 - i1) * 1000
 
-            # Log timing for non-move events or if total > 50ms
-            if action != 'move' or total_ms > 50:
+            # Move and wheel events can arrive in large bursts (a single
+            # browser gesture may contain thousands of wheel samples).  The
+            # Host already emits bounded aggregate observations for those
+            # high-frequency actions; logging every sample here adds avoidable
+            # stdout/file I/O and can contend with the WebRTC event loop. Keep
+            # the per-event timing record for reliable actions and unusually
+            # slow high-frequency samples only.
+            if action not in {'move', 'wheel'} or total_ms > 50:
                 logger.info(
                     "Input timing: type=%s action=%s total=%.1fms lock_wait=%.1fms to_thread=%.1fms",
                     input_type, action, total_ms, lock_wait_ms, to_thread_ms
@@ -389,7 +395,11 @@ class InputHandler:
         y = self.monitor.y + rel_y * self.monitor.height
         self._last_mouse_position = (x, y)
 
-        if action != 'move':
+        # Down/up/reset are useful per-event breadcrumbs. Wheel input is
+        # intentionally summarized by the Host's aggregate diagnostics; an
+        # INFO line for every wheel sample can itself become the bottleneck
+        # during a fast scroll over TURN.
+        if action in {'down', 'up', 'reset', 'dblclick'}:
             logger.info("mouse_input action=%s", action)
 
         button = payload.get('button', 'left')
