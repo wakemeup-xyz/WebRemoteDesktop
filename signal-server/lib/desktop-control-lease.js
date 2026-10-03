@@ -132,6 +132,26 @@ class DesktopControlLease {
     return { state: 'ACTIVE', ok: true };
   }
 
+  // A Socket.IO reconnect may give the same browser a new socket id while the
+  // control lease is still within its heartbeat/grace window. Move the
+  // authoritative owner to that new id without minting a lease or weakening
+  // the reset barrier. Callers must authenticate the browser session before
+  // invoking this method.
+  rebindViewer(previousViewerId, nextViewerId) {
+    if (!previousViewerId || !nextViewerId || previousViewerId === nextViewerId) return false;
+    if (this._state === 'ACTIVE' && this._active?.viewerId === previousViewerId) {
+      if (this._isActiveExpired()) return false;
+      this._active.viewerId = nextViewerId;
+      return true;
+    }
+    if ((this._state === 'GRANTING' || this._state === 'REVOKING')
+      && this._pending?.viewerId === previousViewerId) {
+      this._pending.viewerId = nextViewerId;
+      return true;
+    }
+    return false;
+  }
+
   beginRelease({ viewerId, reason }) {
     if (this._state === 'ACTIVE' && this._active && this._active.viewerId === viewerId) {
       return this._beginResetTransition(reason || 'released');
@@ -210,6 +230,17 @@ class DesktopControlLease {
       && this._active.viewerId === viewerId
       && this._active.leaseId === leaseId
       && this._active.leaseEpoch === leaseEpoch;
+  }
+
+  getActiveLease(viewerId) {
+    if (this._state !== 'ACTIVE'
+      || !this._active
+      || this._active.viewerId !== viewerId
+      || this._isActiveExpired()) return null;
+    return {
+      leaseId: this._active.leaseId,
+      leaseEpoch: this._active.leaseEpoch,
+    };
   }
 
   snapshot() {

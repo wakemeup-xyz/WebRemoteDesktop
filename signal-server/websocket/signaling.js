@@ -87,7 +87,12 @@ function verifyToken(token) {
 }
 
 function isActiveViewerSocket(socket) {
-  return connections.viewers.get(socket.id) === socket;
+  return connections.viewers.get(socket.id) === socket && socket?._wrdDisconnected !== true;
+}
+
+function normalizeViewerSessionId(value) {
+  const sessionId = String(value || '').trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(sessionId) ? sessionId : null;
 }
 
 function clampInt(value, min, max, fallback) {
@@ -103,7 +108,8 @@ function setupSignaling(io, options = {}) {
   const setHostCapabilities = (payload = {}) => instanceRuntime.setHostCapabilities(payload);
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
-  const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket;
+  const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket
+    && socket?._wrdDisconnected !== true;
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
   const admitProofViewer = (admission, socketId) => instanceRuntime.admitProofViewer(admission, socketId);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
@@ -133,6 +139,10 @@ function setupSignaling(io, options = {}) {
   });
   const pendingOffers = new Map();
   const pendingInputs = new Map();
+  // A transient transport loss must not immediately revoke the desktop lease.
+  // Keep only the authenticated session key and socket reference here; the
+  // socket itself is marked inactive while it waits for a replacement.
+  const viewerSessionBindings = new Map();
   const inputAggregateCounts = new Map();
   let pendingControllerProtocolVersion = null;
   let legacyControllerViewerId = null;
@@ -147,6 +157,9 @@ function setupSignaling(io, options = {}) {
   const intervalFactory = options.scheduler?.setInterval || options.setInterval || setInterval;
   const setTimeoutFn = options.scheduler?.setTimeout || options.setTimeout || setTimeout;
   const clearTimeoutFn = options.scheduler?.clearTimeout || options.clearTimeout || clearTimeout;
+  const viewerDisconnectGraceMs = Number.isFinite(Number(options.viewerDisconnectGraceMs))
+    ? Math.max(0, Math.min(30_000, Math.floor(Number(options.viewerDisconnectGraceMs))))
+    : 8_000;
   const interval = intervalFactory(() => {
     dispatchLeaseEffect(desktopLease.expire());
   }, 1000);
@@ -368,11 +381,110 @@ function setupSignaling(io, options = {}) {
     });
   }
 
+  function clearViewerSessionBinding(socket) {
+    const sessionId = socket?._wrdViewerSessionId;
+    if (!sessionId) return;
+    const binding = viewerSessionBindings.get(sessionId);
+    if (binding?.socket === socket) {
+      if (binding.timer) clearTimeoutFn(binding.timer);
+      viewerSessionBindings.delete(sessionId);
+    }
+    socket._wrdViewerSessionTimer = null;
+  }
+
+  function rebindDisconnectedViewer(socket) {
+    const sessionId = socket?._wrdViewerSessionId;
+    if (!sessionId) return false;
+    const binding = viewerSessionBindings.get(sessionId);
+    const previous = binding?.socket;
+    if (!previous || previous === socket
+      || previous._wrdDisconnected !== true
+      || connections.viewers.get(previous.id) !== previous) {
+      return false;
+    }
+
+    if (binding.timer) clearTimeoutFn(binding.timer);
+    viewerSessionBindings.delete(sessionId);
+    socket._wrdDisconnected = false;
+    socket._wrdViewerSessionTimer = null;
+
+    const previousId = previous.id;
+    const nextId = socket.id;
+    const reboundLease = desktopLease.rebindViewer(previousId, nextId);
+    connections.viewers.delete(previousId);
+    connections.viewers.set(nextId, socket);
+
+    const priorProgress = mediaActivityProgress.get(previousId);
+    if (priorProgress) {
+      mediaActivityProgress.delete(previousId);
+      mediaActivityProgress.set(nextId, priorProgress);
+    }
+    const pendingOfferQueue = pendingOffers.get(previousId);
+    if (pendingOfferQueue) {
+      pendingOffers.delete(previousId);
+      pendingOffers.set(nextId, pendingOfferQueue.map((entry) => ({ ...entry, socket })));
+    }
+    const pendingInputQueue = pendingInputs.get(previousId);
+    if (pendingInputQueue) {
+      pendingInputs.delete(previousId);
+      pendingInputs.set(nextId, pendingInputQueue.map((entry) => ({ ...entry, socket })));
+    }
+    if (legacyControllerViewerId === previousId) legacyControllerViewerId = nextId;
+    if (legacyRelayOwnerIds.delete(previousId)) legacyRelayOwnerIds.add(nextId);
+    const companionId = legacyRelayCompanionByOwner.get(previousId);
+    if (companionId) {
+      legacyRelayCompanionByOwner.delete(previousId);
+      legacyRelayCompanionByOwner.set(nextId, companionId);
+    }
+    if (reboundLease) {
+      // freezeControl() intentionally disables the browser input gate while
+      // signaling is offline. Re-issue the existing lease after an
+      // authenticated same-session rebind so the client can restore its
+      // heartbeat and input envelope without asking for a new takeover.
+      const activeLease = desktopLease.getActiveLease(nextId);
+      if (activeLease) sendGrant(nextId, activeLease);
+    }
+    previous._wrdRemoved = true;
+    emitControlEvent('viewer_reconnected', {
+      viewerId: nextId,
+      previousViewerId: previousId,
+      sessionId,
+    });
+    emitViewerStatus('viewer-reconnected', socket);
+    broadcastControlState('viewer-reconnected');
+    return true;
+  }
+
+  function scheduleDesktopViewerGrace(socket) {
+    const sessionId = socket?._wrdViewerSessionId;
+    if (!sessionId || viewerDisconnectGraceMs <= 0) return false;
+    if (connections.viewers.get(socket.id) !== socket) return false;
+    const existing = viewerSessionBindings.get(sessionId);
+    if (existing?.timer) clearTimeoutFn(existing.timer);
+    const timer = setTimeoutFn(() => {
+      const binding = viewerSessionBindings.get(sessionId);
+      if (!binding || binding.socket !== socket) return;
+      viewerSessionBindings.delete(sessionId);
+      socket._wrdViewerSessionTimer = null;
+      removeDesktopViewer(socket, 'viewer-disconnect-timeout');
+    }, viewerDisconnectGraceMs);
+    timer?.unref?.();
+    viewerSessionBindings.set(sessionId, { socket, timer });
+    socket._wrdViewerSessionTimer = timer;
+    emitControlEvent('viewer_disconnect_grace_started', {
+      viewerId: socket.id,
+      sessionId,
+      graceMs: viewerDisconnectGraceMs,
+    });
+    return true;
+  }
+
   // Single cleanup entry for desktop viewers. Map identity guard is the only
   // idempotency latch (compatible with FakeSocket; no socket.data required).
   function removeDesktopViewer(socket, reason = 'viewer-disconnected') {
     if (!socket) return null;
     if (connections.viewers.get(socket.id) !== socket) return null;
+    clearViewerSessionBinding(socket);
     connections.viewers.delete(socket.id);
     clearPendingInputs(socket.id);
     mediaActivityProgress.delete(socket.id);
@@ -838,10 +950,15 @@ function setupSignaling(io, options = {}) {
       }
       if (!isProofViewer) noteHumanViewerAdmission();
       socket._wrdProofViewer = isProofViewer;
+      socket._wrdDisconnected = false;
+      socket._wrdViewerSessionId = normalizeViewerSessionId(socket.handshake?.auth?.viewerSessionId);
       // Hard order: claim map slot → supersede others → only then welcome incoming.
       // New desktop viewers never auto-acquire control.
-      connections.viewers.set(socket.id, socket);
-      supersedeOtherDesktopViewers(socket);
+      const rebound = rebindDisconnectedViewer(socket);
+      if (!rebound) {
+        connections.viewers.set(socket.id, socket);
+        supersedeOtherDesktopViewers(socket);
+      }
       if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
       socket.emit('connected', {
         role: 'viewer',
@@ -1612,7 +1729,14 @@ function setupSignaling(io, options = {}) {
           console.log(`Ignoring stale host disconnect: ${socket.id}`);
         }
       } else if (role === 'viewer') {
-        removeDesktopViewer(socket, 'viewer-disconnected');
+        // Socket.IO assigns a new id after a transport reconnect. Keep the
+        // authoritative viewer/lease for a short authenticated grace window,
+        // while marking the old socket inactive so delayed packets cannot
+        // write through the preserved context.
+        socket._wrdDisconnected = true;
+        if (!scheduleDesktopViewerGrace(socket)) {
+          removeDesktopViewer(socket, 'viewer-disconnected');
+        }
       } else if (role === 'relay-viewer') {
         connections.relayViewers.delete(socket.id);
         const ownerId = legacyRelayOwnerForCompanion(socket.id);

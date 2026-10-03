@@ -35,6 +35,32 @@ test('first acquire stays granting until transition ack and returns a lease', ()
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...granted.lease }), true);
 });
 
+test('rebindViewer moves an active lease to a replacement socket without minting credentials', () => {
+  const lease = makeLease();
+  const requested = lease.requestControl({ viewerId: 'socket-a' });
+  const active = lease.confirmTransition({ leaseEpoch: requested.transition.leaseEpoch });
+
+  assert.equal(lease.rebindViewer('socket-a', 'socket-b'), true);
+  assert.equal(lease.authorize({ viewerId: 'socket-a', ...active.lease }), false);
+  assert.equal(lease.authorize({ viewerId: 'socket-b', ...active.lease }), true);
+  assert.deepEqual(lease.getActiveLease('socket-b'), active.lease);
+  assert.equal(lease.snapshot().controllerViewerId, 'socket-b');
+  assert.equal(lease.rebindViewer('socket-a', 'socket-c'), false);
+  assert.equal(lease.getActiveLease('socket-a'), null);
+});
+
+test('rebindViewer preserves a pending grant and refuses an expired active lease', () => {
+  const lease = makeLease();
+  const pending = lease.requestControl({ viewerId: 'socket-a' });
+  assert.equal(lease.rebindViewer('socket-a', 'socket-b'), true);
+  assert.equal(lease.snapshot().pendingViewerId, 'socket-b');
+  assert.equal(lease.confirmTransition({ leaseEpoch: pending.transition.leaseEpoch }).state, 'ACTIVE');
+
+  lease.advanceTo(12_000);
+  assert.equal(lease.rebindViewer('socket-b', 'socket-c'), false);
+  assert.equal(lease.snapshot().controllerViewerId, 'socket-b');
+});
+
 test('Host transition materialization includes only the pending lease token', () => {
   const lease = makeLease();
   const requested = lease.requestControl({ viewerId: 'viewer-a' });

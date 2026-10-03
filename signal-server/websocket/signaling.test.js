@@ -732,6 +732,83 @@ test('viewer disconnect reports zero viewers so host can stop active relay strea
   );
 });
 
+test('authenticated viewer reconnect rebinds the lease during the short disconnect grace window', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+
+  const host = new FakeSocket('host-grace', 'host');
+  const first = new FakeSocket('viewer-grace-a', 'viewer');
+  const sessionId = 'browser-session-grace-1';
+  host.handshake.auth.inputProtocolVersion = 2;
+  first.handshake.auth.inputProtocolVersion = 2;
+  first.handshake.auth.viewerSessionId = sessionId;
+  io.connect(host);
+  io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'grace-rebind');
+  const transitionsBeforeDisconnect = host.sent.filter((entry) => entry.event === 'control-transition').length;
+
+  first.trigger('disconnect');
+  assert.equal(connections.viewers.get(first.id), first);
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, transitionsBeforeDisconnect);
+
+  // The disconnected socket is retained only as a lease placeholder; delayed
+  // packets must still be rejected while the replacement is being established.
+  first.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  assert.equal(first.sent.some((entry) => entry.event === 'control-heartbeat-rejected'), false);
+
+  const replacement = new FakeSocket('viewer-grace-b', 'viewer');
+  replacement.handshake.auth.inputProtocolVersion = 2;
+  replacement.handshake.auth.viewerSessionId = sessionId;
+  io.connect(replacement);
+  assert.equal(connections.viewers.get(replacement.id), replacement);
+  assert.equal(connections.viewers.has(first.id), false);
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, 1);
+  const reboundGrant = replacement.sent.find((entry) => entry.event === 'control-grant');
+  assert.deepEqual(reboundGrant?.data, {
+    controller: true,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+
+  replacement.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  assert.equal(replacement.sent.some((entry) => entry.event === 'control-heartbeat-rejected'), false);
+  assert.equal(replacement.sent.at(-1)?.event, 'control-state');
+});
+
+test('viewer grace expiry falls back to the formal reset barrier', () => {
+  resetConnections();
+  const timers = [];
+  const scheduler = {
+    setInterval() { return { unref() {} }; },
+    setTimeout(fn, ms) {
+      const timer = { fn, ms, cancelled: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  };
+  const io = makeIo();
+  setupSignaling(io, { scheduler, viewerDisconnectGraceMs: 8000 });
+  const host = new FakeSocket('host-grace-expiry', 'host');
+  const viewer = new FakeSocket('viewer-grace-expiry', 'viewer');
+  viewer.handshake.auth.viewerSessionId = 'browser-session-grace-2';
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'grace-expiry' });
+  const transition = host.sent.find((entry) => entry.event === 'control-transition').data;
+  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+  const beforeDisconnect = host.sent.filter((entry) => entry.event === 'control-transition').length;
+
+  viewer.trigger('disconnect');
+  const graceTimer = timers.find((timer) => timer.ms === 8000 && !timer.cancelled);
+  assert.ok(graceTimer);
+  graceTimer.fn();
+  assert.equal(connections.viewers.has(viewer.id), false);
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, beforeDisconnect + 1);
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').at(-1)?.data?.reason, 'controller-disconnect');
+});
+
 test('input from disconnected viewer is not relayed to host', () => {
   resetConnections();
   const io = makeIo();

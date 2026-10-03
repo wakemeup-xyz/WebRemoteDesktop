@@ -14,16 +14,20 @@
 - Viewer 对 `connect`、`disconnect`、`connect_error` 建立统一 signaling recovery supervisor，覆盖 Relay、STUN/直连和 Tunnel。
 - Socket 断开后先等待 Socket.IO 自动恢复；超过 12 秒才重建 signaling socket。媒体链路健康时复用现有 PeerConnection，媒体不健康时才刷新 offer，减少黑屏和上下文重建。
 - `pagehide`、`pageshow`、`online` 统一处理，优先复用现有 socket，恢复后重放 media intent、重新绑定控制租约并检查 DataChannel。
+- 恢复旧 PeerConnection 时显式回切 UI 到 `connected` 或 `media-pending`，避免页面停在“连接中”而输入 gate 没有重新打开。
+- Viewer 使用页面会话级 `viewerSessionId`。Signal 对同一已认证会话保留 8 秒断线 grace，Socket.IO 重新分配 socket id 时迁移 lease、媒体 attempt、待处理队列和 legacy relay 绑定；超时仍执行原有 fail-closed reset barrier。
 - 手动断开和 viewer 被 supersede 时继续保持 fail-closed，不会被自动恢复误触发。
 - Host 对 wheel 事件停止逐条 INFO 日志，只保留已有聚合观测、可靠输入日志和超过 50ms 的异常 timing；输入行为不变。
 
 ## 验证
 
-- `node --test web-client/js/webrtc.test.js`：219 passed。
+- `node --test web-client/js/webrtc.test.js`：221 passed（包含稳定页面会话、健康 PeerConnection 的 UI 回切）。
 - `node --check web-client/js/webrtc.js web-client/js/webrtc.test.js`：通过。
+- `node --test signal-server/lib/desktop-control-lease.test.js signal-server/websocket/signaling.test.js`：104 passed，覆盖 grace rebind、超时复位和旧 socket 拒绝写入。
+- `npm test`（Signal Server 全量）：369 passed。
 - 输入与诊断专项：由子代理完成 59 passed，覆盖 wheel 日志抑制和输入聚合。
 - `git diff --check`：通过。
 
 ## 后续观察
 
-发布后应重点观察 `signal-disconnect`、`connect_error`、`reconnect`、`pc-disconnected`、`ice-disconnected`、`host_event_loop_lag` 和 `signal_input_aggregate`。如果重连次数下降但仍频繁丢控制权，再增加带短暂 grace 的 Viewer 会话身份重绑定；当前先通过前端自动恢复和 Host 日志降噪降低风险，避免扩大租约状态机改动面。
+发布后应重点观察 `signal-disconnect`、`connect_error`、`reconnect`、`viewer_disconnect_grace_started`、`viewer_reconnected`、`pc-disconnected`、`ice-disconnected`、`host_event_loop_lag` 和 `signal_input_aggregate`。如果断线持续超过 8 秒，仍会进入 reset barrier，需结合 TURN 和 Host 资源指标判断是否属于真实链路故障。

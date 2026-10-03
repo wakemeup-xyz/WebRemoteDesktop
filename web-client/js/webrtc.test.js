@@ -888,6 +888,21 @@ test('buildSignalingSocketOptions keeps websocket before polling and timeout <= 
   assert.equal(options.auth.inputProtocolVersion, 2);
 });
 
+test('buildSignalingSocketOptions carries one stable page session id across reconnects', () => {
+  let stored = null;
+  const { WebRTC } = loadWebRTC({
+    sessionStorage: {
+      getItem() { return stored; },
+      setItem(_key, value) { stored = value; },
+    },
+  });
+  const first = WebRTC.buildSignalingSocketOptions({ token: 't' });
+  const second = WebRTC.buildSignalingSocketOptions({ token: 't' });
+  assert.match(first.auth.viewerSessionId, /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/);
+  assert.equal(second.auth.viewerSessionId, first.auth.viewerSessionId);
+  assert.equal(stored, first.auth.viewerSessionId);
+});
+
 test('buildSignalingSocketOptions forwards the Lab proof admission from session storage unchanged', () => {
   const admission = { token: 'lab-proof-token', epoch: 7, realm: 'lab-run-7' };
   const { WebRTC } = loadWebRTC({
@@ -2237,6 +2252,37 @@ test('direct signaling recovery is armed while manual disconnect stays inert', (
   WebRTC.clearSignalingRecovery();
   WebRTC.manualDisconnect = true;
   assert.equal(WebRTC.scheduleSignalingRecovery('manual-disconnect'), false);
+  assert.equal(WebRTC._signalRecoveryPending, false);
+});
+
+test('healthy peer signaling recovery restores connected UI and input without a fresh frame', () => {
+  const inputStates = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      setActive(value) { inputStates.push(value); },
+      setControlLease() {},
+      setKeyboardDataChannelAvailable() {},
+      requestInputRecovery() {},
+      updateKeyboardUI() {},
+    },
+  });
+
+  WebRTC.socket = { connected: true };
+  WebRTC.pc = { connectionState: 'connected' };
+  WebRTC.uiPhase = 'signaling';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._signalRecoveryPending = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    hostOnline: true,
+    lease: { leaseId: 'lease-recovered-0001', leaseEpoch: 4 },
+  };
+  WebRTC.isInboundVideoHealthy = () => true;
+
+  assert.equal(WebRTC.handleSignalingRecoveryConnected(), true);
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(inputStates.at(-1), true);
   assert.equal(WebRTC._signalRecoveryPending, false);
 });
 

@@ -569,7 +569,7 @@ find /tmp/wrd-diag -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | tail 
 
 ### 信令短断线与上下文连续性（2026-10-04）
 
-Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂断线先等待 Socket.IO 自动恢复，页面从后台、休眠或网络切换回来时会复用现有 socket；媒体仍健康时保留现有 PeerConnection，只有媒体不健康才刷新 offer。手动断开和 viewer 被 supersede 不会触发自动恢复。
+Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂断线先等待 Socket.IO 自动恢复，页面从后台、休眠或网络切换回来时会复用现有 socket；媒体仍健康时保留现有 PeerConnection，并把 UI 和输入 gate 回切到可用状态，只有媒体不健康才刷新 offer。Signal 对同一页面会话保留 8 秒 grace，用于迁移 Socket.IO 重连产生的新 socket id、控制租约和媒体 attempt；手动断开和 viewer 被 supersede 不会触发自动恢复。
 
 快速滚动产生的 wheel 事件只保留 Host 聚合诊断，不应在 `back-debug.log` 中逐条出现 `mouse_input action=wheel` 或 `Input timing: type=mouse action=wheel`。如果仍出现大量逐条 wheel 日志，说明运行的是旧 Host，按 `scripts/restart-host.sh` 重载；如果同时看到 `aioice TransactionTimeout` 和 critical `host_event_loop_lag`，先降低输入日志与系统 CPU 争用，再判断 TURN 稳定性。
 

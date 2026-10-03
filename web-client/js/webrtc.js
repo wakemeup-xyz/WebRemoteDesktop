@@ -465,6 +465,7 @@ const WebRTC = {
   _signalRecoveryTimer: null,
   _signalRecoveryStartedAt: 0,
   _signalRecoveryPending: false,
+  _viewerSessionId: null,
   SIGNAL_RECOVERY_RETRY_MS: 1500,
   SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
   _pageLifecycleRecoveryBound: false,
@@ -2410,6 +2411,32 @@ const WebRTC = {
 
   signalingConnectBudgetMs: 5000,
 
+  resolveViewerSessionId() {
+    const key = 'wrd_viewer_session_id';
+    const safe = (value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(String(value || ''))
+      ? String(value) : null;
+    const inMemory = safe(this._viewerSessionId);
+    if (inMemory) return inMemory;
+    try {
+      const storage = typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+      const existing = safe(storage?.getItem?.(key));
+      if (existing) {
+        this._viewerSessionId = existing;
+        return existing;
+      }
+      const generated = typeof globalThis !== 'undefined' && typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `viewer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+      const value = safe(generated) || `viewer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+      storage?.setItem?.(key, value);
+      this._viewerSessionId = value;
+      return value;
+    } catch (_error) {
+      this._viewerSessionId = `viewer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+      return this._viewerSessionId;
+    }
+  },
+
   resolveSignalingTransports({ allowPolling = true } = {}) {
     // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
     if (allowPolling === false) return ['websocket'];
@@ -2426,6 +2453,7 @@ const WebRTC = {
         token,
         role: 'viewer',
         inputProtocolVersion: 2,
+        viewerSessionId: this.resolveViewerSessionId(),
         proofAdmission: (() => {
           try {
             if (typeof sessionStorage === 'undefined') return null;
@@ -5609,6 +5637,14 @@ if (this.tunnelLastObjectUrl) {
       return true;
     }
 
+    // The disconnect handler moves the paint gate to `disconnected`, and the
+    // socket connect handler moves it to `signaling`.  When the existing peer
+    // is still carrying media there may be no new frame to trigger the normal
+    // paint transition, so restore the visible phase explicitly. This also
+    // re-enables desktop input for the surviving painted attempt.
+    this.setUiPhase(this.hasPaintedFrame ? 'connected' : 'media-pending', {
+      reason: 'signal-reconnected',
+    });
     this.ensureMediaActiveIfVisible('signal-reconnected');
     this.replayMediaActivityIntent('signal-reconnected');
     this.rebindActiveKeyboardLease('signal-reconnected');
