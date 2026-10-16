@@ -1772,6 +1772,11 @@ class WebRemoteHost:
         self._input_move_datachannel = None
         self._active_input_binding = None
         self._connection_generation = 0
+        self._authority_revision = 0
+        self._control_operation = None
+        self._authority_input_lock = asyncio.Lock()
+        self._signal_ready = False
+        self._signal_generation = 0
         self._input_lifecycle_tasks = set()
         self._control_transition_lock = asyncio.Lock()
         self._offer_lock = asyncio.Lock()
@@ -1865,24 +1870,31 @@ class WebRemoteHost:
 
     def _build_socket_client(self):
         sio = socketio.AsyncClient(reconnection=False, ssl_verify=should_verify_tls(SERVER_URL))
-        sio.on('connected', self.on_connected)
-        sio.on('offer', self.on_offer)
-        sio.on('host-status', self.on_host_status)
-        sio.on('disconnect', self.on_disconnect)
-        sio.on('input', self.on_input)
-        sio.on('control-transition', self.on_control_transition)
-        sio.on('viewer-session-rebind', self.on_viewer_session_rebind)
-        sio.on('ice-candidate', self.on_ice_candidate)
-        sio.on('diagnostic', self.on_diagnostic)
-        sio.on('viewer-status', self.on_viewer_status)
-        sio.on('viewer-stats', self.on_viewer_stats)
-        sio.on('resolution-change', self.on_resolution_change)
-        sio.on('media-profile-change', self.on_media_profile_change)
-        sio.on('request-keyframe', self.on_request_keyframe)
-        sio.on('media-activity-change', self.on_media_activity_change)
-        sio.on('relay-stream-control', self.on_relay_stream_control)
-        sio.on('connection-attempt-bind', self.on_connection_attempt_bind)
-        sio.on('relay-frame-ack', self.on_relay_frame_ack)
+        def register(event, handler):
+            async def current_client(*args):
+                if self.sio is not sio:
+                    return {"status": "rejected"}
+                result = handler(*args)
+                return await result if inspect.isawaitable(result) else result
+            sio.on(event, current_client)
+        register('connected', self.on_connected)
+        register('offer', self.on_offer)
+        register('host-status', self.on_host_status)
+        register('disconnect', self.on_disconnect)
+        register('input', self.on_input)
+        register('control-transition', self.on_control_transition)
+        register('viewer-session-rebind', self.on_viewer_session_rebind)
+        register('ice-candidate', self.on_ice_candidate)
+        register('diagnostic', self.on_diagnostic)
+        register('viewer-status', self.on_viewer_status)
+        register('viewer-stats', self.on_viewer_stats)
+        register('resolution-change', self.on_resolution_change)
+        register('media-profile-change', self.on_media_profile_change)
+        register('request-keyframe', self.on_request_keyframe)
+        register('media-activity-change', self.on_media_activity_change)
+        register('relay-stream-control', self.on_relay_stream_control)
+        register('connection-attempt-bind', self.on_connection_attempt_bind)
+        register('relay-frame-ack', self.on_relay_frame_ack)
         return sio
 
     async def connect(self):
@@ -2140,6 +2152,7 @@ class WebRemoteHost:
                 })
 
             input_adapter = getattr(self, "input_adapter", None) or getattr(self, "input_handler", None)
+            authority = self._capture_authority()
             adapter_started = time.perf_counter()
             try:
                 if input_type == "keyboard":
@@ -2158,6 +2171,8 @@ class WebRemoteHost:
                 logger.error("Input adapter failed: %s", type(exc).__name__)
                 return
 
+            if not self._authority_matches(authority):
+                return
             local_execute_ms = (time.perf_counter() - adapter_started) * 1000
             result_data = dict(data)
             if isinstance(result, dict) and isinstance(result.get("inputIds"), (list, tuple)):
@@ -2173,6 +2188,8 @@ class WebRemoteHost:
             )
             if isinstance(result, dict):
                 await self._send_input_ack(data, result, local_execute_ms)
+                if not self._authority_matches(authority):
+                    return
             if result and isinstance(result, dict) and result.get("inputIds"):
                 if self.screen_track:
                     with self.screen_track._pending_input_lock:
@@ -2291,7 +2308,16 @@ class WebRemoteHost:
         return accepted
 
     async def on_connected(self, data):
-        logger.info(f"Connected: {data}")
+        self._signal_generation = getattr(self, "_signal_generation", 0) + 1
+        self._advance_authority()
+        self._signal_ready = False
+        self._active_input_binding = None
+        authority = self._capture_authority()
+        reset = await self._reset_keyboard_lifecycle("signal-connected")
+        if self._authority_matches(authority) and isinstance(reset, dict) and reset.get("status") == "applied":
+            self._control_operation = None
+            self._signal_ready = True
+        logger.info("Authenticated signaling connection initialized")
 
     def build_event_loop_lag_context(self, *, lag_ms, sample_count, max_lag_ms, task_count):
         usage = resource.getrusage(resource.RUSAGE_SELF)
@@ -2503,6 +2529,44 @@ class WebRemoteHost:
         task.add_done_callback(tasks.discard)
         return task
 
+    def _advance_authority(self):
+        self._authority_revision = int(getattr(self, "_authority_revision", 0)) + 1
+
+    def _capture_authority(self):
+        """Immutable scope shared by control, media and input queue admission."""
+        binding = getattr(self, "_active_input_binding", None) or {}
+        return (getattr(self, "_authority_revision", 0), *(binding.get(key) for key in (
+            "viewerId", "leaseId", "leaseEpoch", "connectionAttemptId",
+            "connectionAttemptSequence", "connectionGeneration")))
+
+    def _authority_matches(self, snapshot):
+        return snapshot == self._capture_authority()
+
+    def _authority_input_queue(self):
+        # This queue orders adapter rebinding against reset. The adapters' own
+        # queues drain native in-flight work before reset returns (M3 may replace
+        # that wait with reset_after_quiescent, using this same authority).
+        if not hasattr(self, "_authority_input_lock"):
+            self._authority_input_lock = asyncio.Lock()
+        return self._authority_input_lock
+
+    async def _bind_input_authority(self, binding, authority):
+        async with self._authority_input_queue():
+            if not self._authority_matches(authority):
+                return False
+            result = await self.input_handler.transition_keyboard(
+                connection_generation=binding["connectionGeneration"],
+                lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+            )
+            if not self._authority_matches(authority):
+                return False
+            desktop = await self._transition_desktop_writes(
+                lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+            )
+            return (self._authority_matches(authority)
+                    and isinstance(result, dict) and result.get("status") == "applied"
+                    and getattr(desktop, "status", None) == "applied")
+
     async def _transition_desktop_writes(self, *, lease_id, lease_epoch):
         """Use the serialized desktop transition when the handler provides it."""
         transition_async = getattr(self.input_handler, "transition_desktop_writes_async", None)
@@ -2544,20 +2608,27 @@ class WebRemoteHost:
             self._reset_keyboard_lifecycle(
                 "datachannel-closed",
                 lease_epoch=active_epoch,
+                authority=self._capture_authority(),
             )
         )
 
-    async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
+    async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None, authority=None):
         handler = getattr(self, "input_handler", None)
         if handler is None:
             return None
-        result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
-        reset_desktop = getattr(handler, "reset_desktop_writes", None)
-        if callable(reset_desktop):
-            await reset_desktop(reason=reason)
-        else:
-            handler.release_all_mouse_buttons(reason=reason)
-        return result
+        authority = self._capture_authority() if authority is None else authority
+        async with self._authority_input_queue():
+            if not self._authority_matches(authority):
+                return {"status": "rejected"}
+            result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
+            # Complete both native drains under this queue even if superseded;
+            # the newer grant must wait for its own reset behind us.
+            reset_desktop = getattr(handler, "reset_desktop_writes", None)
+            if callable(reset_desktop):
+                await reset_desktop(reason=reason)
+            else:
+                handler.release_all_mouse_buttons(reason=reason)
+            return result
 
     async def _emit_control_transition_ack(self, lease_epoch, status, reason=None):
         sio = getattr(self, "sio", None)
@@ -2573,14 +2644,20 @@ class WebRemoteHost:
         lock = getattr(self, "_control_transition_lock", None)
         if lock is None:
             lock = self._control_transition_lock = asyncio.Lock()
+        connection = getattr(self, "_signal_generation", 0)
         async with lock:
+            if connection != getattr(self, "_signal_generation", 0):
+                return
             await self._apply_control_transition(data)
 
     async def on_viewer_session_rebind(self, data):
+        authority = self._capture_authority()
         lock = getattr(self, "_offer_lock", None)
         if lock is None:
             lock = self._offer_lock = asyncio.Lock()
         async with lock:
+            if not self._authority_matches(authority):
+                return {"status": "rejected"}
             media_lock = getattr(self, "_media_activity_lock", None)
             if media_lock is None:
                 media_lock = self._media_activity_lock = asyncio.Lock()
@@ -2588,6 +2665,8 @@ class WebRemoteHost:
             # never take the offer lock. Finish old media writes before moving
             # their viewer identity so they cannot restore the old socket later.
             async with media_lock:
+                if not self._authority_matches(authority):
+                    return {"status": "rejected"}
                 return self._apply_viewer_session_rebind(data)
 
     def _apply_viewer_session_rebind(self, data):
@@ -2637,7 +2716,10 @@ class WebRemoteHost:
         relay_viewer = getattr(relay, "viewer_id", None)
         if relay_viewer not in (None, previous):
             return {"status": "rejected"}
+        self._advance_authority()
         binding["viewerId"] = viewer
+        if getattr(self, "pc", None) is not None:
+            self.pc._wrd_owner = (viewer, binding["leaseId"], binding["leaseEpoch"])
         if getattr(self, "current_viewer_id", None) == previous:
             self.current_viewer_id = viewer
         if isinstance(media, dict) and media.get("viewerId") == previous:
@@ -2648,110 +2730,80 @@ class WebRemoteHost:
         return {"status": "applied"}
 
     async def _apply_control_transition(self, data):
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not getattr(self, "_signal_ready", True):
             return
         lease_epoch = data.get("leaseEpoch")
-        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+        if type(lease_epoch) is not int or lease_epoch < 1:
             return
-        lease_id = data.get("leaseId")
-        viewer_id = data.get("viewerId")
-        has_binding_identity = (
-            isinstance(lease_id, str)
-            and len(lease_id) >= 16
-            and isinstance(viewer_id, str)
-            and bool(viewer_id)
-        )
-        active_binding = getattr(self, "_active_input_binding", None)
-        active_epoch = active_binding.get("leaseEpoch") if isinstance(active_binding, dict) else None
-        is_stale = isinstance(active_epoch, int) and (
-            lease_epoch < active_epoch
-            or (lease_epoch == active_epoch and has_binding_identity)
-        )
-        if is_stale:
-            logger.warning(
-                "Ignoring stale control transition epoch=%s active_epoch=%s",
-                lease_epoch,
-                active_epoch,
-            )
-            return
-        # Freeze the previous authority before yielding to the reset queue so
-        # no old Socket.IO or DataChannel input remains executable mid-handoff.
+        viewer_id, lease_id = data.get("viewerId"), data.get("leaseId")
+        grant = isinstance(viewer_id, str) and bool(viewer_id)
+        kind = "grant" if grant else "reset"
+        active = getattr(self, "_active_input_binding", None) or {}
+        operation = getattr(self, "_control_operation", None)
+        if operation is None and active.get("leaseEpoch"):
+            operation = (active["leaseEpoch"], "grant", "applied")
+        if operation:
+            epoch, previous_kind, outcome = operation
+            if lease_epoch < epoch or (lease_epoch == epoch and kind != previous_kind):
+                return
+            if lease_epoch == epoch and outcome == "applied":
+                if kind == "reset":
+                    await self._emit_control_transition_ack(lease_epoch, "applied")
+                return
+        self._control_operation = (lease_epoch, kind, "pending")
+        self._advance_authority()
         self._active_input_binding = None
-        self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
+        self._connection_generation = int(getattr(self, "_connection_generation", 0)) + 1
+        authority = self._capture_authority()
 
-        async def reject_transition():
-            self._active_input_binding = None
-            logger.warning("Rejecting keyboard control transition epoch=%s", lease_epoch)
-            await self._emit_control_transition_ack(
-                lease_epoch,
-                "rejected",
-                reason="reset-failed",
-            )
+        async def reject():
+            if self._authority_matches(authority):
+                self._control_operation = (lease_epoch, kind, "rejected")
+                await self._emit_control_transition_ack(lease_epoch, "rejected", reason="reset-failed")
 
         try:
-            reset_result = await self._reset_keyboard_lifecycle(
-                data.get("reason") or "pending-reset"
-            )
+            reset = await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
+            if not self._authority_matches(authority):
+                return
+            if not isinstance(reset, dict) or reset.get("status") != "applied":
+                await reject()
+                return
+            # A fresh grant cannot inherit the previous owner's peer. Detach
+            # resources before awaiting close, so old cleanup owns only old PC.
+            if getattr(self, "pc", None) is not None:
+                await self._close_peer_connection(reason="control-transition", reset_offer_state=True,
+                                                  preserve_authority=True, reset_input=False)
+                if not self._authority_matches(authority):
+                    return
+            relay = getattr(self, "relay_streamer", None)
+            if relay is not None:
+                self.relay_streamer = None
+                await relay.stop()
+                if not self._authority_matches(authority):
+                    return
+            if grant:
+                binding = {
+                    "viewerId": viewer_id,
+                    "leaseId": lease_id if isinstance(lease_id, str) and len(lease_id) >= 16 else f"legacy-host-{lease_epoch}-{viewer_id}",
+                    "leaseEpoch": lease_epoch,
+                    "connectionGeneration": self._connection_generation,
+                }
+                accepted = await self._bind_input_authority(binding, authority)
+                if not self._authority_matches(authority):
+                    return
+                if not accepted:
+                    await reject()
+                    return
+                self._active_input_binding = binding
+            self.current_viewer_id = viewer_id if grant else None
+            self._media_activity_binding = None
+            self._control_operation = (lease_epoch, kind, "applied")
+            await self._emit_control_transition_ack(lease_epoch, "applied")
         except Exception:
-            await reject_transition()
-            return
-        if not isinstance(reset_result, dict) or reset_result.get("status") != "applied":
-            await reject_transition()
-            return
-        if has_binding_identity:
-            binding = {
-                "viewerId": viewer_id,
-                "leaseId": lease_id,
-                "leaseEpoch": lease_epoch,
-                "connectionGeneration": self._connection_generation,
-            }
-            try:
-                result = await self.input_handler.transition_keyboard(
-                    connection_generation=binding["connectionGeneration"],
-                    lease_id=binding["leaseId"],
-                    lease_epoch=binding["leaseEpoch"],
-                )
-                desktop_result = await self._transition_desktop_writes(
-                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
-                )
-            except Exception:
-                await reject_transition()
-                return
-            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
-                await reject_transition()
-                return
-            self._active_input_binding = binding
-        elif isinstance(viewer_id, str) and viewer_id:
-            # Signal deliberately withholds the v2 token during transition.
-            # Legacy input gets an opaque Host-internal lease until its offer
-            # arrives; it is never sent to the viewer or accepted as v2 input.
-            binding = {
-                "viewerId": viewer_id,
-                "leaseId": f"legacy-host-{lease_epoch}-{viewer_id}",
-                "leaseEpoch": lease_epoch,
-                "connectionGeneration": self._connection_generation,
-            }
-            try:
-                result = await self.input_handler.transition_keyboard(
-                    connection_generation=binding["connectionGeneration"],
-                    lease_id=binding["leaseId"],
-                    lease_epoch=binding["leaseEpoch"],
-                )
-                desktop_result = await self._transition_desktop_writes(
-                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
-                )
-            except Exception:
-                await reject_transition()
-                return
-            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
-                await reject_transition()
-                return
-            self._active_input_binding = binding
-        else:
-            self._active_input_binding = None
-        await self._emit_control_transition_ack(lease_epoch, "applied")
+            await reject()
 
-    async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
+    async def _close_peer_connection(self, reason="manual", reset_offer_state=False,
+                                     preserve_authority=False, reset_input=True):
         closing_pc = getattr(self, "pc", None)
         closing_track = getattr(self, "screen_track", None)
         closing_sender = getattr(self, "video_sender", None)
@@ -2764,24 +2816,45 @@ class WebRemoteHost:
             if isinstance(closing_binding, dict) else None
         )
 
-        # Freeze this connection's lease before yielding to the reset worker.
-        self._active_input_binding = None
+        if not preserve_authority:
+            self._advance_authority()
+            self._active_input_binding = None
+        # Remove ownership synchronously. A second cleanup must never await or
+        # clear these detached objects on behalf of a newer grant.
+        self.pc = None
         if getattr(self, "_input_datachannel", None) is closing_channel:
             self._input_datachannel = None
         if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
             self._input_move_datachannel = None
-        await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+        if getattr(self, "screen_track", None) is closing_track:
+            self.screen_track = None
+        if getattr(self, "video_sender", None) is closing_sender:
+            self.video_sender = None
+        media_sender = getattr(self, "media_sender", None)
+        if media_sender is not None and getattr(media_sender, "sender", None) is closing_sender:
+            self.media_sender = None
+            if callable(getattr(media_sender, "invalidate", None)):
+                media_sender.invalidate()
+        capture_adapter = getattr(self, "capture_adapter", None)
+        if capture_adapter is not None and getattr(capture_adapter, "track", None) is closing_track:
+            self.capture_adapter = None
+        if closing_track is not None and hasattr(closing_track, "set_suspended"):
+            closing_track.set_suspended(True)
+        self.pending_candidates = []
+        if reset_offer_state:
+            self.current_viewer_id = None
+            self._offer_epoch = 0
+        authority = self._capture_authority()
+        if reset_input:
+            await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
 
         if closing_pc:
             logger.info("Closing peer connection reason=%s", reason)
             await closing_pc.close()
-        owns_peer = self.pc is closing_pc
-        if owns_peer and self.pc is closing_pc:
-            self.pc = None
-
         if closing_track:
             await closing_track.shutdown()
-        if self.screen_track is closing_track:
+        owns_peer = self._authority_matches(authority) and self.pc is None
+        if getattr(self, "screen_track", None) is closing_track:
             self.screen_track = None
         if getattr(self, "video_sender", None) is closing_sender:
             self.video_sender = None
@@ -2817,9 +2890,6 @@ class WebRemoteHost:
         if getattr(self, "pending_candidates", None) is closing_candidates:
             self.pending_candidates = []
 
-        if reset_offer_state and owns_peer:
-            self.current_viewer_id = None
-            self._offer_epoch = 0
 
     async def on_offer(self, data):
         viewer_id = data.get('viewerId')
@@ -2827,7 +2897,18 @@ class WebRemoteHost:
         logger.info(f"Received offer from viewer {viewer_id} epoch={offer_epoch}")
 
         # Serialize offer processing to prevent race conditions
+        connection = getattr(self, "_signal_generation", 0)
         async with self._offer_lock:
+            if connection != getattr(self, "_signal_generation", 0):
+                return
+            if not getattr(self, "_signal_ready", True):
+                return
+            active = getattr(self, "_active_input_binding", None)
+            if isinstance(active, dict) and any(data.get(k) != active.get(k) for k in ("viewerId", "leaseId", "leaseEpoch")):
+                return
+            operation = getattr(self, "_control_operation", None)
+            if operation and (operation[1:] != ("grant", "applied") or data.get("leaseEpoch") != operation[0]):
+                return
             if not self._should_process_offer(viewer_id, offer_epoch):
                 return
             offer_sequence = data.get("connectionAttemptSequence")
@@ -2840,8 +2921,17 @@ class WebRemoteHost:
                 )
                 return
 
+            if operation is None and isinstance(active, dict) and active.get("leaseEpoch"):
+                self._control_operation = (active["leaseEpoch"], "grant", "applied")
+            self._advance_authority()
+            self._active_input_binding = None
+            authority = self._capture_authority()
+            offer_pc = None
+            offer_track = None
             try:
-                await self._close_peer_connection(reason="new-offer", reset_offer_state=False)
+                await self._close_peer_connection(reason="new-offer", reset_offer_state=False, preserve_authority=True)
+                if not self._authority_matches(authority):
+                    return
 
                 lease_id = data.get("leaseId")
                 lease_epoch = data.get("leaseEpoch")
@@ -2868,34 +2958,14 @@ class WebRemoteHost:
                     self._media_profile_sequence = 0
                     if isinstance(offer_sequence, int) and offer_sequence >= 1:
                         binding["connectionAttemptSequence"] = offer_sequence
-                    result = await self.input_handler.transition_keyboard(
-                        connection_generation=binding["connectionGeneration"],
-                        lease_id=binding["leaseId"],
-                        lease_epoch=binding["leaseEpoch"],
-                    )
-                    if result.get("status") != "applied":
-                        logger.warning("Ignoring offer with rejected keyboard binding")
+                    accepted = await self._bind_input_authority(binding, authority)
+                    if not self._authority_matches(authority):
                         return
-                    try:
-                        desktop_result = await self._transition_desktop_writes(
-                            lease_id=binding["leaseId"],
-                            lease_epoch=binding["leaseEpoch"],
-                        )
-                    except Exception:
-                        logger.exception("Rejecting offer with failed desktop write binding")
-                        desktop_result = None
-                    if getattr(desktop_result, "status", None) != "applied":
-                        logger.warning("Ignoring offer with rejected desktop write binding")
-                        self._active_input_binding = None
-                        try:
-                            await self._reset_keyboard_lifecycle(
-                                "desktop-binding-rejected",
-                                lease_epoch=binding["leaseEpoch"],
-                            )
-                        except Exception:
-                            logger.exception("Failed to clean up rejected offer binding")
+                    if not accepted:
+                        await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
                         return
                     self._active_input_binding = binding
+                    authority = self._capture_authority()
                     # New offer/attempt invalidates prior media activity progress.
                     self._media_activity_binding = {
                         "viewerId": viewer_id,
@@ -2926,11 +2996,11 @@ class WebRemoteHost:
                     iceServers=build_ice_servers(network_mode, self._session_turn_server_id,
                                                  getattr(self, "_session_turn_override", None))
                 )
-                self.pc = RTCPeerConnection(configuration=config)
-                offer_pc = self.pc
+                offer_pc = RTCPeerConnection(configuration=config)
+                offer_pc._wrd_owner = (viewer_id, lease_id, lease_epoch)
                 if self._frame_trace_registry is not None:
                     self._frame_trace_registry.record_lab_pc_state(
-                        identifier=f"host-pc-{id(self.pc)}", state=str(self.pc.connectionState),
+                        identifier=f"host-pc-{id(offer_pc)}", state=str(offer_pc.connectionState),
                         width=int((self._user_resolution or {}).get("width", 0) or 0),
                         height=int((self._user_resolution or {}).get("height", 0) or 0),
                     )
@@ -2942,10 +3012,12 @@ class WebRemoteHost:
                 except Exception as cap_err:
                     logger.warning("Failed to refresh host TURN capability after offer: %s", cap_err)
 
+                if not self._authority_matches(authority):
+                    return
                 # Setup handlers BEFORE setting local description
                 ice_complete = asyncio.Event()
 
-                @self.pc.on("icecandidate")
+                @offer_pc.on("icecandidate")
                 async def on_icecandidate(candidate):
                     target_viewer = self.current_viewer_id if self.pc is offer_pc else None
                     if candidate and target_viewer:
@@ -2970,19 +3042,21 @@ class WebRemoteHost:
                         except Exception as e:
                             logger.error(f"Failed to send ICE: {e}")
 
-                @self.pc.on("icegatheringstatechange")
+                @offer_pc.on("icegatheringstatechange")
                 def on_icegatheringstatechange():
-                    state = self.pc.iceGatheringState
+                    state = offer_pc.iceGatheringState
                     logger.info(f"ICE gathering: {state}")
                     if state == "complete":
                         ice_complete.set()
 
-                @self.pc.on("connectionstatechange")
+                @offer_pc.on("connectionstatechange")
                 def on_connectionstatechange():
+                    if self.pc is not offer_pc:
+                        return
                     state = self.pc.connectionState
                     if self._frame_trace_registry is not None:
                         self._frame_trace_registry.record_lab_pc_state(
-                            identifier=f"host-pc-{id(self.pc)}", state=str(state),
+                            identifier=f"host-pc-{id(offer_pc)}", state=str(state),
                             width=int((self._user_resolution or {}).get("width", 0) or 0),
                             height=int((self._user_resolution or {}).get("height", 0) or 0),
                         )
@@ -2991,17 +3065,21 @@ class WebRemoteHost:
                         logger.info("WebRTC CONNECTED!")
                     elif state in ('failed', 'closed', 'disconnected'):
                         self._schedule_input_lifecycle(
-                            self._reset_keyboard_lifecycle(f"webrtc-{state}")
+                            self._reset_keyboard_lifecycle(f"webrtc-{state}", authority=self._capture_authority())
                         )
                         if state == 'failed':
                             logger.error("WebRTC FAILED")
 
-                @self.pc.on("iceconnectionstatechange")
+                @offer_pc.on("iceconnectionstatechange")
                 def on_iceconnectionstatechange():
+                    if self.pc is not offer_pc:
+                        return
                     logger.info(f"ICE connection: {self.pc.iceConnectionState}")
 
-                @self.pc.on("datachannel")
+                @offer_pc.on("datachannel")
                 def on_datachannel(channel):
+                    if self.pc is not offer_pc:
+                        return
                     logger.info("DataChannel received: label=%s id=%s", channel.label, channel.id)
                     binding = dict(self._active_input_binding or {})
                     if channel.label == "input":
@@ -3075,16 +3153,15 @@ class WebRemoteHost:
 
                 # Add video track
                 policy = self._h264_policy_provider.current_policy()
-                self._frame_trace_context = self._frame_trace_context_for_policy(policy)
-                self.screen_track = self._create_screen_track()
-                self.capture_adapter = CaptureAdapter(track=self.screen_track)
-                self.screen_track._host_ref = self
-                self.video_sender = self.pc.addTrack(self.screen_track)
-                self.video_sender._wrd_h264_policy = policy
-                self.video_sender._wrd_frame_trace_context = self._frame_trace_context
-                self.media_sender = MediaSenderAdapter()
-                self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
-                self._prefer_h264_transceivers()
+                frame_trace_context = self._frame_trace_context_for_policy(policy)
+                offer_track = self._create_screen_track()
+                offer_track._host_ref = self
+                offer_sender = offer_pc.addTrack(offer_track)
+                offer_sender._wrd_h264_policy = policy
+                offer_sender._wrd_frame_trace_context = frame_trace_context
+                offer_media_sender = MediaSenderAdapter()
+                offer_media_sender.bind(offer_sender, offer_track, pc=offer_pc)
+                self._prefer_h264_transceivers(offer_pc)
                 logger.info("Added video track")
 
                 # Process offer - replace mDNS with localhost
@@ -3096,16 +3173,22 @@ class WebRemoteHost:
                 offer_sdp = re.sub(r'[a-f0-9-]+\.local', '127.0.0.1', offer_sdp)
                 self._log_video_codecs("viewer-offer", offer_sdp)
 
-                await self.pc.setRemoteDescription(
+                await offer_pc.setRemoteDescription(
                     RTCSessionDescription(sdp=offer_sdp, type=offer_data['type'])
                 )
+                if not self._authority_matches(authority):
+                    return
                 logger.info("Set remote description")
 
                 # Create answer
-                answer = await self.pc.createAnswer()
-                await self.pc.setLocalDescription(answer)
+                answer = await offer_pc.createAnswer()
+                if not self._authority_matches(authority):
+                    return
+                await offer_pc.setLocalDescription(answer)
+                if not self._authority_matches(authority):
+                    return
                 logger.info("Set local description")
-                local_description = self.pc.localDescription or answer
+                local_description = offer_pc.localDescription or answer
                 if not (local_description and hasattr(local_description, 'sdp')):
                     logger.warning("localDescription is None after setLocalDescription")
 
@@ -3116,16 +3199,26 @@ class WebRemoteHost:
                 except asyncio.TimeoutError:
                     logger.warning("ICE gathering timeout")
 
+                if not self._authority_matches(authority):
+                    return
                 # Send answer with ICE candidates included (relay mode filters non-relay)
-                local_description = self.pc.localDescription or answer
+                local_description = offer_pc.localDescription or answer
                 answer_sdp = filter_sdp_ice_candidates(
                     network_mode,
                     local_description.sdp if local_description else "",
                 )
                 if answer_sdp:
                     self._log_video_codecs("host-answer", answer_sdp)
-                if self.pc is not offer_pc:
-                    return
+                if getattr(self, "_media_activity_suspended", False):
+                    if hasattr(offer_track, "set_suspended"):
+                        offer_track.set_suspended(True)
+                    offer_media_sender.suspend()
+                self.pc = offer_pc
+                self.screen_track = offer_track
+                self.video_sender = offer_sender
+                self.media_sender = offer_media_sender
+                self.capture_adapter = CaptureAdapter(track=offer_track)
+                self._frame_trace_context = frame_trace_context
                 await self.sio.emit('answer', {
                     'answer': {
                         'type': local_description.type,
@@ -3136,12 +3229,21 @@ class WebRemoteHost:
                 logger.info("Sent answer")
 
                 # Process any pending candidates received before PC was ready
+                if not self._authority_matches(authority):
+                    return
                 for cand in self.pending_candidates:
                     await self._add_ice_candidate(cand)
+                    if not self._authority_matches(authority):
+                        return
                 self.pending_candidates = []
 
             except Exception as e:
                 logger.error(f"Error in on_offer: {e}", exc_info=True)
+            finally:
+                if offer_pc is not None and self.pc is not offer_pc:
+                    await offer_pc.close()
+                    if offer_track is not None:
+                        await offer_track.shutdown()
 
     async def on_ice_candidate(self, data):
         candidate_viewer_id = data.get('from')
@@ -4071,6 +4173,7 @@ class WebRemoteHost:
                 )
                 return
 
+            authority = self._capture_authority()
             applied = False
             keyframe_requested = False
             screen_track = getattr(self, "screen_track", None)
@@ -4150,7 +4253,11 @@ class WebRemoteHost:
                     elif relay is not None and getattr(relay, "enabled", False):
                         try:
                             await relay.stop()
+                            if not self._authority_matches(authority):
+                                return
                         except Exception as exc:
+                            if not self._authority_matches(authority):
+                                return
                             step_ok["relay"] = False
                             logger.warning("media suspend relay stop failed: %s", type(exc).__name__)
                     applied = all(step_ok.values())
@@ -4204,11 +4311,15 @@ class WebRemoteHost:
                                     baseline,
                                     2.0,  # relay paths need more warmup time under CPU load
                                 )
+                                if not self._authority_matches(authority):
+                                    return
                                 if fresh is not True:
                                     step_ok["capture"] = False
                                     capture_failed_reason = "fresh-capture-timeout"
                             capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
                         except Exception as exc:
+                            if not self._authority_matches(authority):
+                                return
                             step_ok["capture"] = False
                             capture_failed_reason = "fresh-capture-timeout"
                             logger.warning("media resume capture failed: %s", type(exc).__name__)
@@ -4270,6 +4381,8 @@ class WebRemoteHost:
                         },
                     )
             except Exception as exc:
+                if not self._authority_matches(authority):
+                    return
                 logger.error("media activity apply failed: %s", type(exc).__name__)
                 applied = False
                 # Stay safe/suspended on failure.
@@ -4286,6 +4399,8 @@ class WebRemoteHost:
                 except Exception:
                     pass
 
+            if not self._authority_matches(authority):
+                return
             if applied:
                 # This binding is applied progress, not request history. Preserve
                 # the previous generation so a transient failure can replay once.
@@ -4536,6 +4651,21 @@ class WebRemoteHost:
                 and binding.get("connectionAttemptId") not in (None, attempt_id)
             ):
                 return
+        if binding.get("connectionAttemptId") == attempt_id and binding.get("connectionAttemptSequence") == sequence:
+            return
+        self._advance_authority()
+        # Any capture already warming for the old attempt loses permission.
+        track = getattr(self, "screen_track", None)
+        if track is not None and hasattr(track, "set_suspended"):
+            track.set_suspended(True)
+        sender = getattr(self, "media_sender", None)
+        if sender is not None:
+            sender.suspend()
+        relay = getattr(self, "relay_streamer", None)
+        if relay is not None and hasattr(relay, "set_suspended"):
+            relay.set_suspended(True)
+        self._media_activity_suspended = True
+        if isinstance(sequence, int) and sequence >= 1:
             binding["connectionAttemptSequence"] = sequence
         binding["connectionAttemptId"] = attempt_id
         coordinator = getattr(self, "_media_apply_coordinator", None)
@@ -4654,7 +4784,7 @@ class WebRemoteHost:
         except Exception as e:
             logger.warning(f"Failed to parse {label} ICE candidates: {e}")
 
-    def _prefer_h264_transceivers(self):
+    def _prefer_h264_transceivers(self, pc=None):
         """Prefer H.264 for lower latency and better browser decoder support."""
         try:
             from aiortc import RTCRtpSender
@@ -4669,7 +4799,7 @@ class WebRemoteHost:
             fallback = [codec for codec in video_codecs if codec not in h264_codecs and codec not in h264_rtx]
             preferred = h264_codecs + h264_rtx + fallback
 
-            for transceiver in self.pc.getTransceivers():
+            for transceiver in (pc or self.pc).getTransceivers():
                 if transceiver.kind == "video":
                     transceiver.setCodecPreferences(preferred)
                     logger.info("Preferred host video codecs: %s", " | ".join(str(codec) for codec in preferred))
@@ -4681,8 +4811,17 @@ class WebRemoteHost:
 
     async def on_disconnect(self):
         logger.warning("Disconnected from signaling server")
-        if self.relay_streamer:
-            await self.relay_streamer.stop()
+        self._signal_generation = getattr(self, "_signal_generation", 0) + 1
+        self._advance_authority()
+        self._signal_ready = False
+        self._active_input_binding = None
+        authority = self._capture_authority()
+        relay = getattr(self, "relay_streamer", None)
+        if relay:
+            self.relay_streamer = None
+            await relay.stop()
+            if not self._authority_matches(authority):
+                return
         await self._close_peer_connection(reason='signal-disconnect', reset_offer_state=True)
 
     async def ensure_connected(self):

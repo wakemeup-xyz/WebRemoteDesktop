@@ -213,10 +213,14 @@ async def test_rebind_waits_for_media_write_and_preserves_attempt_sequence(tunne
     assert host.input_handler._desktop_writes.snapshot().last_applied_seq == 2
 
 
-def test_rebind_handler_is_registered_only_on_host_signaling_client(monkeypatch):
+@pytest.mark.asyncio
+async def test_rebind_handler_is_registered_only_on_host_signaling_client(monkeypatch):
     registered = {}
     client = SimpleNamespace(on=lambda event, handler: registered.setdefault(event, handler))
     monkeypatch.setattr(host_module.socketio, "AsyncClient", lambda **_kwargs: client)
     host = make_host()
     assert host._build_socket_client() is client
-    assert registered["viewer-session-rebind"] == host.on_viewer_session_rebind
+    host.sio = client
+    assert await registered["viewer-session-rebind"](payload()) == {"status": "applied"}
+    host.sio = object()
+    assert await registered["viewer-session-rebind"](payload()) == {"status": "rejected"}

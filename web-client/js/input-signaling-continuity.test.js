@@ -43,6 +43,7 @@ function fixture({ heartbeat = false } = {}) {
   }
   const WebRTC = context.__WebRTC;
   const Input = context.__Input;
+  const originalCreateOffer = WebRTC.createOffer;
   const originalHeartbeat = WebRTC.startControlHeartbeat;
   const originalMedia = {
     ensureMediaActiveIfVisible: WebRTC.ensureMediaActiveIfVisible,
@@ -81,7 +82,7 @@ function fixture({ heartbeat = false } = {}) {
     WebRTC.socket.connected = false;
     WebRTC.freezeControl('signal-disconnect');
   };
-  return { WebRTC, Input, context, intervals, originalMedia, emitted, sent, lease, grant, acknowledge, disconnect };
+  return { WebRTC, Input, context, intervals, originalMedia, originalCreateOffer, emitted, sent, lease, grant, acknowledge, disconnect };
 }
 
 test('same-session signaling regrant retains both sequences and waits for both reset acknowledgements', () => {
@@ -278,4 +279,54 @@ test('grant immediately heartbeats and repeated grants keep only one periodic he
   h.disconnect(); assert.equal(h.intervals.size, 0);
   beforeDisconnect.fn(); assert.equal(heartbeats().length, 4);
   h.WebRTC.startControlHeartbeat(); assert.equal(h.intervals.size, 0);
+});
+
+test('different lease grant closes a connected peer and negotiates; same lease keeps it', () => {
+  const h = fixture();
+  let closes = 0;
+  let creates = 0;
+  let offers = 0;
+  const original = h.WebRTC.pc;
+  original._wrdControlLease = { ...h.lease };
+  original.close = () => { closes += 1; };
+  h.WebRTC.createPeerConnection = () => {
+    creates += 1;
+    h.WebRTC.pc = { connectionState: 'new', _wrdControlLease: { ...h.WebRTC.controlState.lease } };
+  };
+  h.WebRTC.createOffer = () => { offers += 1; };
+  h.grant();
+  assert.equal(h.WebRTC.pc, original);
+  assert.equal(creates, 0);
+  h.grant({ leaseId: 'different-lease', leaseEpoch: 9 });
+  assert.equal(closes, 1);
+  assert.equal(creates, 1);
+  assert.equal(offers, 1);
+  h.WebRTC.pc.connectionState = 'connected';
+  h.WebRTC.inputChannel = { readyState: 'open' };
+  h.grant({ leaseId: 'different-lease', leaseEpoch: 9 });
+  assert.equal(creates, 1);
+  assert.equal(offers, 1);
+});
+
+test('old async offer cannot use replacement peer or send under its lease', async () => {
+  const h = fixture();
+  let release;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const waiting = new Promise((resolve) => { release = resolve; });
+  let oldLocal = 0;
+  const oldPeer = h.WebRTC.pc;
+  oldPeer.getTransceivers = () => [{ mid: '0' }];
+  oldPeer.createOffer = async () => { entered(); return waiting; };
+  oldPeer.setLocalDescription = async () => { oldLocal += 1; };
+  oldPeer.close = () => {};
+  h.WebRTC.createPeerConnection = () => { h.WebRTC.pc = { connectionState: 'new' }; };
+  const pending = h.originalCreateOffer.call(h.WebRTC);
+  await started;
+  h.grant({ leaseId: 'new-peer-lease', leaseEpoch: 9 });
+  release({ type: 'offer', sdp: 'old' });
+  await pending;
+  assert.equal(oldLocal, 0);
+  assert.equal(h.emitted.filter((event) => event.event === 'offer').length, 0);
+  assert.notEqual(h.WebRTC.pc, oldPeer);
 });

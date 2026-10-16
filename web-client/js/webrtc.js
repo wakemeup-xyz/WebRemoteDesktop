@@ -3552,6 +3552,24 @@ const WebRTC = {
       this.freezeControl('invalid-control-grant');
       return;
     }
+    const peerLease = this.pc?._wrdControlLease;
+    const differentPeerLease = peerLease && (peerLease.leaseId !== data.leaseId || peerLease.leaseEpoch !== data.leaseEpoch);
+    if (differentPeerLease) {
+      const oldPeer = this.pc;
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) {
+        oldPeer[event] = null;
+      }
+      this.pc = null;
+      this.inputChannel = null;
+      this.inputMoveChannel = null;
+      this._offerEpoch += 1;
+      this.offerInProgress = false;
+      this._mediaReadyConnectionAttemptId = null;
+      this.hasPaintedFrame = false;
+      this.stopDcKeepalive();
+      oldPeer.close();
+    }
     this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
     if (typeof Input !== 'undefined') {
@@ -3934,6 +3952,7 @@ const WebRTC = {
     this.selectedCandidatePair = null;
     if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
     this.pc = new RTCPeerConnection(this.config);
+    this.pc._wrdControlLease = this.controlState?.lease ? Object.freeze({ ...this.controlState.lease }) : null;
     this.videoTransceiver = null;
     this.inputChannel = null;
     this.inputMoveChannel = null;
@@ -4553,47 +4572,58 @@ if (this.tunnelLastObjectUrl) {
     this.offerInProgress = true;
     this._offerEpoch += 1;
     const epoch = this._offerEpoch;
+    const peer = this.pc;
+    const socket = this.socket;
+    if (!this.currentConnectionAttemptId) this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    const attemptId = this.currentConnectionAttemptId;
+    const attemptSequence = Number(this.connectionAttemptSequence) || 1;
+    const lease = Object.freeze({ ...this.controlState.lease });
+    peer._wrdControlLease = lease;
+    const ownsOffer = () => epoch === this._offerEpoch && this.pc === peer
+      && this.socket === socket && this.currentConnectionAttemptId === attemptId
+      && (Number(this.connectionAttemptSequence) || 1) === attemptSequence
+      && this.controlState?.lease?.leaseId === lease.leaseId
+      && this.controlState?.lease?.leaseEpoch === lease.leaseEpoch;
 
     try {
-      if (epoch !== this._offerEpoch) return;
-      const existingVideoTransceiver = this.pc.getTransceivers().find((transceiver) => {
+      if (!ownsOffer()) return;
+      const existingVideoTransceiver = peer.getTransceivers().find((transceiver) => {
         return transceiver.receiver?.track?.kind === 'video' || transceiver.mid === '0';
       });
       this.videoTransceiver = existingVideoTransceiver || this.videoTransceiver;
       if (!this.videoTransceiver) {
-        this.videoTransceiver = this.pc.addTransceiver('video', { direction: 'recvonly' });
+        this.videoTransceiver = peer.addTransceiver('video', { direction: 'recvonly' });
         this.preferH264(this.videoTransceiver);
       }
 
-      const offer = await this.pc.createOffer();
-      if (epoch !== this._offerEpoch) return;
-      await this.pc.setLocalDescription(offer);
+      const offer = await peer.createOffer();
+      if (!ownsOffer()) return;
+      await peer.setLocalDescription(offer);
+      if (!ownsOffer()) return;
       if (this.networkMode === 'relay') {
         await this.waitForIceGatheringComplete(8000);
       }
-      if (epoch !== this._offerEpoch) return;
+      if (!ownsOffer()) return;
 
-      if (!this.currentConnectionAttemptId) {
-        this.currentConnectionAttemptId = this.createConnectionAttemptId();
-      }
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
       const session = this.getSessionPresentation();
-      this.socket.emit('offer', {
-        offer: this.pc.localDescription,
+      socket.emit('offer', {
+        offer: peer.localDescription,
         epoch,
         schemaVersion: 2,
         networkMode: this.networkMode,
         iceMode: this.networkMode,
         turnServerId: this.selectedTurnServerId || this.serverConfig?.selectedTurnServerId || undefined,
-        leaseId: this.controlState.lease.leaseId,
-        leaseEpoch: this.controlState.lease.leaseEpoch,
-        connectionAttemptId: this.currentConnectionAttemptId,
-        connectionAttemptSequence: Number(this.connectionAttemptSequence) || 1,
+        leaseId: lease.leaseId,
+        leaseEpoch: lease.leaseEpoch,
+        connectionAttemptId: attemptId,
+        connectionAttemptSequence: attemptSequence,
         width: session.width,
         height: session.height,
       });
       console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {
+      if (!ownsOffer()) return;
       console.error('Failed to create offer:', err);
       this.scheduleReconnect('offer-error');
     } finally {
