@@ -356,3 +356,22 @@ test('matched negative unordered ACK settles rejection once while late failures 
   assert.equal(s.outcomes.late, 1); assert.equal(s.outcomes.timedOut, 1);
   assert.equal(s.outcomes.rejected, 0); assert.equal(s.metrics.inputAckRttMs.count, 0);
 });
+
+test('late post-apply evidence uses saved presentation time and never settles ACK or visible effect', () => {
+  let now = 100;
+  const scope = { connectionAttemptId: 'a', generation: 1, leaseEpoch: 7 };
+  const monitor = createLatencyMonitor({ now: () => now });
+  monitor.setScope(scope); monitor.recordInputSend('one', { scope });
+  now = 800;
+  assert.equal(monitor.hasPendingFrameInputs(), true);
+  assert.equal(monitor.onPostApplyFrame({ scope, traceStatus: 'matched', viewerClockMs: 200, inputIds: ['one'] }, { scope }), true);
+  const snapshot = monitor.snapshot();
+  assert.equal(snapshot.metrics.inputToPostApplyFrameMs.last, 100);
+  assert.equal(snapshot.metrics.inputToVisibleEffectMs.available, false);
+  assert.equal(snapshot.metrics.inputAckRttMs.available, false);
+  assert.equal(snapshot.outcomes.acked, 0);
+  assert.equal(monitor.hasPendingFrameInputs(), false);
+  now = 900;
+  monitor.onInputAck({ status: 'applied', inputIds: ['one'] }, { scope });
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 800);
+});

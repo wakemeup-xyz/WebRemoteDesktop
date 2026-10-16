@@ -280,3 +280,10 @@ def test_controlled_producer_records_immutable_input_bound_event_and_freezes_for
     assert event.action_id == 4
     with __import__("pytest").raises(Exception):
         event.action_id = 5
+
+
+def test_visual_clock_deltas_keep_original_presentation_and_reject_missing_or_negative_clock():
+    assert scene._clock_delta(150, 100) == 50
+    for value in (None, "150", True, -1, float("inf"), float("nan")):
+        assert scene._clock_delta(value, 100) is None
+        assert scene._clock_delta(150, value) is None

@@ -369,9 +369,8 @@ def _indexed(rows: Any, field: str, failures: set[str], *, invalid: str, duplica
 
 
 def _clock_delta(later: Any, earlier: Any) -> float | None:
-    if isinstance(later, bool) or isinstance(earlier, bool):
-        return None
-    if not isinstance(later, (int, float)) or not isinstance(earlier, (int, float)):
+    # Both samples are the original Viewer callbacks, never metadata arrival or Host wall time.
+    if not _finite_clock(later) or not _finite_clock(earlier):
         return None
     value = float(later) - float(earlier)
     return value if math.isfinite(value) and value >= 0 else None
@@ -391,7 +390,7 @@ def _nonce(value: Any) -> int | None:
 
 
 def _finite_clock(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and value >= 0
 
 
 def _exact_row(row: Any, required: set[str]) -> bool:

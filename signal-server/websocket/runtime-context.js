@@ -142,6 +142,7 @@ function normalizeTurnServerIds(value) {
 
 function normalizeCapabilities(payload = {}, timestamped) {
   return {
+    inputFrameCorrelationVersion: payload.inputFrameCorrelationVersion === 1 ? 1 : null,
     turnReady: Boolean(payload.turnReady),
     turnFingerprint: String(payload.turnFingerprint || '').trim(),
     supportsSessionTurn: Boolean(payload.supportsSessionTurn),

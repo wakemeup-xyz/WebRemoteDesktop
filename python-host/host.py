@@ -50,8 +50,9 @@ from h264_encoder_policy import (
 )
 from media_apply_coordinator import MediaApplyCoordinator, MediaApplyIdentity
 from media_timing import RtpFrameClock
-from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
+from media_stage_metrics import FrameKey, FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
+from input_frame_causality import InputFrameCausality
 from observability import (
     configure_host_logging,
     emit_host_event,
@@ -132,14 +133,11 @@ try:
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
 
-    # Detailed trace is an explicit Lab opt-in. Production's counter-only
-    # media path does not install private aiortc wrappers at all.
-    _rtp_frame_observer = None
-    if os.environ.get("WRD_FRAME_TRACE_DETAIL") == "1":
-        _rtp_frame_observer = RtpFrameObserver()
-        _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
-        if not _rtp_observer_ready:
-            logger.warning("RTP frame trace observer unavailable: %s", _rtp_observer_reason)
+    # Basic input correlation is sparse and ABI checked; detailed stages stay opt-in.
+    _rtp_frame_observer = RtpFrameObserver()
+    _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
+    if not _rtp_observer_ready:
+        logger.warning("RTP frame observer unavailable: %s", _rtp_observer_reason)
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -1261,6 +1259,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             was = self._suspended
             self._suspended = suspended
             if was != suspended:
+                self._release_input_frame_reservations()
                 self._capture_generation += 1
             self._activity_condition.notify_all()
         if suspended:
@@ -1288,6 +1287,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     async def shutdown(self):
         """Async shutdown: never blocks the event loop."""
+        self._release_input_frame_reservations()
         with self._activity_condition:
             self._capture_running = False
             self._suspended = False
@@ -1371,6 +1371,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 screenshot = self._capture_buffer
                 seq = self._capture_seq
                 self._capture_buffer = None
+            selected_grab_bounds = self._capture_bounds_ns.get(seq)
+        selected_host = getattr(self, "_host_ref", None)
+        selected_scope = selected_host._input_observation_scope() if hasattr(selected_host, "_input_observation_scope") else None
 
         capture_wait = 0.0  # never block — capture runs independently
 
@@ -1448,8 +1451,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         frame.time_base = time_base
         if trace_context is not None:
             capture_seq = seq if fresh else self._last_consumed_seq
-            with self._capture_lock:
-                grab_bounds = self._capture_bounds_ns.get(capture_seq)
+            grab_bounds = selected_grab_bounds
             encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
             trace_key = trace_context.key(capture_seq, encoder_timestamp)
             self._record_output_trace(
@@ -1457,6 +1459,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 fresh=fresh, reused=reused,
             )
             self._send_frame_trace_batch()
+        if selected_scope is not None and selected_grab_bounds is not None:
+            try:
+                key = FrameKey(selected_scope[0], selected_scope[1], "video", seq,
+                               int(round(float(pts * time_base * 90_000))) & 0xffffffff)
+                selected_host._input_frame_causality.reserve_for_capture(
+                    key, capture_started_ns=selected_grab_bounds[0], reused=reused or not fresh,
+                    scope=selected_scope)
+            except Exception:
+                pass  # observation must never interrupt capture
         convert_time = worker_timing["construct"]
         total_time = time.perf_counter() - recv_start
 
@@ -1731,6 +1742,12 @@ class ScreenCaptureTrack(VideoStreamTrack):
         bgr = np.ascontiguousarray(img[:, :, :3], dtype=np.uint8)
         return av.VideoFrame.from_ndarray(bgr[:, :, ::-1], format="rgb24")
 
+    def _release_input_frame_reservations(self):
+        host = getattr(self, "_host_ref", None)
+        if host is not None and getattr(host, "screen_track", None) is self:
+            causality = getattr(host, "_input_frame_causality", None)
+            if causality is not None: causality.release_all()
+
     def set_max_resolution(self, width, height):
         ABSOLUTE_MAX_WIDTH = 1920
         ABSOLUTE_MAX_HEIGHT = 1080
@@ -1740,6 +1757,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._max_width = width
             self._max_height = height
             self._target_generation += 1
+        self._release_input_frame_reservations()
         logger.info("Screen stream max resolution set to %sx%s (requested capped at %sx%s, monitor=%sx%s)",
                     width, height, ABSOLUTE_MAX_WIDTH, ABSOLUTE_MAX_HEIGHT,
                     self.monitor["width"], self.monitor["height"])
@@ -1750,6 +1768,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._target_fps = target_fps
             self._frame_interval = 1.0 / target_fps
             self._target_generation += 1
+        self._release_input_frame_reservations()
         logger.info("Screen stream target FPS set to %s", target_fps)
 
     @staticmethod
@@ -1822,6 +1841,7 @@ class WebRemoteHost:
         self._policy_selection = self._create_policy_selection()
         self._h264_policy_version = self._policy_selection.policy_id
         self._h264_policy_provider = H264SessionPolicyProvider(resolver=self._policy_selection.resolver)
+        self._input_frame_causality = InputFrameCausality()
         self._frame_trace_detail_enabled = detailed_frame_trace_enabled()
         self._lab_loss_trace_enabled = os.environ.get("WRD_LAB_LOSS_TRACE") == "1" and os.environ.get("WRD_LAB_HOST_ENTRY") == "1"
         self._frame_trace_registry = FrameTraceRegistry(lab_loss_trace=self._lab_loss_trace_enabled) if self._frame_trace_detail_enabled else None
@@ -1997,6 +2017,7 @@ class WebRemoteHost:
             logger.info("Connected to signaling server")
             try:
                 capability = self._host_turn_capability() if hasattr(self, "_host_turn_capability") else get_host_turn_capability()
+                capability["inputFrameCorrelationVersion"] = 1 if (globals().get("_rtp_observer_ready", False) and getattr(globals().get("_rtp_frame_observer"), "enabled", False)) else None
                 await self.sio.emit("host-capabilities", capability)
                 logger.info(
                     "Host capabilities reported turnReady=%s multi=%s default=%s fingerprint=%s ids=%s",
@@ -2326,6 +2347,11 @@ class WebRemoteHost:
             if not self._authority_matches(authority):
                 return
             local_execute_ms = (time.perf_counter() - adapter_started) * 1000
+            applied_ns = time.monotonic_ns()
+            try:
+                self._note_input_applied(result, authority, applied_ns, input_type=input_type, action=action)
+            except Exception:
+                pass  # optional observation cannot change ACK or authority
             result_data = dict(data)
             if isinstance(result, dict) and isinstance(result.get("inputIds"), (list, tuple)):
                 result_data["inputIds"] = result["inputIds"]
@@ -2342,15 +2368,6 @@ class WebRemoteHost:
                 await self._send_input_ack(data, result, local_execute_ms)
                 if not self._authority_matches(authority):
                     return
-            if result and isinstance(result, dict) and result.get("inputIds"):
-                if self.screen_track:
-                    with self.screen_track._pending_input_lock:
-                        self.screen_track._pending_input_ids.update(result["inputIds"])
-                        self.screen_track._pending_input_data.append({
-                            "ids": result["inputIds"],
-                            "receiveTime": result.get("receiveTime"),
-                            "executeTime": result.get("executeTime"),
-                        })
             return result
         except Exception as exc:
             if accepted:
@@ -2705,7 +2722,44 @@ class WebRemoteHost:
         task.add_done_callback(tasks.discard)
         return task
 
+    def _input_observation_scope(self):
+        binding = getattr(self, "_active_input_binding", None) or {}
+        attempt = binding.get("connectionAttemptId")
+        generation = binding.get("connectionAttemptSequence")
+        epoch = binding.get("leaseEpoch")
+        if not isinstance(attempt, str) or not attempt or not isinstance(generation, int) or not isinstance(epoch, int):
+            return None
+        return (attempt, generation, epoch)
+
+    def _note_input_applied(self, result, authority, applied_ns, *, input_type=None, action=None):
+        if not self._authority_matches(authority) or not isinstance(result, dict): return
+        scope = self._input_observation_scope()
+        if (scope is None or not globals().get("_rtp_observer_ready", False)
+                or not getattr(globals().get("_rtp_frame_observer"), "enabled", False)): return
+        causality = getattr(self, "_input_frame_causality", None)
+        if causality is None:
+            causality = self._input_frame_causality = InputFrameCausality()
+        causality.reset_scope(scope)
+        status = result.get("status")
+        if status == "unordered" and (input_type, action) != ("mouse", "move"): return
+        causality.note_applied(result.get("inputIds") or (), scope=scope, applied_ns=applied_ns,
+                              status="applied" if status == "unordered" else status)
+
+    def _commit_input_frame(self, key, scope, ssrc, timestamp):
+        if scope != self._input_observation_scope(): return
+        ids = self._input_frame_causality.commit_first_packet(key, wire_timestamp=timestamp, ssrc=ssrc, scope=scope)
+        if not ids: return
+        dc = self.get_input_datachannel()
+        if dc is not None and hasattr(dc, "send"):
+            dc.send(json.dumps({"type": "input_frame_binding", "schemaVersion": 1,
+                "scope": {"connectionAttemptId": scope[0], "generation": scope[1], "leaseEpoch": scope[2]},
+                "streamId": key.stream_id, "captureSeq": key.capture_seq,
+                "encoderTimestamp": key.encoder_timestamp, "wireTimestamp": timestamp, "ssrc": ssrc,
+                "captureFresh": True, "captureAfterApplied": True, "inputIds": ids}))
+
     def _advance_authority(self):
+        causality = getattr(self, "_input_frame_causality", None)
+        if causality is not None: causality.reset_scope(None)
         queue = getattr(self, '_input_admission', None)
         if queue is not None:
             queue.freeze(self._capture_authority(), 'authority-transition')
@@ -3228,6 +3282,7 @@ class WebRemoteHost:
                     session_caps = (self._host_turn_capability(self._session_turn_server_id)
                                     if hasattr(self, "_host_turn_capability")
                                     else get_host_turn_capability(self._session_turn_server_id))
+                    session_caps["inputFrameCorrelationVersion"] = 1 if (globals().get("_rtp_observer_ready", False) and getattr(globals().get("_rtp_frame_observer"), "enabled", False)) else None
                     await self.sio.emit("host-capabilities", session_caps)
                 except Exception as cap_err:
                     logger.warning("Failed to refresh host TURN capability after offer: %s", cap_err)
@@ -3379,6 +3434,7 @@ class WebRemoteHost:
                 offer_sender = offer_pc.addTrack(offer_track)
                 offer_sender._wrd_h264_policy = policy
                 offer_sender._wrd_frame_trace_context = frame_trace_context
+                offer_sender._wrd_input_frame_host = self
                 offer_media_sender = MediaSenderAdapter()
                 offer_media_sender.bind(offer_sender, offer_track, pc=offer_pc)
                 self._prefer_h264_transceivers(offer_pc)

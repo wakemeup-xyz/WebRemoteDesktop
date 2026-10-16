@@ -43,11 +43,11 @@ const FRAME_TRACE_ROW_FIELDS = [
 // performs identity joins only: rVFC's rtpTimestamp is never subtracted from a
 // Host timestamp or compared to the encoder's pre-origin timestamp.
 class FrameTraceCollector {
-  constructor({ now = () => performance.now(), capacity = 2048, ttlMs = 120000, lateWaitMs = 2000 } = {}) {
+  constructor({ now = () => performance.now(), capacity = 256, ttlMs = 30000, lateWaitMs = 2000 } = {}) {
     this.now = now;
-    this.capacity = capacity;
-    this.ttlMs = ttlMs;
-    this.lateWaitMs = lateWaitMs;
+    this.capacity = Math.min(256, Math.max(1, capacity));
+    this.ttlMs = Math.min(30000, ttlMs);
+    this.lateWaitMs = Math.min(2000, lateWaitMs);
     this.frames = new Map();
     this.traces = new Map();
     this.seen = new Map();
@@ -95,7 +95,7 @@ class FrameTraceCollector {
 
   identity(value) {
     return [value?.attemptId, Number(value?.generation), value?.streamId,
-      Number(value?.wireTimestamp) >>> 0].join('|');
+      value?.ssrc, Number(value?.wireTimestamp) >>> 0].join('|');
   }
 
   isValidTrace(trace) {
@@ -138,12 +138,12 @@ class FrameTraceCollector {
     this.matched = [];
   }
 
-  prune(map) {
-    const deadline = Number(this.now()) - this.ttlMs;
+  prune(map, ttlMs = this.lateWaitMs) {
+    const deadline = Number(this.now()) - ttlMs;
     for (const [id, entry] of map) {
       if (entry.at <= deadline) {
         map.delete(id);
-        this.unaligned = true;
+        if (map !== this.seen) { this.unaligned = true; this.droppedTraceCount += 1; }
       }
     }
   }
@@ -151,7 +151,7 @@ class FrameTraceCollector {
   expire() {
     this.prune(this.frames);
     this.prune(this.traces);
-    this.prune(this.seen);
+    this.prune(this.seen, this.ttlMs);
     const lateDeadline = Number(this.now()) - this.lateWaitMs;
     for (const entry of this.frames.values()) {
       if (entry.at <= lateDeadline) this.unaligned = true;
@@ -159,7 +159,7 @@ class FrameTraceCollector {
     for (const entry of this.traces.values()) {
       if (entry.at <= lateDeadline) this.unaligned = true;
     }
-    const deadline = Number(this.now()) - this.ttlMs;
+    const deadline = Number(this.now()) - this.lateWaitMs;
     while (this.matched.length && this.matched[0].at <= deadline) {
       this.matched.shift();
       this.unaligned = true;
@@ -167,16 +167,16 @@ class FrameTraceCollector {
   }
 
   appendMatch(value) {
-    if (this.matched.length >= this.capacity) {
-      this.failClosed();
-      return false;
+    if (this.matched.length >= Math.min(128, this.capacity)) {
+      this.matched.shift(); this.droppedTraceCount += 1;
     }
-    this.matched.push({ at: Number(this.now()), value });
+    this.matched.push({ at: value.viewerClockMs, value });
+    this.matched.sort((a, b) => a.at - b.at);
     this.lastMatched = value;
     return true;
   }
 
-  matchedVisual(trace, rtpTimestamp, roi) {
+  matchedVisual(trace, rtpTimestamp, roi, at) {
     // This is the only browser-side conversion from a Host trace plus rVFC.
     // Keep every join identity so downstream scene validation never needs to
     // invent a timestamp or infer a generation from a marker.
@@ -191,16 +191,19 @@ class FrameTraceCollector {
       // It is evidence of the observed mapping, never a clock for latency.
       rtpOrigin: (trace.wireTimestamp - trace.encoderTimestamp) >>> 0,
       traceStatus: 'matched',
-      viewerClockMs: Number(this.now()),
+      viewerClockMs: at,
       idrKind: trace.idrKind || null,
       roi,
+      ...(trace.inputIds ? { inputIds: trace.inputIds, scope: trace.scope } : {}),
     };
   }
 
   observeVideoFrame(identity, roi) {
     if (this.terminalUnaligned) return false;
-    const timestamp = Number(identity?.rtpTimestamp);
-    if (!Number.isFinite(timestamp)) {
+    const timestamp = identity?.rtpTimestamp;
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 0xffffffff
+        || !Number.isSafeInteger(identity?.ssrc) || identity.ssrc < 0 || identity.ssrc > 0xffffffff
+        || !identity.streamId) {
       this.unaligned = true;
       return false;
     }
@@ -208,14 +211,14 @@ class FrameTraceCollector {
     if (!this.isInScope({ ...identity, wireTimestamp: timestamp })) return false;
     const id = this.identity({ ...identity, wireTimestamp: timestamp });
     const trace = this.traces.get(id);
+    if (!trace && (this.frames.has(id) || this.seen.has(id))) return false;
     if (trace) {
       this.traces.delete(id);
-      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi));
+      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi, Number(this.now())));
       return true;
     }
     if (this.frames.size >= this.capacity) {
-      this.failClosed();
-      return false;
+      this.frames.delete(this.frames.keys().next().value); this.droppedTraceCount += 1;
     }
     this.frames.set(id, { at: Number(this.now()), value: { identity, roi } });
     return false;
@@ -230,12 +233,12 @@ class FrameTraceCollector {
           && (!Number.isSafeInteger(batch.droppedTraceCount) || batch.droppedTraceCount < 0))) return this.rejectInvalidBatch();
     const identities = new Set();
     for (const trace of batch.traces) {
-      if (!this.isValidTrace(trace)) return this.rejectInvalidBatch();
-      if (!this.isInScope(trace)) {
+      if (trace && typeof trace.attemptId === 'string' && trace.attemptId.trim() && Number.isSafeInteger(trace.generation) && trace.generation >= 0
+          && typeof trace.streamId === 'string' && trace.streamId.trim() && !this.isInScope(trace)) {
         this.staleTraceCount += 1;
-        this.failClosed();
-        return 0;
+        continue;
       }
+      if (!this.isValidTrace(trace)) return this.rejectInvalidBatch();
       const id = this.identity(trace);
       if (identities.has(id) || this.traces.has(id) || this.seen.has(id)) {
         this.conflictingTraceCount += 1;
@@ -244,27 +247,49 @@ class FrameTraceCollector {
       }
       identities.add(id);
     }
-    if (this.seen.size + identities.size > this.capacity) return this.rejectInvalidBatch();
+
     this.droppedTraceCount += Math.max(0, Number(batch.droppedTraceCount) || 0);
     if (this.droppedTraceCount) this.unaligned = true;
     let joined = 0;
-    for (const trace of batch.traces) {
-      const id = this.identity(trace);
-      this.seen.set(id, { at: Number(this.now()) });
-      const frame = this.frames.get(id);
-      if (frame) {
-        this.frames.delete(id);
-        this.appendMatch(this.matchedVisual(trace, frame.value.identity.rtpTimestamp, frame.value.roi));
-        joined += 1;
-        continue;
-      }
-      if (this.traces.size >= this.capacity) {
-        this.failClosed();
-        return 0;
-      }
-      this.traces.set(id, { at: Number(this.now()), value: trace });
-    }
+    for (const trace of batch.traces) if (this.isInScope(trace)) joined += this.joinTrace(trace);
     return joined;
+  }
+
+  joinTrace(trace) {
+    const id = this.identity(trace);
+    while (this.seen.size >= 2048) { this.seen.delete(this.seen.keys().next().value); this.droppedTraceCount += 1; }
+    this.seen.set(id, { at: Number(this.now()) });
+    const frame = this.frames.get(id);
+    if (frame) {
+      this.frames.delete(id);
+      this.appendMatch(this.matchedVisual(trace, frame.value.identity.rtpTimestamp, frame.value.roi, frame.at));
+      return 1;
+    }
+    if (this.traces.size >= this.capacity) {
+      this.traces.delete(this.traces.keys().next().value); this.droppedTraceCount += 1;
+    }
+    this.traces.set(id, { at: Number(this.now()), value: trace });
+    return 0;
+  }
+
+  acceptBinding(binding, scope) {
+    this.expire();
+    if (this.terminalUnaligned || !binding || binding.type !== 'input_frame_binding' || binding.schemaVersion !== 1) return 0;
+    const fields = ['type', 'schemaVersion', 'scope', 'streamId', 'captureSeq', 'encoderTimestamp', 'wireTimestamp', 'ssrc', 'captureFresh', 'captureAfterApplied', 'inputIds'];
+    if (Object.keys(binding).length !== fields.length || fields.some(k => !Object.hasOwn(binding, k))) return 0;
+    if (!scope || Object.keys(binding.scope || {}).length !== 3
+        || !['connectionAttemptId', 'generation', 'leaseEpoch'].every(k => binding.scope[k] === scope[k])) { this.staleTraceCount += 1; return 0; }
+    const uint = value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
+    if (binding.captureFresh !== true || binding.captureAfterApplied !== true || binding.streamId !== 'video'
+        || !Number.isSafeInteger(binding.captureSeq) || binding.captureSeq < 0
+        || !['encoderTimestamp', 'wireTimestamp', 'ssrc'].every(k => uint(binding[k]))
+        || !Array.isArray(binding.inputIds) || binding.inputIds.length < 1 || binding.inputIds.length > 64
+        || binding.inputIds.some(id => typeof id !== 'string' || !/^[\x20-\x7e]{1,128}$/.test(id))
+        || new Set(binding.inputIds).size !== binding.inputIds.length) return 0;
+    const trace = { ...binding, attemptId: scope.connectionAttemptId, generation: scope.generation };
+    const id = this.identity(trace);
+    if (this.seen.has(id)) { this.conflictingTraceCount += 1; this.failClosed(); return 0; }
+    return this.joinTrace(trace);
   }
 
   takeMatched() {
@@ -275,6 +300,7 @@ class FrameTraceCollector {
   }
 
   latestMatchedForRtp(rtpTimestamp) {
+    if (this.lastMatched && this.now() - this.lastMatched.viewerClockMs >= this.lateWaitMs) this.lastMatched = null;
     const row = this.lastMatched;
     if (!row || (Number(row.rtpTimestamp) >>> 0) !== (Number(rtpTimestamp) >>> 0)) return null;
     // Callers must not be able to mutate the T3-owned join object.
@@ -2621,6 +2647,8 @@ const WebRTC = {
     if (!capabilities || typeof capabilities !== 'object') {
       return this.serverConfig;
     }
+    this.serverConfig.inputFrameCorrelationVersion = capabilities.inputFrameCorrelationVersion === 1 ? 1 : null;
+    if (this.serverConfig.inputFrameCorrelationVersion !== 1) this.inputFrameCollector = null;
     if (Object.prototype.hasOwnProperty.call(capabilities, 'turnReady')) {
       this.serverConfig.hostTurnReady = Boolean(capabilities.turnReady);
     }
@@ -4349,6 +4377,12 @@ const WebRTC = {
           }
           return;
         }
+        if (data.type === 'input_frame_binding') {
+          const collector = this.ensureInputFrameCollector();
+          collector?.acceptBinding(data, this.latencyScope());
+          this.consumeInputFrameMatches();
+          return;
+        }
         if (data.type === 'frame_trace_batch') {
           this.acceptFrameTraceBatch(data);
           return;
@@ -5301,12 +5335,15 @@ if (this.tunnelLastObjectUrl) {
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
-      this.ensureFrameTraceCollector().observeVideoFrame({
-        attemptId,
-        generation: Number(this.connectionAttemptSequence) || 0,
-        streamId: 'video',
-        rtpTimestamp: metadata?.rtpTimestamp,
-      }, { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
+      const identity = this.verifiedVideoFrameIdentity(trackedPc, video, metadata);
+      if (identity) {
+        if (this._frameTraceEnabled || this._controlledSceneMarkerRoi || this._lossLabTrace) {
+          this.ensureFrameTraceCollector().observeVideoFrame(identity,
+            { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
+        }
+        this.ensureInputFrameCollector()?.observeVideoFrame(identity, {});
+        this.consumeInputFrameMatches();
+      }
       this.recordLossLabRvfc(metadata, video);
       this.observePaintFrame(now, metadata, video);
       this.observeFreshResumeFrame({
@@ -5357,6 +5394,33 @@ if (this.tunnelLastObjectUrl) {
     }
   },
 
+  verifiedVideoFrameIdentity(pc, video, metadata) {
+    if (!pc || pc !== this.pc || typeof pc.getReceivers !== 'function') return null;
+    const tracks = video?.srcObject?.getVideoTracks?.() || [];
+    const receivers = pc.getReceivers().filter(r => r.track?.kind === 'video' && tracks.some(t => t.id === r.track.id));
+    if (receivers.length !== 1) return null;
+    const sources = [...new Set((receivers[0].getSynchronizationSources?.() || []).map(s => s.source))];
+    if (sources.length !== 1 || !Number.isSafeInteger(sources[0])) return null;
+    return { ...this.currentFrameTraceIdentity(), ssrc: sources[0], rtpTimestamp: metadata?.rtpTimestamp };
+  },
+
+  ensureInputFrameCollector() {
+    if (this.serverConfig?.inputFrameCorrelationVersion !== 1 || typeof LatencyMonitor === 'undefined'
+        || !LatencyMonitor.hasPendingFrameInputs?.()) { this.inputFrameCollector = null; return null; }
+    const scope = this.latencyScope(), key = JSON.stringify(scope);
+    if (!this.inputFrameCollector || this._inputFrameScope !== key) {
+      this.inputFrameCollector = new FrameTraceCollector(); this._inputFrameScope = key;
+      this.inputFrameCollector.setScope({ attemptId: scope.connectionAttemptId, generation: scope.generation, streamId: 'video' });
+    }
+    return this.inputFrameCollector;
+  },
+
+  consumeInputFrameMatches() {
+    for (const row of this.inputFrameCollector?.takeMatched() || []) {
+      if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onPostApplyFrame?.(row, { scope: this.latencyScope() });
+    }
+  },
+
   ensureFrameTraceCollector(scope = this.currentFrameTraceIdentity()) {
     if (!this.frameTraceCollector) this.frameTraceCollector = new FrameTraceCollector();
     this.frameTraceCollector.setScope(scope);
@@ -5364,6 +5428,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   acceptFrameTraceBatch(batch) {
+    this._frameTraceEnabled = true;
     return this.ensureFrameTraceCollector().acceptBatch(batch);
   },
 

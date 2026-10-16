@@ -35,8 +35,9 @@ function loadCollector(now = () => 0) {
   context.globalThis = context;
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
-  vm.runInContext(`${source}\nglobalThis.__Collector = FrameTraceCollector; globalThis.__DecodeControlledMarker = decodeControlledMarkerRgba;`, context);
+  vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC; globalThis.__Collector = FrameTraceCollector; globalThis.__DecodeControlledMarker = decodeControlledMarkerRgba;`, context);
   context.__Collector.decodeControlledMarker = context.__DecodeControlledMarker;
+  context.__Collector.runtime = context;
   return context.__Collector;
 }
 
@@ -61,7 +62,7 @@ test('actual 256x128 canvas pixels decode the dual-CRC marker before T3 visual e
   const marker = Collector.decodeControlledMarker(controlledMarkerPixels(), 256, 128);
   assert.deepEqual(JSON.parse(JSON.stringify(marker)), { runNonce: '72623859790382856', sceneId: 7, tick: 3, actionId: 9 });
   const collector = new Collector();
-  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 44 }, { marker });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, { marker });
   collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ attemptId: 'a', generation: 1, wireTimestamp: 44 })] });
   const visual = collector.takeControlledVisualEvidence();
   assert.equal(visual.length, 1);
@@ -73,7 +74,7 @@ test('late diagnostic joins the matching rVFC wire timestamp within two seconds'
   let now = 100;
   const Collector = loadCollector(() => now);
   const collector = new Collector({ now: () => now });
-  collector.observeVideoFrame({ attemptId: 'a', generation: 2, streamId: 'video', rtpTimestamp: 44 }, { roi: 'frame' });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 2, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, { roi: 'frame' });
   collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({
     attemptId: 'a', generation: 2, wireTimestamp: 44, idrKind: 'idr', idrReason: 'periodic',
   })] });
@@ -97,7 +98,7 @@ test('wrong generation and expired or missing diagnostics stay UNALIGNED', () =>
   let now = 0;
   const Collector = loadCollector(() => now);
   const collector = new Collector({ now: () => now });
-  collector.observeVideoFrame({ attemptId: 'a', generation: 2, streamId: 'video', rtpTimestamp: 44 }, { roi: 'wrong' });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 2, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, { roi: 'wrong' });
   collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ wireTimestamp: 44 })] });
   now = 2001;
   collector.expire();
@@ -105,19 +106,19 @@ test('wrong generation and expired or missing diagnostics stay UNALIGNED', () =>
   assert.equal(collector.takeMatched().length, 0);
 });
 
-test('matched rows are bounded for diagnostics and expire at the 120 second index TTL', () => {
+test('matched rows evict without closing the live stream and expire after two seconds', () => {
   let now = 0;
   const Collector = loadCollector(() => now);
   const collector = new Collector({ now: () => now, capacity: 2, lateWaitMs: 2000 });
   for (const timestamp of [1, 2]) {
-    collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: timestamp }, { timestamp });
+    collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: timestamp }, { timestamp });
     collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ wireTimestamp: timestamp, captureSeq: timestamp })] });
   }
   assert.equal(collector.diagnostics().matchedCount, 2);
-  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 3 }, { timestamp: 3 });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 3 }, { timestamp: 3 });
   collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ wireTimestamp: 3, captureSeq: 3 })] });
-  assert.equal(collector.diagnostics().matchedCount, 0);
-  assert.equal(collector.acceptanceState(), 'UNALIGNED');
+  assert.equal(collector.diagnostics().matchedCount, 2);
+  assert.equal(collector.terminalUnaligned, false);
   now = 2001;
   collector.expire();
   assert.equal(collector.diagnostics().matchedCount, 0);
@@ -126,14 +127,14 @@ test('matched rows are bounded for diagnostics and expire at the 120 second inde
   assert.equal(collector.takeMatched().length, 0);
 });
 
-test('a missing counterpart becomes UNALIGNED after two seconds but the index expires at 120 seconds', () => {
+test('a missing counterpart is removed after two seconds', () => {
   let now = 0;
   const Collector = loadCollector(() => now);
   const collector = new Collector({ now: () => now, capacity: 2, lateWaitMs: 2000 });
-  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 1 }, { roi: 'missing' });
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 1 }, { roi: 'missing' });
   now = 2001;
   assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
-  assert.equal(collector.diagnostics().pendingFrames, 1);
+  assert.equal(collector.diagnostics().pendingFrames, 0);
   now = 120001;
   assert.equal(collector.diagnostics().pendingFrames, 0);
 });
@@ -148,7 +149,7 @@ test('incomplete, duplicate, conflicting, and stale trace batches never enter th
   assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace, { ...trace }] }), 0);
   assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace, { ...trace, captureSeq: 5 }] }), 0);
   assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{ ...trace, attemptId: 'old' }] }), 0);
-  assert.equal(collector.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'current' }), false);
+  assert.equal(collector.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', ssrc: 7, rtpTimestamp: 77 }, { roi: 'current' }), false);
   assert.equal(collector.takeMatched().length, 0);
   assert.equal(collector.diagnostics().pendingTraces, 0);
   assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
@@ -157,7 +158,7 @@ test('incomplete, duplicate, conflicting, and stale trace batches never enter th
   duplicate.setScope({ attemptId: 'live', generation: 3, streamId: 'video' });
   assert.equal(duplicate.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [trace] }), 0);
   assert.equal(duplicate.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [{ ...trace }] }), 0);
-  assert.equal(duplicate.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'duplicate' }), false);
+  assert.equal(duplicate.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', ssrc: 7, rtpTimestamp: 77 }, { roi: 'duplicate' }), false);
   assert.equal(duplicate.takeMatched().length, 0);
   assert.equal(duplicate.diagnostics().acceptanceState, 'UNALIGNED');
 
@@ -165,7 +166,7 @@ test('incomplete, duplicate, conflicting, and stale trace batches never enter th
   malformed.setScope({ attemptId: 'live', generation: 3, streamId: 'video' });
   assert.equal(malformed.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, droppedTraceCount: '1', traces: [{ ...trace, generation: '3' }] }), 0);
   assert.equal(malformed.diagnostics().invalidBatchCount, 1);
-  assert.equal(malformed.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', rtpTimestamp: 77 }, { roi: 'malformed' }), false);
+  assert.equal(malformed.observeVideoFrame({ attemptId: 'live', generation: 3, streamId: 'video', ssrc: 7, rtpTimestamp: 77 }, { roi: 'malformed' }), false);
 });
 
 test('schema v1 rejects every missing, extra, or incoherent Host row field', () => {
@@ -198,4 +199,82 @@ test('schema v1 rejects every missing, extra, or incoherent Host row field', () 
     assert.equal(collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [row] }), 0);
     assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
   }
+});
+
+ test('late trace keeps original presentation time', () => {
+  let now = 100;
+  const Collector = loadCollector(() => now), c = new Collector({ now: () => now });
+  c.setScope({ attemptId: 'a', generation: 1, streamId: 'video' });
+  c.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, {});
+  now = 800;
+  c.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace()] });
+  assert.equal(c.takeMatched()[0].viewerClockMs, 100);
+});
+
+ test('fifteen minute trace remains bounded and matches every current frame', () => {
+  let now = 0;
+  const Collector = loadCollector(() => now), c = new Collector({ now: () => now });
+  c.setScope({ attemptId: 'a', generation: 1, streamId: 'video' });
+  let matched = 0;
+  for (let i = 0; i < 18000; i += 1) {
+    now = i * 50;
+    const wireTimestamp = (0xfffff000 + i * 4500) >>> 0;
+    c.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: wireTimestamp }, {});
+    c.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1,
+      traces: [validTrace({ captureSeq: i, wireTimestamp, encoderTimestamp: (wireTimestamp - 12345) >>> 0 })] });
+    matched += c.takeMatched().length;
+    assert.ok(c.seen.size <= 2048);
+    assert.ok(c.frames.size <= 256 && c.traces.size <= 256);
+  }
+  assert.equal(matched, 18000);
+});
+
+ test('stale scope and absent SSRC cannot poison current joins or create marker evidence', () => {
+  const Collector = loadCollector(), c = new Collector();
+  c.setScope({ attemptId: 'a', generation: 1, streamId: 'video' });
+  c.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace({ attemptId: 'old' })] });
+  assert.equal(c.terminalUnaligned, false);
+  assert.equal(c.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', rtpTimestamp: 44 }, {}), false);
+  assert.equal(c.frames.size, 0);
+  c.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, {});
+  c.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, traces: [validTrace()] });
+  assert.equal(c.takeControlledVisualEvidence().length, 0);
+});
+
+ test('binding is separate strict v1 with scope, SSRC and preserved presentation time', () => {
+  let now = 100;
+  const Collector = loadCollector(() => now), c = new Collector({ now: () => now });
+  const scope = { connectionAttemptId: 'a', generation: 1, leaseEpoch: 7 };
+  const binding = { type: 'input_frame_binding', schemaVersion: 1, scope, streamId: 'video', captureSeq: 1,
+    encoderTimestamp: 10, wireTimestamp: 44, ssrc: 7, captureFresh: true, captureAfterApplied: true, inputIds: ['one'] };
+  c.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, {});
+  now = 800;
+  assert.equal(c.acceptBinding({ ...binding, schemaVersion: 2 }, scope), 0);
+  assert.equal(c.acceptBinding({ ...binding, scope: { ...scope, leaseEpoch: 8 } }, scope), 0);
+  assert.equal(c.acceptBinding(binding, scope), 1);
+  assert.equal(c.takeMatched()[0].viewerClockMs, 100);
+  const expired = new Collector({ now: () => now });
+  expired.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 }, {});
+  now += 2001;
+  assert.equal(expired.acceptBinding(binding, scope), 0);
+  assert.equal(expired.takeMatched().length, 0);
+});
+
+ test('receiver SSRC mapping is unique current-PC video mapping and disabled capability retains no join', () => {
+  const Collector = loadCollector(), w = Collector.runtime.__WebRTC;
+  let pending = true;
+  Collector.runtime.LatencyMonitor = { hasPendingFrameInputs: () => pending };
+  w.currentConnectionAttemptId = 'a'; w.connectionAttemptSequence = 1;
+  const receiver = { track: { kind: 'video', id: 'v' }, getSynchronizationSources: () => [{ source: 7 }] };
+  const pc = { getReceivers: () => [receiver] }; w.pc = pc;
+  const video = { srcObject: { getVideoTracks: () => [{ id: 'v' }] } };
+  assert.equal(w.verifiedVideoFrameIdentity(pc, video, { rtpTimestamp: 44 }).ssrc, 7);
+  assert.equal(w.verifiedVideoFrameIdentity({}, video, { rtpTimestamp: 44 }), null);
+  receiver.getSynchronizationSources = () => [{ source: 7 }, { source: 8 }];
+  assert.equal(w.verifiedVideoFrameIdentity(pc, video, { rtpTimestamp: 44 }), null);
+  w.serverConfig = {}; assert.equal(w.ensureInputFrameCollector(), null);
+  w.serverConfig.inputFrameCorrelationVersion = 1;
+  assert.ok(w.ensureInputFrameCollector());
+  pending = false; assert.equal(w.ensureInputFrameCollector(), null);
+  assert.equal(w.inputFrameCollector, null);
 });

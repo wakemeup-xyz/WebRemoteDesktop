@@ -88,6 +88,7 @@ const createLatencyMonitor = (options = {}) => {
     const rows = metrics.get(name);
     if (rows.some(r => r.key === key)) return false;
     rows.push({ value, at: t, key, bytes: JSON.stringify({ value, at: t, key }).length + 32 });
+    rows.sort((a, b) => a.at - b.at);
     if (rows.length > 256) { rows.shift(); inc('dropped'); }
     while (totalSamples() > 4096 || sampleBytes() > 589824) {
       const oldest = [...metrics.values()].filter(r => r.length).reduce((a, b) => a[0].at <= b[0].at ? a : b);
@@ -172,6 +173,23 @@ const createLatencyMonitor = (options = {}) => {
         const record = pending.get(id) || tombstones.get(id);
         if (record && !record.notice) { push('inputToFrameNoticeMs', t - record.sent, t, id); record.notice = true; }
       }
+    },
+    hasPendingFrameInputs() {
+      const t = clock(); if (t === null) return false; expire(t);
+      return [...pending.values(), ...tombstones.values()].some(r => !r.postApply && t - r.sent < 10000 && (!r.state || r.state === 'acked'));
+    },
+    onPostApplyFrame(row = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return false; expire(t);
+      if (!sameScope(scope, context.scope) || !sameScope(scope, row.scope)
+          || row.traceStatus !== 'matched' || !valid(row.viewerClockMs) || row.viewerClockMs > t || t - row.viewerClockMs >= 2000) return false;
+      let recorded = false;
+      for (const id of Array.isArray(row.inputIds) ? row.inputIds.filter(validId).slice(0, 64) : []) {
+        const record = pending.get(id) || tombstones.get(id);
+        if (!record || record.postApply || row.viewerClockMs < record.sent || (record.state && record.state !== 'acked')) continue;
+        recorded = push('inputToPostApplyFrameMs', row.viewerClockMs - record.sent, row.viewerClockMs, id) || recorded;
+        record.postApply = true;
+      }
+      return recorded;
     },
     recordStage(name, value, context = {}) {
       const t = clock(context.atMs); if (t === null) return false; expire(t);

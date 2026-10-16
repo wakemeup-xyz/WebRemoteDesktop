@@ -131,3 +131,13 @@ test('setupSignaling accepts isolated contexts without cross-instance viewers', 
   assert.equal(first.connections.viewers.has('viewer-b'), false);
   assert.equal(second.connections.viewers.has('viewer-a'), false);
 });
+
+test('input frame capability accepts only known version and clears with Host', () => {
+  const context = createRuntimeContext();
+  assert.equal(context.getHostCapabilities().inputFrameCorrelationVersion, null);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 1 }).inputFrameCorrelationVersion, 1);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: '1' }).inputFrameCorrelationVersion, null);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 2 }).inputFrameCorrelationVersion, null);
+  context.setHostCapabilities({ inputFrameCorrelationVersion: 1 });
+  assert.equal(context.clearHostCapabilities().inputFrameCorrelationVersion, null);
+});
