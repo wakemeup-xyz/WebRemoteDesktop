@@ -1,0 +1,346 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "scope": "Read-only transport latency review; this evidence file is the only output written for this subtask. No service, tunnel, Viewer, source, spec or plan changes.",
+  "measurementBoundaries": {
+    "viewerBusinessRtt": "Viewer-local pending send to receipt/handling of business ACK; includes endpoint scheduling and execution, not just network.",
+    "hostAdapterAwait": "Host-local monotonic adapter await from structured host_input_result.meta.localExecuteMs, including adapter queue wait. Wire hostExecuteMs is deliberately not used.",
+    "residual": "viewerBusinessRttMs minus matched structured hostAdapterAwaitMs. Remaining components include Viewer scheduling/transport queues, forward and return network, Signal scheduling/forwarding for Socket, Host ingress scheduling before the timed adapter, and ACK handling. It is NOT pure network latency or a one-way delay.",
+    "population": "Four selected event-level matches, not a random sample or p50/p95 population estimate. Duplicate diagnostic uploads are not separate inputs.",
+    "clockPolicy": "Only local durations are subtracted. No RTT/2 one-way estimate and no Viewer-minus-Host timestamp estimate is used for input residuals."
+  },
+  "matchedInputSamples": [
+    {
+      "inputIdHash": "8da71c10949fa2b4",
+      "inputType": "mouse",
+      "action": "down",
+      "transport": "datachannel",
+      "viewerBusinessRttMs": 4108.2,
+      "hostAdapterAwaitMs": 3688.38,
+      "unattributedResidualMs": 419.82,
+      "viewerEvidence": {
+        "file": "/tmp/wrd-diag/2026-10-16T11-51-04-439Z_0kt0q_IGi-v4Sn-9AABj.json",
+        "jsonPointer": "/inputTrace/events/219",
+        "diagnosticReceivedAtUtc": "2026-10-16T11:51:04.431Z",
+        "eventTimestampCaveat": "The upload time is not the input event time. Match by inputIdHash; do not align this historical event with candidate RTT at upload time."
+      },
+      "hostEvidence": {
+        "file": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "received": {
+          "line": 9270,
+          "ts": "2026-10-16T11:49:25.535981+00:00"
+        },
+        "result": {
+          "line": 9410,
+          "ts": "2026-10-16T11:49:29.226047+00:00",
+          "event": "host_input_result",
+          "field": "meta.localExecuteMs",
+          "timingScope": "host-adapter-await",
+          "timingIncludesQueueWait": true
+        },
+        "ackEnqueued": {
+          "line": 9411,
+          "ts": "2026-10-16T11:49:29.227403+00:00"
+        },
+        "resultTimeAsiaShanghai": "2026-10-16T19:49:29.226047+08:00"
+      }
+    },
+    {
+      "inputIdHash": "6bafc969d38c4cca",
+      "inputType": "mouse",
+      "action": "up",
+      "transport": "datachannel",
+      "viewerBusinessRttMs": 4149,
+      "hostAdapterAwaitMs": 3793.948,
+      "unattributedResidualMs": 355.052,
+      "viewerEvidence": {
+        "file": "/tmp/wrd-diag/2026-10-16T11-51-04-439Z_0kt0q_IGi-v4Sn-9AABj.json",
+        "jsonPointer": "/inputTrace/events/220",
+        "diagnosticReceivedAtUtc": "2026-10-16T11:51:04.431Z",
+        "eventTimestampCaveat": "The upload time is not the input event time. Match by inputIdHash; do not align this historical event with candidate RTT at upload time."
+      },
+      "hostEvidence": {
+        "file": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "received": {
+          "line": 9271,
+          "ts": "2026-10-16T11:49:25.600383+00:00"
+        },
+        "result": {
+          "line": 9417,
+          "ts": "2026-10-16T11:49:29.395019+00:00",
+          "event": "host_input_result",
+          "field": "meta.localExecuteMs",
+          "timingScope": "host-adapter-await",
+          "timingIncludesQueueWait": true
+        },
+        "ackEnqueued": {
+          "line": 9418,
+          "ts": "2026-10-16T11:49:29.397667+00:00"
+        },
+        "resultTimeAsiaShanghai": "2026-10-16T19:49:29.395019+08:00"
+      }
+    },
+    {
+      "inputIdHash": "ded36764a0818f00",
+      "inputType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "viewerBusinessRttMs": 9412.8,
+      "hostAdapterAwaitMs": 1.616,
+      "unattributedResidualMs": 9411.184,
+      "viewerEvidence": {
+        "file": "/tmp/wrd-diag/2026-10-16T15-22-53-633Z_H9dDjAdpocpFeThAAABm.json",
+        "jsonPointer": "/inputTrace/events/237",
+        "diagnosticReceivedAtUtc": "2026-10-16T15:22:53.583Z",
+        "eventTimestampCaveat": "The upload time is not the input event time. Match by inputIdHash; do not align this historical event with candidate RTT at upload time."
+      },
+      "hostEvidence": {
+        "file": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "received": {
+          "line": 10030,
+          "ts": "2026-10-16T11:51:43.480124+00:00"
+        },
+        "result": {
+          "line": 10032,
+          "ts": "2026-10-16T11:51:43.482359+00:00",
+          "event": "host_input_result",
+          "field": "meta.localExecuteMs",
+          "timingScope": "host-adapter-await",
+          "timingIncludesQueueWait": true
+        },
+        "ackEnqueued": {
+          "line": 10033,
+          "ts": "2026-10-16T11:51:43.483659+00:00"
+        },
+        "resultTimeAsiaShanghai": "2026-10-16T19:51:43.482359+08:00"
+      },
+      "signalEvidence": {
+        "file": "/tmp/signal-server.log",
+        "line": 35250,
+        "event": "signal_input_relayed",
+        "ts": "2026-10-16T11:51:43.433Z",
+        "signalPostEnqueueObservationToHostIngressObservationMs": 47.124,
+        "boundary": "Same-machine log observation difference, not packet wire time; Signal logs after emit, Host logs after handler entry and validation."
+      }
+    },
+    {
+      "inputIdHash": "26b144f190c9391d",
+      "inputType": "mouse",
+      "action": "down",
+      "transport": "datachannel",
+      "viewerBusinessRttMs": 9761.8,
+      "hostAdapterAwaitMs": 240.513,
+      "unattributedResidualMs": 9521.287,
+      "viewerEvidence": {
+        "file": "/tmp/wrd-diag/2026-10-16T17-07-19-606Z_WrgHYQiSFSXGS6ExAACP.json",
+        "jsonPointer": "/inputTrace/events/84",
+        "diagnosticReceivedAtUtc": "2026-10-16T17:07:19.594Z",
+        "eventTimestampCaveat": "The upload time is not the input event time. Match by inputIdHash; do not align this historical event with candidate RTT at upload time."
+      },
+      "hostEvidence": {
+        "file": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "received": {
+          "line": 28379,
+          "ts": "2026-10-16T17:05:54.605617+00:00"
+        },
+        "result": {
+          "line": 28382,
+          "ts": "2026-10-16T17:05:54.848293+00:00",
+          "event": "host_input_result",
+          "field": "meta.localExecuteMs",
+          "timingScope": "host-adapter-await",
+          "timingIncludesQueueWait": true
+        },
+        "ackEnqueued": {
+          "line": 28383,
+          "ts": "2026-10-16T17:05:54.850526+00:00"
+        },
+        "resultTimeAsiaShanghai": "2026-10-17T01:05:54.848293+08:00"
+      }
+    }
+  ],
+  "ackAndTimingPaths": [
+    {
+      "inputPath": "DataChannel input to Host",
+      "ackPath": "Host reliable ordered input DataChannel to Viewer",
+      "timingPath": "Same reliable ordered input DataChannel",
+      "ordering": "Current Host enqueues the business ACK before adding this input to the next frame timing. Normal same-channel ordered delivery protects the ACK-before-timing order. input-move ingress is unordered but its ACK still returns on the reliable input channel.",
+      "sources": [
+        "web-client/js/webrtc.js:4058",
+        "python-host/host.py:2171",
+        "python-host/host.py:2175",
+        "python-host/host.py:2256",
+        "python-host/host.py:1443"
+      ]
+    },
+    {
+      "inputPath": "Socket.IO input/reset/fallback to Signal then Host",
+      "ackPath": "Host Socket.IO to Signal then Viewer; public Viewer may traverse Cloudflare",
+      "timingPath": "Host reliable input DataChannel to Viewer, if a DC remains active",
+      "raceCondition": "Independent paths have no cross-transport delivery ordering. A slower Socket ACK can be overtaken by frame_timing over DC even on the current Host. Keyboard and mouse reset prefer Socket while DC can remain open.",
+      "sources": [
+        "web-client/js/keyboard-transport.js:207",
+        "web-client/js/webrtc.js:4211",
+        "python-host/host.py:2263",
+        "signal-server/websocket/signaling.js:1326",
+        "python-host/host.py:1443"
+      ]
+    }
+  ],
+  "offlineFrameTimingRace": {
+    "executed": true,
+    "method": "Node vm evaluated the repository latency-monitor.js with fake local monotonic/wall clocks; no browser or network. recordInputSend at 100ms; schemaVersion 2 frame_timing for that fixture at 120ms; input_ack at 300ms; no video-frame callback.",
+    "actualBusinessAckRttMs": 200,
+    "reportedInputRttMs": 20,
+    "reportedVisualFeedbackMs": 20,
+    "paintSampleCount": 0,
+    "cause": "onFrameTiming consumes input pending without checking legacy Host capability; visualFeedback is timing-message receipt, not paint. Host sends frame_timing before VideoStreamTrack.recv returns, before actual encoding and presentation.",
+    "sources": [
+      "web-client/js/latency-monitor.js:121",
+      "python-host/host.py:1430"
+    ],
+    "additionalWindowCheck": {
+      "wallClockAdvancedMs": 60000,
+      "declaredWindowMs": 5000,
+      "inputRttStillAvailable": true,
+      "retainedSampleMs": 20,
+      "source": "web-client/js/latency-monitor.js:215"
+    }
+  },
+  "offlineTunnelAckClockPreference": {
+    "executed": true,
+    "method": "Extracted the real TunnelRelayStreamer.ack method from host.py using Python AST, with fake Host monotonic clock and in-flight frame. No Host initialization, capture, network or service invocation.",
+    "actualHostLocalFrameSendToAckMs": 200,
+    "cases": [
+      {
+        "clientLatencyMs": null,
+        "chosenFeedbackMs": 200.0
+      },
+      {
+        "clientLatencyMs": 5100,
+        "chosenFeedbackMs": 5100
+      },
+      {
+        "clientLatencyMs": 0,
+        "chosenFeedbackMs": 0
+      }
+    ],
+    "cause": "Host prefers client latencyMs when supplied. Viewer computes this as Date.now minus Host frame timestamp; independent wall-clock offset contaminates both UI and feedback. This client value also excludes the ACK return leg.",
+    "productionMetricCaveat": "TUNNEL_RELAY_STATS avg_ack_ms is not guaranteed to be Host-local round-trip or pure network latency.",
+    "sources": [
+      "web-client/js/webrtc.js:4442",
+      "web-client/js/webrtc.js:4472",
+      "python-host/host.py:773",
+      "python-host/host.py:690"
+    ]
+  },
+  "previous0705msVerification": {
+    "verified": true,
+    "inputIdHash": "2625a0c795dd7d23",
+    "inputType": "keyboard",
+    "action": "reset",
+    "transport": "socket",
+    "hostAdapterAwaitMs": 0.705,
+    "source": {
+      "file": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.2",
+      "receivedLine": 34575,
+      "receivedTs": "2026-10-15T14:30:42.887732+00:00",
+      "resultLine": 34577,
+      "resultTs": "2026-10-15T14:30:42.889318+00:00",
+      "event": "host_input_result",
+      "field": "meta.localExecuteMs",
+      "timingScope": "host-adapter-await",
+      "timingIncludesQueueWait": true,
+      "ackEnqueuedLine": 34578,
+      "ackEnqueuedTs": "2026-10-15T14:30:42.889973+00:00"
+    },
+    "boundary": "The 0.705ms claim is a real structured Host adapter-await duration, not wire hostExecuteMs, network RTT, or visible native effect time."
+  },
+  "requirements": [
+    {
+      "file": "docs/需求文档/WebRemoteDesktop-需求文档.md",
+      "lines": [
+        121,
+        122
+      ],
+      "constraint": "Separate Viewer local pending RTT, Host adapter await and visual feedback; do not mix timing with business ACK RTT or infer cross-machine one-way latency."
+    },
+    {
+      "file": "docs/superpowers/specs/2026-07-18-remote-desktop-reliability-latency-remediation-design.md",
+      "lines": [
+        214,
+        226
+      ],
+      "constraint": "Independent business ACK; local timing domains; no cross-machine wall-clock subtraction."
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-05-turn-quality-latency-optimization-design.md",
+      "lines": [
+        337,
+        343
+      ],
+      "constraint": "ACK p95 <=150ms and Host event-loop p95 <=50ms apply to the specified local-login real-TURN acceptance scenario, not an unconditional public-path SLA."
+    }
+  ],
+  "codeAnchors": [
+    {
+      "file": "web-client/js/webrtc.js",
+      "lines": [
+        4058,
+        4207,
+        4442,
+        4472
+      ],
+      "sha256": "377f6f7f9ada74d8042332245c6bda76aefd65d1ce7ef5836e11931aab8eb118"
+    },
+    {
+      "file": "web-client/js/latency-monitor.js",
+      "lines": [
+        121,
+        160,
+        215
+      ],
+      "sha256": "05924a75bd0256e21943fb2c8c901bfcfbc8e1998c69b14302d9dea39c6d7c82"
+    },
+    {
+      "file": "web-client/js/keyboard-transport.js",
+      "lines": [
+        207
+      ],
+      "sha256": "b64aa5f9f3cfa239192429f1028ef15978224a82f674c2324b84a237fe20735b"
+    },
+    {
+      "file": "python-host/host.py",
+      "lines": [
+        773,
+        1430,
+        1439,
+        2138,
+        2256
+      ],
+      "sha256": "02617320c81778adbd3a35ec5018b08735526ce6bfc2b03db918d7b23e9fca3d"
+    },
+    {
+      "file": "signal-server/websocket/signaling.js",
+      "lines": [
+        1313,
+        1326,
+        1702
+      ],
+      "sha256": "06d96c18a3e2d15bea4c7d288a68e4c329c6e4f475bdbe57fe8a4a1158665783"
+    }
+  ],
+  "redaction": {
+    "rawInputIds": false,
+    "inputPayloads": false,
+    "keyCodeTextCoordinates": false,
+    "credentialsTokensSdp": false,
+    "correlation": "Only bounded SHA-256 prefixes already present in redacted production observations; source file paths retained for verification."
+  },
+  "limitations": [
+    "Log line numbers may change with rotation; match timestamp, event and inputIdHash as well.",
+    "No new production Viewer, active input, packet capture, stress test or live service change was performed.",
+    "Signal does not record a complete input/ACK ingress-egress timing chain; exact one-way network and browser scheduling portions remain unknown."
+  ]
+}

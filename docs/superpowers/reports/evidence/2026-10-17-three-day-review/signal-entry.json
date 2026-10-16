@@ -1,0 +1,1522 @@
+{
+  "schemaVersion": 1,
+  "reviewWindow": {
+    "startInclusive": "2026-10-14T02:15:00+08:00",
+    "endExclusive": "2026-10-17T02:15:00+08:00",
+    "hours": 72,
+    "timezone": "Asia/Shanghai"
+  },
+  "writtenAt": "2026-10-17T02:24:32.088062+08:00",
+  "scope": "Read-only audit of the three specified /tmp logs and matching available rotations. Only this JSON was written; no source/config/service/tunnel/Viewer operation.",
+  "sources": [
+    {
+      "file": "/tmp/signal-server.log",
+      "snapshotBytes": 1136356,
+      "sha256": "579921e57a1b6a118cfc9363017f1814d526dc958187d6df933cf97d83b4dac5",
+      "rotation": false
+    },
+    {
+      "file": "/tmp/wrd-fixed-watch.log",
+      "snapshotBytes": 1729060,
+      "sha256": "ec46afe4b193ed077967eecff2625b968892a9c0964b700ffd12e3231a6a540c",
+      "rotation": false
+    },
+    {
+      "file": "/tmp/wrd-fixed-domain.log",
+      "snapshotBytes": 521780,
+      "sha256": "e872f862a3430b9918f49a3f7690af90bf7f91de9b8dca95a5acc5fec33b5453",
+      "rotation": false
+    }
+  ],
+  "coverage": {
+    "signal": {
+      "firstTimestampInFile": "2026-10-03T11:57:16.202000+08:00",
+      "lastTimestampInFile": "2026-10-17T02:23:37.658000+08:00",
+      "firstTimestampInWindow": "2026-10-14T03:04:06.546000+08:00",
+      "lastTimestampInWindow": "2026-10-17T02:14:53.279000+08:00",
+      "timestampedRecordsInWindow": 1061,
+      "firstLineInWindow": 23635,
+      "lastLineInWindow": 43856
+    },
+    "watch": {
+      "firstTimestampInFile": "2026-10-01T15:48:19+08:00",
+      "lastTimestampInFile": "2026-10-17T02:23:26+08:00",
+      "firstTimestampInWindow": "2026-10-14T02:15:07+08:00",
+      "lastTimestampInWindow": "2026-10-17T02:14:05+08:00",
+      "timestampedRecordsInWindow": 4034,
+      "firstLineInWindow": 16673,
+      "lastLineInWindow": 20706
+    },
+    "connector": {
+      "firstTimestampInFile": "2026-10-02T20:15:23+08:00",
+      "lastTimestampInFile": "2026-10-17T01:11:30+08:00",
+      "firstTimestampInWindow": "2026-10-14T03:06:56+08:00",
+      "lastTimestampInWindow": "2026-10-17T01:11:30+08:00",
+      "timestampedRecordsInWindow": 491,
+      "firstLineInWindow": 3604,
+      "lastLineInWindow": 4094
+    },
+    "availableRotations": [],
+    "interpretation": "First/last timestamp are log evidence bounds, not proof of continuous service or monitoring. Signal contains untimestamped stdout lines and pre-fix unknown structured events; connector is event-driven, so quiet gaps are not outages or uptime proof."
+  },
+  "perDay": [
+    {
+      "date": "2026-10-14",
+      "windowStart": "2026-10-14T02:15:00+08:00",
+      "windowEndExclusive": "2026-10-15T00:00:00+08:00",
+      "signalEvents": {
+        "diagnostic_uploaded": 14,
+        "signal_input_relayed": 36,
+        "unknown": 101,
+        "viewer_bootstrap_served": 2
+      },
+      "signalFailedClosedReasons": {},
+      "signalResetRetryReasons": {},
+      "watchTickStatus": {
+        "formal-down": 3,
+        "healthy": 1236
+      },
+      "watchFormalProbeFailures": 3,
+      "watchOriginProbeFailures": 0,
+      "connectorLogLevels": {
+        "ERR": 39,
+        "INF": 136,
+        "WRN": 73
+      },
+      "connectorCategories": {
+        "connection_registered": 35,
+        "connection_terminated": 36,
+        "edge_connection_lost": 29,
+        "edge_serve_error": 36,
+        "request_canceled": 2,
+        "retry_scheduled": 36,
+        "origin_connection_reset": 2
+      }
+    },
+    {
+      "date": "2026-10-15",
+      "windowStart": "2026-10-15T00:00:00+08:00",
+      "windowEndExclusive": "2026-10-16T00:00:00+08:00",
+      "signalEvents": {
+        "diagnostic_uploaded": 32,
+        "signal_input_rejected": 4,
+        "signal_input_relayed": 21,
+        "unknown": 154,
+        "viewer_bootstrap_served": 8
+      },
+      "signalFailedClosedReasons": {},
+      "signalResetRetryReasons": {},
+      "watchTickStatus": {
+        "formal-down": 2,
+        "healthy": 1344
+      },
+      "watchFormalProbeFailures": 2,
+      "watchOriginProbeFailures": 0,
+      "connectorLogLevels": {
+        "ERR": 6,
+        "INF": 24,
+        "WRN": 16
+      },
+      "connectorCategories": {
+        "connection_registered": 6,
+        "connection_terminated": 7,
+        "edge_connection_lost": 4,
+        "edge_serve_error": 7,
+        "retry_scheduled": 7
+      }
+    },
+    {
+      "date": "2026-10-16",
+      "windowStart": "2026-10-16T00:00:00+08:00",
+      "windowEndExclusive": "2026-10-17T00:00:00+08:00",
+      "signalEvents": {
+        "connection_attempt_bound": 77,
+        "control_reset_blocked": 1,
+        "control_reset_retry": 12,
+        "control_transition_failed_closed": 40,
+        "diagnostic_uploaded": 17,
+        "media_activity_requested": 62,
+        "signal_input_rejected": 4,
+        "signal_input_relayed": 37,
+        "unknown": 3,
+        "viewer_bootstrap_served": 10,
+        "viewer_disconnect_grace_started": 46,
+        "viewer_rebind_confirmed": 1,
+        "viewer_reconnected": 1
+      },
+      "signalFailedClosedReasons": {
+        "controller-disconnect": 1,
+        "lease-expired": 29,
+        "released": 8,
+        "transition-timeout": 2
+      },
+      "signalResetRetryReasons": {
+        "input-recovery-user": 7,
+        "transition-timeout": 5
+      },
+      "watchTickStatus": {
+        "formal-down": 7,
+        "healthy": 1321,
+        "restarted": 2
+      },
+      "watchFormalProbeFailures": 9,
+      "watchOriginProbeFailures": 0,
+      "connectorLogLevels": {
+        "ERR": 29,
+        "INF": 138,
+        "WRN": 26
+      },
+      "connectorCategories": {
+        "connection_registered": 21,
+        "connection_terminated": 13,
+        "edge_connection_lost": 10,
+        "edge_serve_error": 13,
+        "origin_connection_refused": 14,
+        "request_canceled": 2,
+        "retry_scheduled": 13,
+        "tunnel_process_start": 2
+      }
+    },
+    {
+      "date": "2026-10-17",
+      "windowStart": "2026-10-17T00:00:00+08:00",
+      "windowEndExclusive": "2026-10-17T02:15:00+08:00",
+      "signalEvents": {
+        "connection_attempt_bound": 49,
+        "control_reset_blocked": 1,
+        "control_reset_retry": 18,
+        "control_transition_failed_closed": 39,
+        "diagnostic_uploaded": 48,
+        "media_activity_requested": 13,
+        "signal_input_aggregate": 4,
+        "signal_input_rejected": 2,
+        "signal_input_relayed": 140,
+        "viewer_bootstrap_served": 18,
+        "viewer_disconnect_grace_started": 38,
+        "viewer_rebind_confirmed": 3,
+        "viewer_rebind_failed": 1,
+        "viewer_reconnected": 4
+      },
+      "signalFailedClosedReasons": {
+        "controller-disconnect": 2,
+        "lease-expired": 24,
+        "rebind-rejected": 1,
+        "released": 9,
+        "transition-timeout": 3
+      },
+      "signalResetRetryReasons": {
+        "input-recovery-user": 7,
+        "lease-expired": 5,
+        "transition-timeout": 6
+      },
+      "watchTickStatus": {
+        "formal-down": 11,
+        "healthy": 106
+      },
+      "watchFormalProbeFailures": 11,
+      "watchOriginProbeFailures": 0,
+      "connectorLogLevels": {
+        "ERR": 4
+      },
+      "connectorCategories": {
+        "request_canceled": 4
+      }
+    }
+  ],
+  "signalSummary": {
+    "structuredEventsInWindow": 1061,
+    "unknownStructuredEvents": 258,
+    "firstNamedControlObservation": {
+      "at": "2026-10-16T01:37:23.771000+08:00",
+      "line": 30417,
+      "event": "control_transition_failed_closed",
+      "reason": "released",
+      "leaseEpoch": 2
+    },
+    "graceStarted": 84,
+    "reconnected": 5,
+    "rebindConfirmed": 4,
+    "rebindFailed": 1,
+    "rebindFailureReasons": {
+      "rebind-rejected": 1
+    },
+    "rebindTimeoutEvents": 0,
+    "leaseExpiredFailedClosedEvents": 53,
+    "distinctExpiryEpochs": 53,
+    "expiryObservations": [
+      {
+        "at": "2026-10-16T03:16:34.126000+08:00",
+        "line": 31955,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 12
+      },
+      {
+        "at": "2026-10-16T03:27:55.038000+08:00",
+        "line": 32127,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 14
+      },
+      {
+        "at": "2026-10-16T07:14:48.664000+08:00",
+        "line": 32211,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 16
+      },
+      {
+        "at": "2026-10-16T10:47:52.042000+08:00",
+        "line": 32350,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 18
+      },
+      {
+        "at": "2026-10-16T10:50:20.446000+08:00",
+        "line": 32453,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 20
+      },
+      {
+        "at": "2026-10-16T10:54:21.823000+08:00",
+        "line": 32547,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 22
+      },
+      {
+        "at": "2026-10-16T14:36:49.088000+08:00",
+        "line": 32576,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 24
+      },
+      {
+        "at": "2026-10-16T14:47:15.748000+08:00",
+        "line": 32762,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 28
+      },
+      {
+        "at": "2026-10-16T14:57:47.622000+08:00",
+        "line": 32829,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 30
+      },
+      {
+        "at": "2026-10-16T15:10:33.005000+08:00",
+        "line": 32897,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 32
+      },
+      {
+        "at": "2026-10-16T15:54:23.543000+08:00",
+        "line": 32965,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 34
+      },
+      {
+        "at": "2026-10-16T16:00:00.889000+08:00",
+        "line": 32995,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 36
+      },
+      {
+        "at": "2026-10-16T16:05:23.935000+08:00",
+        "line": 33062,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 38
+      },
+      {
+        "at": "2026-10-16T16:10:59.632000+08:00",
+        "line": 33146,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 40
+      },
+      {
+        "at": "2026-10-16T16:21:40.194000+08:00",
+        "line": 33248,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 42
+      },
+      {
+        "at": "2026-10-16T16:29:17.196000+08:00",
+        "line": 33332,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 44
+      },
+      {
+        "at": "2026-10-16T16:32:13.640000+08:00",
+        "line": 33399,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 46
+      },
+      {
+        "at": "2026-10-16T16:37:49.102000+08:00",
+        "line": 33483,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 48
+      },
+      {
+        "at": "2026-10-16T16:45:26.234000+08:00",
+        "line": 33567,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 50
+      },
+      {
+        "at": "2026-10-16T17:09:26.220000+08:00",
+        "line": 33651,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 52
+      },
+      {
+        "at": "2026-10-16T18:01:38.263000+08:00",
+        "line": 33735,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 54
+      },
+      {
+        "at": "2026-10-16T18:34:06.032000+08:00",
+        "line": 33819,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 56
+      },
+      {
+        "at": "2026-10-16T19:44:36.228000+08:00",
+        "line": 34202,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 58
+      },
+      {
+        "at": "2026-10-16T19:46:18.533000+08:00",
+        "line": 34411,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 60
+      },
+      {
+        "at": "2026-10-16T19:52:20.480000+08:00",
+        "line": 35375,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 69
+      },
+      {
+        "at": "2026-10-16T23:23:22.229000+08:00",
+        "line": 35544,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 71
+      },
+      {
+        "at": "2026-10-16T23:24:33.319000+08:00",
+        "line": 35610,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 73
+      },
+      {
+        "at": "2026-10-16T23:34:26.190000+08:00",
+        "line": 35704,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 75
+      },
+      {
+        "at": "2026-10-16T23:36:59.339000+08:00",
+        "line": 35820,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 77
+      },
+      {
+        "at": "2026-10-17T00:12:50.872000+08:00",
+        "line": 36212,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 79
+      },
+      {
+        "at": "2026-10-17T00:14:14.356000+08:00",
+        "line": 36390,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 81
+      },
+      {
+        "at": "2026-10-17T00:17:40.363000+08:00",
+        "line": 36446,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 83
+      },
+      {
+        "at": "2026-10-17T01:00:03.541000+08:00",
+        "line": 39088,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 96
+      },
+      {
+        "at": "2026-10-17T01:11:15.522000+08:00",
+        "line": 41618,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 110
+      },
+      {
+        "at": "2026-10-17T01:11:43.649000+08:00",
+        "line": 41871,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 112
+      },
+      {
+        "at": "2026-10-17T01:14:26.728000+08:00",
+        "line": 42050,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 114
+      },
+      {
+        "at": "2026-10-17T01:14:50.843000+08:00",
+        "line": 42151,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 116
+      },
+      {
+        "at": "2026-10-17T01:20:14.738000+08:00",
+        "line": 42265,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 118
+      },
+      {
+        "at": "2026-10-17T01:26:08.828000+08:00",
+        "line": 42425,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 120
+      },
+      {
+        "at": "2026-10-17T01:26:32.871000+08:00",
+        "line": 42503,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 122
+      },
+      {
+        "at": "2026-10-17T01:30:40.831000+08:00",
+        "line": 42652,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 124
+      },
+      {
+        "at": "2026-10-17T01:35:24.008000+08:00",
+        "line": 42736,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 126
+      },
+      {
+        "at": "2026-10-17T01:39:54.262000+08:00",
+        "line": 42820,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 128
+      },
+      {
+        "at": "2026-10-17T01:40:27.319000+08:00",
+        "line": 42873,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 130
+      },
+      {
+        "at": "2026-10-17T01:46:49.334000+08:00",
+        "line": 42919,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 132
+      },
+      {
+        "at": "2026-10-17T01:49:39.283000+08:00",
+        "line": 42986,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 134
+      },
+      {
+        "at": "2026-10-17T01:50:17.428000+08:00",
+        "line": 43037,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 136
+      },
+      {
+        "at": "2026-10-17T01:53:56.333000+08:00",
+        "line": 43121,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 138
+      },
+      {
+        "at": "2026-10-17T01:56:16.069000+08:00",
+        "line": 43205,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 140
+      },
+      {
+        "at": "2026-10-17T01:59:41.729000+08:00",
+        "line": 43289,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 142
+      },
+      {
+        "at": "2026-10-17T02:00:06.803000+08:00",
+        "line": 43340,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 144
+      },
+      {
+        "at": "2026-10-17T02:03:21.511000+08:00",
+        "line": 43424,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 146
+      },
+      {
+        "at": "2026-10-17T02:06:59.043000+08:00",
+        "line": 43508,
+        "event": "control_transition_failed_closed",
+        "reason": "lease-expired",
+        "leaseEpoch": 148
+      }
+    ],
+    "rebindSequences": [
+      {
+        "reconnectedAt": "2026-10-16T19:44:33.563000+08:00",
+        "reconnectedLine": 34032,
+        "priorGraceAt": "2026-10-16T19:44:26.678000+08:00",
+        "priorGraceLine": 34016,
+        "graceToReconnectMs": 6885.0,
+        "outcome": "viewer_rebind_confirmed",
+        "outcomeAt": "2026-10-16T19:44:33.584000+08:00",
+        "outcomeLine": 34048,
+        "reason": null,
+        "reconnectedToOutcomeMs": 21.0
+      },
+      {
+        "reconnectedAt": "2026-10-17T00:21:13.381000+08:00",
+        "reconnectedLine": 36590,
+        "priorGraceAt": "2026-10-17T00:21:10.632000+08:00",
+        "priorGraceLine": 36562,
+        "graceToReconnectMs": 2749.0,
+        "outcome": "viewer_rebind_failed",
+        "outcomeAt": "2026-10-17T00:21:13.968000+08:00",
+        "outcomeLine": 36618,
+        "reason": "rebind-rejected",
+        "reconnectedToOutcomeMs": 587.0
+      },
+      {
+        "reconnectedAt": "2026-10-17T01:00:51.611000+08:00",
+        "reconnectedLine": 39357,
+        "priorGraceAt": "2026-10-17T01:00:50.530000+08:00",
+        "priorGraceLine": 39329,
+        "graceToReconnectMs": 1081.0,
+        "outcome": "viewer_rebind_confirmed",
+        "outcomeAt": "2026-10-17T01:00:51.636000+08:00",
+        "outcomeLine": 39373,
+        "reason": null,
+        "reconnectedToOutcomeMs": 25.0
+      },
+      {
+        "reconnectedAt": "2026-10-17T01:04:06.339000+08:00",
+        "reconnectedLine": 39832,
+        "priorGraceAt": "2026-10-17T01:04:05.138000+08:00",
+        "priorGraceLine": 39804,
+        "graceToReconnectMs": 1201.0,
+        "outcome": "viewer_rebind_confirmed",
+        "outcomeAt": "2026-10-17T01:04:06.356000+08:00",
+        "outcomeLine": 39848,
+        "reason": null,
+        "reconnectedToOutcomeMs": 17.0
+      },
+      {
+        "reconnectedAt": "2026-10-17T01:11:34.352000+08:00",
+        "reconnectedLine": 41766,
+        "priorGraceAt": "2026-10-17T01:11:31.424000+08:00",
+        "priorGraceLine": 41738,
+        "graceToReconnectMs": 2928.0,
+        "outcome": "viewer_rebind_confirmed",
+        "outcomeAt": "2026-10-17T01:11:34.400000+08:00",
+        "outcomeLine": 41782,
+        "reason": null,
+        "reconnectedToOutcomeMs": 48.0
+      }
+    ],
+    "untimestampedConnectionLinesDefinitelyBracketedInWindow": {
+      "disconnected_viewer": 147,
+      "connection_viewer": 147,
+      "connection_host": 4,
+      "disconnected_host": 3
+    },
+    "boundaryAmbiguousConnectionLines": 1,
+    "countingCaveats": [
+      "Control causes before the structured logger fix cannot be recovered from unknown events; zero named events is not zero failures.",
+      "53 lease-expired observations have distinct epochs in this log window; they are not 53 independently proven user-visible incidents.",
+      "grace start is a transport-disconnect observation, not necessarily control loss; reconnect attempts and normal release/user action differ.",
+      "Signal rebind-rejected reports Host negative or invalid acknowledgement; exact Host rejection cause is absent in these permitted logs.",
+      "Disconnect stdout omits reason and timestamp; connection counts use neighboring timestamp bounds and are not used as precise daily counts."
+    ]
+  },
+  "watchSummary": {
+    "rowsInWindow": 4034,
+    "tickCount": 4032,
+    "healthyTickCount": 4007,
+    "formalDownStatusCount": 23,
+    "restartTickCount": 2,
+    "formalProbeFailureCountIncludingRestartTicks": 25,
+    "originProbeFailureCount": 0,
+    "failedProbeRows": [
+      {
+        "at": "2026-10-14T20:12:45+08:00",
+        "line": 17701,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-14T22:02:39+08:00",
+        "line": 17804,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-14T22:30:26+08:00",
+        "line": 17830,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-15T21:44:48+08:00",
+        "line": 19132,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-15T21:45:59+08:00",
+        "line": 19133,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T15:40:33+08:00",
+        "line": 20129,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T16:08:07+08:00",
+        "line": 20155,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T19:34:29+08:00",
+        "line": 20348,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T19:35:35+08:00",
+        "line": 20349,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T19:36:40+08:00",
+        "line": 20350,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T19:37:46+08:00",
+        "line": 20351,
+        "status": "restarted",
+        "action": "restart",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T19:44:24+08:00",
+        "line": 20353,
+        "status": "restarted",
+        "action": "restart",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T21:29:11+08:00",
+        "line": 20449,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-16T22:57:29+08:00",
+        "line": 20531,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T00:30:30+08:00",
+        "line": 20616,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T00:35:15+08:00",
+        "line": 20620,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T00:36:24+08:00",
+        "line": 20621,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T00:52:31+08:00",
+        "line": 20635,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T00:55:59+08:00",
+        "line": 20638,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:07:33+08:00",
+        "line": 20648,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:10:01+08:00",
+        "line": 20650,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:17:00+08:00",
+        "line": 20656,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:35:14+08:00",
+        "line": 20671,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:44:57+08:00",
+        "line": 20680,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      },
+      {
+        "at": "2026-10-17T01:56:13+08:00",
+        "line": 20690,
+        "status": "formal-down",
+        "action": "none",
+        "origin_ok": 1,
+        "formal_ok": 0
+      }
+    ],
+    "consecutiveFailureGroups": [
+      {
+        "priorHealthyAt": "2026-10-14T20:11:39+08:00",
+        "firstFailureAt": "2026-10-14T20:12:45+08:00",
+        "firstFailureLine": 17701,
+        "lastFailureAt": "2026-10-14T20:12:45+08:00",
+        "lastFailureLine": 17701,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-14T20:13:52+08:00",
+        "nextHealthyLine": 17702,
+        "observedFirstFailToNextSuccessSeconds": 67.0
+      },
+      {
+        "priorHealthyAt": "2026-10-14T22:01:34+08:00",
+        "firstFailureAt": "2026-10-14T22:02:39+08:00",
+        "firstFailureLine": 17804,
+        "lastFailureAt": "2026-10-14T22:02:39+08:00",
+        "lastFailureLine": 17804,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-14T22:03:43+08:00",
+        "nextHealthyLine": 17805,
+        "observedFirstFailToNextSuccessSeconds": 64.0
+      },
+      {
+        "priorHealthyAt": "2026-10-14T22:29:21+08:00",
+        "firstFailureAt": "2026-10-14T22:30:26+08:00",
+        "firstFailureLine": 17830,
+        "lastFailureAt": "2026-10-14T22:30:26+08:00",
+        "lastFailureLine": 17830,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-14T22:31:32+08:00",
+        "nextHealthyLine": 17831,
+        "observedFirstFailToNextSuccessSeconds": 66.0
+      },
+      {
+        "priorHealthyAt": "2026-10-15T21:43:43+08:00",
+        "firstFailureAt": "2026-10-15T21:44:48+08:00",
+        "firstFailureLine": 19132,
+        "lastFailureAt": "2026-10-15T21:45:59+08:00",
+        "lastFailureLine": 19133,
+        "failedProbeCount": 2,
+        "nextHealthyAt": "2026-10-15T21:47:01+08:00",
+        "nextHealthyLine": 19134,
+        "observedFirstFailToNextSuccessSeconds": 133.0
+      },
+      {
+        "priorHealthyAt": "2026-10-16T15:39:27+08:00",
+        "firstFailureAt": "2026-10-16T15:40:33+08:00",
+        "firstFailureLine": 20129,
+        "lastFailureAt": "2026-10-16T15:40:33+08:00",
+        "lastFailureLine": 20129,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-16T15:41:35+08:00",
+        "nextHealthyLine": 20130,
+        "observedFirstFailToNextSuccessSeconds": 62.0
+      },
+      {
+        "priorHealthyAt": "2026-10-16T16:07:01+08:00",
+        "firstFailureAt": "2026-10-16T16:08:07+08:00",
+        "firstFailureLine": 20155,
+        "lastFailureAt": "2026-10-16T16:08:07+08:00",
+        "lastFailureLine": 20155,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-16T16:09:11+08:00",
+        "nextHealthyLine": 20156,
+        "observedFirstFailToNextSuccessSeconds": 64.0
+      },
+      {
+        "priorHealthyAt": "2026-10-16T19:33:24+08:00",
+        "firstFailureAt": "2026-10-16T19:34:29+08:00",
+        "firstFailureLine": 20348,
+        "lastFailureAt": "2026-10-16T19:44:24+08:00",
+        "lastFailureLine": 20353,
+        "failedProbeCount": 5,
+        "nextHealthyAt": "2026-10-16T19:46:11+08:00",
+        "nextHealthyLine": 20355,
+        "observedFirstFailToNextSuccessSeconds": 702.0
+      },
+      {
+        "priorHealthyAt": "2026-10-16T21:28:05+08:00",
+        "firstFailureAt": "2026-10-16T21:29:11+08:00",
+        "firstFailureLine": 20449,
+        "lastFailureAt": "2026-10-16T21:29:11+08:00",
+        "lastFailureLine": 20449,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-16T21:30:16+08:00",
+        "nextHealthyLine": 20450,
+        "observedFirstFailToNextSuccessSeconds": 65.0
+      },
+      {
+        "priorHealthyAt": "2026-10-16T22:56:18+08:00",
+        "firstFailureAt": "2026-10-16T22:57:29+08:00",
+        "firstFailureLine": 20531,
+        "lastFailureAt": "2026-10-16T22:57:29+08:00",
+        "lastFailureLine": 20531,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-16T22:58:33+08:00",
+        "nextHealthyLine": 20532,
+        "observedFirstFailToNextSuccessSeconds": 64.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T00:29:17+08:00",
+        "firstFailureAt": "2026-10-17T00:30:30+08:00",
+        "firstFailureLine": 20616,
+        "lastFailureAt": "2026-10-17T00:30:30+08:00",
+        "lastFailureLine": 20616,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T00:31:40+08:00",
+        "nextHealthyLine": 20617,
+        "observedFirstFailToNextSuccessSeconds": 70.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T00:34:07+08:00",
+        "firstFailureAt": "2026-10-17T00:35:15+08:00",
+        "firstFailureLine": 20620,
+        "lastFailureAt": "2026-10-17T00:36:24+08:00",
+        "lastFailureLine": 20621,
+        "failedProbeCount": 2,
+        "nextHealthyAt": "2026-10-17T00:37:29+08:00",
+        "nextHealthyLine": 20622,
+        "observedFirstFailToNextSuccessSeconds": 134.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T00:51:19+08:00",
+        "firstFailureAt": "2026-10-17T00:52:31+08:00",
+        "firstFailureLine": 20635,
+        "lastFailureAt": "2026-10-17T00:52:31+08:00",
+        "lastFailureLine": 20635,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T00:53:40+08:00",
+        "nextHealthyLine": 20636,
+        "observedFirstFailToNextSuccessSeconds": 69.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T00:54:51+08:00",
+        "firstFailureAt": "2026-10-17T00:55:59+08:00",
+        "firstFailureLine": 20638,
+        "lastFailureAt": "2026-10-17T00:55:59+08:00",
+        "lastFailureLine": 20638,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T00:57:05+08:00",
+        "nextHealthyLine": 20639,
+        "observedFirstFailToNextSuccessSeconds": 66.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:06:23+08:00",
+        "firstFailureAt": "2026-10-17T01:07:33+08:00",
+        "firstFailureLine": 20648,
+        "lastFailureAt": "2026-10-17T01:07:33+08:00",
+        "lastFailureLine": 20648,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:08:46+08:00",
+        "nextHealthyLine": 20649,
+        "observedFirstFailToNextSuccessSeconds": 73.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:08:46+08:00",
+        "firstFailureAt": "2026-10-17T01:10:01+08:00",
+        "firstFailureLine": 20650,
+        "lastFailureAt": "2026-10-17T01:10:01+08:00",
+        "lastFailureLine": 20650,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:11:10+08:00",
+        "nextHealthyLine": 20651,
+        "observedFirstFailToNextSuccessSeconds": 69.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:15:52+08:00",
+        "firstFailureAt": "2026-10-17T01:17:00+08:00",
+        "firstFailureLine": 20656,
+        "lastFailureAt": "2026-10-17T01:17:00+08:00",
+        "lastFailureLine": 20656,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:18:09+08:00",
+        "nextHealthyLine": 20657,
+        "observedFirstFailToNextSuccessSeconds": 69.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:33:59+08:00",
+        "firstFailureAt": "2026-10-17T01:35:14+08:00",
+        "firstFailureLine": 20671,
+        "lastFailureAt": "2026-10-17T01:35:14+08:00",
+        "lastFailureLine": 20671,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:36:17+08:00",
+        "nextHealthyLine": 20672,
+        "observedFirstFailToNextSuccessSeconds": 63.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:43:51+08:00",
+        "firstFailureAt": "2026-10-17T01:44:57+08:00",
+        "firstFailureLine": 20680,
+        "lastFailureAt": "2026-10-17T01:44:57+08:00",
+        "lastFailureLine": 20680,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:46:16+08:00",
+        "nextHealthyLine": 20681,
+        "observedFirstFailToNextSuccessSeconds": 79.0
+      },
+      {
+        "priorHealthyAt": "2026-10-17T01:55:01+08:00",
+        "firstFailureAt": "2026-10-17T01:56:13+08:00",
+        "firstFailureLine": 20690,
+        "lastFailureAt": "2026-10-17T01:56:13+08:00",
+        "lastFailureLine": 20690,
+        "failedProbeCount": 1,
+        "nextHealthyAt": "2026-10-17T01:57:20+08:00",
+        "nextHealthyLine": 20691,
+        "observedFirstFailToNextSuccessSeconds": 67.0
+      }
+    ],
+    "restartAttempts": [
+      {
+        "startedAt": "2026-10-16T19:37:46+08:00",
+        "startLine": 20351,
+        "finishedAt": "2026-10-16T19:43:16+08:00",
+        "finishLine": 20352,
+        "durationSeconds": 330.0,
+        "exitCode": 1,
+        "boundary": "Elapsed between watcher start and completion log records; includes notification/script/start/health-wait overhead, not a separately instrumented health-wait duration."
+      },
+      {
+        "startedAt": "2026-10-16T19:44:24+08:00",
+        "startLine": 20353,
+        "finishedAt": "2026-10-16T19:44:57+08:00",
+        "finishLine": 20354,
+        "durationSeconds": 33.0,
+        "exitCode": 0,
+        "boundary": "Elapsed between watcher start and completion log records; includes notification/script/start/health-wait overhead, not a separately instrumented health-wait duration."
+      }
+    ],
+    "firstRestartFinishToSecondRestartStartSeconds": 68.0,
+    "tickSpacingSeconds": {
+      "count": 4031,
+      "min": 61.0,
+      "p50": 64.0,
+      "p95": 68.0,
+      "max": 398.0
+    },
+    "largestTickGaps": [
+      {
+        "from": "2026-10-16T19:37:46+08:00",
+        "to": "2026-10-16T19:44:24+08:00",
+        "seconds": 398.0,
+        "fromLine": 20351,
+        "toLine": 20353
+      },
+      {
+        "from": "2026-10-16T19:44:24+08:00",
+        "to": "2026-10-16T19:46:11+08:00",
+        "seconds": 107.0,
+        "fromLine": 20353,
+        "toLine": 20355
+      },
+      {
+        "from": "2026-10-17T00:19:13+08:00",
+        "to": "2026-10-17T00:20:45+08:00",
+        "seconds": 92.0,
+        "fromLine": 20607,
+        "toLine": 20608
+      },
+      {
+        "from": "2026-10-17T01:25:01+08:00",
+        "to": "2026-10-17T01:26:32+08:00",
+        "seconds": 91.0,
+        "fromLine": 20663,
+        "toLine": 20664
+      },
+      {
+        "from": "2026-10-17T01:30:16+08:00",
+        "to": "2026-10-17T01:31:45+08:00",
+        "seconds": 89.0,
+        "fromLine": 20667,
+        "toLine": 20668
+      },
+      {
+        "from": "2026-10-16T02:19:37+08:00",
+        "to": "2026-10-16T02:21:04+08:00",
+        "seconds": 87.0,
+        "fromLine": 19382,
+        "toLine": 19383
+      },
+      {
+        "from": "2026-10-17T00:26:40+08:00",
+        "to": "2026-10-17T00:28:07+08:00",
+        "seconds": 87.0,
+        "fromLine": 20613,
+        "toLine": 20614
+      },
+      {
+        "from": "2026-10-17T01:26:32+08:00",
+        "to": "2026-10-17T01:27:59+08:00",
+        "seconds": 87.0,
+        "fromLine": 20664,
+        "toLine": 20665
+      }
+    ],
+    "interpretation": [
+      "4007 healthy, 23 formal-down and 2 restarted status ticks total 4032 probes; the 2 restart ticks also had formal_ok=0, so 25 formal probe failures, plus 2 completion rows.",
+      "Booleans do not identify DNS/HTTP/proxy/Cloudflare/root cause, and successful /health does not verify assets, Socket, Host input or fresh media.",
+      "Failure groups are observation clusters, not continuous outage duration. Do not derive service availability from probe fractions.",
+      "The 330s and 33s elapsed recoveries are observed watcher operations; no recovery was initiated by this audit.",
+      "The first failure ended only 68s before the next restart; prior code audit established cooldown uses a timestamp captured before probes."
+    ]
+  },
+  "connectorSummary": {
+    "timestampedRowsInWindow": 491,
+    "levels": {
+      "ERR": 78,
+      "WRN": 115,
+      "INF": 298
+    },
+    "categoryRecordCounts": {
+      "connection_registered": 62,
+      "connection_terminated": 56,
+      "edge_connection_lost": 43,
+      "edge_serve_error": 56,
+      "origin_connection_refused": 14,
+      "request_canceled": 8,
+      "retry_scheduled": 56,
+      "tunnel_process_start": 2,
+      "origin_connection_reset": 2
+    },
+    "categoryExamples": {
+      "connection_registered": [
+        {
+          "at": "2026-10-14T03:07:12+08:00",
+          "line": 3609,
+          "level": "INF",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:50+08:00",
+          "line": 3621,
+          "level": "INF",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:50+08:00",
+          "line": 3622,
+          "level": "INF",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-16T23:31:20+08:00",
+          "line": 4088,
+          "level": "INF",
+          "connIndex": 2
+        }
+      ],
+      "connection_terminated": [
+        {
+          "at": "2026-10-14T03:06:58+08:00",
+          "line": 3607,
+          "level": "WRN",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:46+08:00",
+          "line": 3617,
+          "level": "WRN",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:47+08:00",
+          "line": 3618,
+          "level": "WRN",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-16T23:31:17+08:00",
+          "line": 4085,
+          "level": "WRN",
+          "connIndex": 2
+        }
+      ],
+      "edge_connection_lost": [
+        {
+          "at": "2026-10-14T03:56:45+08:00",
+          "line": 3610,
+          "level": "INF",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-14T04:51:35+08:00",
+          "line": 3635,
+          "level": "INF",
+          "connIndex": 2
+        },
+        {
+          "at": "2026-10-14T04:51:39+08:00",
+          "line": 3640,
+          "level": "INF",
+          "connIndex": 1
+        },
+        {
+          "at": "2026-10-16T23:31:15+08:00",
+          "line": 4081,
+          "level": "INF",
+          "connIndex": 2
+        }
+      ],
+      "edge_serve_error": [
+        {
+          "at": "2026-10-14T03:06:56+08:00",
+          "line": 3605,
+          "level": "WRN",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:45+08:00",
+          "line": 3612,
+          "level": "WRN",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-14T03:56:46+08:00",
+          "line": 3615,
+          "level": "WRN",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-16T23:31:15+08:00",
+          "line": 4082,
+          "level": "WRN",
+          "connIndex": 2
+        }
+      ],
+      "origin_connection_refused": [
+        {
+          "at": "2026-10-16T01:35:29+08:00",
+          "line": 3898,
+          "level": "ERR",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-16T01:35:29+08:00",
+          "line": 3899,
+          "level": "ERR",
+          "connIndex": null
+        },
+        {
+          "at": "2026-10-16T01:35:41+08:00",
+          "line": 3911,
+          "level": "ERR",
+          "connIndex": null
+        }
+      ],
+      "request_canceled": [
+        {
+          "at": "2026-10-14T23:39:54+08:00",
+          "line": 3850,
+          "level": "ERR",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-14T23:39:54+08:00",
+          "line": 3851,
+          "level": "ERR",
+          "connIndex": null
+        },
+        {
+          "at": "2026-10-16T23:34:45+08:00",
+          "line": 4089,
+          "level": "ERR",
+          "connIndex": 2
+        },
+        {
+          "at": "2026-10-17T01:11:30+08:00",
+          "line": 4094,
+          "level": "ERR",
+          "connIndex": null
+        }
+      ],
+      "retry_scheduled": [
+        {
+          "at": "2026-10-14T03:06:56+08:00",
+          "line": 3606,
+          "level": "INF",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-14T03:56:45+08:00",
+          "line": 3613,
+          "level": "INF",
+          "connIndex": 0
+        },
+        {
+          "at": "2026-10-14T03:56:46+08:00",
+          "line": 3616,
+          "level": "INF",
+          "connIndex": 3
+        },
+        {
+          "at": "2026-10-16T23:31:15+08:00",
+          "line": 4084,
+          "level": "INF",
+          "connIndex": 2
+        }
+      ],
+      "tunnel_process_start": [
+        {
+          "at": "2026-10-16T19:37:48+08:00",
+          "line": 3973,
+          "level": "INF",
+          "connIndex": null
+        },
+        {
+          "at": "2026-10-16T19:44:28+08:00",
+          "line": 4017,
+          "level": "INF",
+          "connIndex": null
+        }
+      ],
+      "origin_connection_reset": [
+        {
+          "at": "2026-10-14T16:35:26+08:00",
+          "line": 3819,
+          "level": "ERR",
+          "connIndex": 2
+        },
+        {
+          "at": "2026-10-14T16:35:26+08:00",
+          "line": 3820,
+          "level": "ERR",
+          "connIndex": null
+        }
+      ]
+    },
+    "dnsErrorRecordCount": 0,
+    "dnsMatchingTerms": [
+      "lookup",
+      "no such host",
+      "DNS fail/error",
+      "server misbehaving",
+      "temporary failure in name resolution"
+    ],
+    "originRefusalWindow": {
+      "firstAt": "2026-10-16T01:35:29+08:00",
+      "lastAt": "2026-10-16T01:35:41+08:00",
+      "primaryErrorRecords": 7,
+      "mirrorProxyErrorRecords": 7,
+      "sourceLines": [
+        3898,
+        3899,
+        3900,
+        3901,
+        3902,
+        3903,
+        3904,
+        3905,
+        3906,
+        3907,
+        3908,
+        3909,
+        3910,
+        3911
+      ],
+      "targetClass": "local IPv6 loopback port 8080",
+      "interpretation": "Coincides with the already documented 10/16 01:35 local service reload window; do not count as proof of a Cloudflare-side failure."
+    },
+    "interpretation": [
+      "Counts are log records, not unique outages. One edge disconnection emits several error/retry/termination records.",
+      "Individual connector loss does not prove all connector paths failed simultaneously.",
+      "Zero explicit DNS records does not prove DNS was healthy: watcher discards detailed checker errors and connector logs are not a full DNS trace.",
+      "Request context-canceled records do not identify whether client, proxy, scheduling or network initiated cancellation."
+    ],
+    "originResetObservation": {
+      "at": "2026-10-14T16:35:26+08:00",
+      "primaryErrorRecords": 1,
+      "mirrorProxyErrorRecords": 1,
+      "sourceLines": [
+        3819,
+        3820
+      ],
+      "targetClass": "local IPv4 loopback port 8080",
+      "reason": "connection reset by peer",
+      "interpretation": "Source-side TCP reset is observed; these logs do not identify its application or process cause."
+    }
+  },
+  "notableCorrelations": [
+    {
+      "at": "2026-10-16T19:44:33.584+08:00",
+      "rebindConfirmedLine": 34048,
+      "leaseExpiryAt": "2026-10-16T19:44:36.228+08:00",
+      "leaseExpiryLine": 34202,
+      "elapsedMs": 2644,
+      "expiryEpoch": 58,
+      "interpretation": "Rebind-confirmed followed by expiry in 2.644s, before the new client 3s heartbeat interval. This matches the previously audited missing-renewal defect; it does not explain every expiry."
+    },
+    {
+      "from": "2026-10-16T23:30:39+08:00",
+      "to": "2026-10-16T23:31:20+08:00",
+      "connectorLines": [
+        4061,
+        4088
+      ],
+      "neighborWatchHealthyLines": [
+        20562,
+        20563
+      ],
+      "interpretation": "Connector indexes 1/2 churned between healthy probes; healthy discrete observations do not exclude transient connection loss."
+    }
+  ],
+  "redaction": {
+    "rawLinesCopied": false,
+    "viewerSessionConnectionIdsPersisted": false,
+    "credentialsTokensInputPayloadsAddressesPersisted": false,
+    "allowedFields": "Timestamps, line numbers, event/status/reason enums, lease epochs, connector index, numeric counts/durations, file hashes."
+  },
+  "limits": [
+    "Fixed half-open 72h window; 10/14 and 10/17 are partial calendar days.",
+    "No active probe or production Viewer was created.",
+    "Three configured logs have no matching rotations available at read time.",
+    "No formal spec or implementation plan is included; awaiting main-thread interface constraints."
+  ]
+}

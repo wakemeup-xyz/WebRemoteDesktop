@@ -8,17 +8,16 @@ This file provides guidance to Codex (Codex.ai/code) when working with this repo
 - 但是，文档难免会有滞后性，当出现文档与代码冲突时，优先以最新的代码作为事实依据。
 - 用户和agent需尽量保持文档与代码的一致性。
 
-## Plan 路径与流程确认规范（必须遵守）
+## 默认规划流程（必须遵守）
 
-- 进行规划前，agent 必须先与用户确认规划路径：
-  1. EnterPlanMode（Codex 内置，产物在 `~/.Codex/plans/`）
-  2. superpowers:brainstorming + superpowers:writing-plans（产物在 `docs/superpowers/`）
-- 未经用户确认，不得自行选择规划路径。
-- 无论采用哪种规划方式，最终计划文件必须落在仓库内并纳入版本管理。
-- 推荐落盘位置：
+- 用户已于 2026-10-17 确认：今后统一使用 `superpowers:brainstorming` + `superpowers:writing-plans`，不再询问规划路径，不再默认切换 EnterPlanMode。
+- 在用户已要求编写方案、spec 和 plan 的范围内，直接完成上下文核对、方案比较、文档编写与系统性 review；不因流程模板再次要求逐段确认或询问是否继续写 plan。只有缺少会实质影响正确性、且无法从上下文确定的信息时才提问。
+- 规划授权不等于实施授权。用户要求“先不要修复／重启”时，只做诊断和文档；涉及服务或 tunnel 的操作仍遵守下文既有约束。
+- 最终 spec、plan 和 review 记录必须落在仓库内并纳入版本管理；保留任务开始前已有的修改，不混入无关代码。
+- 默认落盘位置：
   - 设计文档：`docs/superpowers/specs/`
   - 执行计划：`docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
-- 若 EnterPlanMode 产物出现在 `~/.Codex/plans/`，需在继续实施前同步/迁移到仓库内对应路径。
+- 如用户以后明确指定其他规划方式，以该次指示为准；仓库外产物仍须同步到仓库再实施。
 
 ## 项目目录结构
 

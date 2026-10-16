@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-17T01:26:05.631294+08:00",
+  "timezone": "Asia/Shanghai",
+  "scope": "read-only latency review and evidence/report writes; user selected brainstorming + writing-plans on 2026-10-17; specs and plans completed as documentation only, no implementation or restart",
+  "baselineCommit": "ab1a343680aa0ec093a4e0a781052e149f7dc793",
+  "trackedDiffSha256": "c2b91ad9c2c94b44c9c2b63d377b04c082169b561f576216c1405ef8400b0d1d",
+  "sourceSha256": {
+    "web-client/js/latency-monitor.js": "05924a75bd0256e21943fb2c8c901bfcfbc8e1998c69b14302d9dea39c6d7c82",
+    "web-client/js/webrtc-stats.js": "3f0a5a62f1c0aca160a7c123f7f298106ee0b278d5c694ffe6a07e82a7321520",
+    "web-client/js/webrtc.js": "377f6f7f9ada74d8042332245c6bda76aefd65d1ce7ef5836e11931aab8eb118",
+    "web-client/js/input.js": "97c0d4cb14b376fb25a436a14fdc0d00c1c611093b4b8b01878078e87321bff4",
+    "web-client/js/diagnostic.js": "941628403647039e0b4c5474306116de0f101db7c0be53c26b29a070ba1891d6",
+    "web-client/viewer.html": "b3f33aeee4c3211ba32fc78d15f0cffa40aac779ab941c1e440a114e3abf12de",
+    "python-host/host.py": "02617320c81778adbd3a35ec5018b08735526ce6bfc2b03db918d7b23e9fca3d",
+    "python-host/input_handler.py": "872121bd65aa38461b696c6b85943a1875ab6b2fd1b1de0924ab0b87e4ec4cb0",
+    "python-host/rtp_frame_observer.py": "627dae77c1362246208c3bcb946627fb44e78eed8b3213db40166d1df0723bbe",
+    "python-host/h264_videotoolbox_encoder.py": "97cf2c1d73fa06ee98b83ae300d2bd2d1ddfe09138b9ca05b3f3ba5d61758761",
+    "signal-server/websocket/signaling.js": "06d96c18a3e2d15bea4c7d288a68e4c329c6e4f475bdbe57fe8a4a1158665783"
+  },
+  "diagnosticReceiptWindow": {
+    "start": "2026-10-17T01:04:00+08:00",
+    "end": "2026-10-17T01:14:40+08:00",
+    "note": "Receipt time is not necessarily incident time",
+    "reports": [
+      {
+        "receivedAt": "2026-10-16T17:04:03.489Z",
+        "reason": "input-ack-timeout",
+        "latencyPresent": false,
+        "sourceFileSha256": "0419ed32b53ccfb619716257f5bc0298f1f319896a20111e2dd8e983bc115432"
+      },
+      {
+        "receivedAt": "2026-10-16T17:04:04.504Z",
+        "reason": "dc-stuck",
+        "latencyPresent": false,
+        "sourceFileSha256": "933bb26262c337c27e072e98869d40eda3523b303617cc101bd38476e90b02fd"
+      },
+      {
+        "receivedAt": "2026-10-16T17:05:16.691Z",
+        "reason": "input-ack-timeout",
+        "latencyPresent": false,
+        "sourceFileSha256": "13420803ad9e4bb3be3ad5792fb0246655e431726b689ad409d7873c9e8f0866"
+      },
+      {
+        "receivedAt": "2026-10-16T17:06:01.568Z",
+        "reason": "input-ack-timeout",
+        "latencyPresent": false,
+        "sourceFileSha256": "169df37afcbdc6ebdec91c0e5d66e99a8265504053010c5e148da9a3c8b26782"
+      },
+      {
+        "receivedAt": "2026-10-16T17:07:19.594Z",
+        "reason": null,
+        "latencyPresent": true,
+        "sourceFileSha256": "41b72e393058728ca0f7ac940788e85731c07a3a1ef4e319f74c366a54acb3d5",
+        "metrics": {
+          "inputRtt": {
+            "last": 2801.5,
+            "p50": 2801.5,
+            "p95": 2801.5,
+            "count": 2,
+            "available": true
+          },
+          "visualFeedback": {
+            "last": 16752.10000038147,
+            "p50": 13294.800000190735,
+            "p95": 16752.10000038147,
+            "count": 3,
+            "available": true
+          },
+          "executeTime": {
+            "last": 261.925,
+            "p50": 261.925,
+            "p95": 261.925,
+            "count": 2,
+            "available": true
+          },
+          "paint": {
+            "last": 17242.399999999994,
+            "p50": 17242.399999999994,
+            "p95": 17242.399999999994,
+            "count": 1,
+            "available": true
+          },
+          "network": {
+            "last": null,
+            "p50": null,
+            "p95": null,
+            "count": 0,
+            "available": false
+          }
+        }
+      },
+      {
+        "receivedAt": "2026-10-16T17:11:39.822Z",
+        "reason": "ice-disconnected",
+        "latencyPresent": false,
+        "sourceFileSha256": "c58cef8f359a6ad5ec1a7af5610d52921c476a556aa6e4a41317ba546905e3be"
+      },
+      {
+        "receivedAt": "2026-10-16T17:11:43.548Z",
+        "reason": "input-ack-timeout",
+        "latencyPresent": false,
+        "sourceFileSha256": "e5bffca06fd806fe2bbe32d3c40126fc5fb697a94aadb77cfafb32fe1bac66d0"
+      },
+      {
+        "receivedAt": "2026-10-16T17:11:45.150Z",
+        "reason": "dc-stuck",
+        "latencyPresent": false,
+        "sourceFileSha256": "51da214d76386f20041fcb0dec12747ce6a65b547102e824246a23ff73147061"
+      },
+      {
+        "receivedAt": "2026-10-16T17:14:28.834Z",
+        "reason": "ice-disconnected",
+        "latencyPresent": false,
+        "sourceFileSha256": "762397204ac70369b4951b69ecfc8338974d31863d2b4427ac5c4ef6ce7e281d"
+      },
+      {
+        "receivedAt": "2026-10-16T17:14:31.332Z",
+        "reason": "input-ack-timeout",
+        "latencyPresent": false,
+        "sourceFileSha256": "c31f52afbea707ce7ab384ea335f49531d934a4b41a03ec234133a7d08d94872"
+      }
+    ]
+  },
+  "componentEvidence": [
+    "frontend.json",
+    "host.json",
+    "transport.json"
+  ],
+  "notPerformed": [
+    "source changes",
+    "configuration changes",
+    "service restart",
+    "tunnel operations",
+    "production Viewer connection",
+    "physical remote input",
+    "load benchmark"
+  ],
+  "unknown": [
+    "true input-to-visible-effect p95",
+    "pure one-way network latency",
+    "full attribution of unexplained RTT residual"
+  ],
+  "review": {
+    "frontend": "complete; trigger conditions and independent sample windows clarified",
+    "host": "complete; rejected input, loaded source and overlapping stages clarified",
+    "transport": "complete; no material issue after evidence links checked"
+  },
+  "artifactSha256": {
+    "frontend.json": "e64d992bc23539da419b9eda1d6b1cc4fbfe008c716200aabe274494060e5c51",
+    "host.json": "0ec23e0a448af694c0e8cb3b9c683306e1dccfb26d330e3689319924526ac045",
+    "transport.json": "fd3b9a1e10ce825761a1433073eb797bf6006ed0448a3b525fcff9ba8082aa0c"
+  }
+}

@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-17T01:22:08+08:00",
+  "scope": "Host input execution, capture/worker/encoder/RTP evidence review; offline mocks only",
+  "safety": {
+    "productionViewerCreated": false,
+    "nativeInputExecuted": false,
+    "screenCaptured": false,
+    "serviceRestarted": false,
+    "tunnelChanged": false,
+    "sourceChanged": false,
+    "evidenceFileOnly": true
+  },
+  "sourceSha256": {
+    "python-host/host.py": "02617320c81778adbd3a35ec5018b08735526ce6bfc2b03db918d7b23e9fca3d",
+    "python-host/input_handler.py": "872121bd65aa38461b696c6b85943a1875ab6b2fd1b1de0924ab0b87e4ec4cb0",
+    "python-host/media_timing.py": "1673b567147765e959b9a8fc40bcab0f8b64894cd4b41ab5fcff83a8b0020bfe",
+    "python-host/media_stage_metrics.py": "3f9dd7933ea96e35d7bc869ea7152a05eb6165597ed27356229aff20243e55f4",
+    "python-host/rtp_frame_observer.py": "627dae77c1362246208c3bcb946627fb44e78eed8b3213db40166d1df0723bbe",
+    "python-host/h264_videotoolbox_encoder.py": "97cf2c1d73fa06ee98b83ae300d2bd2d1ddfe09138b9ca05b3f3ba5d61758761",
+    "python-host/capture_experiment.py": "512b4e766ce29b56e2fcaaa2fc1a7eb2e37ab08526e5c49d65d65c20fbfb5eb9",
+    "web-client/js/latency-monitor.js": "05924a75bd0256e21943fb2c8c901bfcfbc8e1998c69b14302d9dea39c6d7c82"
+  },
+  "findings": [
+    {
+      "id": "host-visual-causality",
+      "priority": "P2",
+      "claim": "frame_timing precedes encoding/RTP and can attach post-capture input IDs to old or reused frames.",
+      "source": [
+        {
+          "file": "python-host/host.py",
+          "lines": [
+            1287,
+            1315,
+            1430,
+            1437,
+            1447,
+            1451,
+            1456,
+            2172,
+            2180
+          ]
+        },
+        {
+          "file": "web-client/js/latency-monitor.js",
+          "lines": [
+            121,
+            134
+          ]
+        },
+        {
+          "file": "web-client/js/webrtc.js",
+          "lines": [
+            4144,
+            4146
+          ]
+        }
+      ],
+      "method": "Imported bare_track fixture without MSS/native input. Used 2x2 synthetic pixels. Blocked the image worker, applied the exact pending-ID update after frame selection, then released it. Separate case provided only the old ndarray cache.",
+      "cases": [
+        {
+          "name": "input-completes-after-frame-selected",
+          "parameters": {
+            "imageWidth": 2,
+            "imageHeight": 2,
+            "pixel": 17,
+            "captureSeq": 1
+          },
+          "observed": {
+            "framePixel": 17,
+            "captureSeq": 1,
+            "inputAttached": true,
+            "timingFrameId": 0,
+            "framePts": 9000,
+            "timingEmittedBeforeAnyEncoding": true
+          }
+        },
+        {
+          "name": "no-new-capture",
+          "parameters": {
+            "imageWidth": 2,
+            "imageHeight": 2,
+            "cachedPixel": 29,
+            "captureSeq": 1
+          },
+          "observed": {
+            "reused": 1,
+            "pixel": 29,
+            "inputAttached": true,
+            "pendingCleared": true
+          }
+        }
+      ],
+      "limits": [
+        "Proves a causal association defect, not actual native pixel response latency.",
+        "frameId is a per-track timing counter without an RTP timestamp or attempt/lease identity.",
+        "Even an after-input fresh capture does not by itself prove the operating system has rendered the effect.",
+        "No production frame capture or encoding was executed."
+      ]
+    },
+    {
+      "id": "host-rejected-input-visual-pending",
+      "priority": "P2",
+      "claim": "Adapter-rejected ordered inputs still enter pending visual IDs because the append is not gated on result status.",
+      "source": [
+        {
+          "file": "python-host/host.py",
+          "lines": [
+            2160,
+            2172,
+            2175,
+            2176
+          ]
+        },
+        {
+          "file": "python-host/input_handler.py",
+          "lines": [
+            265,
+            270
+          ]
+        }
+      ],
+      "method": "Actual on_input with fake adapter returning sequence-gap for a command in the matching fixture lease. No native command execution.",
+      "parameters": {
+        "schemaVersion": 2,
+        "inputType": "command",
+        "action": "showDock",
+        "seq": 9,
+        "adapterAppliedSeq": 2
+      },
+      "observed": {
+        "adapterResult": "sequence-gap",
+        "pendingVisualIds": 1,
+        "pendingInputTimingRows": 1
+      },
+      "limits": [
+        "Also source-applicable to other adapter results carrying inputIds, including execution-failed or dropped move.",
+        "Lease rejection before the adapter returns early and is not this path.",
+        "An ID in frame_timing is neither accepted-input proof nor visible-effect proof."
+      ]
+    },
+    {
+      "id": "host-keyboard-wire-duration",
+      "priority": "P2",
+      "claim": "Keyboard result timestamps are both recorded after worker completion, so wire hostExecuteMs overrides the actual adapter-await duration with nearly zero.",
+      "source": [
+        {
+          "file": "python-host/input_handler.py",
+          "lines": [
+            126,
+            150,
+            190,
+            199
+          ]
+        },
+        {
+          "file": "python-host/host.py",
+          "lines": [
+            1941,
+            1948,
+            2138,
+            2156,
+            2170,
+            2171
+          ]
+        }
+      ],
+      "method": "Actual apply_keyboard with one offline worker sleeping 40ms and returning a synthetic applied result, then actual _wire_execute_ms. No key or native input.",
+      "parameters": {
+        "workerDelayMs": 40
+      },
+      "observed": {
+        "actualAdapterAwaitMs": 42.865,
+        "resultReceiveToExecuteMs": 0.000588,
+        "wireHostExecuteMs": 0.000588
+      },
+      "productionEvidence": [
+        {
+          "file": "back-debug.log",
+          "line": 12530,
+          "localTime": "2026-10-17 00:07:50.763",
+          "localExecuteMs": 1119.562
+        },
+        {
+          "file": "back-debug.log",
+          "line": 12533,
+          "localTime": "2026-10-17 00:07:50.842",
+          "localExecuteMs": 1200.027
+        },
+        {
+          "file": "back-debug.log",
+          "line": 12535,
+          "localTime": "2026-10-17 00:07:50.856",
+          "localExecuteMs": 1207.482
+        },
+        {
+          "file": "back-debug.log",
+          "line": 12537,
+          "localTime": "2026-10-17 00:07:50.861",
+          "localExecuteMs": 1212.758
+        }
+      ],
+      "limits": [
+        "Production values are local adapter-await log values and include queue and scheduling wait.",
+        "No corresponding production wire payload was captured; near-zero wire values follow from source and offline reproduction.",
+        "Does not change keyboard execution itself; it conceals its cost in latency diagnostics."
+      ]
+    },
+    {
+      "id": "host-generator-stage-misattribution",
+      "priority": "P2",
+      "claim": "Detailed trace encode timing measures generator creation; codec execution occurs during packetize and is attributed to packetize.",
+      "source": [
+        {
+          "file": "python-host/h264_videotoolbox_encoder.py",
+          "lines": [
+            781,
+            907,
+            1040,
+            1049
+          ]
+        }
+      ],
+      "method": "Actual H264VideoToolboxEncoder.encode and _encode_frame with a fake codec sleeping 40ms and returning a tiny Annex-B NAL; synthetic 2x2 AV frame, no hardware/software codec invocation.",
+      "parameters": {
+        "fakeCodecDelayMs": 40,
+        "width": 2,
+        "height": 2,
+        "framePts": 9000,
+        "timeBase": "1/90000",
+        "policy": "relay-on-demand-v1"
+      },
+      "observed": {
+        "encodeMs": 0.004,
+        "packetizeMs": 40.336,
+        "encodeTotalMs": 40.455
+      },
+      "limits": [
+        "Affects opt-in detailed stage attribution.",
+        "Aggregate WRD_ENCODER_SAMPLE elapsed time remains a meaningful overall local wall duration.",
+        "It must not be used to conclude that RTP packetization is the encoding bottleneck."
+      ]
+    },
+    {
+      "id": "host-rtp-submitted-not-sent",
+      "priority": "P2",
+      "claim": "RTP observer records wire binding/send evidence before the underlying DTLS send succeeds; only the first packet of a frame is observed.",
+      "source": [
+        {
+          "file": "python-host/rtp_frame_observer.py",
+          "lines": [
+            161,
+            166,
+            218,
+            220
+          ]
+        },
+        {
+          "file": "python-host/host.py",
+          "lines": [
+            132,
+            139
+          ]
+        }
+      ],
+      "method": "Installed the real observer into the disposable offline Python process, created a real aiortc DTLS object in NEW state without a transport, and attempted one synthetic RTP packet.",
+      "parameters": {
+        "dtlsState": "NEW",
+        "encoderTimestamp": 9000,
+        "rtpTimestamp": 9040,
+        "ssrc": 7,
+        "rtpPayloadBytes": 1
+      },
+      "observed": {
+        "sendFailedBeforeEncryption": true,
+        "frameAlreadyMarkedWire": 1,
+        "sourceToWireCoverage": 1,
+        "recordedSendEvents": 1
+      },
+      "limits": [
+        "Enabled only by WRD_FRAME_TRACE_DETAIL=1; not established as active in current production.",
+        "Correctly observes the RTP header submitted at the send API, not successful emission or complete-frame delivery.",
+        "No network packets were transmitted; the real send rejected the disconnected DTLS state."
+      ]
+    }
+  ],
+  "measurementBoundaries": {
+    "nativeGrab": {
+      "source": "python-host/host.py:1145-1156,1568",
+      "meaning": "MSS grab interval on the background capture thread; detailed trace only in the reviewed telemetry path"
+    },
+    "capturePrepareMs": {
+      "source": "python-host/host.py:1590-1611,1716-1725",
+      "meaning": "Worker preparation: np.frombuffer/reshape and resize for fresh frames; cache copy or zero fill for reused/fallback frames. Excludes MSS grab, screenshot age, worker queue, AV frame construction."
+    },
+    "frameConvertMs": {
+      "source": "python-host/host.py:1612-1634",
+      "meaning": "AV VideoFrame construction/copy and any conversion fallback; excludes screenshot preparation."
+    },
+    "imgprocQueueMs": {
+      "source": "python-host/host.py:1312-1316,1631",
+      "meaning": "Submission timestamp to worker start, including executor/scheduling delay."
+    },
+    "imgprocBuildMs": {
+      "source": "python-host/host.py:1632-1634",
+      "meaning": "Preparation plus frame construction; overlaps capturePrepareMs and frameConvertMs."
+    },
+    "recvTotal": {
+      "source": "python-host/host.py:1257-1377",
+      "meaning": "Track recv wall time, including pacing, queue, worker work and coroutine resumption; excludes later encode and RTP. capture_wait is deliberately zero, not evidence that MSS grab costs zero."
+    },
+    "encodeTotal": {
+      "source": "python-host/h264_videotoolbox_encoder.py:1026-1059",
+      "meaning": "Local encoder entry to packetization completion; includes actual codec work and packetization. Overlaps encode and packetize; current split is wrong because _encode_frame is lazy."
+    },
+    "rtpSendMs": {
+      "source": "python-host/host.py:1462-1464",
+      "meaning": "null is appropriate; no completed-send duration is provided here."
+    },
+    "exclusions": [
+      "Do not sum build+prepare+construct or encode_total+encode+packetize.",
+      "Do not sum marginal p50/p95 across frames.",
+      "Grab operates concurrently with prior output/encoding; timing values are not all sequential.",
+      "Detailed trace has no implemented standalone reformat recording in the reviewed encoder.",
+      "RTP timestamp identifies media ordering and is not a cross-machine capture wall clock."
+    ]
+  },
+  "captureRateCheck": {
+    "currentProductionFactory": {
+      "source": "python-host/host.py:1822-1832,3069",
+      "captureMultiplier": 1,
+      "opencvThreads": 1
+    },
+    "compatibilityDefault": {
+      "source": "python-host/host.py:1672-1679",
+      "captureMultiplier": 2,
+      "usedWhen": "capture_strategy=None"
+    },
+    "documentationMismatch": {
+      "file": "docs/需求文档/WebRemoteDesktop-需求文档.md",
+      "lines": [
+        63,
+        75
+      ],
+      "description": "Still describes production 2x capture."
+    },
+    "limits": [
+      "Current source normal Host uses the 1x factory; no claim that 2x capture causes the incident.",
+      "Running-process source identity was not independently revalidated during this subtask."
+    ]
+  },
+  "productionStageSamples": {
+    "snapshot": {
+      "file": "back-debug.log",
+      "lines": 31257,
+      "lastLocalTimestamp": "2026-10-17 01:15:34.454",
+      "detailedFrameTraceSummaryCount": 0
+    },
+    "periods": [
+      {
+        "start": "2026-10-17 00:50:00",
+        "endExclusive": "2026-10-17 01:00:00",
+        "captureOutputWindows": 112,
+        "medianOutputFps": 8.9,
+        "reusePct": 52.1,
+        "weightedFrameConstructMs": 11.24,
+        "weightedRecvTotalMs": 56.01,
+        "encoders": {
+          "h264_videotoolbox": {
+            "windows": 63,
+            "frames": 3438,
+            "avgWallMs": 27.14,
+            "maxWallMs": 4095.313,
+            "targetFps": [
+              20
+            ]
+          },
+          "libx264": {
+            "windows": 44,
+            "frames": 1577,
+            "avgWallMs": 62.69,
+            "maxWallMs": 2173.638,
+            "targetFps": [
+              12,
+              15
+            ]
+          }
+        },
+        "keyboardResultCount": 441,
+        "maxKeyboardAdapterMs": 522.679,
+        "maxLoggedLoopLagMs": 5982.95
+      },
+      {
+        "start": "2026-10-17 01:00:00",
+        "endExclusive": "2026-10-17 01:10:00",
+        "captureOutputWindows": 95,
+        "medianOutputFps": 7.6,
+        "reusePct": 50.2,
+        "weightedFrameConstructMs": 12.7,
+        "weightedRecvTotalMs": 59.14,
+        "encoders": {
+          "h264_videotoolbox": {
+            "windows": 37,
+            "frames": 2534,
+            "avgWallMs": 22.52,
+            "maxWallMs": 1325.261,
+            "targetFps": [
+              20
+            ]
+          },
+          "libx264": {
+            "windows": 51,
+            "frames": 1380,
+            "avgWallMs": 76.69,
+            "maxWallMs": 1642.746,
+            "targetFps": [
+              12,
+              15
+            ]
+          }
+        },
+        "keyboardResultCount": 284,
+        "maxKeyboardAdapterMs": 144.773,
+        "maxLoggedLoopLagMs": 3163.132
+      }
+    ],
+    "limits": [
+      "These are separate telemetry windows, not frame-aligned pipeline sums or matched A/B tests.",
+      "Encoder and construct means are weighted by their respective frame counts; output FPS is the median of capture-output windows.",
+      "Wall durations include scheduling/preemption and are not pure CPU time.",
+      "No normal production grab/age/worker-queue/RTP completed-send measurements can be reconstructed from these aggregate lines.",
+      "Event-loop maxima come from threshold-triggered logs, not a complete latency distribution.",
+      "No input text, coordinates, raw production input IDs, tokens or SDP are retained."
+    ]
+  }
+}

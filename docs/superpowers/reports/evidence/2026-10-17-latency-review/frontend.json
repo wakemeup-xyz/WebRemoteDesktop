@@ -1,0 +1,773 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-10-17",
+  "title": "前端传输与输入到画面测量：离线复现证据",
+  "finding_id_policy": "frontend-01 至 frontend-08 仅为本证据文件内部编号；主报告统一分配 L 编号。",
+  "scope": {
+    "code_snapshot": "当前工作树源码；文件 SHA-256 见 source_sha256，可能含此前已授权但未提交的修复。",
+    "permitted_write": "仅本证据 JSON。",
+    "production_viewer_created": false,
+    "browser_session_created": false,
+    "services_started_or_restarted": false,
+    "tunnel_modified": false,
+    "network_requests": false,
+    "production_load_test": false,
+    "production_heap_or_cpu_profile": false,
+    "business_code_modified": false,
+    "spec_or_plan_written": false,
+    "methods": [
+      "只读源码核对",
+      "Node vm 加载真实 LatencyMonitor / FrameTraceCollector / WebRtcStats，使用合成时钟和合成输入",
+      "只读检查既存诊断 JSON 的 trigger 与 latency 字段存在性"
+    ],
+    "runtime_causality_limit": "以下证明测量与可观测性缺陷，不证明它们直接导致生产网页打不开、视频停播或远控断连。",
+    "redaction": "不包含 URL、IP、token、密码、真实输入内容、按键、坐标、socket/viewer/lease 标识；复现标识均为 fixture 值，诊断仅保留时间、触发类型和字段存在性。"
+  },
+  "requirements": [
+    {
+      "path": "docs/需求文档/WebRemoteDesktop-需求文档.md",
+      "line_start": 121,
+      "line_end": 122
+    },
+    {
+      "path": "docs/需求文档/WebRemoteDesktop-需求文档.md",
+      "line_start": 140,
+      "line_end": 140
+    },
+    {
+      "path": "docs/需求文档/WebRemoteDesktop-需求文档.md",
+      "line_start": 192,
+      "line_end": 192
+    }
+  ],
+  "findings": [
+    {
+      "id": "frontend-01",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "UI 的“输入→画面”实际展示 inputRtt",
+      "trigger": "业务 input_ack 已返回，但相应远端画面尚未展示或根本没有视频帧时。",
+      "source": [
+        {
+          "path": "web-client/viewer.html",
+          "line_start": 332,
+          "line_end": 332
+        },
+        {
+          "path": "web-client/js/diagnostic.js",
+          "line_start": 625,
+          "line_end": 632
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 160,
+          "line_end": 181
+        }
+      ],
+      "verification": {
+        "method": "源码绑定核对；无浏览器 UI 验收",
+        "label": "输入→画面",
+        "display_metric": "inputRtt",
+        "display_statistic": "p50",
+        "visual_frame_required_by_metric": false
+      },
+      "actual_result": "该标签可显示 ACK 往返数值，不需要对应 rVFC 或可见内容证据。",
+      "boundary": "本项是用户可见的指标语义错误；不能用该显示数值证明输入已经产生可见画面。"
+    },
+    {
+      "id": "frontend-02",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "frame_timing 到达被计为视觉反馈，并会抢先结束 v2 输入 ACK RTT",
+      "trigger": "带 inputIds 的 frame_timing 先于独立 input_ack 到达；该兼容分支没有按旧 Host 能力或 schemaVersion 限定。",
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 121,
+          "line_end": 134
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 4144,
+          "line_end": 4147
+        },
+        {
+          "path": "python-host/host.py",
+          "line_start": 1430,
+          "line_end": 1474
+        }
+      ],
+      "reproduction": {
+        "method": "真实 LatencyMonitor + fake clock；不调用 onVideoFrame。",
+        "events": [
+          {
+            "event": "recordInputSend",
+            "at_ms": 1000
+          },
+          {
+            "event": "schemaVersion 2 frame_timing",
+            "at_ms": 1040
+          },
+          {
+            "event": "input_ack",
+            "at_ms": 1120
+          }
+        ],
+        "before_ack": {
+          "inputRtt": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          },
+          "visualFeedback": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          },
+          "paint": {
+            "last": null,
+            "p50": null,
+            "p95": null,
+            "count": 0,
+            "available": false
+          }
+        },
+        "after_ack": {
+          "inputRtt": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          },
+          "visualFeedback": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          },
+          "paint": {
+            "last": null,
+            "p50": null,
+            "p95": null,
+            "count": 0,
+            "available": false
+          }
+        },
+        "true_local_send_to_ack_ms": 120,
+        "recorded_input_rtt_ms": 40
+      },
+      "actual_result": "尚无任何 rVFC 时 visualFeedback 已记 40 ms；真正 120 ms 的 ACK 到达后 inputRtt 仍是 40 ms，因为 pending 已被 timing 删除。",
+      "boundary": "Host 在返回 frame 给编码链路之前发送 frame_timing；该包到达不能证明该帧编码、传输、解码或展示完成。"
+    },
+    {
+      "id": "frontend-03",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "晚到 frame trace 将关联时刻写成画面观测时刻",
+      "trigger": "rVFC 先到，匹配的 frame_trace_batch 在 lateWaitMs 内晚到。",
+      "source": [
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 179,
+          "line_end": 220
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 251,
+          "line_end": 257
+        },
+        {
+          "path": "scripts/turn_controlled_scene.py",
+          "line_start": 522,
+          "line_end": 528
+        }
+      ],
+      "reproduction": {
+        "method": "真实 FrameTraceCollector + fake clock；同 attempt/generation/stream/wire RTP 身份。",
+        "rvfcAtMs": 100,
+        "traceArrivedAtMs": 800,
+        "recordedViewerClockMs": 800,
+        "overstatementMs": 700
+      },
+      "actual_result": "frame 保存了 at=100，但 matchedVisual 使用关联时 now=800，输出 viewerClockMs=800；比实际 rVFC 晚 700 ms。",
+      "boundary": "受控场景脚本直接以该 viewerClockMs 计算 sendToVisualMs，故遥测到达延迟可被误算为画面延迟。RTP 数值在这里仅用于身份关联，不是跨机可相减时钟。"
+    },
+    {
+      "id": "frontend-04",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "窗口与 pending 只在新写入时清理，暂停和会话边界没有独立度量重置",
+      "trigger": "某指标停止产生新样本；少于 10 次新输入后停顿；或两次 rVFC 之间有长时间主动暂停且没有重置 monitor。",
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 142,
+          "line_end": 157
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 177,
+          "line_end": 181
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 193,
+          "line_end": 243
+        }
+      ],
+      "reproduction": {
+        "method": "三个独立真实 LatencyMonitor 实例 + fake clock。",
+        "stale_five_second_window": {
+          "idleMs": 120000,
+          "inputRtt": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          }
+        },
+        "input_ack_after_60000_ms": {
+          "last": 60000,
+          "p50": 60000,
+          "p95": 60000,
+          "count": 1,
+          "available": true
+        },
+        "rvfc_gap_after_300000_ms": {
+          "last": 300000,
+          "p50": 300000,
+          "p95": 300000,
+          "count": 1,
+          "available": true
+        }
+      },
+      "actual_result": "40 ms 样本静置 120000 ms 后仍 available=true/count=1；单输入的 60000 ms 晚 ACK 仍记作新样本；相隔 300000 ms 的两次 rVFC 记 paint=300000 ms。",
+      "boundary": "getStats 本身不淘汰 5 秒窗口外样本。复现中的长间隔由 fake clock 注入，没有等待或制造生产停顿。源码未对 monitor 按 attempt、暂停或重连分区；这不证明某份生产样本实际已过期，因为现有快照没有样本年龄。"
+    },
+    {
+      "id": "frontend-05",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "未知值被转换为 0，执行耗时没有按输入去重",
+      "trigger": "hostExecuteMs、receiveTime/executeTime 或 jitterBufferMs 为 null；没有新的 jitter emitted 样本；同输入重复 ACK 或同时出现在 ACK 与 frame_timing 执行数据中。",
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 113,
+          "line_end": 117
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 160,
+          "line_end": 187
+        },
+        {
+          "path": "web-client/js/webrtc-stats.js",
+          "line_start": 52,
+          "line_end": 76
+        }
+      ],
+      "reproduction": {
+        "method": "相互独立的真实 monitor 实例；重复样本用合成同一 inputId。",
+        "null_ack_host_execute": {
+          "last": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1,
+          "available": true
+        },
+        "null_frame_receive_and_execute": {
+          "last": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1,
+          "available": true
+        },
+        "null_jitter": {
+          "last": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1,
+          "available": true
+        },
+        "normalize_empty_rtc_stats_jitter_ms": 0,
+        "duplicate_execution": {
+          "inputRtt": {
+            "last": 40,
+            "p50": 40,
+            "p95": 40,
+            "count": 1,
+            "available": true
+          },
+          "executeTime": {
+            "last": 2.0000000000000018,
+            "p50": 2,
+            "p95": 2.0000000000000018,
+            "count": 3,
+            "available": true
+          }
+        },
+        "duplicate_fixture_events": [
+          "同一输入发送一次",
+          "同一 hostExecuteMs=2 的 ACK 调用两次",
+          "同一输入在 frame_timing.inputs 中回报 receiveTime=1, executeTime=1.002"
+        ]
+      },
+      "actual_result": "缺失/无样本值呈 available=true 的 0 ms；重复复现 inputRtt.count=1，而 executeTime.count=3。",
+      "boundary": "重复 ACK 是明确的合成触发，不据此宣称生产一定重复投递。无 emitted delta 时 jitterBufferMs=0 是真实正常初始化/停帧分支，不能视为已测得零缓冲。2.0000000000000018 是二进制浮点运算结果，不是额外耗时证据。"
+    },
+    {
+      "id": "frontend-06",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "默认 frame trace 容量不能覆盖持续 20 FPS 的 120 秒窗口",
+      "trigger": "同一 scope 连续收到唯一且有效的 RTP 帧身份；默认 capacity=2048、ttlMs=120000。详细模式每帧 trace 完整，或普通 counter-only 模式没有 trace。",
+      "source": [
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 45,
+          "line_end": 65
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 127,
+          "line_end": 167
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 200,
+          "line_end": 220
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 224,
+          "line_end": 274
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 5090,
+          "line_end": 5095
+        },
+        {
+          "path": "python-host/host.py",
+          "line_start": 91,
+          "line_end": 94
+        },
+        {
+          "path": "python-host/host.py",
+          "line_start": 1478,
+          "line_end": 1505
+        }
+      ],
+      "defaults": {
+        "capacity": 2048,
+        "ttl_ms": 120000,
+        "late_wait_ms": 2000
+      },
+      "reproduction": {
+        "method": "真实 Collector；fake clock 每帧 +50 ms，共 2049 帧；完整 trace 案例每帧 takeMatched 清空已匹配队列。",
+        "full_trace": {
+          "framesAttempted": 2049,
+          "frameRate": 20,
+          "atMs": 102450,
+          "matchedTotal": 2048,
+          "terminalUnaligned": true,
+          "diagnostics": {
+            "acceptanceState": "UNALIGNED",
+            "pendingFrames": 0,
+            "pendingTraces": 0,
+            "seenIdentities": 2048,
+            "matchedCount": 0,
+            "droppedTraceCount": 0,
+            "invalidBatchCount": 1,
+            "staleTraceCount": 0,
+            "conflictingTraceCount": 0
+          }
+        },
+        "counter_only_no_trace": {
+          "framesAttempted": 2049,
+          "atMs": 102450,
+          "beforeTerminal": {
+            "acceptanceState": "UNALIGNED",
+            "pendingFrames": 2048,
+            "pendingTraces": 0,
+            "seenIdentities": 0,
+            "matchedCount": 0,
+            "droppedTraceCount": 0,
+            "invalidBatchCount": 0,
+            "staleTraceCount": 0,
+            "conflictingTraceCount": 0
+          },
+          "terminalUnaligned": true,
+          "afterTerminal": {
+            "acceptanceState": "UNALIGNED",
+            "pendingFrames": 0,
+            "pendingTraces": 0,
+            "seenIdentities": 0,
+            "matchedCount": 0,
+            "droppedTraceCount": 0,
+            "invalidBatchCount": 0,
+            "staleTraceCount": 0,
+            "conflictingTraceCount": 0
+          }
+        }
+      },
+      "actual_result": "完整 trace 案例前 2048 帧成功，102450 ms 第 2049 帧触发 invalidBatchCount=1、terminalUnaligned=true，尽管 matched 每帧已清空。无 trace 案例先积累 2048 个 pendingFrames，再在第 2049 帧 failClosed 清空。",
+      "production_and_memory_boundary": {
+        "host_detail_opt_in": "详细 trace 由 WRD_FRAME_TRACE_DETAIL=1 启用；默认 Host 为 counter-only。本子任务未读取生产进程环境，不能断言线上已启用详细模式。",
+        "frontend_default": "前端 rVFC 路径无条件调用 Collector；在浏览器提供有效且连续变化的 rtpTimestamp 时，无 trace 的普通模式也会收集 pendingFrames。",
+        "missing_rtp_timestamp": "若浏览器没有提供有限 rtpTimestamp，会标记 unaligned 并提前返回，不能套用 2049 帧积累结论。",
+        "diagnostics_only": "terminalUnaligned 使 Collector 停止接受该 scope 的后续关联；不会直接停止 WebRTC 视频或输入。",
+        "memory": "数据结构容量有界。本复现证明无 trace 时保留最多 2048 个帧身份/metadata/marker 包装对象后清空；不是无界内存泄漏证据，也未测量实际堆字节或 GC 成本。",
+        "continuous_acceptance": "20 FPS 且 scope 不变的 10 分钟完整 trace 验收会先于 120 秒 TTL 耗尽 seen 容量；takeMatched 不释放 seen。",
+        "wall_clock_limit": "102450 ms 为合成时钟时间；未运行约 102 秒的生产压测。"
+      }
+    },
+    {
+      "id": "frontend-07",
+      "priority": "P2",
+      "confidence": "high",
+      "title": "自动失败报告没有附带 LatencyMonitor 快照",
+      "trigger": "autoSendFailure 直接使用 buildConnectionDiagnostic；没有经过手动 sendLogs 的 payload.latency 赋值。",
+      "source": [
+        {
+          "path": "web-client/js/diagnostic.js",
+          "line_start": 256,
+          "line_end": 273
+        },
+        {
+          "path": "web-client/js/diagnostic.js",
+          "line_start": 291,
+          "line_end": 445
+        },
+        {
+          "path": "web-client/js/diagnostic.js",
+          "line_start": 577,
+          "line_end": 589
+        },
+        {
+          "path": "signal-server/lib/diagnostic.js",
+          "line_start": 640,
+          "line_end": 641
+        }
+      ],
+      "verification": {
+        "method": "源码路径核对 + 读取 /tmp/wrd-diag 中本次采样时按文件名排序最新 10 份既存 JSON，只保留脱敏摘要。",
+        "sample_count": 10,
+        "auto_failure_count": 9,
+        "auto_failure_with_latency": 0,
+        "manual_count": 1,
+        "manual_with_latency": 1,
+        "samples": [
+          {
+            "timestamp_utc": "2026-10-16T17:05:16.714Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:06:01.605Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:07:19.606Z",
+            "trigger": "manual",
+            "latency_present": true
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:11:39.905Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:11:43.571Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:11:45.163Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:14:28.858Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:14:31.349Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:19:32.010Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          },
+          {
+            "timestamp_utc": "2026-10-16T17:22:44.524Z",
+            "trigger": "auto-failure",
+            "latency_present": false
+          }
+        ]
+      },
+      "actual_result": "9 份自动失败报告均无 latency；唯一手动报告包含 latency。服务端持久化代码在字段存在时会保留它。",
+      "boundary": "样本描述的是采样时最新 10 份既存报告，不代表全部历史诊断。缺失字段不能证明失败时没有发生延迟，亦不能事后补推真实端到端耗时。"
+    },
+    {
+      "id": "frontend-08",
+      "priority": "P3",
+      "confidence": "high",
+      "title": "一次 clock sync 响应丢失后，周期调用无法重试",
+      "trigger": "inputChannel 为 open，clock_sync_req 已发出但响应未到；monitor 保持 syncing。之后定时调用或更换 DataChannel 均未重置该状态。",
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 42,
+          "line_end": 76
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 3855,
+          "line_end": 3868
+        }
+      ],
+      "reproduction": {
+        "method": "真实 LatencyMonitor + fake clock + 两个合成 open channel；没有真实定时等待。",
+        "call_times_ms": [
+          1000,
+          31000,
+          61000
+        ],
+        "channel_replaced_before_call": 3,
+        "requestsAttempted": 3,
+        "sentCount": 1,
+        "state": "syncing"
+      },
+      "actual_result": "调用 3 次只发送 1 次，最终 sync.state 仍为 syncing。",
+      "boundary": "代码没有同步请求超时或 attempt/generation 绑定。当前 network 指标没有使用该 offset 形成单向网络耗时，因此本项不应被归因为真实远控断连或证明已测到单向网络延迟。"
+    }
+  ],
+  "measurement_boundaries": [
+    {
+      "metric": "inputRtt",
+      "observed_boundary": "recordInputSend 时的 Viewer monotonic time 到 onInputAck 处理时的 Viewer monotonic time；现有 frame_timing 兼容分支可提前终止该区间。",
+      "start_excludes_dom": true,
+      "start_explanation": "recordLatency 在 transport send/emit 及 transport-send 轨迹之后调用；不包含 DOM 事件起点、门禁和发送前主线程排队/处理耗时。",
+      "source": [
+        {
+          "path": "web-client/js/input.js",
+          "line_start": 327,
+          "line_end": 340
+        },
+        {
+          "path": "web-client/js/input.js",
+          "line_start": 2255,
+          "line_end": 2288
+        },
+        {
+          "path": "web-client/js/input.js",
+          "line_start": 2291,
+          "line_end": 2320
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 142,
+          "line_end": 171
+        }
+      ],
+      "cannot_prove": [
+        "DOM 到远端可见效果",
+        "单向网络传输",
+        "远端原生系统已经展示效果"
+      ]
+    },
+    {
+      "metric": "hostExecuteMs / executeTime",
+      "observed_boundary": "Host 回报的同机执行阶段 duration；只在其实际起止点范围内成立。",
+      "cannot_prove": [
+        "完整输入队列等待",
+        "端到端网络",
+        "操作者看到效果"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 113,
+          "line_end": 117
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 169,
+          "line_end": 171
+        }
+      ]
+    },
+    {
+      "metric": "visualFeedback",
+      "observed_boundary": "含输入 ID 的 frame_timing 消息到达处理时刻减本地记录发送时刻。",
+      "cannot_prove": [
+        "该帧已编码/传输/解码/显示",
+        "该帧包含输入产生的新内容"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 121,
+          "line_end": 127
+        }
+      ]
+    },
+    {
+      "metric": "paint",
+      "observed_boundary": "相邻 rVFC 回调时间参数的间隔。",
+      "cannot_prove": [
+        "单帧绘制 CPU 开销",
+        "输入到画面延迟",
+        "新内容对应关系",
+        "跨机单向传输"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 177,
+          "line_end": 181
+        }
+      ]
+    },
+    {
+      "metric": "candidate-pair RTT",
+      "observed_boundary": "所选 ICE candidate pair 的 RTT 统计。",
+      "cannot_prove": [
+        "Socket.IO 业务往返",
+        "某条 DataChannel 输入的应用执行 ACK RTT",
+        "输入到可见效果"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/webrtc-stats.js",
+          "line_start": 19,
+          "line_end": 40
+        }
+      ]
+    },
+    {
+      "metric": "jitterBufferMs / playout",
+      "observed_boundary": "存在 emitted 样本时，delta jitterBufferDelay / delta jitterBufferEmittedCount 的均值。",
+      "cannot_prove": [
+        "网络、解码、展示的总耗时",
+        "单向网络传输"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/webrtc-stats.js",
+          "line_start": 58,
+          "line_end": 76
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 184,
+          "line_end": 187
+        }
+      ]
+    },
+    {
+      "metric": "RTP trace + controlled marker",
+      "observed_boundary": "同 scope 的 trace/RTP 身份关联，且受控 ROI 实际解码出 marker 后才形成受控场景证据。",
+      "cannot_prove": [
+        "RTP 时间戳可与 Host clock 直接相减",
+        "普通未打标桌面任意输入的因果可见结果"
+      ],
+      "known_limits": [
+        "晚到 trace 时间戳偏移",
+        "详细 trace 需显式启用",
+        "连续 scope 容量不足"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 179,
+          "line_end": 197
+        },
+        {
+          "path": "web-client/js/webrtc.js",
+          "line_start": 284,
+          "line_end": 297
+        }
+      ]
+    },
+    {
+      "metric": "aggregate statistics",
+      "observed_boundary": "现有 maps 只保存 inputId 与本地时间，当前统计未按 transport/action/attempt 分段。",
+      "cannot_prove": [
+        "输入丢失比例",
+        "超时请求的完整分母",
+        "DataChannel 与 Socket fallback 各自 p95"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 9,
+          "line_end": 11
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 142,
+          "line_end": 171
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 215,
+          "line_end": 243
+        }
+      ]
+    },
+    {
+      "metric": "network",
+      "observed_boundary": "当前 monitor 保留 network 槽位，但未记录该指标样本。",
+      "available": false,
+      "cannot_prove": [
+        "单向传输时延；不能以 RTT/2 或 clock offset 直接冒充实测"
+      ],
+      "source": [
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 24,
+          "line_end": 34
+        },
+        {
+          "path": "web-client/js/latency-monitor.js",
+          "line_start": 228,
+          "line_end": 242
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "results_count": 8,
+    "reproduced_with_real_source_classes": true,
+    "production_incident_reproduction": false,
+    "browser_acceptance_run": false,
+    "full_test_suite_run": false,
+    "source_hashes_include_preexisting_worktree_changes": true
+  },
+  "source_sha256": {
+    "web-client/js/latency-monitor.js": "05924a75bd0256e21943fb2c8c901bfcfbc8e1998c69b14302d9dea39c6d7c82",
+    "web-client/js/webrtc.js": "377f6f7f9ada74d8042332245c6bda76aefd65d1ce7ef5836e11931aab8eb118",
+    "web-client/js/input.js": "97c0d4cb14b376fb25a436a14fdc0d00c1c611093b4b8b01878078e87321bff4",
+    "web-client/js/diagnostic.js": "941628403647039e0b4c5474306116de0f101db7c0be53c26b29a070ba1891d6",
+    "web-client/js/webrtc-stats.js": "3f0a5a62f1c0aca160a7c123f7f298106ee0b278d5c694ffe6a07e82a7321520",
+    "web-client/viewer.html": "b3f33aeee4c3211ba32fc78d15f0cffa40aac779ab941c1e440a114e3abf12de",
+    "python-host/host.py": "02617320c81778adbd3a35ec5018b08735526ce6bfc2b03db918d7b23e9fca3d",
+    "signal-server/lib/diagnostic.js": "bdf351f952f2daac16685105aa60f5741efdb351fd6cf4dddd63096147affbf2",
+    "scripts/turn_controlled_scene.py": "eacb33b87bfe3b15c50f2ade9ee70ebc0677286c226349697505c94e6d8c8946",
+    "docs/需求文档/WebRemoteDesktop-需求文档.md": "732b3505043db10e8fbb45faf8fda315a3712486db35b666fe7eaab43d9d7cf6"
+  }
+}

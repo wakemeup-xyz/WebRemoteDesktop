@@ -1,0 +1,592 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-17T00:35:55.002903+08:00",
+  "timezone": "Asia/Shanghai",
+  "scope": "read-only production observations, source review and lightweight offline reproductions; report/evidence writes only",
+  "baselineCommit": "ab1a343680aa0ec093a4e0a781052e149f7dc793",
+  "trackedDiffSha256AtReadOnlyBaseline": "c2b91ad9c2c94b44c9c2b63d377b04c082169b561f576216c1405ef8400b0d1d",
+  "sourceSha256": {
+    "python-host/host.py": "02617320c81778adbd3a35ec5018b08735526ce6bfc2b03db918d7b23e9fca3d",
+    "python-host/input_handler.py": "872121bd65aa38461b696c6b85943a1875ab6b2fd1b1de0924ab0b87e4ec4cb0",
+    "python-host/h264_encoder_policy.py": "65541bd0e61b1ca1f7a5aa61cac6aa8fb7ecc064b86a0465ca52ce6f4aa41d42",
+    "signal-server/server.js": "de0dc830d794e35bd3ebc0ee96c82cc0dcd350c0d0a87b17ecee41f09285d875",
+    "signal-server/websocket/signaling.js": "06d96c18a3e2d15bea4c7d288a68e4c329c6e4f475bdbe57fe8a4a1158665783",
+    "signal-server/lib/desktop-control-lease.js": "20393340255bfa2e80c4e4c3d350c2b617bb74a07f54ef1801251704cd337c18",
+    "signal-server/scripts/build-web-client.js": "8842f700f14ed6836baf214ac99b7cc6e10c2d0d232d7770182981480b426fdb",
+    "web-client/js/webrtc.js": "377f6f7f9ada74d8042332245c6bda76aefd65d1ce7ef5836e11931aab8eb118",
+    "web-client/js/input.js": "97c0d4cb14b376fb25a436a14fdc0d00c1c611093b4b8b01878078e87321bff4",
+    "web-client/js/input-trace.js": "b3609db1e4f7f24a6612ba25821af763b285386fd9904113730bd96f8090f4f1",
+    "web-client/js/keyboard-transport.js": "b64aa5f9f3cfa239192429f1028ef15978224a82f674c2324b84a237fe20735b",
+    "web-client/js/auth.js": "c673a41b99b3aeabf127cda2770d172b04f3910f6eca6ac92dc86d7f9ec6decd",
+    "web-client/js/terminal-loader.js": "befb27fa6b6d50f8e92ba717fa56f54fc3a1e54ce1c7386ba0fce68038ede404",
+    "web-client/js/shell-guard.js": "5c1b956d2e46d2853ba0eed7a471c91f84f3befe8389a334af1719a5aa89674c",
+    "web-client/index.html": "4d58e9cfcf24a4ba5850591ba652d5ca7a499ca0edbc85e3a519200176d787b1",
+    "scripts/watch-fixed-domain.sh": "21e65eac7bc51467cf3922fe5335c62c0aa834e20ce1b2ecdf159385a01a16a5",
+    "scripts/lib-fixed-domain.sh": "26a2daf7c6e9db7e898c12883a8aaa3fdbe22065fab4b162f73cbc52e7f0880d"
+  },
+  "runtime": {
+    "formalUrl": "[redacted: formal-domain]",
+    "optionalQuickUrlFilePresent": false,
+    "signalPid": 22232,
+    "hostPid": 22537,
+    "cloudflaredPid": 84671,
+    "cloudflaredStartedAt": "2026-10-16T19:44:27+08:00",
+    "serviceHealthObserved": {
+      "signalAlive": true,
+      "hostAlive": true,
+      "healthOk": true,
+      "hostOnline": true
+    },
+    "mutatedServices": false,
+    "createdViewer": false,
+    "note": "Current cloudflared restart is attributed to preexisting watcher logs, not this review. Service status is not proof of usable remote input.",
+    "formalUrlRedactionNote": "Public entry identity retained only as route class; full URL removed during 2026-10-17 documentation review."
+  },
+  "httpProbes": [
+    {
+      "localTime": "00:18:22",
+      "route": "local",
+      "path": "/health",
+      "httpStatus": 200,
+      "connectSeconds": 0.000875,
+      "ttfbSeconds": 3.608026,
+      "totalSeconds": 3.608277,
+      "wireBytes": 54,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:18:24",
+      "route": "local",
+      "path": "/",
+      "httpStatus": 200,
+      "connectSeconds": 0.001414,
+      "ttfbSeconds": 2.630873,
+      "totalSeconds": 2.631107,
+      "wireBytes": 2319,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:18:26",
+      "route": "formal-direct",
+      "path": "/health",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 1.546381,
+      "totalSeconds": 1.547117,
+      "wireBytes": null,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:18:28",
+      "route": "formal-direct",
+      "path": "/",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 2.043147,
+      "totalSeconds": 2.043936,
+      "wireBytes": null,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:19:18",
+      "route": "formal-via-local-proxy",
+      "path": "/",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 2.196041,
+      "totalSeconds": 2.366242,
+      "wireBytes": null,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:19:21",
+      "route": "formal-direct",
+      "path": "/",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 1.954266,
+      "totalSeconds": 1.954869,
+      "wireBytes": null,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:19:55",
+      "route": "local",
+      "path": "/assets/desktop-core.53adfd7519ca04dc.js",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 0.193377,
+      "totalSeconds": 1.287637,
+      "wireBytes": 109757,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:20:01",
+      "route": "formal-direct",
+      "path": "/assets/desktop-core.53adfd7519ca04dc.js",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 3.228036,
+      "totalSeconds": 5.797738,
+      "wireBytes": 108991,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:23:12",
+      "route": "local",
+      "path": "/health",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 0.055992,
+      "totalSeconds": 0.0564,
+      "wireBytes": 54,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:23:13",
+      "route": "local",
+      "path": "/health",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 0.04946,
+      "totalSeconds": 0.049744,
+      "wireBytes": 54,
+      "date": "2026-10-17"
+    },
+    {
+      "localTime": "00:23:14",
+      "route": "local",
+      "path": "/health",
+      "httpStatus": 200,
+      "connectSeconds": null,
+      "ttfbSeconds": 0.012757,
+      "totalSeconds": 0.013192,
+      "wireBytes": 54,
+      "date": "2026-10-17"
+    }
+  ],
+  "httpLimitations": [
+    "These are isolated probes from the same congested machine, not a browser trace or latency percentile.",
+    "Measurements include client scheduling delay.",
+    "Direct probes and local HTTP proxy probes both succeeded at sampled times; user-side networking may differ.",
+    "Public core asset probe was CF-Cache-Status MISS; compressed wire size may differ from local compression."
+  ],
+  "deployedAssets": {
+    "core": "desktop-core.53adfd7519ca04dc.js",
+    "coreRawBytes": 413891,
+    "coreGzipBytes": 109757,
+    "coreSha256": "53adfd7519ca04dc9e8921ac1a859300bef5347fe60ac59fa3528169e3f167dc",
+    "viewerCssRawBytes": 49178,
+    "viewerCssGzipBytes": 9469,
+    "viewerHtmlGzipBytes": 6678,
+    "terminalRawBytes": 555545,
+    "terminalGzipBytes": 144964,
+    "terminalIsLazy": true,
+    "runtimeCdnDependencyObserved": false,
+    "shellCoreDeadlineMs": 5000
+  },
+  "resources": {
+    "logicalCpus": 12,
+    "physicalMemoryGiB": 32,
+    "loadSampleLocalTime": "2026-10-17 00:18 (minute precision, Asia/Shanghai)",
+    "load1": 194.2,
+    "load5": 137.88,
+    "load15": 80.3,
+    "swapUsedMiB": 25648.75,
+    "topSampleLocalTime": "2026-10-17T00:19:41+08:00",
+    "processes": 946,
+    "threads": 7767,
+    "cpuUserPercent": 42.31,
+    "cpuSystemPercent": 28.28,
+    "cpuIdlePercent": 29.39,
+    "swapDelta": {
+      "sampleLocalTime": "2026-10-17T00:21:08+08:00",
+      "elapsedSeconds": 2.034,
+      "pageBytes": 4096,
+      "swapinPagesDelta": 116318,
+      "swapoutPagesDelta": 61081,
+      "swapinMiBPerSecond": 223.37,
+      "swapoutMiBPerSecond": 117.29
+    },
+    "diskFreeGiBApprox": 64,
+    "limitations": [
+      "Load is not CPU utilization.",
+      "Per-process RSS may double-count shared pages.",
+      "A point-in-time process ranking does not establish individual culpability."
+    ]
+  },
+  "productionEvidence": [
+    {
+      "id": "R1",
+      "source": "/tmp/signal-server.log",
+      "lines": [
+        34016,
+        34050,
+        34203
+      ],
+      "times": [
+        "2026-10-16T19:44:26.678+08:00",
+        "2026-10-16T19:44:33.584+08:00",
+        "2026-10-16T19:44:36.228+08:00"
+      ],
+      "events": [
+        "disconnect-grace",
+        "rebind-confirmed",
+        "lease-expired"
+      ],
+      "confirmedToExpiredSeconds": 2.644,
+      "frontendFirstHeartbeatDelaySeconds": 3
+    },
+    {
+      "id": "N5",
+      "source": "/tmp/wrd-fixed-watch.log",
+      "lines": [
+        20348,
+        20351,
+        20352,
+        20353,
+        20354
+      ],
+      "firstFormalDown": "2026-10-16T19:34:29+08:00",
+      "firstRestartStart": "2026-10-16T19:37:46+08:00",
+      "firstRestartEnd": "2026-10-16T19:43:16+08:00",
+      "firstRestartExit": 1,
+      "firstRestartElapsedSeconds": 330,
+      "secondRestartStart": "2026-10-16T19:44:24+08:00",
+      "secondRestartEnd": "2026-10-16T19:44:57+08:00",
+      "secondRestartExit": 0,
+      "gapAfterFirstReturnSeconds": 68,
+      "originWasHealthy": true,
+      "localizationLimit": "Boolean formal-down from watcher cannot distinguish local proxy/DNS/probe failures from remote path failure."
+    },
+    {
+      "id": "N6",
+      "source": "/tmp/wrd-fixed-domain.log",
+      "lines": [
+        4061,
+        4090
+      ],
+      "start": "2026-10-16T23:30:39+08:00",
+      "end": "2026-10-16T23:31:20+08:00",
+      "affectedConnectionIndices": [
+        1,
+        2
+      ],
+      "observation": "disconnect and registration churn; does not establish simultaneous loss of all edge connections"
+    },
+    {
+      "id": "N1",
+      "source": "/tmp/signal-server.log",
+      "lines": [
+        36459
+      ],
+      "localTime": "2026-10-17T00:17:52+08:00",
+      "event": "viewer_bootstrap_served",
+      "serverProcessMs": 622.33,
+      "usualObservedMsRange": [
+        0.07,
+        2.71
+      ]
+    },
+    {
+      "id": "N2",
+      "source": "back-debug.log",
+      "lines": [
+        11891,
+        11892
+      ],
+      "localTime": "2026-10-17T00:06:51+08:00",
+      "frames": 6,
+      "fps": 0.8,
+      "captureConvertJpegWallMeanMs": 750.5,
+      "averageFrameKB": 4.7,
+      "eventLoopLagMs": 4076.268,
+      "systemLoad1": 5.688,
+      "inputWaiters": 0,
+      "relayRunning": true,
+      "note": "No per-stage profile; cannot attribute entire lag to one frame or pure CPU work."
+    },
+    {
+      "id": "host-lag-a",
+      "source": "back-debug.log",
+      "lines": [
+        8772,
+        8773,
+        8837
+      ],
+      "localTime": "2026-10-16T19:48:01+08:00",
+      "eventLoopLagMs": 8182.498,
+      "followingEvents": [
+        "Engine.IO queue empty abort",
+        "signaling disconnect at 19:48:17"
+      ]
+    },
+    {
+      "id": "host-lag-b",
+      "source": "back-debug.log",
+      "lines": [
+        14927,
+        14928
+      ],
+      "localTime": "2026-10-17T00:14:43+08:00",
+      "eventLoopLagMs": 8556.12,
+      "outputFps": 1.8
+    },
+    {
+      "id": "idle-host-lag",
+      "source": "back-debug.log",
+      "lines": [
+        14959,
+        14991,
+        14996
+      ],
+      "start": "2026-10-17T00:16:03+08:00",
+      "end": "2026-10-17T00:17:55+08:00",
+      "cpuSecondsDelta": 1.068,
+      "elapsedSeconds": 112,
+      "maxObservedLagMs": 1439,
+      "pcPresent": false,
+      "captureRunning": false,
+      "relayRunning": false,
+      "inputWaiters": 0
+    },
+    {
+      "id": "N4",
+      "source": "back-debug.log",
+      "lines": [
+        9384,
+        9409,
+        9416
+      ],
+      "localTime": "2026-10-16T19:49:29+08:00",
+      "wheelQueueMs": 4870.9,
+      "mouseDownQueueMs": 3682.2,
+      "mouseDownTotalMs": 3687.7,
+      "mouseUpQueueMs": 3627.3,
+      "mouseUpTotalMs": 3793
+    },
+    {
+      "id": "N3",
+      "source": "back-debug.log and back-debug.log.1",
+      "hardwareWindowLocalHour": "2026-10-16T15:00:00+08:00",
+      "hardwareWindows": 711,
+      "hardwareFrames": 68659,
+      "hardwareWeightedWallMeanMs": 4.55,
+      "softwareWindows": [
+        {
+          "localTime": "2026-10-17T00:12:55+08:00",
+          "wallMeanMs": 216.9
+        },
+        {
+          "localTime": "2026-10-17T00:14:48+08:00",
+          "wallMeanMs": 85.2,
+          "wallP95Ms": 201.023
+        }
+      ],
+      "note": "Different load/time windows; not a controlled A/B benchmark."
+    },
+    {
+      "id": "N13",
+      "source": "back-debug.log.1",
+      "localHour": "2026-10-16T15:00:00+08:00",
+      "outputFpsApprox": 19.5,
+      "reusePercent": 57.6,
+      "viewerReuseReported": 0
+    }
+  ],
+  "offlineReproductions": [
+    {
+      "id": "R1",
+      "method": "fake clock with real lease and frontend heartbeat interval",
+      "lastHeartbeatSeconds": 0,
+      "disconnectSeconds": 2.9,
+      "rejoinSeconds": 10.8,
+      "hostAckSeconds": 11,
+      "expirySeconds": 12,
+      "nextHeartbeatSeconds": 14
+    },
+    {
+      "id": "R2",
+      "method": "pause actual peer close path, apply newer control transition, resume older offer",
+      "newEpoch": 9,
+      "epochAfterOldOffer": 7,
+      "keyboardEpochAfterOldOffer": 7
+    },
+    {
+      "id": "R3",
+      "method": "ordinary keyboard input, drop ACK, advance 5 seconds",
+      "transportState": "ready",
+      "pending": 1,
+      "lastSent": 1,
+      "lastApplied": 0,
+      "gateAllowed": true,
+      "autoRecovery": false,
+      "nextSendAllowed": true
+    },
+    {
+      "id": "R4",
+      "method": "Host rejects rebind or ACK exceeds1500ms, automatic acquire blocked by pending gate, reset confirmed, no subsequent automatic acquire",
+      "state": "FREE",
+      "automaticGrantCount": 0,
+      "rebindAckTimeoutMs": 1500,
+      "freeStateRequiresResetConfirmation": true
+    },
+    {
+      "id": "R5",
+      "method": "pending grant epoch1, disconnect reset epoch1, old grant applied ACK then reset rejected ACK",
+      "stateAfterOldAck": "FREE",
+      "stateAfterResetRejected": "FREE",
+      "resetRetryCount": 0,
+      "newAcquireState": "GRANTING",
+      "newAcquireEpoch": 2
+    },
+    {
+      "id": "R6",
+      "method": "reset on blur, outage4s exceeds reset3s but within grace8s, same-lease reconnect",
+      "state": "reacquire-required",
+      "automaticAndOrdinaryRetryError": "keyboard-reset-send-failed",
+      "explicitReleaseThenReacquireExitExists": true
+    },
+    {
+      "id": "R7",
+      "method": "same-page socket reconnect with in-flight socket mouse reset, Host ACK retains old viewer, keyboard reset separately completes",
+      "mouseConfirmed": false,
+      "keyboardConfirmed": true,
+      "eventualTimeout": true,
+      "conditions": [
+        "same page",
+        "same lease regranted",
+        "in-flight mouse reset ACK uses Socket path"
+      ]
+    },
+    {
+      "id": "R8",
+      "method": "failed rebind, user explicitly reacquires fresh grant, reuse existing healthy peer, later bind new attempt, reconnect again",
+      "activeInputOwner": "new",
+      "peerOwner": "old",
+      "nextRebindRejected": true
+    },
+    {
+      "id": "R9",
+      "method": "pause fresh-capture wait, bind newer attempt, resume older media completion",
+      "inputAttempt": 2,
+      "mediaAttempt": 1
+    },
+    {
+      "id": "R10",
+      "method": "old active ACK received but awaiting fresh frame; switch attempt, resend active intent and refresh baseline while old frame-pending flag survives; frame arrives without new ACK",
+      "runtimeState": "active",
+      "inputGateEnabled": true
+    },
+    {
+      "id": "R11",
+      "method": "legacy relay owner migrated while Host rebind pending",
+      "relayStartForwardedBeforeHostConfirmation": true
+    },
+    {
+      "id": "N3",
+      "method": "pure H264 policy resolution for1152x720,requested600000bps",
+      "results": [
+        {
+          "fps": 20,
+          "codec": "h264_videotoolbox",
+          "bitrateBps": 3200000
+        },
+        {
+          "fps": 15,
+          "codec": "libx264",
+          "threads": 1,
+          "bitrateBps": 1800000
+        },
+        {
+          "fps": 12,
+          "codec": "libx264",
+          "threads": 1,
+          "bitrateBps": 1800000
+        }
+      ]
+    },
+    {
+      "id": "N7",
+      "method": "VM auth verification response503",
+      "sessionTokenRemoved": true,
+      "localTokenRemoved": true,
+      "navigation": "index.html"
+    },
+    {
+      "id": "N9",
+      "method": "Terminal script succeeds, stylesheet fails, retry",
+      "firstState": "failed",
+      "retryState": "ready",
+      "cssRequests": 1,
+      "jsRequests": 1
+    },
+    {
+      "id": "N10-login",
+      "method": "pending login fetch",
+      "buttonDisabled": true,
+      "abortSignalPresent": false
+    },
+    {
+      "id": "N10-diagnostics",
+      "method": "pending deferred diagnostic script",
+      "timerCount": 0,
+      "state": "loading",
+      "retryAvailable": false
+    },
+    {
+      "id": "N11",
+      "method": "append one unordered mouse ACK to existing 256-event trace fixture",
+      "serializedBytes": 59270,
+      "recentAckCountsPer256": [
+        143,
+        176
+      ],
+      "actualBrowserCpuMeasured": false
+    },
+    {
+      "id": "N12",
+      "method": "repeat actual ChromeLayout capabilities with identical state using instrumented DOM fixture",
+      "attributeAndClassWrites": 120,
+      "ariaWrites": 22,
+      "idQueries": 23,
+      "extrapolatedWritesAt20Fps": 2840,
+      "actualBrowserCpuMeasured": false
+    },
+    {
+      "id": "D1",
+      "method": "trace timestamps around and after ten-minute clamp",
+      "outputMs": [
+        0,
+        599999,
+        600000,
+        600000,
+        600000
+      ]
+    }
+  ],
+  "previousVerificationOnly": {
+    "source": "../2026-10-16-control-recovery/summary.json",
+    "viewerTests": 799,
+    "signalTests": 85,
+    "hostTests": 84,
+    "total": 968,
+    "fullSuiteRerunThisReview": false,
+    "publicLongRunPerformed": false,
+    "physicalInputPerformed": false
+  },
+  "limitations": [
+    "Exact user-reported page failure time and error category not yet supplied.",
+    "Root cause of initial reliable DataChannel failure remains unknown.",
+    "Original cause of formal endpoint failure at 19:34 remains unknown.",
+    "Source reproducibility uses current source hashes plus described offline schedules; ephemeral VM fixture scripts are not persisted.",
+    "Production log lines are pointers to mutable/rotating local logs; this file preserves sanitized selected values, not complete raw logs.",
+    "Review does not establish every code defect occurred during the latest incident.",
+    "No credentials, raw keyboard contents, SDP or raw diagnostic bundles are included."
+  ],
+  "reportReview": {
+    "frontend": "completed; corrections incorporated",
+    "host": "completed; corrections incorporated",
+    "signalAndEntry": "completed; corrections incorporated"
+  }
+}

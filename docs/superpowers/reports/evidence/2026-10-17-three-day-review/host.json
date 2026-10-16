@@ -1,0 +1,4289 @@
+{
+  "schemaVersion": 1,
+  "audit": "host-rolling-72h-log-review",
+  "generatedAt": "2026-10-17T02:23:30.366939+08:00",
+  "requestedWindow": {
+    "start": "2026-10-14T02:15:00.000+08:00",
+    "end": "2026-10-17T02:15:00.000+08:00",
+    "durationHours": 72,
+    "timeZone": "Asia/Shanghai",
+    "endExclusive": true
+  },
+  "collection": {
+    "method": "One forward bounded byte-snapshot traversal of each of four already-existing files; all aggregates computed in memory; no production inputs, service changes, network requests, or stress tests. Window is [start, end); the observed maximum is strictly before end, with no record at the exact end boundary.",
+    "sourceFiles": [
+      {
+        "file": "back-debug.log.3",
+        "snapshotBytes": 10485674,
+        "inode": 41417777,
+        "mtime": "2026-10-15T16:15:11.893321+08:00",
+        "sha256": "562719c350ee552978ef9802f00852de58c21311ca2a1095efd1b6cb67390209",
+        "lines": 46750,
+        "timestampedLines": 46750,
+        "unprefixedLines": 0,
+        "withinWindowTimestampedLines": 46750,
+        "firstTimestamp": "2026-10-14T12:36:49.699+08:00",
+        "lastTimestamp": "2026-10-15T16:15:11.893+08:00",
+        "withinWindowFirst": "2026-10-14T12:36:49.699+08:00",
+        "withinWindowLast": "2026-10-15T16:15:11.893+08:00",
+        "withinWindowByDay": {
+          "2026-10-14": 29677,
+          "2026-10-15": 17073
+        },
+        "truncatedAtSnapshot": false,
+        "bytesRead": 10485674
+      },
+      {
+        "file": "back-debug.log.2",
+        "snapshotBytes": 10485680,
+        "inode": 41905866,
+        "mtime": "2026-10-16T01:44:37.593767+08:00",
+        "sha256": "ca9be7029d86292758faba41f080cf6751edf0bbb032b3be81014897c7a31d08",
+        "lines": 45225,
+        "timestampedLines": 45225,
+        "unprefixedLines": 0,
+        "withinWindowTimestampedLines": 45225,
+        "firstTimestamp": "2026-10-15T16:15:11.978+08:00",
+        "lastTimestamp": "2026-10-16T01:44:37.593+08:00",
+        "withinWindowFirst": "2026-10-15T16:15:11.978+08:00",
+        "withinWindowLast": "2026-10-16T01:44:37.593+08:00",
+        "withinWindowByDay": {
+          "2026-10-15": 35902,
+          "2026-10-16": 9323
+        },
+        "truncatedAtSnapshot": false,
+        "bytesRead": 10485680
+      },
+      {
+        "file": "back-debug.log.1",
+        "snapshotBytes": 10485567,
+        "inode": 42033984,
+        "mtime": "2026-10-16T15:29:11.306371+08:00",
+        "sha256": "e34c743ae160c8f43ca3ab03e9e2453b5fae08d76411f0df0c50818faa82d7af",
+        "lines": 45255,
+        "timestampedLines": 45255,
+        "unprefixedLines": 0,
+        "withinWindowTimestampedLines": 45255,
+        "firstTimestamp": "2026-10-16T01:44:38.323+08:00",
+        "lastTimestamp": "2026-10-16T15:29:11.306+08:00",
+        "withinWindowFirst": "2026-10-16T01:44:38.323+08:00",
+        "withinWindowLast": "2026-10-16T15:29:11.306+08:00",
+        "withinWindowByDay": {
+          "2026-10-16": 45255
+        },
+        "truncatedAtSnapshot": false,
+        "bytesRead": 10485567
+      },
+      {
+        "file": "back-debug.log",
+        "snapshotBytes": 9803382,
+        "inode": 42470473,
+        "mtime": "2026-10-17T02:21:47.593373+08:00",
+        "sha256": "def77ad773e78b6006aa72174af6f5997e53e8edffb4be0b87b039f7021d0b74",
+        "lines": 35859,
+        "timestampedLines": 35756,
+        "unprefixedLines": 103,
+        "withinWindowTimestampedLines": 34253,
+        "firstTimestamp": "2026-10-16T15:29:11.527+08:00",
+        "lastTimestamp": "2026-10-17T02:21:47.592+08:00",
+        "withinWindowFirst": "2026-10-16T15:29:11.527+08:00",
+        "withinWindowLast": "2026-10-17T02:14:59.953+08:00",
+        "withinWindowByDay": {
+          "2026-10-16": 11576,
+          "2026-10-17": 22677
+        },
+        "truncatedAtSnapshot": false,
+        "bytesRead": 9803382
+      }
+    ],
+    "onlyWrittenFile": "docs/superpowers/reports/evidence/2026-10-17-three-day-review/host.json"
+  },
+  "coverage": {
+    "observedFirst": "2026-10-14T12:36:49.699+08:00",
+    "observedLast": "2026-10-17T02:14:59.953+08:00",
+    "missingWindowPrefixSeconds": 37309.699,
+    "missingWindowPrefixExplanation": "No retained file earlier than observedFirst; size-based rotation (10MiB x current plus 3 backups) cannot prove complete rolling 72-hour retention.",
+    "longestObservedLogSilencesOver60s": [
+      {
+        "durationSeconds": 1786.993,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 29961,
+          "time": "2026-10-15T04:18:05.543+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 29962,
+          "time": "2026-10-15T04:47:52.536+08:00"
+        }
+      },
+      {
+        "durationSeconds": 1610.686,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 29952,
+          "time": "2026-10-15T03:20:17.353+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 29953,
+          "time": "2026-10-15T03:47:08.039+08:00"
+        }
+      },
+      {
+        "durationSeconds": 1296.447,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 29939,
+          "time": "2026-10-15T02:33:36.535+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 29940,
+          "time": "2026-10-15T02:55:12.982+08:00"
+        }
+      },
+      {
+        "durationSeconds": 804.981,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 25000,
+          "time": "2026-10-14T18:44:41.883+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 25001,
+          "time": "2026-10-14T18:58:06.864+08:00"
+        }
+      },
+      {
+        "durationSeconds": 800.883,
+        "from": {
+          "file": "back-debug.log.2",
+          "line": 30535,
+          "time": "2026-10-15T20:21:46.421+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.2",
+          "line": 30536,
+          "time": "2026-10-15T20:35:07.304+08:00"
+        }
+      },
+      {
+        "durationSeconds": 798.924,
+        "from": {
+          "file": "back-debug.log.2",
+          "line": 35888,
+          "time": "2026-10-15T23:08:31.249+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.2",
+          "line": 35889,
+          "time": "2026-10-15T23:21:50.173+08:00"
+        }
+      },
+      {
+        "durationSeconds": 781.908,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 30147,
+          "time": "2026-10-15T11:51:30.380+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 30148,
+          "time": "2026-10-15T12:04:32.288+08:00"
+        }
+      },
+      {
+        "durationSeconds": 758.751,
+        "from": {
+          "file": "back-debug.log.2",
+          "line": 31410,
+          "time": "2026-10-15T21:35:34.923+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.2",
+          "line": 31411,
+          "time": "2026-10-15T21:48:13.674+08:00"
+        }
+      },
+      {
+        "durationSeconds": 756.785,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 24981,
+          "time": "2026-10-14T17:49:48.257+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 24982,
+          "time": "2026-10-14T18:02:25.042+08:00"
+        }
+      },
+      {
+        "durationSeconds": 673.778,
+        "from": {
+          "file": "back-debug.log.3",
+          "line": 30139,
+          "time": "2026-10-15T11:01:13.747+08:00"
+        },
+        "to": {
+          "file": "back-debug.log.3",
+          "line": 30140,
+          "time": "2026-10-15T11:12:27.525+08:00"
+        }
+      }
+    ],
+    "silenceCountOver60s": 779,
+    "silenceMeaning": "Intervals without timestamped log records are observability gaps, not proof of service outage or healthy operation."
+  },
+  "counts": {
+    "timestamped_lines": 171483,
+    "level:INFO": 160604,
+    "level:WARNING": 10860,
+    "event:host_event_loop_lag": 6390,
+    "datachannel_closed:input": 84,
+    "datachannel_closed:input-move": 84,
+    "ice_state:closed": 111,
+    "pc_state:closed": 111,
+    "event:host_media_suspended": 60,
+    "event:host_session_presentation": 111,
+    "ice_state:checking": 111,
+    "pc_state:connecting": 111,
+    "ice_state:completed": 87,
+    "pc_state:connected": 87,
+    "marker:CAPTURE_STATS": 8243,
+    "marker:WRD_ENCODER_SAMPLE": 8176,
+    "event:host_viewer_diagnostic_summary": 107,
+    "event:host_media_resumed": 38,
+    "event:host_media_resume_failed": 24,
+    "event:host_input_received": 3393,
+    "event:host_input_result": 3393,
+    "event:host_input_ack_sent": 3393,
+    "event:host_input_aggregate": 978,
+    "input_stale_dc_binding": 156,
+    "event:host_input_rejected": 7,
+    "signal_disconnect_message": 4,
+    "level:ERROR": 19,
+    "auth_failed": 11,
+    "host_connected_message": 1,
+    "input_active_lease_mismatch": 1,
+    "continuation_lines": 80,
+    "traceback_continuations": 5,
+    "marker:TUNNEL_RELAY_STATS": 1
+  },
+  "overall": {
+    "eventLoopAlertReports": {
+      "reports": 6390,
+      "representedOverThresholdSamples": 8559,
+      "reportsAtLeast100ms": 3232,
+      "reportsAtLeast1000ms": 127,
+      "reportsAtLeast5000ms": 5,
+      "maxLagMs": 8893.9,
+      "maxSystemLoad1": 847.062,
+      "pcNoneAndRelayFalseReports": 2718
+    },
+    "input": {
+      "observationCounts": {
+        "host_input_received": 3393,
+        "host_input_result": 3393,
+        "host_input_ack_sent": 3393,
+        "host_input_aggregate": 978,
+        "host_input_rejected": 7
+      },
+      "resultStatusCounts": {
+        "applied": 3385,
+        "sequence-gap": 8
+      },
+      "rejectionReasons": {
+        "unbound-channel": 7
+      },
+      "resultByType": {
+        "mouse": 629,
+        "keyboard": 2764
+      },
+      "resultByTransport": {
+        "datachannel": 3178,
+        "socket": 215
+      },
+      "adapterAwaitMsObservedResults": {
+        "count": 3393,
+        "min": 0.035,
+        "mean": 109.089,
+        "median": 6.489,
+        "max": 32068.664
+      },
+      "adapterAwaitAtLeast1000ms": 52,
+      "ackEnqueueAccepted": {
+        "true": 3393
+      },
+      "lockContentionReports": 3967,
+      "maxLockWaitMs": 60846.1,
+      "maxWaitersBefore": 1173,
+      "inputTimingReports": 5365,
+      "inputTimingTotalMs": {
+        "count": 5365,
+        "min": 0.3,
+        "mean": 14806.186,
+        "median": 1590.9,
+        "max": 60871.6
+      },
+      "inputTimingLockWaitMs": {
+        "count": 5365,
+        "min": 0.0,
+        "mean": 14739.458,
+        "median": 1550.0,
+        "max": 60846.1
+      }
+    },
+    "capture": {
+      "windows": 8243,
+      "reportedFrames": 691992,
+      "reportedReuseFrames": 379404,
+      "reusePercent": 54.828,
+      "fpsWindowDistribution": {
+        "count": 8243,
+        "min": 0.0,
+        "mean": 16.672,
+        "median": 19.5,
+        "max": 19.8
+      },
+      "weightedConvertMs": 3.394,
+      "weightedRecvTotalMs": 47.841,
+      "maxWindowMeanRecvTotalMs": 13983.1
+    },
+    "encoder": {
+      "h264_videotoolbox": {
+        "windows": 7697,
+        "sampledFrames": 677422,
+        "targetFpsValues": [
+          20
+        ],
+        "frameWeightedAvgMs": 7.457,
+        "maxFrameWallMs": 4095.313,
+        "maxWindowReportedP95Ms": 2705.237
+      },
+      "libx264": {
+        "windows": 479,
+        "sampledFrames": 13568,
+        "targetFpsValues": [
+          12,
+          15
+        ],
+        "frameWeightedAvgMs": 74.675,
+        "maxFrameWallMs": 6123.401,
+        "maxWindowReportedP95Ms": 6123.401
+      }
+    },
+    "relay": {
+      "windows": 1,
+      "sentFrames": 6,
+      "ackedFrames": 5,
+      "loggedTimeouts": 1,
+      "fpsWindows": {
+        "count": 1,
+        "min": 0.8,
+        "mean": 0.8,
+        "median": 0.8,
+        "max": 0.8
+      },
+      "frameWeightedCaptureJpegMs": 750.5,
+      "maxWindowMeanCaptureJpegMs": 750.5,
+      "maxReportedClientAckMsNotNetworkRTT": 400.0
+    },
+    "connectionAndErrorCounts": {
+      "input_stale_dc_binding": 156,
+      "signal_disconnect_message": 4,
+      "auth_failed": 11,
+      "host_connected_message": 1,
+      "input_active_lease_mismatch": 1,
+      "traceback_continuation": 5,
+      "datachannel_closed:input": 84,
+      "datachannel_closed:input-move": 84,
+      "ice:closed": 111,
+      "pc:closed": 111,
+      "ice:checking": 111,
+      "pc:connecting": 111,
+      "ice:completed": 87,
+      "pc:connected": 87
+    }
+  },
+  "byDay": {
+    "2026-10-14": {
+      "lineAndEventCounts": {
+        "timestamped_lines": 29677,
+        "level:INFO": 28957,
+        "level:WARNING": 720,
+        "event:host_event_loop_lag": 597,
+        "datachannel_closed:input": 11,
+        "datachannel_closed:input-move": 11,
+        "ice_state:closed": 11,
+        "pc_state:closed": 11,
+        "event:host_media_suspended": 10,
+        "event:host_session_presentation": 10,
+        "ice_state:checking": 10,
+        "pc_state:connecting": 10,
+        "ice_state:completed": 10,
+        "pc_state:connected": 10,
+        "marker:CAPTURE_STATS": 694,
+        "marker:WRD_ENCODER_SAMPLE": 691,
+        "event:host_viewer_diagnostic_summary": 10,
+        "event:host_media_resumed": 6,
+        "event:host_media_resume_failed": 3,
+        "event:host_input_received": 367,
+        "event:host_input_result": 367,
+        "event:host_input_ack_sent": 367,
+        "event:host_input_aggregate": 205
+      },
+      "metrics": {
+        "eventLoopAlertReports": {
+          "reports": 597,
+          "representedOverThresholdSamples": 737,
+          "reportsAtLeast100ms": 228,
+          "reportsAtLeast1000ms": 6,
+          "reportsAtLeast5000ms": 0,
+          "maxLagMs": 1545.509,
+          "maxSystemLoad1": 608.369,
+          "pcNoneAndRelayFalseReports": 196
+        },
+        "input": {
+          "observationCounts": {
+            "host_input_received": 367,
+            "host_input_result": 367,
+            "host_input_ack_sent": 367,
+            "host_input_aggregate": 205
+          },
+          "resultStatusCounts": {
+            "applied": 366,
+            "sequence-gap": 1
+          },
+          "rejectionReasons": {},
+          "resultByType": {
+            "mouse": 124,
+            "keyboard": 243
+          },
+          "resultByTransport": {
+            "datachannel": 350,
+            "socket": 17
+          },
+          "adapterAwaitMsObservedResults": {
+            "count": 367,
+            "min": 0.072,
+            "mean": 17.845,
+            "median": 4.198,
+            "max": 888.286
+          },
+          "adapterAwaitAtLeast1000ms": 0,
+          "ackEnqueueAccepted": {
+            "true": 367
+          },
+          "lockContentionReports": 90,
+          "maxLockWaitMs": 589.3,
+          "maxWaitersBefore": 26,
+          "inputTimingReports": 374,
+          "inputTimingTotalMs": {
+            "count": 374,
+            "min": 0.3,
+            "mean": 126.016,
+            "median": 81.7,
+            "max": 1128.6
+          },
+          "inputTimingLockWaitMs": {
+            "count": 374,
+            "min": 0.0,
+            "mean": 45.564,
+            "median": 0.0,
+            "max": 589.3
+          }
+        },
+        "capture": {
+          "windows": 694,
+          "reportedFrames": 57756,
+          "reportedReuseFrames": 33221,
+          "reusePercent": 57.52,
+          "fpsWindowDistribution": {
+            "count": 694,
+            "min": 0.0,
+            "mean": 16.491,
+            "median": 18.9,
+            "max": 19.8
+          },
+          "weightedConvertMs": 4.719,
+          "weightedRecvTotalMs": 48.758,
+          "maxWindowMeanRecvTotalMs": 5274.7
+        },
+        "encoder": {
+          "h264_videotoolbox": {
+            "windows": 691,
+            "sampledFrames": 57657,
+            "targetFpsValues": [
+              20
+            ],
+            "frameWeightedAvgMs": 12.173,
+            "maxFrameWallMs": 2498.507,
+            "maxWindowReportedP95Ms": 2498.507
+          }
+        },
+        "relay": {
+          "windows": 0,
+          "sentFrames": 0,
+          "ackedFrames": 0,
+          "loggedTimeouts": 0,
+          "fpsWindows": {
+            "count": 0
+          },
+          "frameWeightedCaptureJpegMs": null,
+          "maxWindowMeanCaptureJpegMs": null,
+          "maxReportedClientAckMsNotNetworkRTT": null
+        },
+        "connectionAndErrorCounts": {
+          "datachannel_closed:input": 11,
+          "datachannel_closed:input-move": 11,
+          "ice:closed": 11,
+          "pc:closed": 11,
+          "ice:checking": 10,
+          "pc:connecting": 10,
+          "ice:completed": 10,
+          "pc:connected": 10
+        }
+      }
+    },
+    "2026-10-15": {
+      "lineAndEventCounts": {
+        "timestamped_lines": 52975,
+        "level:WARNING": 966,
+        "event:host_event_loop_lag": 839,
+        "level:INFO": 52009,
+        "event:host_viewer_diagnostic_summary": 32,
+        "event:host_session_presentation": 25,
+        "ice_state:checking": 25,
+        "pc_state:connecting": 25,
+        "ice_state:completed": 21,
+        "pc_state:connected": 21,
+        "marker:CAPTURE_STATS": 3732,
+        "event:host_input_received": 95,
+        "event:host_input_result": 95,
+        "event:host_input_ack_sent": 95,
+        "event:host_input_aggregate": 84,
+        "marker:WRD_ENCODER_SAMPLE": 3721,
+        "input_stale_dc_binding": 43,
+        "event:host_input_rejected": 3,
+        "datachannel_closed:input-move": 21,
+        "datachannel_closed:input": 21,
+        "ice_state:closed": 25,
+        "pc_state:closed": 25,
+        "event:host_media_suspended": 13,
+        "event:host_media_resumed": 9,
+        "event:host_media_resume_failed": 4
+      },
+      "metrics": {
+        "eventLoopAlertReports": {
+          "reports": 839,
+          "representedOverThresholdSamples": 989,
+          "reportsAtLeast100ms": 245,
+          "reportsAtLeast1000ms": 5,
+          "reportsAtLeast5000ms": 0,
+          "maxLagMs": 1641.29,
+          "maxSystemLoad1": 708.592,
+          "pcNoneAndRelayFalseReports": 612
+        },
+        "input": {
+          "observationCounts": {
+            "host_input_received": 95,
+            "host_input_result": 95,
+            "host_input_ack_sent": 95,
+            "host_input_aggregate": 84,
+            "host_input_rejected": 3
+          },
+          "resultStatusCounts": {
+            "applied": 94,
+            "sequence-gap": 1
+          },
+          "rejectionReasons": {
+            "unbound-channel": 3
+          },
+          "resultByType": {
+            "mouse": 34,
+            "keyboard": 61
+          },
+          "resultByTransport": {
+            "datachannel": 74,
+            "socket": 21
+          },
+          "adapterAwaitMsObservedResults": {
+            "count": 95,
+            "min": 0.035,
+            "mean": 5.032,
+            "median": 0.727,
+            "max": 103.345
+          },
+          "adapterAwaitAtLeast1000ms": 0,
+          "ackEnqueueAccepted": {
+            "true": 95
+          },
+          "lockContentionReports": 4,
+          "maxLockWaitMs": 60.4,
+          "maxWaitersBefore": 4,
+          "inputTimingReports": 47,
+          "inputTimingTotalMs": {
+            "count": 47,
+            "min": 0.3,
+            "mean": 34.9,
+            "median": 1.5,
+            "max": 173.6
+          },
+          "inputTimingLockWaitMs": {
+            "count": 47,
+            "min": 0.0,
+            "mean": 2.709,
+            "median": 0.0,
+            "max": 60.4
+          }
+        },
+        "capture": {
+          "windows": 3732,
+          "reportedFrames": 361762,
+          "reportedReuseFrames": 202819,
+          "reusePercent": 56.064,
+          "fpsWindowDistribution": {
+            "count": 3732,
+            "min": 0.1,
+            "mean": 19.296,
+            "median": 19.6,
+            "max": 19.8
+          },
+          "weightedConvertMs": 1.906,
+          "weightedRecvTotalMs": 45.737,
+          "maxWindowMeanRecvTotalMs": 9256.1
+        },
+        "encoder": {
+          "h264_videotoolbox": {
+            "windows": 3712,
+            "sampledFrames": 361119,
+            "targetFpsValues": [
+              20
+            ],
+            "frameWeightedAvgMs": 4.601,
+            "maxFrameWallMs": 1085.479,
+            "maxWindowReportedP95Ms": 143.729
+          },
+          "libx264": {
+            "windows": 9,
+            "sampledFrames": 504,
+            "targetFpsValues": [
+              12,
+              15
+            ],
+            "frameWeightedAvgMs": 12.885,
+            "maxFrameWallMs": 65.761,
+            "maxWindowReportedP95Ms": 39.529
+          }
+        },
+        "relay": {
+          "windows": 0,
+          "sentFrames": 0,
+          "ackedFrames": 0,
+          "loggedTimeouts": 0,
+          "fpsWindows": {
+            "count": 0
+          },
+          "frameWeightedCaptureJpegMs": null,
+          "maxWindowMeanCaptureJpegMs": null,
+          "maxReportedClientAckMsNotNetworkRTT": null
+        },
+        "connectionAndErrorCounts": {
+          "input_stale_dc_binding": 43,
+          "ice:checking": 25,
+          "pc:connecting": 25,
+          "ice:completed": 21,
+          "pc:connected": 21,
+          "datachannel_closed:input-move": 21,
+          "datachannel_closed:input": 21,
+          "ice:closed": 25,
+          "pc:closed": 25
+        }
+      }
+    },
+    "2026-10-16": {
+      "lineAndEventCounts": {
+        "timestamped_lines": 66154,
+        "level:WARNING": 6898,
+        "event:host_event_loop_lag": 3463,
+        "level:INFO": 59242,
+        "event:host_media_resumed": 23,
+        "event:host_session_presentation": 43,
+        "ice_state:checking": 43,
+        "pc_state:connecting": 43,
+        "ice_state:completed": 36,
+        "pc_state:connected": 36,
+        "marker:CAPTURE_STATS": 3120,
+        "marker:WRD_ENCODER_SAMPLE": 3100,
+        "event:host_input_received": 1164,
+        "event:host_input_result": 1164,
+        "event:host_input_ack_sent": 1164,
+        "event:host_input_aggregate": 411,
+        "event:host_media_suspended": 24,
+        "signal_disconnect_message": 2,
+        "datachannel_closed:input": 33,
+        "datachannel_closed:input-move": 33,
+        "ice_state:closed": 43,
+        "pc_state:closed": 43,
+        "level:ERROR": 14,
+        "auth_failed": 11,
+        "host_connected_message": 1,
+        "event:host_viewer_diagnostic_summary": 17,
+        "event:host_media_resume_failed": 17,
+        "input_active_lease_mismatch": 1,
+        "input_stale_dc_binding": 75,
+        "event:host_input_rejected": 4,
+        "continuation_lines": 32,
+        "traceback_continuations": 2
+      },
+      "metrics": {
+        "eventLoopAlertReports": {
+          "reports": 3463,
+          "representedOverThresholdSamples": 4714,
+          "reportsAtLeast100ms": 1790,
+          "reportsAtLeast1000ms": 39,
+          "reportsAtLeast5000ms": 1,
+          "maxLagMs": 8182.498,
+          "maxSystemLoad1": 847.062,
+          "pcNoneAndRelayFalseReports": 1461
+        },
+        "input": {
+          "observationCounts": {
+            "host_input_received": 1164,
+            "host_input_result": 1164,
+            "host_input_ack_sent": 1164,
+            "host_input_aggregate": 411,
+            "host_input_rejected": 4
+          },
+          "resultStatusCounts": {
+            "applied": 1164
+          },
+          "rejectionReasons": {
+            "unbound-channel": 4
+          },
+          "resultByType": {
+            "mouse": 233,
+            "keyboard": 931
+          },
+          "resultByTransport": {
+            "datachannel": 1127,
+            "socket": 37
+          },
+          "adapterAwaitMsObservedResults": {
+            "count": 1164,
+            "min": 0.273,
+            "mean": 175.122,
+            "median": 6.066,
+            "max": 32068.664
+          },
+          "adapterAwaitAtLeast1000ms": 23,
+          "ackEnqueueAccepted": {
+            "true": 1164
+          },
+          "lockContentionReports": 3233,
+          "maxLockWaitMs": 60846.1,
+          "maxWaitersBefore": 1173,
+          "inputTimingReports": 3714,
+          "inputTimingTotalMs": {
+            "count": 3714,
+            "min": 0.4,
+            "mean": 21142.299,
+            "median": 11647.45,
+            "max": 60871.6
+          },
+          "inputTimingLockWaitMs": {
+            "count": 3714,
+            "min": 0.0,
+            "mean": 21091.728,
+            "median": 11637.05,
+            "max": 60846.1
+          }
+        },
+        "capture": {
+          "windows": 3120,
+          "reportedFrames": 239894,
+          "reportedReuseFrames": 127866,
+          "reusePercent": 53.301,
+          "fpsWindowDistribution": {
+            "count": 3120,
+            "min": 0.1,
+            "mean": 15.253,
+            "median": 19.0,
+            "max": 19.8
+          },
+          "weightedConvertMs": 4.16,
+          "weightedRecvTotalMs": 49.332,
+          "maxWindowMeanRecvTotalMs": 2652.3
+        },
+        "encoder": {
+          "h264_videotoolbox": {
+            "windows": 2897,
+            "sampledFrames": 235604,
+            "targetFpsValues": [
+              20
+            ],
+            "frameWeightedAvgMs": 8.975,
+            "maxFrameWallMs": 3124.155,
+            "maxWindowReportedP95Ms": 2705.237
+          },
+          "libx264": {
+            "windows": 203,
+            "sampledFrames": 4230,
+            "targetFpsValues": [
+              12,
+              15
+            ],
+            "frameWeightedAvgMs": 109.765,
+            "maxFrameWallMs": 6123.401,
+            "maxWindowReportedP95Ms": 6123.401
+          }
+        },
+        "relay": {
+          "windows": 0,
+          "sentFrames": 0,
+          "ackedFrames": 0,
+          "loggedTimeouts": 0,
+          "fpsWindows": {
+            "count": 0
+          },
+          "frameWeightedCaptureJpegMs": null,
+          "maxWindowMeanCaptureJpegMs": null,
+          "maxReportedClientAckMsNotNetworkRTT": null
+        },
+        "connectionAndErrorCounts": {
+          "signal_disconnect_message": 2,
+          "auth_failed": 11,
+          "host_connected_message": 1,
+          "input_active_lease_mismatch": 1,
+          "input_stale_dc_binding": 75,
+          "traceback_continuation": 2,
+          "ice:checking": 43,
+          "pc:connecting": 43,
+          "ice:completed": 36,
+          "pc:connected": 36,
+          "datachannel_closed:input": 33,
+          "datachannel_closed:input-move": 33,
+          "ice:closed": 43,
+          "pc:closed": 43
+        }
+      }
+    },
+    "2026-10-17": {
+      "lineAndEventCounts": {
+        "timestamped_lines": 22677,
+        "level:INFO": 20396,
+        "level:WARNING": 2276,
+        "event:host_event_loop_lag": 1491,
+        "event:host_input_aggregate": 278,
+        "marker:TUNNEL_RELAY_STATS": 1,
+        "event:host_input_received": 1767,
+        "event:host_input_result": 1767,
+        "event:host_input_ack_sent": 1767,
+        "event:host_viewer_diagnostic_summary": 48,
+        "event:host_session_presentation": 33,
+        "ice_state:checking": 33,
+        "pc_state:connecting": 33,
+        "ice_state:completed": 20,
+        "pc_state:connected": 20,
+        "marker:CAPTURE_STATS": 697,
+        "marker:WRD_ENCODER_SAMPLE": 664,
+        "datachannel_closed:input": 19,
+        "datachannel_closed:input-move": 19,
+        "ice_state:closed": 32,
+        "pc_state:closed": 32,
+        "level:ERROR": 5,
+        "signal_disconnect_message": 2,
+        "continuation_lines": 48,
+        "traceback_continuations": 3,
+        "input_stale_dc_binding": 38,
+        "event:host_media_suspended": 13
+      },
+      "metrics": {
+        "eventLoopAlertReports": {
+          "reports": 1491,
+          "representedOverThresholdSamples": 2119,
+          "reportsAtLeast100ms": 969,
+          "reportsAtLeast1000ms": 77,
+          "reportsAtLeast5000ms": 4,
+          "maxLagMs": 8893.9,
+          "maxSystemLoad1": 489.425,
+          "pcNoneAndRelayFalseReports": 449
+        },
+        "input": {
+          "observationCounts": {
+            "host_input_aggregate": 278,
+            "host_input_received": 1767,
+            "host_input_result": 1767,
+            "host_input_ack_sent": 1767
+          },
+          "resultStatusCounts": {
+            "applied": 1761,
+            "sequence-gap": 6
+          },
+          "rejectionReasons": {},
+          "resultByType": {
+            "mouse": 238,
+            "keyboard": 1529
+          },
+          "resultByTransport": {
+            "socket": 140,
+            "datachannel": 1627
+          },
+          "adapterAwaitMsObservedResults": {
+            "count": 1767,
+            "min": 0.088,
+            "mean": 90.135,
+            "median": 8.531,
+            "max": 14139.908
+          },
+          "adapterAwaitAtLeast1000ms": 29,
+          "ackEnqueueAccepted": {
+            "true": 1767
+          },
+          "lockContentionReports": 640,
+          "maxLockWaitMs": 13734.2,
+          "maxWaitersBefore": 72,
+          "inputTimingReports": 1230,
+          "inputTimingTotalMs": {
+            "count": 1230,
+            "min": 0.3,
+            "mean": 702.376,
+            "median": 236.6,
+            "max": 14129.8
+          },
+          "inputTimingLockWaitMs": {
+            "count": 1230,
+            "min": 0.0,
+            "mean": 589.712,
+            "median": 58.6,
+            "max": 13734.2
+          }
+        },
+        "capture": {
+          "windows": 697,
+          "reportedFrames": 32580,
+          "reportedReuseFrames": 15498,
+          "reusePercent": 47.569,
+          "fpsWindowDistribution": {
+            "count": 697,
+            "min": 0.1,
+            "mean": 9.154,
+            "median": 8.9,
+            "max": 19.6
+          },
+          "weightedConvertMs": 11.921,
+          "weightedRecvTotalMs": 58.592,
+          "maxWindowMeanRecvTotalMs": 13983.1
+        },
+        "encoder": {
+          "h264_videotoolbox": {
+            "windows": 397,
+            "sampledFrames": 23042,
+            "targetFpsValues": [
+              20
+            ],
+            "frameWeightedAvgMs": 24.908,
+            "maxFrameWallMs": 4095.313,
+            "maxWindowReportedP95Ms": 2647.86
+          },
+          "libx264": {
+            "windows": 267,
+            "sampledFrames": 8834,
+            "targetFpsValues": [
+              12,
+              15
+            ],
+            "frameWeightedAvgMs": 61.398,
+            "maxFrameWallMs": 3875.524,
+            "maxWindowReportedP95Ms": 3875.524
+          }
+        },
+        "relay": {
+          "windows": 1,
+          "sentFrames": 6,
+          "ackedFrames": 5,
+          "loggedTimeouts": 1,
+          "fpsWindows": {
+            "count": 1,
+            "min": 0.8,
+            "mean": 0.8,
+            "median": 0.8,
+            "max": 0.8
+          },
+          "frameWeightedCaptureJpegMs": 750.5,
+          "maxWindowMeanCaptureJpegMs": 750.5,
+          "maxReportedClientAckMsNotNetworkRTT": 400.0
+        },
+        "connectionAndErrorCounts": {
+          "signal_disconnect_message": 2,
+          "traceback_continuation": 3,
+          "input_stale_dc_binding": 38,
+          "ice:checking": 33,
+          "pc:connecting": 33,
+          "ice:completed": 20,
+          "pc:connected": 20,
+          "datachannel_closed:input": 19,
+          "datachannel_closed:input-move": 19,
+          "ice:closed": 32,
+          "pc:closed": 32
+        }
+      }
+    }
+  },
+  "byHour": {
+    "2026-10-14 12:00": {
+      "timestampedLines": 385,
+      "eventLoop": {
+        "reports": 11,
+        "representedOverThresholdSamples": 11,
+        "reportsAtLeast100ms": 2,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 180.837,
+        "maxSystemLoad1": 5.722,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 8,
+      "medianOutputFps": 19.55,
+      "reusePercent": 59.474,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 7,
+          "sampledFrames": 682,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.922,
+          "maxFrameWallMs": 243.554,
+          "maxWindowReportedP95Ms": 8.905
+        }
+      }
+    },
+    "2026-10-14 13:00": {
+      "timestampedLines": 574,
+      "eventLoop": {
+        "reports": 27,
+        "representedOverThresholdSamples": 27,
+        "reportsAtLeast100ms": 12,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 167.021,
+        "maxSystemLoad1": 6.761,
+        "pcNoneAndRelayFalseReports": 27
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 36,
+      "medianOutputFps": 19.6,
+      "reusePercent": 59.311,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 34,
+          "sampledFrames": 3333,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.338,
+          "maxFrameWallMs": 124.477,
+          "maxWindowReportedP95Ms": 13.495
+        }
+      }
+    },
+    "2026-10-14 14:00": {
+      "timestampedLines": 8020,
+      "eventLoop": {
+        "reports": 140,
+        "representedOverThresholdSamples": 174,
+        "reportsAtLeast100ms": 46,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 783.508,
+        "maxSystemLoad1": 206.939,
+        "pcNoneAndRelayFalseReports": 3
+      },
+      "inputResults": 136,
+      "maxAdapterAwaitMs": 232.421,
+      "lockContentionReports": 18,
+      "maxLockWaitMs": 97.5,
+      "maxWaitersBefore": 10,
+      "captureWindows": 382,
+      "medianOutputFps": 19.1,
+      "reusePercent": 57.774,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 381,
+          "sampledFrames": 34148,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 10.724,
+          "maxFrameWallMs": 1390.134,
+          "maxWindowReportedP95Ms": 480.98
+        }
+      }
+    },
+    "2026-10-14 15:00": {
+      "timestampedLines": 7137,
+      "eventLoop": {
+        "reports": 27,
+        "representedOverThresholdSamples": 27,
+        "reportsAtLeast100ms": 4,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 166.281,
+        "maxSystemLoad1": 13.008,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 3,
+      "maxAdapterAwaitMs": 0.499,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 61,
+      "medianOutputFps": 19.6,
+      "reusePercent": 57.888,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 61,
+          "sampledFrames": 5954,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.346,
+          "maxFrameWallMs": 99.582,
+          "maxWindowReportedP95Ms": 22.184
+        }
+      }
+    },
+    "2026-10-14 16:00": {
+      "timestampedLines": 7884,
+      "eventLoop": {
+        "reports": 18,
+        "representedOverThresholdSamples": 18,
+        "reportsAtLeast100ms": 6,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 140.077,
+        "maxSystemLoad1": 24.085,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 17:00": {
+      "timestampedLines": 981,
+      "eventLoop": {
+        "reports": 18,
+        "representedOverThresholdSamples": 18,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 126.975,
+        "maxSystemLoad1": 8.286,
+        "pcNoneAndRelayFalseReports": 15
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 18:00": {
+      "timestampedLines": 22,
+      "eventLoop": {
+        "reports": 22,
+        "representedOverThresholdSamples": 22,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 160.044,
+        "maxSystemLoad1": 7.719,
+        "pcNoneAndRelayFalseReports": 22
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 19:00": {
+      "timestampedLines": 39,
+      "eventLoop": {
+        "reports": 39,
+        "representedOverThresholdSamples": 40,
+        "reportsAtLeast100ms": 10,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 159.006,
+        "maxSystemLoad1": 4.833,
+        "pcNoneAndRelayFalseReports": 39
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 20:00": {
+      "timestampedLines": 20,
+      "eventLoop": {
+        "reports": 20,
+        "representedOverThresholdSamples": 20,
+        "reportsAtLeast100ms": 5,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 159.54,
+        "maxSystemLoad1": 7.527,
+        "pcNoneAndRelayFalseReports": 20
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 21:00": {
+      "timestampedLines": 20,
+      "eventLoop": {
+        "reports": 20,
+        "representedOverThresholdSamples": 20,
+        "reportsAtLeast100ms": 4,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 147.858,
+        "maxSystemLoad1": 6.909,
+        "pcNoneAndRelayFalseReports": 20
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 22:00": {
+      "timestampedLines": 26,
+      "eventLoop": {
+        "reports": 26,
+        "representedOverThresholdSamples": 26,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 149.616,
+        "maxSystemLoad1": 9.236,
+        "pcNoneAndRelayFalseReports": 26
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-14 23:00": {
+      "timestampedLines": 4569,
+      "eventLoop": {
+        "reports": 229,
+        "representedOverThresholdSamples": 334,
+        "reportsAtLeast100ms": 118,
+        "reportsAtLeast1000ms": 6,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 1545.509,
+        "maxSystemLoad1": 608.369,
+        "pcNoneAndRelayFalseReports": 24
+      },
+      "inputResults": 228,
+      "maxAdapterAwaitMs": 888.286,
+      "lockContentionReports": 72,
+      "maxLockWaitMs": 589.3,
+      "maxWaitersBefore": 26,
+      "captureWindows": 207,
+      "medianOutputFps": 14.1,
+      "reusePercent": 56.145,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 208,
+          "sampledFrames": 13540,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 21.561,
+          "maxFrameWallMs": 2498.507,
+          "maxWindowReportedP95Ms": 2498.507
+        }
+      }
+    },
+    "2026-10-15 00:00": {
+      "timestampedLines": 232,
+      "eventLoop": {
+        "reports": 232,
+        "representedOverThresholdSamples": 366,
+        "reportsAtLeast100ms": 111,
+        "reportsAtLeast1000ms": 5,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 1641.29,
+        "maxSystemLoad1": 708.592,
+        "pcNoneAndRelayFalseReports": 232
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 01:00": {
+      "timestampedLines": 19,
+      "eventLoop": {
+        "reports": 19,
+        "representedOverThresholdSamples": 19,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 113.199,
+        "maxSystemLoad1": 8.354,
+        "pcNoneAndRelayFalseReports": 19
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 02:00": {
+      "timestampedLines": 17,
+      "eventLoop": {
+        "reports": 17,
+        "representedOverThresholdSamples": 17,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 255.472,
+        "maxSystemLoad1": 55.862,
+        "pcNoneAndRelayFalseReports": 17
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 03:00": {
+      "timestampedLines": 13,
+      "eventLoop": {
+        "reports": 13,
+        "representedOverThresholdSamples": 13,
+        "reportsAtLeast100ms": 1,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 136.252,
+        "maxSystemLoad1": 4.412,
+        "pcNoneAndRelayFalseReports": 13
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 04:00": {
+      "timestampedLines": 14,
+      "eventLoop": {
+        "reports": 14,
+        "representedOverThresholdSamples": 14,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 121.482,
+        "maxSystemLoad1": 4.584,
+        "pcNoneAndRelayFalseReports": 14
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 05:00": {
+      "timestampedLines": 49,
+      "eventLoop": {
+        "reports": 49,
+        "representedOverThresholdSamples": 49,
+        "reportsAtLeast100ms": 15,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 151.732,
+        "maxSystemLoad1": 8.946,
+        "pcNoneAndRelayFalseReports": 49
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 06:00": {
+      "timestampedLines": 24,
+      "eventLoop": {
+        "reports": 24,
+        "representedOverThresholdSamples": 24,
+        "reportsAtLeast100ms": 5,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 155.361,
+        "maxSystemLoad1": 4.982,
+        "pcNoneAndRelayFalseReports": 24
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 07:00": {
+      "timestampedLines": 22,
+      "eventLoop": {
+        "reports": 22,
+        "representedOverThresholdSamples": 22,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 141.73,
+        "maxSystemLoad1": 4.835,
+        "pcNoneAndRelayFalseReports": 22
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 08:00": {
+      "timestampedLines": 22,
+      "eventLoop": {
+        "reports": 22,
+        "representedOverThresholdSamples": 22,
+        "reportsAtLeast100ms": 4,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 126.313,
+        "maxSystemLoad1": 4.924,
+        "pcNoneAndRelayFalseReports": 22
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 09:00": {
+      "timestampedLines": 19,
+      "eventLoop": {
+        "reports": 19,
+        "representedOverThresholdSamples": 19,
+        "reportsAtLeast100ms": 6,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 129.897,
+        "maxSystemLoad1": 4.139,
+        "pcNoneAndRelayFalseReports": 19
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 10:00": {
+      "timestampedLines": 29,
+      "eventLoop": {
+        "reports": 29,
+        "representedOverThresholdSamples": 29,
+        "reportsAtLeast100ms": 6,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 179.639,
+        "maxSystemLoad1": 8.29,
+        "pcNoneAndRelayFalseReports": 29
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 11:00": {
+      "timestampedLines": 10,
+      "eventLoop": {
+        "reports": 10,
+        "representedOverThresholdSamples": 10,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 138.237,
+        "maxSystemLoad1": 8.858,
+        "pcNoneAndRelayFalseReports": 10
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 12:00": {
+      "timestampedLines": 19,
+      "eventLoop": {
+        "reports": 19,
+        "representedOverThresholdSamples": 19,
+        "reportsAtLeast100ms": 6,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 159.615,
+        "maxSystemLoad1": 4.469,
+        "pcNoneAndRelayFalseReports": 19
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 13:00": {
+      "timestampedLines": 21,
+      "eventLoop": {
+        "reports": 21,
+        "representedOverThresholdSamples": 21,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 158.925,
+        "maxSystemLoad1": 4.608,
+        "pcNoneAndRelayFalseReports": 21
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-15 14:00": {
+      "timestampedLines": 8521,
+      "eventLoop": {
+        "reports": 86,
+        "representedOverThresholdSamples": 92,
+        "reportsAtLeast100ms": 21,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 325.506,
+        "maxSystemLoad1": 30.912,
+        "pcNoneAndRelayFalseReports": 3
+      },
+      "inputResults": 61,
+      "maxAdapterAwaitMs": 85.855,
+      "lockContentionReports": 2,
+      "maxLockWaitMs": 60.4,
+      "maxWaitersBefore": 2,
+      "captureWindows": 552,
+      "medianOutputFps": 19.5,
+      "reusePercent": 42.452,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 550,
+          "sampledFrames": 52489,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 6.458,
+          "maxFrameWallMs": 725.918,
+          "maxWindowReportedP95Ms": 143.729
+        }
+      }
+    },
+    "2026-10-15 15:00": {
+      "timestampedLines": 5673,
+      "eventLoop": {
+        "reports": 20,
+        "representedOverThresholdSamples": 20,
+        "reportsAtLeast100ms": 8,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 127.231,
+        "maxSystemLoad1": 11.144,
+        "pcNoneAndRelayFalseReports": 8
+      },
+      "inputResults": 1,
+      "maxAdapterAwaitMs": 0.372,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 287,
+      "medianOutputFps": 19.6,
+      "reusePercent": 60.298,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 285,
+          "sampledFrames": 27862,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.042,
+          "maxFrameWallMs": 154.798,
+          "maxWindowReportedP95Ms": 24.047
+        }
+      }
+    },
+    "2026-10-15 16:00": {
+      "timestampedLines": 9234,
+      "eventLoop": {
+        "reports": 27,
+        "representedOverThresholdSamples": 27,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 142.723,
+        "maxSystemLoad1": 6.733,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 715,
+      "medianOutputFps": 19.6,
+      "reusePercent": 59.925,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 715,
+          "sampledFrames": 69944,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.154,
+          "maxFrameWallMs": 137.436,
+          "maxWindowReportedP95Ms": 14.35
+        }
+      }
+    },
+    "2026-10-15 17:00": {
+      "timestampedLines": 9081,
+      "eventLoop": {
+        "reports": 8,
+        "representedOverThresholdSamples": 8,
+        "reportsAtLeast100ms": 1,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 108.601,
+        "maxSystemLoad1": 6.329,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 693,
+      "medianOutputFps": 19.6,
+      "reusePercent": 60.229,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 693,
+          "sampledFrames": 67789,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.113,
+          "maxFrameWallMs": 199.02,
+          "maxWindowReportedP95Ms": 10.885
+        }
+      }
+    },
+    "2026-10-15 18:00": {
+      "timestampedLines": 3310,
+      "eventLoop": {
+        "reports": 22,
+        "representedOverThresholdSamples": 22,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 184.467,
+        "maxSystemLoad1": 3.977,
+        "pcNoneAndRelayFalseReports": 11
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 253,
+      "medianOutputFps": 19.6,
+      "reusePercent": 59.976,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 251,
+          "sampledFrames": 24552,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.206,
+          "maxFrameWallMs": 152.984,
+          "maxWindowReportedP95Ms": 10.173
+        }
+      }
+    },
+    "2026-10-15 19:00": {
+      "timestampedLines": 9049,
+      "eventLoop": {
+        "reports": 34,
+        "representedOverThresholdSamples": 34,
+        "reportsAtLeast100ms": 8,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 155.59,
+        "maxSystemLoad1": 8.714,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 711,
+      "medianOutputFps": 19.6,
+      "reusePercent": 59.184,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 709,
+          "sampledFrames": 69369,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.343,
+          "maxFrameWallMs": 183.908,
+          "maxWindowReportedP95Ms": 10.948
+        }
+      }
+    },
+    "2026-10-15 20:00": {
+      "timestampedLines": 2243,
+      "eventLoop": {
+        "reports": 30,
+        "representedOverThresholdSamples": 30,
+        "reportsAtLeast100ms": 8,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 134.223,
+        "maxSystemLoad1": 8.096,
+        "pcNoneAndRelayFalseReports": 23
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 168,
+      "medianOutputFps": 19.6,
+      "reusePercent": 58.761,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 168,
+          "sampledFrames": 16425,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 3.852,
+          "maxFrameWallMs": 246.935,
+          "maxWindowReportedP95Ms": 11.518
+        }
+      }
+    },
+    "2026-10-15 21:00": {
+      "timestampedLines": 870,
+      "eventLoop": {
+        "reports": 25,
+        "representedOverThresholdSamples": 25,
+        "reportsAtLeast100ms": 5,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 156.184,
+        "maxSystemLoad1": 6.507,
+        "pcNoneAndRelayFalseReports": 24
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 65,
+      "medianOutputFps": 19.6,
+      "reusePercent": 62.297,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 65,
+          "sampledFrames": 6363,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.024,
+          "maxFrameWallMs": 108.856,
+          "maxWindowReportedP95Ms": 8.321
+        }
+      }
+    },
+    "2026-10-15 22:00": {
+      "timestampedLines": 4466,
+      "eventLoop": {
+        "reports": 59,
+        "representedOverThresholdSamples": 69,
+        "reportsAtLeast100ms": 5,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 849.341,
+        "maxSystemLoad1": 47.027,
+        "pcNoneAndRelayFalseReports": 15
+      },
+      "inputResults": 33,
+      "maxAdapterAwaitMs": 103.345,
+      "lockContentionReports": 2,
+      "maxLockWaitMs": 5.5,
+      "maxWaitersBefore": 4,
+      "captureWindows": 288,
+      "medianOutputFps": 19.5,
+      "reusePercent": 43.028,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 276,
+          "sampledFrames": 26326,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 5.585,
+          "maxFrameWallMs": 1085.479,
+          "maxWindowReportedP95Ms": 75.871
+        },
+        "libx264": {
+          "windows": 9,
+          "sampledFrames": 504,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 12.885,
+          "maxFrameWallMs": 65.761,
+          "maxWindowReportedP95Ms": 39.529
+        }
+      }
+    },
+    "2026-10-15 23:00": {
+      "timestampedLines": 18,
+      "eventLoop": {
+        "reports": 18,
+        "representedOverThresholdSamples": 18,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 155.846,
+        "maxSystemLoad1": 3.875,
+        "pcNoneAndRelayFalseReports": 18
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 00:00": {
+      "timestampedLines": 22,
+      "eventLoop": {
+        "reports": 22,
+        "representedOverThresholdSamples": 22,
+        "reportsAtLeast100ms": 8,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 135.4,
+        "maxSystemLoad1": 6.627,
+        "pcNoneAndRelayFalseReports": 22
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 01:00": {
+      "timestampedLines": 12355,
+      "eventLoop": {
+        "reports": 763,
+        "representedOverThresholdSamples": 1241,
+        "reportsAtLeast100ms": 582,
+        "reportsAtLeast1000ms": 12,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 2393.82,
+        "maxSystemLoad1": 847.062,
+        "pcNoneAndRelayFalseReports": 8
+      },
+      "inputResults": 561,
+      "maxAdapterAwaitMs": 845.833,
+      "lockContentionReports": 242,
+      "maxLockWaitMs": 1873.4,
+      "maxWaitersBefore": 44,
+      "captureWindows": 519,
+      "medianOutputFps": 8.2,
+      "reusePercent": 46.396,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 515,
+          "sampledFrames": 25378,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 25.719,
+          "maxFrameWallMs": 3070.831,
+          "maxWindowReportedP95Ms": 2705.237
+        }
+      }
+    },
+    "2026-10-16 02:00": {
+      "timestampedLines": 17753,
+      "eventLoop": {
+        "reports": 720,
+        "representedOverThresholdSamples": 1086,
+        "reportsAtLeast100ms": 545,
+        "reportsAtLeast1000ms": 19,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 3375.354,
+        "maxSystemLoad1": 794.765,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 405,
+      "maxAdapterAwaitMs": 32068.664,
+      "lockContentionReports": 2551,
+      "maxLockWaitMs": 60846.1,
+      "maxWaitersBefore": 1173,
+      "captureWindows": 483,
+      "medianOutputFps": 6.9,
+      "reusePercent": 47.879,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 321,
+          "sampledFrames": 18831,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 22.763,
+          "maxFrameWallMs": 3124.155,
+          "maxWindowReportedP95Ms": 2615.743
+        },
+        "libx264": {
+          "windows": 157,
+          "sampledFrames": 2544,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 144.786,
+          "maxFrameWallMs": 4240.215,
+          "maxWindowReportedP95Ms": 4240.215
+        }
+      }
+    },
+    "2026-10-16 03:00": {
+      "timestampedLines": 2280,
+      "eventLoop": {
+        "reports": 76,
+        "representedOverThresholdSamples": 84,
+        "reportsAtLeast100ms": 17,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 368.833,
+        "maxSystemLoad1": 31.3,
+        "pcNoneAndRelayFalseReports": 43
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 04:00": {
+      "timestampedLines": 107,
+      "eventLoop": {
+        "reports": 107,
+        "representedOverThresholdSamples": 124,
+        "reportsAtLeast100ms": 38,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 374.96,
+        "maxSystemLoad1": 93.7,
+        "pcNoneAndRelayFalseReports": 107
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 05:00": {
+      "timestampedLines": 115,
+      "eventLoop": {
+        "reports": 112,
+        "representedOverThresholdSamples": 140,
+        "reportsAtLeast100ms": 31,
+        "reportsAtLeast1000ms": 1,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 1431.159,
+        "maxSystemLoad1": 99.956,
+        "pcNoneAndRelayFalseReports": 112
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 06:00": {
+      "timestampedLines": 109,
+      "eventLoop": {
+        "reports": 109,
+        "representedOverThresholdSamples": 122,
+        "reportsAtLeast100ms": 30,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 390.579,
+        "maxSystemLoad1": 94.171,
+        "pcNoneAndRelayFalseReports": 109
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 07:00": {
+      "timestampedLines": 161,
+      "eventLoop": {
+        "reports": 117,
+        "representedOverThresholdSamples": 135,
+        "reportsAtLeast100ms": 31,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 229.024,
+        "maxSystemLoad1": 47.592,
+        "pcNoneAndRelayFalseReports": 114
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 08:00": {
+      "timestampedLines": 118,
+      "eventLoop": {
+        "reports": 118,
+        "representedOverThresholdSamples": 145,
+        "reportsAtLeast100ms": 44,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 305.728,
+        "maxSystemLoad1": 93.564,
+        "pcNoneAndRelayFalseReports": 118
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 09:00": {
+      "timestampedLines": 162,
+      "eventLoop": {
+        "reports": 159,
+        "representedOverThresholdSamples": 197,
+        "reportsAtLeast100ms": 54,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 421.189,
+        "maxSystemLoad1": 74.431,
+        "pcNoneAndRelayFalseReports": 159
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 10:00": {
+      "timestampedLines": 2242,
+      "eventLoop": {
+        "reports": 205,
+        "representedOverThresholdSamples": 273,
+        "reportsAtLeast100ms": 78,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 713.555,
+        "maxSystemLoad1": 168.61,
+        "pcNoneAndRelayFalseReports": 144
+      },
+      "inputResults": 11,
+      "maxAdapterAwaitMs": 314.787,
+      "lockContentionReports": 1,
+      "maxLockWaitMs": 24.1,
+      "maxWaitersBefore": 1,
+      "captureWindows": 126,
+      "medianOutputFps": 18.95,
+      "reusePercent": 45.28,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 125,
+          "sampledFrames": 10567,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 7.123,
+          "maxFrameWallMs": 1119.412,
+          "maxWindowReportedP95Ms": 238.377
+        }
+      }
+    },
+    "2026-10-16 11:00": {
+      "timestampedLines": 9810,
+      "eventLoop": {
+        "reports": 199,
+        "representedOverThresholdSamples": 286,
+        "reportsAtLeast100ms": 94,
+        "reportsAtLeast1000ms": 1,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 1258.23,
+        "maxSystemLoad1": 435.908,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 715,
+      "medianOutputFps": 19.4,
+      "reusePercent": 52.899,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 715,
+          "sampledFrames": 64156,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 6.305,
+          "maxFrameWallMs": 978.869,
+          "maxWindowReportedP95Ms": 374.701
+        }
+      }
+    },
+    "2026-10-16 12:00": {
+      "timestampedLines": 2509,
+      "eventLoop": {
+        "reports": 49,
+        "representedOverThresholdSamples": 52,
+        "reportsAtLeast100ms": 18,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 214.016,
+        "maxSystemLoad1": 50.226,
+        "pcNoneAndRelayFalseReports": 39
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 187,
+      "medianOutputFps": 19.5,
+      "reusePercent": 58.433,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 187,
+          "sampledFrames": 18054,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.602,
+          "maxFrameWallMs": 191.649,
+          "maxWindowReportedP95Ms": 82.211
+        }
+      }
+    },
+    "2026-10-16 13:00": {
+      "timestampedLines": 58,
+      "eventLoop": {
+        "reports": 58,
+        "representedOverThresholdSamples": 62,
+        "reportsAtLeast100ms": 18,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 246.378,
+        "maxSystemLoad1": 24.149,
+        "pcNoneAndRelayFalseReports": 58
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 14:00": {
+      "timestampedLines": 2160,
+      "eventLoop": {
+        "reports": 52,
+        "representedOverThresholdSamples": 54,
+        "reportsAtLeast100ms": 13,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 470.523,
+        "maxSystemLoad1": 26.741,
+        "pcNoneAndRelayFalseReports": 44
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 155,
+      "medianOutputFps": 19.5,
+      "reusePercent": 58.908,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 153,
+          "sampledFrames": 14873,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.255,
+          "maxFrameWallMs": 258.526,
+          "maxWindowReportedP95Ms": 28.3
+        }
+      }
+    },
+    "2026-10-16 15:00": {
+      "timestampedLines": 9421,
+      "eventLoop": {
+        "reports": 59,
+        "representedOverThresholdSamples": 60,
+        "reportsAtLeast100ms": 12,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 265.893,
+        "maxSystemLoad1": 53.759,
+        "pcNoneAndRelayFalseReports": 0
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 711,
+      "medianOutputFps": 19.5,
+      "reusePercent": 57.613,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 711,
+          "sampledFrames": 68659,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.546,
+          "maxFrameWallMs": 313.081,
+          "maxWindowReportedP95Ms": 94.033
+        }
+      }
+    },
+    "2026-10-16 16:00": {
+      "timestampedLines": 785,
+      "eventLoop": {
+        "reports": 87,
+        "representedOverThresholdSamples": 96,
+        "reportsAtLeast100ms": 27,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 297.66,
+        "maxSystemLoad1": 60.032,
+        "pcNoneAndRelayFalseReports": 75
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 64,
+      "medianOutputFps": 19.5,
+      "reusePercent": 58.481,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 60,
+          "sampledFrames": 5784,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.667,
+          "maxFrameWallMs": 357.526,
+          "maxWindowReportedP95Ms": 20.539
+        }
+      }
+    },
+    "2026-10-16 17:00": {
+      "timestampedLines": 157,
+      "eventLoop": {
+        "reports": 59,
+        "representedOverThresholdSamples": 66,
+        "reportsAtLeast100ms": 23,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 312.806,
+        "maxSystemLoad1": 65.45,
+        "pcNoneAndRelayFalseReports": 57
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 10,
+      "medianOutputFps": 19.6,
+      "reusePercent": 58.917,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 10,
+          "sampledFrames": 984,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.214,
+          "maxFrameWallMs": 147.242,
+          "maxWindowReportedP95Ms": 9.113
+        }
+      }
+    },
+    "2026-10-16 18:00": {
+      "timestampedLines": 202,
+      "eventLoop": {
+        "reports": 47,
+        "representedOverThresholdSamples": 53,
+        "reportsAtLeast100ms": 8,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 183.993,
+        "maxSystemLoad1": 19.678,
+        "pcNoneAndRelayFalseReports": 44
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 10,
+      "medianOutputFps": 18.6,
+      "reusePercent": 54.576,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 10,
+          "sampledFrames": 916,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.814,
+          "maxFrameWallMs": 133.254,
+          "maxWindowReportedP95Ms": 15.061
+        }
+      }
+    },
+    "2026-10-16 19:00": {
+      "timestampedLines": 4219,
+      "eventLoop": {
+        "reports": 169,
+        "representedOverThresholdSamples": 234,
+        "reportsAtLeast100ms": 85,
+        "reportsAtLeast1000ms": 6,
+        "reportsAtLeast5000ms": 1,
+        "maxLagMs": 8182.498,
+        "maxSystemLoad1": 764.205,
+        "pcNoneAndRelayFalseReports": 47
+      },
+      "inputResults": 187,
+      "maxAdapterAwaitMs": 3793.948,
+      "lockContentionReports": 439,
+      "maxLockWaitMs": 4870.9,
+      "maxWaitersBefore": 92,
+      "captureWindows": 131,
+      "medianOutputFps": 12.5,
+      "reusePercent": 40.23,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 81,
+          "sampledFrames": 6521,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 8.543,
+          "maxFrameWallMs": 700.028,
+          "maxWindowReportedP95Ms": 530.091
+        },
+        "libx264": {
+          "windows": 46,
+          "sampledFrames": 1686,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 56.923,
+          "maxFrameWallMs": 6123.401,
+          "maxWindowReportedP95Ms": 6123.401
+        }
+      }
+    },
+    "2026-10-16 20:00": {
+      "timestampedLines": 71,
+      "eventLoop": {
+        "reports": 71,
+        "representedOverThresholdSamples": 73,
+        "reportsAtLeast100ms": 12,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 248.173,
+        "maxSystemLoad1": 36.459,
+        "pcNoneAndRelayFalseReports": 71
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 21:00": {
+      "timestampedLines": 28,
+      "eventLoop": {
+        "reports": 28,
+        "representedOverThresholdSamples": 30,
+        "reportsAtLeast100ms": 3,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 122.256,
+        "maxSystemLoad1": 26.633,
+        "pcNoneAndRelayFalseReports": 28
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 22:00": {
+      "timestampedLines": 46,
+      "eventLoop": {
+        "reports": 46,
+        "representedOverThresholdSamples": 48,
+        "reportsAtLeast100ms": 12,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 242.441,
+        "maxSystemLoad1": 23.921,
+        "pcNoneAndRelayFalseReports": 46
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 0,
+      "medianOutputFps": null,
+      "reusePercent": null,
+      "encoder": {}
+    },
+    "2026-10-16 23:00": {
+      "timestampedLines": 1264,
+      "eventLoop": {
+        "reports": 31,
+        "representedOverThresholdSamples": 31,
+        "reportsAtLeast100ms": 7,
+        "reportsAtLeast1000ms": 0,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 173.466,
+        "maxSystemLoad1": 12.473,
+        "pcNoneAndRelayFalseReports": 16
+      },
+      "inputResults": 0,
+      "maxAdapterAwaitMs": null,
+      "lockContentionReports": 0,
+      "maxLockWaitMs": null,
+      "maxWaitersBefore": null,
+      "captureWindows": 9,
+      "medianOutputFps": 19.6,
+      "reusePercent": 55.035,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 9,
+          "sampledFrames": 881,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 4.16,
+          "maxFrameWallMs": 229.337,
+          "maxWindowReportedP95Ms": 7.907
+        }
+      }
+    },
+    "2026-10-17 00:00": {
+      "timestampedLines": 14089,
+      "eventLoop": {
+        "reports": 759,
+        "representedOverThresholdSamples": 1118,
+        "reportsAtLeast100ms": 503,
+        "reportsAtLeast1000ms": 43,
+        "reportsAtLeast5000ms": 4,
+        "maxLagMs": 8893.9,
+        "maxSystemLoad1": 469.371,
+        "pcNoneAndRelayFalseReports": 141
+      },
+      "inputResults": 1086,
+      "maxAdapterAwaitMs": 14139.908,
+      "lockContentionReports": 428,
+      "maxLockWaitMs": 13734.2,
+      "maxWaitersBefore": 72,
+      "captureWindows": 456,
+      "medianOutputFps": 9.1,
+      "reusePercent": 46.114,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 285,
+          "sampledFrames": 16730,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 24.216,
+          "maxFrameWallMs": 4095.313,
+          "maxWindowReportedP95Ms": 2647.86
+        },
+        "libx264": {
+          "windows": 153,
+          "sampledFrames": 4962,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 69.545,
+          "maxFrameWallMs": 3875.524,
+          "maxWindowReportedP95Ms": 3875.524
+        }
+      }
+    },
+    "2026-10-17 01:00": {
+      "timestampedLines": 6695,
+      "eventLoop": {
+        "reports": 620,
+        "representedOverThresholdSamples": 845,
+        "reportsAtLeast100ms": 400,
+        "reportsAtLeast1000ms": 29,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 4895.544,
+        "maxSystemLoad1": 489.425,
+        "pcNoneAndRelayFalseReports": 276
+      },
+      "inputResults": 518,
+      "maxAdapterAwaitMs": 2384.481,
+      "lockContentionReports": 204,
+      "maxLockWaitMs": 6295.4,
+      "maxWaitersBefore": 38,
+      "captureWindows": 179,
+      "medianOutputFps": 8.5,
+      "reusePercent": 52.131,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 76,
+          "sampledFrames": 4764,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 25.132,
+          "maxFrameWallMs": 2247.802,
+          "maxWindowReportedP95Ms": 2247.802
+        },
+        "libx264": {
+          "windows": 90,
+          "sampledFrames": 2854,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 60.573,
+          "maxFrameWallMs": 1729.541,
+          "maxWindowReportedP95Ms": 1729.541
+        }
+      }
+    },
+    "2026-10-17 02:00": {
+      "timestampedLines": 1893,
+      "eventLoop": {
+        "reports": 112,
+        "representedOverThresholdSamples": 156,
+        "reportsAtLeast100ms": 66,
+        "reportsAtLeast1000ms": 5,
+        "reportsAtLeast5000ms": 0,
+        "maxLagMs": 2918.464,
+        "maxSystemLoad1": 280.44,
+        "pcNoneAndRelayFalseReports": 32
+      },
+      "inputResults": 163,
+      "maxAdapterAwaitMs": 1374.834,
+      "lockContentionReports": 8,
+      "maxLockWaitMs": 362.7,
+      "maxWaitersBefore": 2,
+      "captureWindows": 62,
+      "medianOutputFps": 8.45,
+      "reusePercent": 46.261,
+      "encoder": {
+        "h264_videotoolbox": {
+          "windows": 36,
+          "sampledFrames": 1548,
+          "targetFpsValues": [
+            20
+          ],
+          "frameWeightedAvgMs": 31.688,
+          "maxFrameWallMs": 1674.469,
+          "maxWindowReportedP95Ms": 1674.469
+        },
+        "libx264": {
+          "windows": 24,
+          "sampledFrames": 1018,
+          "targetFpsValues": [
+            12,
+            15
+          ],
+          "frameWeightedAvgMs": 23.998,
+          "maxFrameWallMs": 557.9,
+          "maxWindowReportedP95Ms": 284.07
+        }
+      }
+    }
+  },
+  "evidence": {
+    "topEventLoopAlerts": [
+      {
+        "file": "back-debug.log",
+        "line": 16472,
+        "time": "2026-10-17T00:30:05.938+08:00",
+        "lagMs": 8893.9,
+        "maxLagMs": 8893.9,
+        "sampleCount": 1,
+        "targetFps": 15,
+        "captureSeq": 721,
+        "inputEventCount": 13593,
+        "lastInputAgeMs": 40886.644,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 0,
+        "taskCount": 26,
+        "threadCount": 8,
+        "processCpuSeconds": 5193.794,
+        "rssMiB": 501.984,
+        "systemLoad1": 349.794,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 14927,
+        "time": "2026-10-17T00:14:43.174+08:00",
+        "lagMs": 8556.12,
+        "maxLagMs": 8556.12,
+        "sampleCount": 1,
+        "targetFps": 12,
+        "captureSeq": 225,
+        "inputEventCount": 12739,
+        "lastInputAgeMs": 272111.214,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 0,
+        "taskCount": 26,
+        "threadCount": 8,
+        "processCpuSeconds": 5112.9,
+        "rssMiB": 501.984,
+        "systemLoad1": 73.955,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 8772,
+        "time": "2026-10-16T19:48:01.273+08:00",
+        "lagMs": 8182.498,
+        "maxLagMs": 8182.498,
+        "sampleCount": 2,
+        "targetFps": 20,
+        "captureSeq": 507,
+        "inputEventCount": 10182,
+        "lastInputAgeMs": 23040.358,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 0,
+        "taskCount": 16,
+        "threadCount": 8,
+        "processCpuSeconds": 4751.091,
+        "rssMiB": 501.984,
+        "systemLoad1": 221.614,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25729,
+        "time": "2026-10-17T00:59:54.636+08:00",
+        "lagMs": 5982.95,
+        "maxLagMs": 5982.95,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 1561,
+        "inputEventCount": 15901,
+        "lastInputAgeMs": 9717.579,
+        "inputWaiters": 1,
+        "pendingRelayFrames": 0,
+        "taskCount": 51,
+        "threadCount": 8,
+        "processCpuSeconds": 6050.519,
+        "rssMiB": 501.984,
+        "systemLoad1": 262.919,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 18906,
+        "time": "2026-10-17T00:37:57.905+08:00",
+        "lagMs": 5012.817,
+        "maxLagMs": 5012.817,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 1759,
+        "inputEventCount": 13907,
+        "lastInputAgeMs": 4755.496,
+        "inputWaiters": 3,
+        "pendingRelayFrames": 0,
+        "taskCount": 115,
+        "threadCount": 8,
+        "processCpuSeconds": 5409.924,
+        "rssMiB": 501.984,
+        "systemLoad1": 92.414,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 31575,
+        "time": "2026-10-17T01:26:09.597+08:00",
+        "lagMs": 4895.544,
+        "maxLagMs": 4895.544,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 23,
+        "inputEventCount": 20195,
+        "lastInputAgeMs": 726188.102,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 0,
+        "taskCount": 51,
+        "threadCount": 8,
+        "processCpuSeconds": 6475.838,
+        "rssMiB": 501.984,
+        "systemLoad1": 268.736,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25728,
+        "time": "2026-10-17T00:59:47.653+08:00",
+        "lagMs": 4562.744,
+        "maxLagMs": 4562.744,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 1561,
+        "inputEventCount": 15901,
+        "lastInputAgeMs": 2734.728,
+        "inputWaiters": 1,
+        "pendingRelayFrames": 0,
+        "taskCount": 51,
+        "threadCount": 8,
+        "processCpuSeconds": 6050.491,
+        "rssMiB": 501.984,
+        "systemLoad1": 198.474,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 8806,
+        "time": "2026-10-16T19:48:10.401+08:00",
+        "lagMs": 4516.12,
+        "maxLagMs": 4516.12,
+        "sampleCount": 1,
+        "targetFps": 15,
+        "captureSeq": 522,
+        "inputEventCount": 10182,
+        "lastInputAgeMs": 32168.123,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 0,
+        "taskCount": 11,
+        "threadCount": 8,
+        "processCpuSeconds": 4751.9,
+        "rssMiB": 501.984,
+        "systemLoad1": 306.872,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 11892,
+        "time": "2026-10-17T00:06:51.335+08:00",
+        "lagMs": 4076.268,
+        "maxLagMs": 4076.268,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 0,
+        "inputEventCount": 10703,
+        "lastInputAgeMs": 4405.846,
+        "inputWaiters": 0,
+        "pendingRelayFrames": 1,
+        "taskCount": 19,
+        "threadCount": 6,
+        "processCpuSeconds": 4961.421,
+        "rssMiB": 501.984,
+        "systemLoad1": 5.688,
+        "pcState": "none",
+        "iceState": "none",
+        "relayRunning": true,
+        "severity": "critical"
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25734,
+        "time": "2026-10-17T00:59:59.094+08:00",
+        "lagMs": 3458.368,
+        "maxLagMs": 3458.368,
+        "sampleCount": 1,
+        "targetFps": 20,
+        "captureSeq": 1562,
+        "inputEventCount": 15901,
+        "lastInputAgeMs": 14175.918,
+        "inputWaiters": 1,
+        "pendingRelayFrames": 0,
+        "taskCount": 55,
+        "threadCount": 8,
+        "processCpuSeconds": 6050.532,
+        "rssMiB": 501.984,
+        "systemLoad1": 289.992,
+        "pcState": "connected",
+        "iceState": "completed",
+        "relayRunning": false,
+        "severity": "critical"
+      }
+    ],
+    "topInputAdapterAwait": [
+      {
+        "file": "back-debug.log.1",
+        "line": 8152,
+        "time": "2026-10-16T02:14:27.619+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 32068.664,
+        "appliedSeq": 753
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 8157,
+        "time": "2026-10-16T02:14:27.625+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 32065.779,
+        "appliedSeq": 754
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 8161,
+        "time": "2026-10-16T02:14:27.629+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "reset",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 32064.555,
+        "appliedSeq": 755
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 8146,
+        "time": "2026-10-16T02:14:27.377+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "down",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 31859.356,
+        "appliedSeq": 752
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25731,
+        "time": "2026-10-17T00:59:58.549+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "down",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 14139.908,
+        "appliedSeq": 5
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25741,
+        "time": "2026-10-17T00:59:59.265+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 13763.781,
+        "appliedSeq": 6
+      },
+      {
+        "file": "back-debug.log",
+        "line": 9417,
+        "time": "2026-10-16T19:49:29.395+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 3793.948,
+        "appliedSeq": 111
+      },
+      {
+        "file": "back-debug.log",
+        "line": 9410,
+        "time": "2026-10-16T19:49:29.226+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "down",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 3688.38,
+        "appliedSeq": 110
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 4268,
+        "time": "2026-10-16T02:05:16.301+08:00",
+        "event": "host_input_result",
+        "inputType": "keyboard",
+        "action": "key",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 2493.221,
+        "appliedSeq": 234
+      },
+      {
+        "file": "back-debug.log",
+        "line": 28132,
+        "time": "2026-10-17T01:05:12.716+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "datachannel",
+        "status": "applied",
+        "localExecuteMs": 2384.481,
+        "appliedSeq": 25
+      }
+    ],
+    "topInputLockWait": [
+      {
+        "file": "back-debug.log.1",
+        "line": 13194,
+        "time": "2026-10-16T02:18:33.122+08:00",
+        "waitersBefore": 972,
+        "lockWaitMs": 60846.1,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13192,
+        "time": "2026-10-16T02:18:33.118+08:00",
+        "waitersBefore": 972,
+        "lockWaitMs": 60845.0,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13190,
+        "time": "2026-10-16T02:18:33.110+08:00",
+        "waitersBefore": 971,
+        "lockWaitMs": 60838.7,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13188,
+        "time": "2026-10-16T02:18:33.012+08:00",
+        "waitersBefore": 970,
+        "lockWaitMs": 60742.3,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13214,
+        "time": "2026-10-16T02:18:33.863+08:00",
+        "waitersBefore": 977,
+        "lockWaitMs": 60709.6,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13158,
+        "time": "2026-10-16T02:18:31.906+08:00",
+        "waitersBefore": 962,
+        "lockWaitMs": 60685.6,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13156,
+        "time": "2026-10-16T02:18:31.903+08:00",
+        "waitersBefore": 961,
+        "lockWaitMs": 60682.3,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13182,
+        "time": "2026-10-16T02:18:32.906+08:00",
+        "waitersBefore": 969,
+        "lockWaitMs": 60681.6,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13154,
+        "time": "2026-10-16T02:18:31.898+08:00",
+        "waitersBefore": 960,
+        "lockWaitMs": 60677.2,
+        "inputType": "mouse",
+        "action": "wheel"
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13186,
+        "time": "2026-10-16T02:18:32.924+08:00",
+        "waitersBefore": 970,
+        "lockWaitMs": 60666.3,
+        "inputType": "mouse",
+        "action": "wheel"
+      }
+    ],
+    "topInputTimingTotal": [
+      {
+        "file": "back-debug.log.1",
+        "line": 13195,
+        "time": "2026-10-16T02:18:33.147+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60871.6,
+        "lockWaitMs": 60846.1,
+        "toThreadMs": 20.7
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13193,
+        "time": "2026-10-16T02:18:33.121+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60847.5,
+        "lockWaitMs": 60845.0,
+        "toThreadMs": 1.8
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13191,
+        "time": "2026-10-16T02:18:33.115+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60844.0,
+        "lockWaitMs": 60838.7,
+        "toThreadMs": 4.5
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13189,
+        "time": "2026-10-16T02:18:33.066+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60796.1,
+        "lockWaitMs": 60742.3,
+        "toThreadMs": 53.2
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13187,
+        "time": "2026-10-16T02:18:33.010+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60752.1,
+        "lockWaitMs": 60666.3,
+        "toThreadMs": 85.2
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13213,
+        "time": "2026-10-16T02:18:33.862+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60713.9,
+        "lockWaitMs": 60500.4,
+        "toThreadMs": 212.7
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13215,
+        "time": "2026-10-16T02:18:33.865+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60711.9,
+        "lockWaitMs": 60709.6,
+        "toThreadMs": 1.2
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13159,
+        "time": "2026-10-16T02:18:31.909+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60688.0,
+        "lockWaitMs": 60685.6,
+        "toThreadMs": 1.3
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13183,
+        "time": "2026-10-16T02:18:32.911+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60686.8,
+        "lockWaitMs": 60681.6,
+        "toThreadMs": 4.6
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13157,
+        "time": "2026-10-16T02:18:31.906+08:00",
+        "inputType": "mouse",
+        "action": "wheel",
+        "totalMs": 60684.8,
+        "lockWaitMs": 60682.3,
+        "toThreadMs": 1.8
+      }
+    ],
+    "topCaptureRecvMean": [
+      {
+        "file": "back-debug.log",
+        "line": 25733,
+        "time": "2026-10-17T00:59:58.901+08:00",
+        "fps": 0.1,
+        "frames": 1.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 2064.5,
+        "recvTotalMs": 13983.1,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log.3",
+        "line": 32990,
+        "time": "2026-10-15T14:23:10.614+08:00",
+        "fps": 0.1,
+        "frames": 41.0,
+        "sleepMs": 35.3,
+        "captureWaitMs": 0.0,
+        "convertMs": 2.1,
+        "recvTotalMs": 9256.1,
+        "width": 1280.0,
+        "height": 720.0,
+        "reuse": 22.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 31583,
+        "time": "2026-10-17T01:26:19.124+08:00",
+        "fps": 0.1,
+        "frames": 1.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 4501.0,
+        "recvTotalMs": 7401.8,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 16471,
+        "time": "2026-10-17T00:30:05.933+08:00",
+        "fps": 0.1,
+        "frames": 3.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 4084.4,
+        "recvTotalMs": 6526.7,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 1.0
+      },
+      {
+        "file": "back-debug.log.3",
+        "line": 4322,
+        "time": "2026-10-14T14:24:29.770+08:00",
+        "fps": 0.2,
+        "frames": 72.0,
+        "sleepMs": 36.5,
+        "captureWaitMs": 0.0,
+        "convertMs": 2.3,
+        "recvTotalMs": 5274.7,
+        "width": 1280.0,
+        "height": 720.0,
+        "reuse": 36.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 31576,
+        "time": "2026-10-17T01:26:09.603+08:00",
+        "fps": 0.2,
+        "frames": 2.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 4.7,
+        "recvTotalMs": 3807.3,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 12381,
+        "time": "2026-10-16T02:18:15.461+08:00",
+        "fps": 0.3,
+        "frames": 2.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 1029.9,
+        "recvTotalMs": 2652.3,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 15306,
+        "time": "2026-10-17T00:26:21.674+08:00",
+        "fps": 0.2,
+        "frames": 2.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 6.4,
+        "recvTotalMs": 1863.0,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 34192,
+        "time": "2026-10-17T02:14:31.587+08:00",
+        "fps": 0.4,
+        "frames": 3.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 344.8,
+        "recvTotalMs": 946.1,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 31627,
+        "time": "2026-10-17T01:26:40.134+08:00",
+        "fps": 0.8,
+        "frames": 4.0,
+        "sleepMs": 0.0,
+        "captureWaitMs": 0.0,
+        "convertMs": 25.6,
+        "recvTotalMs": 916.8,
+        "width": 1152.0,
+        "height": 720.0,
+        "reuse": 0.0
+      }
+    ],
+    "topEncoderFrameMax": [
+      {
+        "file": "back-debug.log",
+        "line": 8835,
+        "time": "2026-10-16T19:48:16.633+08:00",
+        "codec": "libx264",
+        "targetFps": 15,
+        "count": 16,
+        "avgMs": 511.967,
+        "windowP95Ms": 6123.401,
+        "maxMs": 6123.401,
+        "targetBitrate": 1800000,
+        "effectiveBitrate": 1800000
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 13792,
+        "time": "2026-10-16T02:19:00.805+08:00",
+        "codec": "libx264",
+        "targetFps": 12,
+        "count": 6,
+        "avgMs": 960.216,
+        "windowP95Ms": 4240.215,
+        "maxMs": 4240.215,
+        "targetBitrate": 1800000,
+        "effectiveBitrate": 1800000
+      },
+      {
+        "file": "back-debug.log",
+        "line": 25712,
+        "time": "2026-10-17T00:59:42.087+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 31,
+        "avgMs": 170.267,
+        "windowP95Ms": 352.363,
+        "maxMs": 4095.313,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log",
+        "line": 15297,
+        "time": "2026-10-17T00:26:19.452+08:00",
+        "codec": "libx264",
+        "targetFps": 12,
+        "count": 1,
+        "avgMs": 3875.524,
+        "windowP95Ms": 3875.524,
+        "maxMs": 3875.524,
+        "targetBitrate": 1800000,
+        "effectiveBitrate": 1800000
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 16245,
+        "time": "2026-10-16T02:30:22.404+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 25,
+        "avgMs": 171.813,
+        "windowP95Ms": 196.272,
+        "maxMs": 3124.155,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log.2",
+        "line": 42320,
+        "time": "2026-10-16T01:37:02.355+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 39,
+        "avgMs": 123.999,
+        "windowP95Ms": 712.639,
+        "maxMs": 3070.831,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log.2",
+        "line": 42901,
+        "time": "2026-10-16T01:39:15.924+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 19,
+        "avgMs": 170.614,
+        "windowP95Ms": 2705.237,
+        "maxMs": 2705.237,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log",
+        "line": 18947,
+        "time": "2026-10-17T00:38:04.596+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 4,
+        "avgMs": 674.417,
+        "windowP95Ms": 2647.86,
+        "maxMs": 2647.86,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log.1",
+        "line": 17473,
+        "time": "2026-10-16T02:37:01.626+08:00",
+        "codec": "h264_videotoolbox",
+        "targetFps": 20,
+        "count": 17,
+        "avgMs": 189.776,
+        "windowP95Ms": 2615.743,
+        "maxMs": 2615.743,
+        "targetBitrate": 3200000,
+        "effectiveBitrate": 3200000
+      },
+      {
+        "file": "back-debug.log",
+        "line": 9047,
+        "time": "2026-10-16T19:48:52.825+08:00",
+        "codec": "libx264",
+        "targetFps": 15,
+        "count": 17,
+        "avgMs": 211.052,
+        "windowP95Ms": 2501.253,
+        "maxMs": 2501.253,
+        "targetBitrate": 1800000,
+        "effectiveBitrate": 1800000
+      }
+    ],
+    "topRelayCaptureJpegMean": [
+      {
+        "file": "back-debug.log",
+        "line": 11891,
+        "time": "2026-10-17T00:06:51.315+08:00",
+        "profile": "survival",
+        "fps": 0.8,
+        "sent": 6.0,
+        "acked": 5.0,
+        "pending": 1.0,
+        "timeouts": 1.0,
+        "avgKiB": 4.7,
+        "avgCaptureJpegMs": 750.5,
+        "reportedAvgAckMs": 400.0,
+        "width": 640.0,
+        "height": 360.0,
+        "quality": 18.0,
+        "maxInFlight": 1.0
+      }
+    ],
+    "inputResultErrors": [
+      {
+        "file": "back-debug.log.3",
+        "line": 4550,
+        "time": "2026-10-14T14:25:26.641+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "down",
+        "transport": "datachannel",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.072,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log.2",
+        "line": 31793,
+        "time": "2026-10-15T22:03:19.984+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "down",
+        "transport": "datachannel",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.035,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 12166,
+        "time": "2026-10-17T00:07:31.865+08:00",
+        "event": "host_input_result",
+        "inputType": "keyboard",
+        "action": "key",
+        "transport": "datachannel",
+        "status": "sequence-gap",
+        "localExecuteMs": 26.151,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 12169,
+        "time": "2026-10-17T00:07:32.059+08:00",
+        "event": "host_input_result",
+        "inputType": "keyboard",
+        "action": "key",
+        "transport": "datachannel",
+        "status": "sequence-gap",
+        "localExecuteMs": 14.697,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 19381,
+        "time": "2026-10-17T00:38:33.670+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "reset",
+        "transport": "socket",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.099,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 21139,
+        "time": "2026-10-17T00:46:37.886+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "reset",
+        "transport": "socket",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.088,
+        "appliedSeq": 58
+      },
+      {
+        "file": "back-debug.log",
+        "line": 28941,
+        "time": "2026-10-17T01:07:52.646+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "reset",
+        "transport": "socket",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.099,
+        "appliedSeq": 0
+      },
+      {
+        "file": "back-debug.log",
+        "line": 29165,
+        "time": "2026-10-17T01:08:41.859+08:00",
+        "event": "host_input_result",
+        "inputType": "mouse",
+        "action": "up",
+        "transport": "socket",
+        "status": "sequence-gap",
+        "localExecuteMs": 0.09,
+        "appliedSeq": 0
+      }
+    ],
+    "ackEnqueueFailures": [],
+    "errorAndConnectionExamples": {
+      "input_stale_dc_binding": {
+        "count": 156,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 30368,
+            "time": "2026-10-15T14:07:03.332+08:00",
+            "category": "input_stale_dc_binding"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 30369,
+            "time": "2026-10-15T14:07:03.337+08:00",
+            "category": "input_stale_dc_binding"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 29211,
+            "time": "2026-10-17T01:08:52.210+08:00",
+            "category": "input_stale_dc_binding"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 29213,
+            "time": "2026-10-17T01:08:52.215+08:00",
+            "category": "input_stale_dc_binding"
+          }
+        ]
+      },
+      "signal_disconnect_message": {
+        "count": 4,
+        "first": [
+          {
+            "file": "back-debug.log.2",
+            "line": 42203,
+            "time": "2026-10-16T01:35:25.690+08:00",
+            "category": "signal_disconnect_message"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 8837,
+            "time": "2026-10-16T19:48:17.297+08:00",
+            "category": "signal_disconnect_message"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 16545,
+            "time": "2026-10-17T00:30:17.201+08:00",
+            "category": "signal_disconnect_message"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 25774,
+            "time": "2026-10-17T01:00:09.154+08:00",
+            "category": "signal_disconnect_message"
+          }
+        ]
+      },
+      "auth_failed": {
+        "count": 11,
+        "first": [
+          {
+            "file": "back-debug.log.2",
+            "line": 42213,
+            "time": "2026-10-16T01:35:29.889+08:00",
+            "category": "auth_failed"
+          },
+          {
+            "file": "back-debug.log.2",
+            "line": 42216,
+            "time": "2026-10-16T01:35:30.967+08:00",
+            "category": "auth_failed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log.2",
+            "line": 42234,
+            "time": "2026-10-16T01:35:40.243+08:00",
+            "category": "auth_failed"
+          },
+          {
+            "file": "back-debug.log.2",
+            "line": 42236,
+            "time": "2026-10-16T01:35:41.269+08:00",
+            "category": "auth_failed"
+          }
+        ]
+      },
+      "host_connected_message": {
+        "count": 1,
+        "first": [
+          {
+            "file": "back-debug.log.2",
+            "line": 42248,
+            "time": "2026-10-16T01:36:50.853+08:00",
+            "category": "host_connected_message"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log.2",
+            "line": 42248,
+            "time": "2026-10-16T01:36:50.853+08:00",
+            "category": "host_connected_message"
+          }
+        ]
+      },
+      "input_active_lease_mismatch": {
+        "count": 1,
+        "first": [
+          {
+            "file": "back-debug.log.1",
+            "line": 11070,
+            "time": "2026-10-16T02:17:41.762+08:00",
+            "category": "input_active_lease_mismatch"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log.1",
+            "line": 11070,
+            "time": "2026-10-16T02:17:41.762+08:00",
+            "category": "input_active_lease_mismatch"
+          }
+        ]
+      },
+      "traceback_continuation": {
+        "count": 5,
+        "first": [
+          {
+            "file": "back-debug.log",
+            "line": 9443,
+            "time": "2026-10-16T19:49:29.792+08:00",
+            "category": "traceback_continuation"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 9461,
+            "time": "2026-10-16T19:49:30.084+08:00",
+            "category": "traceback_continuation"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 17198,
+            "time": "2026-10-17T00:31:33.713+08:00",
+            "category": "traceback_continuation"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 19594,
+            "time": "2026-10-17T00:39:33.584+08:00",
+            "category": "traceback_continuation"
+          }
+        ]
+      },
+      "datachannel_closed:input": {
+        "count": 84,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 236,
+            "time": "2026-10-14T12:56:42.505+08:00",
+            "kind": "datachannel_closed",
+            "label": "input",
+            "pcState": "connected",
+            "iceState": "completed"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 379,
+            "time": "2026-10-14T12:57:35.115+08:00",
+            "kind": "datachannel_closed",
+            "label": "input",
+            "pcState": "connected",
+            "iceState": "completed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32452,
+            "time": "2026-10-17T02:00:46.630+08:00",
+            "kind": "datachannel_closed",
+            "label": "input",
+            "pcState": "connected",
+            "iceState": "completed"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32623,
+            "time": "2026-10-17T02:07:39.097+08:00",
+            "kind": "datachannel_closed",
+            "label": "input",
+            "pcState": "connected",
+            "iceState": "completed"
+          }
+        ]
+      },
+      "datachannel_closed:input-move": {
+        "count": 84,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 237,
+            "time": "2026-10-14T12:56:42.506+08:00",
+            "kind": "datachannel_closed",
+            "label": "input-move",
+            "pcState": "connected",
+            "iceState": "completed"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 380,
+            "time": "2026-10-14T12:57:35.115+08:00",
+            "kind": "datachannel_closed",
+            "label": "input-move",
+            "pcState": "connected",
+            "iceState": "completed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32453,
+            "time": "2026-10-17T02:00:46.630+08:00",
+            "kind": "datachannel_closed",
+            "label": "input-move",
+            "pcState": "connected",
+            "iceState": "completed"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32624,
+            "time": "2026-10-17T02:07:39.097+08:00",
+            "kind": "datachannel_closed",
+            "label": "input-move",
+            "pcState": "connected",
+            "iceState": "completed"
+          }
+        ]
+      },
+      "ice:closed": {
+        "count": 111,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 238,
+            "time": "2026-10-14T12:56:42.524+08:00",
+            "kind": "ice",
+            "state": "closed"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 381,
+            "time": "2026-10-14T12:57:35.115+08:00",
+            "kind": "ice",
+            "state": "closed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32505,
+            "time": "2026-10-17T02:04:01.538+08:00",
+            "kind": "ice",
+            "state": "closed"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32625,
+            "time": "2026-10-17T02:07:39.097+08:00",
+            "kind": "ice",
+            "state": "closed"
+          }
+        ]
+      },
+      "pc:closed": {
+        "count": 111,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 239,
+            "time": "2026-10-14T12:56:42.525+08:00",
+            "kind": "pc",
+            "state": "closed"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 382,
+            "time": "2026-10-14T12:57:35.116+08:00",
+            "kind": "pc",
+            "state": "closed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32506,
+            "time": "2026-10-17T02:04:01.538+08:00",
+            "kind": "pc",
+            "state": "closed"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32626,
+            "time": "2026-10-17T02:07:39.097+08:00",
+            "kind": "pc",
+            "state": "closed"
+          }
+        ]
+      },
+      "ice:checking": {
+        "count": 111,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 263,
+            "time": "2026-10-14T12:56:54.601+08:00",
+            "kind": "ice",
+            "state": "checking"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 411,
+            "time": "2026-10-14T13:07:39.222+08:00",
+            "kind": "ice",
+            "state": "checking"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32554,
+            "time": "2026-10-17T02:06:47.438+08:00",
+            "kind": "ice",
+            "state": "checking"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32665,
+            "time": "2026-10-17T02:10:20.766+08:00",
+            "kind": "ice",
+            "state": "checking"
+          }
+        ]
+      },
+      "pc:connecting": {
+        "count": 111,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 264,
+            "time": "2026-10-14T12:56:54.601+08:00",
+            "kind": "pc",
+            "state": "connecting"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 412,
+            "time": "2026-10-14T13:07:39.222+08:00",
+            "kind": "pc",
+            "state": "connecting"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32555,
+            "time": "2026-10-17T02:06:47.438+08:00",
+            "kind": "pc",
+            "state": "connecting"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32666,
+            "time": "2026-10-17T02:10:20.766+08:00",
+            "kind": "pc",
+            "state": "connecting"
+          }
+        ]
+      },
+      "ice:completed": {
+        "count": 87,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 279,
+            "time": "2026-10-14T12:56:55.194+08:00",
+            "kind": "ice",
+            "state": "completed"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 427,
+            "time": "2026-10-14T13:07:39.821+08:00",
+            "kind": "ice",
+            "state": "completed"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32570,
+            "time": "2026-10-17T02:06:51.038+08:00",
+            "kind": "ice",
+            "state": "completed"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32681,
+            "time": "2026-10-17T02:10:21.414+08:00",
+            "kind": "ice",
+            "state": "completed"
+          }
+        ]
+      },
+      "pc:connected": {
+        "count": 87,
+        "first": [
+          {
+            "file": "back-debug.log.3",
+            "line": 280,
+            "time": "2026-10-14T12:56:55.343+08:00",
+            "kind": "pc",
+            "state": "connected"
+          },
+          {
+            "file": "back-debug.log.3",
+            "line": 428,
+            "time": "2026-10-14T13:07:39.948+08:00",
+            "kind": "pc",
+            "state": "connected"
+          }
+        ],
+        "last": [
+          {
+            "file": "back-debug.log",
+            "line": 32571,
+            "time": "2026-10-17T02:06:52.190+08:00",
+            "kind": "pc",
+            "state": "connected"
+          },
+          {
+            "file": "back-debug.log",
+            "line": 32682,
+            "time": "2026-10-17T02:10:21.604+08:00",
+            "kind": "pc",
+            "state": "connected"
+          }
+        ]
+      }
+    }
+  },
+  "limitations": [
+    "No overall event-loop percentiles are calculated: only threshold alerts are logged (>20ms, cooldown for noncritical); maxLag may represent multiple alert samples.",
+    "Host structured input rows exclude high-frequency moves/wheels in favor of cumulative count-only aggregate emissions; aggregate count fields cannot be summed as independent inputs. Results may lack IDs and cannot be treated as unique user gestures or input success rate.",
+    "Keyboard wire hostExecuteMs and frame_timing are invalid for precise causal/visual timing; this audit uses localExecuteMs adapter-await only. Adapter-await includes internal queue/executor scheduling, not only Quartz execution.",
+    "Input timing and lock-contention logs are conditional/censored and describe logged samples, not a distribution of all inputs. Incoming valid input count includes receipt, not successful execution.",
+    "CAPTURE_STATS reports recv/output windows. convert is AV frame construction; recv_total includes pacing/queue/build, excludes encoding/RTP. grab timing and captured-frame age are absent from ordinary samples. Reuse means no new selected capture, not proof of unchanged screen content.",
+    "Encoder sample means are weighted by each window encode.count; max is a reported frame wall-time maximum, not CPU time. Per-window p95 is not globally aggregated. Codec groups are different sessions/load/resolution/targetFps conditions, not a matched A/B comparison.",
+    "Relay avg_encode_ms encloses synchronous capture+array/PIL/JPEG work, not just compression. avg_ack_ms may use client cross-clock latency and is not validated network RTT. Relay sent/acked windows may straddle in-flight boundaries.",
+    "Metrics are marginal per-stage windows, not paired frame/input observations; they cannot be summed into end-to-end latency. Stage overlap and concurrent capture prohibit simple addition.",
+    "Embedded Viewer replay logs are excluded from Host events/metrics. Raw input content, keyboard codes/text, mouse coordinates, socket/viewer/lease/input IDs, URLs, and credentials are not copied.",
+    "Current source definitions establish measurement meaning but loaded-code identity for every historical process is not independently verified. Files were still being appended; byte snapshots plus hashes define exact inspected prefix.",
+    "recv_total starts before the suspended/resume wait in host.py:1257-1276. Large output-window recv_total can include intentional suspension and cannot by itself prove active capture/encoding took that long. Media-active state must be joined before interpreting outliers.",
+    "Connection closed logs include expected teardown/reconnect; counts are state transitions, not unique unexpected failures. Error categories are recognized templates, not an exhaustive classification of every ERROR/traceback line."
+  ],
+  "sourceReferences": {
+    "logRetention": "python-host/observability.py:29-30,66-78",
+    "eventLoopAlertSelection": "python-host/host.py:4709-4744",
+    "inputAdapterAwait": "python-host/host.py:2138-2171",
+    "inputAggregation": "python-host/host.py:1964-2013",
+    "inputLockAndConditionalTiming": "python-host/input_handler.py:235-258,322-331",
+    "captureStats": "python-host/host.py:1380-1413",
+    "encoderSample": "python-host/h264_videotoolbox_encoder.py:440-491",
+    "relayStats": "python-host/host.py:845-926"
+  },
+  "parserValidation": {
+    "CAPTURE_STATS": {
+      "marker": 8243,
+      "parsed": 8243
+    },
+    "WRD_ENCODER_SAMPLE": {
+      "marker": 8176,
+      "parsed": 8176
+    },
+    "TUNNEL_RELAY_STATS": {
+      "marker": 1,
+      "parsed": 1
+    },
+    "sourceLineTotals": 173089,
+    "withinWindowTimestampedLines": 171483
+  },
+  "computedObservations": [
+    {
+      "finding": "Retained Host logs do not cover the requested full 72h",
+      "unretainedPrefixSeconds": 37309.699
+    },
+    {
+      "finding": "A real input queue burst exceeded one minute",
+      "time": "2026-10-16T02:18:33.147+08:00",
+      "file": "back-debug.log.1",
+      "line": 13195,
+      "totalMs": 60871.6,
+      "lockWaitMs": 60846.1,
+      "toThreadMs": 20.7,
+      "maxLoggedWaitersInWindow": 1173
+    },
+    {
+      "finding": "Reliable mouse up and reset waited roughly 32 seconds inside Host adapter",
+      "time": "2026-10-16T02:14:27.619+08:00",
+      "file": "back-debug.log.1",
+      "lines": [
+        8152,
+        8157,
+        8161
+      ],
+      "adapterAwaitMs": [
+        32068.664,
+        32065.779,
+        32064.555
+      ]
+    },
+    {
+      "finding": "Event-loop stalls persist in some snapshots without active peer or relay",
+      "pcNoneRelayFalseAlertReports": 2718,
+      "notProof": "No claim that these alone identify global resource cause; correlated system pressure evidence is separate."
+    }
+  ]
+}

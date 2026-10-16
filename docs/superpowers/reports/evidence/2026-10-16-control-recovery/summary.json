@@ -1,0 +1,764 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-16",
+  "timezone": "Asia/Shanghai",
+  "scope": "production-read-only-evidence-and-offline-regression",
+  "diagnosticTimeMeaning": "receivedAt is upload receipt, not necessarily incident time",
+  "baselineCommit": "ab1a343",
+  "diagnostics": [
+    {
+      "sourceFile": "2026-10-15T06-04-22-733Z_rPUU1v96_1hLmGaXAAVQ.json",
+      "sha256": "75d70c9204756048d3d221a4569a9783b80c5376658a357bf5f0d63109acd6ae",
+      "receivedAt": "2026-10-15T06:04:22.705Z",
+      "reason": null,
+      "mode": "relay",
+      "pc": {
+        "connectionState": "failed",
+        "iceConnectionState": "disconnected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "keyboard-transport-revoked",
+        "draft-uncertain"
+      ],
+      "derivedFps": 0,
+      "rttMs": 96
+    },
+    {
+      "sourceFile": "2026-10-15T06-06-34-815Z_081X6w0da2dy5WusAAVS.json",
+      "sha256": "7a6365f8f673f63ef8163a9846e3cbe6a4fcc1f578aa6c625f61e9eb0e3de606",
+      "receivedAt": "2026-10-15T06:06:34.808Z",
+      "reason": "dc-stuck",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "new",
+        "iceConnectionState": "new",
+        "iceGatheringState": "complete",
+        "signalingState": "have-local-offer"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "inactive",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 0,
+      "rttMs": null
+    },
+    {
+      "sourceFile": "2026-10-15T06-07-49-950Z_http-viewer-password-login.json",
+      "sha256": "91a589176626d3e9226ddb3a715952744bf96b4956f40ff53687d40f0a8817b3",
+      "receivedAt": "2026-10-15T06:07:49.942Z",
+      "reason": "dc-error",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "keyboard-transport-revoked",
+        "mouse-reset-pending",
+        "draft-uncertain"
+      ],
+      "derivedFps": 0,
+      "rttMs": 65
+    },
+    {
+      "sourceFile": "2026-10-15T06-35-24-969Z_f0sSebIerP4RJNA5AAVY.json",
+      "sha256": "5f2e94e68e71aa122354a0506d9ac38a3ef4271bb8bfb92f88da8aca042dbe42",
+      "receivedAt": "2026-10-15T06:35:24.961Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 17,
+      "rttMs": 94
+    },
+    {
+      "sourceFile": "2026-10-15T06-44-40-717Z_HxvQktv9eVoOsKYJAAVa.json",
+      "sha256": "c15cd74a3a00ffcb697eac16df74f9fe120cd01604984aa9fa23747c6e720dd7",
+      "receivedAt": "2026-10-15T06:44:40.710Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 60
+    },
+    {
+      "sourceFile": "2026-10-15T06-45-54-902Z_ICDx72SHH17CPCfOAAVc.json",
+      "sha256": "c04dfcfd62814546d49ef243f53b0135195a2a02b69f7433dca7aace785dfa38",
+      "receivedAt": "2026-10-15T06:45:54.897Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 65
+    },
+    {
+      "sourceFile": "2026-10-15T07-42-38-874Z_qLPt_S3C-OyI-kN5AAVp.json",
+      "sha256": "7644b95c2e53c7d30180e6bb8f3469c027f2ca59364351ef060b8a7c89cc8a9e",
+      "receivedAt": "2026-10-15T07:42:38.871Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 61
+    },
+    {
+      "sourceFile": "2026-10-15T08-43-40-467Z_b3bd1QAdRumme7xsAAVs.json",
+      "sha256": "aef820175f40eefeb653ae647d79c70eea5b097e3883e9202ba4c240a278a5b0",
+      "receivedAt": "2026-10-15T08:43:40.447Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 18.9,
+      "rttMs": 60
+    },
+    {
+      "sourceFile": "2026-10-15T08-50-29-330Z_GNw1kYLpnx7Ns93mAAVu.json",
+      "sha256": "2a2cc02b59f3544d830ebacf6106122ff9adf2bfb690a0bfa4f78a28c9fb995c",
+      "receivedAt": "2026-10-15T08:50:29.324Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt",
+        "keyboard-transport-revoked",
+        "draft-uncertain"
+      ],
+      "derivedFps": 17,
+      "rttMs": 57
+    },
+    {
+      "sourceFile": "2026-10-15T09-34-47-531Z_isOi89yTK3koeLJSAAVw.json",
+      "sha256": "1c95850b7ac59df91b7bf440f1a71032a4fdc0dbb7e80cf9e93fe861a95f16f1",
+      "receivedAt": "2026-10-15T09:34:47.523Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 18,
+      "rttMs": 60
+    },
+    {
+      "sourceFile": "2026-10-15T10-38-15-006Z_GY8URW_eF8xnnxT6AAV1.json",
+      "sha256": "4ca16233d61bde9ec212d2e5cf10999de0bc569685154a20dd6358f4c080a99d",
+      "receivedAt": "2026-10-15T10:38:14.997Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19,
+      "rttMs": 68
+    },
+    {
+      "sourceFile": "2026-10-15T10-49-58-000Z_qLwoR-KzSFs3H8zMAAV3.json",
+      "sha256": "bffdc01e61ca4a407f491c88cf722b7558715abd9e7e55f6894e870fc135c2f6",
+      "receivedAt": "2026-10-15T10:49:57.994Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19.9,
+      "rttMs": 67
+    },
+    {
+      "sourceFile": "2026-10-15T10-53-44-472Z_LoV0LC4qQbJG4mcwAAV6.json",
+      "sha256": "ff3a4efd940da0f0f375714d9851442ebe2be2c27c574ebc3fa36a236514e20d",
+      "receivedAt": "2026-10-15T10:53:44.466Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt",
+        "keyboard-transport-revoked",
+        "draft-uncertain"
+      ],
+      "derivedFps": 20,
+      "rttMs": 63
+    },
+    {
+      "sourceFile": "2026-10-15T10-57-24-036Z_qd0aabXhBt41J_bZAAV9.json",
+      "sha256": "c7247102e23324dbf3331a9b98538e0cf38bf9e3926df6ef517e83303d1cf1c6",
+      "receivedAt": "2026-10-15T10:57:24.033Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 62
+    },
+    {
+      "sourceFile": "2026-10-15T11-10-57-651Z_WB2By6u7-6O_-iQCAAV_.json",
+      "sha256": "a59ea2af5c4e8c4ad50de0387dc0cf0f831391611233fe4444898e51064ab54d",
+      "receivedAt": "2026-10-15T11:10:57.646Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19.1,
+      "rttMs": 61
+    },
+    {
+      "sourceFile": "2026-10-15T11-13-21-616Z_QTtJgtvaEzP34mn9AAWB.json",
+      "sha256": "9b033bd0f178947a5e2efa7cc0227a0a5835ad7cb3e8629b3b1365f5dabc7e13",
+      "receivedAt": "2026-10-15T11:13:21.612Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19,
+      "rttMs": 63
+    },
+    {
+      "sourceFile": "2026-10-15T11-25-31-340Z_0ZwImE-cfyq0RCD5AAWD.json",
+      "sha256": "42fba1a04f2651f547320522106a2f47671301954697d6dbdf6a15dbc437bf7b",
+      "receivedAt": "2026-10-15T11:25:31.335Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19.1,
+      "rttMs": 60
+    },
+    {
+      "sourceFile": "2026-10-15T11-30-34-218Z_3hkOAdkzKUAORQADAAWF.json",
+      "sha256": "4b428f6bc2bac36d78ad889b9b4d049e2ff420da7aa170dd2dfc8633d1836f30",
+      "receivedAt": "2026-10-15T11:30:34.212Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspending",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspending",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19.9,
+      "rttMs": 61
+    },
+    {
+      "sourceFile": "2026-10-15T11-44-19-146Z_luUGW4RrmvSEPAMbAAWK.json",
+      "sha256": "b05209f8e617af78f2d5d12ba290ec7e8b007055a882e88d7ace73b32178c577",
+      "receivedAt": "2026-10-15T11:44:19.137Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 19.1,
+      "rttMs": 68
+    },
+    {
+      "sourceFile": "2026-10-15T12-08-06-840Z_Hari8KWhlXFCvseOAAWP.json",
+      "sha256": "6bd13219b0605864785246ec48018c7c24ff537c5fc33c65f9613e05037bf58f",
+      "receivedAt": "2026-10-15T12:08:06.835Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 16,
+      "rttMs": 61
+    },
+    {
+      "sourceFile": "2026-10-15T13-09-36-529Z_v075QwJoTRm_njqZAAWR.json",
+      "sha256": "45077a42b9a62a198752180f235a2b3f0dcb2023c5835a61dcd18b3cbbb087df",
+      "receivedAt": "2026-10-15T13:09:36.523Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "suspended",
+      "runtimePhase": "suspended",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:suspended",
+        "media-state:suspended",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 66
+    },
+    {
+      "sourceFile": "2026-10-15T14-02-17-224Z_AIbOICd6bE4I770BAAWT.json",
+      "sha256": "c279321c476508b65b915f21b798999ccb4cc0114e31acff56392992e65d0db9",
+      "receivedAt": "2026-10-15T14:02:17.212Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connecting",
+        "iceConnectionState": "checking",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "resuming",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:resuming",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 0,
+      "rttMs": null
+    },
+    {
+      "sourceFile": "2026-10-15T14-07-48-387Z_leEVArx-KGxKlHLYAAWV.json",
+      "sha256": "998443bab6f49fa1d8328f7f35eb13129c85182138f84ea18897f917fa8e96fb",
+      "receivedAt": "2026-10-15T14:07:48.379Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "resuming",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:resuming",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 20,
+      "rttMs": 65
+    },
+    {
+      "sourceFile": "2026-10-15T14-09-46-366Z_ioIDkc44mUJDNA99AAWX.json",
+      "sha256": "de5f1d8908668eecc93260bfb46f70677b9c68f81ef687f3ade29a70c56abbc6",
+      "receivedAt": "2026-10-15T14:09:46.361Z",
+      "reason": "paint-pending-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connecting",
+        "iceConnectionState": "checking",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "resuming",
+      "blockedReasons": [
+        "inactive",
+        "runtime-phase:resuming",
+        "media-not-ready-for-attempt"
+      ],
+      "derivedFps": 0,
+      "rttMs": null
+    },
+    {
+      "sourceFile": "2026-10-15T14-28-39-210Z_SUFNxaWh9Q5FHFStAAWZ.json",
+      "sha256": "4a67acbe28e421912d3794a5552cb1d8905c27fe620cad86252b1535141aac56",
+      "receivedAt": "2026-10-15T14:28:39.206Z",
+      "reason": "input-ack-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "surface-pending"
+      ],
+      "derivedFps": 0,
+      "rttMs": 61
+    },
+    {
+      "sourceFile": "2026-10-15T14-28-58-024Z_SUFNxaWh9Q5FHFStAAWZ.json",
+      "sha256": "6f82c96ce311ad040477222d35f2a3326872287123a5768f3e523df310c12e78",
+      "receivedAt": "2026-10-15T14:28:58.018Z",
+      "reason": "input-ack-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "surface-pending"
+      ],
+      "derivedFps": 0,
+      "rttMs": 66
+    },
+    {
+      "sourceFile": "2026-10-15T14-30-17-441Z_SUFNxaWh9Q5FHFStAAWZ.json",
+      "sha256": "839c547d9f16e1539202350e4ac249cb2589dfd5b55b3282d30ec6a668f2e58c",
+      "receivedAt": "2026-10-15T14:30:17.434Z",
+      "reason": "input-ack-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "surface-pending"
+      ],
+      "derivedFps": 16,
+      "rttMs": 65
+    },
+    {
+      "sourceFile": "2026-10-15T14-31-42-650Z_wpuXoARuE2mAI_vLAAWb.json",
+      "sha256": "cca9f58e225eb5a152277fd6912a2470899fe355ea8b0ba66382d7e7a961b74e",
+      "receivedAt": "2026-10-15T14:31:42.647Z",
+      "reason": "input-ack-timeout",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": true,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "keyboard-transport-blocked",
+        "keyboard-reset-pending",
+        "surface-uncertain",
+        "mouse-reset-pending",
+        "draft-uncertain",
+        "recovery-waiting"
+      ],
+      "derivedFps": 20.1,
+      "rttMs": 67
+    },
+    {
+      "sourceFile": "2026-10-15T14-41-31-964Z_-7346T_Mbglo-XrNAAWh.json",
+      "sha256": "f4d1b7a8d45a64f18fcdd10407de61e8ae14a85c8ba5e4816204e776e9240951",
+      "receivedAt": "2026-10-15T14:41:31.959Z",
+      "reason": "pc-failed",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "failed",
+        "iceConnectionState": "disconnected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "keyboard-transport-revoked",
+        "draft-uncertain"
+      ],
+      "derivedFps": 0,
+      "rttMs": 62
+    },
+    {
+      "sourceFile": "2026-10-15T14-42-01-449Z_http-viewer-password-login.json",
+      "sha256": "0896ede700491e4b8dff03ab01af119c54dc2a816f495d56112194809b5fc3da",
+      "receivedAt": "2026-10-15T14:42:01.445Z",
+      "reason": "dc-error",
+      "mode": "relay",
+      "pc": {
+        "connectionState": "connected",
+        "iceConnectionState": "connected",
+        "iceGatheringState": "complete",
+        "signalingState": "stable"
+      },
+      "hasLease": false,
+      "mediaState": "active",
+      "runtimePhase": "active",
+      "blockedReasons": [
+        "no-active-control",
+        "inactive",
+        "keyboard-transport-revoked",
+        "draft-uncertain"
+      ],
+      "derivedFps": 0,
+      "rttMs": 62
+    }
+  ],
+  "verification": {
+    "viewerTests": 799,
+    "hostTests": 84,
+    "signalTests": 85,
+    "failed": 0,
+    "build": "PASS (temporary output directory)",
+    "publicLongRun": "NOT RUN",
+    "physicalInput": "NOT RUN"
+  },
+  "limits": [
+    "Initial cause of reliable DC outage is not established by existing logs.",
+    "Suspended paint timeouts are diagnostic false positives, not proof of network outage.",
+    "Read-only service health does not prove desktop input works."
+  ],
+  "deployment": {
+    "localReload": "completed; helper timed out waiting for Host, subsequent independent health and online checks passed",
+    "signalPid": 22232,
+    "hostPid": 22537,
+    "formalTunnelPid": 9230,
+    "formalTunnelProcessUnchanged": true,
+    "quickUrlFileUnchanged": true,
+    "servedDesktopAsset": "desktop-core.53adfd7519ca04dc.js",
+    "servedAssetMatchesBuild": true,
+    "publicProbe": {
+      "curlHttpStatus": 200,
+      "bodyStatus": "ok",
+      "checkedAt": "2026-10-16T01:39:28+08:00",
+      "urllibProbeHttpStatus": 403,
+      "note": "Different probe clients received different responses; curl and existing watcher passed."
+    },
+    "postReloadObservedMouseAndKeyboardReset": "applied",
+    "viewerFullRefreshRequired": true
+  },
+  "resourceObservation": {
+    "logicalCpus": 12,
+    "load1": 546.55,
+    "swapUsedMiB": 17522.75,
+    "context": "observed during investigation; not evidence of pre-investigation resource levels"
+  }
+}

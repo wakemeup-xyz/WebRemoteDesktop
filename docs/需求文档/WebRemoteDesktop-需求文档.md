@@ -53,6 +53,16 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ## 3. 功能需求
 
+### 3.0 2026-10-17稳定性与延迟整改状态
+
+最近三天复查发现输入锁等待最高60.8秒、Host事件循环秒级停顿、控制恢复竞态、网页恢复与诊断留存缺陷。以下是待实施要求；旧功能勾选不代表这些异常路径已经通过验收。事实、限制与完整问题ID见[诊断报告](../superpowers/reports/2026-10-17-three-day-review-and-solution.md)，共同契约见[总spec](../superpowers/specs/2026-10-17-reliability-latency-remediation-design.md)，执行与验收见[总plan](../superpowers/plans/2026-10-17-reliability-latency-remediation-plan.md)。
+
+- [ ] **控制恢复**：rebind成功续租并立即心跳；新transition使用新epoch；旧异步任务和旧ACK不能覆盖/确认新授权；普通键盘ACK失联受监督；reset确认后有界自动重新申请。
+- [ ] **输入与媒体隔离**：可靠输入队列有项数/字节上限，编号前合并高频输入；饱和走既有安全reset，不重放不确定输入、不执行旧epoch积压；JPEG捕获编码不阻塞控制event loop。
+- [ ] **可信耗时**：分别报告输入确认往返、Host排队/应用、帧通知、新鲜帧、受控可见效果；缺测不填零，不使用跨机wall clock或RTT/2冒充单向传输；统计窗口、scope、超时和重复样本正确。
+- [ ] **网页与诊断**：临时服务故障保留有效认证；请求有界、跨版本延迟资源可恢复；巡检总截止与完成后冷却正确；自动/手动诊断同schema，记录build/实际事件时间/资源压力，保留最新明细及有界三天聚合并声明覆盖缺口。
+- [ ] **真实验收**：按路径/质量档位/资源负载分别验证，保留Quality Lock及手动网络选择；授权窗口完成至少3小时连续会话与真实输入/内容因果验证，未做项目保持NOT RUN。当前仅文档完成，未修复或重启。
+
 ### 3.1 视频流
 
 - [x] **屏幕捕获**：使用 MSS 库实时捕获 macOS 屏幕
@@ -61,7 +71,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **媒体时钟与延迟基础**：浏览器端继续使用 `jitterBufferTarget = 0`；Host 视频帧使用单调的 90kHz RTP 时钟，避免 wall-clock 调整造成异常 PTS 跳跃。历史的「GOP 1 秒即延迟优化」不是完成结论。
 - [x] **Canonical 统计与恢复身份**：Viewer 以区间 `decodedDelta` 计算 `derivedFps`，浏览器报告的 FPS 只作诊断；恢复请求携带当前 connection attempt 与 generation，旧会话事件不得影响当前会话。
 - [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。默认 relay-peak-sliced-v1 的已测标准 20fps relay intent 使用 VideoToolbox 优先、双 slice、零应用层周期 IDR、keyint=1201 safety-net 与显式请求 IDR：1280x720 或 1152x720 为 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit，1920x1080 或 1728x1080 为 5Mbps / 7.2Mbps / 1300kbit；硬件编码不可用时回退 libx264 ultrafast。其它 resolution 或 FPS 实际回退 relay-on-demand-v1 ultrafast 单线程；on-demand、legacy 可显式回滚，balanced 仍禁止生产。真实 TURN/Viewer、丢包和物理设备验收未由离线通过替代。
-- [x] **捕获节奏边界**：离线采集实验没有通过浏览器 paint 门禁，生产捕获仍保持 target FPS 的 2 倍；不得把离线采集结果当成真实 relay 画面验收。
+- [x] **捕获节奏边界**：2026-10-17源码复核，正常生产offer工厂显式使用 `CaptureExperiment(1.0,1)`，按target FPS的1倍捕获；2倍仍存在于默认/兼容/实验入口，不能泛化为正常生产链。源码事实不代表已核验每个历史运行进程，也不代表离线采集实验通过真实浏览器paint验收。
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
 - [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
@@ -72,7 +82,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **TURN 选择与自检**：网络面板展示配置来源/fingerprint/Host ready；支持一键「测试 TURN」（配置完整性、Allocate、双边一致性）；诊断 snapshot 含 `turnSelfTest`
 - [x] **Strict STUN 自适应降载**：Viewer 根据 FPS、RTT、jitter buffer 和丢包识别弱直连链路，自动降为 540p/15fps、480p/12fps、360p/8fps，并通知 Host 调整采集档位
 - [x] **自适应恢复**：连续 10 个良好样本且距离上次档位变化至少 15 秒后只升一级；每次降档必须由两个新的退化样本触发，避免旧统计重复决策和频繁振荡
-- [x] **目标帧率采集节奏**：Host 按当前 target FPS 动态调整 MSS 抓屏频率并限制在 60 FPS；survival 8 FPS 档最多按 16 FPS 抓屏，降低无效采集和转换开销
+- [x] **目标帧率采集节奏**：Host 按当前 target FPS 和入口的capture multiplier调整 MSS 抓屏频率，上限60 FPS；正常生产1倍路径的survival 8 FPS按8 FPS抓屏，兼容/实验2倍入口可为16 FPS，需记录实际入口与配置，不混算性能。
 - [x] **主动 ICE 恢复**：直连媒体链路持续 0 FPS 或严重退化时，Viewer 在 Strict STUN 模式下最多主动尝试一次 ICE restart；自动恢复耗尽后明确失败并自动上报诊断。自动恢复有界，但不是唯一后续手段：用户可再手动触发端口搜索
 - [x] **按需媒体暂停**：切换 Terminal 或用户手动暂停时立即停止屏幕 capture、编码和视频 payload；页面进入后台须持续 **5 分钟（300s）** 才停止采集。WebRTC 保留 PeerConnection、ICE 和 DataChannel，tunnel 保留控制连接，Terminal Socket、PTY 和 admin 授权不受影响
 - [x] **暂停期健康语义**：暂停和恢复中的预期 0 FPS 不触发质量降档、ICE restart 或自动重连；只有匹配当前 connection attempt（含 tunnel 的 connection-attempt-bind 权威）的恢复 ack 与一帧新渲染画面后才重新启用桌面输入。Terminal/page visibility 的自动 reason 不会覆盖 `manual-pause`
@@ -119,7 +129,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport`、Viewer 本地 pending RTT 和 Host adapter-await 时间，便于区分 DataChannel 与 Socket.IO 兜底路径；这些是各自边界的耗时，不冒充跨机器单向延迟或可见原生效果。`dom-received`、`gate`、`transport-send`、`ack`/`ack-timeout`、`lifecycle`/`recovery` 六阶段摘要共用同一有界诊断轨迹
-- 桌面输入执行后必须独立返回 `input_ack`：浏览器用本地 pending 计算 `inputRtt`，Host 只回传同机 `hostExecuteMs`；下一帧 timing 只记录 `visualFeedback`，不得再把等待视频帧混入输入 transport RTT。DataChannel 输入不经过 Signal；`enqueued` 只表示 Viewer 本地接受排队，`applied` 是 Host adapter 返回成功，业务 ACK 仍不等于操作者已经看到系统效果
+- 桌面输入执行后必须独立返回 `input_ack`：浏览器同钟计算业务ACK往返，Host区分adapter-await、内部排队和实际应用。frame_timing只证明帧通知；输入后新捕获帧也不等于任意应用已产生可见效果。真正可见效果须有受控内容因果证据，缺测显示unavailable。2026-10-17复查发现当前UI/兼容分支/键盘计时仍违反该契约，属于待整改L1–L7，不能据现有字段声称已实现。DataChannel输入不经过Signal；`enqueued`是本地接受，`applied`是Host adapter成功，均不等于用户已看到效果。
 
 #### 3.3.1 键盘协议、映射与兼容契约
 
