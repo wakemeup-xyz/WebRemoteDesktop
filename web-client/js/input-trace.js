@@ -158,6 +158,14 @@
   function create(options) {
     const config = options || {};
     const schemaVersion = config.schemaVersion === 3 ? 3 : 1;
+    // Independent from browserSessionId (which survives reload). This trace epoch
+    // travels with both at and traceNowMs, so consumers never subtract new-boot clocks.
+    const bootIdHash = schemaVersion === 3 ? (() => {
+      const words = new Uint32Array(4);
+      if (root.crypto && typeof root.crypto.getRandomValues === 'function') root.crypto.getRandomValues(words);
+      else for (let i = 0; i < words.length; i++) words[i] = Math.floor(Math.random() * 0x100000000);
+      return Array.from(words, word => word.toString(16).padStart(8, '0')).join('');
+    })() : null;
     const now = typeof config.now === 'function'
       ? config.now
       : () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -238,7 +246,7 @@
     function snapshotObject() {
       return {
         schemaVersion,
-        ...(schemaVersion === 3 ? { traceNowMs: traceNowMs() } : {}),
+        ...(schemaVersion === 3 ? { traceNowMs: traceNowMs(), bootIdHash } : {}),
         events: events.map(publicEvent),
         counters: publicCounters(),
       };
@@ -565,7 +573,7 @@
         // expose internal correlation state through object references.
         return JSON.parse(JSON.stringify(result));
       } catch (_error) {
-        return { schemaVersion, ...(schemaVersion === 3 ? { traceNowMs: traceNowMs() } : {}), events: [], counters: publicCounters() };
+        return { schemaVersion, ...(schemaVersion === 3 ? { traceNowMs: traceNowMs(), bootIdHash } : {}), events: [], counters: publicCounters() };
       }
     }
 

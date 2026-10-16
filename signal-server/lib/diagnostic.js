@@ -1,5 +1,4 @@
-const fs = require('fs');
-const path = require('path');
+const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
 
 const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
@@ -95,10 +94,6 @@ function redactRuntimeDiagnostic(payload) {
   }
   return clean;
 }
-
-const DIAG_MAX_AGE_DAYS = 7;
-const DIAG_MAX_PER_VIEWER = 3;
-const DIAG_MAX_TOTAL = 50;
 
 const INPUT_TRACE_MAX_EVENTS = 256;
 const INPUT_TRACE_MAX_BYTES = 64 * 1024;
@@ -286,6 +281,7 @@ function redactInputTrace(inputTrace) {
     schemaVersion: safeInteger(inputTrace.schemaVersion, 10) || 1,
     events,
     counters,
+    ...(inputTrace.schemaVersion === 3 ? { traceNowMs: safeInteger(inputTrace.traceNowMs, Number.MAX_SAFE_INTEGER), bootIdHash: digestValue(inputTrace.bootIdHash) } : {}),
   };
   const byteLength = () => Buffer.byteLength(JSON.stringify(clean), 'utf8');
   while (events.length && byteLength() > INPUT_TRACE_MAX_BYTES) {
@@ -448,173 +444,21 @@ function redactDiagnosticPayload(payload) {
   };
 }
 
-function getDiagDir() {
-  // Prefer a stable absolute path so operators/agents can find uploads without
-  // chasing macOS per-user os.tmpdir() folders. Override with WRD_DIAG_DIR.
-  const override = String(process.env.WRD_DIAG_DIR || '').trim();
-  if (override) return path.resolve(override);
-  return path.join('/tmp', 'wrd-diag');
+// Keep the public persistence API; all real filesystem operations and receipts
+// live in the one diagnostic store. HTTP and Socket still share this ingress.
+const diagnosticStore = () => createDiagnosticStore({ dir: getDiagDir() });
+function persistDiagnostic(filename, report) { return diagnosticStore().persistLegacy(filename, report); }
+function loadDiagnosticReceipts(now) { return diagnosticStore().loadDiagnosticReceipts(now); }
+function saveDiagnosticReceipts(index) { return diagnosticStore().saveDiagnosticReceipts(index); }
+function persistDiagnosticOnce(report, { viewerId = report.viewerId, receivedAt = report.receivedAt, now } = {}) {
+  return createDiagnosticStore({ dir: getDiagDir(), ...(now === undefined ? {} : { now: () => now }) })
+    .write({ ...report, viewerId, receivedAt });
 }
-
-function writeJsonAtomically(target, value) {
-  const temporary = `${target}.${crypto.randomBytes(8).toString('hex')}.tmp`;
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(value), { encoding: 'utf8', flag: 'wx' });
-    const file = fs.openSync(temporary, 'r');
-    try { fs.fsyncSync(file); } finally { fs.closeSync(file); }
-    fs.renameSync(temporary, target);
-    const directory = fs.openSync(path.dirname(target), 'r');
-    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-  } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
-}
-function persistDiagnostic(filename, report) {
-  const dir = getDiagDir();
-  fs.mkdirSync(dir, { recursive: true });
-  writeJsonAtomically(path.join(dir, path.basename(filename)), report);
-}
-
-// One durable receipt index, shared by raw/event persistence and future summaries.
-// Hash-only keys expire after 24h; eviction at 10k entries bounds dedupe coverage.
-const RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
-const RECEIPT_MAX_ENTRIES = 10000;
-function loadDiagnosticReceipts(now = Date.now()) {
-  const target = path.join(getDiagDir(), '.receipt-index');
-  let records = [];
-  if (fs.existsSync(target)) {
-    const stat = fs.lstatSync(target);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw Error('invalid-receipt-index');
-    const value = JSON.parse(fs.readFileSync(target, 'utf8'));
-    if (value.schemaVersion !== 1 || !Array.isArray(value.records)) throw Error('invalid-receipt-index');
-    records = value.records.filter(row => row && ['report', 'scope-ended'].includes(row.kind)
-      && digestValue(row.key) && Number.isSafeInteger(row.at) && row.at <= now && now - row.at <= RECEIPT_TTL_MS)
-      .slice(-RECEIPT_MAX_ENTRIES).map(row => ({ kind: row.kind, key: row.key, at: row.at,
-        ...(row.kind === 'report' ? { eventIdHashes: (Array.isArray(row.eventIdHashes) ? row.eventIdHashes : []).filter(digestValue).slice(0, 4) } : {}) }));
-  }
-  return { schemaVersion: 1, records };
-}
-function saveDiagnosticReceipts(index) {
-  const dir = getDiagDir(); fs.mkdirSync(dir, { recursive: true });
-  writeJsonAtomically(path.join(dir, '.receipt-index'), { schemaVersion: 1, records: index.records.slice(-RECEIPT_MAX_ENTRIES) });
-}
-function persistDiagnosticOnce(report, { viewerId, receivedAt, now = Date.now() }) {
-  const index = loadDiagnosticReceipts(now);
-  const reportKey = hashIdentity(report.diagnosticId);
-  const existing = index.records.find(row => row.kind === 'report' && row.key === reportKey);
-  if (existing) return { persisted: true, duplicate: true, eventIdHashes: existing.eventIdHashes || [], receiptKey: reportKey };
-  const eventIdHashes = [];
-  for (const event of (report.scopeEnded?.events || [])) {
-    const existingEvent = index.records.find(row => row.kind === 'scope-ended' && row.key === event.eventIdHash);
-    if (!existingEvent) {
-      const filename = `scope-ended_${event.eventIdHash}.json`;
-      if (!fs.existsSync(path.join(getDiagDir(), filename))) persistDiagnostic(filename, { type: 'scope-ended', schemaVersion: 3,
-        receivedAt, eventIdHash: event.eventIdHash, endedAtMs: event.endedAtMs, snapshot: event.snapshot });
-      index.records.push({ kind: 'scope-ended', key: event.eventIdHash, at: now });
-    }
-    eventIdHashes.push(event.eventIdHash);
-  }
-  const filename = `runtime_${reportKey}_${hashIdentity(viewerId)}.json`;
-  if (!fs.existsSync(path.join(getDiagDir(), filename))) persistDiagnostic(filename, report);
-  // Completion is recorded only after every event and the raw report were written.
-  index.records.push({ kind: 'report', key: reportKey, at: now, eventIdHashes });
-  saveDiagnosticReceipts(index);
-  return { persisted: true, duplicate: false, eventIdHashes, receiptKey: reportKey };
-}
-
 function cleanupDiagLogs(logger = console) {
-  const dir = getDiagDir();
-  try {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        const stat = fs.statSync(filePath);
-        return { name, filePath, mtimeMs: stat.mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    const now = Date.now();
-    const maxAgeMs = DIAG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-    for (const file of files) {
-      if (now - file.mtimeMs > maxAgeMs) {
-        fs.unlinkSync(file.filePath);
-      }
-    }
-
-    const remaining = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        const stat = fs.statSync(filePath);
-        const viewerId = name.replace(/^.+_/, '').replace('.json', '');
-        return { name, filePath, viewerId, mtimeMs: stat.mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    const viewerCounts = {};
-    for (const file of remaining) {
-      viewerCounts[file.viewerId] = (viewerCounts[file.viewerId] || 0) + 1;
-      if (viewerCounts[file.viewerId] > DIAG_MAX_PER_VIEWER) {
-        fs.unlinkSync(file.filePath);
-        viewerCounts[file.viewerId] -= 1;
-      }
-    }
-
-    const finalFiles = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    while (finalFiles.length > DIAG_MAX_TOTAL) {
-      const oldest = finalFiles.shift();
-      fs.unlinkSync(oldest.filePath);
-    }
-  } catch (error) {
-    logger.error?.('[DIAGNOSTIC] cleanup failed:', error.message);
-  }
+  try { return diagnosticStore().cleanup(); }
+  catch (error) { logger.error?.('[DIAGNOSTIC] cleanup failed:', error.message); }
 }
-
-function loadRecentDiagnostics(limit = 50, options = {}) {
-  const dir = getDiagDir();
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-  const logger = options.logger || console;
-
-  return fs.readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
-    .flatMap((name) => {
-      const filePath = path.join(dir, name);
-      try {
-        return [{
-          name,
-          filePath,
-          mtimeMs: fs.statSync(filePath).mtimeMs,
-        }];
-      } catch (error) {
-        logger.warn?.(`[DIAGNOSTIC] Skip unreadable file ${name}: ${error.message}`);
-        return [];
-      }
-    })
-    .sort((a, b) => {
-      if (b.mtimeMs !== a.mtimeMs) {
-        return b.mtimeMs - a.mtimeMs;
-      }
-      return b.name.localeCompare(a.name);
-    })
-    .slice(0, Math.max(0, Number(limit) || 0))
-    .flatMap((entry) => {
-      try {
-        return [JSON.parse(fs.readFileSync(entry.filePath, 'utf8'))];
-      } catch (error) {
-        logger.warn?.(`[DIAGNOSTIC] Skip malformed file ${entry.name}: ${error.message}`);
-        return [];
-      }
-    });
-}
+function loadRecentDiagnostics(limit = 50) { return diagnosticStore().recent(limit); }
 
 function dedupeDiagnosticsByAttempt(items = []) {
   const deduped = [];
@@ -828,11 +672,8 @@ function ingestDiagnosticPayload(options = {}) {
       if (report.diagnosticId) {
         ({ persisted, duplicate, eventIdHashes } = persistDiagnosticOnce(report, { viewerId, receivedAt }));
       } else {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        persistDiagnostic(`${ts}_${viewerId}.json`, report);
-        persisted = true;
+        ({ persisted, duplicate } = diagnosticStore().write(report));
       }
-      cleanupDiagLogs(logger);
     } catch (error) {
       logger.error?.('[DIAGNOSTIC] Failed to write log file:', error.message);
     }

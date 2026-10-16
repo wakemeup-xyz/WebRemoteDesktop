@@ -337,3 +337,18 @@ test('schema3 timestamp validation rejects coercion, negative, nonfinite and uns
     const snapshot = trace.snapshot(); assert.equal(snapshot.traceNowMs, null); assert.equal(snapshot.events[0].at, null); trace.dispose();
   }
 });
+
+
+test('schema3 15-minute chronology and boot hashes prevent cross-boot age comparison', () => {
+  let now=0;
+  const first=requireCollector().create({schemaVersion:3,now:()=>now,hashInputIds:null});
+  for(const value of [0,599999,600001,900000]){now=value;first.record('lifecycle',{action:'pause'});}
+  const a=first.snapshot(); assert.deepEqual(a.events.map(e=>e.at),[0,599999,600001,900000]);
+  assert.equal(a.traceNowMs,900000); assert.match(a.bootIdHash,/^[a-f0-9]{32}$/);
+  assert.equal(first.snapshot().bootIdHash,a.bootIdHash);
+  // A new collector represents a new trace epoch; only its own events use its clock.
+  const second=requireCollector().create({schemaVersion:3,now:()=>0,hashInputIds:null});
+  const b=second.snapshot();assert.notEqual(a.bootIdHash,b.bootIdHash);
+  assert.equal(b.traceNowMs,0);assert.deepEqual(b.events,[]);
+  first.dispose();second.dispose();
+});

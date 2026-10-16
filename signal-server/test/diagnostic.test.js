@@ -855,7 +855,7 @@ function runtimeFixture() {
   return createRuntimeDiagnosticBuilder({ nowMs: () => 1000000, wallNow: () => '2026-10-17T00:00:00Z', getLatency: () => sample,
     getBuild: () => ({ id: '0123456789abcdef', builtAt: 1792195200000 }),
     getInput: () => ({ inputState: { text: 'RAW_PAYLOAD_CANARY', recentInputEvents: [{ connectionAttemptId: 'RAW_SCOPE_CANARY', text: 'RAW_PAYLOAD_CANARY' }] },
-      inputTrace: { schemaVersion: 3, traceNowMs: 1000000, events: [{ stage: 'ack', at: 999999, connectionAttemptId: 'RAW_SCOPE_CANARY', payload: 'RAW_PAYLOAD_CANARY' }] } }),
+      inputTrace: { schemaVersion: 3, traceNowMs: 1000000, bootIdHash: 'b'.repeat(32), events: [{ stage: 'ack', at: 999999, connectionAttemptId: 'RAW_SCOPE_CANARY', payload: 'RAW_PAYLOAD_CANARY' }] } }),
     getStartup: () => ({ marks: [{ name: 'first-frame', atMs: 4, detail: 'https://private.test/?URL_QUERY_CANARY' }, { name: 'URL_QUERY_CANARY', atMs: 8 }],
       resources: [{ path: 'https://private.test/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' },
         { path: '/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' }, { path: '/assets/core.0123456789abcdef.js', durationMs: 8 }] }),
@@ -874,7 +874,7 @@ test('real runtime redactor+ingest removes canaries and keeps exact M1 whitelist
   assert.equal(report.latency.metrics.inputToVisibleEffectMs.lastSampleAgeMs, null);
   assert.equal(report.latency.outcomes.cancelled, 2); assert.equal(report.scopeEnded.events[0].snapshot.outcomes.cancelled, 2);
   assert.deepEqual(Object.keys(report.latency.scope), ['attemptHash', 'generation', 'leaseEpoch']);
-  assert.equal(report.inputTrace.events[0].at, 999999); assert.equal(report.inputTrace.traceNowMs, 1000000);
+  assert.equal(report.inputTrace.events[0].at, 999999); assert.equal(report.inputTrace.traceNowMs, 1000000); assert.equal(report.inputTrace.bootIdHash, 'b'.repeat(32));
   assert.equal(report.startup.resources.length, 1); assert.equal(report.build.builtAt, 1792195200000);
   assert.equal(result.receipt.accepted, false); assert.deepEqual(result.receipt.eventIdHashes, []);
 });
@@ -885,11 +885,11 @@ test('durable receipt ledger dedupes reports and scope events after raw eviction
   try {
     const payload = runtimeFixture(); const ingest = data => ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data, config: { enableDiagPersist: true }, logger: {} });
     const first = ingest(payload); assert.equal(first.persisted, true); assert.equal(first.receipt.eventIdHashes.length, 1);
-    for (const name of fs.readdirSync(dir).filter(name => name.endsWith('.json'))) fs.unlinkSync(path.join(dir, name));
+    for (const name of fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json'))) fs.unlinkSync(path.join(dir, 'raw', name));
     const again = ingest(payload); assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
-    assert.deepEqual(again.receipt, first.receipt); assert.equal(fs.readdirSync(dir).filter(name => name.endsWith('.json')).length, 0);
+    assert.deepEqual(again.receipt, first.receipt); assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json')).length, 0);
     const next = ingest({ ...payload, diagnosticId: 'f'.repeat(32) }); assert.equal(next.duplicate, false);
-    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 0); // already persisted, raw intentionally evicted
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 0); // already persisted, raw intentionally evicted
     const ledger = require('../lib/diagnostic').loadDiagnosticReceipts();
     assert.equal(ledger.records.filter(row => row.kind === 'scope-ended').length, 1);
     assert.equal(JSON.stringify(ledger).includes('RAW_'), false);
@@ -907,7 +907,7 @@ test('partial raw persistence failure returns no confirmation and retry complete
     const failed = ingestDiagnosticPayload(options); assert.equal(failed.persisted, false); assert.equal(failed.receipt.accepted, false); assert.deepEqual(failed.receipt.eventIdHashes, []);
     fs.writeFileSync = writeFile;
     const retry = ingestDiagnosticPayload(options); assert.equal(retry.persisted, true); assert.equal(retry.receipt.eventIdHashes.length, 1);
-    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 1);
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 1);
     assert.equal(ingestDiagnosticPayload(options).duplicate, true);
   } finally { fs.writeFileSync = writeFile; if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -946,4 +946,21 @@ test('diagnostic socket confirms only persisted IDs and preserves viewer authori
     noPersist.listeners('diagnostic')[0](payload, receipt => { assert.equal(receipt.accepted, false); assert.deepEqual(receipt.eventIdHashes, []); });
     noPersist.disconnect();
   } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingress persists only redacted runtime raw and summary and merges one incident by SHA', () => {
+  const { createDiagnosticStore } = require('../lib/diagnostic-store');
+  const previousDir=process.env.WRD_DIAG_DIR,dir=fs.mkdtempSync(path.join(os.tmpdir(),'w3b-private-'));
+  process.env.WRD_DIAG_DIR=dir;
+  try {
+    const payload=runtimeFixture();
+    const result=ingestDiagnosticPayload({role:'viewer',viewerId:'unit',data:payload,config:{enableDiagPersist:true},logger:{}});
+    assert.equal(result.persisted,true);assert.equal(result.receipt.accepted,true);
+    const raw=fs.readdirSync(path.join(dir,'raw')).map(n=>fs.readFileSync(path.join(dir,'raw',n),'utf8')).join('');
+    const summary=fs.readdirSync(path.join(dir,'summary')).map(n=>fs.readFileSync(path.join(dir,'summary',n),'utf8')).join('');
+    for(const text of [raw,summary])for(const canary of ['RAW_SCOPE_CANARY','RAW_PAYLOAD_CANARY','UNKNOWN_METRIC_CANARY','URL_QUERY_CANARY','https://private.test'])assert.equal(text.includes(canary),false,canary);
+    const records=createDiagnosticStore({dir}).listSummary({from:0,to:Date.now()+1}).records;
+    assert.equal(records.length,1);assert.equal(records[0].rawAvailable,true);assert.equal(records[0].sampleCount,3);
+    assert.equal(summary.includes(payload.diagnosticId),false);
+  } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
 });
