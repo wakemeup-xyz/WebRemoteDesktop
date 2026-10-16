@@ -1866,6 +1866,7 @@ class WebRemoteHost:
         sio.on('disconnect', self.on_disconnect)
         sio.on('input', self.on_input)
         sio.on('control-transition', self.on_control_transition)
+        sio.on('viewer-session-rebind', self.on_viewer_session_rebind)
         sio.on('ice-candidate', self.on_ice_candidate)
         sio.on('diagnostic', self.on_diagnostic)
         sio.on('viewer-status', self.on_viewer_status)
@@ -2565,6 +2566,77 @@ class WebRemoteHost:
         async with lock:
             await self._apply_control_transition(data)
 
+    async def on_viewer_session_rebind(self, data):
+        lock = getattr(self, "_offer_lock", None)
+        if lock is None:
+            lock = self._offer_lock = asyncio.Lock()
+        async with lock:
+            media_lock = getattr(self, "_media_activity_lock", None)
+            if media_lock is None:
+                media_lock = self._media_activity_lock = asyncio.Lock()
+            # Offer processing never takes the media lock, and media handlers
+            # never take the offer lock. Finish old media writes before moving
+            # their viewer identity so they cannot restore the old socket later.
+            async with media_lock:
+                return self._apply_viewer_session_rebind(data)
+
+    def _apply_viewer_session_rebind(self, data):
+        """Move an authenticated page's socket identity without resetting input.
+
+        Only Signal emits this event after validating its reconnect grace. The
+        lease and attempt must already belong to the old socket on this Host;
+        this event cannot establish authority or adopt a different attempt.
+        Keep validation and mutation together without yielding to input work.
+        """
+        if not isinstance(data, dict):
+            return {"status": "rejected"}
+        binding = getattr(self, "_active_input_binding", None)
+        previous = data.get("previousViewerId")
+        viewer = data.get("viewerId")
+        if (
+            not isinstance(binding, dict)
+            or not isinstance(previous, str) or not previous
+            or not isinstance(viewer, str) or not viewer or viewer == previous
+            or binding.get("viewerId") != previous
+            or not isinstance(data.get("leaseId"), str)
+            or len(data["leaseId"]) < 16
+            or data["leaseId"] != binding.get("leaseId")
+            or type(data.get("leaseEpoch")) is not int
+            or data["leaseEpoch"] < 1
+            or data["leaseEpoch"] != binding.get("leaseEpoch")
+            or getattr(self, "current_viewer_id", None) not in (None, previous)
+        ):
+            return {"status": "rejected"}
+
+        media = getattr(self, "_media_activity_binding", None)
+        if isinstance(media, dict) and media.get("viewerId") not in (None, previous):
+            return {"status": "rejected"}
+        # A control re-grant may replace the input binding while retaining its
+        # peer. Media demand retains the peer's attempt authority in that case.
+        for field in ("connectionAttemptId", "connectionAttemptSequence"):
+            expected = binding.get(field)
+            media_value = media.get(field) if isinstance(media, dict) else None
+            if expected is not None and media_value is not None and expected != media_value:
+                return {"status": "rejected"}
+            expected = expected if expected is not None else media_value
+            received = data.get(field)
+            if received != expected or type(received) is not type(expected):
+                return {"status": "rejected"}
+
+        relay = getattr(self, "relay_streamer", None)
+        relay_viewer = getattr(relay, "viewer_id", None)
+        if relay_viewer not in (None, previous):
+            return {"status": "rejected"}
+        binding["viewerId"] = viewer
+        if getattr(self, "current_viewer_id", None) == previous:
+            self.current_viewer_id = viewer
+        if isinstance(media, dict) and media.get("viewerId") == previous:
+            media["viewerId"] = viewer
+        if relay_viewer == previous:
+            relay.viewer_id = viewer
+        logger.info("Viewer session rebound without input reset epoch=%s", data["leaseEpoch"])
+        return {"status": "applied"}
+
     async def _apply_control_transition(self, data):
         if not isinstance(data, dict):
             return
@@ -2821,6 +2893,8 @@ class WebRemoteHost:
                         "generation": 0,
                         "state": "active",
                     }
+                    if isinstance(offer_sequence, int) and offer_sequence >= 1:
+                        self._media_activity_binding["connectionAttemptSequence"] = offer_sequence
 
                 try:
                     offer_width = int(data.get("width") or 0)
@@ -2843,6 +2917,7 @@ class WebRemoteHost:
                                                  getattr(self, "_session_turn_override", None))
                 )
                 self.pc = RTCPeerConnection(configuration=config)
+                offer_pc = self.pc
                 if self._frame_trace_registry is not None:
                     self._frame_trace_registry.record_lab_pc_state(
                         identifier=f"host-pc-{id(self.pc)}", state=str(self.pc.connectionState),
@@ -2862,7 +2937,8 @@ class WebRemoteHost:
 
                 @self.pc.on("icecandidate")
                 async def on_icecandidate(candidate):
-                    if candidate and viewer_id:
+                    target_viewer = self.current_viewer_id if self.pc is offer_pc else None
+                    if candidate and target_viewer:
                         if not should_emit_ice_candidate(network_mode, candidate.sdp):
                             logger.info(
                                 "WRD_POLICY_INFO ice_candidate_dropped mode=%s sdp=%s",
@@ -2874,7 +2950,7 @@ class WebRemoteHost:
                         try:
                             await self.sio.emit('ice-candidate', {
                                 'target': 'viewer',
-                                'viewerId': viewer_id,
+                                'viewerId': target_viewer,
                                 'candidate': {
                                     'candidate': candidate.sdp,
                                     'sdpMLineIndex': candidate.sdpMLineIndex,
@@ -3038,12 +3114,14 @@ class WebRemoteHost:
                 )
                 if answer_sdp:
                     self._log_video_codecs("host-answer", answer_sdp)
+                if self.pc is not offer_pc:
+                    return
                 await self.sio.emit('answer', {
                     'answer': {
                         'type': local_description.type,
                         'sdp': answer_sdp
                     },
-                    'viewerId': viewer_id
+                    'viewerId': self.current_viewer_id
                 })
                 logger.info("Sent answer")
 
@@ -3955,6 +4033,16 @@ class WebRemoteHost:
             "reasons": data.get("reasons") if isinstance(data.get("reasons"), list) else [],
         }
 
+    def _retained_media_attempt_sequence(self, attempt_id):
+        for owner in (getattr(self, "_active_input_binding", None),
+                      getattr(self, "_media_activity_binding", None)):
+            if not isinstance(owner, dict) or owner.get("connectionAttemptId") != attempt_id:
+                continue
+            sequence = owner.get("connectionAttemptSequence")
+            if type(sequence) is int and sequence >= 1:
+                return {"connectionAttemptSequence": sequence}
+        return {}
+
     async def on_media_activity_change(self, data):
         """Apply lease-bound media suspend/resume demand from the active controller."""
         lock = getattr(self, "_media_activity_lock", None)
@@ -4192,6 +4280,7 @@ class WebRemoteHost:
                 # This binding is applied progress, not request history. Preserve
                 # the previous generation so a transient failure can replay once.
                 self._media_activity_binding = {
+                    **self._retained_media_attempt_sequence(normalized["connectionAttemptId"]),
                     "viewerId": normalized["viewerId"],
                     "connectionAttemptId": normalized["connectionAttemptId"],
                     "generation": normalized["generation"],
@@ -4342,6 +4431,7 @@ class WebRemoteHost:
                 applied = True
 
             self._media_activity_binding = {
+                **self._retained_media_attempt_sequence(attempt_id),
                 "viewerId": viewer_id,
                 "connectionAttemptId": attempt_id,
                 "generation": generation,
@@ -4371,7 +4461,11 @@ class WebRemoteHost:
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""
         try:
             if self._is_tunnel_media_control(data):
-                await self._apply_tunnel_media_control(data)
+                lock = getattr(self, "_media_activity_lock", None)
+                if lock is None:
+                    lock = self._media_activity_lock = asyncio.Lock()
+                async with lock:
+                    await self._apply_tunnel_media_control(data)
                 return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
@@ -4451,6 +4545,8 @@ class WebRemoteHost:
             "generation": 0,
             "state": "active",
         }
+        if isinstance(sequence, int) and sequence >= 1:
+            self._media_activity_binding["connectionAttemptSequence"] = sequence
 
     async def on_relay_frame_ack(self, data):
         try:

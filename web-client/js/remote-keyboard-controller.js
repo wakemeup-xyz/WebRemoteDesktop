@@ -291,6 +291,14 @@
       notify();
     }
 
+    function suspend() {
+      // Stop every controller entry point without revoking the transport's
+      // sequence identity. A later authenticated same-session grant resumes it.
+      leaseActive = false;
+      pressed.clear();
+      notify();
+    }
+
     function setMode(nextMode) {
       if (!MODE_VALUES.has(nextMode)) return false;
       reconcilePendingMode();
@@ -460,7 +468,7 @@
       };
     }
 
-    return { setLease, setMode, setVirtualModifier, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
+    return { setLease, suspend, setMode, setVirtualModifier, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
   }
 
   return { create };

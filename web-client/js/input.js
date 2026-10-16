@@ -134,6 +134,8 @@ const Input = {
   _lastSurfaceGeometry: null,
   _surfaceGeometryByElement: new WeakMap(),
   activeControlLease: null,
+  _suspendedControlLease: null,
+  _signalingInputResumePending: false,
   lastKeyboardResetReason: null,
   modifierMask: 0,
   _pendingMouseMove: null,
@@ -246,6 +248,15 @@ const Input = {
   setKeyboardDataChannelAvailable(available) {
     this.initKeyboardController();
     if (!this.keyboardTransport) return;
+    // A signaling outage temporarily parks the same lease. Defer transport
+    // reset until the authenticated grant returns and Socket.IO can carry it.
+    if (this._suspendedControlLease && !this.activeControlLease) return;
+    if (available && typeof WebRTC !== 'undefined'
+        && WebRTC.inputChannel && WebRTC._quarantinedInputChannel === WebRTC.inputChannel) {
+      // A rebind/visibility notification is not proof that this same channel
+      // recovered. It must not invalidate the already recovered Socket context.
+      return;
+    }
     this._recordInputTrace('lifecycle', {
       inputType: 'keyboard',
       action: available ? 'active' : 'inactive',
@@ -330,15 +341,35 @@ const Input = {
     }
   },
 
+  suspendControlLease() {
+    if (this._suspendedControlLease) return true;
+    if (!this.activeControlLease) return false;
+    // Preserve wire sequence ownership while closing all public input gates.
+    // The server may reissue this exact lease during its reconnect grace window.
+    this.setActive(false, { resetKeyboard: false, reason: 'signal-disconnect' });
+    this.parkKeyboard('signal-disconnect');
+    this._invalidateRecoveryIdentity('signal-disconnect');
+    this._recoveryAutoIdentity = null;
+    this._suspendedControlLease = this.activeControlLease;
+    this.activeControlLease = null;
+    this._signalingInputResumePending = true;
+    this.keyboardController?.suspend?.();
+    this.updateKeyboardUI();
+    return true;
+  },
+
   setControlLease(lease) {
     this.initKeyboardController();
     const nextLease = lease && typeof lease.leaseId === 'string' && Number.isInteger(lease.leaseEpoch)
       ? { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch }
       : null;
-    const previousLease = this.activeControlLease;
+    const suspendedLease = this._suspendedControlLease;
+    const previousLease = this.activeControlLease || suspendedLease;
     const leaseChanged = previousLease?.leaseId !== nextLease?.leaseId
       || previousLease?.leaseEpoch !== nextLease?.leaseEpoch;
+    this._suspendedControlLease = null;
     if (leaseChanged) {
+      this._signalingInputResumePending = false;
       this._invalidateRecoveryIdentity('lease-changed');
       this._recoveryAutoIdentity = null;
       // Clear the mobile draft before the controller changes the transport
@@ -373,6 +404,11 @@ const Input = {
       });
     }
     if (this.keyboardController) this.keyboardController.setLease(lease || null);
+    if (suspendedLease && nextLease) {
+      this.setKeyboardDataChannelAvailable(
+        typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open',
+      );
+    }
     if (!nextLease) this.mobileTextInputAdapter?.onTransportState('revoked');
     this.updateKeyboardUI();
     if (nextLease) this._maybeAutoRecover('lease-rebind');
@@ -872,7 +908,8 @@ const Input = {
     // Ordinary surface ACKs, pending drafts, and an owned keyboard reset ACK
     // already in flight are not failures. Only uncertainty or a failed/expired
     // transport state can start a bounded dual-reset cycle.
-    return surfaceUncertain
+    return this._signalingInputResumePending
+      || surfaceUncertain
       || this._pendingMouseReset
       || this._desktopWriteRecovery?.state === 'reacquire-required'
       || (contextNeedsRecovery && !mobile.hasPending)
@@ -965,6 +1002,7 @@ const Input = {
     this._clearRecoveryTimer();
     this._pendingMouseReset = false;
     this._pendingMouseResetId = null;
+    this._signalingInputResumePending = false;
     this._touchAdapters.forEach((adapter) => adapter.rearm?.());
     this._touchAdapters.forEach((adapter) => adapter.flushPending?.());
     this._mobileSurfaceState = 'settled';
@@ -1131,10 +1169,16 @@ const Input = {
   },
 
   _markMobileSurfaceUncertain(_reason) {
+    const timedOutId = _reason === 'down-ack-timeout' ? this._mobileSurfaceGesture?.downId
+      : _reason === 'up-ack-timeout' ? this._mobileSurfaceGesture?.upId : null;
+    const timedOutWrite = timedOutId && this._desktopWritePending.get(timedOutId);
     this._clearMobileSurfaceTimer();
     this._mobileSurfaceGeneration += 1;
     this._mobileSurfaceState = 'uncertain';
     this._mobileSurfaceGesture = null;
+    if (timedOutWrite?.transport === 'datachannel' && typeof WebRTC !== 'undefined') {
+      WebRTC.quarantineReliableInputChannel?.(_reason, timedOutWrite.dataChannel);
+    }
     this.mobileTextInputAdapter?.onTransportState('reacquire-required');
     this._recordInputTrace('recovery', {
       inputType: 'pointer', action: 'recovery', state: 'uncertain',
@@ -1998,6 +2042,11 @@ const Input = {
   },
 
   resetKeyboard(reason) {
+    if (this._suspendedControlLease && !this.activeControlLease) {
+      // Blur/visibility can follow the socket disconnect. Keep the saved
+      // sequence context parked until the same-session grant can reset it.
+      return this.parkKeyboard(reason);
+    }
     this.lastKeyboardResetReason = reason;
     this._mobileResetPending = true;
     this.clearMobileTextInputDock();
@@ -2186,7 +2235,8 @@ const Input = {
     if (reliableWrite && this._desktopWriteRecovery?.state === 'reacquire-required') return null;
     const nextSequence = reliableWrite ? this._desktopWriteSequence + 1 : null;
     if (reliableWrite) data.seq = nextSequence;
-    const commitSequence = () => {
+    const dataChannel = typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null;
+    const commitSequence = (transport) => {
       if (!reliableWrite) return;
       this._desktopWriteSequence = nextSequence;
       this._desktopWritePending.set(data.inputIds[0], {
@@ -2194,6 +2244,8 @@ const Input = {
         seq: nextSequence,
         type,
         action,
+        transport,
+        dataChannel: transport === 'datachannel' ? dataChannel : null,
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
         connectionAttemptId: this._currentConnectionAttemptId(),
@@ -2231,7 +2283,7 @@ const Input = {
       reliable: reliableWrite,
     });
     if (dataChannelAccepted) {
-      commitSequence();
+      commitSequence('datachannel');
       this.recordLatency(data);
       return data.inputIds[0];
     }
@@ -2264,7 +2316,7 @@ const Input = {
         connectionAttemptId,
         reliable: reliableWrite,
       });
-      commitSequence();
+      commitSequence('socket');
       this.recordLatency(data);
       return data.inputIds[0];
     }

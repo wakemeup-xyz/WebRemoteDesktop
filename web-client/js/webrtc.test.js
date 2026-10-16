@@ -6361,6 +6361,43 @@ test('media-pending 8s auto-sends paint-pending-timeout', () => {
   assert.equal(WebRTC.uiPhase, 'media-pending');
 });
 
+test('intentional pause and hidden pages do not report first-paint timeout, but active resume does', () => {
+  const timers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback, ms) { timers.set(ms, callback); return ms; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const sent = [];
+  const fire = (ms) => {
+    const callback = timers.get(ms);
+    timers.delete(ms);
+    callback();
+  };
+  context.Diagnostic = { autoSendFailure(reason) { sent.push(reason); } };
+  WebRTC.updateNetworkUI = () => {};
+  let state = 'active';
+  WebRTC.getMediaActivitySnapshot = () => ({ state, reasons: [], generation: 1 });
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC.schedulePaintPendingCopyTimers();
+  state = 'suspended';
+  fire(8000);
+  assert.deepEqual(sent, []);
+  WebRTC.clearPaintPendingCopyTimers();
+  WebRTC.schedulePaintPendingCopyTimers();
+  assert.equal(timers.size, 0);
+
+  state = 'active';
+  WebRTC.schedulePaintPendingCopyTimers();
+  context.document.hidden = true;
+  fire(8000);
+  assert.deepEqual(sent, []);
+  WebRTC.clearPaintPendingCopyTimers();
+  context.document.hidden = false;
+  WebRTC.schedulePaintPendingCopyTimers();
+  fire(8000);
+  assert.deepEqual(sent, ['paint-pending-timeout']);
+});
+
 test('media-stalled lasting 3s auto-sends media-stalled', () => {
   const timers = new Map();
   const { WebRTC, context } = loadWebRTC({

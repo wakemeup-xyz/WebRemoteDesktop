@@ -1533,6 +1533,68 @@ test('a closed DataChannel uses a connected Socket for the dual reset and fresh 
   )), ['mouse:down:', 'mouse:up:', 'keyboard:key:down', 'keyboard:key:up']);
 });
 
+test('an open but silent reliable DataChannel recovers over Socket.IO without replaying clicks', () => {
+  const h = loadRecoveryFixture();
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  const clicks = h.inputs().filter((payload) => ['down', 'up'].includes(payload.action));
+  assert.equal(clicks.length, 2);
+  const originalDc = h.WebRTC.inputChannel;
+  h.advance(3100);
+  h.Input.requestInputRecovery({ source: 'auto' });
+  const mouseReset = h.inputs().filter((payload) => payload.type === 'mouse' && payload.action === 'reset').at(-1);
+  assert.ok(mouseReset);
+  assert.equal(h.sent.find((entry) => entry.payload === mouseReset)?.event, 'input');
+  assert.equal(originalDc.readyState, 'open', 'recovery must not depend on a close event');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+
+  // Host never received the two clicks. Its sequence-gap ACK permits one
+  // freshly identified reset at the authoritative prefix, not click replay.
+  h.ack(mouseReset, { status: 'sequence-gap', appliedSeq: 0 });
+  const retry = h.inputs().filter((payload) => payload.type === 'mouse' && payload.action === 'reset').at(-1);
+  assert.equal(retry.seq, 1);
+  assert.notDeepEqual(retry.inputIds, mouseReset.inputIds);
+  h.ack(retry);
+  const keyboardReset = h.inputs().filter((payload) => payload.type === 'keyboard' && payload.action === 'reset').at(-1);
+  h.ack(keyboardReset);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.inputs().filter((payload) => ['down', 'up'].includes(payload.action)).length, 2);
+
+  const start = h.sent.length;
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  assert.equal(h.sent.slice(start).filter((entry) => entry.event === 'dc').length, 0);
+  assert.equal(h.sent.slice(start).filter((entry) => entry.event === 'input').length, 2);
+  h.inputs().slice(-2).forEach((payload) => h.ack(payload));
+  h.Input.setKeyboardDataChannelAvailable(true);
+  const keyboardStart = h.sent.length;
+  h.keydown();
+  h.keyup();
+  assert.equal(h.sent.slice(keyboardStart).filter((entry) => entry.event === 'dc').length, 0);
+  assert.equal(h.sent.slice(keyboardStart).filter((entry) => entry.event === 'input').length, 2);
+});
+
+test('a Socket.IO ACK timeout does not quarantine a DataChannel that did not carry the write', () => {
+  const h = loadRecoveryFixture({ channels: 'socket' });
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  h.WebRTC.inputChannel = { readyState: 'open', send() {} };
+  h.advance(3100);
+  assert.notEqual(h.WebRTC._quarantinedInputChannel, h.WebRTC.inputChannel);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+});
+
+test('a retired DataChannel write timing out cannot quarantine its replacement', () => {
+  const h = loadRecoveryFixture();
+  h.pointer('pointerdown');
+  h.pointer('pointerup');
+  const replacement = { readyState: 'open', send() {} };
+  h.WebRTC.inputChannel = replacement;
+  h.advance(3100);
+  assert.notEqual(h.WebRTC._quarantinedInputChannel, replacement);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+});
+
 test('recovery does not claim success when both input transports are unavailable', () => {
   const h = loadRecoveryFixture({channels: 'none'});
   h.Input._markMobileSurfaceUncertain('all-transports-down');

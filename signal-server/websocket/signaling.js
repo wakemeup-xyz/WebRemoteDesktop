@@ -109,7 +109,8 @@ function setupSignaling(io, options = {}) {
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
   const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket
-    && socket?._wrdDisconnected !== true;
+    && socket?._wrdDisconnected !== true
+    && socket?._wrdRebindPending !== true;
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
   const admitProofViewer = (admission, socketId) => instanceRuntime.admitProofViewer(admission, socketId);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
@@ -179,9 +180,27 @@ function setupSignaling(io, options = {}) {
   const mediaActivityProgress = new Map();
 
   function emitControlEvent(type, fields = {}) {
+    // Match the production logger contract: unknown top-level fields are
+    // discarded by normalizeEvent(). Keep an explicit allowlist so adding
+    // credentials or input to an effect cannot accidentally persist them.
+    const correlation = {};
+    for (const key of ['viewerId', 'previousViewerId', 'connectionAttemptId']) {
+      if (typeof fields[key] === 'string') correlation[key] = fields[key];
+    }
+    if (typeof fields.sessionId === 'string') correlation.browserSessionId = fields.sessionId;
+    const meta = {};
+    for (const key of [
+      'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',
+      'rebound', 'schemaVersion', 'state', 'reasons', 'generation',
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
+    }
     const payload = {
-      type,
-      ...fields,
+      domain: 'control',
+      event: type,
+      message: type,
+      correlation,
+      meta,
     };
     // Bounded non-secret fields only — never lease tokens, input, SDP, candidates.
     if (structuredLogger && typeof structuredLogger.info === 'function') {
@@ -402,6 +421,10 @@ function setupSignaling(io, options = {}) {
       || connections.viewers.get(previous.id) !== previous) {
       return false;
     }
+    // An in-flight grant still belongs to the old Host transition. Only an
+    // already active lease can migrate without another reset barrier.
+    const previousLease = withLeaseExpiry(() => desktopLease.getActiveLease(previous.id));
+    if (!previousLease || !connections.host) return false;
 
     if (binding.timer) clearTimeoutFn(binding.timer);
     viewerSessionBindings.delete(sessionId);
@@ -437,12 +460,41 @@ function setupSignaling(io, options = {}) {
       legacyRelayCompanionByOwner.set(nextId, companionId);
     }
     if (reboundLease) {
-      // freezeControl() intentionally disables the browser input gate while
-      // signaling is offline. Re-issue the existing lease after an
-      // authenticated same-session rebind so the client can restore its
-      // heartbeat and input envelope without asking for a new takeover.
-      const activeLease = desktopLease.getActiveLease(nextId);
-      if (activeLease) sendGrant(nextId, activeLease);
+      // Host may still be finishing an asynchronous offer. Keep the new socket
+      // input-inactive until Host confirms it migrated the same authority.
+      socket._wrdRebindPending = true;
+      let settled = false;
+      const finishRebind = (ack) => {
+        if (settled) return;
+        settled = true;
+        if (connections.viewers.get(nextId) !== socket || socket._wrdDisconnected === true) return;
+        socket._wrdRebindPending = false;
+        const activeLease = withLeaseExpiry(() => desktopLease.getActiveLease(nextId));
+        if (!activeLease || activeLease.leaseId !== previousLease.leaseId
+          || activeLease.leaseEpoch !== previousLease.leaseEpoch) return;
+        if (ack?.status === 'applied') {
+          sendGrant(nextId, activeLease);
+          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId });
+          return;
+        }
+        const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
+        const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+        dispatchLeaseEffect(result, reason);
+        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
+      };
+      // Socket.IO's timeout also removes its pending callback, so an old Host
+      // that never acknowledges cannot accumulate retained rebind closures.
+      connections.host.timeout(1500).emit('viewer-session-rebind', {
+        previousViewerId: previousId,
+        viewerId: nextId,
+        ...previousLease,
+        ...(priorProgress ? {
+          connectionAttemptId: priorProgress.connectionAttemptId,
+          connectionAttemptSequence: priorProgress.connectionAttemptSequence,
+        } : {}),
+      }, (error, ack) => finishRebind(error
+        ? { status: 'rejected', reason: 'rebind-timeout' }
+        : ack));
     }
     previous._wrdRemoved = true;
     emitControlEvent('viewer_reconnected', {

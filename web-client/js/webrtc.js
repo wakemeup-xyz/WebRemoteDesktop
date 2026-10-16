@@ -421,6 +421,7 @@ const WebRTC = {
   _mediaResumeFrameTimer: null,
   _mediaResumeArmPending: false,
   _mediaResumeSoftRecoverUsed: false,
+  _mediaResumeReadyReplay: null,
   _mediaIntent: null,
   _mediaRequestRetryUsed: false,
   _mediaResumeRefreshFallbackUsed: false,
@@ -698,6 +699,8 @@ const WebRTC = {
       reasons: Array.isArray(snapshot?.reasons) ? snapshot.reasons.slice(0, 8) : [],
       generation,
     };
+    if (desired === 'suspended') this.clearPaintPendingCopyTimers();
+    else if (this.uiPhase === 'media-pending') this.schedulePaintPendingCopyTimers();
 
     // Immediate local gates on suspend.
     if (desired === 'suspended') {
@@ -1774,17 +1777,20 @@ const WebRTC = {
   },
 
   schedulePaintPendingCopyTimers() {
+    if (this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
     if (!this._paintPending3sTimer) {
       this._paintPending3sTimer = setTimeout(() => {
         this._paintPending3sTimer = null;
-        if (this.uiPhase !== 'media-pending') return;
+        if (this.uiPhase !== 'media-pending'
+            || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
         this.announcePaintIssue('media-pending-3s');
       }, 3000);
     }
     if (!this._paintPending8sTimer) {
       this._paintPending8sTimer = setTimeout(() => {
         this._paintPending8sTimer = null;
-        if (this.uiPhase !== 'media-pending') return;
+        if (this.uiPhase !== 'media-pending'
+            || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
         this.announcePaintIssue('media-pending-8s');
         this.autoSendPaintFailure('paint-pending-timeout');
       }, 8000);
@@ -3533,10 +3539,14 @@ const WebRTC = {
     // revoke/visibility freeze left re-grant blocked until the next frame, which
     // may not arrive for seconds on full-relay survival profiles.
     if (typeof Input !== 'undefined') {
+      const suspended = reason === 'signal-disconnect'
+        && Input.suspendControlLease?.() === true;
       // Reset keyboard while lease is still present so the envelope can send.
-      if (reset) Input.resetKeyboard?.(reason || 'control-lost');
-      Input.releasePointer?.(reason || 'control-lost');
-      Input.setControlLease(null);
+      if (!suspended) {
+        if (reset) Input.resetKeyboard?.(reason || 'control-lost');
+        Input.releasePointer?.(reason || 'control-lost');
+        Input.setControlLease(null);
+      }
       Input.setActive(false, { resetKeyboard: false, reason: reason || 'control-lost' });
     }
     this.controlState = { ...this.controlState, controller: false, lease: null };
@@ -3803,7 +3813,27 @@ const WebRTC = {
       this.ensureMediaResumeFallbackArmed('pc-connected');
     }
     // Connected + visible ⇒ do not stay black due to a stuck page-hidden suspend.
-    this.ensureMediaActiveIfVisible('pc-connected');
+    const visibleMediaEnsured = this.ensureMediaActiveIfVisible('pc-connected');
+    // A resume sent before the new offer is installed can receive `closed`
+    // from the previous Host peer. A hidden tab can still desire active media
+    // during its five-minute grace period, so peer readiness must retry that
+    // request without waiting for a visibility event or clearing pause reasons.
+    if (!visibleMediaEnsured && this._mediaIntent?.state === 'active'
+        && this.getMediaActivitySnapshot().state === 'active'
+        && this.getMediaAppliedPhase() === 'resuming') {
+      const generation = this._mediaIntent.generation;
+      const attemptId = this.currentConnectionAttemptId;
+      const ack = this.mediaActivityRuntime?.snapshot?.().lastAck;
+      const acknowledged = ack?.applied === true && ack.state === 'active'
+        && ack.generation === generation && ack.connectionAttemptId === attemptId;
+      const prior = this._mediaResumeReadyReplay;
+      const alreadyReplayed = prior?.pc === this.pc && prior.attemptId === attemptId
+        && prior.generation === generation;
+      if (!acknowledged && !alreadyReplayed) {
+        this._mediaResumeReadyReplay = { pc: this.pc, attemptId, generation };
+        this.replayMediaActivityIntent('pc-ready-resume');
+      }
+    }
     if (this.isPortSearchActive()) {
       this.armPortSearchDeadline();
     }
@@ -4029,6 +4059,7 @@ const WebRTC = {
       ordered: true
     });
     this.inputChannel = inputChannel;
+    this._quarantinedInputChannel = null;
     inputChannel.bufferedAmountLowThreshold = 32 * 1024;
     this.inputMoveChannel = this.pc.createDataChannel('input-move', {
       ordered: false,
@@ -4175,6 +4206,11 @@ const WebRTC = {
 
   sendInput(data) {
     const isMouseMove = data.type === 'mouse' && data.action === 'move';
+    // Safety barriers must not queue behind an apparently open, stalled SCTP
+    // stream. Keyboard resets already use Socket.IO for the same reason.
+    if (data.type === 'mouse' && data.action === 'reset' && this.socket?.connected) return false;
+    if (!isMouseMove && this.inputChannel
+        && this._quarantinedInputChannel === this.inputChannel) return false;
     const channel = isMouseMove && this.inputMoveChannel?.readyState === 'open'
       ? this.inputMoveChannel
       : this.inputChannel;
@@ -4196,6 +4232,15 @@ const WebRTC = {
       ...data,
       transport: 'datachannel'
     }));
+    return true;
+  },
+
+  quarantineReliableInputChannel(reason = 'input-ack-timeout', channel = this.inputChannel) {
+    if (!channel || channel !== this.inputChannel || this._quarantinedInputChannel === channel) return false;
+    this._quarantinedInputChannel = channel;
+    this._inputDcDegraded = true;
+    console.warn('[INPUT-DC] Reliable input ACK timed out; using Socket.IO reason=%s', reason);
+    if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
     return true;
   },
 
