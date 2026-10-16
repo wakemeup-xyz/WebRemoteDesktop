@@ -1996,6 +1996,7 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
     role: 'viewer', status: 'ok', hostOnline: true,
     inputProtocolVersion: 2, hostInputProtocolVersion: 1,
     hostCapabilities: {
+      inputFrameCorrelationVersion: null,
       turnReady: false,
       turnFingerprint: '',
       supportsSessionTurn: false,
@@ -3548,3 +3549,34 @@ for (const outcome of ['applied', 'rejected', 'timeout', 'superseded', 'disconne
     }
   });
 }
+
+test('disconnect telemetry whitelists protocol reasons without altering host cleanup', () => {
+  const events = [];
+  const context = createRuntimeContext();
+  const io = makeIo();
+  setupSignaling(io, {
+    runtimeContext: context,
+    structuredLogger: { info(event) { events.push(event); } },
+  });
+  const host = new FakeSocket('runtime-host', 'host');
+  io.connect(host);
+  host.trigger('disconnect', { payload: 'disconnect-secret-canary' });
+  const event = events.find((item) => item.event === 'signal_socket_disconnected');
+  assert.equal(event.meta.reason, 'other');
+  assert.equal(JSON.stringify(events).includes('disconnect-secret-canary'), false);
+  assert.equal(context.connections.host, null);
+});
+
+test('disconnect telemetry sink failure cannot prevent existing relay cleanup', () => {
+  const context = createRuntimeContext();
+  const io = makeIo();
+  setupSignaling(io, {
+    runtimeContext: context,
+    structuredLogger: { info() { throw new Error('sink unavailable'); } },
+    recentEventStore: { append() { throw new Error('store unavailable'); } },
+  });
+  const relay = new FakeSocket('runtime-relay', 'relay-viewer');
+  io.connect(relay);
+  assert.doesNotThrow(() => relay.trigger('disconnect', 'transport close'));
+  assert.equal(context.connections.relayViewers.has(relay.id), false);
+});

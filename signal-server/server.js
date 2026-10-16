@@ -43,6 +43,7 @@ const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
+const { createRuntimeObserver, bindRuntimeObserver } = require('./lib/observability/runtime');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
 const rateLimit = require('express-rate-limit');
@@ -123,6 +124,11 @@ function createServerApp(options = {}) {
 
   const app = express();
   const server = http.createServer(app);
+  const runtimeObserver = options.runtimeObserver || createRuntimeObserver({
+    // Node normalizes maxRSS to KiB on every supported platform.
+    samplePeakRss: () => process.resourceUsage().maxRSS / 1024,
+  });
+  bindRuntimeObserver(server, runtimeObserver);
 
   app.set('trust proxy', trustLoopbackProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
@@ -435,7 +441,7 @@ function createServerApp(options = {}) {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
-    return res.json(recentEventStore.summary());
+    return res.json({ ...recentEventStore.summary(), runtime: runtimeObserver.snapshot() });
   });
 
   app.get('/api/admin/observability/recent', requireConfiguredAccessToken, (req, res) => {
@@ -484,8 +490,10 @@ function createServerApp(options = {}) {
     terminalAudit,
     recentEventStore,
     structuredLogger,
+    runtimeObserver,
     signalingRuntime,
     async close(reason = 'system:shutdown') {
+      runtimeObserver.stop();
       if (typeof terminal?.close === 'function') {
         return terminal.close(reason);
       }

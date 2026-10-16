@@ -1,6 +1,7 @@
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
+const { normalizeDisconnectReason } = require('../lib/observability/runtime');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { createRuntimeContext } = require('./runtime-context');
@@ -1827,7 +1828,15 @@ function setupSignaling(io, options = {}) {
       });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      const disconnectEvent = {
+        domain: 'signaling', event: 'signal_socket_disconnected',
+        message: 'Signaling socket disconnected',
+        meta: { role, reason: normalizeDisconnectReason(reason) },
+      };
+      // Observability failures must never interrupt the existing authority cleanup.
+      try { structuredLogger?.info?.(disconnectEvent); } catch (_error) { /* best effort */ }
+      try { recentEventStore?.append?.(disconnectEvent); } catch (_error) { /* best effort */ }
       console.log(`Disconnected: ${role} - ${socket.id}`);
       if (role === 'host') {
         if (connections.host && connections.host.id === socket.id) {

@@ -64,6 +64,7 @@ from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSe
 from capture_experiment import CaptureExperiment
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
 from relay_frame_worker import RelayFrameWorker
+from runtime_observability import RuntimeObservability, ResourceSampler, snapshot_relay_queue
 
 if __name__ == "__main__":
     configure_host_logging()
@@ -2514,7 +2515,6 @@ class WebRemoteHost:
 
     def build_event_loop_lag_context(self, *, lag_ms, sample_count, max_lag_ms, task_count):
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        rss_divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
         try:
             system_load_1 = round(float(os.getloadavg()[0]), 3)
         except (AttributeError, OSError):
@@ -2531,7 +2531,16 @@ class WebRemoteHost:
         pc = getattr(self, "pc", None)
         screen_track = getattr(self, "screen_track", None)
         input_handler = getattr(self, "input_handler", None)
-        severity = "critical" if float(max_lag_ms) >= 100 else "warning"
+        observer = getattr(self, '_runtime_observability', None)
+        runtime_context = observer.snapshot() if observer is not None else RuntimeObservability().snapshot()
+        sampler = getattr(self, '_resource_sampler', None)
+        resources = sampler.snapshot() if sampler is not None else {
+            "available": False, "ageMs": None, "status": "unavailable",
+            "swapInBytesPerSec": None, "swapOutBytesPerSec": None,
+            "memoryPressure": "unknown",
+        }
+        severity = "critical" if float(max_lag_ms) >= 100 else (
+            "warning" if float(max_lag_ms) > 20 else "normal")
         return {
             "lagMs": round(max(0.0, float(lag_ms)), 3),
             "maxLagMs": round(max(0.0, float(max_lag_ms)), 3),
@@ -2550,7 +2559,8 @@ class WebRemoteHost:
             "taskCount": int(task_count),
             "threadCount": threading.active_count(),
             "processCpuSeconds": round(float(usage.ru_utime + usage.ru_stime), 3),
-            "rssMiB": round(float(usage.ru_maxrss) / rss_divisor, 3),
+            **runtime_context,
+            "resources": resources,
             "systemLoad1": system_load_1,
         }
 
@@ -5164,41 +5174,50 @@ class WebRemoteHost:
 
         logger.info("Host running. Press Ctrl+C to stop.")
 
-        # Event loop lag monitor
+        self._resource_sampler = ResourceSampler(os.getpid(), registered_pids={os.getpid()})
+        self._runtime_observability = RuntimeObservability(
+            read_current_rss=lambda: self._resource_sampler.snapshot()['currentRssMiB'],
+            read_peak_rss=lambda: self._resource_sampler.snapshot()['peakRssMiB'],
+        )
+        # Diagnostics only read already-existing queues; never instantiate input work.
+        def input_queue_snapshot(method):
+            queue = getattr(self, '_input_admission', None)
+            return getattr(queue, method)() if queue is not None else None
+        self._runtime_observability.register_queue(
+            'inputReliable', lambda: input_queue_snapshot('snapshot'))
+        self._runtime_observability.register_queue(
+            'inputUnordered', lambda: input_queue_snapshot('unordered_snapshot'))
+        def relay_queue_snapshot():
+            worker = getattr(getattr(self, 'relay_streamer', None), '_jpeg_worker', None)
+            return snapshot_relay_queue(worker)
+        self._runtime_observability.register_queue('relayFrames', relay_queue_snapshot)
+        self._resource_sampler.start()
+
         async def monitor_event_loop_lag():
-            interval_seconds = 1.0
-            emit_cooldown_seconds = 5.0
-            deadline = time.perf_counter() + interval_seconds
-            last_emitted_at = 0.0
-            pending_count = 0
-            pending_max_lag_ms = 0.0
+            interval_ns = 1_000_000_000
+            deadline = time.monotonic_ns() + interval_ns
+            last_emitted_at = time.monotonic_ns()
             while True:
-                await asyncio.sleep(max(0.0, deadline - time.perf_counter()))
-                observed_at = time.perf_counter()
-                lag_ms = max(0.0, (observed_at - deadline) * 1000)
-                deadline = observed_at + interval_seconds
-                if lag_ms > 20:
-                    pending_count += 1
-                    pending_max_lag_ms = max(pending_max_lag_ms, lag_ms)
-                should_emit = pending_count > 0 and (
-                    pending_max_lag_ms >= 100
-                    or observed_at - last_emitted_at >= emit_cooldown_seconds
-                )
-                if should_emit:
+                await asyncio.sleep(max(0.0, (deadline - time.monotonic_ns()) / 1_000_000_000))
+                observed_at = time.monotonic_ns()
+                self._runtime_observability.observe_loop(deadline, observed_at)
+                # Skip missed deadlines without inventing healthy zero samples.
+                deadline += (max(0, observed_at - deadline) // interval_ns + 1) * interval_ns
+                if observed_at - last_emitted_at >= 5_000_000_000:
+                    summary = self._runtime_observability.snapshot(observed_at)['eventLoop']
+                    max_lag = summary['max']
                     emit_host_event(
                         logger,
                         event="host_event_loop_lag",
-                        message="Host event loop lag exceeded threshold",
-                        level="warning",
+                        message="Host complete sampled event loop window",
+                        level="warning" if max_lag > 20 else "info",
                         meta=self.build_event_loop_lag_context(
-                            lag_ms=pending_max_lag_ms,
-                            sample_count=pending_count,
-                            max_lag_ms=pending_max_lag_ms,
+                            lag_ms=summary['last'],
+                            sample_count=summary['count'],
+                            max_lag_ms=max_lag,
                             task_count=len(asyncio.all_tasks()),
                         ),
                     )
-                    pending_count = 0
-                    pending_max_lag_ms = 0.0
                     last_emitted_at = observed_at
 
         lag_task = asyncio.create_task(monitor_event_loop_lag())
@@ -5212,6 +5231,8 @@ class WebRemoteHost:
             logger.info("Shutting down...")
         finally:
             lag_task.cancel()
+            await asyncio.gather(lag_task, return_exceptions=True)
+            await self._resource_sampler.close()
             lifecycle_tasks = list(self._input_lifecycle_tasks)
             if lifecycle_tasks:
                 await asyncio.gather(*lifecycle_tasks, return_exceptions=True)
