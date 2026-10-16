@@ -1,11 +1,16 @@
+import asyncio
+import io
+import json
 import unittest
-from scripts.passive_session_soak import ContinuitySummary, private_row
+from scripts.passive_session_soak import (ContinuitySummary, EvidenceWriter, collect_samples,
+    private_row, record_missed_ticks)
 
 
 def row(tick, **changes):
     sample = {'socketConnected': True, 'pcState': 'connected', 'pcIdentity': 1,
-        'attemptHash': 'a', 'generation': 1, 'buildId':'release-a', 'callbacks': tick*20+1,
-        'transport': {'status':'observed', 'localType':'relay', 'remoteType':'host'}}
+        'attemptHash': 'a', 'generation': 1, 'leaseEpoch': 1, 'scopeStable': True,
+        'frameAgeMs': 10, 'maxFrameGapMs': 50, 'buildId':'release-a', 'callbacks': tick*20+1,
+        'transport': {'status':'observed', 'localType':'relay', 'remoteType':'host', 'protocol':'udp', 'pathIdentity':'path-1'}}
     sample.update(changes)
     return {'status':'observed', 'elapsedSeconds':tick, 'sample':sample}
 
@@ -37,11 +42,121 @@ class ContinuityTest(unittest.TestCase):
         for tick in range(11): summary.observe(row(tick, callbacks=1))
         self.assertEqual(summary.result(elapsed_s=10)['status'], 'FAIL')
 
+    def test_between_tick_render_gap_and_stale_age_cannot_pass(self):
+        for problem in ('gap', 'age', 'missing-age', 'missing-gap'):
+            summary = ContinuitySummary(duration_s=10, mode='relay')
+            counts = [1, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7]
+            for tick, count in enumerate(counts):
+                item = row(tick, callbacks=count)
+                if problem == 'gap' and tick >= 6: item['sample']['maxFrameGapMs'] = 5800
+                if problem == 'age' and tick == 5: item['sample']['frameAgeMs'] = 5000
+                if problem == 'missing-age': item['sample']['frameAgeMs'] = None
+                if problem == 'missing-gap': item['sample']['maxFrameGapMs'] = None
+                summary.observe(item)
+            self.assertEqual(summary.result(elapsed_s=10)['status'], 'FAIL', problem)
+
+    def test_one_second_without_new_frame_cannot_pass(self):
+        summary = ContinuitySummary(duration_s=1, mode='relay')
+        for tick in range(2): summary.observe(row(tick, callbacks=2))
+        self.assertEqual(summary.result(elapsed_s=1)['status'], 'FAIL')
+
+    def test_lease_pair_protocol_change_and_missing_scope_cannot_pass(self):
+        for field, value in [('leaseEpoch', 2), ('leaseEpoch', None), ('generation', None),
+                             ('pcIdentity', None), ('scopeStable', False),
+                             ('pathIdentity', 'path-2'), ('pathIdentity', None), ('protocol', 'tcp')]:
+            summary = ContinuitySummary(duration_s=10, mode='relay')
+            for tick in range(11):
+                item = row(tick)
+                if tick >= 5:
+                    target = item['sample']['transport'] if field in ('pathIdentity', 'protocol') else item['sample']
+                    target[field] = value
+                summary.observe(item)
+            self.assertEqual(summary.result(elapsed_s=10)['status'], 'FAIL', (field, value))
+
+    def test_tunnel_requires_fresh_loads_and_progress_not_optical_presentation(self):
+        for problem in ('none', 'stale', 'gap', 'no-progress', 'missing-age'):
+            summary = ContinuitySummary(duration_s=1, mode='tunnel')
+            for tick in range(2):
+                item = row(tick, pcIdentity=None, relayFrameSeq=tick+1, tunnelRelayActive=True,
+                    relayLoadCallbacks=2 if problem == 'no-progress' else tick+1,
+                    relayLoadAgeMs=None if problem == 'missing-age' else 5000 if problem == 'stale' else 10,
+                    maxRelayLoadGapMs=5800 if problem == 'gap' else 50)
+                summary.observe(item)
+            self.assertEqual(summary.result(elapsed_s=1)['status'], 'PASS' if problem == 'none' else 'FAIL', problem)
+
     def test_private_attempt_is_salted_and_removed(self):
         result = private_row({'attempt':'private-id', 'buildId':'release-a'}, b'one')
         self.assertNotIn('attempt', result)
         self.assertNotIn('private-id', str(result))
         self.assertNotEqual(result['attemptHash'], private_row({'attempt':'private-id'}, b'two')['attemptHash'])
+
+
+class ScheduleBudgetTest(unittest.IsolatedAsyncioTestCase):
+    async def collect(self, *, duration=3, budget=100000, stall=10**9, sample_stall=0):
+        stream = io.StringIO()
+        writer = EvidenceWriter(stream, max_bytes=budget)
+        summary = ContinuitySummary(duration_s=duration, mode='relay')
+        clock = {'now': 0, 'sleeps': 0, 'samples': 0}
+        async def sleep(delay):
+            clock['sleeps'] += 1
+            clock['now'] += stall if clock['sleeps'] == 2 else delay
+        async def sample():
+            clock['samples'] += 1
+            value = row(int(clock['now']))['sample']
+            value['attempt'] = 'private-attempt'
+            if clock['now'] >= duration: clock['now'] += sample_stall
+            return value
+        failure = None
+        try:
+            await collect_samples(sample, writer, summary, b'salt', start=0,
+                duration_s=duration, monotonic=lambda: clock['now'], sleep=sleep)
+        except RuntimeError as exc: failure = str(exc)
+        return stream, writer, summary, clock, failure
+
+    async def test_fake_clock_stall_beyond_deadline_is_bounded_and_incomplete(self):
+        stream, writer, summary, clock, failure = await self.collect()
+        rows = [json.loads(line) for line in stream.getvalue().splitlines()]
+        self.assertEqual(failure, 'sampling-deadline-overrun')
+        self.assertEqual(clock['samples'], 1)
+        self.assertEqual([item['tick'] for item in rows], [0, 1, 2, 3])
+        self.assertEqual(summary.missing, 3)
+        self.assertEqual(writer.total_bytes, len(stream.getvalue().encode()))
+        self.assertEqual(summary.result(elapsed_s=clock['now'], interrupted=True)['status'], 'INCOMPLETE')
+
+    async def test_missing_ticks_share_nearly_exhausted_byte_budget(self):
+        baseline, _, _, _, _ = await self.collect()
+        first_two = baseline.getvalue().splitlines(keepends=True)[:2]
+        budget = len(''.join(first_two).encode()) + 5
+        stream, writer, summary, clock, failure = await self.collect(budget=budget)
+        self.assertEqual(failure, 'evidence-budget-exceeded')
+        self.assertEqual(clock['samples'], 1)
+        self.assertEqual(summary.missing, 1)
+        self.assertEqual(len(stream.getvalue().splitlines()), 2)
+        self.assertEqual(writer.total_bytes, len(stream.getvalue().encode()))
+        self.assertLessEqual(writer.total_bytes, budget)
+
+    async def test_in_window_stall_records_missing_ticks_and_normal_run_passes(self):
+        for stall, expected in [(1, 'PASS'), (3.2, 'FAIL')]:
+            stream, _, summary, clock, failure = await self.collect(duration=5, stall=stall)
+            self.assertIsNone(failure)
+            rows = [json.loads(line) for line in stream.getvalue().splitlines()]
+            self.assertEqual([item['tick'] for item in rows], list(range(6)))
+            self.assertEqual(summary.result(elapsed_s=clock['now'])['status'], expected)
+
+    async def test_sample_finishing_far_past_end_cannot_complete(self):
+        _, _, summary, clock, failure = await self.collect(stall=1, sample_stall=1000)
+        self.assertEqual(failure, 'sampling-deadline-overrun')
+        self.assertEqual(summary.result(elapsed_s=clock['now'], interrupted=True)['status'], 'INCOMPLETE')
+
+    async def test_all_rows_enforce_row_cap_without_partial_writes(self):
+        stream = io.StringIO()
+        writer = EvidenceWriter(stream, max_row_bytes=10)
+        summary = ContinuitySummary(duration_s=3, mode='relay')
+        with self.assertRaisesRegex(RuntimeError, 'evidence-budget-exceeded'):
+            record_missed_ticks(writer, summary, tick=0, elapsed_s=10**9, duration_s=3)
+        self.assertEqual(stream.getvalue(), '')
+        self.assertEqual(writer.total_bytes, 0)
+        self.assertEqual(summary.missing, 0)
 
 
 if __name__ == '__main__': unittest.main()
