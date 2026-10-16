@@ -6643,8 +6643,9 @@ test('ACK metadata and passive trace failures do not reduce C/M1 dispatch or gra
   assert.deepEqual(calls, ['peek', 'mouse', 'unordered', 'trace']);
 });
 
-test('200 stable rVFCs preserve every authority and M observation with no extra chrome writes', () => {
-  const { WebRTC, context } = loadWebRTC();
+for (const realInput of [false, true]) {
+test(`200 stable rVFCs preserve every authority and M observation with no extra chrome writes (real Input=${realInput})`, () => {
+  const { WebRTC, context } = loadWebRTC({ realInput });
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
   const writes = [];
   const instrumented = new WeakSet();
@@ -6683,7 +6684,11 @@ test('200 stable rVFCs preserve every authority and M observation with no extra 
   WebRTC.hasActiveControl = () => true;
   WebRTC.canEnableDesktopInput = () => true;
   const activations = [];
-  context.Input = { setActive(value) { activations.push(value); } };
+  if (realInput) {
+    const input = context.__Input;
+    const activate = input.setActive;
+    input.setActive = function(value, ...args) { activations.push(value); return activate.call(this, value, ...args); };
+  } else context.Input = { setActive(value) { activations.push(value); } };
   const latency = [], frameTrace = [], inputFrames = [], resumeFrames = [];
   context.LatencyMonitor = { onVideoFrame: (now, metadata) => latency.push([now, metadata.rtpTimestamp]) };
   WebRTC._frameTraceEnabled = true;
@@ -6726,4 +6731,63 @@ test('200 stable rVFCs preserve every authority and M observation with no extra 
   assert.equal(WebRTC._videoFrameSeq, 201);
   assert.equal(activations.length, 201);
   assert.equal(resumeFrames.length, 201);
+});
+}
+
+test('real control writer cannot enable Terminal controls behind an unchanged chrome projection', () => {
+  const { WebRTC, context } = loadWebRTC();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.controlState = { state: 'FREE', controller: false };
+  WebRTC.hasActiveControl = () => false;
+  WebRTC.getMediaActivitySnapshot = () => ({ reasons: ['terminal-active'] });
+  const button = context.document.getElementById('requestControlBtn');
+  for (let i = 0; i < 3; i++) {
+    WebRTC.updateControlUI('只读');
+    assert.equal(button.disabled, true, `control update ${i} must preserve the Terminal veto`);
+    assert.equal(button.getAttribute('aria-disabled'), 'true');
+  }
+});
+
+test('real mobile and port-search writers converge with the chrome capability projection', () => {
+  const { WebRTC, context } = loadWebRTC({ realInput: true });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  const Input = context.__Input;
+  WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.controlState = { state: 'ACTIVE', controller: true };
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'active', reasons: [] });
+  Input.isActive = true;
+  const mobile = context.document.getElementById('mobileTextInputBtn');
+  WebRTC.syncChromeCapabilities();
+  Input.updateMobileTextInputButton();
+  assert.equal(mobile.hidden, true, 'pointer-only viewer does not have a mobile text surface');
+  WebRTC.syncChromeCapabilities();
+  assert.equal(mobile.hidden, true, 'same chrome projection must preserve the mobile support veto');
+  context.navigator.maxTouchPoints = 1;
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'suspended', reasons: ['terminal-active'] });
+  for (let i = 0; i < 3; i++) {
+    WebRTC.syncChromeCapabilities();
+    Input.updateMobileTextInputButton();
+    assert.equal(mobile.hidden, true);
+    assert.equal(mobile.disabled, true);
+  }
+  const port = context.document.getElementById('portSearchBtn');
+  WebRTC.uiPhase = 'media-stalled';
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'active', reasons: [] });
+  WebRTC.canStartPortSearch = () => true;
+  for (const tools of ['loading', 'failed', 'ready']) {
+    WebRTC._operatorToolsState = tools;
+    WebRTC.renderPortSearchStatus();
+    WebRTC.syncChromeCapabilities();
+    assert.equal(port.disabled, tools === 'loading');
+    assert.equal(port.getAttribute('aria-disabled'), String(tools === 'loading'));
+  }
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'suspended', reasons: ['terminal-active'] });
+  WebRTC._operatorToolsState = 'failed';
+  WebRTC.syncChromeCapabilities();
+  WebRTC.renderPortSearchStatus();
+  assert.equal(port.disabled, true, 'tool retry cannot override the Terminal gate');
+  assert.equal(port.getAttribute('aria-disabled'), 'true');
 });

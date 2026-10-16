@@ -2040,8 +2040,16 @@ const Input = {
   updateMobileTextInputButton() {
     const button = document.getElementById('mobileTextInputBtn');
     if (!button) return;
-    renderKeyboardUi(button, { hidden: !this.supportsMobileTextInput() });
-    renderKeyboardUi(button, { disabled: !this.isActive });
+    const capabilities = typeof ChromeLayout !== 'undefined'
+      && typeof ChromeLayout.getCapabilities === 'function'
+      && typeof WebRTC !== 'undefined' && typeof WebRTC.getChromeSnapshot === 'function'
+      ? ChromeLayout.getCapabilities(WebRTC.getChromeSnapshot()) : null;
+    const disabled = !this.isActive || (capabilities ? !capabilities.canSendDesktopInput : false);
+    renderKeyboardUi(button, {
+      hidden: !this.supportsMobileTextInput()
+        || (capabilities ? !capabilities.mediaReady || capabilities.terminalActive : false),
+      disabled,
+    }, { 'aria-disabled': String(disabled) });
   },
 
   setupInputRecoveryUi() {

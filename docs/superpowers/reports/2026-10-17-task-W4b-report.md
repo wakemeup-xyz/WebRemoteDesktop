@@ -50,3 +50,28 @@ Ephemeral local evidence: `/tmp/wrd-w4b-chrome-red.txt`, `/tmp/wrd-w4b-chrome-gr
 These are deterministic **offline PASS** results for DOM writes and preserved call/observation counts. Per-frame business derivation still runs; reduced DOM writes are not a measured reduction in total input or presentation processing time.
 
 **NOT RUN:** production dist rebuild/deployment, real Viewer or service restart, real public cold-start P95, browser CPU/long-task profile, cross-deployment login acceptance, mobile device acceptance, at least three-hour Viewer session, physical visible-effect/optical latency. Existing services and tunnel were not touched by W4b. The root task owns any separately authorized acceptance.
+
+## R1 — reconcile intervening production DOM writers
+
+Independent review found one P2 in `e5e086d`: the Chrome cache assumed it exclusively owned mounted fields. A second real `WebRTC.updateControlUI('只读')` changed the Terminal request-control button back to `disabled=false`, while the cached model and `aria-disabled` still said `true`. The original implementation's claim of preserved Terminal state was incomplete until this repair. The ignored review and counterexample remain under `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/`.
+
+Exact new integration RED: `node --test --test-name-pattern='real control writer|real mobile and port-search writers' web-client/js/webrtc.test.js` failed both tests before R1. The real control-writer test fails on its second update (`false !== true`), matching the independent counterexample. The real Input test also exposes its mobile-button writer restoring a Terminal-hidden button. This uses real production writers and ChromeLayout, with the existing offline VM/DOM fixture.
+
+R1 changes:
+
+- Chrome's final fixed-field comparison now reads the mounted DOM value. Even an unchanged cached model repairs fields changed by another writer; only mismatched fields are written. Cache/model equality is used as fallback for write-only DOM shims, where a getter is unavailable. Node replacement and explicit invalidation still render afresh.
+- Mobile support, Input activation and capability/Terminal gates now derive compatible final mobile-button values in Chrome and Input. Input also synchronizes `aria-disabled`. This avoids alternating writes between two renderers on stable frames.
+- The port controller owns its explanatory title and loader/retry decision. Its disabled decision becomes an explicit derived Chrome snapshot boolean; the final projection combines it with capability/Terminal gates. `renderPortSearchStatus` finishes with capability reconciliation, so a tool retry cannot reopen a Terminal-gated button, and an allowed loading tool remains disabled with matching ARIA.
+- No control business update is suppressed. `updateControlUI`, same-value `Input.setActive`, session transitions, recovery, frame identity, rVFC, latency observations and resume barriers continue to execute. Added snapshot values are bounded UI booleans only; M1/M2/M3 interfaces and metrics are unchanged.
+
+The request-control and mobile/port integration regressions now pass. A counting-DOM test repairs exactly the three externally changed disabled/hidden/ARIA fields, followed by 200 stable calls with no further writes. The production rVFC fixture now runs twice, including **real Input** instead of only the activation stub. Both variants assert no extra DOM writes over 200 stable frames, all 201 C/M observations and the old-attempt callback veto. Audit covers pointer-only mobile support, touch Terminal veto, port loading, failed-tool retry, ready-tool state and Terminal retry closure.
+
+R1 focused verification: **4/4 PASS** for both rVFC variants and the two production-writer integrations; ChromeLayout **44/44 PASS**. Final combined offline command:
+
+```sh
+node --test --test-concurrency=1 web-client/js/chrome-layout.test.js web-client/js/webrtc.test.js web-client/js/input-signaling-continuity.test.js web-client/js/input.test.js web-client/js/input-recovery.test.js web-client/js/terminal-input-gate.test.js web-client/js/mobile-text-input.test.js
+```
+
+Result: **520/520 PASS**, 29.5 s; scoped `git diff --check`: PASS. Ephemeral evidence: `/tmp/wrd-w4b-r1-red.txt`, `/tmp/wrd-w4b-r1-green.txt`, `/tmp/wrd-w4b-r1-chrome.txt`, `/tmp/wrd-w4b-r1-regression.txt`.
+
+R1 scope: `chrome-layout.js`, `chrome-layout.test.js`, `input.js`, `webrtc.js`, `webrtc.test.js`, and this report. No unrelated integration/M4/M5 changes staged. Self-review checked every shared field and every new dependency against the final projection; no whole-model early return, performance-clock key, whole-PC serialization or blanket per-frame write was added. All real deployment/device/browser-profile/public-network/long-session acceptance listed above remains **NOT RUN** for W4b. Root arranges independent R1 review after the scoped commit.

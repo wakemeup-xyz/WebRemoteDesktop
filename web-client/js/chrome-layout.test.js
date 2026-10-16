@@ -1348,3 +1348,23 @@ test('capability projections are independent for separate roots', () => {
   assert.equal(b.writes.length, beforeB);
   assert.ok(a.writes.length > beforeA);
 });
+
+
+test('unchanged capability model repairs only fields changed by another DOM writer', () => {
+  const { node, writes } = makeCountingControl();
+  const root = { getElementById: id => id === 'refreshBtn' ? node : null,
+    querySelector: () => null, querySelectorAll: () => [] };
+  const snapshot = { uiPhase: 'connected', streamReady: true, activeControl: true };
+  ChromeLayout.applyCapabilities(snapshot, root);
+  node.disabled = true;
+  node.hidden = true;
+  node.setAttribute('aria-disabled', 'true');
+  const beforeRepair = writes.length;
+  ChromeLayout.applyCapabilities(snapshot, root);
+  assert.deepEqual(writes.slice(beforeRepair), [
+    ['disabled', false], ['hidden', false], ['aria-disabled', 'false'],
+  ]);
+  const afterRepair = writes.length;
+  for (let i = 0; i < 200; i++) ChromeLayout.applyCapabilities(snapshot, root);
+  assert.equal(writes.length, afterRepair);
+});

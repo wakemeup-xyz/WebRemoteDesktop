@@ -1821,6 +1821,13 @@ const WebRTC = {
       modalOpen,
       transportReady,
       mobileInputMode,
+      // Shared writers use the same final mobile/port capability projection.
+      mobileTextInputSupported: typeof Input !== 'undefined' && typeof Input.supportsMobileTextInput === 'function'
+        ? Input.supportsMobileTextInput() : true,
+      mobileTextInputActive: typeof Input === 'undefined' || Input.isActive !== false,
+      portSearchDisabled: (this._operatorToolsState || 'loading') === 'loading'
+        || (this._operatorToolsState !== 'failed'
+          && !this.isPortSearchActive() && !this.canStartPortSearch()),
       terminalActive,
       mediaActivityReasons: Array.isArray(mediaActivity?.reasons)
         ? mediaActivity.reasons.slice(0, 8) : [],
@@ -3126,6 +3133,9 @@ const WebRTC = {
       }
     }
 
+    // Reconcile the controller's own loader/retry state with the shared phase
+    // and Terminal gate, including when the derived Chrome model is unchanged.
+    this.syncChromeCapabilities();
     if (!candidateEl || !snap) {
       return;
     }

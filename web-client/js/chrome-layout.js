@@ -7,13 +7,28 @@ const renderedByRoot = new WeakMap();
 const CHROME_MODEL_FIELDS = ['disabled', 'hidden', 'title', 'ariaDisabled',
   'hiddenClass', 'connecting', 'pointerEvents'];
 
+function readChromeField(node, field) {
+  if (field === 'ariaDisabled') return node.getAttribute?.('aria-disabled');
+  if (field === 'hiddenClass') return node.classList?.contains?.('hidden');
+  if (field === 'connecting') return node.classList?.contains?.('is-connecting');
+  if (field === 'pointerEvents') return node.style?.pointerEvents;
+  return node[field];
+}
+
 function applyChromeModel(root, model) {
   const previous = renderedByRoot.get(root);
   for (const [node, fields] of model) {
     const before = previous?.get(node);
     for (const field of CHROME_MODEL_FIELDS) {
-      if (!(field in fields) || (before && before[field] === fields[field])) continue;
+      if (!(field in fields)) continue;
       const value = fields[field];
+      // Other production renderers can change a mounted node between calls.
+      // Cache equality alone cannot prove that our final projection is present.
+      // Undefined supports write-only embedded/test DOM shims; real DOM fields
+      // and attributes have readable values (including absent-attribute null).
+      const actual = readChromeField(node, field);
+      if (before && (actual === value
+          || (actual === undefined && before[field] === value))) continue;
       if (field === 'ariaDisabled') node.setAttribute?.('aria-disabled', value);
       else if (field === 'hiddenClass') node.classList?.add?.('hidden');
       else if (field === 'connecting') node.classList?.toggle?.('is-connecting', value);
@@ -798,11 +813,13 @@ const ChromeLayout = {
         // lease; text/keyboard actions remain gated by the lease itself.
         const disabled = isRequestControl
           ? !capabilities.canRequestControl || snapshot.activeControl === true || snapshot.controlTransition === true
-          : isDesktopInput ? !capabilities.canSendDesktopInput : !allowed;
+          : isDesktopInput ? !capabilities.canSendDesktopInput
+            : id === 'portSearchBtn' ? !allowed || snapshot.portSearchDisabled === true : !allowed;
         setNode(id, visible, {
           hide: true,
           disabled,
-          title: disabled && visible ? '当前阶段暂不可操作' : '',
+          // The port controller owns its loading/retry/gate explanation.
+          title: id !== 'portSearchBtn' && disabled && visible ? '当前阶段暂不可操作' : '',
         });
       });
     });
@@ -830,9 +847,9 @@ const ChromeLayout = {
     });
     setNode('moreActionsBtn', capabilities.canOpenMore, { hide: true });
     setNode('toggleControlsBtn', capabilities.canToggleControls, { hide: true });
-    setNode('mobileTextInputBtn', mediaReady && !terminalActive, {
+    setNode('mobileTextInputBtn', mediaReady && !terminalActive && snapshot.mobileTextInputSupported !== false, {
       hide: true,
-      disabled: !capabilities.canSendDesktopInput,
+      disabled: !capabilities.canSendDesktopInput || snapshot.mobileTextInputActive === false,
       title: !capabilities.canSendDesktopInput ? '需要可用的桌面输入控制' : '',
     });
     if (!capabilities.canOpenPortSearch) {
