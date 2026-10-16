@@ -525,3 +525,13 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-09-03 | 修复生产 desktop bundle 未装配触控适配器、断连态网络模式入口被隐藏、延迟诊断 unavailable/0ms 混淆和状态栏指标宽度抖动；自动化验证与未执行的真实设备/公网验收见 `docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md` |
 | 2026-09-06 | TURN 媒体时钟、canonical FPS、恢复 identity 与 paint/编码观测完成自动化覆盖。离线 `relay-balanced-v2` 矩阵没有合格候选，默认保留 `relay-legacy-v1`，生产捕获仍为 target FPS 的 2 倍；周期清晰度脉冲、真实 TURN、正式公网和物理设备验收保持未关闭。|
 | 2026-09-19 | Terminal 代码与页面 review：发现 presenter 事件回环、replay 超大 chunk 突破硬上限、startup timeout 清理不完整、WebRTC answer listener 泄漏、admin 密码普通比较、session title 无界和移动端 Terminal 布局/可访问性问题；新增优化 Spec/Plan 和验收报告，真实双浏览器与公网验收继续保持 NOT RUN |
+
+### 2026-10-17 输入背压与 relay JPEG 工作线程（M3）
+
+- Viewer 的键盘和可靠桌面写入共用 32 项／128 KiB 预算，单项不超过 64 KiB；预算覆盖已经提交但尚未确认的消息。先准入再分配可靠序号；容量不足沿既有控制恢复处理，不重放未知结果的业务输入。旧键盘消息在 reset 期间仍占预算，只有所属 reset 的成功 ACK 或控制租约终结才释放。up/reset 不绕过满队列。
+- 鼠标 move 只保留最新一项；wheel 在编号前合并为一项，两次提交至少相隔 16 ms，非有限或超过安全整数范围的合并量显式拒绝并恢复。切换控制作用域取消旧待发 wheel。
+- Host 同步准入可靠输入，等待队列最多 64 项／256 KiB，另一个执行项最多 64 KiB；unordered move 独立保留最新一项、最多 1 KiB。一个 drain 负责执行，过载冻结并只通知一次当前作用域，不能为拒绝洪峰创建逐消息 ACK/执行任务。旧 authority 在出队及原生完成后校验；原生完成后的序号、ACK 和输入帧候选均不可跨作用域提交。
+- 权威 reset 清理旧 waiting 并等待已开始的原生输入真正完成，随后执行键盘和桌面释放。2 秒等待超时或失败保持冻结；不能以 asyncio 取消代替原生结束。Host 输入排队耗时包含上述准入队列等待。
+- relay 抓屏、RGB 转换和 JPEG 编码使用单专属线程，MSS 仅在该线程创建、使用和关闭；只保留一个执行请求和一个最新待处理请求（请求 ≤4 KiB），没有逐帧 executor 积压。旧 generation 结果回到 Host loop 后丢弃。stop 超过 2 秒保留 stopping worker，禁止另起原生线程。
+- 可计数缓冲上限：BGRA 源 256 MiB（边长 ≤8192）、RGB 中间图 192 MiB、目标图每张 64 MiB 且最多两张、JPEG 16 MiB；超限停止该媒体任务，不自动降低用户选择的分辨率。这是 payload/应用缓冲预算，不是 Python、JS 或原生库 RSS 的硬上限；实际资源开销由运行采样报告。
+- 以上通过纯单元／VM／fake native 阻塞测试验证。真实抓屏、Viewer、公网路径、可见效果及长会话性能验收仍为 **NOT RUN**，不能据此宣称实际输入延迟已达标。

@@ -1,3 +1,31 @@
+// Payload accounting only; JS object/native overhead is measured separately.
+function createInputBudget({ maxEntries = 32, maxBytes = 131072 } = {}) {
+  const entries = new Map();
+  let pendingBytes = 0;
+  return {
+    reserve(id, bytes) {
+      if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 65536) return false;
+      if (entries.has(id)) return entries.get(id) === bytes;
+      if (entries.size >= maxEntries || pendingBytes + bytes > maxBytes) return false;
+      entries.set(id, bytes); pendingBytes += bytes; return true;
+    },
+    release(id) {
+      if (!entries.has(id)) return;
+      pendingBytes -= entries.get(id); entries.delete(id);
+    },
+    snapshot() { return { pendingCount: entries.size, pendingBytes }; },
+  };
+}
+
+function inputSerializedBytes(data) {
+  let bytes = 0;
+  for (const char of JSON.stringify(data)) {
+    const code = char.codePointAt(0);
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+  }
+  return bytes;
+}
+
 const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
 const MOBILE_VIEWPORT_UNSUPPORTED_HINT = '可用空间不足，请收起系统键盘或旋转设备';
 const INPUT_RECOVERY_TIMEOUT_MS = 3000;
@@ -184,6 +212,28 @@ const Input = {
     }
   },
 
+  _getInputBudget() {
+    if (!this._inputBudget) this._inputBudget = createInputBudget();
+    return this._inputBudget;
+  },
+
+  _deleteDesktopPending(inputId) {
+    this._getInputBudget().release(inputId);
+    this._desktopWritePending.delete(inputId);
+  },
+
+  _clearDesktopPending() {
+    for (const inputId of this._desktopWritePending.keys()) this._getInputBudget().release(inputId);
+    this._desktopWritePending.clear();
+  },
+
+  _inputCapacityRejected(action = null) {
+    // Recovery owns any release/reacquire. An unsent request never quarantines a DC.
+    const lease = this.activeControlLease;
+    this._onReliableAckTimeout({leaseId: lease?.leaseId, leaseEpoch: lease?.leaseEpoch,
+      connectionAttemptId: this._currentConnectionAttemptId(), action});
+  },
+
   initKeyboardController() {
     if (this.keyboardController) {
       this._subscribeMobileTextTransport();
@@ -191,6 +241,7 @@ const Input = {
     }
     if (typeof KeyboardTransport === 'undefined' || typeof RemoteKeyboardController === 'undefined') return null;
     this.keyboardTransport = KeyboardTransport.create({
+      inputBudget: this._getInputBudget(),
       sendDataChannel: (payload) => this.sendKeyboardDataChannel(payload),
       sendSocket: (payload) => this.sendKeyboardSocket(payload),
       getConnectionAttemptId: () => this._currentConnectionAttemptId(),
@@ -403,12 +454,16 @@ const Input = {
       }
       this._resetMobileSurfaceContext();
       this._desktopWriteSequence = 0;
-      this._desktopWritePending.clear();
+      this._clearDesktopPending();
       this._clearDesktopWriteTimer();
       this._reliableAckRecoveryPending = false;
       this._desktopWriteRecovery = null;
       this._pointerLifecycleGeneration += 1;
       this._pendingMouseMove = null;
+      this._pendingWheel = null;
+      this._wheelScheduled = false;
+      if (this._wheelTimer != null) clearTimeout(this._wheelTimer);
+      this._wheelTimer = null;
       if (nextLease) {
         this._pendingMouseReset = false;
         this._pendingMouseResetId = null;
@@ -1055,7 +1110,7 @@ const Input = {
     this._mobileSurfaceGesture = null;
     this._clearMobileSurfaceTimer();
     if (cycle.mouseReset?.inputId) {
-      this._desktopWritePending.delete(cycle.mouseReset.inputId);
+      this._deleteDesktopPending(cycle.mouseReset.inputId);
     }
     cycle.state = 'recovered';
     cycle.reason = null;
@@ -1096,7 +1151,7 @@ const Input = {
     cycle.mouseRetryUsed = true;
     this._desktopWriteSequence = ack.appliedSeq;
     this._desktopWritePending.forEach((record, inputId) => {
-      if (record.seq > ack.appliedSeq) this._desktopWritePending.delete(inputId);
+      if (record.seq > ack.appliedSeq) this._deleteDesktopPending(inputId);
     });
     const newId = this.sendInput('mouse', 'reset', { reason: 'sequence-gap' });
     const newReset = this._captureMouseReset(newId);
@@ -1519,9 +1574,13 @@ const Input = {
     }
 
     const status = ack?.status;
+    if (status === 'resync-required') {
+      this._inputCapacityRejected(records[0].action);
+      return {status: 'resync-required'};
+    }
     if (status === 'applied' || status === 'duplicate') {
       records.forEach(({ inputId }) => {
-        if (!protectedIds.has(inputId)) this._desktopWritePending.delete(inputId);
+        if (!protectedIds.has(inputId)) this._deleteDesktopPending(inputId);
       });
       const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
       if (appliedSeq !== null) {
@@ -1529,7 +1588,7 @@ const Input = {
           if (record.seq <= appliedSeq && !protectedIds.has(inputId)
             && record.connectionAttemptId === this._currentConnectionAttemptId()
             && (record.transport !== 'socket' || this._recordSocketIsCurrent(record))) {
-            this._desktopWritePending.delete(inputId);
+            this._deleteDesktopPending(inputId);
           }
         });
       }
@@ -1546,7 +1605,7 @@ const Input = {
     if (!recoverable || appliedSeq === null || appliedSeq > this._desktopWriteSequence) {
       // Without an authoritative applied sequence, continuing would guess about
       // native state. Require a new lease to reset Host and local ordering.
-      this._desktopWritePending.clear();
+      // Keep uncertain reservations until the authoritative lease transition.
       this._clearDesktopWriteTimer();
       this._desktopWriteRecovery = { state: 'reacquire-required', status };
       return { status: 'reacquire-required', failedStatus: status };
@@ -1558,7 +1617,7 @@ const Input = {
     this._desktopWriteSequence = appliedSeq;
     this._desktopWritePending.forEach((record, inputId) => {
       if (record.seq > appliedSeq && !protectedIds.has(inputId)) {
-        this._desktopWritePending.delete(inputId);
+        this._deleteDesktopPending(inputId);
       }
     });
     this._scheduleDesktopWriteDeadline();
@@ -2358,11 +2417,18 @@ const Input = {
     if (reliableWrite && this._desktopWriteRecovery?.state === 'reacquire-required') return null;
     if (reliableWrite && this._reliableAckRecoveryPending && !isMouseSafetyRelease) return null;
     const nextSequence = reliableWrite ? this._desktopWriteSequence + 1 : null;
-    if (reliableWrite) data.seq = nextSequence;
+    if (reliableWrite) {
+      // Reserve with the candidate envelope before committing a wire sequence.
+      const bytes = inputSerializedBytes({...data, seq: nextSequence});
+      if (!this._getInputBudget().reserve(data.inputIds[0], bytes)) {
+        this._inputCapacityRejected(action);
+        return null;
+      }
+      data.seq = nextSequence;
+    }
     const dataChannel = typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null;
     const commitSequence = (transport) => {
       if (!reliableWrite) return;
-      if (type === 'mouse' && action === 'reset') this._desktopWritePending.clear();
       this._desktopWriteSequence = nextSequence;
       this._desktopWritePending.set(data.inputIds[0], {
         inputId: data.inputIds[0],
@@ -2397,6 +2463,7 @@ const Input = {
           connectionAttemptId,
           reliable: reliableWrite,
         });
+        if (reliableWrite) this._getInputBudget().release(data.inputIds[0]);
         throw error;
       }
     }
@@ -2432,6 +2499,7 @@ const Input = {
           connectionAttemptId,
           reliable: reliableWrite,
         });
+        if (reliableWrite) this._getInputBudget().release(data.inputIds[0]);
         throw error;
       }
       this._recordInputTrace('transport-send', {
@@ -2460,6 +2528,7 @@ const Input = {
       connectionAttemptId,
       reliable: reliableWrite,
     });
+    if (reliableWrite) this._getInputBudget().release(data.inputIds[0]);
     return null;
   },
 
@@ -2813,9 +2882,22 @@ const Input = {
     this._pendingWheel.relY = payload.relY;
     this._pendingWheel.deltaX += Number(payload.deltaX) || 0;
     this._pendingWheel.deltaY += Number(payload.deltaY) || 0;
+    if (!Number.isFinite(this._pendingWheel.deltaX) || !Number.isFinite(this._pendingWheel.deltaY)
+      || Math.abs(this._pendingWheel.deltaX) > Number.MAX_SAFE_INTEGER
+      || Math.abs(this._pendingWheel.deltaY) > Number.MAX_SAFE_INTEGER) {
+      this._pendingWheel = null;
+      this._inputCapacityRejected();
+      return;
+    }
     if (this._wheelScheduled) return;
     this._wheelScheduled = true;
+    const wheelGeneration = this._pointerLifecycleGeneration;
     const flush = () => {
+      if (wheelGeneration !== this._pointerLifecycleGeneration) return;
+      const now = Date.now();
+      const remaining = this._wheelLastFlushAt == null ? 0 : 16 - (now - this._wheelLastFlushAt);
+      if (remaining > 0) { this._wheelTimer = setTimeout(flush, remaining); return; }
+      this._wheelTimer = null;
       this._wheelScheduled = false;
       const wheel = this._pendingWheel;
       this._pendingWheel = null;
@@ -2824,6 +2906,7 @@ const Input = {
         return;
       }
       if (wheel.deltaX === 0 && wheel.deltaY === 0) return;
+      this._wheelLastFlushAt = Date.now();
       this.sendInput('mouse', 'wheel', wheel);
     };
     // rAF batches to the next frame; an extra microtask keeps same-tick callers
@@ -3107,7 +3190,9 @@ const Input = {
 if (typeof globalThis !== 'undefined') globalThis.Input = Input;
 if (typeof window !== 'undefined') window.Input = Input;
 
-document.addEventListener('DOMContentLoaded', () => {
+if (typeof module === 'object' && module.exports) module.exports = { createInputBudget };
+
+if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
   const video = document.getElementById('remoteVideo');
   if (!video) return;
   Input.videoElement = video;

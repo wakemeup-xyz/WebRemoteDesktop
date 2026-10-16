@@ -3,10 +3,32 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.KeyboardTransport = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createKeyboardTransportApi() {
-  const MAX_PENDING = 256;
+  const MAX_PENDING = 32;
+
+  function localBudget() {
+    const entries = new Map(); let total = 0;
+    return {
+      reserve(id, bytes) {
+        if (bytes > 65536 || total + bytes > 131072 || entries.size >= MAX_PENDING) return false;
+        entries.set(id, bytes); total += bytes; return true;
+      },
+      release(id) { if (entries.has(id)) { total -= entries.get(id); entries.delete(id); } },
+    };
+  }
+  function serializedBytes(data) {
+    let bytes = 0;
+    for (const char of JSON.stringify(data)) {
+      const code = char.codePointAt(0);
+      bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    }
+    return bytes;
+  }
 
   function create(options) {
     const config = options || {};
+    const budget = config.inputBudget || localBudget();
+    const reservations = new Map();
+    let capacityRejected = false;
     const now = typeof config.now === 'function' ? config.now
       : () => typeof performance !== 'undefined' ? performance.now() : 0;
     const makeInputId = typeof config.makeInputId === 'function'
@@ -107,7 +129,11 @@
       if (record) onTimeout(record);
     }
 
+    function releaseReservation(id) { budget.release(id); reservations.delete(id); }
+    function releaseAllReservations() { for (const id of reservations.keys()) releaseReservation(id); }
+
     function clearSession() {
+      releaseAllReservations();
       cancelDeadline();
       frozen = false;
       pending.clear();
@@ -119,6 +145,7 @@
     }
 
     function requireReacquire() {
+      // Uncertain submitted writes retain the shared budget until lease change.
       cancelDeadline();
       pending.clear();
       // Preserve the identity internally so the caller cannot turn the same
@@ -188,7 +215,7 @@
 
     function sendThrough(adapterName, message, isReset) {
       const inputId = makeInputId();
-      const seq = ++lastSent;
+      const seq = lastSent + 1;
       let connectionAttemptId = null;
       try {
         connectionAttemptId = getConnectionAttemptId() || null;
@@ -205,6 +232,15 @@
         seq,
         inputIds: [inputId],
       };
+      capacityRejected = false;
+      if (!budget.reserve(inputId, serializedBytes(payload))) {
+        capacityRejected = true;
+        frozen = true;
+        cancelDeadline();
+        notifyState();
+        onTimeout({leaseId, leaseEpoch, connectionAttemptId, reset: Boolean(isReset)});
+        return null;
+      }
       const record = {
         inputId,
         seq,
@@ -217,13 +253,15 @@
         dataChannel: adapterName === 'dataChannel' ? getDataChannel() : null,
         sentAt: now(),
       };
+      lastSent = seq;
       let delivered = false;
       try {
         delivered = adapters[adapterName](payload) === true;
       } catch (_) {
         delivered = false;
       }
-      if (!delivered) return null;
+      if (!delivered) { budget.release(inputId); return null; }
+      reservations.set(inputId, seq);
       pending.set(inputId, record);
       scheduleDeadline();
       return record;
@@ -304,6 +342,7 @@
       const identity = keyIdentity(message);
       const record = sendThrough(adapterName, normalizeLegacyKey(message), false);
       if (!record) {
+        if (capacityRejected) return null;
         markAdapterUnavailable(adapterName);
         return null;
       }
@@ -361,7 +400,13 @@
         return { status: 'stale' };
       }
       if (payload.status === 'resync-required' || payload.status === 'sequence-gap') {
-        if (!barrier) sendReset('transport-change');
+        const record = ackInputIds?.map(id => pending.get(id)).find(Boolean);
+        if (payload.status === 'resync-required' && record && config.onReliableAckTimeout) {
+          frozen = true;
+          cancelDeadline();
+          notifyState();
+          onTimeout({leaseId, leaseEpoch, connectionAttemptId: record.connectionAttemptId, reset: record.reset});
+        } else if (!barrier) sendReset('transport-change');
         return { status: 'resync-required' };
       }
       if (['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed'].includes(payload.status)) {
@@ -390,6 +435,9 @@
         && (record.adapter !== 'socket'
           || (record.socket === getSocket() && record.socketId === (getSocket()?.id || null))))) {
         return { status: 'stale' };
+      }
+      for (const [inputId, seq] of reservations) {
+        if (seq <= payload.appliedSeq) releaseReservation(inputId);
       }
       for (const [inputId, record] of pending) {
         if (record.seq <= payload.appliedSeq && record.connectionAttemptId === getConnectionAttemptId()

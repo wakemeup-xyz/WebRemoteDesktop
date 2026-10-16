@@ -224,7 +224,7 @@ class RemoteKeyboardState:
         self._last_applied_seq = 0
         return self._result("applied")
 
-    def apply(self, envelope: Any, *, authoritative_modifiers: bool = True) -> ApplyResult:
+    def apply(self, envelope: Any, *, authoritative_modifiers: bool = True, commit_fence=lambda: True) -> ApplyResult:
         parsed = validate_remote_input(envelope)
         if not parsed.ok:
             return self._result("invalid-input")
@@ -256,6 +256,8 @@ class RemoteKeyboardState:
         except Exception:
             self._release_all("execution-failed")
             return self._result("execution-failed")
+        if not commit_fence():
+            return self._result("stale-lease")
         self._last_applied_seq = sequence
         return self._result("applied")
 
@@ -378,13 +380,14 @@ class LegacyInputAdapter:
             self._transport = None
         return result
 
-    def apply(self, legacy: Any, *, transport: str) -> ApplyResult:
+    def apply(self, legacy: Any, *, transport: str, commit_fence=lambda: True) -> ApplyResult:
         if self._lease_id is None:
             return self._state._result("stale-lease")
         if self._transport is not None and transport != self._transport:
             reset = self._envelope("reset", {"reason": "transport-change"})
-            result = self._state.apply(reset)
-            self._next_seq += 1
+            result = self._state.apply(reset, commit_fence=commit_fence)
+            if commit_fence():
+                self._next_seq += 1
             if result.status != "applied":
                 return result
         self._transport = transport
@@ -397,9 +400,10 @@ class LegacyInputAdapter:
         action, payload = self._normalise(legacy)
         result = self._state.apply(
             self._envelope(action, payload),
-            authoritative_modifiers=authoritative_modifiers,
+            authoritative_modifiers=authoritative_modifiers, commit_fence=commit_fence,
         )
-        self._next_seq += 1
+        if commit_fence():
+            self._next_seq += 1
         return result
 
     def _envelope(self, action: str, payload: dict) -> dict:

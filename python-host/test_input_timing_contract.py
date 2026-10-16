@@ -1,5 +1,6 @@
 import unittest
 from input_timing import InputTiming, relay_ack_duration_ms
+from input_admission_queue import input_commit_fence
 
 class TestInputTimingContract(unittest.TestCase):
     def test_queue_and_execution_are_measured_before_result_construction(self):
@@ -31,7 +32,7 @@ def production_class(filename, name, **namespace):
     tree = ast.parse(Path(__file__).with_name(filename).read_text())
     node = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == name)
     env = {"asyncio": asyncio, "time": time, "InputTiming": InputTiming, "logger": logging.getLogger(__name__),
-           "relay_ack_duration_ms": relay_ack_duration_ms, **namespace}
+           "relay_ack_duration_ms": relay_ack_duration_ms, "input_commit_fence": input_commit_fence, **namespace}
     exec(compile(ast.Module(body=[node], type_ignores=[]), filename, 'exec'), env)
     return env[name]
 
@@ -45,7 +46,7 @@ class TestActualKeyboardTiming(unittest.IsolatedAsyncioTestCase):
         entered, release = threading.Event(), threading.Event()
         ticks = [1_000_000]
         class Adapter:
-            def apply(self, envelope):
+            def apply(self, envelope, *, commit_fence):
                 entered.set()
                 release.wait(2)
                 ticks[0] = 71_000_000

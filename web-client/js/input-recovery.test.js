@@ -367,7 +367,7 @@ test('visible controlled gate rejection records an unexpected incident without a
     inputIds: command.payload.inputIds,
     leaseEpoch: command.payload.leaseEpoch,
     appliedSeq: 0,
-    status: 'resync-required',
+    status: 'invalid-input',
   });
 
   const before = h.writes().length;

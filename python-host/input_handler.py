@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """macOS Input Controller using Quartz"""
 import asyncio
+from input_admission_queue import input_commit_fence
 import logging
 import subprocess
 import threading
@@ -127,6 +128,7 @@ class InputHandler:
     async def apply_keyboard(self, envelope, *, transport=None):
         """Apply v2 or lease-bound legacy keyboard input on the ordered worker."""
         timing = InputTiming()
+        commit_fence = input_commit_fence.get()
         async with self._keyboard_lock:
             loop = asyncio.get_running_loop()
 
@@ -140,10 +142,11 @@ class InputHandler:
                         )
                         if field in envelope
                     }
-                    return self._remote_keyboard.apply(protocol_envelope)
+                    return self._remote_keyboard.apply(protocol_envelope, commit_fence=commit_fence)
                 return self._legacy_keyboard.apply(
                     envelope,
                     transport=str(transport or envelope.get("transport") or "socket"),
+                    commit_fence=commit_fence,
                 )
 
             def apply():
@@ -322,6 +325,8 @@ class InputHandler:
                         result["appliedSeq"] = self._desktop_writes.snapshot().last_applied_seq
                     return result
 
+                if not input_commit_fence.get()():
+                    return {"status": "stale-lease", "inputIds": []}
                 if desktop is not None and desktop.status == "applied":
                     desktop = self._desktop_writes.commit(
                         data["seq"],

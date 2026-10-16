@@ -54,7 +54,9 @@ def test_production_host_rejects_lab_only_controlled_scene_field_before_any_adap
     host = WebRemoteHost.__new__(WebRemoteHost)
     calls = []
     host.input_adapter = type("Adapter", (), {"handle_input": lambda *_args: calls.append(True)})()
-    run(host.on_input({"controlledScene": {"inputId": "forged"}}))
+    async def submit():
+        await host.on_input({"controlledScene": {"inputId": "forged"}})
+    run(submit())
     assert calls == []
 
 

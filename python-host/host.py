@@ -61,6 +61,8 @@ from observability import (
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 from capture_experiment import CaptureExperiment
+from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
+from relay_frame_worker import RelayFrameWorker
 
 if __name__ == "__main__":
     configure_host_logging()
@@ -585,12 +587,67 @@ class OverlayNotifier:
             pass
 
 
+class RelayOutputBuffer(io.BytesIO):
+    def write(self, data):
+        if self.tell() + len(data) > 16 * 1024 * 1024:
+            raise ValueError('relay output exceeds buffer budget')
+        return super().write(data)
+
+
+class RelayJpegProcessor:
+    """All capture objects and image buffers belong exclusively to the worker."""
+    def __init__(self):
+        self.sct = None
+        self.monitor = None
+
+    def __call__(self, request):
+        if self.sct is None:
+            self.sct = MSS()
+            self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
+        width, height = self.monitor['width'], self.monitor['height']
+        if width > 8192 or height > 8192 or width * height * 4 > 256 * 1024 * 1024:
+            raise ValueError('relay source exceeds buffer budget')
+        if request['width'] * request['height'] * 3 > 64 * 1024 * 1024:
+            raise ValueError('relay target exceeds buffer budget')
+        started = time.monotonic()
+        shot = self.sct.grab(self.monitor)
+        # asarray is a view of MSS BGRA, avoiding a second full BGRA allocation.
+        img = np.asarray(shot)
+        h, w = img.shape[:2]
+        factor = 1
+        for f in (2, 3, 4):
+            if w // f <= request['width'] and h // f <= request['height']:
+                factor = f
+                break
+        if factor > 1:
+            img = img[::factor, ::factor]
+        if img.shape[0] * img.shape[1] * 3 > 64 * 1024 * 1024:
+            raise ValueError('relay image exceeds target buffer budget')
+        image = Image.fromarray(img[:, :, 2::-1])
+        try:
+            buffer = RelayOutputBuffer()
+            image.save(buffer, format='JPEG', quality=request['quality'], optimize=False, subsampling=2)
+            if buffer.tell() > 16 * 1024 * 1024:
+                raise ValueError('relay output exceeds buffer budget')
+            return {'data': buffer.getvalue(), 'width': image.width, 'height': image.height,
+                    'encodeMs': (time.monotonic() - started) * 1000}
+        finally:
+            image.close()
+
+    def close(self):
+        if self.sct is not None:
+            self.sct.close()
+            self.sct = None
+
+
 class TunnelRelayStreamer:
     """Low-FPS JPEG stream over Socket.IO/Cloudflare for networks where WebRTC ICE fails."""
+    _retiring_worker = None
 
     def __init__(self, sio):
         self.sio = sio
         self.task = None
+        self._jpeg_worker = None
         self.viewer_id = None
         self.enabled = False
         self.suspended = False
@@ -721,6 +778,9 @@ class TunnelRelayStreamer:
             authority_is_current is not None and not authority_is_current()
         ):
             return False
+        retiring = TunnelRelayStreamer._retiring_worker
+        if retiring is not None and not retiring.stopped:
+            return False
         self.viewer_id = viewer_id
         self._apply_profile(self._pick_initial_profile(width, height, fps), reason="start", log=False)
         self.frame_id = 0
@@ -760,6 +820,10 @@ class TunnelRelayStreamer:
         self.suspended = False
         self.inflight_frames = {}
         closing_task = self.task
+        worker = getattr(self, '_jpeg_worker', None)
+        if worker is not None:
+            TunnelRelayStreamer._retiring_worker = worker
+            worker.invalidate(self.production_generation)
         self.task = None
         if closing_task:
             closing_task.cancel()
@@ -767,7 +831,13 @@ class TunnelRelayStreamer:
                 await closing_task
             except asyncio.CancelledError:
                 pass
-        # Do not clear task/enabled after the await: a new start may own them.
+        if worker is not None:
+            if await worker.stop():
+                if TunnelRelayStreamer._retiring_worker is worker:
+                    TunnelRelayStreamer._retiring_worker = None
+                if self._jpeg_worker is worker:
+                    self._jpeg_worker = None
+        # A timed-out worker stays retained and forbids another native thread.
         return operation
 
     def set_suspended(self, suspended):
@@ -782,6 +852,9 @@ class TunnelRelayStreamer:
         else:
             self.production_generation += 1
             self.ack_event.set()
+        worker = getattr(self, '_jpeg_worker', None)
+        if worker is not None:
+            worker.invalidate(self.production_generation)
         return self.production_generation
 
     def ack(self, frame_id, latency_ms=None):
@@ -812,131 +885,122 @@ class TunnelRelayStreamer:
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
 
     async def _run(self):
-        with MSS() as sct:
-            monitor = select_capture_monitor(sct.monitors, fallback_monitors=get_screeninfo_monitors())
-            while self.enabled and self.viewer_id and self.task is asyncio.current_task():
-                frame_interval = 1 / max(1, self.fps)
-                ack_timeout = max(0.35, min(1.5, frame_interval * 4))
-                if self.suspended:
-                    # No new capture/encode/emit while media is intentionally suspended.
-                    await asyncio.sleep(max(0.05, frame_interval))
-                    continue
-                if self.should_wait_before_capture():
-                    try:
-                        await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
-                        self.ack_event.clear()
-                        continue
-                    except asyncio.TimeoutError:
-                        self.ack_event.clear()
-                        logger.debug(
-                            "Tunnel relay backpressure timeout viewer=%s pending=%s profile=%s",
-                            self.viewer_id,
-                            self.pending_frame_count(),
-                            self.profile_name,
-                        )
-                        self.note_ack_timeout("pre-capture-backpressure")
-                        continue
-
-                started = time.time()
-                production_generation = self.production_generation
+        self._jpeg_worker = RelayFrameWorker(RelayJpegProcessor())
+        self._jpeg_worker.invalidate(self.production_generation)
+        while self.enabled and self.viewer_id and self.task is asyncio.current_task():
+            frame_interval = 1 / max(1, self.fps)
+            ack_timeout = max(0.35, min(1.5, frame_interval * 4))
+            if self.suspended:
+                # No new capture/encode/emit while media is intentionally suspended.
+                await asyncio.sleep(max(0.05, frame_interval))
+                continue
+            if self.should_wait_before_capture():
                 try:
-                    if self.suspended:
-                        continue
-                    shot = sct.grab(monitor)
-                    if self.suspended or production_generation != self.production_generation:
-                        continue
-                    # Fast path: numpy stride downsample then PIL JPEG encode
-                    img = np.array(shot)  # BGRA
-                    h, w = img.shape[:2]
-                    # Pick integer stride factor for fast downsample
-                    factor = 1
-                    for f in (2, 3, 4):
-                        if w // f <= self.width and h // f <= self.height:
-                            factor = f
-                            break
-                    if factor > 1:
-                        img = img[::factor, ::factor]
-                    # Convert BGRA to RGB for JPEG
-                    rgb = img[:, :, 2::-1]
-                    image = Image.fromarray(rgb)
-                    buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=self.jpeg_quality, optimize=False, subsampling=2)
-                    jpeg_bytes = buffer.getvalue()
-                    encode_ms = (time.time() - started) * 1000
-                    self.frame_id += 1
-                    frame_id = self.frame_id
-                    sent_at_ms = time.monotonic() * 1000.0
-                    self.inflight_frames[frame_id] = {
-                        "sent_at_ms": sent_at_ms,
-                        "generation": production_generation,
+                    await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
+                    self.ack_event.clear()
+                    continue
+                except asyncio.TimeoutError:
+                    self.ack_event.clear()
+                    logger.debug(
+                        "Tunnel relay backpressure timeout viewer=%s pending=%s profile=%s",
+                        self.viewer_id,
+                        self.pending_frame_count(),
+                        self.profile_name,
+                    )
+                    self.note_ack_timeout("pre-capture-backpressure")
+                    continue
+
+            started = time.time()
+            production_generation = self.production_generation
+            try:
+                if self.suspended:
+                    continue
+                frame = await self._jpeg_worker.submit_latest({
+                    'generation': production_generation, 'width': self.width,
+                    'height': self.height, 'quality': self.jpeg_quality,
+                })
+                if frame is None or self.suspended or production_generation != self.production_generation:
+                    continue
+                jpeg_bytes = frame['data']
+                encode_ms = frame['encodeMs']
+                self.frame_id += 1
+                frame_id = self.frame_id
+                sent_at_ms = time.monotonic() * 1000.0
+                self.inflight_frames[frame_id] = {
+                    "sent_at_ms": sent_at_ms,
+                    "generation": production_generation,
+                    "profile": self.profile_name,
+                    "quality": self.jpeg_quality,
+                    "width": frame['width'],
+                    "height": frame['height'],
+                }
+                if self.suspended or production_generation != self.production_generation:
+                    self.inflight_frames.pop(frame_id, None)
+                    continue
+                try:
+                    await self.sio.emit("relay-frame", {
+                        "viewerId": self.viewer_id,
+                        "frameId": frame_id,
+                        "width": frame['width'],
+                        "height": frame['height'],
+                        "timestamp": int(time.time() * 1000),
+                        "mime": "image/jpeg",
+                        "bytes": len(jpeg_bytes),
                         "profile": self.profile_name,
                         "quality": self.jpeg_quality,
-                        "width": image.width,
-                        "height": image.height,
-                    }
-                    if self.suspended or production_generation != self.production_generation:
-                        self.inflight_frames.pop(frame_id, None)
-                        continue
-                    try:
-                        await self.sio.emit("relay-frame", {
-                            "viewerId": self.viewer_id,
-                            "frameId": frame_id,
-                            "width": image.width,
-                            "height": image.height,
-                            "timestamp": int(time.time() * 1000),
-                            "mime": "image/jpeg",
-                            "bytes": len(jpeg_bytes),
-                            "profile": self.profile_name,
-                            "quality": self.jpeg_quality,
-                            "maxInFlightFrames": self.max_in_flight_frames,
-                            "productionGeneration": production_generation,
-                            "data": jpeg_bytes,
-                        })
-                        self.stats_frames += 1
-                        self.stats_bytes += len(jpeg_bytes)
-                        self.stats_encode_ms += encode_ms
-                    except Exception:
-                        self.inflight_frames.pop(frame_id, None)
-                        raise
-                except asyncio.TimeoutError:
-                    logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
-                    self.note_ack_timeout("post-send-backpressure")
-                except Exception as e:
-                    logger.warning(f"Tunnel relay frame failed: {e}")
+                        "maxInFlightFrames": self.max_in_flight_frames,
+                        "productionGeneration": production_generation,
+                        "data": jpeg_bytes,
+                    })
+                    self.stats_frames += 1
+                    self.stats_bytes += len(jpeg_bytes)
+                    self.stats_encode_ms += encode_ms
+                except Exception:
+                    self.inflight_frames.pop(frame_id, None)
+                    raise
+            except asyncio.TimeoutError:
+                logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
+                self.note_ack_timeout("post-send-backpressure")
+            except ValueError:
+                # Buffer limits stop this media task; never silently resize.
+                self.enabled = False
+                logger.warning('Tunnel relay stopped: buffer budget exceeded')
+            except Exception as e:
+                logger.warning('Tunnel relay frame failed: %s', type(e).__name__)
 
-                elapsed = time.time() - started
-                now = time.time()
-                if now - self.stats_started_at >= 5:
-                    duration = max(0.001, now - self.stats_started_at)
-                    avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
-                    avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
-                    avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
-                    logger.info(
-                        "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
-                        self.viewer_id,
-                        self.profile_name,
-                        self.stats_frames / duration,
-                        self.stats_frames,
-                        self.stats_acked,
-                        self.pending_frame_count(),
-                        self.stats_timeout_count,
-                        avg_kb,
-                        avg_encode,
-                        avg_ack_latency,
-                        self.width,
-                        self.height,
-                        self.jpeg_quality,
-                        self.max_in_flight_frames,
-                    )
-                    self.stats_started_at = now
-                    self.stats_frames = 0
-                    self.stats_acked = 0
-                    self.stats_bytes = 0
-                    self.stats_encode_ms = 0.0
-                    self.stats_ack_latency_ms = 0.0
-                    self.stats_ack_samples = 0
-                    self.stats_timeout_count = 0
-                await asyncio.sleep(max(0.001, frame_interval - elapsed))
+            elapsed = time.time() - started
+            now = time.time()
+            if now - self.stats_started_at >= 5:
+                duration = max(0.001, now - self.stats_started_at)
+                avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
+                avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
+                avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
+                logger.info(
+                    "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
+                    self.viewer_id,
+                    self.profile_name,
+                    self.stats_frames / duration,
+                    self.stats_frames,
+                    self.stats_acked,
+                    self.pending_frame_count(),
+                    self.stats_timeout_count,
+                    avg_kb,
+                    avg_encode,
+                    avg_ack_latency,
+                    self.width,
+                    self.height,
+                    self.jpeg_quality,
+                    self.max_in_flight_frames,
+                )
+                self.stats_started_at = now
+                self.stats_frames = 0
+                self.stats_acked = 0
+                self.stats_bytes = 0
+                self.stats_encode_ms = 0.0
+                self.stats_ack_latency_ms = 0.0
+                self.stats_ack_samples = 0
+                self.stats_timeout_count = 0
+            await asyncio.sleep(max(0.001, frame_interval - elapsed))
 
 
 def format_keyboard_command(action, payload):
@@ -1895,7 +1959,12 @@ class WebRemoteHost:
         register('offer', self.on_offer)
         register('host-status', self.on_host_status)
         register('disconnect', self.on_disconnect)
-        register('input', self.on_input)
+        # Socket.IO invokes this synchronous callback without retaining one
+        # waiting coroutine per message; on_input performs admission immediately.
+        def admit_current_input(data):
+            if self.sio is sio:
+                self.on_input(data)
+        sio.on('input', admit_current_input)
         register('control-transition', self.on_control_transition)
         register('viewer-session-rebind', self.on_viewer_session_rebind)
         register('ice-candidate', self.on_ice_candidate)
@@ -2053,7 +2122,43 @@ class WebRemoteHost:
         )
         return True
 
-    async def on_input(self, data):
+    def _get_input_admission(self):
+        queue = getattr(self, '_input_admission', None)
+        if queue is None:
+            queue = self._input_admission = InputAdmissionQueue(self._execute_input, self._authority_matches)
+        return queue
+
+    def on_input(self, data):
+        """Synchronous admission, before retaining payload or creating work."""
+        if not isinstance(data, dict) or 'controlledScene' in data or data.get('type') == 'dc_keepalive':
+            return completed_future(AdmissionResult('cancelled', None))
+        authority = self._capture_authority()
+        try:
+            byte_count = len(json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
+        except (TypeError, ValueError):
+            return completed_future(AdmissionResult('cancelled', None))
+        queue = self._get_input_admission()
+        future = queue.submit(data, authority=authority, byte_count=byte_count)
+        if future.done() and future.result().outcome == 'resync-required':
+            # One notification per frozen scope, not one task/ACK per rejected
+            # message. The rejected payload is never retained by the queue.
+            if (getattr(self, '_input_overload_authority', None) != authority
+                    and (getattr(self, '_input_rejection_task', None) is None
+                         or self._input_rejection_task.done())):
+                self._input_overload_authority = authority
+                notice = {key: data[key] for key in (
+                    'schemaVersion', 'type', 'leaseEpoch', 'viewerId', 'transport', 'seq'
+                ) if key in data and (type(data[key]) is int
+                                      or isinstance(data[key], str) and len(data[key]) <= 128)}
+                ids = data.get('inputIds')
+                notice['inputIds'] = [v for v in ids[:64] if isinstance(v, str) and len(v) <= 128] if isinstance(ids, list) else []
+                async def reject_once():
+                    if self._authority_matches(authority):
+                        await self._send_input_ack(notice, {'status': 'resync-required', 'inputIds': notice['inputIds']}, None)
+                self._input_rejection_task = self._schedule_input_lifecycle(reject_once())
+        return future
+
+    async def _execute_input(self, data, authority):
         """Handle input commands from viewer while recording safe outcomes."""
         accepted = False
         result = None
@@ -2166,7 +2271,8 @@ class WebRemoteHost:
                 })
 
             input_adapter = getattr(self, "input_adapter", None) or getattr(self, "input_handler", None)
-            authority = self._capture_authority()
+            if not self._authority_matches(authority):
+                return
             adapter_started = time.perf_counter()
             try:
                 if input_type == "keyboard":
@@ -2213,6 +2319,7 @@ class WebRemoteHost:
                             "receiveTime": result.get("receiveTime"),
                             "executeTime": result.get("executeTime"),
                         })
+            return result
         except Exception as exc:
             if accepted:
                 self._emit_input_observation(
@@ -2567,6 +2674,9 @@ class WebRemoteHost:
         return task
 
     def _advance_authority(self):
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None:
+            queue.freeze(self._capture_authority(), 'authority-transition')
         self._authority_revision = int(getattr(self, "_authority_revision", 0)) + 1
 
     def _capture_authority(self):
@@ -2657,15 +2767,25 @@ class WebRemoteHost:
         async with self._authority_input_queue():
             if not self._authority_matches(authority):
                 return {"status": "rejected"}
-            result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
-            # Complete both native drains under this queue even if superseded;
-            # the newer grant must wait for its own reset behind us.
-            reset_desktop = getattr(handler, "reset_desktop_writes", None)
-            if callable(reset_desktop):
-                await reset_desktop(reason=reason)
-            else:
-                handler.release_all_mouse_buttons(reason=reason)
-            return result
+            async def apply_reset():
+                result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
+                # Both native queues must finish before C can grant new authority.
+                reset_desktop = getattr(handler, "reset_desktop_writes", None)
+                if callable(reset_desktop):
+                    desktop = await reset_desktop(reason=reason)
+                    if isinstance(desktop, dict) and desktop.get('status') != 'applied':
+                        return {'status': 'rejected'}
+                else:
+                    handler.release_all_mouse_buttons(reason=reason)
+                return result
+            queue = getattr(self, '_input_admission', None)
+            if queue is not None:
+                result = await queue.reset_after_quiescent(authority, apply_reset)
+                if (result.get('status') == 'applied' and self._authority_matches(authority)
+                        and getattr(self, '_active_input_binding', None) is not None):
+                    queue.resume()
+                return result
+            return await apply_reset()
 
     async def _emit_control_transition_ack(self, lease_epoch, status, reason=None):
         sio = getattr(self, "sio", None)
@@ -2766,8 +2886,15 @@ class WebRemoteHost:
         relay_viewer = getattr(relay, "viewer_id", None)
         if relay_viewer not in (None, previous):
             return {"status": "rejected"}
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None and (queue.snapshot()['inFlightCount'] or queue.snapshot()['pendingCount']
+                                  or queue.unordered_snapshot()['inFlightCount'] or queue.unordered_snapshot()['pendingCount']
+                                  or queue.snapshot()['frozen']):
+            return {'status': 'rejected'}
         self._advance_authority()
         binding["viewerId"] = viewer
+        if queue is not None:
+            queue.resume()
         if getattr(self, "pc", None) is not None:
             self.pc._wrd_owner = (viewer, binding["leaseId"], binding["leaseEpoch"])
         if getattr(self, "current_viewer_id", None) == previous:
@@ -2845,6 +2972,9 @@ class WebRemoteHost:
                     await reject()
                     return
                 self._active_input_binding = binding
+                queue = getattr(self, '_input_admission', None)
+                if queue is not None:
+                    queue.resume()
             self.current_viewer_id = viewer_id if grant else None
             self._media_activity_binding = None
             self._control_operation = (lease_epoch, kind, "applied")
@@ -3015,6 +3145,9 @@ class WebRemoteHost:
                         await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
                         return
                     self._active_input_binding = binding
+                    queue = getattr(self, '_input_admission', None)
+                    if queue is not None:
+                        queue.resume()
                     authority = self._capture_authority()
                     # New offer/attempt invalidates prior media activity progress.
                     self._media_activity_binding = {
@@ -3193,7 +3326,7 @@ class WebRemoteHost:
                                 if not self._input_is_keepalive(data):
                                     logger.warning("Ignoring unbound or stale DataChannel input")
                                 return
-                            self._schedule_input_lifecycle(self.on_input(bound))
+                            self.on_input(bound)
                         except Exception as e:
                             self._emit_input_observation(
                                 "host_input_rejected", {"transport": "datachannel"},
@@ -4762,6 +4895,10 @@ class WebRemoteHost:
         }
         if isinstance(sequence, int) and sequence >= 1:
             self._media_activity_binding["connectionAttemptSequence"] = sequence
+
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None and not queue.snapshot()['pendingCount'] and not queue.unordered_snapshot()['pendingCount']:
+            queue.resume()
 
     async def on_relay_frame_ack(self, data):
         try:

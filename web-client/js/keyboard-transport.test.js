@@ -194,15 +194,15 @@ test('expired reset barrier requires lease reacquisition before accepting new in
 
 test('pending capacity freezes before numbering and does not invent applied progress', () => {
   const h = createHarness();
-  for (let index = 0; index < 256; index += 1) {
+  for (let index = 0; index < 32; index += 1) {
     assert.equal(h.transport.send({ action: 'keydown', payload: { code: `Key${index}` } }), `input-${index + 1}`);
   }
   assert.equal(h.transport.send({ action: 'keydown', payload: { code: 'Overflow' } }), null);
-  assert.equal(h.transport.getSnapshot().pendingCount, 256);
-  assert.equal(h.transport.getSnapshot().lastSent, 256);
+  assert.equal(h.transport.getSnapshot().pendingCount, 32);
+  assert.equal(h.transport.getSnapshot().lastSent, 32);
   assert.equal(h.transport.getSnapshot().lastApplied, 0);
   assert.equal(h.timeouts.length, 1);
-  assert.equal(h.dataChannel.length, 256);
+  assert.equal(h.dataChannel.length, 32);
 });
 
 test('a rejected DataChannel keyup fails closed through one Socket reset barrier', () => {

@@ -141,3 +141,30 @@ def test_tunnel_relay_suspend_blocks_production():
     assert relay.running is False
     relay.set_suspended(False)
     assert relay.suspended is False
+
+@pytest.mark.asyncio
+async def test_relay_worker_generation_is_checked_before_real_emit(monkeypatch):
+    import threading
+    import host as module
+    entered, release = threading.Event(), threading.Event()
+    class Processor:
+        def __call__(self, request):
+            entered.set()
+            assert release.wait(2)
+            return {'data': b'fake-jpeg', 'width': 10, 'height': 10, 'encodeMs': 1}
+        def close(self):
+            pass
+    monkeypatch.setattr(module, 'RelayJpegProcessor', Processor)
+    sio = FakeSio()
+    relay = TunnelRelayStreamer(sio)
+    await relay.start('fake-viewer')
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        relay.set_suspended(True)
+        release.set()
+        await relay._jpeg_worker.drain()
+        await asyncio.sleep(0)
+        assert sio.emits == []
+    finally:
+        release.set()
+        await relay.stop()

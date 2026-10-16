@@ -1002,3 +1002,63 @@ def test_wheel_input_does_not_emit_per_event_info_logs(monkeypatch, caplog):
     text = "\n".join(record.getMessage() for record in caplog.records if record.name == "input_handler")
     assert "mouse_input action=wheel" not in text
     assert "Input timing: type=mouse action=wheel" not in text
+
+@pytest.mark.asyncio
+async def test_admission_reset_waits_for_real_native_and_fences_old_keyboard_sequence():
+    from input_admission_queue import InputAdmissionQueue
+    native = BlockingAdapter()
+    handler = InputHandler(keyboard_adapter=native)
+    handler._running = True
+    await handler.transition_keyboard(connection_generation=1, lease_id=LEASE_ID, lease_epoch=1)
+    revision = [1]
+    q = InputAdmissionQueue(lambda data, authority: handler.apply_keyboard(data), lambda a: a == revision[0])
+    one = q.submit(key_envelope(seq=1, phase='down'), authority=1, byte_count=300)
+    assert await asyncio.to_thread(native.started.wait, 2)
+    two = q.submit(key_envelope(seq=2, phase='up'), authority=1, byte_count=300)
+    revision[0] = 2
+    reset_entered = []
+    async def reset():
+        reset_entered.append(True)
+        return await handler.reset_keyboard()
+    barrier = asyncio.create_task(q.reset_after_quiescent(1, reset))
+    await asyncio.sleep(0)
+    assert reset_entered == []
+    assert handler.get_keyboard_snapshot().last_applied_seq == 0
+    native.allow.set()
+    try:
+        assert (await barrier)['status'] == 'applied'
+        assert (await one).outcome == 'cancelled'
+        assert (await two).outcome == 'cancelled'
+        assert handler.get_keyboard_snapshot().last_applied_seq == 0
+        assert [e[1] for e in native.events] == [True, False]
+    finally:
+        native.allow.set()
+        handler._keyboard_executor.shutdown(wait=True)
+        handler._input_thread_pool.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_admission_fences_desktop_sequence_after_real_native_completion():
+    from input_admission_queue import InputAdmissionQueue
+    handler = InputHandler(keyboard_adapter=RecordingAdapter())
+    handler._running = True
+    handler.transition_desktop_writes(lease_id=LEASE_ID, lease_epoch=1)
+    entered, release = threading.Event(), threading.Event()
+    def native(action, payload):
+        entered.set()
+        assert release.wait(2)
+        return True
+    handler._handle_mouse = native
+    revision = [1]
+    q = InputAdmissionQueue(lambda data, authority: handler.handle_input(data), lambda a: a == revision[0])
+    one = q.submit(desktop_envelope(action='down', seq=1, payload={'relX':0.2, 'relY':0.3, 'button':'left', 'clickCount':1, 'buttons':1}), authority=1, byte_count=300)
+    assert await asyncio.to_thread(entered.wait, 2)
+    revision[0] = 2
+    release.set()
+    try:
+        assert (await one).outcome == 'cancelled'
+        assert handler._desktop_writes.snapshot().last_applied_seq == 0
+    finally:
+        release.set()
+        handler._keyboard_executor.shutdown(wait=True)
+        handler._input_thread_pool.shutdown(wait=True)
