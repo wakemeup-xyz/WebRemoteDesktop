@@ -118,6 +118,7 @@ const Input = {
   keyboardController: null,
   _desktopWriteSequence: 0,
   _desktopWritePending: new Map(),
+  _unorderedTraceSends: new Map(),
   _desktopWriteTimer: null,
   _reliableAckRecoveryPending: false,
   // This is deliberately an object-identity capability, not a caller-supplied
@@ -501,19 +502,27 @@ const Input = {
     return true;
   },
 
-  acceptKeyboardAck(ack, source) {
-    if (source && !this.keyboardTransport?.ownsAckSource?.(ack, source)) return { status: 'stale' };
+  acceptKeyboardAck(ack, source, options = {}) {
+    let metadata = null;
+    if (!options.deferTrace) {
+      try { metadata = this.peekInputAckMetadata(ack, source); } catch (_) {}
+    }
+    if (source && !this.keyboardTransport?.ownsAckSource?.(ack, source)) {
+      const result = { status: 'stale' };
+      if (!options.deferTrace) this._recordInputAck('keyboard', ack, result, metadata);
+      return result;
+    }
     let result;
     try {
       result = this._acceptKeyboardAck(ack);
     } catch (error) {
       if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
-        this._recordInputAck('keyboard', ack, { status: 'stale' });
+        if (!options.deferTrace) this._recordInputAck('keyboard', ack, { status: 'stale' }, metadata);
       }
       throw error;
     }
     if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType') || ack.inputType === 'keyboard') {
-      this._recordInputAck('keyboard', ack, result);
+      if (!options.deferTrace) this._recordInputAck('keyboard', ack, result, metadata);
     }
     return result;
   },
@@ -712,6 +721,21 @@ const Input = {
     if (!collector) return null;
     const context = this._inputTraceContext || {};
     const identity = this._traceIdentity();
+    this._pruneUnorderedTraceSends(identity);
+    if (stage === 'transport-send' && meta.accepted === true && meta.reliable === false
+      && ['move', 'wheel'].includes(meta.action)) {
+      for (const id of (Array.isArray(meta.inputIds) ? meta.inputIds.slice(0, 64) : [])) {
+        if (typeof id !== 'string' || id.length > 96) continue;
+        this._unorderedTraceSends.set(id, {
+          action: meta.action, transport: meta.transport, leaseEpoch: identity.leaseEpoch,
+          socket: meta.transport === 'socket' ? this._currentInputSocket() : null,
+          socketId: meta.transport === 'socket' ? (this._currentInputSocket()?.id || null) : null,
+          dataChannel: meta.transport === 'datachannel' && typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null,
+          connectionAttemptId: identity.connectionAttemptId, sentAt: Date.now(),
+        });
+      }
+      while (this._unorderedTraceSends.size > 256) this._unorderedTraceSends.delete(this._unorderedTraceSends.keys().next().value);
+    }
     const safe = {};
     const has = (key) => Object.prototype.hasOwnProperty.call(meta || {}, key);
     const value = (key, fallback = undefined) => (has(key) ? meta[key] : fallback);
@@ -728,7 +752,7 @@ const Input = {
       'transport', 'accepted', 'reason', 'status', 'seq', 'appliedSeq', 'clientRttMs',
       'focusKind', 'visibility', 'state', 'source', 'generation', 'gateAllowed',
       'surfaceState', 'recoveryState', 'pendingMouseReset', 'desktopWriteRecoveryState',
-      'reliable', 'ackTimeoutMs', 'unexpected',
+      'reliable', 'matchedReliablePending', 'late', 'ackTimeoutMs', 'unexpected',
     ]) {
       if (has(key)) safe[key] = meta[key];
     }
@@ -857,30 +881,76 @@ const Input = {
     return result;
   },
 
-  _recordInputAck(inputType, ack, result) {
+  _pruneUnorderedTraceSends(identity = this._traceIdentity()) {
+    const now = Date.now();
+    for (const [id, record] of this._unorderedTraceSends) {
+      if (now - record.sentAt >= 10000 || now < record.sentAt
+        || record.connectionAttemptId !== identity.connectionAttemptId
+        || record.leaseEpoch !== identity.leaseEpoch) this._unorderedTraceSends.delete(id);
+    }
+  },
+
+  peekInputAckMetadata(ack, source) {
+    // Capture the actual reliable pending record before C deletes it. The
+    // bounded unordered map is only an action hint, never reliable authority.
+    const ids = Array.isArray(ack?.inputIds) ? ack.inputIds.slice(0, 64) : (ack?.inputId ? [ack.inputId] : []);
+    const inputType = ack?.inputType;
+    const mouse = inputType === 'mouse' || inputType === 'command' || inputType === undefined
+      ? ids.map(id => this._desktopWritePending.get(id)).find(Boolean) : null;
+    const keyboard = inputType === 'keyboard' || inputType === undefined
+      ? this.keyboardTransport?.peekAckMetadata?.(ack) : null;
+    if (mouse || keyboard) return {
+      inputType: mouse ? this._traceInputType(mouse.type) : 'keyboard',
+      action: mouse?.action || keyboard?.action || 'ack',
+      reliable: true, matchedReliablePending: true,
+      connectionAttemptId: mouse?.connectionAttemptId || keyboard?.connectionAttemptId,
+    };
+    const identity = this._traceIdentity();
+    this._pruneUnorderedTraceSends(identity);
+    const matches = ids.map(id => this._unorderedTraceSends.get(id));
+    const hint = matches[0];
+    if (inputType === 'mouse' && hint && matches.every(record => record && record.action === hint.action
+        && record.transport === hint.transport)
+      && ack?.leaseEpoch === identity.leaseEpoch
+      && (!source || (source.transport === hint.transport && (source.transport === 'socket'
+        ? hint.socket === source.socket && hint.socketId === (source.socket?.id || null)
+        : hint.dataChannel === source.dataChannel)))) return {
+      inputType: 'pointer', action: hint.action, reliable: false, matchedReliablePending: false,
+      late: Date.now() - hint.sentAt >= 3000, connectionAttemptId: hint.connectionAttemptId,
+    };
+    return { inputType: this._traceInputType(inputType), action: 'ack', matchedReliablePending: false };
+  },
+
+  recordObservedInputAck(ack, result, metadata) {
+    const inputType = ack?.inputType === 'keyboard' ? 'keyboard' : 'mouse';
+    this._recordInputAck(inputType, ack, result, metadata);
+  },
+
+  _recordInputAck(inputType, ack, result, metadata = {}) {
     const inputIds = Array.isArray(ack?.inputIds)
       ? ack.inputIds : (ack?.inputId ? [ack.inputId] : []);
     const status = typeof ack?.status === 'string' ? ack.status : result?.status;
     const accepted = typeof ack?.accepted === 'boolean'
       ? ack.accepted : ['applied', 'duplicate'].includes(result?.status);
-    const pending = inputType === 'mouse'
-      ? inputIds.map((id) => this._desktopWritePending.get(id)).find(Boolean)
-      : null;
     const identity = this._traceIdentity();
     this._recordInputTrace('ack', {
       eventId: null,
-      inputType: ack?.inputType === 'command'
-        ? 'control' : inputType === 'mouse' ? 'pointer' : 'keyboard',
-      action: 'ack',
+      inputType: metadata?.inputType || (ack?.inputType === 'command'
+        ? 'control' : inputType === 'mouse' ? 'pointer' : 'keyboard'),
+      action: metadata?.action || 'ack',
+      reliable: metadata?.reliable,
+      matchedReliablePending: metadata?.matchedReliablePending,
+      late: metadata?.late,
       accepted,
       status,
       appliedSeq: ack?.appliedSeq,
       inputIds,
       leaseEpoch: ack?.leaseEpoch,
-      connectionAttemptId: ack?.connectionAttemptId || pending?.connectionAttemptId
+      connectionAttemptId: ack?.connectionAttemptId || metadata?.connectionAttemptId
         || identity.connectionAttemptId,
       incidentEligible: false,
     });
+    inputIds.forEach(id => this._unorderedTraceSends.delete(id));
   },
 
   _recoveryIdentity() {
@@ -1621,7 +1691,11 @@ const Input = {
     return { status, recovery: 'reconciled', appliedSeq };
   },
 
-  acceptMouseAck(ack, source) {
+  acceptMouseAck(ack, source, options = {}) {
+    let metadata = null;
+    if (!options.deferTrace) {
+      try { metadata = this.peekInputAckMetadata(ack, source); } catch (_) {}
+    }
     if (source) {
       const ids = ack?.inputIds || (ack?.inputId ? [ack.inputId] : []);
       const owned = ids.some(id => {
@@ -1632,7 +1706,11 @@ const Input = {
               && record.socketId === (source.socket?.id || null)
             : record.transport === 'datachannel' && record.dataChannel === source.dataChannel);
       });
-      if (!owned) return { status: 'stale' };
+      if (!owned) {
+        const result = { status: 'stale' };
+        if (!options.deferTrace) this._recordInputAck('mouse', ack, result, metadata);
+        return result;
+      }
     }
     let result;
     try {
@@ -1640,13 +1718,13 @@ const Input = {
     } catch (error) {
       if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
         || ack.inputType === 'mouse' || ack.inputType === 'command') {
-        this._recordInputAck('mouse', ack, { status: 'stale' });
+        if (!options.deferTrace) this._recordInputAck('mouse', ack, { status: 'stale' }, metadata);
       }
       throw error;
     }
     if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
       || ack.inputType === 'mouse' || ack.inputType === 'command') {
-      this._recordInputAck('mouse', ack, result);
+      if (!options.deferTrace) this._recordInputAck('mouse', ack, result, metadata);
     }
     return result;
   },

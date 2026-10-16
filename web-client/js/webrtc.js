@@ -1277,30 +1277,43 @@ const WebRTC = {
   acceptObservedInputAck(data, context = {}) {
     // Finish C's validation first. Timing never grants or repairs authority.
     const source = context.socket || context.dataChannel ? context : undefined;
+    let metadata = null;
+    try { metadata = typeof Input !== 'undefined' ? Input.peekInputAckMetadata?.(data, source) : null; } catch (_) {}
     const results = [];
-    if (typeof Input !== 'undefined') {
-      if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data, source));
-      if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
-        && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data, source));
-    }
-    if (data?.schemaVersion === 2) {
-      const positive = data.status === 'applied' || data.status === 'duplicate';
-      const validated = results.some(result => result && (positive
-        ? result.status === 'applied' || result.status === 'duplicate'
-        : result.status !== 'stale'));
-      if (!validated) {
-        // Moves deliberately bypass C's reliable sequence ledger. The observer
-        // may settle only its own accepted unordered submission, with the exact
-        // current scope, lease, ID and actual receiving transport.
-        if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onUnorderedInputAck?.(data, {
-          scope: this.latencyScope(), transport: context.transport,
-        });
-        return;
+    try {
+      if (typeof Input !== 'undefined') {
+        if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data, source, { deferTrace: true }));
+        if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
+          && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data, source, { deferTrace: true }));
       }
-    }
-    if (typeof LatencyMonitor !== 'undefined') {
-      this.syncLatencyScope();
-      LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
+      if (data?.schemaVersion === 2) {
+        const positive = data.status === 'applied' || data.status === 'duplicate';
+        const validated = results.some(result => result && (positive
+          ? result.status === 'applied' || result.status === 'duplicate'
+          : result.status !== 'stale'));
+        if (!validated) {
+          // Moves deliberately bypass C's reliable sequence ledger. The observer
+          // may settle only its own accepted unordered submission, with the exact
+          // current scope, lease, ID and actual receiving transport.
+          if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onUnorderedInputAck?.(data, {
+            scope: this.latencyScope(), transport: context.transport,
+          });
+          return;
+        }
+      }
+      if (typeof LatencyMonitor !== 'undefined') {
+        this.syncLatencyScope();
+        LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
+      }
+    } finally {
+      // Passive tracing is last, including the unordered/stale early return.
+      // Observer failures cannot alter the ACK result or M1 routing.
+      try {
+        if (typeof Input !== 'undefined') {
+          const result = results.find(item => item && item.status !== 'stale') || results[0];
+          Input.recordObservedInputAck?.(data, result, metadata);
+        }
+      } catch (_) {}
     }
   },
 

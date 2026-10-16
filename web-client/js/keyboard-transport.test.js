@@ -428,3 +428,26 @@ test('attempt invalidation cancels timer without resetting sequence or claiming 
   assert.equal(h.transport.getSnapshot().lastApplied, 0);
   assert.equal(h.transport.canSendNewInput(), false);
 });
+
+
+test('peekAckMetadata is payload free, detached and does not expire or mutate pending resets', () => {
+  let now = 1000;
+  const sent = [];
+  const transport = KeyboardTransport.create({ now: () => now, makeInputId: () => 'peek-id',
+    getConnectionAttemptId: () => 'peek-attempt', setTimeoutFn: () => 1, clearTimeoutFn() {},
+    sendSocket(payload) { sent.push(payload); return true; } });
+  transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
+  const id = transport.resetBarrier('focus-lost');
+  const before = transport.getSnapshot();
+  now = 30000;
+  const meta = transport.peekAckMetadata({ inputIds: [id] });
+  assert.deepEqual(meta, { action: 'reset', reliable: true, matchedReliablePending: true,
+    connectionAttemptId: 'peek-attempt' });
+  meta.action = 'modified';
+  assert.equal(transport.peekAckMetadata({ inputIds: [id] }).action, 'reset');
+  // getSnapshot itself expires barriers, so restore the clock before asking it.
+  now = 1000;
+  assert.deepEqual(transport.getSnapshot(), before);
+  assert.equal(sent.length, 1);
+  assert.equal(transport.peekAckMetadata({ inputIds: ['unknown'] }), null);
+});

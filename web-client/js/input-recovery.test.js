@@ -1742,3 +1742,59 @@ test('reset timeout releases once without recursively sending reset and retains 
   assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
   assert.equal(h.inputs().some(p => p.action === 'text'), false);
 });
+
+
+test('ACK metadata reads actual pending before reset deletion and does not expire keyboard barriers', () => {
+  const h = loadRecoveryFixture();
+  h.pointer('pointerdown');
+  h.blur();
+  const resets = h.writes().filter(payload => payload.action === 'reset');
+  assert.ok(resets.some(payload => payload.type === 'mouse'));
+  assert.ok(resets.some(payload => payload.type === 'keyboard'));
+  for (const reset of resets) {
+    const ack = { schemaVersion: 2, inputType: reset.type, inputIds: reset.inputIds,
+      leaseEpoch: reset.leaseEpoch, appliedSeq: reset.seq, status: 'applied' };
+    const meta = h.Input.peekInputAckMetadata(ack);
+    assert.equal(meta.action, 'reset');
+    assert.equal(meta.matchedReliablePending, true);
+    if (reset.type === 'keyboard') {
+      const before = h.Input.keyboardTransport.getSnapshot();
+      h.Input.keyboardTransport.peekAckMetadata(ack);
+      assert.deepEqual(h.Input.keyboardTransport.getSnapshot(), before);
+    }
+    h.ack(reset);
+    assert.equal(h.Input.peekInputAckMetadata(ack).matchedReliablePending, false);
+  }
+  const events = h.trace.snapshot().events.filter(event => event.stage === 'ack');
+  assert.equal(events.filter(event => event.action === 'reset').length, resets.length);
+});
+
+test('unordered hints are payload free, bounded, pruned by scope/TTL and never reliable pending authority', () => {
+  const h = loadRecoveryFixture();
+  const Input = h.Input;
+  const send = (id, action = 'move') => Input._recordInputTrace('transport-send', {
+    inputType: 'pointer', action, transport: 'datachannel', reliable: false, accepted: true,
+    inputIds: [id], payload: { text: 'PRIVATE_CANARY', relX: .9 },
+  });
+  for (let i = 0; i < 1000; i++) send(`hint-${i}`);
+  assert.equal(Input._unorderedTraceSends.size, 256);
+  assert.equal(JSON.stringify([...Input._unorderedTraceSends.values()]).includes('PRIVATE_CANARY'), false);
+  const ack = id => ({ inputType: 'mouse', leaseEpoch: Input.activeControlLease.leaseEpoch, inputIds: [id] });
+  assert.equal(Input.peekInputAckMetadata(ack('hint-0')).reliable, undefined);
+  assert.equal(Input.peekInputAckMetadata(ack('hint-999')).reliable, false);
+  assert.equal(Input.peekInputAckMetadata(ack('hint-999')).matchedReliablePending, false);
+  assert.equal(Input.peekInputAckMetadata(ack('hint-999'), {
+    transport: 'datachannel', dataChannel: {},
+  }).reliable, undefined, 'old channel identity must retain an unknown trace');
+  assert.equal(Input.peekInputAckMetadata({ ...ack('hint-999'), leaseEpoch: 999 }).reliable, undefined);
+  assert.equal(Input.peekInputAckMetadata({ ...ack('hint-999'), inputIds: ['hint-999', 'unknown'] }).reliable, undefined);
+  h.advance(3001);
+  assert.equal(Input.peekInputAckMetadata(ack('hint-999')).late, true);
+  h.advance(7000);
+  assert.equal(Input.peekInputAckMetadata(ack('hint-999')).reliable, undefined);
+  assert.equal(Input._unorderedTraceSends.size, 0);
+  send('scope-hint');
+  h.WebRTC.currentConnectionAttemptId = 'another-attempt';
+  Input.peekInputAckMetadata(ack('scope-hint'));
+  assert.equal(Input._unorderedTraceSends.size, 0);
+});

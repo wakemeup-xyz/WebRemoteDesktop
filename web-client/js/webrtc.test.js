@@ -6542,3 +6542,103 @@ test('future-sequence applied keyboard envelope cannot produce successful timing
   assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
   assert.equal(monitor.snapshot().outcomes.acked, 0);
 });
+
+
+for (const transport of ['socket', 'datachannel']) test(`1000 actual ${transport} ACK handlers keep business and M1 calls before trace sampling`, () => {
+  const { InputTrace } = require('./input-trace.js');
+  const trace = InputTrace.create({ hashInputIds: null });
+  const order = [];
+  const counts = { mouse: 0, keyboard: 0, latency: 0 };
+  const handlers = new Map(); const channels = new Map();
+  let pending = true;
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      peekInputAckMetadata() { order.push('peek'); return { inputType: 'pointer', action: pending ? 'reset' : 'move',
+        reliable: pending, matchedReliablePending: pending, late: false }; },
+      acceptMouseAck() { counts.mouse++; order.push('mouse'); pending = false; return { status: 'applied' }; },
+      acceptKeyboardAck() { counts.keyboard++; order.push('keyboard'); return { status: 'applied' }; },
+      recordObservedInputAck(data, result, meta) { order.push('trace'); trace.record('ack', { ...meta, status: data.status, accepted: false }); },
+    },
+    LatencyMonitor: { onInputAck() { counts.latency++; order.push('latency'); } },
+  });
+  WebRTC.pc = { createDataChannel(label) { const c = { label, readyState: 'connecting', send() {} }; channels.set(label, c); return c; } };
+  WebRTC.socket = { on(event, handler) { handlers.set(event, handler); } };
+  WebRTC.createInputChannel(); WebRTC.setupSocketListeners();
+  const deliver = data => transport === 'socket' ? handlers.get('input-ack')(data)
+    : channels.get('input').onmessage({ data: JSON.stringify(data) });
+  // Legacy envelopes invoke both real business consumer names on every ACK.
+  deliver({ type: 'input_ack', inputType: 'mouse', status: 'applied' });
+  for (let i = 0; i < 1000; i++) deliver({ type: 'input_ack', inputType: 'mouse', status: 'applied' });
+  assert.deepEqual(counts, { mouse: 1001, keyboard: 1001, latency: 1001 });
+  assert.deepEqual(order.slice(0, 5), ['peek', 'mouse', 'keyboard', 'latency', 'trace']);
+  assert.equal(trace.snapshot().counters.sampledAckEvents, 1000);
+  assert.equal(trace.snapshot().events[0].action, 'reset');
+  trace.dispose();
+});
+
+
+for (const transport of ['socket', 'datachannel']) test(`real v2 unordered ${transport} ACK sampling preserves 1000 C and M1 deliveries`, () => {
+  const { InputTrace } = require('./input-trace.js');
+  let now = 1000;
+  const trace = InputTrace.create({ now: () => now, hashInputIds: null });
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const handlers = new Map(); const channels = new Map();
+  const counts = { mouse: 0, keyboard: 0, unordered: 0, latency: 0 };
+  const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor,
+    Diagnostic: { recordInputTrace: (stage, meta) => trace.record(stage, meta) },
+    performance: { now: () => now } });
+  const Input = context.__Input;
+  WebRTC.currentConnectionAttemptId = 'sampling-attempt'; WebRTC.connectionAttemptSequence = 1;
+  Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 4 }; Input.isActive = true;
+  WebRTC.pc = { createDataChannel(label) { const c = { label, readyState: 'connecting', send() {} }; channels.set(label, c); return c; } };
+  WebRTC.socket = { connected: true, id: 'sampling-socket', emit() {}, on(event, handler) { handlers.set(event, handler); } };
+  WebRTC.createInputChannel(); WebRTC.setupSocketListeners();
+  WebRTC.sendInput = () => transport === 'datachannel';
+  for (const [object, method, counter] of [[Input, 'acceptMouseAck', 'mouse'], [Input, 'acceptKeyboardAck', 'keyboard'],
+    [monitor, 'onUnorderedInputAck', 'unordered'], [monitor, 'onInputAck', 'latency']]) {
+    const original = object[method];
+    object[method] = function(...args) { counts[counter]++; return original.apply(this, args); };
+  }
+  const deliver = ack => transport === 'socket' ? handlers.get('input-ack')(ack)
+    : channels.get('input').onmessage({ data: JSON.stringify(ack) });
+  const resetId = Input._sendInput('mouse', 'reset', {});
+  assert.equal(Input._desktopWritePending.size, 1);
+  deliver({ type: 'input_ack', schemaVersion: 2, inputType: 'mouse', status: 'applied',
+    leaseEpoch: 4, appliedSeq: 1, inputIds: [resetId] });
+  assert.equal(Input._desktopWritePending.size, 0);
+  assert.equal(trace.snapshot().events.find(event => event.stage === 'ack').action, 'reset');
+  trace.record('ack-timeout', { inputType: 'pointer', action: 'reset', status: 'timeout', reliable: true });
+  for (let i = 0; i < 1000; i++) {
+    const id = Input._sendInput('mouse', 'move', { relX: .5, relY: .5 });
+    assert.ok(id);
+    const ack = { type: 'input_ack', schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [id] };
+    deliver(ack);
+  }
+  assert.deepEqual(counts, { mouse: 1001, keyboard: 0, unordered: 1000, latency: 1001 });
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.counters.sampledAckEvents, 1000);
+  assert.equal(snapshot.events.filter(event => event.stage === 'ack-timeout').length, 1);
+  assert.equal(snapshot.events.filter(event => event.stage === 'ack' && event.action === 'reset').length, 1);
+  assert.equal(Input._desktopWritePending.size, 0);
+  assert.equal(Input._unorderedTraceSends.size, 0);
+  trace.dispose();
+});
+
+
+test('ACK metadata and passive trace failures do not reduce C/M1 dispatch or grant timing authority', () => {
+  const calls = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      peekInputAckMetadata() { calls.push('peek'); throw new Error('observer metadata'); },
+      acceptMouseAck() { calls.push('mouse'); return { status: 'stale' }; },
+      acceptKeyboardAck() { calls.push('keyboard'); return { status: 'applied' }; },
+      recordObservedInputAck() { calls.push('trace'); throw new Error('observer trace'); },
+    },
+    LatencyMonitor: { onInputAck() { calls.push('latency'); }, onUnorderedInputAck() { calls.push('unordered'); } },
+  });
+  assert.doesNotThrow(() => WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', status: 'applied' }));
+  assert.deepEqual(calls, ['peek', 'mouse', 'keyboard', 'latency', 'trace']);
+  calls.length = 0;
+  assert.doesNotThrow(() => WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied' }));
+  assert.deepEqual(calls, ['peek', 'mouse', 'unordered', 'trace']);
+});

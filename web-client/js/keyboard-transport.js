@@ -246,6 +246,7 @@
         seq,
         adapter: adapterName,
         reset: Boolean(isReset),
+        action: message.action,
         connectionAttemptId,
         leaseId, leaseEpoch,
         socket: getSocket(),
@@ -489,6 +490,17 @@
           : record.adapter === 'dataChannel' && record.dataChannel === source.dataChannel));
     }
 
+    // Observation only: no deadline expiry, ACK acceptance or pending mutation.
+    function peekAckMetadata(ack) {
+      const ids = Array.isArray(ack?.inputIds) ? ack.inputIds.slice(0, 64)
+        : (ack?.inputId ? [ack.inputId] : []);
+      const record = ids.map(id => pending.get(id)).find(Boolean);
+      if (!record) return null;
+      return { action: record.reset ? 'reset' : record.action,
+        reliable: true, matchedReliablePending: true,
+        connectionAttemptId: record.connectionAttemptId };
+    }
+
     function canSendNewInput() {
       return state() === 'ready';
     }
@@ -521,6 +533,7 @@
       setLease,
       connectionScopeChanged,
       ownsAckSource,
+      peekAckMetadata,
       send,
       resetBarrier,
       acceptAck,
