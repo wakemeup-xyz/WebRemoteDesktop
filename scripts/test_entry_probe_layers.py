@@ -126,14 +126,15 @@ class ProbeBoundariesTest(unittest.TestCase):
         clock, budgets = [0], []
         deadline = Deadline(15, lambda: clock[0])
         def failure(command, **kw):
-            self.assertIs(kw['deadline'], deadline)
+            self.assertLessEqual(kw['deadline'].ends_at, deadline.ends_at)
+            self.assertFalse(kw['private_group'])
             budgets.append(float(command[command.index('--max-time')+1]))
             clock[0] += 8
             return {'outcome': 'failed', 'stdout': b'', 'stderr': b'secret URL'}
         with patch('scripts.wrd_entry_health.run_owned_probe', side_effect=failure):
             row = _default_resolved_checker('https://fixture.invalid/health', 'fixture.invalid',443,
                                            ['192.0.2.1', '192.0.2.2', '192.0.2.3'], 15, deadline=deadline)
-        self.assertEqual(budgets, [15, 7])
+        self.assertEqual(budgets, [14.5, 6.5])
         self.assertEqual(row['resolverMode'], 'configured-public')
         self.assertEqual(row['outcome'], 'unknown')
         self.assertNotIn('secret', json.dumps(row))
@@ -286,6 +287,177 @@ _http_fetch('https://fixture.invalid', layer='formal-health', deadline=Deadline(
             self.assertEqual(records[0]['outcome'], 'timeout')
             self.assertTrue(records[0]['reaped'])
             self.assertIn(stage.encode(), records[0]['stdout'])
+
+
+class NestedFallbackLifecycleTest(unittest.TestCase):
+    def test_nested_dns_and_curl_helpers_never_escape_outer_probe_timeout(self):
+        import os
+        import signal
+        import sys
+        import time
+        from scripts.wrd_deadline import run_owned_probe
+        for helper in ('dns', 'curl'):
+            with self.subTest(helper=helper), tempfile.TemporaryDirectory() as directory:
+                marker = Path(directory)/'leaf.json'
+                leaf = ("import json,os,time; "
+                        "open(" + repr(str(marker)) + ",'w').write(json.dumps({'pid':os.getpid(),'pgid':os.getpgrp()})); "
+                        "time.sleep(60)")
+                code = """
+import json,os,sys,time
+from unittest.mock import patch
+from scripts.wrd_deadline import Deadline,run_owned_probe
+import scripts.wrd_entry_health as entry
+actual_runner = run_owned_probe
+def fixture_runner(command, **kwargs):
+    return actual_runner([sys.executable, '-c', LEAF],
+                         **{**kwargs, 'allowed_executables': {sys.executable}})
+print(json.dumps({'workerPid':os.getpid(),'workerGroup':os.getpgrp()}), flush=True)
+with patch.object(entry, 'run_owned_probe', side_effect=fixture_runner):
+    deadline = Deadline(60)
+    if HELPER == 'dns':
+        entry._default_public_resolver('fixture.invalid', deadline=deadline)
+    else:
+        entry._default_resolved_checker('https://fixture.invalid/health','fixture.invalid',443,
+                                        ['192.0.2.1'],60,deadline=deadline)
+""".replace('LEAF', repr(leaf)).replace('HELPER', repr(helper))
+                total_deadline = Deadline(1.5)
+                result = run_owned_probe([sys.executable, '-c', code], deadline=total_deadline,
+                                         allowed_executables={sys.executable})
+                record = json.loads(marker.read_text())
+                worker = json.loads(result['stdout'])
+                # Always clean up exactly the disposable child on RED too.
+                try:
+                    try:
+                        os.kill(record['pid'], 0)
+                        alive = True
+                    except ProcessLookupError:
+                        alive = False
+                    # A zombie has exited; Linux may leave it awaiting init reap.
+                    proc_stat = Path('/proc')/str(record['pid'])/'stat'
+                    if proc_stat.exists() and proc_stat.read_text().split()[2] == 'Z':
+                        alive = False
+                    while alive and not total_deadline.expired():
+                        time.sleep(0.01)
+                        try:
+                            os.kill(record['pid'], 0)
+                        except ProcessLookupError:
+                            alive = False
+                        if proc_stat.exists() and proc_stat.read_text().split()[2] == 'Z':
+                            alive = False
+                    self.assertEqual(result['outcome'], 'timeout')
+                    self.assertTrue(result['reaped'])
+                    self.assertEqual(record['pgid'], worker['workerGroup'])
+                    self.assertFalse(alive)
+                finally:
+                    try:
+                        os.kill(record['pid'], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+
+class FallbackDeadlineContractTest(unittest.TestCase):
+    def test_parent_passes_exact_absolute_cutoff_to_worker(self):
+        from unittest.mock import patch
+        from scripts.wrd_entry_health import _owned_fetch
+        deadline = Deadline(7)
+        def capture(command, **kw):
+            self.assertEqual(float(command[command.index('--deadline-at')+1]), deadline.ends_at)
+            self.assertIs(kw['deadline'], deadline)
+            return {'outcome':'timeout','stdout':b''}
+        with patch('scripts.wrd_entry_health.run_owned_probe', side_effect=capture):
+            _owned_fetch('formal-health', target='https://fixture.invalid', deadline=deadline,
+                         limit=65536, proxy_mode='environment')
+
+    def test_worker_does_not_renew_relative_timeout(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        from scripts.wrd_entry_health import main, probe_result
+        cutoff = __import__('time').monotonic() + 0.25
+        def observe(layer, target, **kw):
+            self.assertEqual(kw['deadline'].ends_at, cutoff)
+            return probe_result(layer, outcome='ok', reason='ok')
+        with patch('scripts.wrd_entry_health._observe', side_effect=observe), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['--probe-worker','formal-health','--url','https://fixture.invalid',
+                                   '--timeout','60','--deadline-at',str(cutoff)]), 0)
+
+    def test_health_wait_cli_owns_worker_directly_and_passes_absolute_cutoff(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        from scripts.wrd_deadline import main
+        def capture(command, **kw):
+            self.assertIn('--probe-worker', command)
+            self.assertEqual(command[command.index('--probe-worker')+1], 'formal-health')
+            self.assertEqual(float(command[command.index('--deadline-at')+1]), kw['deadline'].ends_at)
+            self.assertAlmostEqual(kw['deadline'].remaining(), 7, delta=0.1)
+            return {'outcome':'ok','stdout':b'{"outcome":"ok"}'}
+        def wait(**kw):
+            return kw['probe'](remaining_s=7)
+        with patch('scripts.wrd_deadline.run_owned_probe', side_effect=capture), \
+             patch('scripts.wrd_deadline.wait_formal_health', side_effect=wait), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['--health-url','https://fixture.invalid',
+                                   '--cloudflared','fixture-unused','--tunnel-name','fixture-unused']), 0)
+
+    def test_nested_helpers_are_reaped_before_worker_cutoff(self):
+        import os
+        import sys
+        import time
+        from scripts.wrd_deadline import run_owned_probe
+        for helper in ('dns','curl'):
+            with self.subTest(helper=helper), tempfile.TemporaryDirectory() as directory:
+                marker, record_path = Path(directory)/'pid', Path(directory)/'result'
+                leaf = 'import os,time; open(' + repr(str(marker)) + ",'w').write(str(os.getpid())); time.sleep(60)"
+                cutoff = time.monotonic() + 1.5
+                code = """
+import json,sys,socket
+from unittest.mock import patch
+import scripts.wrd_entry_health as entry
+from scripts.wrd_deadline import run_owned_probe
+actual_runner = run_owned_probe
+def fixture_runner(command, **kwargs):
+    if HELPER == 'curl' and command[0] == 'nslookup':
+        return {'outcome':'ok','stdout':b'Address: 192.0.2.1'}
+    result = actual_runner([sys.executable,'-c',LEAF],
+                          **{**kwargs,'allowed_executables':{sys.executable}})
+    open(RECORD, 'w').write(json.dumps({'outcome':result['outcome'],'reaped':result['reaped'],
+                                      'returncode':result['returncode']}))
+    return result
+with patch.object(entry, 'run_owned_probe', side_effect=fixture_runner), \
+     patch.object(entry, '_http_fetch', side_effect=socket.gaierror(-2, 'fixture')):
+    entry.main(['--probe-worker','formal-health','--url','https://fixture.trycloudflare.com/health',
+                '--timeout','60','--deadline-at',str(CUTOFF)])
+""".replace('HELPER',repr(helper)).replace('LEAF',repr(leaf)).replace('RECORD',repr(str(record_path))).replace('CUTOFF',repr(cutoff))
+                outer_deadline = Deadline(0)
+                outer_deadline.ends_at = cutoff
+                result = run_owned_probe([sys.executable,'-c',code], deadline=outer_deadline,
+                                         allowed_executables={sys.executable})
+                self.assertEqual(result['outcome'], 'ok', result['stderr'])
+                record = json.loads(record_path.read_text())
+                self.assertEqual(record['outcome'], 'timeout')
+                self.assertTrue(record['reaped'])
+                self.assertIsNotNone(record['returncode'])
+                pid = int(marker.read_text())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+                self.assertLessEqual(time.monotonic(), cutoff)
+
+
+class InheritedLeafCleanupTest(unittest.TestCase):
+    def test_output_limit_kills_only_leaf_and_retains_bounded_output(self):
+        import sys
+        from scripts.wrd_deadline import run_owned_probe
+        code = """
+import json,sys
+from scripts.wrd_deadline import Deadline,run_owned_probe
+result = run_owned_probe([sys.executable,'-c',"import sys,time;sys.stdout.write('x'*70000);sys.stdout.flush();time.sleep(60)"],
+                         deadline=Deadline(1),allowed_executables={sys.executable},
+                         output_limit=512,private_group=False)
+print(json.dumps({'outcome':result['outcome'],'reaped':result['reaped'],
+                  'bytes':len(result['stdout'])+len(result['stderr'])}),flush=True)
+"""
+        result = run_owned_probe([sys.executable,'-c',code],deadline=Deadline(2),allowed_executables={sys.executable})
+        self.assertEqual(result['outcome'],'ok',result['stderr'])
+        record = json.loads(result['stdout'])
+        self.assertEqual(record,{'outcome':'output-limit','reaped':True,'bytes':512})
 
 
 if __name__ == '__main__':

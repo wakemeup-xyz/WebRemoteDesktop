@@ -45,11 +45,13 @@ def wait_formal_health(*, timeout_s, probe, info, now=time.monotonic, sleep=time
     return {"outcome": "timeout", "elapsedMs": (now() - started) * 1000, "attempts": attempts}
 
 
-def run_owned_probe(command, *, deadline, allowed_executables, output_limit=65536):
+def run_owned_probe(command, *, deadline, allowed_executables, output_limit=65536, private_group=True):
     """Only caller-constructed probe commands are allowed; never a recovery worker.
 
     Pipes are drained incrementally. A timed-out/output-limited probe's private
     process group is terminated and reaped; no daemon or connector is targeted.
+    Only known leaf helpers may use private_group=False: inherit the owning
+    worker group, and inner cleanup signals only that leaf PID, never the group.
     """
     if not command or command[0] not in allowed_executables:
         raise ValueError("probe executable is not allowed")
@@ -60,7 +62,7 @@ def run_owned_probe(command, *, deadline, allowed_executables, output_limit=6553
         return result
     try:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, start_new_session=True)
+                                   stderr=subprocess.PIPE, start_new_session=private_group)
     except OSError:
         result["outcome"] = "spawn-failed"
         return result
@@ -98,7 +100,10 @@ def run_owned_probe(command, *, deadline, allowed_executables, output_limit=6553
             # SIGKILL avoids unbounded cooperative cancellation. This group was
             # just created for a finite, read-only probe; never a service group.
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                if private_group:
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()  # Leaf only; never kill its owning worker group.
             except ProcessLookupError:
                 pass
         try:
@@ -124,12 +129,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     checker = str(Path(__file__).with_name("wrd_entry_health.py"))
     def probe(remaining_s):
-        result = run_owned_probe([sys.executable, checker, "--url", args.health_url,
-                                  "--timeout", str(remaining_s)],
-                                 deadline=Deadline(remaining_s), allowed_executables={sys.executable})
+        deadline = Deadline(remaining_s)
+        result = run_owned_probe([sys.executable, checker, "--probe-worker", "formal-health",
+                                  "--url", args.health_url, "--timeout", str(remaining_s),
+                                  "--deadline-at", str(deadline.ends_at)],
+                                 deadline=deadline, allowed_executables={sys.executable})
         if result["outcome"] == "ok":
             try:
-                if json.loads(result["stdout"]).get("deliverable") is True:
+                if json.loads(result["stdout"]).get("outcome") == "ok":
                     return {"outcome": "ok"}
             except (ValueError, AttributeError):
                 pass

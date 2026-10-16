@@ -135,7 +135,8 @@ def _owned_fetch(layer, *, target, deadline, limit, proxy_mode):
         return probe_result(layer, reason='invalid-target', proxy=proxy_mode)
     duration = deadline.remaining()
     command = [sys.executable, str(Path(__file__).resolve()), '--probe-worker', layer,
-               '--url', target, '--timeout', str(duration), '--proxy-mode', proxy_mode]
+               '--url', target, '--timeout', str(duration), '--deadline-at', str(deadline.ends_at),
+               '--proxy-mode', proxy_mode]
     probe = run_owned_probe(command, deadline=deadline, allowed_executables={sys.executable})
     try:
         if probe['outcome'] == 'ok':
@@ -213,8 +214,18 @@ def probe_layers(config, *, deadline, fetch=None, now=time.monotonic, include_as
     return rows
 
 
+def _fallback_deadline(deadline):
+    # Let the leaf finish cleanup before the outer owner reaches its own reap
+    # reserve. If the worker is killed earlier, inherited group ownership still
+    # prevents a nested helper escaping. Never renew the absolute cutoff.
+    leaf = Deadline(0, deadline.now)
+    leaf.ends_at = max(0, deadline.ends_at - 0.5)
+    return leaf
+
+
 def _default_public_resolver(host, *, deadline):
-    probe = run_owned_probe(['nslookup', host, '8.8.8.8'], deadline=deadline, allowed_executables={'nslookup'})
+    probe = run_owned_probe(['nslookup', host, '8.8.8.8'], deadline=_fallback_deadline(deadline),
+                            allowed_executables={'nslookup'}, private_group=False)
     if probe['outcome'] != 'ok':
         return []
     addresses = re.findall(rb'(?m)^Address:\s*([0-9]+(?:\.[0-9]+){3})\s*$', probe['stdout'])
@@ -223,14 +234,16 @@ def _default_public_resolver(host, *, deadline):
 
 def _default_resolved_checker(target, host, port, ips, timeout, *, deadline=None, proxy_mode='environment'):
     deadline = deadline or Deadline(timeout)
+    leaf_deadline = _fallback_deadline(deadline)
     for ip in ips:
-        if deadline.expired():
+        if leaf_deadline.expired():
             break
-        command = ['curl', '--silent', '--max-time', str(deadline.remaining()), '--max-filesize', '65536',
+        command = ['curl', '--silent', '--max-time', str(leaf_deadline.remaining()), '--max-filesize', '65536',
                    '--resolve', f'{host}:{port}:{ip}', '--write-out', '\n__WRD_STATUS__=%{http_code}', target]
         if proxy_mode == 'direct':
             command[1:1] = ['--noproxy', '*']
-        probe = run_owned_probe(command, deadline=deadline, allowed_executables={'curl'})
+        probe = run_owned_probe(command, deadline=leaf_deadline,
+                                allowed_executables={'curl'}, private_group=False)
         if probe['outcome'] != 'ok':
             continue
         body, marker, status = probe['stdout'].rpartition(b'\n__WRD_STATUS__=')
@@ -276,8 +289,14 @@ def main(argv=None):
     parser.add_argument('--timeout', type=float, default=10.0)
     parser.add_argument('--proxy-mode', choices=('environment', 'direct'), default='environment')
     parser.add_argument('--probe-worker', choices=LAYERS[:-1])
+    parser.add_argument('--deadline-at', type=float)
     args = parser.parse_args(argv)
     deadline = Deadline(args.timeout)
+    if args.deadline_at is not None:
+        import math
+        if not math.isfinite(args.deadline_at) or args.deadline_at < 0:
+            parser.error('invalid monotonic cutoff')
+        deadline.ends_at = min(deadline.ends_at, args.deadline_at)
     if args.probe_worker:
         fetch = lambda layer, **kw: _http_fetch(kw['target'], layer=layer, deadline=deadline, limit=kw['limit'], proxy_mode=args.proxy_mode)
         result = _observe(args.probe_worker, args.url, deadline=deadline, fetch=fetch, now=deadline.now, proxy_mode=args.proxy_mode)
