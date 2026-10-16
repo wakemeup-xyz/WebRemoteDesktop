@@ -72,10 +72,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **Canonical 统计与恢复身份**：Viewer 以区间 `decodedDelta` 计算 `derivedFps`，浏览器报告的 FPS 只作诊断；恢复请求携带当前 connection attempt 与 generation，旧会话事件不得影响当前会话。
 - [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。默认 relay-peak-sliced-v1 的已测标准 20fps relay intent 使用 VideoToolbox 优先、双 slice、零应用层周期 IDR、keyint=1201 safety-net 与显式请求 IDR：1280x720 或 1152x720 为 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit，1920x1080 或 1728x1080 为 5Mbps / 7.2Mbps / 1300kbit；硬件编码不可用时回退 libx264 ultrafast。其它 resolution 或 FPS 实际回退 relay-on-demand-v1 ultrafast 单线程；on-demand、legacy 可显式回滚，balanced 仍禁止生产。真实 TURN/Viewer、丢包和物理设备验收未由离线通过替代。
 - [x] **捕获节奏边界**：2026-10-17源码复核，正常生产offer工厂显式使用 `CaptureExperiment(1.0,1)`，按target FPS的1倍捕获；2倍仍存在于默认/兼容/实验入口，不能泛化为正常生产链。源码事实不代表已核验每个历史运行进程，也不代表离线采集实验通过真实浏览器paint验收。
+- [x] **抓屏阶段与复用窗口**：grab 边界由 capture thread 实测，recv/worker 独立记录 queue、prepare、convert 和包围 prepare/convert 的 build；不能重复相加。缓存像素保留其原 captureSeq 和 grab 边界，新截图处理失败不能把旧图提升为新截图。capture_stats 的日志与 DataChannel 使用同一清零前 reuse/frames 快照；主动暂停等待单列 pause_wait，排除在 active recv_total 外。
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
 - [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
-- [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，只上报实测 `capturePrepareMs` / `frameConvertMs`；尚未建立真实边界的 `encoderMs` / `rtpSendMs` / `endToEndVideoMs` 必须为 `null`，不得用 track return 或 DataChannel 到达时间冒充
+- [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，上报实测 prepare/convert 与 worker queue/build；recv 尚未经过 encoder，故该消息的 `encoderMs`、`rtpSendMs`、`endToEndVideoMs` 仍为 `null`。详细 frame trace 的 encode 阶段必须先消费 lazy NAL generator，再开始 packetize；encode_total 为包围总项，不能与子阶段重复相加。codec 内部 reformat 计入 encode，独立 reformat 无 hook 时保持 null；不得用 track return 或 DataChannel 到达时间冒充编码、传输或可见效果。freshFrameAge 需要 Viewer 同钟的新 capture 关联证明，缺失时保持 unavailable。
 - [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继（失败只提示手动切换，不静默改写模式）
 - [x] **TURN 双边统一配置**：支持 `TURN_*` env、`signal-server/.env` 与本机 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（env 覆盖 json）；signal-server 与 python-host 使用同一 fingerprint；Host LaunchAgent 注入 `TURN_*`（`scripts/lib-turn-env.sh`）
 - [x] **会话级 Host TURN**：`relay` 会话必须装载 TURN；`auto`/`stun` 在 Strict STUN 下仍可省略 TURN；offer 携带 `networkMode`

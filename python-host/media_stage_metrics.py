@@ -18,6 +18,11 @@ STAGES = (
     "grab", "age_at_recv", "worker_queue", "prepare", "build",
     "reformat", "encode", "packetize", "encode_total",
 )
+# ``convert`` is the local prepared-image -> VideoFrame boundary already sent
+# as frame_timing.frameConvertMs. Keep the strict frame_trace_batch v1 STAGES
+# unchanged: its consumers reject unknown wire fields. Build encloses prepare
+# and convert; encode_total encloses encode and packetize. Never sum these.
+METRIC_STAGES = (*STAGES, "convert")
 MAX_RECORDS = 2048
 TTL_NS = 120_000_000_000
 
@@ -461,7 +466,7 @@ class StageMetrics:
         self._lock = threading.RLock()
         self._registry = registry
         self._capacity = int(capacity)
-        self._samples = {stage: deque(maxlen=self._capacity) for stage in STAGES}
+        self._samples = {stage: deque(maxlen=self._capacity) for stage in METRIC_STAGES}
         self.invalid_interval_count = 0
         self.invalid_stage_count = 0
         self.dropped_stage_samples = 0

@@ -1038,7 +1038,10 @@ class H264VideoToolboxEncoder(Encoder):
                 stream_id=trace_context.stream_id,
             )
         encode_started_ns = time.monotonic_ns()
-        packages = self._encode_frame(frame, force_keyframe)
+        # _encode_frame is lazy: codec.encode (including internal reformat)
+        # executes during iteration. Materialize here so that work is measured
+        # as encode, before the packetizer consumes the completed NAL list.
+        packages = list(self._encode_frame(frame, force_keyframe))
         encode_finished_ns = time.monotonic_ns()
         packetize_started_ns = time.monotonic_ns()
         packetized = self._packetize(packages)

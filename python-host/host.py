@@ -1159,6 +1159,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._process_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="imgproc")
         self._timing_totals = {
             "sleep": 0.0,
+            "pause_wait": 0.0,
             "capture_wait": 0.0,
             "convert": 0.0,
             "total": 0.0,
@@ -1184,6 +1185,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._last_img = None
         self._last_img_shape = (0, 0)
         self._last_img_target_generation = -1
+        self._last_img_capture = (0, None)
         self._reuse_count = 0
         self._total_reuse = 0
 
@@ -1269,6 +1271,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 getattr(self, "_capture_bounds_ns", {}).clear()
                 self._last_img = None
                 self._last_img_target_generation = -1
+                self._last_img_capture = (0, None)
             with self._pending_input_lock:
                 self._pending_input_ids.clear()
                 self._pending_input_data.clear()
@@ -1317,6 +1320,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._pending_input_data.clear()
         self._last_img = None
         self._last_img_shape = (0, 0)
+        self._last_img_capture = (0, None)
         self._frame_trace_context = None
         self.sct = None
 
@@ -1337,6 +1341,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
     async def next_timestamp(self):
         return self._frame_clock.next_timestamp()
 
+    async def _wait_while_suspended(self):
+        """Return only intentional pause wait, on the recv duration clock."""
+        if not self._suspended:
+            return 0.0
+        started = time.perf_counter()
+        while self._suspended and self._capture_running:
+            await asyncio.sleep(0.05)
+        return time.perf_counter() - started
+
     async def recv(self):
         loop = asyncio.get_event_loop()
         recv_start = time.perf_counter()
@@ -1344,8 +1357,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
         # Suspended: block until resumed/stop. Do not return blank frames that
         # would still be encoded and inflate RTP while media is paused.
-        while self._suspended and self._capture_running:
-            await asyncio.sleep(0.05)
+        pause_wait = await self._wait_while_suspended()
         if not self._capture_running:
             raise MediaStreamError
 
@@ -1357,8 +1369,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             await asyncio.sleep(sleep_time)
         # Re-check after pacing sleep: suspension may have started mid-wait.
         if self._suspended:
-            while self._suspended and self._capture_running:
-                await asyncio.sleep(0.05)
+            pause_wait += await self._wait_while_suspended()
             if not self._capture_running:
                 raise MediaStreamError
         self._last_frame_time = time.time()
@@ -1397,6 +1408,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
             if getattr(self, "_last_img_target_generation", -1) == target_generation
             else None
         )
+        # Cache pixels and their source identity are selected together before
+        # awaiting the worker. A failed new capture may return these old pixels.
+        fallback_capture = getattr(self, "_last_img_capture", (0, None)) if fallback_img is not None else (0, None)
         selected_at_ns = time.monotonic_ns()
         queued_at = selected_at_ns
         try:
@@ -1432,10 +1446,20 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._last_img = cached_img
             self._last_img_shape = cached_img.shape[:2]
             self._last_img_target_generation = target_generation
+            self._last_img_capture = (seq, selected_grab_bounds)
             self._reuse_count = 0
         elif reused:
             self._reuse_count += 1
             self._total_reuse += 1
+        fresh_output = cached_img is not None and fresh and not reused
+        if fresh_output:
+            output_capture_seq, output_grab_bounds = seq, selected_grab_bounds
+        elif worker_timing["source"] == "cache":
+            output_capture_seq, output_grab_bounds = fallback_capture
+        else:
+            # Blank frames carry no capture evidence, including when they were
+            # built after a failed fresh capture or an invalid cached image.
+            output_capture_seq, output_grab_bounds = 0, None
 
         trace_context = getattr(self, "_frame_trace_context", None)
         # aiortc encodes the prior recv result before asking this track for the
@@ -1451,16 +1475,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = time_base
         if trace_context is not None:
-            capture_seq = seq if fresh else self._last_consumed_seq
-            grab_bounds = selected_grab_bounds
             encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
-            trace_key = trace_context.key(capture_seq, encoder_timestamp)
+            trace_key = trace_context.key(output_capture_seq, encoder_timestamp)
             self._record_output_trace(
-                trace_context, trace_key, pts, grab_bounds, selected_at_ns, worker_timing,
-                fresh=fresh, reused=reused,
+                trace_context, trace_key, pts, output_grab_bounds, selected_at_ns, worker_timing,
+                fresh=fresh_output, reused=reused,
             )
             self._send_frame_trace_batch()
-        if selected_scope is not None and selected_grab_bounds is not None:
+        if fresh_output and selected_scope is not None and selected_grab_bounds is not None:
             try:
                 key = FrameKey(selected_scope[0], selected_scope[1], "video", seq,
                                int(round(float(pts * time_base * 90_000))) & 0xffffffff)
@@ -1470,9 +1492,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
             except Exception:
                 pass  # observation must never interrupt capture
         convert_time = worker_timing["construct"]
-        total_time = time.perf_counter() - recv_start
+        # Pacing is active recv work; intentional pause wait has its own label.
+        total_time = max(0.0, time.perf_counter() - recv_start - pause_wait)
 
         self._timing_totals["sleep"] += sleep_time
+        self._timing_totals["pause_wait"] = self._timing_totals.get("pause_wait", 0.0) + pause_wait
         self._timing_totals["capture_wait"] += capture_wait
         self._timing_totals["convert"] += convert_time
         self._timing_totals["total"] += total_time
@@ -1481,23 +1505,26 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.frame_count += 1
         current_time = time.time()
         if current_time - self.last_time >= 5:
-            fps = self.frame_count / (current_time - self.last_time)
+            interval_reuse = self._total_reuse
+            interval_frames = self.frame_count
+            fps = interval_frames / (current_time - self.last_time)
             if self._timing_count:
                 avg = {
                     key: value / self._timing_count * 1000
                     for key, value in self._timing_totals.items()
                 }
                 logger.info(
-                    "CAPTURE_STATS fps=%.1f frames=%d avg_ms sleep=%.1f capture_wait=%.1f convert=%.1f recv_total=%.1f frame=%dx%d reuse=%d",
+                    "CAPTURE_STATS fps=%.1f frames=%d avg_ms sleep=%.1f pause_wait=%.1f capture_wait=%.1f convert=%.1f recv_total=%.1f frame=%dx%d reuse=%d",
                     fps,
-                    self.frame_count,
+                    interval_frames,
                     avg["sleep"],
+                    avg["pause_wait"],
                     avg["capture_wait"],
                     avg["convert"],
                     avg["total"],
                     frame.width,
                     frame.height,
-                    self._total_reuse,
+                    interval_reuse,
                 )
                 for key in self._timing_totals:
                     self._timing_totals[key] = 0.0
@@ -1518,7 +1545,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
                             "fps": round(fps, 1),
                             "width": frame.width,
                             "height": frame.height,
-                            "reuse": self._total_reuse,
+                            "reuse": interval_reuse,
+                            "frames": interval_frames,
                         }))
                     except Exception:
                         pass
@@ -1665,6 +1693,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     context.metrics.record(trace_key, "age_at_recv", grab_bounds[1], selected_at_ns)
                 context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
                 context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
+                context.metrics.record(trace_key, "convert", worker_timing["prepared_ns"], worker_timing["finished_ns"])
                 context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
             self._increment_trace_interval_unlocked(
                 outputs=1,
@@ -1686,15 +1715,18 @@ class ScreenCaptureTrack(VideoStreamTrack):
         started_ns = time.monotonic_ns()
         cached_img = None
         reused = False
+        source = "blank"
         try:
             if fresh:
                 img = self._process_screenshot(screenshot, max_width, max_height)
                 if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
                     raise ValueError("invalid processed screenshot")
+                source = "capture"
             elif isinstance(fallback_img, np.ndarray):
                 # Keep the ndarray cache; copy only for this independently-owned frame.
                 img = fallback_img.copy()
                 reused = True
+                source = "cache"
             else:
                 img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
         except Exception as exc:
@@ -1702,6 +1734,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             reused = True
             if isinstance(fallback_img, np.ndarray):
                 img = fallback_img.copy()
+                source = "cache"
             else:
                 img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
         prepared_ns = time.monotonic_ns()
@@ -1716,14 +1749,17 @@ class ScreenCaptureTrack(VideoStreamTrack):
             try:
                 if isinstance(fallback_img, np.ndarray):
                     frame = self._video_frame_from_image(fallback_img.copy())
+                    source = "cache"
                 else:
                     raise ValueError("no valid cached frame")
             except Exception:
                 frame = self._video_frame_from_image(
                     np.zeros((max_height, max_width, 4), dtype=np.uint8)
                 )
+                source = "blank"
         finished_ns = time.monotonic_ns()
         return frame, cached_img, reused, {
+            "source": source,
             "queue": max(0.0, started_ns - queued_at) / 1_000_000_000,
             "prepare": max(0.0, prepared_ns - started_ns) / 1_000_000_000,
             "construct": max(0.0, finished_ns - prepared_ns) / 1_000_000_000,

@@ -75,6 +75,35 @@ test('v2 zero duration is measured while invalid durations stay unavailable', ()
   assert.equal(stats.network.available, false);
 });
 
+test('measured media stages retain enclosing totals without synthesizing freshness or pipeline sums', () => {
+  let now = 1000;
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(testScope);
+  m.onFrameTiming({ schemaVersion: 2, timings: {
+    captureGrabMs: 2, captureAgeAtRecvMs: 9, imgprocQueueMs: 10,
+    capturePrepareMs: 5, frameConvertMs: 2, imgprocBuildMs: 7,
+    encoderMs: 40, packetizeMs: 3, encodeTotalMs: 43,
+    freshFrameAgeMs: 0, rtpSendMs: 1, endToEndVideoMs: 1,
+  } });
+  m.onVideoFrame(now);
+  now = 1050;
+  m.onVideoFrame(now);
+  const snapshot = m.snapshot();
+  assert.equal(snapshot.metrics.imgprocBuildMs.last, 7);
+  assert.equal(snapshot.metrics.capturePrepareMs.last, 5);
+  assert.equal(snapshot.metrics.frameConvertMs.last, 2);
+  assert.equal(snapshot.metrics.encoderMs.last, 40);
+  assert.equal(snapshot.metrics.packetizeMs.last, 3);
+  assert.equal(snapshot.metrics.encodeTotalMs.last, 43);
+  assert.equal(snapshot.metrics.paintIntervalMs.last, 50);
+  // Receipt and paint do not prove a new capture. A separate Viewer-clock
+  // association is required; a Host field cannot provide that evidence.
+  assert.equal(snapshot.metrics.freshFrameAgeMs.available, false);
+  assert.equal(snapshot.metrics.inputToVisibleEffectMs.available, false);
+  assert.equal('pipelineTotalMs' in snapshot.metrics, false);
+  assert.equal(m.getStats().network.available, false);
+});
+
 test('legacy out-of-order timestamps are discarded without synthetic network latency', () => {
   const monitor = loadLatencyMonitor();
   monitor.onFrameTiming({ schemaVersion: 1, timings: {

@@ -9,6 +9,24 @@ RTP_CLOCK_RATE = 90_000
 NANOSECONDS_PER_SECOND = 1_000_000_000
 
 
+def materialize_and_packetize(produce, packetize, now_ns):
+    """Measure lazy encoder work before handing NALs to the packetizer.
+
+    All durations use one local monotonic clock. encodeTotalMs encloses the
+    other two stages and must not be added to them in a pipeline sum.
+    """
+    started_ns = now_ns()
+    nals = list(produce())
+    encoded_ns = now_ns()
+    packets = packetize(nals)
+    finished_ns = now_ns()
+    return packets, {
+        "encoderMs": (encoded_ns - started_ns) / 1_000_000,
+        "packetizeMs": (finished_ns - encoded_ns) / 1_000_000,
+        "encodeTotalMs": (finished_ns - started_ns) / 1_000_000,
+    }
+
+
 class RtpFrameClock:
     """Produce strictly increasing video PTS values from a monotonic clock."""
 
