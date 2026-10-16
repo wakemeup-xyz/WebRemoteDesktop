@@ -986,7 +986,7 @@ test('core auto failure captures M1 without loading deferred scripts and manual 
 });
 
 test('actual auto failure retries captured ID/time/latency and drains M1 only once through server receipt', async () => {
-  const os = require('node:os'); const { ingestDiagnosticPayload } = require('../../signal-server/lib/diagnostic');
+  const os = require('node:os'); const { ingestDiagnosticPayload, loadRecentDiagnostics } = require('../../signal-server/lib/diagnostic');
   const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-retry-'));
   process.env.WRD_DIAG_DIR = dir;
   try {
@@ -1016,7 +1016,9 @@ test('actual auto failure retries captured ID/time/latency and drains M1 only on
     assert.equal(Diagnostic.getPendingDiagnostics().length, 0);
     const again = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'viewer-test', data: failure, config: { enableDiagPersist: true }, logger: {} });
     assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
-    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 2);
+    const durableEvents = loadRecentDiagnostics().filter(report => report.type === 'scope-ended');
+    assert.equal(durableEvents.length, 2);
+    assert.deepEqual(durableEvents.map(report => report.eventIdHash).sort(), [...receipts[0].eventIdHashes].sort());
     assert.equal(receipts[0].eventIdHashes.length, 2);
   } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
 });
