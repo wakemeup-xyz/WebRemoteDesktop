@@ -6642,3 +6642,88 @@ test('ACK metadata and passive trace failures do not reduce C/M1 dispatch or gra
   assert.doesNotThrow(() => WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied' }));
   assert.deepEqual(calls, ['peek', 'mouse', 'unordered', 'trace']);
 });
+
+test('200 stable rVFCs preserve every authority and M observation with no extra chrome writes', () => {
+  const { WebRTC, context } = loadWebRTC();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  const writes = [];
+  const instrumented = new WeakSet();
+  const instrument = node => {
+    if (instrumented.has(node)) return node;
+    instrumented.add(node);
+    for (const key of ['className', 'textContent', 'hidden', 'disabled', 'title']) {
+      let value = node[key];
+      Object.defineProperty(node, key, { configurable: true,
+        get: () => value, set(next) { value = next; writes.push([key, next]); } });
+    }
+    for (const method of ['add', 'remove', 'toggle']) {
+      const original = node.classList[method];
+      node.classList[method] = (...args) => { writes.push([method, ...args]); return original(...args); };
+    }
+    const originalAttribute = node.setAttribute;
+    node.setAttribute = (...args) => { writes.push(args); return originalAttribute(...args); };
+    node.style = new Proxy(node.style, { set(target, key, value) { writes.push([key, value]); target[key] = value; return true; } });
+    return node;
+  };
+  const lookup = context.document.getElementById;
+  context.document.getElementById = id => instrument(lookup(id));
+  instrument(context.document.body);
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  const track = { id: 'stable-video', kind: 'video' };
+  video.videoWidth = 1280; video.videoHeight = 720;
+  video.srcObject = { getVideoTracks: () => [track] };
+  video.getBoundingClientRect = () => ({ x: 0, y: 0, width: 1280, height: 720 });
+  video.requestVideoFrameCallback = callback => { callbacks.push(callback); return callbacks.length; };
+  WebRTC.pc = { connectionState: 'connected',
+    getReceivers: () => [{ track, getSynchronizationSources: () => [{ source: 17 }] }] };
+  WebRTC.currentConnectionAttemptId = 'stable-attempt';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.socket = { connected: true };
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.canEnableDesktopInput = () => true;
+  const activations = [];
+  context.Input = { setActive(value) { activations.push(value); } };
+  const latency = [], frameTrace = [], inputFrames = [], resumeFrames = [];
+  context.LatencyMonitor = { onVideoFrame: (now, metadata) => latency.push([now, metadata.rtpTimestamp]) };
+  WebRTC._frameTraceEnabled = true;
+  WebRTC.ensureFrameTraceCollector = () => ({ observeVideoFrame: (identity, observation, now) => frameTrace.push([identity, now]) });
+  WebRTC.ensureInputFrameCollector = () => ({ observeVideoFrame: (identity, observation, now) => inputFrames.push([identity, now]) });
+  WebRTC.consumeInputFrameMatches = () => {};
+  const observeResume = WebRTC.observeFreshResumeFrame;
+  WebRTC.observeFreshResumeFrame = function(frame) { resumeFrames.push(frame.frameSeq); return observeResume.call(this, frame); };
+  const session = WebRTC.ensureDesktopSessionState();
+  let freshMediaTransitions = 0;
+  const sessionAdapter = { ...session, applyMedia(event) {
+    if (event.event === 'fresh-frame') freshMediaTransitions++;
+    return session.applyMedia(event);
+  } };
+  WebRTC.ensureDesktopSessionState = () => sessionAdapter;
+  WebRTC.startVideoFrameTracking();
+  callbacks[0](0, { presentedFrames: 1, rtpTimestamp: 100 });
+  const before = writes.length;
+  assert.ok(before > 0);
+  for (let index = 1; index <= 200; index++) callbacks[index](index * 16, {
+    presentedFrames: index + 1, rtpTimestamp: 100 + index,
+  });
+  assert.equal(writes.length, before);
+  assert.equal(WebRTC._videoFrameSeq, 201);
+  assert.equal(activations.length, 201);
+  assert.ok(activations.every(Boolean));
+  assert.equal(latency.length, 201);
+  assert.equal(frameTrace.length, 201);
+  assert.equal(inputFrames.length, 201);
+  assert.equal(resumeFrames.length, 201);
+  assert.equal(resumeFrames.at(-1), 201);
+  assert.equal(inputFrames.at(-1)[0].rtpTimestamp, 300);
+  assert.equal(inputFrames.at(-1)[1], 3200);
+  assert.equal(WebRTC._paintObservationWindow.intervals.length, 200);
+  assert.equal(WebRTC._paintObservationWindow.lastPaintAt, 3200);
+  assert.ok(freshMediaTransitions >= 201);
+  const oldCallback = callbacks.at(-1);
+  WebRTC.currentConnectionAttemptId = 'replacement-attempt';
+  oldCallback(3216, { presentedFrames: 202, rtpTimestamp: 301 });
+  assert.equal(WebRTC._videoFrameSeq, 201);
+  assert.equal(activations.length, 201);
+  assert.equal(resumeFrames.length, 201);
+});

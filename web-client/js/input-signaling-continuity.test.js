@@ -733,3 +733,60 @@ test(`real failed-PC replacement/replay rejects old ACK and retains early frame 
 });
 
 }
+
+
+test('stable same-value activation deduplicates keyboard DOM and still runs recovery each time', () => {
+  const h = fixture();
+  h.sent.filter(write => write.action === 'reset').forEach(write => h.acknowledge(write));
+  const writes = [];
+  const ids = ['keyInputDisplay', 'mobileTextInputBtn', 'mobileInputStatus',
+    'mobileInputRetryBtn', 'mobileInputDiscardBtn', 'inputRecoveryNotice',
+    'inputRecoveryNoticeStatus', 'inputRecoveryNoticeText', 'inputRecoveryRetryBtn',
+    'inputRecoveryControlBtn', 'inputRecoveryDraftBtn'];
+  const instrument = (node) => {
+    for (const key of ['textContent', 'hidden', 'disabled']) {
+      let value = node[key];
+      Object.defineProperty(node, key, { configurable: true,
+        get() { return value; }, set(next) { value = next; writes.push([key, next]); } });
+    }
+    const attrs = new Map();
+    node.getAttribute = key => attrs.get(key) ?? null;
+    node.setAttribute = (key, value) => { attrs.set(key, value); writes.push([key, value]); };
+    const data = node.dataset;
+    node.dataset = new Proxy(data, { set(target, key, value) { target[key] = value; writes.push([key, value]); return true; } });
+    return node;
+  };
+  ids.forEach(id => instrument(h.context.document.getElementById(id)));
+  const recoveryEpochs = [];
+  h.Input._maybeAutoRecover = () => { recoveryEpochs.push(h.Input.activeControlLease.leaseEpoch); };
+  h.Input.setActive(true);
+  const before = writes.length;
+  assert.ok(before > 0);
+  for (let i = 0; i < 200; i++) h.Input.setActive(true);
+  assert.equal(recoveryEpochs.length, 201);
+  assert.equal(writes.length, before);
+  const display = h.context.document.getElementById('keyInputDisplay');
+  assert.equal(display.dataset.state, 'READY');
+  h.Input.activeControlLease = { ...h.Input.activeControlLease, leaseEpoch: 8 };
+  h.Input.setActive(true);
+  assert.equal(recoveryEpochs.at(-1), 8, 'same active value must still observe a new lease epoch');
+  const controllerSnapshot = h.Input.keyboardController.getSnapshot.bind(h.Input.keyboardController);
+  h.Input.keyboardController.getSnapshot = () => ({ ...controllerSnapshot(), state: 'RESET_REQUIRED' });
+  h.Input.updateKeyboardUI();
+  assert.equal(display.dataset.state, 'RESET_REQUIRED');
+  h.Input.keyboardController.getSnapshot = controllerSnapshot;
+  h.Input._recoveryCycle = { ...h.Input._recoveryCycle, state: 'waiting' };
+  h.Input.updateKeyboardUI();
+  assert.equal(display.dataset.state, 'BLOCKED');
+  assert.ok(writes.length > before);
+  const afterRecovery = writes.length;
+  h.Input.mobileTextInputAdapter = { getSnapshot: () => ({ status: 'uncertain', hasPending: true, deliveryUncertain: true }) };
+  h.Input.updateKeyboardUI();
+  assert.equal(h.context.document.getElementById('inputRecoveryDraftBtn').hidden, false);
+  assert.ok(writes.length > afterRecovery);
+  const replacement = instrument({ dataset: {}, classList: {}, setAttribute() {} });
+  const originalLookup = h.context.document.getElementById;
+  h.context.document.getElementById = id => id === 'keyInputDisplay' ? replacement : originalLookup(id);
+  h.Input.updateKeyboardUI();
+  assert.equal(replacement.dataset.state, 'BLOCKED');
+});

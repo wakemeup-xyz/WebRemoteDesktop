@@ -2,6 +2,27 @@ const OVERFLOW_ACTION_SELECTOR = '.action-btn:not(.action-more):not([data-pin="a
 const IDLE_EDGE_PX = 80;
 const UI_PHASES = ['idle', 'signaling', 'media-pending', 'connected', 'media-stalled', 'disconnected'];
 const CONTROL_PHASES = ['connected', 'media-stalled'];
+// Only derived DOM fields live here; frame/control state is never cached.
+const renderedByRoot = new WeakMap();
+const CHROME_MODEL_FIELDS = ['disabled', 'hidden', 'title', 'ariaDisabled',
+  'hiddenClass', 'connecting', 'pointerEvents'];
+
+function applyChromeModel(root, model) {
+  const previous = renderedByRoot.get(root);
+  for (const [node, fields] of model) {
+    const before = previous?.get(node);
+    for (const field of CHROME_MODEL_FIELDS) {
+      if (!(field in fields) || (before && before[field] === fields[field])) continue;
+      const value = fields[field];
+      if (field === 'ariaDisabled') node.setAttribute?.('aria-disabled', value);
+      else if (field === 'hiddenClass') node.classList?.add?.('hidden');
+      else if (field === 'connecting') node.classList?.toggle?.('is-connecting', value);
+      else if (field === 'pointerEvents') { if (node.style) node.style.pointerEvents = value; }
+      else node[field] = value;
+    }
+  }
+  renderedByRoot.set(root, model);
+}
 
 const CAPABILITY_IDS = {
   canConnect: ['startBtn'],
@@ -257,6 +278,7 @@ const ChromeLayout = {
   setFullscreenActive(active, rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     this.clearIdleTimer();
+    this.invalidate(root, 'fullscreen');
     this.recalculate(root, { schedule: true });
     if (active || this.isFullscreenActive(root)) return;
     if (!this.autoIdleEnabled) return;
@@ -609,12 +631,16 @@ const ChromeLayout = {
     const listeners = [];
     const observe = (target, options) => {
       if (!target || typeof MutationObserver === 'undefined') return null;
-      const observer = new MutationObserver(() => this.recalculate(root, { schedule: true }));
+      const observer = new MutationObserver(() => {
+        this.invalidate(root, 'node-or-terminal');
+        this.recalculate(root, { schedule: true });
+      });
       observer.observe(target, options);
       listeners.push(observer);
       return observer;
     };
     observe(body, { attributes: true, attributeFilter: ['class'] });
+    observe(root?.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
     observe(panel, { attributes: true, attributeFilter: ['class', 'hidden'] });
     observe(desktopTab, { attributes: true, attributeFilter: ['class', 'aria-selected'] });
     observe(terminalTab, { attributes: true, attributeFilter: ['class', 'aria-selected'] });
@@ -641,7 +667,10 @@ const ChromeLayout = {
       target.addEventListener(type, handler);
       listeners.push([target, type, handler]);
     };
-    const update = () => this.recalculate(root, { schedule: true });
+    const update = () => {
+      this.invalidate(root, 'viewport');
+      this.recalculate(root, { schedule: true });
+    };
     const keyboard = navigatorObject?.virtualKeyboard;
     if (keyboard) {
       try { keyboard.overlaysContent = true; } catch (_) { /* optional API */ }
@@ -666,6 +695,7 @@ const ChromeLayout = {
     const docks = root?.getElementById?.('chromeDocks') || root?.querySelector?.('#chromeDocks');
     const textDock = this._getElement(root, 'mobileInputDock');
     const update = () => {
+      this.invalidate(root, 'dock-resize');
       this.syncMobileDockHeight(docks, root);
       this.recalculate(root, { schedule: true });
     };
@@ -722,6 +752,10 @@ const ChromeLayout = {
       terminalActive,
     };
   },
+  invalidate(rootEl, reason = 'external') {
+    const root = rootEl || (typeof document !== 'undefined' ? document : null);
+    if (root) renderedByRoot.delete(root);
+  },
   applyCapabilities(snapshot = {}, rootEl) {
     const root = rootEl || (typeof document !== 'undefined' ? document : null);
     const mobileSnapshot = this.getMobileCapabilitySnapshot(snapshot, root);
@@ -733,13 +767,17 @@ const ChromeLayout = {
     const capabilities = this.getCapabilities(capabilitySnapshot);
     const phase = UI_PHASES.includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     if (!root) return capabilities;
+    const model = new Map();
+    const deriveNode = (node, fields) => {
+      if (node) model.set(node, { ...model.get(node), ...fields });
+    };
     const setNode = (id, allowed, { hide = true, disabled = !allowed, title = '' } = {}) => {
       const node = root.getElementById?.(id) || root.querySelector?.(`#${id}`);
       if (!node) return;
-      node.disabled = disabled;
-      node.setAttribute?.('aria-disabled', String(disabled));
-      if (hide) node.hidden = !allowed;
-      if (title && disabled) node.title = title;
+      deriveNode(node, { disabled, ariaDisabled: String(disabled),
+        ...(hide ? { hidden: !allowed } : {}),
+        ...(title && disabled ? { title } : {}),
+      });
     };
     Object.entries(CAPABILITY_IDS).forEach(([capability, ids]) => {
       ids.forEach((id) => {
@@ -773,16 +811,15 @@ const ChromeLayout = {
     const request = root.getElementById?.('requestControlBtn') || root.querySelector?.('#requestControlBtn');
     if (request) {
       const leaseFree = capabilities.canRequestControl === true;
-      request.hidden = !leaseFree && snapshot.activeControl === true;
-      request.disabled = !leaseFree;
-      request.setAttribute?.('aria-disabled', String(request.disabled));
-      if (request.disabled) request.title = snapshot.controlTransition === true ? '控制权正在切换' : '当前已由其他观察者控制';
+      deriveNode(request, { hidden: !leaseFree && snapshot.activeControl === true,
+        disabled: !leaseFree, ariaDisabled: String(!leaseFree),
+        ...(!leaseFree ? { title: snapshot.controlTransition === true ? '控制权正在切换' : '当前已由其他观察者控制' } : {}),
+      });
     }
     const terminalTab = root.getElementById?.('terminalTabBtn') || root.querySelector?.('#terminalTabBtn');
     if (terminalTab) {
-      terminalTab.hidden = !capabilities.canOpenTerminal;
-      terminalTab.disabled = !capabilities.canOpenTerminal;
-      terminalTab.setAttribute?.('aria-disabled', String(terminalTab.disabled));
+      deriveNode(terminalTab, { hidden: !capabilities.canOpenTerminal,
+        disabled: !capabilities.canOpenTerminal, ariaDisabled: String(!capabilities.canOpenTerminal) });
     }
     const mediaReady = capabilities.mediaReady;
     MEDIA_CONTROL_IDS.forEach((id) => {
@@ -809,14 +846,12 @@ const ChromeLayout = {
       ['resolutionModal', 'networkModal'].forEach((id) => {
         const modal = root.getElementById?.(id) || root.querySelector?.(`#${id}`);
         if (!modal) return;
-        modal.hidden = true;
-        modal.classList?.add?.('hidden');
+        deriveNode(modal, { hidden: true, hiddenClass: true });
       });
     }
     const actionNodes = root.querySelectorAll?.('[data-action]') || [];
     actionNodes.forEach((node) => {
-      node.disabled = !capabilities.canSendDesktopInput;
-      node.hidden = !capabilities.canSendDesktopInput;
+      deriveNode(node, { disabled: !capabilities.canSendDesktopInput, hidden: !capabilities.canSendDesktopInput });
     });
     const mobileActionNodes = root.querySelectorAll?.('[data-mobile-action]') || [];
     mobileActionNodes.forEach((node) => {
@@ -826,12 +861,11 @@ const ChromeLayout = {
       // editing gate.
       const modifierPressed = node.getAttribute?.('aria-pressed') === 'true';
       const allowed = capabilities.canSendDesktopInput || modifierPressed;
-      node.disabled = !allowed;
-      node.hidden = !allowed;
+      deriveNode(node, { disabled: !allowed, hidden: !allowed });
     });
     const loading = root.getElementById?.('loading') || root.querySelector?.('#loading');
-    if (loading?.classList?.toggle) loading.classList.toggle('is-connecting', phase === 'signaling');
-    if (loading?.style) loading.style.pointerEvents = phase === 'signaling' ? 'auto' : 'none';
+    deriveNode(loading, { connecting: phase === 'signaling', pointerEvents: phase === 'signaling' ? 'auto' : 'none' });
+    applyChromeModel(root, model);
     return capabilities;
   },
   observeStatusBar(statusEl, rootEl) {
@@ -841,6 +875,7 @@ const ChromeLayout = {
       return () => {};
     }
     const apply = () => {
+      this.invalidate(rootEl, 'status-resize');
       this.recalculate(rootEl, { schedule: true });
     };
     apply();

@@ -1188,3 +1188,163 @@ test('scheduled layout coalesces resize work and skips identical CSS writes', ()
     else global.Input = previousInput;
   }
 });
+
+function makeCountingControl() {
+  const writes = [];
+  const values = {};
+  const attributes = {};
+  const node = {
+    dataset: {},
+    setAttribute(key, value) { writes.push([key, value]); attributes[key] = value; },
+    getAttribute(key) { return attributes[key]; },
+    classList: {
+      toggle(key, value) { writes.push([key, value]); },
+      add(key) { writes.push(['add', key]); },
+      remove(key) { writes.push(['remove', key]); },
+    },
+  };
+  for (const key of ['disabled', 'hidden', 'title']) Object.defineProperty(node, key, {
+    get() { return values[key]; },
+    set(value) { values[key] = value; writes.push([key, value]); },
+  });
+  return { node, writes };
+}
+
+test('stable capability model renders once over 200 fresh snapshots', () => {
+  const { node, writes } = makeCountingControl();
+  const root = {
+    getElementById: id => id === 'refreshBtn' ? node : null,
+    querySelector: () => null, querySelectorAll: () => [],
+  };
+  ChromeLayout.applyCapabilities({ uiPhase: 'connected', streamReady: true, activeControl: true }, root);
+  const before = writes.length;
+  assert.ok(before > 0);
+  for (let i = 0; i < 200; i++) ChromeLayout.applyCapabilities({
+    uiPhase: 'connected', streamReady: true, activeControl: true, leaseEpoch: i, frameSeq: i,
+  }, root);
+  assert.equal(writes.length, before);
+});
+
+test('capability cache refreshes replaced nodes, explicit invalidation, and Terminal changes', () => {
+  const h = makeLayoutHarness();
+  try {
+    const first = makeCountingControl();
+    const snapshot = { uiPhase: 'connected', streamReady: true, activeControl: true };
+    h.elements.set('refreshBtn', first.node);
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    const before = first.writes.length;
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    assert.equal(first.writes.length, before);
+    const second = makeCountingControl();
+    h.elements.set('refreshBtn', second.node);
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    assert.ok(second.writes.length > 0);
+    const replacementBefore = second.writes.length;
+    ChromeLayout.invalidate(h.root, 'theme');
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    assert.ok(second.writes.length > replacementBefore);
+    h.classes.add('terminal-active');
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    assert.equal(second.node.hidden, true);
+    h.classes.delete('terminal-active');
+    ChromeLayout.applyCapabilities(snapshot, h.root);
+    assert.equal(second.node.hidden, false);
+    h.root.defaultView.visualViewport.height = 500;
+    ChromeLayout.recalculate(h.root);
+    assert.equal(h.properties.get('--mobile-keyboard-bottom'), '312px');
+  } finally { h.restore(); }
+});
+
+test('same active capability updates recovery gates and a latched mobile modifier', () => {
+  const input = makeCountingControl();
+  const modifier = makeCountingControl();
+  const root = {
+    getElementById: id => id === 'textInputBtn' ? input.node : null,
+    querySelector: () => null,
+    querySelectorAll: selector => selector === '[data-mobile-action]' ? [modifier.node] : [],
+  };
+  const snapshot = { uiPhase: 'connected', streamReady: true, activeControl: true };
+  ChromeLayout.applyCapabilities(snapshot, root);
+  assert.equal(input.node.disabled, false);
+  ChromeLayout.applyCapabilities({ ...snapshot, controlTransition: true, leaseEpoch: 2 }, root);
+  assert.equal(input.node.disabled, true);
+  assert.equal(modifier.node.hidden, true);
+  modifier.node.setAttribute('aria-pressed', 'true');
+  ChromeLayout.applyCapabilities({ ...snapshot, controlTransition: true, leaseEpoch: 2 }, root);
+  assert.equal(modifier.node.hidden, false);
+  assert.equal(modifier.node.disabled, false);
+});
+
+test('mobile viewport, fullscreen, theme and dock observers invalidate the render projection', () => {
+  const h = makeLayoutHarness();
+  const previousMutation = global.MutationObserver;
+  const previousResize = global.ResizeObserver;
+  const mutations = [];
+  const resizes = [];
+  global.MutationObserver = class {
+    constructor(callback) { this.callback = callback; mutations.push(this); }
+    observe(target, options) { this.target = target; this.options = options; }
+    disconnect() {}
+  };
+  global.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; resizes.push(this); }
+    observe() {}
+    disconnect() {}
+  };
+  let unbindViewport, unbindLayout, unbindDocks;
+  try {
+    const refresh = makeCountingControl();
+    h.elements.set('refreshBtn', refresh.node);
+    Object.assign(h.root.defaultView, makeEventTarget());
+    h.root.defaultView.visualViewport = Object.assign(makeEventTarget(), { height: 812, offsetTop: 0 });
+    unbindViewport = ChromeLayout.observeMobileViewport(h.root);
+    unbindLayout = ChromeLayout.observeMobileLayout(h.root);
+    unbindDocks = ChromeLayout.observeMobileDocks(h.root);
+    const snapshot = { uiPhase: 'connected', streamReady: true, activeControl: true };
+    const render = () => ChromeLayout.applyCapabilities(snapshot, h.root);
+    render();
+    const assertInvalidated = action => {
+      const before = refresh.writes.length;
+      action();
+      render();
+      assert.ok(refresh.writes.length > before);
+      const after = refresh.writes.length;
+      render();
+      assert.equal(refresh.writes.length, after);
+    };
+    assertInvalidated(() => {
+      h.root.defaultView.visualViewport.height = 500;
+      h.root.defaultView.visualViewport.dispatch('resize');
+    });
+    assert.equal(h.properties.get('--mobile-keyboard-bottom'), '312px');
+    assertInvalidated(() => ChromeLayout.setFullscreenActive(true, h.root));
+    const theme = mutations.find(observer => observer.target === h.root.documentElement);
+    assert.deepEqual(theme.options.attributeFilter, ['class', 'data-theme']);
+    assertInvalidated(() => theme.callback());
+    assertInvalidated(() => resizes[0].callback());
+  } finally {
+    unbindDocks?.(); unbindLayout?.(); unbindViewport?.();
+    if (previousMutation) global.MutationObserver = previousMutation;
+    else delete global.MutationObserver;
+    if (previousResize) global.ResizeObserver = previousResize;
+    else delete global.ResizeObserver;
+    h.restore();
+  }
+});
+
+test('capability projections are independent for separate roots', () => {
+  const a = makeCountingControl();
+  const b = makeCountingControl();
+  const root = control => ({ getElementById: id => id === 'refreshBtn' ? control.node : null,
+    querySelector: () => null, querySelectorAll: () => [] });
+  const rootA = root(a), rootB = root(b);
+  const snapshot = { uiPhase: 'connected', streamReady: true, activeControl: true };
+  ChromeLayout.applyCapabilities(snapshot, rootA);
+  ChromeLayout.applyCapabilities(snapshot, rootB);
+  const beforeA = a.writes.length, beforeB = b.writes.length;
+  ChromeLayout.invalidate(rootA, 'node');
+  ChromeLayout.applyCapabilities(snapshot, rootB);
+  ChromeLayout.applyCapabilities(snapshot, rootA);
+  assert.equal(b.writes.length, beforeB);
+  assert.ok(a.writes.length > beforeA);
+});

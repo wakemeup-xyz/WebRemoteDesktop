@@ -26,6 +26,18 @@ function inputSerializedBytes(data) {
   return bytes;
 }
 
+// Compare only the last DOM projection. All gate/recovery/draft derivation and
+// same-value setActive side effects still run on every call.
+function renderKeyboardUi(node, fields = {}, attributes = {}) {
+  if (!node) return;
+  for (const [key, value] of Object.entries(fields)) {
+    if (node[key] !== value) node[key] = value;
+  }
+  for (const [key, value] of Object.entries(attributes)) {
+    if (node.getAttribute?.(key) !== value) node.setAttribute?.(key, value);
+  }
+}
+
 const MOBILE_SURFACE_ACK_TIMEOUT_MS = 3000;
 const MOBILE_VIEWPORT_UNSUPPORTED_HINT = '可用空间不足，请收起系统键盘或旋转设备';
 const INPUT_RECOVERY_TIMEOUT_MS = 3000;
@@ -1952,8 +1964,8 @@ const Input = {
       blocked: '键盘：阻塞',
       ready: '键盘：就绪',
     };
-    display.textContent = labels[displayState] || `键盘：${displayState}`;
-    display.dataset.state = displayState;
+    renderKeyboardUi(display, { textContent: labels[displayState] || `键盘：${displayState}` });
+    if (display.dataset.state !== displayState) display.dataset.state = displayState;
     this.updateMobileTextInputButton();
     this.updateMobileTextInputState(this.mobileTextInputAdapter?.getSnapshot());
     this.updateMobileVirtualModifierButtons();
@@ -2016,7 +2028,7 @@ const Input = {
   updateMobileVirtualModifierButtons() {
     const active = new Set(this.keyboardController?.getSnapshot().virtualModifiers || []);
     document.querySelectorAll?.('[data-mobile-modifier]').forEach((button) => {
-      button.setAttribute?.('aria-pressed', String(active.has(button.dataset.mobileModifier)));
+      renderKeyboardUi(button, {}, { 'aria-pressed': String(active.has(button.dataset.mobileModifier)) });
     });
   },
 
@@ -2028,8 +2040,8 @@ const Input = {
   updateMobileTextInputButton() {
     const button = document.getElementById('mobileTextInputBtn');
     if (!button) return;
-    button.hidden = !this.supportsMobileTextInput();
-    button.disabled = !this.isActive;
+    renderKeyboardUi(button, { hidden: !this.supportsMobileTextInput() });
+    renderKeyboardUi(button, { disabled: !this.isActive });
   },
 
   setupInputRecoveryUi() {
@@ -2161,29 +2173,29 @@ const Input = {
               ? '输入上下文未确认，已保持安全状态。'
               : '';
     if (notice) {
-      notice.hidden = !show;
-      notice.setAttribute?.('aria-hidden', String(!show));
-      if (noticeText) noticeText.textContent = message;
-      else if (noticeStatus) noticeStatus.textContent = message;
-      (noticeStatus || notice).setAttribute?.('aria-busy', String(waiting));
+      renderKeyboardUi(notice, { hidden: !show });
+      renderKeyboardUi(notice, {}, { 'aria-hidden': String(!show) });
+      if (noticeText) renderKeyboardUi(noticeText, { textContent: message });
+      else if (noticeStatus) renderKeyboardUi(noticeStatus, { textContent: message });
+      renderKeyboardUi(noticeStatus || notice, {}, { 'aria-busy': String(waiting) });
     }
     if (retry) {
-      retry.hidden = !hasActiveControl || !(waiting || failed || surfaceBlocked);
-      retry.disabled = !hasActiveControl || waiting || (!failed && !surfaceBlocked);
+      renderKeyboardUi(retry, { hidden: !hasActiveControl || !(waiting || failed || surfaceBlocked) });
+      renderKeyboardUi(retry, { disabled: !hasActiveControl || waiting || (!failed && !surfaceBlocked) });
     }
     if (control) {
       const canOfferControl = show && !draftBlocked && !mobile.composing;
-      control.hidden = !canOfferControl;
+      renderKeyboardUi(control, { hidden: !canOfferControl });
       // Releasing the current lease is a safe escape hatch even while the
       // dual reset is waiting. Only an in-flight control transition disables
       // the button; retry itself remains non-repeatable during `waiting`.
-      control.disabled = controlTransitioning;
-      control.textContent = reacquireRequired && !hasActiveControl ? '请求控制' : '重新获取控制';
-      control.setAttribute?.('aria-label', control.textContent);
+      renderKeyboardUi(control, { disabled: controlTransitioning });
+      renderKeyboardUi(control, { textContent: reacquireRequired && !hasActiveControl ? '请求控制' : '重新获取控制' });
+      renderKeyboardUi(control, {}, { 'aria-label': control.textContent });
     }
     if (draft) {
-      draft.hidden = !draftBlocked;
-      draft.disabled = !draftBlocked;
+      renderKeyboardUi(draft, { hidden: !draftBlocked });
+      renderKeyboardUi(draft, { disabled: !draftBlocked });
     }
   },
 
@@ -2195,11 +2207,11 @@ const Input = {
     const viewportUnsupported = this._viewportInputSupported === false;
     if (!state) {
       if (status) {
-        status.hidden = !viewportUnsupported;
-        status.textContent = viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '';
+        renderKeyboardUi(status, { hidden: !viewportUnsupported });
+        renderKeyboardUi(status, { textContent: viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '' });
       }
-      if (retry) retry.hidden = true;
-      if (discard) discard.hidden = true;
+      if (retry) renderKeyboardUi(retry, { hidden: true });
+      if (discard) renderKeyboardUi(discard, { hidden: true });
       this.updateInputRecoveryUI();
       return;
     }
@@ -2216,16 +2228,16 @@ const Input = {
       const labelsForState = labels[state.status] || '';
       const label = [labelsForState, viewportUnsupported ? MOBILE_VIEWPORT_UNSUPPORTED_HINT : '']
         .filter(Boolean).join('；');
-      status.hidden = !showStatus || !label;
-      status.textContent = label;
+      renderKeyboardUi(status, { hidden: !showStatus || !label });
+      renderKeyboardUi(status, { textContent: label });
     }
     if (retry) {
-      retry.hidden = !hasDraft;
-      retry.disabled = !state.retryable;
+      renderKeyboardUi(retry, { hidden: !hasDraft });
+      renderKeyboardUi(retry, { disabled: !state.retryable });
     }
     if (discard) {
-      discard.hidden = !(hasDraft || hasRecovery);
-      discard.disabled = !(hasDraft || hasRecovery);
+      renderKeyboardUi(discard, { hidden: !(hasDraft || hasRecovery) });
+      renderKeyboardUi(discard, { disabled: !(hasDraft || hasRecovery) });
     }
     this.updateInputRecoveryUI();
   },

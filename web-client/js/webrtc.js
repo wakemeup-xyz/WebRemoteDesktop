@@ -1703,12 +1703,12 @@ const WebRTC = {
   hidePaintLoading() {
     const el = document.getElementById('loading');
     if (el) {
-      el.classList.add('hidden');
-      el.classList.remove('is-connecting');
+      renderViewerChromeClass(el, 'hidden', true);
+      renderViewerChromeClass(el, 'is-connecting', false);
     }
-    document.body.classList.add('stream-connected');
+    renderViewerChromeClass(document.body, 'stream-connected', true);
     const videoEl = document.getElementById('remoteVideo');
-    if (videoEl) videoEl.classList.add('connected');
+    renderViewerChromeClass(videoEl, 'connected', true);
     this.hideReconnectHud();
   },
 
@@ -5912,8 +5912,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   hideReconnectHud() {
-    document.getElementById('reconnectHud')?.classList.add('hidden');
-    document.getElementById('lastFrameHold')?.classList.add('hidden');
+    renderViewerChromeClass(document.getElementById('reconnectHud'), 'hidden', true);
+    renderViewerChromeClass(document.getElementById('lastFrameHold'), 'hidden', true);
   },
 
   RECOVERY_REFRESH_COOLDOWN_MS: 3000,
@@ -6532,9 +6532,17 @@ if (typeof globalThis !== 'undefined') {
   globalThis.WebRTC = WebRTC;
 }
 
+function renderViewerChromeClass(node, name, active) {
+  if (!node?.classList || node.classList.contains?.(name) === active) return;
+  if (active) node.classList.add(name);
+  else node.classList.remove(name);
+}
+
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
-  statusEl.className = 'status ' + status;
+  if (!statusEl) return;
+  const className = 'status ' + status;
+  if (statusEl.className !== className) statusEl.className = className;
   
   const statusText = {
     idle: '未开始',
@@ -6545,7 +6553,8 @@ function updateConnectionStatus(status) {
     'media-stalled': '画面卡顿',
     disconnected: '已断开',
   };
-  statusEl.textContent = statusText[status] || status;
+  const label = statusText[status] || status;
+  if (statusEl.textContent !== label) statusEl.textContent = label;
 }
 
 function updateLoadingText(text) {
