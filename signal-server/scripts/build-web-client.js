@@ -57,6 +57,7 @@ async function buildWebClient({ sourceDir, outDir }) {
     const desktopSource = `${socketClient}\n${readJoined(sourceDir, graph.desktopScripts)}`;
     const deferredSource = readJoined(sourceDir, graph.desktopDeferredScripts || []);
     const terminalSource = `${xtermJs}\n${fitJs}\n${readJoined(sourceDir, graph.terminalScripts)}`;
+    const loginJs = await compileClassic(readJoined(sourceDir, graph.loginScripts), 'login.js');
     const desktopJs = await compileClassic(desktopSource, 'desktop-core.js');
     const deferredJs = deferredSource
       ? await compileClassic(deferredSource, 'desktop-deferred.js')
@@ -70,6 +71,7 @@ async function buildWebClient({ sourceDir, outDir }) {
     const viewerCss = `${tokenCss}\n${fs.readFileSync(path.join(sourceDir, 'css/viewer.css'), 'utf8')}`;
 
     const assets = {
+      loginJs: writeHashed(path.join(staging, 'assets'), 'login', 'js', loginJs),
       desktopJs: writeHashed(path.join(staging, 'assets'), 'desktop-core', 'js', desktopJs),
       viewerCss: writeHashed(path.join(staging, 'assets'), 'viewer', 'css', viewerCss),
       terminalJs: writeHashed(path.join(staging, 'assets'), 'terminal', 'js', terminalJs),
@@ -128,7 +130,13 @@ async function buildWebClient({ sourceDir, outDir }) {
     }
 
     fs.writeFileSync(path.join(staging, 'viewer.html'), viewerHtml);
-    fs.copyFileSync(path.join(sourceDir, 'index.html'), path.join(staging, 'index.html'));
+    const loginHtml = replaceBlock(
+      fs.readFileSync(path.join(sourceDir, 'index.html'), 'utf8'),
+      '<!-- WRD_BUILD_LOGIN_SCRIPTS_START -->',
+      '<!-- WRD_BUILD_LOGIN_SCRIPTS_END -->',
+      `<script src="/${assets.loginJs}" defer></script>`,
+    );
+    fs.writeFileSync(path.join(staging, 'index.html'), loginHtml);
     fs.mkdirSync(path.join(staging, 'css'));
     fs.copyFileSync(path.join(sourceDir, 'css/login.css'), path.join(staging, 'css/login.css'));
     fs.copyFileSync(path.join(sourceDir, 'css/tokens.css'), path.join(staging, 'css/tokens.css'));

@@ -5,10 +5,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 const { buildWebClient } = require('../scripts/build-web-client');
 
 test('asset graph keeps desktop critical and Terminal optional sources separate', () => {
   const graph = require('../scripts/web-asset-graph');
+  assert.deepEqual(graph.loginScripts, ['js/runtime-config.js', 'js/bounded-request.js', 'js/login.js']);
+  assert.ok(graph.desktopScripts.indexOf('js/bounded-request.js') < graph.desktopScripts.indexOf('js/auth.js'));
   assert.ok(graph.desktopScripts.includes('js/webrtc.js'));
   assert.ok(graph.desktopScripts.includes('js/chrome-layout.js'));
   assert.ok(graph.desktopScripts.includes('js/touch-input-adapter.js'));
@@ -48,10 +51,15 @@ test('viewer boot is deferred until the classic bundle has initialized later glo
   );
 });
 
-test('build emits deterministic first-party critical assets and lazy Terminal assets', async () => {
+test('build emits deterministic first-party critical assets and lazy Terminal assets', async (t) => {
   const outA = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-a-'));
   const outB = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-b-'));
-  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-source-'));
+  // Compare two builds of one immutable input snapshot, even during parallel implementation.
+  fs.cpSync(path.join(__dirname, '..', '..', 'web-client'), sourceDir, {
+    recursive: true, filter: (file) => path.basename(file) !== 'dist',
+  });
+  t.after(() => [outA, outB, sourceDir].forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
   const a = await buildWebClient({ sourceDir, outDir: outA });
   const b = await buildWebClient({ sourceDir, outDir: outB });
 
@@ -124,4 +132,48 @@ test('build does not publish a manifest when an input is missing on empty outDir
     /missing|ENOENT/i,
   );
   assert.equal(fs.existsSync(path.join(outDir, 'asset-manifest.json')), false);
+});
+
+
+test('temporary login build delivers one local bundle with a working bounded form controller', async (t) => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-login-build-'));
+  t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  const manifest = await buildWebClient({ sourceDir, outDir });
+  const html = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.ok(manifest.assets.loginJs);
+  assert.equal((html.match(/<script[^>]+src=/g) || []).length, 1);
+  assert.match(html, new RegExp(`<script src="/${manifest.assets.loginJs.replaceAll('.', '\\.')}" defer>`));
+  assert.doesNotMatch(html, /<script>\s*const API_BASE|https?:\/\/|WRD_BUILD_LOGIN_SCRIPTS/);
+
+  let submit;
+  const button = {};
+  const input = { value: 'fixture', setAttribute() {}, removeAttribute() {} };
+  const error = {};
+  const form = { querySelector: () => button, addEventListener(name, listener) { if (name === 'submit') submit = listener; } };
+  const elements = { loginForm: form, password: input, error };
+  const tokens = [];
+  let calls = 0;
+  const context = {
+    AbortController, setTimeout, clearTimeout,
+    document: { getElementById(id) { return elements[id]; } },
+    window: { location: { origin: 'http://fixture', href: 'index.html' }, addEventListener() {} },
+    sessionStorage: { setItem(key, value) { tokens.push([key, value]); } },
+    localStorage: { getItem() { return null; }, removeItem() {} },
+    fetch: async (url, options) => {
+      calls++;
+      assert.equal(url, 'http://fixture/api/auth/login');
+      assert.deepEqual(JSON.parse(options.body), { password: 'fixture' });
+      return { ok: true, status: 200, json: async () => ({ token: 'fixture-token' }) };
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(outDir, manifest.assets.loginJs), 'utf8'), context);
+  assert.equal(calls, 0, 'mount does not automatically submit a password');
+  assert.equal(typeof submit, 'function');
+  submit({ preventDefault() {} });
+  assert.equal(button.disabled, true);
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.deepEqual(tokens, [['wrd_token', 'fixture-token']]);
+  assert.equal(context.window.location.href, 'viewer.html');
+  assert.equal(button.disabled, false);
 });
