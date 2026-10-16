@@ -1802,3 +1802,70 @@ async def test_old_relay_stop_completion_does_not_clear_replacement_producer(mon
         assert not current_task.done()
     finally:
         await relay.stop()
+
+
+@pytest.mark.asyncio
+async def test_trusted_reset_stops_actual_old_relay_after_viewer_index_migration():
+    host = _authority_host()
+    stopped = []
+    class Relay:
+        viewer_id = "viewer-a"
+        async def stop(self):
+            stopped.append(self.viewer_id)
+    host.relay_streamer = Relay()
+    # Signal moved its index to B, but rejected rebind leaves A's producer.
+    host.current_viewer_id = "viewer-b"
+    await host.on_control_transition({"leaseEpoch": 8, "reason": "rebind-rejected"})
+    assert stopped == ["viewer-a"]
+    assert host.relay_streamer is None
+    assert host.sio.events[-1] == ("control-transition-ack", {"leaseEpoch": 8, "status": "applied"})
+
+
+@pytest.mark.asyncio
+async def test_trusted_reset_old_stop_completion_cannot_clear_new_relay_or_ack():
+    host = _authority_host()
+    entered, release = asyncio.Event(), asyncio.Event()
+    class Relay:
+        viewer_id = "viewer-a"
+        async def stop(self):
+            entered.set()
+            await release.wait()
+    host.relay_streamer = Relay()
+    reset = asyncio.create_task(host.on_control_transition({"leaseEpoch": 8, "reason": "rebind-rejected"}))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        host._advance_authority()
+        current = SimpleNamespace(viewer_id="viewer-b")
+        host.relay_streamer = current
+    finally:
+        release.set()
+        await reset
+    assert host.relay_streamer is current
+    assert not any(event == "control-transition-ack" and data["status"] == "applied"
+                   for event, data in host.sio.events)
+
+
+@pytest.mark.asyncio
+async def test_trusted_reset_freezes_old_producer_before_waiting_for_input_reset():
+    host = _authority_host()
+    reset_entered, release = asyncio.Event(), asyncio.Event()
+    stopped = []
+    class Relay:
+        viewer_id = "viewer-a"
+        async def stop(self):
+            stopped.append(self.viewer_id)
+    host.relay_streamer = Relay()
+    original_reset = host._reset_keyboard_lifecycle
+    async def delayed_reset(reason):
+        reset_entered.set()
+        await release.wait()
+        return await original_reset(reason)
+    host._reset_keyboard_lifecycle = delayed_reset
+    reset = asyncio.create_task(host.on_control_transition({"leaseEpoch": 8, "reason": "rebind-timeout"}))
+    try:
+        await asyncio.wait_for(reset_entered.wait(), 1)
+        assert stopped == ["viewer-a"]
+        assert host.relay_streamer is None
+    finally:
+        release.set()
+        await reset

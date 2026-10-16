@@ -4101,7 +4101,7 @@ test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', 
   assert.ok(WebRTC.PAGE_HIDDEN_SUSPEND_DELAY_MS >= 15000);
 });
 
-test('resume stays resuming when framesDecoded does not increase past baseline', () => {
+test('resume stays gated through decoded statistics until a real rendered frame', () => {
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
   require('node:vm').runInContext(runtimeSource, context);
@@ -4140,7 +4140,7 @@ test('resume stays resuming when framesDecoded does not increase past baseline',
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
   assert.equal(WebRTC.canEnableDesktopInput(), false);
 
-  // Fresh decoded frame past baseline unlocks once.
+  // Decoded statistics cannot stand in for a fresh rendered frame.
   WebRTC.processStatsSnapshot({
     fps: 15,
     rttMs: 40,
@@ -4150,6 +4150,9 @@ test('resume stays resuming when framesDecoded does not increase past baseline',
     bytesReceived: 1100,
     selectedCandidateType: 'srflx',
   });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1,
+    connectionAttemptId: 'wrd-1', pc: WebRTC.pc });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 

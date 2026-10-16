@@ -2939,6 +2939,14 @@ class WebRemoteHost:
                 await self._emit_control_transition_ack(lease_epoch, "rejected", reason="reset-failed")
 
         try:
+            # Trusted authority reset owns the actual producer, even when Signal
+            # already moved its Viewer index. Freeze it before any input/PC wait.
+            relay = getattr(self, "relay_streamer", None)
+            if relay is not None:
+                self.relay_streamer = None
+                await relay.stop()
+                if not self._authority_matches(authority):
+                    return
             reset = await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
             if not self._authority_matches(authority):
                 return
@@ -2950,12 +2958,6 @@ class WebRemoteHost:
             if getattr(self, "pc", None) is not None:
                 await self._close_peer_connection(reason="control-transition", reset_offer_state=True,
                                                   preserve_authority=True, reset_input=False)
-                if not self._authority_matches(authority):
-                    return
-            relay = getattr(self, "relay_streamer", None)
-            if relay is not None:
-                self.relay_streamer = None
-                await relay.stop()
                 if not self._authority_matches(authority):
                     return
             if grant:

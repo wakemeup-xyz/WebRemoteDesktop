@@ -698,6 +698,7 @@ const WebRTC = {
     const generation = Number(snapshot?.generation) || 0;
     if (generation < 1) return snapshot;
     if (this._mediaIntent?.generation !== generation) {
+      this.clearMediaResumeProof();
       this._mediaRequestRetryUsed = false;
       this._mediaResumeRefreshFallbackUsed = false;
       this._mediaResumeSoftRecoverUsed = false;
@@ -726,10 +727,7 @@ const WebRTC = {
       }
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
       this.noMediaTicks = 0;
-      this._mediaResumeFramePending = false;
-      this._mediaResumeBaseline = null;
-      this._mediaResumeArmPending = false;
-      this.clearMediaResumeFallback();
+      this.clearMediaResumeProof();
     }
 
     const runtime = this.mediaActivityRuntime;
@@ -847,8 +845,10 @@ const WebRTC = {
     if (this._mediaResumeRefreshFallbackUsed || this._mediaIntent?.state !== 'active') return;
     if (this.getMediaAppliedPhase() !== 'resuming') return;
     const timeoutMs = this.mediaResumeTimeoutMs();
+    const baseline = this._mediaResumeBaseline;
     this._mediaResumeFrameTimer = setTimeout(() => {
       this._mediaResumeFrameTimer = null;
+      if (baseline !== this._mediaResumeBaseline || !this.mediaResumeScopeMatches(baseline)) return;
       this.onMediaResumeFrameTimeout();
     }, timeoutMs);
   },
@@ -931,13 +931,38 @@ const WebRTC = {
     return false;
   },
 
-  captureMediaResumeBaseline(generation) {
-    this._mediaResumeBaseline = {
+  clearMediaResumeProof() {
+    this._mediaResumeFramePending = false;
+    this._mediaResumeBaseline = null;
+    this._mediaResumeEarlyFrame = null;
+    this._lastRenderedRelayFrame = null;
+    this._mediaResumeArmPending = false;
+    this.clearMediaResumeFallback();
+  },
+
+  mediaResumeScope(generation = this._mediaIntent?.generation) {
+    const lease = this.activeLeaseEnvelope();
+    return {
       connectionAttemptId: this.currentConnectionAttemptId || null,
       generation: Number(generation) || 0,
-      framesDecoded: Number(this._lastInboundFramesDecoded) || 0,
-      videoFrameSeq: Number(this._videoFrameSeq) || 0,
+      leaseId: lease?.leaseId || null,
+      leaseEpoch: lease?.leaseEpoch || null,
       pc: this.pc || null,
+      relayRevision: Number(this._mediaRelayRevision) || 0,
+      socket: this.socket || null,
+    };
+  },
+
+  mediaResumeScopeMatches(scope) {
+    const current = this.mediaResumeScope();
+    return Boolean(scope && Object.keys(current).every(key => scope[key] === current[key]));
+  },
+
+  captureMediaResumeBaseline(generation) {
+    this.clearMediaResumeProof();
+    this._mediaResumeBaseline = {
+      ...this.mediaResumeScope(generation),
+      videoFrameSeq: Number(this._videoFrameSeq) || 0,
     };
   },
 
@@ -985,6 +1010,8 @@ const WebRTC = {
 
   handleMediaActivityAck(data = {}) {
     if (!this.mediaActivityRuntime) return;
+    if (!this.mediaResumeScopeMatches(this._mediaResumeBaseline)
+      && data.state === 'active') return;
     const result = this.mediaActivityRuntime.applyAck({
       state: data.state,
       generation: data.generation,
@@ -1012,81 +1039,54 @@ const WebRTC = {
     this._mediaFailureHandledKey = null;
     if (result.phase === 'resuming') {
       this._mediaResumeFramePending = true;
-      if (!this._mediaResumeBaseline) {
-        this.captureMediaResumeBaseline(data.generation);
-      }
       this.ensureMediaResumeFallbackArmed('media-ack');
-      // A tunnel relay frame may finish rendering just before its Host ACK reaches
-      // this socket. Consume that post-baseline frame after the matching ACK rather
-      // than waiting indefinitely for a visually identical JPEG to load again.
-      const renderedRelayFrame = this._lastRenderedRelayFrame;
-      if (renderedRelayFrame) {
-        this.observeFreshResumeFrame({
-          source: 'relay-frame',
-          frameSeq: renderedRelayFrame.frameSeq,
-          connectionAttemptId: renderedRelayFrame.connectionAttemptId,
-        });
-      }
+      // Only a frame observed against this exact request baseline can be replayed.
+      const earlyFrame = this._mediaResumeEarlyFrame;
+      if (earlyFrame) this.observeFreshResumeFrame(earlyFrame);
     }
     if (result.phase === 'suspended') {
-      this._mediaResumeFramePending = false;
-      this._mediaResumeBaseline = null;
-      this._mediaResumeArmPending = false;
-      this.clearMediaResumeFallback();
+      this.clearMediaResumeProof();
     }
     this.syncDesktopInputGate();
   },
 
   observeFreshResumeFrame({
     source = 'unknown',
-    framesDecoded = null,
     frameSeq = null,
     connectionAttemptId = null,
     pc = null,
+    generation = null,
+    scope = null,
   } = {}) {
-    if (!this._mediaResumeFramePending || !this.mediaActivityRuntime) return false;
-    if (this.getMediaAppliedPhase() !== 'resuming') return false;
-    if (!this.hasActiveControl()) return false;
-
+    if (!this.mediaActivityRuntime || this.getMediaAppliedPhase() !== 'resuming') return false;
+    if (!this.hasActiveControl() || this._mediaIntent?.state !== 'active') return false;
+    // Stats and timing notices are diagnostics, never proof that a frame painted.
+    if (source !== 'video-callback' && source !== 'relay-frame') return false;
     const baseline = this._mediaResumeBaseline;
-    if (!baseline) return false;
-
+    if (!this.mediaResumeScopeMatches(baseline)) return false;
+    if (scope && !this.mediaResumeScopeMatches(scope)) return false;
+    const runtime = this.mediaActivityRuntime.snapshot();
+    if (runtime.connectionAttemptId !== baseline.connectionAttemptId
+      || runtime.desiredGeneration !== baseline.generation) return false;
     const attemptId = connectionAttemptId || this.currentConnectionAttemptId || null;
-    if (baseline.connectionAttemptId && attemptId && attemptId !== baseline.connectionAttemptId) {
+    if (attemptId !== baseline.connectionAttemptId) return false;
+    if (generation != null && generation !== baseline.generation) return false;
+    if (pc && pc !== baseline.pc) return false;
+    const seq = Number(frameSeq);
+    if (!Number.isFinite(seq) || seq <= Number(baseline.videoFrameSeq || 0)) return false;
+    const frame = { source, frameSeq: seq, connectionAttemptId: attemptId,
+      pc: baseline.pc, generation: baseline.generation, scope: baseline };
+    if (!this._mediaResumeFramePending) {
+      this._mediaResumeEarlyFrame = frame;
       return false;
     }
-    if (baseline.pc && pc && baseline.pc !== pc) {
-      return false;
-    }
-    if (baseline.pc && this.pc && baseline.pc !== this.pc && !pc) {
-      return false;
-    }
-
-    let isFresh = false;
-    if (source === 'stats' || framesDecoded != null) {
-      const decoded = Number(framesDecoded);
-      if (Number.isFinite(decoded) && decoded > Number(baseline.framesDecoded || 0)) {
-        isFresh = true;
-      }
-    }
-    if (source === 'video-callback' || frameSeq != null) {
-      const seq = Number(frameSeq);
-      if (Number.isFinite(seq) && seq > Number(baseline.videoFrameSeq || 0)) {
-        isFresh = true;
-      }
-    }
-    if (!isFresh) return false;
-
-    const result = this.mediaActivityRuntime.noteRenderedFrame({
-      connectionAttemptId: attemptId,
-      afterResume: true,
-    });
+    const ack = runtime.lastAck;
+    if (!ack?.applied || ack.state !== 'active' || ack.generation !== baseline.generation
+      || ack.connectionAttemptId !== baseline.connectionAttemptId) return false;
+    const result = this.mediaActivityRuntime.noteRenderedFrame({ connectionAttemptId: attemptId });
     if (!result.accepted) return false;
     this.markMediaAttemptReady(attemptId);
-    this._mediaResumeFramePending = false;
-    this._mediaResumeBaseline = null;
-    this._mediaResumeArmPending = false;
-    this.clearMediaResumeFallback();
+    this.clearMediaResumeProof();
     this.noMediaTicks = 0;
     this.syncDesktopInputGate();
     return true;
@@ -1268,6 +1268,7 @@ const WebRTC = {
 
   beginConnectionAttempt(trigger = 'viewer-open') {
     this.clearRefreshDcWaitTimer();
+    this.clearMediaResumeProof();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
     this.syncLatencyScope();
@@ -1284,6 +1285,11 @@ const WebRTC = {
       socket: this.socket?.connected ? 'online' : 'connecting',
     });
     this._mediaReadyConnectionAttemptId = null;
+    if (this._mediaIntent && this.mediaActivityRuntime) {
+      this.mediaActivityRuntime.beginDesired(this._mediaIntent.state, {
+        generation: this._mediaIntent.generation, connectionAttemptId: this.currentConnectionAttemptId,
+      });
+    }
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
     this._mediaResumeSoftRecoverUsed = false;
@@ -3636,6 +3642,12 @@ const WebRTC = {
       this.freezeControl('invalid-control-grant');
       return;
     }
+    // Keep only correlation metadata through a control freeze; it grants no
+    // authority. A fresh lease needs a fresh wire attempt because media ACKs
+    // carry attempt/generation, not lease identity.
+    const previousLease = this._mediaControlLease || this.controlState?.lease;
+    const mediaLeaseChanged = previousLease
+      && (previousLease.leaseId !== data.leaseId || previousLease.leaseEpoch !== data.leaseEpoch);
     const peerLease = this.pc?._wrdControlLease;
     const differentPeerLease = peerLease && (peerLease.leaseId !== data.leaseId || peerLease.leaseEpoch !== data.leaseEpoch);
     if (differentPeerLease) {
@@ -3655,6 +3667,8 @@ const WebRTC = {
       oldPeer.close();
     }
     this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
+    this._mediaControlLease = { ...this.controlState.lease };
+    if (mediaLeaseChanged) this.beginConnectionAttempt('control-identity-changed');
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
     if (typeof Input !== 'undefined') {
       Input.init();
@@ -4047,6 +4061,7 @@ const WebRTC = {
     this.lastCandidateType = '';
     this.selectedCandidatePair = null;
     if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+    this.clearMediaResumeProof();
     this.pc = new RTCPeerConnection(this.config);
     this.pc._wrdControlLease = this.controlState?.lease ? Object.freeze({ ...this.controlState.lease }) : null;
     this.videoTransceiver = null;
@@ -4424,6 +4439,8 @@ const WebRTC = {
     this.stopMediaTelemetry();
     this._tunnelLockUntil = Date.now() + 30000;
     this.tunnelRelayActive = true;
+    this._mediaRelayRevision = (Number(this._mediaRelayRevision) || 0) + 1;
+    this.clearMediaResumeProof();
     this.tunnelFrameCount = 0;
     // Host start() restarts its sequence from zero. A prior producer must not
     // cause the new stream's first frame to be discarded as stale.
@@ -4504,6 +4521,8 @@ const WebRTC = {
     const lease = this.activeLeaseEnvelope();
     if (lease && this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { ...lease, enabled: false });
     this.tunnelRelayActive = false;
+    this._mediaRelayRevision = (Number(this._mediaRelayRevision) || 0) + 1;
+    this.clearMediaResumeProof();
     document.body?.classList?.remove?.('tunnel-relay-active');
     const relayImage = document.getElementById('relayImage');
     if (relayImage) {
@@ -4552,7 +4571,12 @@ if (this.tunnelLastObjectUrl) {
     }
     this.tunnelLastFrameId = frameId || this.tunnelLastFrameId + 1;
 
+    const frameScope = this.mediaResumeScope();
     const ackLoadedFrame = (objectUrl = '') => {
+      if (!this.mediaResumeScopeMatches(frameScope)) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
       relayImage.classList.remove('hidden');
       document.getElementById('loading')?.classList.add('hidden');
       document.getElementById('loading')?.classList.remove('is-connecting');
@@ -4577,15 +4601,15 @@ if (this.tunnelLastObjectUrl) {
       this._lastRenderedRelayFrame = {
         frameId: frameId || this.tunnelLastFrameId,
         frameSeq,
-        connectionAttemptId: this.currentConnectionAttemptId || null,
+        connectionAttemptId: frameScope.connectionAttemptId,
+        scope: frameScope,
       };
-      if (this._mediaResumeFramePending) {
-        this.observeFreshResumeFrame({
-          source: 'relay-frame',
-          frameSeq,
-          connectionAttemptId: this.currentConnectionAttemptId || null,
-        });
-      }
+      this.observeFreshResumeFrame({
+        scope: frameScope,
+        source: 'relay-frame',
+        frameSeq,
+        connectionAttemptId: frameScope.connectionAttemptId,
+      });
       const lease = this.activeLeaseEnvelope();
       if (lease && this.socket?.connected) {
         this.socket.emit('relay-frame-ack', {
@@ -5259,14 +5283,12 @@ if (this.tunnelLastObjectUrl) {
       }, { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
       this.recordLossLabRvfc(metadata, video);
       this.observePaintFrame(now, metadata, video);
-      if (this._mediaResumeFramePending) {
-        this.observeFreshResumeFrame({
-          source: 'video-callback',
-          frameSeq: this._videoFrameSeq,
-          connectionAttemptId: attemptId,
-          pc: trackedPc,
-        });
-      }
+      this.observeFreshResumeFrame({
+        source: 'video-callback',
+        frameSeq: this._videoFrameSeq,
+        connectionAttemptId: attemptId,
+        pc: trackedPc,
+      });
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
     };
     this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);

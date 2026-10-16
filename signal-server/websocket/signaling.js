@@ -108,9 +108,10 @@ function setupSignaling(io, options = {}) {
   const setHostCapabilities = (payload = {}) => instanceRuntime.setHostCapabilities(payload);
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
-  const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket
-    && socket?._wrdDisconnected !== true
-    && socket?._wrdRebindPending !== true;
+  const isActiveViewerSocket = (socket) => Boolean(socket
+    && connections.viewers.get(socket.id) === socket
+    && socket._wrdDisconnected !== true
+    && socket._wrdRebindPending !== true);
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
   const admitProofViewer = (admission, socketId) => instanceRuntime.admitProofViewer(admission, socketId);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
@@ -366,7 +367,7 @@ function setupSignaling(io, options = {}) {
       && legacyControllerViewerId === ownerId
       && snapshot.state === 'ACTIVE'
       && snapshot.controllerViewerId === ownerId
-      && connections.viewers.has(ownerId));
+      && isActiveViewerSocket(connections.viewers.get(ownerId)));
   }
 
   function bindLegacyRelayCompanion(companionId) {
@@ -380,7 +381,9 @@ function setupSignaling(io, options = {}) {
 
   function clearLegacyRelayCompanion(ownerId, { stop = false } = {}) {
     if (!ownerId || !legacyRelayCompanionByOwner.delete(ownerId) || !stop || !connections.host) return;
-    connections.host.emit('relay-stream-control', { enabled: false, viewerId: ownerId });
+    const operation = connections.viewers.get(ownerId)?._wrdRebindOperation;
+    const producerOwnerId = operation?.producerOwnerId || ownerId;
+    connections.host.emit('relay-stream-control', { enabled: false, viewerId: producerOwnerId });
   }
 
   function clearAllLegacyRelayCompanions({ stop = false } = {}) {
@@ -465,6 +468,9 @@ function setupSignaling(io, options = {}) {
       socket._wrdRebindPending = true;
       const operation = {
         socket, host: connections.host, lease: previousLease, attempt: priorProgress, settled: false,
+        // The index has moved, but Host's actual producer remains with the old
+        // owner until its rebind ACK. This snapshot belongs only to this operation.
+        producerOwnerId: previous._wrdRebindOperation?.producerOwnerId || previousId,
       };
       socket._wrdRebindOperation = operation;
       const clearRebind = () => {
@@ -479,6 +485,10 @@ function setupSignaling(io, options = {}) {
         if (socket._wrdRebindOperation !== operation
           || connections.viewers.get(nextId) !== operation.socket
           || socket._wrdDisconnected === true) {
+          if (socket._wrdRebindOperation === operation
+            && connections.viewers.get(nextId) === socket) {
+            clearLegacyRelayCompanion(nextId, { stop: true });
+          }
           clearRebind();
           return;
         }
@@ -493,6 +503,7 @@ function setupSignaling(io, options = {}) {
           // A cancelled migration must revoke its still-current authority before
           // reopening the pending gate, even if a replacement Host reused its ID.
           const reason = 'rebind-cancelled';
+          clearLegacyRelayCompanion(nextId, { stop: true });
           const result = desktopLease.beginRelease({ viewerId: nextId, reason });
           dispatchLeaseEffect(result, reason);
           clearRebind();
@@ -510,6 +521,7 @@ function setupSignaling(io, options = {}) {
           emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId });
           return;
         }
+        clearLegacyRelayCompanion(nextId, { stop: true });
         clearRebind();
         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
@@ -571,6 +583,7 @@ function setupSignaling(io, options = {}) {
     if (!socket) return null;
     if (connections.viewers.get(socket.id) !== socket) return null;
     clearViewerSessionBinding(socket);
+    clearLegacyRelayCompanion(socket.id, { stop: true });
     connections.viewers.delete(socket.id);
     clearPendingInputs(socket.id);
     mediaActivityProgress.delete(socket.id);
@@ -1632,7 +1645,7 @@ function setupSignaling(io, options = {}) {
       const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
-      if (!viewerSocket) return;
+      if (!isActiveViewerSocket(viewerSocket)) return;
       releaseRejectedMediaProgress(viewerId, data);
       viewerSocket.emit('media-activity-ack', {
         schemaVersion: 1,
@@ -1687,10 +1700,9 @@ function setupSignaling(io, options = {}) {
       }
       let viewerId = socket.id;
       if (role === 'relay-viewer') {
+        if (connections.relayViewers.get(socket.id) !== socket) return;
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
-        if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) {
-          clearLegacyRelayCompanion(boundOwnerId, { stop: true });
-        }
+        if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) return;
         viewerId = hasActiveLegacyRelayOwner(boundOwnerId)
           ? boundOwnerId
           : bindLegacyRelayCompanion(socket.id);
@@ -1718,7 +1730,7 @@ function setupSignaling(io, options = {}) {
       const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
-      if (!viewerSocket) return;
+      if (!isActiveViewerSocket(viewerSocket)) return;
       releaseRejectedMediaProgress(viewerId, data);
       const ack = {
         schemaVersion: 1,
@@ -1736,7 +1748,7 @@ function setupSignaling(io, options = {}) {
     });
 
     socket.on('relay-frame', (data) => {
-      if (role !== 'host') {
+      if (role !== 'host' || connections.host !== socket) {
         console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
         return;
       }
@@ -1748,8 +1760,8 @@ function setupSignaling(io, options = {}) {
         if (companionSocket) companionSocket.volatile.emit('relay-frame', data);
         return;
       }
-      const viewerSocket = connections.relayViewers.get(data.viewerId) || connections.viewers.get(data.viewerId);
-      if (viewerSocket) {
+      const viewerSocket = connections.viewers.get(data.viewerId);
+      if (isActiveViewerSocket(viewerSocket)) {
         viewerSocket.volatile.emit('relay-frame', data);
       }
     });
@@ -1759,6 +1771,8 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (connections.host) {
+        if (role === 'relay-viewer' && connections.relayViewers.get(socket.id) !== socket) return;
+        if (role === 'viewer' && !isActiveViewerSocket(socket)) return;
         if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
         const viewerId = role === 'relay-viewer' && hasActiveLegacyRelayOwner(boundOwnerId)

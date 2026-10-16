@@ -132,3 +132,16 @@ test('reset clears phase and health suppression', () => {
   assert.equal(runtime.phase, 'active');
   assert.equal(runtime.isHealthSuppressed(), false);
 });
+
+test('afterResume cannot bypass current active ACK across attempt or generation', () => {
+  const { runtime } = makeRuntime();
+  runtime.beginDesired('active', { generation: 1, connectionAttemptId: 'a' });
+  runtime.applyAck({ state: 'active', generation: 1, connectionAttemptId: 'a', applied: true });
+  runtime.beginDesired('active', { generation: 1, connectionAttemptId: 'b' });
+  assert.equal(runtime.noteRenderedFrame({ connectionAttemptId: 'b', afterResume: true }).accepted, false);
+  runtime.applyAck({ state: 'active', generation: 1, connectionAttemptId: 'b', applied: true });
+  runtime.beginDesired('active', { generation: 2, connectionAttemptId: 'b' });
+  assert.equal(runtime.noteRenderedFrame({ connectionAttemptId: 'b', afterResume: true }).accepted, false);
+  runtime.applyAck({ state: 'active', generation: 2, connectionAttemptId: 'b', applied: true });
+  assert.equal(runtime.noteRenderedFrame({ connectionAttemptId: 'b', afterResume: true }).accepted, true);
+});

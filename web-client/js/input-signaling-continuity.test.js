@@ -159,7 +159,7 @@ test('same-lease reconnect cannot erase an existing keyboard rejection', () => {
   assert.equal(h.Input.getEffectiveInputGate().allowed, false);
   h.grant({ leaseId: 'replacement-lease', leaseEpoch: 8 });
   assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'ready');
-  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false, 'fresh lease still needs fresh attempt media');
 });
 
 test('blur during signaling suspension does not invalidate the preserved lease', () => {
@@ -244,7 +244,7 @@ test('new peer readiness replays a failed hidden-tab resume once and requires it
     connectionAttemptId: w.currentConnectionAttemptId, pc: w.pc });
   assert.equal(w.getMediaAppliedPhase(), 'resuming', 'frames alone cannot replace the Host ACK');
   w.handleMediaActivityAck({ ...closedAck, state: 'active', applied: true });
-  w.noteMediaRenderedFrame({ source: 'stats', framesDecoded: 21,
+  w.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 21,
     connectionAttemptId: w.currentConnectionAttemptId, pc: w.pc });
   assert.equal(w.getMediaAppliedPhase(), 'active');
   w.notePaintStats({ decodedDelta: 1, receivedDelta: 1, derivedFps: 20, videoWidth: 800 });
@@ -506,4 +506,155 @@ test('old Host callback cannot resume acquire after replacement Host arrived', (
   h.rebind.ack(null, { status: 'rejected' });
   assert.equal(h.WebRTC.hasActiveControl(), false);
   assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, before);
+});
+
+function mediaScopeFixture() {
+  const h = fixture();
+  const w = h.WebRTC;
+  w.mediaActivityRuntime = MediaActivityRuntime.create({ setTimeoutFn: () => 1, clearTimeoutFn() {} });
+  w.setUiPhase = () => {};
+  w.ensureFrameTraceCollector = () => ({ resetScope() {} });
+  w.ensureMediaResumeFallbackArmed = () => {};
+  const desired = (generation) => {
+    w._mediaIntent = { state: 'active', reasons: [], generation };
+    w.mediaActivityRuntime.beginDesired('active', { generation, connectionAttemptId: w.currentConnectionAttemptId });
+    w.captureMediaResumeBaseline(generation);
+  };
+  const ack = (generation, attempt = w.currentConnectionAttemptId) => w.handleMediaActivityAck({
+    state: 'active', applied: true, generation, connectionAttemptId: attempt,
+  });
+  const frame = (frameSeq, extra = {}) => w.noteMediaRenderedFrame({
+    source: 'video-callback', frameSeq, connectionAttemptId: w.currentConnectionAttemptId, pc: w.pc, ...extra,
+  });
+  return { ...h, desired, ack, frame };
+}
+
+test('new attempt cannot borrow previous active ACK or pending fresh frame', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  h.desired(8); h.ack(8);
+  const oldAttempt = w.currentConnectionAttemptId;
+  w.beginConnectionAttempt('test-attempt');
+  assert.equal(w._mediaResumeFramePending, false);
+  assert.equal(w._mediaResumeBaseline, null);
+  h.desired(8);
+  h.frame(1);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.ack(8, oldAttempt);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  h.ack(7);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  // A genuine post-baseline frame in B can precede B's ACK and is consumed once.
+  h.ack(8);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(h.frame(2), false);
+});
+
+test('resume rejects obsolete PC, generation, relay cache and metrics proof', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  h.desired(8); h.frame(1);
+  const oldPc = w.pc;
+  w.pc = { connectionState: 'connected' };
+  h.ack(8);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  assert.equal(h.frame(2, { pc: oldPc }), false);
+  h.desired(9);
+  w._lastRenderedRelayFrame = { frameSeq: 99, connectionAttemptId: w.currentConnectionAttemptId };
+  h.ack(9);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  assert.equal(h.frame(3, { generation: 8 }), false);
+  assert.equal(h.frame(null, { source: 'stats', framesDecoded: 100 }), false);
+  assert.notEqual(w.getMediaAppliedPhase(), 'active');
+  h.frame(4);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+test('same-scope relay frame before active ACK unlocks only after ACK', () => {
+  const h = mediaScopeFixture();
+  h.WebRTC.networkMode = 'tunnel';
+  h.desired(8);
+  h.frame(1, { source: 'relay-frame' });
+  assert.notEqual(h.WebRTC.getMediaAppliedPhase(), 'active');
+  h.ack(8);
+  assert.equal(h.WebRTC.getMediaAppliedPhase(), 'active');
+});
+
+test('new control lease invalidates old tunnel ACK even after control freeze clears lease', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  w.networkMode = 'tunnel';
+  w.startTunnelRelay = () => {};
+  h.desired(8); h.ack(8);
+  const oldAttempt = w.currentConnectionAttemptId;
+  w.freezeControl('control-revoked', false);
+  h.grant({ leaseId: 'next-media-lease', leaseEpoch: 9 });
+  assert.notEqual(w.currentConnectionAttemptId, oldAttempt);
+  assert.equal(w._mediaResumeFramePending, false);
+  h.desired(8); h.frame(1, { source: 'relay-frame' });
+  h.ack(8, oldAttempt);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  h.ack(8);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+test('old rVFC callback cannot paint or release a replacement PC', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  const callbacks = [];
+  const video = h.context.document.getElementById('remoteVideo');
+  video.requestVideoFrameCallback = fn => { callbacks.push(fn); return callbacks.length; };
+  video.cancelVideoFrameCallback = () => {};
+  w.startVideoFrameTracking();
+  const oldCallback = callbacks[0];
+  w.pc = { connectionState: 'connected' };
+  w.startVideoFrameTracking();
+  h.desired(8); h.ack(8);
+  const seq = w._videoFrameSeq;
+  oldCallback(100, {});
+  assert.equal(w._videoFrameSeq, seq);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  h.frame(1);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+test('relay image load retained across attempt or producer replacement has no authority', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  w.networkMode = 'tunnel'; w.tunnelRelayActive = true;
+  h.desired(8);
+  w.handleRelayFrame({ frameId: 1, data: 'AAAA', connectionAttemptId: w.currentConnectionAttemptId });
+  const load = h.context.document.getElementById('relayImage').onload;
+  w.beginConnectionAttempt('test-relay-attempt');
+  h.desired(8); h.ack(8);
+  load();
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w._lastRenderedRelayFrame, null);
+  w.handleRelayFrame({ frameId: 2, data: 'BBBB', connectionAttemptId: w.currentConnectionAttemptId });
+  const oldProducerLoad = h.context.document.getElementById('relayImage').onload;
+  w._mediaRelayRevision = 1;
+  h.desired(9); h.ack(9);
+  oldProducerLoad();
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w._lastRenderedRelayFrame, null);
+  w.handleRelayFrame({ frameId: 3, data: 'CCCC', connectionAttemptId: w.currentConnectionAttemptId });
+  h.context.document.getElementById('relayImage').onload();
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+test('user pause rejects late frames and ACK then needs new resume proof', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  h.desired(8); h.frame(1);
+  w._mediaIntent = { state: 'suspended', reasons: ['manual-pause'], generation: 9 };
+  w.mediaActivityRuntime.beginDesired('suspended', { generation: 9, connectionAttemptId: w.currentConnectionAttemptId });
+  w.handleMediaActivityAck({ state: 'suspended', generation: 9, connectionAttemptId: w.currentConnectionAttemptId, applied: true });
+  h.ack(8); h.frame(2);
+  assert.equal(w.getMediaAppliedPhase(), 'suspended');
+  assert.equal(w._mediaResumeEarlyFrame, null);
+  h.desired(10); h.ack(10);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  h.frame(3);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
 });

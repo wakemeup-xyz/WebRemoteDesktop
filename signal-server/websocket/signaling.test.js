@@ -3492,3 +3492,59 @@ test('input ack nullable timing preserves missing values without coercing zero',
     for (const name of ['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs']) assert.equal(ack[name], expected);
   }
 });
+
+for (const outcome of ['applied', 'rejected', 'timeout', 'superseded', 'disconnected', 'companion-disconnected']) {
+  test(`legacy companion shares pending rebind gate and producer cleanup (${outcome})`, () => {
+    resetConnections();
+    const io = makeIo();
+    setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+    const host = new FakeSocket('legacy-host', 'host');
+    const a = new FakeSocket('legacy-a', 'viewer');
+    a.handshake.auth.viewerSessionId = 'legacy-session';
+    const companion = new FakeSocket('legacy-companion', 'relay-viewer');
+    io.connect(host); io.connect(a); io.connect(companion);
+    a.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+    const transition = host.sent.find(e => e.event === 'control-transition').data;
+    host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+    companion.trigger('relay-stream-control', { enabled: true });
+    assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data.viewerId, a.id);
+    a.disconnect();
+    const b = new FakeSocket('legacy-b', 'viewer');
+    b.handshake.auth.viewerSessionId = 'legacy-session';
+    io.connect(b);
+    const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
+    assert.ok(rebind);
+    const hostBefore = host.sent.length;
+    const companionBefore = companion.sent.length;
+    const bBefore = b.sent.length;
+    const competingCompanion = new FakeSocket('legacy-competing-companion', 'relay-viewer');
+    io.connect(competingCompanion);
+    competingCompanion.trigger('relay-stream-control', { enabled: true });
+    companion.trigger('relay-stream-control', { enabled: true });
+    companion.trigger('relay-stream-control', { enabled: false });
+    companion.trigger('relay-frame-ack', { frameId: 1 });
+    companion.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+    host.trigger('relay-frame', { viewerId: a.id, frameId: 1, data: 'old' });
+    host.trigger('relay-frame', { viewerId: b.id, frameId: 2, data: 'pending' });
+    host.trigger('relay-stream-control-ack', { viewerId: b.id, state: 'active', applied: true });
+    host.trigger('media-activity-ack', { viewerId: b.id, state: 'active', applied: true });
+    assert.equal(host.sent.slice(hostBefore).filter(e => ['relay-stream-control', 'relay-frame-ack', 'input'].includes(e.event)).length, 0);
+    assert.equal(companion.sent.slice(companionBefore).filter(e => e.event === 'relay-frame').length, 0);
+    assert.equal(b.sent.slice(bBefore).filter(e => ['relay-frame', 'relay-stream-control-ack', 'media-activity-ack'].includes(e.event)).length, 0);
+    if (outcome === 'superseded') io.connect(new FakeSocket('legacy-superseder', 'viewer'));
+    if (outcome === 'disconnected') b.disconnect();
+    if (outcome === 'companion-disconnected') companion.disconnect();
+    rebind.ack(outcome === 'timeout' ? new Error('timeout') : null,
+      { status: ['superseded', 'disconnected'].includes(outcome) ? 'applied' : outcome });
+    if (outcome === 'applied') {
+      companion.trigger('relay-stream-control', { enabled: true });
+      assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data.viewerId, b.id);
+      host.trigger('relay-frame', { viewerId: b.id, frameId: 3, data: 'current' });
+      assert.equal(companion.sent.filter(e => e.event === 'relay-frame').length, 1);
+    } else {
+      assert.ok(host.sent.slice(hostBefore).some(e => e.event === 'relay-stream-control' && e.data.enabled === false && e.data.viewerId === a.id));
+      companion.trigger('relay-stream-control', { enabled: true });
+      assert.equal(host.sent.slice(hostBefore).filter(e => e.event === 'relay-stream-control' && e.data.enabled === true).length, 0);
+    }
+  });
+}
