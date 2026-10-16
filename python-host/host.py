@@ -595,6 +595,7 @@ class TunnelRelayStreamer:
         self.enabled = False
         self.suspended = False
         self.production_generation = 0
+        self._lifecycle_generation = 0
         self.width = 960
         self.height = 540
         self.fps = 8
@@ -712,8 +713,14 @@ class TunnelRelayStreamer:
         else:
             self.good_ack_streak = 0
 
-    async def start(self, viewer_id, width=960, height=540, fps=8):
-        await self.stop()
+    async def start(self, viewer_id, width=960, height=540, fps=8, *, authority_is_current=None):
+        operation = await self.stop()
+        # stop() reserves its generation before awaiting the old producer. A
+        # newer stop/start invalidates this continuation even on a detached relay.
+        if operation != self._lifecycle_generation or (
+            authority_is_current is not None and not authority_is_current()
+        ):
+            return False
         self.viewer_id = viewer_id
         self._apply_profile(self._pick_initial_profile(width, height, fps), reason="start", log=False)
         self.frame_id = 0
@@ -746,16 +753,22 @@ class TunnelRelayStreamer:
         )
 
     async def stop(self):
+        self._lifecycle_generation = getattr(self, "_lifecycle_generation", 0) + 1
+        operation = self._lifecycle_generation
+        self.production_generation += 1
         self.enabled = False
         self.suspended = False
         self.inflight_frames = {}
-        if self.task:
-            self.task.cancel()
+        closing_task = self.task
+        self.task = None
+        if closing_task:
+            closing_task.cancel()
             try:
-                await self.task
+                await closing_task
             except asyncio.CancelledError:
                 pass
-            self.task = None
+        # Do not clear task/enabled after the await: a new start may own them.
+        return operation
 
     def set_suspended(self, suspended):
         """Pause production without tearing down the relay task lifecycle."""
@@ -801,7 +814,7 @@ class TunnelRelayStreamer:
     async def _run(self):
         with MSS() as sct:
             monitor = select_capture_monitor(sct.monitors, fallback_monitors=get_screeninfo_monitors())
-            while self.enabled and self.viewer_id:
+            while self.enabled and self.viewer_id and self.task is asyncio.current_task():
                 frame_interval = 1 / max(1, self.fps)
                 ack_timeout = max(0.35, min(1.5, frame_interval * 4))
                 if self.suspended:
@@ -1777,6 +1790,7 @@ class WebRemoteHost:
         self._authority_input_lock = asyncio.Lock()
         self._signal_ready = False
         self._signal_generation = 0
+        self._signal_authenticated_generation = None
         self._input_lifecycle_tasks = set()
         self._control_transition_lock = asyncio.Lock()
         self._offer_lock = asyncio.Lock()
@@ -2307,17 +2321,40 @@ class WebRemoteHost:
             )
         return accepted
 
+    async def _initialize_signal_authority(self, connection):
+        """Retry the authenticated connection's actual reset before opening input."""
+        if (connection != getattr(self, "_signal_generation", 0)
+                or connection != getattr(self, "_signal_authenticated_generation", None)):
+            return False
+        authority = self._capture_authority()
+        try:
+            reset = await self._reset_keyboard_lifecycle("signal-connected")
+        except Exception:
+            return False
+        if (connection != getattr(self, "_signal_generation", 0)
+                or not self._authority_matches(authority)
+                or not isinstance(reset, dict) or reset.get("status") != "applied"):
+            return False
+        self._control_operation = None
+        self._signal_ready = True
+        return True
+
     async def on_connected(self, data):
+        previous = getattr(self, "_signal_init_event", None)
+        if previous is not None:
+            previous.set()
         self._signal_generation = getattr(self, "_signal_generation", 0) + 1
+        connection = self._signal_generation
+        self._signal_authenticated_generation = connection
+        initialized = self._signal_init_event = asyncio.Event()
         self._advance_authority()
         self._signal_ready = False
         self._active_input_binding = None
-        authority = self._capture_authority()
-        reset = await self._reset_keyboard_lifecycle("signal-connected")
-        if self._authority_matches(authority) and isinstance(reset, dict) and reset.get("status") == "applied":
-            self._control_operation = None
-            self._signal_ready = True
-        logger.info("Authenticated signaling connection initialized")
+        try:
+            await self._initialize_signal_authority(connection)
+        finally:
+            initialized.set()
+        logger.info("Authenticated signaling connection initialization finished")
 
     def build_event_loop_lag_context(self, *, lag_ms, sample_count, max_lag_ms, task_count):
         usage = resource.getrusage(resource.RUSAGE_SELF)
@@ -2645,9 +2682,22 @@ class WebRemoteHost:
         if lock is None:
             lock = self._control_transition_lock = asyncio.Lock()
         connection = getattr(self, "_signal_generation", 0)
+        initialized = getattr(self, "_signal_init_event", None)
+        if initialized is not None:
+            await initialized.wait()
         async with lock:
             if connection != getattr(self, "_signal_generation", 0):
                 return
+            if not getattr(self, "_signal_ready", True):
+                # Failed initialization is retryable by the next current Signal
+                # operation. Never admit input or acknowledge applied before it.
+                ready = initialized is not None and await self._initialize_signal_authority(connection)
+                if not ready:
+                    if connection == getattr(self, "_signal_generation", 0) and isinstance(data, dict):
+                        epoch = data.get("leaseEpoch")
+                        if type(epoch) is int and epoch >= 1:
+                            await self._emit_control_transition_ack(epoch, "rejected", reason="initialization-reset-failed")
+                    return
             await self._apply_control_transition(data)
 
     async def on_viewer_session_rebind(self, data):
@@ -4520,6 +4570,11 @@ class WebRemoteHost:
             )
             return
 
+        authority = self._capture_authority()
+        relay = None
+        def owns_relay():
+            return self._authority_matches(authority) and self.relay_streamer is relay
+
         applied = False
         try:
             if not self.relay_streamer:
@@ -4539,17 +4594,24 @@ class WebRemoteHost:
                     relay.set_suspended(True)
                 else:
                     await relay.stop()
+                    if not owns_relay():
+                        return
                 self._media_activity_suspended = True
                 applied = True
             else:
                 # Resume producer for current generation; Viewer still waits for fresh frame.
                 if getattr(relay, "viewer_id", None) != viewer_id or not getattr(relay, "enabled", True):
-                    await relay.start(
+                    started = await relay.start(
                         viewer_id,
                         width=data.get("width", 960),
                         height=data.get("height", 540),
                         fps=data.get("fps", 8),
+                        authority_is_current=owns_relay,
                     )
+                    if not owns_relay():
+                        return
+                    if started is False:
+                        raise RuntimeError("relay-start-superseded")
                 if hasattr(relay, "set_suspended"):
                     relay.set_suspended(False)
                 self._media_activity_suspended = False
@@ -4563,16 +4625,20 @@ class WebRemoteHost:
                 "state": state,
             }
         except Exception as exc:
+            if not owns_relay():
+                return
             logger.warning("tunnel media control apply failed: %s", type(exc).__name__)
             applied = False
             try:
-                if hasattr(self.relay_streamer, "set_suspended"):
-                    self.relay_streamer.set_suspended(True)
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(True)
             except Exception:
                 pass
             self._media_activity_suspended = True
             state = "suspended"
 
+        if not owns_relay():
+            return
         await self._emit_relay_stream_control_ack(
             viewer_id=viewer_id,
             state=state if applied else "suspended",
@@ -4584,27 +4650,34 @@ class WebRemoteHost:
 
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""
+        authority = self._capture_authority()
         try:
             if self._is_tunnel_media_control(data):
                 lock = getattr(self, "_media_activity_lock", None)
                 if lock is None:
                     lock = self._media_activity_lock = asyncio.Lock()
                 async with lock:
+                    if not self._authority_matches(authority):
+                        return
                     await self._apply_tunnel_media_control(data)
                 return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
             if not self.relay_streamer:
                 self.relay_streamer = TunnelRelayStreamer(self.sio)
+            relay = self.relay_streamer
             if enabled and viewer_id:
                 # Attempt authority is established only by offer or
                 # connection-attempt-bind. Do not invent it from relay start.
-                await self.relay_streamer.start(
+                await relay.start(
                     viewer_id,
                     width=data.get("width", 960),
                     height=data.get("height", 540),
                     fps=data.get("fps", 8),
+                    authority_is_current=lambda: self._authority_matches(authority) and self.relay_streamer is relay,
                 )
+                if not self._authority_matches(authority) or self.relay_streamer is not relay:
+                    return
             else:
                 active_viewer_id = getattr(self.relay_streamer, "viewer_id", None)
                 if viewer_id and active_viewer_id and viewer_id != active_viewer_id:
@@ -4614,7 +4687,9 @@ class WebRemoteHost:
                         active_viewer_id,
                     )
                     return
-                await self.relay_streamer.stop()
+                await relay.stop()
+                if not self._authority_matches(authority) or self.relay_streamer is not relay:
+                    return
                 logger.info("Tunnel relay stream stopped viewer=%s", viewer_id)
         except Exception as e:
             logger.error(f"Error handling relay stream control: {e}")
@@ -4811,6 +4886,10 @@ class WebRemoteHost:
 
     async def on_disconnect(self):
         logger.warning("Disconnected from signaling server")
+        self._signal_authenticated_generation = None
+        initialized = getattr(self, "_signal_init_event", None)
+        if initialized is not None:
+            initialized.set()
         self._signal_generation = getattr(self, "_signal_generation", 0) + 1
         self._advance_authority()
         self._signal_ready = False

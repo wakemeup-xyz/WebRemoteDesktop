@@ -1647,3 +1647,158 @@ async def test_track_shutdown_completion_cannot_clear_new_recovery_resources():
         await pending
     assert host._keyframe_recovery_state == {"new": True}
     assert host._frame_trace_context is context
+
+
+@pytest.mark.asyncio
+async def test_current_connection_grant_waits_for_authenticated_reset():
+    host = _authority_host(epoch=20)
+    entered, release, grant_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original = host.input_handler.reset_keyboard
+    async def reset(**kwargs):
+        if kwargs.get("reason") == "signal-connected":
+            entered.set()
+            await release.wait()
+        return await original(**kwargs)
+    host.input_handler.reset_keyboard = reset
+    connected = asyncio.create_task(host.on_connected({"role": "host", "status": "ok"}))
+    await asyncio.wait_for(entered.wait(), 1)
+    async def grant():
+        grant_entered.set()
+        await host.on_control_transition({"viewerId": "viewer-b", "leaseId": "lease-0000000000000002", "leaseEpoch": 1})
+    pending = asyncio.create_task(grant())
+    try:
+        await asyncio.wait_for(grant_entered.wait(), 1)
+        assert host._active_input_binding is None
+        assert host.sio.events == []
+    finally:
+        release.set()
+        await asyncio.gather(connected, pending)
+    assert host._active_input_binding["leaseEpoch"] == 1
+    assert host._active_input_binding["viewerId"] == "viewer-b"
+    assert host.sio.events == [("control-transition-ack", {"leaseEpoch": 1, "status": "applied"})]
+
+
+@pytest.mark.asyncio
+async def test_failed_authenticated_reset_is_retried_by_current_control_transition():
+    host = _authority_host(epoch=20)
+    calls = []
+    async def reset(**kwargs):
+        calls.append(kwargs["reason"])
+        return {"status": "execution-failed" if len(calls) == 1 else "applied"}
+    host.input_handler.reset_keyboard = reset
+    await host.on_connected({"role": "host", "status": "ok"})
+    assert host._signal_ready is False
+    assert host._active_input_binding is None
+    await host.on_control_transition({"viewerId": "viewer-b", "leaseId": "lease-0000000000000002", "leaseEpoch": 1})
+    assert host._signal_ready is True
+    assert host._active_input_binding["leaseEpoch"] == 1
+    assert calls == ["signal-connected", "signal-connected", "pending-reset"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_reset_invalidates_real_relay_start_before_producer_creation(monkeypatch, legacy):
+    host = _authority_host()
+    host._active_input_binding.update(connectionAttemptId="attempt-a", connectionAttemptSequence=1)
+    relay = host.relay_streamer = host_module.TunnelRelayStreamer(host.sio)
+    entered, release = asyncio.Event(), asyncio.Event()
+    producer_runs = []
+    async def no_capture_run():
+        producer_runs.append(relay.viewer_id)
+    monkeypatch.setattr(relay, "_run", no_capture_run)
+    stop = relay.stop
+    first = True
+    async def paused_stop():
+        nonlocal first
+        result = await stop()
+        if first:
+            first = False
+            entered.set()
+            await release.wait()
+        return result
+    monkeypatch.setattr(relay, "stop", paused_stop)
+    request = {
+        "schemaVersion": 2, "mediaControlSchemaVersion": 1, "enabled": True,
+        "state": "active", "generation": 1, "connectionAttemptId": "attempt-a",
+        "viewerId": "viewer-a", "leaseId": "lease-0000000000000001", "leaseEpoch": 7,
+    }
+    if legacy:
+        request = {"enabled": True, "viewerId": "viewer-a"}
+    pending = asyncio.create_task(host.on_relay_stream_control(request))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await host.on_control_transition({"leaseEpoch": 8})
+        await host.on_control_transition({"viewerId": "viewer-b", "leaseId": "lease-0000000000000002", "leaseEpoch": 9})
+    finally:
+        release.set()
+        await pending
+        if relay.task:
+            await relay.task
+    assert relay.enabled is False
+    assert producer_runs == []
+    assert host._active_input_binding["viewerId"] == "viewer-b"
+    assert host._media_activity_binding is None
+    assert not any(event == "relay-stream-control-ack" and data.get("applied") for event, data in host.sio.events)
+
+
+@pytest.mark.asyncio
+async def test_failed_initialization_retry_stays_blocked_and_rejects_until_reset_succeeds():
+    host = _authority_host(epoch=20)
+    async def reset(**kwargs):
+        return {"status": "execution-failed"}
+    host.input_handler.reset_keyboard = reset
+    await host.on_connected({"role": "host", "status": "ok"})
+    await host.on_control_transition({"viewerId": "viewer-b", "leaseId": "lease-0000000000000002", "leaseEpoch": 1})
+    assert host._signal_ready is False
+    assert host._active_input_binding is None
+    assert host.sio.events == [("control-transition-ack", {"leaseEpoch": 1, "status": "rejected", "reason": "initialization-reset-failed"})]
+
+
+@pytest.mark.asyncio
+async def test_disconnected_connection_cannot_retry_initialization_without_authentication():
+    host = _authority_host()
+    await host.on_connected({"role": "host", "status": "ok"})
+    await host.on_disconnect()
+    await host.on_control_transition({"viewerId": "viewer-b", "leaseId": "lease-0000000000000002", "leaseEpoch": 1})
+    assert host._signal_ready is False
+    assert host._active_input_binding is None
+    assert not any(data.get("status") == "applied" for event, data in host.sio.events)
+
+
+@pytest.mark.asyncio
+async def test_old_relay_stop_completion_does_not_clear_replacement_producer(monkeypatch):
+    relay = host_module.TunnelRelayStreamer(SimpleNamespace())
+    old_running, cancelled, release, new_running = (asyncio.Event() for _ in range(4))
+    runs = 0
+    async def no_capture_run():
+        nonlocal runs
+        runs += 1
+        if runs == 1:
+            old_running.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await release.wait()
+        else:
+            new_running.set()
+            await asyncio.Event().wait()
+    monkeypatch.setattr(relay, "_run", no_capture_run)
+    await relay.start("viewer-a")
+    await asyncio.wait_for(old_running.wait(), 1)
+    stopping = asyncio.create_task(relay.stop())
+    try:
+        await asyncio.wait_for(cancelled.wait(), 1)
+        await relay.start("viewer-b")
+        await asyncio.wait_for(new_running.wait(), 1)
+        current_task = relay.task
+    finally:
+        release.set()
+        await stopping
+    try:
+        assert relay.enabled is True
+        assert relay.viewer_id == "viewer-b"
+        assert relay.task is current_task
+        assert not current_task.done()
+    finally:
+        await relay.stop()
