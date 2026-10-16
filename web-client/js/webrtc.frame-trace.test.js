@@ -333,3 +333,103 @@ for (const traceFirst of [true, false]) {
     }
   }
 });
+
+function freshnessFixture() {
+  let now = 0;
+  const Collector = loadCollector(() => now), runtime = Collector.runtime, w = runtime.__WebRTC;
+  const { createLatencyMonitor } = require('./latency-monitor');
+  const monitor = runtime.LatencyMonitor = createLatencyMonitor({ now: () => now });
+  w.currentConnectionAttemptId = 'a'; w.connectionAttemptSequence = 1;
+  w.serverConfig = { inputFrameCorrelationVersion: 1 };
+  const scope = w.latencyScope(); monitor.setScope(scope);
+  const set = value => { now = value; };
+  const send = id => monitor.recordInputSend(id, { scope: w.latencyScope() });
+  const paint = (wire, at, collector = w.ensureInputFrameCollector()) => {
+    collector.observeVideoFrame({ ...w.currentFrameTraceIdentity(), ssrc: 7, rtpTimestamp: wire }, {}, at);
+    return collector;
+  };
+  const bind = (collector, wire, capture, id, overrides = {}) => {
+    collector.acceptBinding({ type: 'input_frame_binding', schemaVersion: 1, scope: w.latencyScope(),
+      streamId: 'video', captureSeq: capture, encoderTimestamp: wire, wireTimestamp: wire,
+      ssrc: 7, captureFresh: true, captureAfterApplied: true, inputIds: [id], ...overrides }, w.latencyScope());
+    w.consumeInputFrameMatches();
+  };
+  return { w, monitor, scope, set, send, paint, bind, gauge: () => monitor.snapshot().metrics.freshFrameAgeMs };
+}
+
+test('verified sparse join publishes original rVFC age and does not grant control or ACK', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  f.set(100); const collector = f.paint(44, 100);
+  f.set(800); f.bind(collector, 44, 7, 'one');
+  assert.equal(f.gauge().last, 700);
+  assert.equal(f.gauge().count, 1);
+  const snapshot = f.monitor.snapshot();
+  assert.equal(snapshot.metrics.inputToPostApplyFrameMs.last, 90);
+  assert.equal(snapshot.metrics.inputToVisibleEffectMs.available, false);
+  assert.equal(snapshot.metrics.inputAckRttMs.available, false);
+  assert.equal(snapshot.outcomes.acked, 0);
+});
+
+test('older or repeated captures cannot refresh freshness even with a new RTP identity', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  f.set(100); let c = f.paint(44, 100); f.bind(c, 44, 7, 'one');
+  for (const [wire, capture] of [[45, 6], [46, 7]]) {
+    f.set(200 + wire); f.send(`input-${wire}`); c = f.paint(wire, 200 + wire);
+    f.bind(c, wire, capture, `input-${wire}`);
+    assert.equal(f.gauge().last, 100 + wire);
+  }
+  f.set(300); f.send('fresh'); c = f.paint(47, 300); f.bind(c, 47, 8, 'fresh');
+  assert.equal(f.gauge().last, 0);
+});
+
+test('pause, resume and scope boundaries reject previously presented late joins', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  f.set(100); const c = f.paint(44, 100);
+  f.set(150); f.monitor.setMediaState(false, { scope: f.scope });
+  f.set(200); f.bind(c, 44, 7, 'one'); assert.equal(f.gauge().available, false);
+  f.set(250); f.send('paused'); f.paint(45, 250, c);
+  f.set(300); f.monitor.setMediaState(true, { scope: f.scope });
+  f.bind(c, 45, 8, 'paused'); assert.equal(f.gauge().available, false);
+  f.set(350); f.send('old'); f.paint(46, 350, c);
+  f.set(400); f.w.currentConnectionAttemptId = 'b'; f.monitor.setScope(f.w.latencyScope());
+  f.bind(c, 46, 9, 'old', { scope: f.scope }); assert.equal(f.gauge().available, false);
+  f.send('pre-scope'); const current = f.paint(47, 399);
+  f.bind(current, 47, 10, 'pre-scope'); assert.equal(f.gauge().available, false);
+  f.set(450); f.send('new'); const fresh = f.paint(48, 450);
+  f.bind(fresh, 48, 1, 'new'); assert.equal(f.gauge().last, 0);
+});
+
+test('unassociated paint, ACK, timing, unknown and reused bindings never publish freshness', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  f.set(100); const c = f.paint(44, 100); f.monitor.onVideoFrame(100);
+  f.monitor.onInputAck({ inputIds: ['one'], status: 'applied' }, { scope: f.scope });
+  f.monitor.onFrameTiming({ inputIds: ['one'], schemaVersion: 2, timings: {} }, { scope: f.scope });
+  f.bind(c, 44, 1, 'one', { captureFresh: false });
+  assert.equal(f.gauge().available, false);
+  f.bind(c, 44, 1, 'unknown'); assert.equal(f.gauge().available, false);
+});
+
+test('pause clears an established gauge but retains capture high-water until scope changes', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  f.set(100); let c = f.paint(44, 100); f.bind(c, 44, 7, 'one');
+  assert.equal(f.gauge().last, 0);
+  f.set(200); f.monitor.setMediaState(false, { scope: f.scope });
+  assert.equal(f.gauge().available, false);
+  f.set(300); f.monitor.setMediaState(true, { scope: f.scope });
+  f.set(400); f.send('reused'); c = f.paint(45, 400); f.bind(c, 45, 7, 'reused');
+  assert.equal(f.gauge().available, false);
+  f.set(500); f.send('fresh'); c = f.paint(46, 500); f.bind(c, 46, 8, 'fresh');
+  assert.equal(f.gauge().last, 0);
+  f.set(600); f.w.currentConnectionAttemptId = 'b'; f.monitor.setScope(f.w.latencyScope());
+  assert.equal(f.gauge().available, false);
+});
+
+test('unverified scalar, wrong stream and expired join cannot publish freshness', () => {
+  const f = freshnessFixture(); f.set(10); f.send('one');
+  assert.equal(f.monitor.recordStage('freshFrameAgeMs', 0, { scope: f.scope, sampleKey: 'guess' }), false);
+  f.set(100); const c = f.paint(44, 100);
+  f.bind(c, 44, 1, 'one', { streamId: 'other' });
+  assert.equal(f.gauge().available, false);
+  f.set(2100); f.bind(c, 44, 1, 'one');
+  assert.equal(f.gauge().available, false);
+});

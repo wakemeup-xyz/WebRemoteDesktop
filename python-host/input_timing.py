@@ -1,14 +1,13 @@
 """Same-clock adapter timing; importing this module performs no native work."""
 import math
 import time
-from input_admission_queue import input_queued_ns
 
 class InputTiming:
     def __init__(self, clock_ns=time.perf_counter_ns):
         self.clock_ns = clock_ns
-        self.queued_ns = input_queued_ns.get()
-        if self.queued_ns is None:
-            self.queued_ns = clock_ns()
+        # Adapter-local boundary: M3 admission precedes the enclosing adapter
+        # timer and must never be inherited into its queue/apply substages.
+        self.queued_ns = clock_ns()
         self.started_ns = self.finished_ns = None
 
     def start_apply(self):

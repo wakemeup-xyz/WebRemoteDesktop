@@ -543,3 +543,10 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - 离线 `--matrix latency-joint-v1` 固定比较 20/15/12 FPS、1152×720/1280×720/1728×1080/1920×1080 与两类 codec，PTS 按 90 kHz/FPS 推进；完整复用原始质量、options、codec 实例与 IDR 门禁。当前 joint producer 仅支持 libx264；VideoToolbox 明确标 unsupported，不能获得资格。离线结果不替代真实 loop、业务 ACK、资源及持续会话证据。
 - Host 新适配器无入站消息入口，也未安装本地资格/context，当前默认 disabled；它只在资格成功后请求既有 coordinator，staged/rejected 不宣称 applied，不预先改变 capture intent/FPS/generation，不自动切换网络、TURN 或分辨率。15/12 FPS 的 peak tuple 仍未扩展到生产 resolver。
 - 代码行为由纯 raw fixture、selector、fake coordinator 和 CLI/fake codec 测试覆盖；真实编码矩阵、设备、公网、光学/可见效果及每路径 3 小时验收均为 **NOT RUN**。取得真实资格并独立复核前不启用扩展自适应。
+
+
+### 2026-10-17 延迟指标集成边界补充
+
+- `hostAdapterAwaitMs` 只覆盖输入adapter入口至返回；`hostQueueMs` 只覆盖adapter内部等待至原生调用，`hostApplyMs` 覆盖原生调用区间。Host外层准入等待不在这三个阶段内，仍保留队列遥测；业务RTT减adapter总段后的剩余量不能称作网络耗时。
+- `freshFrameAgeMs` 只在M2验证同scope、video stream、新captureSeq与实际rVFC关联后可用，采用原始Viewer回调时间（100ms呈现、800ms关联时年龄为700ms）。旧/重复captureSeq不刷新；暂停和scope变化清空gauge，旧scope或暂停前/期间的迟到关联不能恢复它。普通paint、ACK、frame_timing、未知关联保持缺测，不改变控制授权。
+- 以上为源码与离线集成验证，实际部署、Viewer、公网、原生输入/抓屏、真实codec与长会话验收不由本次修复声明完成。证据见[最终集成修复报告](../superpowers/reports/2026-10-17-final-integration-fixes.md)。

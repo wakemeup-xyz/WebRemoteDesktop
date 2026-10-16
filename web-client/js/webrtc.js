@@ -194,7 +194,8 @@ class FrameTraceCollector {
       viewerClockMs: at,
       idrKind: trace.idrKind || null,
       roi,
-      ...(trace.inputIds ? { inputIds: trace.inputIds, scope: trace.scope } : {}),
+      ...(trace.inputIds ? { inputIds: trace.inputIds, scope: trace.scope,
+        captureFresh: trace.captureFresh, captureAfterApplied: trace.captureAfterApplied } : {}),
     };
   }
 

@@ -27,6 +27,9 @@ const createLatencyMonitor = (options = {}) => {
   const copyScope = s => s ? { connectionAttemptId: s.connectionAttemptId, generation: s.generation, leaseEpoch: s.leaseEpoch } : null;
   const blankOutcomes = () => Object.fromEntries(['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'].map(k => [k, 0]));
   let scope = null, outcomes = blankOutcomes(), lastNow = -Infinity, lastPaint = null, freshAt = null, mediaActive = true;
+  // M2 currently validates only the video stream. Keep one bounded high-water
+  // mark per scope, including across pauses and sparse collector recreation.
+  let freshCaptureSeq = -1, mediaSince = -Infinity;
   let metrics = new Map(LATENCY_METRIC_NAMES.map(k => [k, []]));
   const pending = new Map(), tombstones = new Map();
   let closed = [], closedDropped = 0, sync = null, lastSync = null;
@@ -110,6 +113,7 @@ const createLatencyMonitor = (options = {}) => {
       scope = copyScope(next); outcomes = blankOutcomes(); metrics = new Map(LATENCY_METRIC_NAMES.map(k => [k, []]));
       stopSyncTimers();
       tombstones.clear(); lastPaint = freshAt = sync = lastSync = null;
+      freshCaptureSeq = -1; mediaSince = t;
     },
     recordInputSend(id, context = {}) {
       const t = clock(context.submittedAtMs); if (t === null) return false;
@@ -189,18 +193,26 @@ const createLatencyMonitor = (options = {}) => {
         recorded = push('inputToPostApplyFrameMs', row.viewerClockMs - record.sent, row.viewerClockMs, id) || recorded;
         record.postApply = true;
       }
+      if (recorded && mediaActive && row.viewerClockMs > mediaSince
+          && row.streamId === 'video' && row.captureFresh === true && row.captureAfterApplied === true
+          && Number.isSafeInteger(row.captureSeq) && row.captureSeq > freshCaptureSeq) {
+        freshCaptureSeq = row.captureSeq;
+        // Late metadata joins retain the actual callback clock, never join time.
+        if (freshAt === null || row.viewerClockMs > freshAt) freshAt = row.viewerClockMs;
+      }
       return recorded;
     },
     recordStage(name, value, context = {}) {
       const t = clock(context.atMs); if (t === null) return false; expire(t);
       if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return false;
-      if (name === 'freshFrameAgeMs') { if (!valid(value) || value > t || !mediaActive) return false; freshAt = t - value; return true; }
+      // Freshness requires M2 identity/provenance; a scalar cannot prove it.
+      if (name === 'freshFrameAgeMs') return false;
       return push(name, value, t, context.sampleKey);
     },
     setMediaState(active, context = {}) {
       const t = clock(context.nowMs); if (t === null) return; expire(t);
       if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return;
-      mediaActive = active === true; lastPaint = freshAt = null;
+      mediaActive = active === true; lastPaint = freshAt = null; mediaSince = t;
     },
     onVideoFrame(t) {
       const at = clock(t); if (at === null) return; expire(at);

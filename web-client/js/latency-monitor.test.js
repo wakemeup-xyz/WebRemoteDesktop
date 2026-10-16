@@ -228,7 +228,9 @@ test('scope close settles cancelled inputs and atomically drains bounded final s
 
 test('pause clears paint baseline and freshness while leaving pending ACK observation alive', () => {
   const f = fixture(); f.m.onVideoFrame(1000); f.set(1050); f.m.onVideoFrame(1050);
-  f.m.recordStage('freshFrameAgeMs', 0, { atMs: 1050, scope: testScope, sampleKey: 'fresh' });
+  f.m.recordInputSend('fresh', { scope: testScope });
+  f.m.onPostApplyFrame({ scope: testScope, traceStatus: 'matched', viewerClockMs: 1050,
+    streamId: 'video', captureSeq: 1, captureFresh: true, captureAfterApplied: true, inputIds: ['fresh'] }, { scope: testScope });
   assert.equal(f.snapshot().metrics.freshFrameAgeMs.last, 0);
   f.m.recordInputSend('pending', { scope: testScope });
   f.m.setMediaState(false, { nowMs: 1050, scope: testScope });

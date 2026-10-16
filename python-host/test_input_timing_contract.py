@@ -98,3 +98,57 @@ class TestActualRelayAck(unittest.TestCase):
                 relay.ack(3, latency_ms=client_ms)
             self.assertEqual(feedback, [200])
             self.assertEqual(relay.stats_acked, 1)
+
+
+class TestQueuedHostTiming(unittest.IsolatedAsyncioTestCase):
+    async def test_outer_admission_wait_is_not_an_adapter_substage(self):
+        """Real Host admission/execution/ACK and queue; fake native adapter/clock."""
+        import json
+        from input_admission_queue import InputAdmissionQueue, AdmissionResult, completed_future
+        Host = production_class('host.py', 'WebRemoteHost', json=json,
+            InputAdmissionQueue=InputAdmissionQueue, AdmissionResult=AdmissionResult,
+            completed_future=completed_future, V2_INPUT_ACK_STATUSES={'applied'})
+        host = Host.__new__(Host)
+        host._active_input_binding = {'viewerId': 'viewer', 'leaseId': 'lease', 'leaseEpoch': 1}
+        host._emit_input_observation = lambda *args, **kwargs: None
+        ticks, entries, acks = [0], [], []
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def native(data):
+            entries.append(ticks[0])
+            timing = InputTiming(clock_ns=lambda: ticks[0])
+            if data['seq'] == 1:
+                entered.set()
+                await release.wait()
+            else:
+                ticks[0] += 5_000_000  # adapter-internal wait
+            timing.start_apply()
+            ticks[0] += 10_000_000
+            timing.finish_apply()
+            return {'status': 'applied', 'inputIds': data['inputIds'], **timing.durations()}
+        async def emit(event, ack):
+            acks.append(ack)
+        host.input_handler = SimpleNamespace(handle_input=native)
+        host.sio = SimpleNamespace(emit=emit)
+        def submit(seq):
+            return host.on_input({**host._active_input_binding, 'schemaVersion': 2,
+                'type': 'command', 'action': 'showDock', 'payload': {},
+                'seq': seq, 'inputIds': [f'input-{seq}']})
+        with patch.object(time, 'perf_counter_ns', side_effect=lambda: ticks[0]), \
+             patch.object(time, 'perf_counter', side_effect=lambda: ticks[0] / 1_000_000_000):
+            first = submit(1)
+            await entered.wait()
+            ticks[0] = 10_000_000
+            second = submit(2)
+            self.assertEqual(host._input_admission.snapshot()['pendingCount'], 1)
+            ticks[0] = 90_000_000
+            release.set()
+            self.assertEqual((await first).outcome, 'applied')
+            self.assertEqual((await second).outcome, 'applied')
+        self.assertEqual(entries, [0, 100_000_000])  # second waited 90ms outside adapter
+        self.assertEqual(len(acks), 2)
+        second_ack = acks[1]
+        self.assertAlmostEqual(second_ack['hostAdapterAwaitMs'], 15)
+        self.assertEqual(second_ack['hostQueueMs'], 5)
+        self.assertEqual(second_ack['hostApplyMs'], 10)
+        self.assertLessEqual(second_ack['hostQueueMs'] + second_ack['hostApplyMs'],
+                             second_ack['hostAdapterAwaitMs'] + 1e-9)

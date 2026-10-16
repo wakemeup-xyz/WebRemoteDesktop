@@ -59,7 +59,7 @@ takeClosedScopeSummaries({nowMs:number}): {summaries:Array<{endedAtMs:number,sna
 ]
 ```
 
-recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rtpApiAwaitMs仅为Host一个RTP包调用发送API到成功返回的同钟区间，不能称整帧发完。freshFrameAgeMs是Viewer同钟自最后确认新captureSeq帧的呈现到当前快照的年龄；它不减Host的时钟。该项为即时gauge：有同scope有效关联时count=1、p50/p95=last仅作共享schema占位，暂停或未知则unavailable；UI/报告只展示当前年龄，禁止把这两个占位值当采样分位分布。其他项为5秒事件样本。
+recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rtpApiAwaitMs仅为Host一个RTP包调用发送API到成功返回的同钟区间，不能称整帧发完。freshFrameAgeMs是Viewer同钟自最后确认新captureSeq帧的呈现到当前快照的年龄；它不减Host的时钟。该项为即时gauge：有同scope有效关联时count=1、p50/p95=last仅作共享schema占位，暂停或未知则unavailable；UI/报告只展示当前年龄，禁止把这两个占位值当采样分位分布。其他项为5秒事件样本。M2成功关联时保留原始rVFC Viewer时间，以同scope/video stream的captureSeq高水位去重；暂停清空gauge但保留高水位，恢复后拒绝暂停前/期间已呈现的迟到关联，换scope清空高水位。普通paint、ACK、frame_timing及无身份标量均不能更新该gauge。
 
 ### 3.2 统计生命周期与容量
 
@@ -72,7 +72,7 @@ recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rt
 
 ### 3.3 Host、Signal与relay边界
 
-新增纯 `python-host/input_timing.py` 的 `InputTiming` 记录 queued_ns、started_ns、finished_ns；键盘/桌面输入在真正入队、executor开始及结束分别打点。hostAdapterAwaitMs仍由Host围住adapter调用；hostQueueMs覆盖内部等待至原生调用开始，hostApplyMs覆盖原生调用至返回。失败或缺hook的子段为null。
+新增纯 `python-host/input_timing.py` 的 `InputTiming` 记录 queued_ns、started_ns、finished_ns；键盘/桌面输入在真正入队、executor开始及结束分别打点。hostAdapterAwaitMs仍由Host围住adapter调用；hostQueueMs覆盖内部等待至原生调用开始，hostApplyMs覆盖原生调用至返回。失败或缺hook的子段为null。M3外层Host准入队列等待发生在adapter入口之前，不计入这三个阶段；保留既有队列数量/字节/inflight/drop/frozen遥测。业务RTT减adapter总段后的剩余量仍含此准入等待及其他调度，不能称为网络耗时。
 
 ACK v2控制字段不变；新增可选 `timingSchemaVersion:1, hostAdapterAwaitMs, hostQueueMs, hostApplyMs`，各值为有限非负数或null；`hostExecuteMs`作为兼容别名只对应真实adapter-await。Signal `input-ack` 显式允许并转发这些字段，绝不补0。**输入v2 envelope不加字段**，内部时间和authority都走旁路状态。legacy Host只提供旧字段时不声称可拆queue/apply。数据缺失不改变ACK业务校验顺序。
 
