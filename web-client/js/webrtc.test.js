@@ -312,8 +312,11 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
     return 1;
   };
   WebRTC.createConnectionAttemptId = () => 'attempt-trace';
+  const videoTrack = { id: 'trace-video', kind: 'video' };
+  video.srcObject = { getVideoTracks: () => [videoTrack] };
   WebRTC.pc = {
     connectionState: 'connected', iceConnectionState: 'connected',
+    getReceivers: () => [{ track: videoTrack, getSynchronizationSources: () => [{ source: 7 }] }],
     createDataChannel(label) {
       const channel = { label, readyState: 'open', on() {}, send() {} };
       return channel;
@@ -321,6 +324,7 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
   };
   WebRTC._mediaIntent = { state: 'active', generation: 99 };
   WebRTC.beginConnectionAttempt('viewer-open');
+  WebRTC._frameTraceEnabled = true;
   WebRTC.startVideoFrameTracking();
   callback(10, { rtpTimestamp: 77 });
   // The existing receiver path owns this handler in production. Invoke it with
