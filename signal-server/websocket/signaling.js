@@ -463,20 +463,45 @@ function setupSignaling(io, options = {}) {
       // Host may still be finishing an asynchronous offer. Keep the new socket
       // input-inactive until Host confirms it migrated the same authority.
       socket._wrdRebindPending = true;
-      let settled = false;
-      const finishRebind = (ack) => {
-        if (settled) return;
-        settled = true;
-        if (connections.viewers.get(nextId) !== socket || socket._wrdDisconnected === true) return;
+      const operation = {
+        socket, host: connections.host, lease: previousLease, attempt: priorProgress, settled: false,
+      };
+      socket._wrdRebindOperation = operation;
+      const clearRebind = () => {
+        // Never release a newer operation's input gate from an old callback.
+        if (socket._wrdRebindOperation !== operation) return;
+        socket._wrdRebindOperation = null;
         socket._wrdRebindPending = false;
+      };
+      const finishRebind = (ack) => {
+        if (operation.settled) return;
+        operation.settled = true;
+        if (socket._wrdRebindOperation !== operation
+          || connections.viewers.get(nextId) !== operation.socket
+          || socket._wrdDisconnected === true
+          || connections.host !== operation.host
+          || mediaActivityProgress.get(nextId) !== operation.attempt) {
+          clearRebind();
+          return;
+        }
         const activeLease = withLeaseExpiry(() => desktopLease.getActiveLease(nextId));
-        if (!activeLease || activeLease.leaseId !== previousLease.leaseId
-          || activeLease.leaseEpoch !== previousLease.leaseEpoch) return;
+        if (!activeLease || activeLease.leaseId !== operation.lease.leaseId
+          || activeLease.leaseEpoch !== operation.lease.leaseEpoch) {
+          clearRebind();
+          return;
+        }
         if (ack?.status === 'applied') {
+          const renewed = withLeaseExpiry(() => desktopLease.heartbeat({ viewerId: nextId, ...activeLease }));
+          if (!renewed.ok) {
+            clearRebind();
+            return;
+          }
+          clearRebind();
           sendGrant(nextId, activeLease);
           emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId });
           return;
         }
+        clearRebind();
         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
         dispatchLeaseEffect(result, reason);
@@ -484,7 +509,7 @@ function setupSignaling(io, options = {}) {
       };
       // Socket.IO's timeout also removes its pending callback, so an old Host
       // that never acknowledges cannot accumulate retained rebind closures.
-      connections.host.timeout(1500).emit('viewer-session-rebind', {
+      operation.host.timeout(1500).emit('viewer-session-rebind', {
         previousViewerId: previousId,
         viewerId: nextId,
         ...previousLease,

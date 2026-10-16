@@ -3565,12 +3565,15 @@ const WebRTC = {
 
   startControlHeartbeat() {
     this.stopControlHeartbeat();
-    this._controlHeartbeatTimer = setInterval(() => {
+    if (!this.hasActiveControl() || !this.socket?.connected) return;
+    const heartbeat = () => {
       const lease = this.controlState.lease;
       if (this.hasActiveControl() && this.socket?.connected) {
         this.socket.emit('control-heartbeat', { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch });
       }
-    }, 3000);
+    };
+    heartbeat();
+    this._controlHeartbeatTimer = setInterval(heartbeat, 3000);
   },
 
   stopControlHeartbeat() {

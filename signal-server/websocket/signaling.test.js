@@ -3405,3 +3405,132 @@ test('host and relay-viewer survive desktop supersede', () => {
   assert.equal(relay.disconnected, false);
   assert.equal(viewerB.disconnected, false);
 });
+
+function makeRebindRenewalFixture() {
+  resetConnections();
+  let now = 0;
+  const { DesktopControlLease } = require('../lib/desktop-control-lease');
+  const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => 'lease-000000000001' });
+  const timers = [];
+  const scheduler = {
+    setInterval: () => ({ unref() {} }),
+    setTimeout(fn, ms) { const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer; },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  };
+  const io = makeIo();
+  setupSignaling(io, { desktopControlLease: lease, now: () => now, scheduler });
+  const host = new FakeSocket('host-renew', 'host');
+  const a = new FakeSocket('viewer-renew-a', 'viewer');
+  a.handshake.auth.viewerSessionId = 'fixture-same-session';
+  io.connect(host); io.connect(a);
+  const granted = grantActiveLease(io, host, a);
+  now = 2900; a.disconnect();
+  now = 10800;
+  const b = new FakeSocket('viewer-renew-b', 'viewer');
+  b.handshake.auth.viewerSessionId = 'fixture-same-session';
+  io.connect(b);
+  const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
+  assert.equal(rebind.timeoutMs, 1500);
+  assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+  return { lease, host, b, io, rebind, granted, timers, advanceTo: value => { now = value; } };
+}
+
+test('confirmed rebind renews only after current Host applied ACK', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(11000); h.rebind.ack(null, { status: 'applied' });
+  h.advanceTo(13000);
+  assert.deepEqual(h.lease.getActiveLease(h.b.id), {
+    leaseId: h.granted.leaseId, leaseEpoch: h.granted.leaseEpoch,
+  });
+  assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 1);
+  h.advanceTo(22999); assert.ok(h.lease.getActiveLease(h.b.id));
+  h.advanceTo(23000); assert.equal(h.lease.getActiveLease(h.b.id), null);
+});
+
+for (const outcome of ['deadline', 'timeout', 'host-replaced', 'same-id-host-replaced', 'disconnected', 'superseded']) {
+  test(`pending rebind ${outcome} cannot renew, grant, or recreate cancelled work`, () => {
+    const h = makeRebindRenewalFixture();
+    h.advanceTo(11000);
+    if (outcome === 'deadline') h.advanceTo(12000);
+    if (outcome === 'timeout') {
+      h.advanceTo(12300); h.rebind.ack(new Error('operation has timed out'));
+    }
+    if (outcome.includes('host-replaced')) h.io.connect(new FakeSocket(
+      outcome === 'same-id-host-replaced' ? h.host.id : 'host-renew-next', 'host'));
+    if (outcome === 'disconnected') h.b.disconnect();
+    if (outcome === 'superseded') {
+      const other = new FakeSocket('viewer-renew-unrelated', 'viewer');
+      other.handshake.auth.viewerSessionId = 'fixture-other-session'; h.io.connect(other);
+    }
+    const before = h.host.sent.filter(e => e.event === 'control-transition').length;
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 0);
+    const after = h.host.sent.filter(e => e.event === 'control-transition').length;
+    assert.equal(after, before + (outcome === 'deadline' ? 1 : 0));
+    h.advanceTo(13000); assert.equal(h.lease.getActiveLease(h.b.id), null);
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(h.host.sent.filter(e => e.event === 'control-transition').length, after);
+  });
+}
+
+test('old rebind callback cannot clear a newer same-session rebind operation', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(10900); h.b.disconnect();
+  const c = new FakeSocket('viewer-renew-c', 'viewer');
+  c.handshake.auth.viewerSessionId = 'fixture-same-session'; h.io.connect(c);
+  const current = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(current, h.rebind);
+  h.rebind.ack(null, { status: 'applied' });
+  assert.equal(c._wrdRebindPending, true);
+  assert.equal(c.sent.some(e => e.event === 'control-grant'), false);
+  h.advanceTo(11000); current.ack(null, { status: 'applied' });
+  assert.equal(c._wrdRebindPending, false);
+  assert.equal(c.sent.filter(e => e.event === 'control-grant').length, 1);
+  h.advanceTo(13000); assert.ok(h.lease.getActiveLease(c.id));
+});
+
+test('expired rebind clears only its pending gate so reset FREE can accept a fresh acquire', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(12000); h.rebind.ack(null, { status: 'applied' });
+  assert.equal(h.b._wrdRebindPending, false);
+  assert.equal(h.lease.snapshot().state, 'REVOKING');
+  const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > h.granted.leaseEpoch);
+  h.host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.lease.snapshot().state, 'FREE');
+  h.b.trigger('control-acquire', { requestId: 'after-expired-rebind' });
+  const fresh = h.host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(fresh.leaseEpoch > reset.leaseEpoch);
+  assert.equal(fresh.viewerId, h.b.id);
+});
+
+test('old grant ACK cannot clear reset rejection or cancel same-epoch retries', () => {
+  resetConnections();
+  const timers = [];
+  const io = makeIo();
+  setupSignaling(io, { scheduler: {
+    setInterval: () => ({ unref() {} }),
+    setTimeout(fn, ms) { const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer; },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  } });
+  const host = new FakeSocket('host-old-grant', 'host');
+  const viewer = new FakeSocket('viewer-old-grant', 'viewer');
+  io.connect(host); io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'candidate' });
+  const grant = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  viewer.trigger('control-release', {});
+  const reset = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > grant.leaseEpoch);
+  host.trigger('control-transition-ack', { leaseEpoch: grant.leaseEpoch, status: 'applied' });
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'rejected' });
+  host.trigger('control-transition-ack', { leaseEpoch: grant.leaseEpoch, status: 'applied' });
+  const retry = timers.find(t => t.ms === 1000 && !t.cancelled);
+  assert.ok(retry);
+  retry.fn();
+  const retried = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.equal(retried.leaseEpoch, reset.leaseEpoch);
+  assert.equal(retried.viewerId, undefined);
+  assert.equal(viewer.sent.some(e => e.event === 'control-grant'), false);
+  viewer.trigger('control-acquire', { requestId: 'still-blocked' });
+  assert.equal(viewer.sent.filter(e => e.event === 'control-state').at(-1).data.state, 'REVOKING');
+});

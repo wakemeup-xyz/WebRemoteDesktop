@@ -158,20 +158,7 @@ class DesktopControlLease {
     }
     if ((this._state === 'GRANTING' || this._state === 'REVOKING')
       && this._pending && this._pending.viewerId === viewerId) {
-      this._pending = {
-        viewerId: null,
-        leaseEpoch: this._pending.leaseEpoch,
-        reason: reason || 'released',
-      };
-      return {
-        state: this._state,
-        reason: reason || 'released',
-        transition: {
-          type: 'control-transition',
-          leaseEpoch: this._pending.leaseEpoch,
-          reason: reason || 'released',
-        },
-      };
+      return this._beginResetTransition(reason || 'released');
     }
     if (this._pending && this._pending.viewerId === viewerId) {
       return this._free(reason || 'released');
@@ -182,20 +169,7 @@ class DesktopControlLease {
   viewerDisconnected(viewerId) {
     if ((this._state === 'GRANTING' || this._state === 'REVOKING')
       && this._pending && this._pending.viewerId === viewerId) {
-      this._pending = {
-        viewerId: null,
-        leaseEpoch: this._pending.leaseEpoch,
-        reason: 'controller-disconnect',
-      };
-      return {
-        state: this._state,
-        reason: 'controller-disconnect',
-        transition: {
-          type: 'control-transition',
-          leaseEpoch: this._pending.leaseEpoch,
-          reason: 'controller-disconnect',
-        },
-      };
+      return this._beginResetTransition('controller-disconnect');
     }
     // ACTIVE controller disconnect must open a formal reset-only barrier.
     // Freeing immediately would let a new Viewer acquire before Host reset ack.

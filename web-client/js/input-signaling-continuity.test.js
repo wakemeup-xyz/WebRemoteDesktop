@@ -5,7 +5,9 @@ const test = require('node:test');
 const vm = require('node:vm');
 const { MediaActivityRuntime } = require('./media-activity-runtime.js');
 
-function fixture() {
+function fixture({ heartbeat = false } = {}) {
+  const intervals = new Map();
+  let nextIntervalId = 0;
   const sent = [];
   const emitted = [];
   const elements = new Map();
@@ -17,7 +19,8 @@ function fixture() {
   });
   const context = {
     console, Date, setTimeout: () => 1, clearTimeout() {}, updateLoadingText() {},
-    setInterval: () => 1, clearInterval() {}, requestAnimationFrame: (fn) => fn(),
+    setInterval: (fn, ms) => { const id = ++nextIntervalId; intervals.set(id, { fn, ms }); return id; },
+    clearInterval(id) { intervals.delete(id); }, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
     navigator: { platform: 'MacIntel', userAgent: 'offline-test' },
     window: { addEventListener() {}, location: { origin: 'http://offline.invalid' } },
@@ -40,6 +43,7 @@ function fixture() {
   }
   const WebRTC = context.__WebRTC;
   const Input = context.__Input;
+  const originalHeartbeat = WebRTC.startControlHeartbeat;
   const originalMedia = {
     ensureMediaActiveIfVisible: WebRTC.ensureMediaActiveIfVisible,
     replayMediaActivityIntent: WebRTC.replayMediaActivityIntent,
@@ -63,6 +67,7 @@ function fixture() {
     'createOffer']) {
     WebRTC[method] = () => {};
   }
+  if (heartbeat) WebRTC.startControlHeartbeat = originalHeartbeat;
   Input._listenersBound = true;
   const lease = { leaseId: 'offline-lease', leaseEpoch: 7 };
   const grant = (next = lease) => WebRTC.handleControlGrant({ controller: true, ...next });
@@ -76,7 +81,7 @@ function fixture() {
     WebRTC.socket.connected = false;
     WebRTC.freezeControl('signal-disconnect');
   };
-  return { WebRTC, Input, context, originalMedia, emitted, sent, lease, grant, acknowledge, disconnect };
+  return { WebRTC, Input, context, intervals, originalMedia, emitted, sent, lease, grant, acknowledge, disconnect };
 }
 
 test('same-session signaling regrant retains both sequences and waits for both reset acknowledgements', () => {
@@ -251,4 +256,26 @@ test('peer-ready resume does not override manual pause or Terminal suspension', 
     assert.deepEqual(w._mediaIntent.reasons, [reason]);
     assert.equal(h.Input.isActive, false);
   }
+});
+
+test('grant immediately heartbeats and repeated grants keep only one periodic heartbeat', () => {
+  const h = fixture({ heartbeat: true });
+  const heartbeats = () => h.emitted.filter(e => e.event === 'control-heartbeat');
+  assert.equal(heartbeats().length, 1);
+  assert.equal(heartbeats()[0].payload.leaseId, h.lease.leaseId);
+  assert.equal(heartbeats()[0].payload.leaseEpoch, h.lease.leaseEpoch);
+  h.grant();
+  assert.equal(heartbeats().length, 2);
+  assert.equal(h.intervals.size, 1);
+  const timer = [...h.intervals.values()][0];
+  assert.equal(timer.ms, 3000);
+  timer.fn(); assert.equal(heartbeats().length, 3);
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false });
+  assert.equal(h.intervals.size, 0);
+  timer.fn(); assert.equal(heartbeats().length, 3);
+  h.grant(); assert.equal(heartbeats().length, 4);
+  const beforeDisconnect = [...h.intervals.values()][0];
+  h.disconnect(); assert.equal(h.intervals.size, 0);
+  beforeDisconnect.fn(); assert.equal(heartbeats().length, 4);
+  h.WebRTC.startControlHeartbeat(); assert.equal(h.intervals.size, 0);
 });

@@ -118,7 +118,9 @@ test('takeover candidate disconnect preserves the reset barrier until host confi
   assert.equal(lease.snapshot().pendingViewerId, null);
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...activeA.lease }), false);
 
-  assert.deepEqual(lease.confirmTransition({ leaseEpoch: takeover.transition.leaseEpoch }), {
+  assert.equal(lease.confirmTransition({ leaseEpoch: takeover.transition.leaseEpoch }).reason, 'stale-transition');
+  assert.ok(disconnected.transition.leaseEpoch > takeover.transition.leaseEpoch);
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: disconnected.transition.leaseEpoch }), {
     state: 'FREE', reason: 'controller-disconnect',
   });
 
@@ -129,7 +131,9 @@ test('takeover candidate disconnect preserves the reset barrier until host confi
   const cancelled = leaseForCancel.beginRelease({ viewerId: 'viewer-b', reason: 'manual' });
   assert.equal(cancelled.state, 'REVOKING');
   assert.equal(leaseForCancel.snapshot().controllerViewerId, null);
-  assert.deepEqual(leaseForCancel.confirmTransition({ leaseEpoch: takeoverForCancel.transition.leaseEpoch }), {
+  assert.equal(leaseForCancel.confirmTransition({ leaseEpoch: takeoverForCancel.transition.leaseEpoch }).reason, 'stale-transition');
+  assert.ok(cancelled.transition.leaseEpoch > takeoverForCancel.transition.leaseEpoch);
+  assert.deepEqual(leaseForCancel.confirmTransition({ leaseEpoch: cancelled.transition.leaseEpoch }), {
     state: 'FREE', reason: 'manual',
   });
 });
@@ -139,11 +143,12 @@ test('granting candidate disconnect preserves the host reset barrier', () => {
   const request = lease.requestControl({ viewerId: 'viewer-a' });
 
   const disconnected = lease.viewerDisconnected('viewer-a');
-  assert.equal(disconnected.state, 'GRANTING');
-  assert.equal(disconnected.transition.leaseEpoch, request.transition.leaseEpoch);
-  assert.equal(lease.snapshot().state, 'GRANTING');
+  assert.equal(disconnected.state, 'REVOKING');
+  assert.ok(disconnected.transition.leaseEpoch > request.transition.leaseEpoch);
+  assert.equal(lease.snapshot().state, 'REVOKING');
   assert.equal(lease.snapshot().pendingViewerId, null);
-  assert.deepEqual(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }), {
+  assert.equal(lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch }).reason, 'stale-transition');
+  assert.deepEqual(lease.confirmTransition({ leaseEpoch: disconnected.transition.leaseEpoch }), {
     state: 'FREE', reason: 'controller-disconnect',
   });
 });
@@ -453,3 +458,28 @@ test('old credentials remain rejected after a new lease is granted', () => {
   assert.equal(lease.authorize({ viewerId: 'viewer-a', ...activeA.lease }), false);
   assert.equal(lease.authorize({ viewerId: 'viewer-b', ...activeB.lease }), true);
 });
+
+for (const cancel of ['release', 'disconnect']) {
+  for (const staleOutcome of ['applied', 'rejected', 'timeout']) {
+    test(`pending grant ${cancel} separates reset from old ${staleOutcome} ACK`, () => {
+      const lease = makeLease();
+      const grant = lease.requestControl({ viewerId: 'viewer-a' }).transition;
+      const reset = cancel === 'release'
+        ? lease.beginRelease({ viewerId: 'viewer-a', reason: 'released' })
+        : lease.viewerDisconnected('viewer-a');
+      assert.ok(reset.transition.leaseEpoch > grant.leaseEpoch);
+      const stale = staleOutcome === 'applied'
+        ? lease.confirmTransition({ leaseEpoch: grant.leaseEpoch })
+        : lease.failTransition({ leaseEpoch: grant.leaseEpoch, reason: staleOutcome });
+      assert.equal(stale.reason, 'stale-transition');
+      assert.equal(lease.snapshot().state, 'REVOKING');
+      const failed = lease.failTransition({ leaseEpoch: reset.transition.leaseEpoch, reason: 'reset-failed' });
+      assert.equal(failed.state, 'REVOKING');
+      assert.equal(lease.snapshot().leaseEpoch, reset.transition.leaseEpoch);
+      assert.equal(lease.confirmTransition({ leaseEpoch: grant.leaseEpoch }).reason, 'stale-transition');
+      assert.equal(lease.transitionForHost({ leaseEpoch: reset.transition.leaseEpoch }).leaseEpoch,
+        reset.transition.leaseEpoch);
+      assert.equal(lease.confirmTransition({ leaseEpoch: reset.transition.leaseEpoch }).state, 'FREE');
+    });
+  }
+}
