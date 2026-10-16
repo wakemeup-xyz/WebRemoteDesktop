@@ -237,6 +237,15 @@ def _runtime_summary(raw):
     if (not loop or not ack or not all(_finite(v) for v in loop + ack)
             or not samples or resources.get('samplerComplete') is not True):
         raise ValueError('runtime incomplete')
+    # The complete sampler conclusion covers intervals absent from retained
+    # rows. Never erase unknown/pressure intervals by normalizing that window
+    # to the healthy subset retained in the artifact.
+    if (resources.get('condition') != 'normal'
+            or type(resources.get('sampleCount')) is not int
+            or resources['sampleCount'] != len(samples)
+            or any(type(resources.get(key)) is not int or resources[key] != 0
+                   for key in ('unknownCount', 'pressureWarningCount'))):
+        raise ValueError('resource window unavailable')
     for row in samples:
         if (row.get('condition') != 'normal'
                 or any(not _finite(row.get(k)) for k in
@@ -247,8 +256,9 @@ def _runtime_summary(raw):
     return {'status': raw['status'], 'path': raw['path'], 'durationMs': raw['durationMs'],
             'inputSampleCount': len(ack), 'loopSampleCount': len(loop),
             'loopP95Ms': _p95(loop), 'inputAckP95Ms': _p95(ack),
-            'resources': {'condition': 'normal', 'samplerComplete': True,
-                'sampleCount': len(samples), 'unknownCount': 0, 'pressureWarningCount': 0,
+            'resources': {'condition': resources['condition'], 'samplerComplete': resources['samplerComplete'],
+                'sampleCount': resources['sampleCount'], 'unknownCount': resources['unknownCount'],
+                'pressureWarningCount': resources['pressureWarningCount'],
                 'samples': deepcopy(samples)}}
 
 

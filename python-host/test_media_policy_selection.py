@@ -22,7 +22,8 @@ class TestMeasuredPolicy(unittest.TestCase):
 
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, MethodType
+import logging
 from unittest.mock import patch
 import ast
 import sys
@@ -125,25 +126,38 @@ class HostAdaptiveAdapterTest(unittest.TestCase):
         # Compile the exact method without importing AV/capture/input integrations.
         source = ast.parse(Path(__file__).with_name('host.py').read_text())
         host = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'WebRemoteHost')
-        method = next(n for n in host.body if isinstance(n, ast.FunctionDef) and n.name == '_request_measured_media_policy')
-        ns = {'select_measured_media_policy': select_measured_media_policy}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), 'host-adapter', 'exec'), ns)
+        names = {'_request_measured_media_policy', '_apply_encoder_bitrate_kbps',
+                 '_capture_authority', '_authority_matches'}
+        methods = [n for n in host.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        ns = {'select_measured_media_policy': select_measured_media_policy,
+              'MediaApplyCoordinator': MediaApplyCoordinator, 'MediaApplyIdentity': MediaApplyIdentity,
+              'logger': logging.getLogger('m5-fixture')}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), 'host-adapter', 'exec'), ns)
         cls.adapter = staticmethod(ns['_request_measured_media_policy'])
+        cls.host_methods = ns
 
     def fake_host(self, evidence, *, stale=False):
         coordinator = MediaApplyCoordinator()
-        coordinator.bind_attempt('stale' if stale else self.intent.connection_attempt_id)
+        coordinator.bind_attempt('new-attempt' if stale else self.intent.connection_attempt_id)
+        if stale:
+            coordinator.admit(MediaApplyIdentity('new-attempt', 2, 0, 'new-policy'))
         calls = []
-        def apply(bitrate, policy):
-            calls.append(policy)
-            result = coordinator.admit(MediaApplyIdentity(policy.connection_attempt_id,
-                policy.generation, 0, policy.fingerprint()))
-            return {'applied': False, 'applyMode': result.decision}
+        encoder = SimpleNamespace(codec=SimpleNamespace(bit_rate=3200000),
+            stage_policy_update=lambda policy: calls.append(policy) or True,
+            set_media_apply_observer=lambda *args: None)
         state = SimpleNamespace(_h264_policy_provider=SimpleNamespace(current=lambda:
             SimpleNamespace(policy=self.current, intent=self.intent)),
             _adaptive_qualification_context=self.context, _adaptive_local_qualification=evidence,
             _media_session_intent=self.intent, capture=SimpleNamespace(width=1280, height=720, fps=20),
-            _apply_encoder_bitrate_kbps=apply)
+            _media_apply_coordinator=coordinator, _media_profile_sequence=0,
+            video_sender=SimpleNamespace(), _video_encoder=lambda: encoder,
+            _frame_trace_context_for_policy=lambda policy: None, _on_media_policy_applied=lambda *a: None,
+            _authority_revision=1, _connection_generation=1, current_viewer_id='fixture-viewer',
+            _active_input_binding={'viewerId': 'fixture-viewer', 'leaseId': 'fixture-lease-0001',
+                'leaseEpoch': 1, 'connectionAttemptId': self.intent.connection_attempt_id,
+                'connectionAttemptSequence': self.intent.generation, 'connectionGeneration': 1})
+        for name in ('_apply_encoder_bitrate_kbps', '_capture_authority', '_authority_matches'):
+            setattr(state, name, MethodType(self.host_methods[name], state))
         return state, coordinator, calls
 
     def test_rejection_never_requests_apply_or_changes_capture_intent(self):
@@ -155,16 +169,65 @@ class HostAdaptiveAdapterTest(unittest.TestCase):
         self.assertEqual(vars(host.capture), {'width': 1280, 'height': 720, 'fps': 20})
         self.assertIsNone(coordinator.pending)
 
-    def test_valid_requests_coordinator_once_and_rejected_is_not_applied(self):
-        for stale in (False, True):
-            host, coordinator, calls = self.fake_host(self.base, stale=stale)
+    def test_valid_requests_real_coordinator_once_and_is_not_yet_applied(self):
+        host, coordinator, calls = self.fake_host(self.base)
+        with patch.dict('os.environ', {'WRD_RELAY_PEAK_CODEC': 'libx264'}):
+            result = self.adapter(host, self.intent)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(coordinator.stats['apply'], 1)
+        self.assertFalse(result['applied'])
+        self.assertEqual(result['applyMode'], 'policy-staged')
+        self.assertIs(host._media_session_intent, self.intent)
+        self.assertIsNone(coordinator.current)
+
+    def test_stale_real_helper_cannot_rebind_or_clear_newer_pending_work(self):
+        host, coordinator, calls = self.fake_host(self.base, stale=True)
+        pending, stats = coordinator.pending, coordinator.stats
+        with patch.dict('os.environ', {'WRD_RELAY_PEAK_CODEC': 'libx264'}):
+            result = self.adapter(host, self.intent)
+        self.assertFalse(result['applied'])
+        self.assertEqual(calls, [])
+        self.assertEqual(coordinator._attempt_id, 'new-attempt')
+        self.assertEqual(coordinator.pending, pending)
+        self.assertEqual(coordinator.stats, stats)
+        self.assertEqual(vars(host.video_sender), {})
+        self.assertIs(host._media_session_intent, self.intent)
+
+    def test_newer_same_attempt_pending_and_changed_authority_remain_untouched(self):
+        for change_revision in (False, True):
+            host, coordinator, calls = self.fake_host(self.base)
+            if change_revision:
+                original_current = host._h264_policy_provider.current
+                def changed_current():
+                    host._authority_revision += 1
+                    return original_current()
+                host._h264_policy_provider.current = changed_current
+            else:
+                coordinator.admit(MediaApplyIdentity(self.intent.connection_attempt_id, 2, 0, 'new-policy'))
+            pending, stats = coordinator.pending, coordinator.stats
             with patch.dict('os.environ', {'WRD_RELAY_PEAK_CODEC': 'libx264'}):
                 result = self.adapter(host, self.intent)
-            self.assertEqual(len(calls), 1)
             self.assertFalse(result['applied'])
-            self.assertEqual(result['applyMode'], 'reject' if stale else 'stage')
-            self.assertIs(host._media_session_intent, self.intent)
-            self.assertIsNone(coordinator.current)
+            self.assertEqual(calls, [])
+            self.assertEqual(coordinator.pending, pending)
+            self.assertEqual(coordinator.stats, stats)
+
+    def test_missing_or_mismatched_active_authority_rejects_real_helper(self):
+        for mutation in (
+            lambda h: setattr(h, '_active_input_binding', None),
+            lambda h: h._active_input_binding.update(connectionAttemptId='new-attempt'),
+            lambda h: h._active_input_binding.update(connectionAttemptSequence=2),
+            lambda h: h._active_input_binding.update(leaseId=None),
+            lambda h: setattr(h, 'current_viewer_id', 'other-viewer'),
+        ):
+            host, coordinator, calls = self.fake_host(self.base)
+            mutation(host)
+            with patch.dict('os.environ', {'WRD_RELAY_PEAK_CODEC': 'libx264'}):
+                result = self.adapter(host, self.intent)
+            self.assertFalse(result['applied'])
+            self.assertEqual(calls, [])
+            self.assertIsNone(coordinator.pending)
+            self.assertEqual(coordinator.stats['apply'], 0)
 
     def test_disabled_local_context_and_resolution_or_network_change(self):
         host, _, calls = self.fake_host(self.base)

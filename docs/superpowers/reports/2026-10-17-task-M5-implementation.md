@@ -45,3 +45,31 @@ python3 scripts/eval-turn-encoder-quality.py --matrix latency-joint-v1 --output 
 ```
 
 真实硬件 producer 仍需补足契约并单独 review，不能忽略 unsupported。真实 direct/TURN/Socket/JPEG、正常/慢 worker/压力分桶、完整 W loop/资源窗口、业务 ACK、RTP+rVFC+marker 可见效果、设备与光学测量、每路径至少 3 小时会话均 **NOT RUN**。没有资格前继续 disabled，不把 fixture PASS 当作真实延迟达标。
+
+## R1：独立 review 两项 P2 整改
+
+冻结 `47cd1c5` 的独立 review 未通过：新自适应入口缺少 C 当前 authority/coordinator 约束，且 raw 资源摘要能抹掉完整窗口的失败计数。本轮只修这两个 M5 问题；不改旧 startup/显式 profile helper 的既有行为。
+
+- Host 在进入真实 `_apply_encoder_bitrate_kbps` 前校验现有 C authority snapshot、active viewer/lease/attempt/attempt sequence/connection generation，以及 coordinator 已绑定 attempt 和 pending/current 的 generation/profile 顺序；纯 selector 返回后再次检查 authority snapshot 与 coordinator 对象/attempt。不能让自适应入口调用旧 helper 的 rebind 路径，缺失 authority 或有更新工作时直接拒绝，保留 pending、统计和 sender/encoder 状态。
+- Host 测试现在 AST 提取实际 `_apply_encoder_bitrate_kbps`、`_capture_authority` 和 `_authority_matches`，只将 encoder/sender 替换为 fake；移除了会绕过 helper rebind 行为的测试 stub。覆盖不同 attempt 的新 pending、同 attempt 较新 generation、校验期间 authority revision 变化、缺少/不匹配 active binding，以及正常路径实际 stage 一次且 applied=false。
+- raw 资源证据必须包含完整 sampler 的 condition、sampleCount、unknownCount、pressureWarningCount，count 必须是非 bool 整数；condition 必须 normal，unknown/warning 必须是实际零值，sampleCount 必须与完整保留 samples 数量一致。所有行仍需完整正常。摘要原样保留这些已校验结论，不能通过单行 normal 覆盖全窗口 pressure/unknown。
+
+R1 RED：
+
+```bash
+python3 -B -m unittest discover -s python-host -p test_media_policy_selection.py -k HostAdaptiveAdapterTest -v
+python3 -B -m unittest discover -s scripts -p test_media_latency_qualification.py -k complete_window -v
+```
+
+前者 5 tests 中 2 FAIL：真实 helper 对 missing/mismatched authority、旧 attempt 都发生了一次 encoder stage；后者 1 FAIL：raw resources condition=pressure 时 validator 返回 `[]`。这是新增回归先运行于未修代码的实际结果。
+
+R1 GREEN：
+
+```bash
+python3 -B -m unittest discover -s python-host -p test_media_policy_selection.py -v
+python3 -B -m unittest discover -s scripts -p test_media_latency_qualification.py -v
+```
+
+分别 **11 tests PASS** 与 **9 tests PASS**。raw-to-summary 额外覆盖 condition=pressure、unknown/warning 非零、sampleCount 不一致、bool/NaN 和完整窗口字段缺失，均拒绝 summary 产物。仅运行上述纯定向测试；没有重跑无关 I1 失败项或大范围 suite。
+
+R1 自查：修改限 M5 Host adapter、raw summary、两个测试与本记录；不改 shared coordinator、C authority 实现、旧 helper 或任何服务。真实 codec/设备/公网/光学/3 小时资格仍 **NOT RUN**，硬件 producer 仍 unsupported，自适应仍 disabled。整改提交后等待再次独立 scoped review；本实施者记录不代替独立 PASS。

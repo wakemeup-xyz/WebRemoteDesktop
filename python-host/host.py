@@ -4293,6 +4293,32 @@ class WebRemoteHost:
         of application; codec-open remains the sole media-apply completion.
         Capture intent/FPS/generation are never optimistically changed here.
         """
+        authority = self._capture_authority()
+        binding = getattr(self, "_active_input_binding", None)
+        coordinator = getattr(self, "_media_apply_coordinator", None)
+        # Unlike startup/explicit profile admission, an adaptive request has no
+        # authority to bind an attempt. Reject before the legacy helper can
+        # rebind and clear work owned by a newer C authority.
+        if (not isinstance(binding, dict)
+                or not isinstance(binding.get("viewerId"), str) or not binding["viewerId"]
+                or binding["viewerId"] != getattr(self, "current_viewer_id", None)
+                or not isinstance(binding.get("leaseId"), str) or not binding["leaseId"]
+                or type(binding.get("leaseEpoch")) is not int or binding["leaseEpoch"] < 1
+                or binding.get("connectionAttemptId") != intent.connection_attempt_id
+                or type(binding.get("connectionAttemptSequence")) is not int
+                or binding["connectionAttemptSequence"] != intent.generation
+                or type(binding.get("connectionGeneration")) is not int
+                or binding["connectionGeneration"] < 1
+                or binding["connectionGeneration"] != getattr(self, "_connection_generation", None)
+                or coordinator is None or coordinator._attempt_id != intent.connection_attempt_id):
+            return {"applied": False, "reason": "adaptive-authority-mismatch"}
+        for existing in (coordinator.pending, coordinator.current):
+            if existing is not None and (
+                    existing.attempt_id != intent.connection_attempt_id
+                    or existing.generation > intent.generation
+                    or (existing.generation == intent.generation
+                        and existing.profile_sequence > intent.profile_sequence)):
+                return {"applied": False, "reason": "adaptive-coordinator-stale"}
         provider = getattr(self, "_h264_policy_provider", None)
         current = provider.current() if provider is not None else None
         if current is None or current.policy is None or current.intent is None:
@@ -4306,6 +4332,10 @@ class WebRemoteHost:
             context=getattr(self, "_adaptive_qualification_context", None))
         if not decision.changed:
             return {"applied": False, "reason": decision.reason}
+        if (not self._authority_matches(authority)
+                or getattr(self, "_media_apply_coordinator", None) is not coordinator
+                or coordinator._attempt_id != intent.connection_attempt_id):
+            return {"applied": False, "reason": "adaptive-authority-mismatch"}
         # Reuse existing generation/coalescing admission and codec-open observer.
         # This method has no inbound handler and no automatic retry loop.
         result = self._apply_encoder_bitrate_kbps(

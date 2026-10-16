@@ -60,7 +60,8 @@ def raw_fixture(entry=None):
         'runs': [{'resolution': [width, height], 'scenarios': scenarios}],
         'runtime': {'status': 'passed', 'path': 'relay', 'durationMs': 10_800_000,
             'loopMs': [5.0] * 100, 'inputAckMs': [10.0] * 100,
-            'resources': {'samplerComplete': True, 'samples': [{'condition': 'normal',
+            'resources': {'samplerComplete': True, 'condition': 'normal', 'sampleCount': 1,
+                'unknownCount': 0, 'pressureWarningCount': 0, 'samples': [{'condition': 'normal',
                 'currentRssMiB': 100.0, 'swapInBytesPerSec': 0.0,
                 'swapOutBytesPerSec': 0.0, 'queues': {'inputDepth': 0, 'relayDepth': 0}}]}}}
 
@@ -125,6 +126,21 @@ class JointQualificationTest(unittest.TestCase):
                 raw = deepcopy(base)
                 raw['runs'][0]['scenarios'][0]['frames'][0][key] = value
                 self.assertTrue(validate_joint_qualification(raw), (key, value))
+
+    def test_complete_window_resource_failures_cannot_be_erased_by_normal_rows(self):
+        base = raw_fixture()
+        for change in ({'condition': 'pressure'}, {'unknownCount': 1},
+                       {'pressureWarningCount': 1}, {'sampleCount': 2},
+                       {'unknownCount': False}, {'pressureWarningCount': float('nan')}):
+            raw = deepcopy(base)
+            raw['runtime']['resources'].update(change)
+            self.assertTrue(validate_joint_qualification(raw), change)
+            with self.assertRaises(ValueError):
+                summarize_joint_qualification(raw)
+        for field in ('condition', 'sampleCount', 'unknownCount', 'pressureWarningCount'):
+            raw = deepcopy(base)
+            del raw['runtime']['resources'][field]
+            self.assertTrue(validate_joint_qualification(raw), field)
 
     def test_unsupported_hardware_cannot_be_promoted_by_raw_fixture(self):
         raw = raw_fixture(build_joint_matrix()[1])
