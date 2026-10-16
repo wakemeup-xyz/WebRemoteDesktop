@@ -3473,6 +3473,41 @@ for (const outcome of ['deadline', 'timeout', 'host-replaced', 'same-id-host-rep
   });
 }
 
+for (const status of ['applied', 'rejected']) {
+  test(`same-ID replacement Host cancels rebind ${status} behind a fresh reset barrier`, () => {
+    const h = makeRebindRenewalFixture();
+    h.advanceTo(11000);
+    const currentHost = new FakeSocket(h.host.id, 'host');
+    h.io.connect(currentHost);
+    h.rebind.ack(null, { status });
+    h.b.trigger('control-heartbeat', h.granted);
+    h.b.trigger('input', { type: 'mouse', action: 'move', x: 1, y: 1, ...h.granted });
+    assert.equal(h.lease.snapshot().state, 'REVOKING');
+    assert.equal(h.lease.getActiveLease(h.b.id), null);
+    assert.equal(currentHost.sent.some(e => e.event === 'input'), false);
+    assert.equal(h.b.sent.some(e => e.event === 'control-grant'), false);
+    const reset = currentHost.sent.filter(e => e.event === 'control-transition').at(-1)?.data;
+    assert.ok(reset);
+    assert.ok(reset.leaseEpoch > h.granted.leaseEpoch);
+    assert.equal(reset.viewerId, undefined);
+    assert.equal(reset.leaseId, undefined);
+    h.host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+    assert.equal(h.lease.snapshot().state, 'REVOKING');
+    h.advanceTo(13000);
+    assert.equal(h.lease.getActiveLease(h.b.id), null);
+    const transitionCount = currentHost.sent.filter(e => e.event === 'control-transition').length;
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(currentHost.sent.filter(e => e.event === 'control-transition').length, transitionCount);
+    currentHost.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+    assert.equal(h.lease.snapshot().state, 'FREE');
+    h.b.trigger('control-acquire', { requestId: 'after-current-host-reset' });
+    const fresh = currentHost.sent.filter(e => e.event === 'control-transition').at(-1).data;
+    assert.ok(fresh.leaseEpoch > reset.leaseEpoch);
+    currentHost.trigger('control-transition-ack', { leaseEpoch: fresh.leaseEpoch, status: 'applied' });
+    assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 1);
+  });
+}
+
 test('old rebind callback cannot clear a newer same-session rebind operation', () => {
   const h = makeRebindRenewalFixture();
   h.advanceTo(10900); h.b.disconnect();

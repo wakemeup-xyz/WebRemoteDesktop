@@ -478,9 +478,7 @@ function setupSignaling(io, options = {}) {
         operation.settled = true;
         if (socket._wrdRebindOperation !== operation
           || connections.viewers.get(nextId) !== operation.socket
-          || socket._wrdDisconnected === true
-          || connections.host !== operation.host
-          || mediaActivityProgress.get(nextId) !== operation.attempt) {
+          || socket._wrdDisconnected === true) {
           clearRebind();
           return;
         }
@@ -488,6 +486,17 @@ function setupSignaling(io, options = {}) {
         if (!activeLease || activeLease.leaseId !== operation.lease.leaseId
           || activeLease.leaseEpoch !== operation.lease.leaseEpoch) {
           clearRebind();
+          return;
+        }
+        if (connections.host !== operation.host
+          || mediaActivityProgress.get(nextId) !== operation.attempt) {
+          // A cancelled migration must revoke its still-current authority before
+          // reopening the pending gate, even if a replacement Host reused its ID.
+          const reason = 'rebind-cancelled';
+          const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+          dispatchLeaseEffect(result, reason);
+          clearRebind();
+          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
           return;
         }
         if (ack?.status === 'applied') {
