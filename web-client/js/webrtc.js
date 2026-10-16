@@ -984,6 +984,13 @@ const WebRTC = {
 
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      // An authorized active request must mount its receiver even while media
+      // remains resuming. Starting the receiver is not an input-ready proof.
+      if (desired === 'active' && !this.tunnelRelayActive) {
+        if (!this.startTunnelRelay({ allowResuming: true, sendRequest: false })) return false;
+        // Local producer identity changed; capture after that change, before send.
+        this.captureMediaResumeBaseline(snapshot.generation);
+      }
       // Re-assert attempt authority before media control so a late WebRTC offer
       // cannot leave Host on a stale attempt across the first suspend/resume.
       this.bindCurrentConnectionAttempt();
@@ -1004,6 +1011,7 @@ const WebRTC = {
       });
     }
 
+    if (this.pc) this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
     this.socket.emit('media-activity-change', payload);
     return true;
   },
@@ -4061,8 +4069,25 @@ const WebRTC = {
     this.lastCandidateType = '';
     this.selectedCandidatePair = null;
     if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+    const previousPeer = this.pc;
+    if (previousPeer) {
+      // ACKs identify attempt/generation, not PC objects. Retiring a producer
+      // must advance the wire attempt before createOffer or intent replay.
+      if (!previousPeer._wrdConnectionAttemptId
+        || previousPeer._wrdConnectionAttemptId === this.currentConnectionAttemptId) {
+        this.beginConnectionAttempt('peer-replaced');
+      }
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) {
+        previousPeer[event] = null;
+      }
+      previousPeer.close?.();
+    }
     this.clearMediaResumeProof();
     this.pc = new RTCPeerConnection(this.config);
+    this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
+    // Bind before the asynchronous offer finishes: media replay can run first.
+    this.bindCurrentConnectionAttempt();
     this.pc._wrdControlLease = this.controlState?.lease ? Object.freeze({ ...this.controlState.lease }) : null;
     this.videoTransceiver = null;
     this.inputChannel = null;
@@ -4412,16 +4437,16 @@ const WebRTC = {
     return true;
   },
 
-  startTunnelRelay() {
+  startTunnelRelay({ allowResuming = false, sendRequest = true } = {}) {
     if (!this.hasActiveControl()) {
       this.requestControl({ allowTakeover: false });
-      return;
+      return false;
     }
-    if (!this.canStartTunnelRelay()) {
-      return;
+    if (!this.canStartTunnelRelay({ allowResuming })) {
+      return false;
     }
     if (!this.socket || !this.socket.connected) {
-      return;
+      return false;
     }
     if (this.pc) {
       // Closing the old WebRTC transport is intentional when tunnel takes
@@ -4453,7 +4478,8 @@ const WebRTC = {
     updateLoadingText('正在启动隧道中继...');
     this.setUiPhase('signaling', { reason: 'tunnel-start' });
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
-    this.emitRelayStreamControl();
+    if (sendRequest) this.emitRelayStreamControl({ allowResuming });
+    return true;
   },
 
   getTunnelRelayRequestSize() {

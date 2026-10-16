@@ -113,6 +113,8 @@ function loadWebRTC(overrides = {}) {
   };
   const context = {
     console,
+    // Explicit offline configuration response; never use a real network fetch.
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
     setTimeout: trackTimeout,
     clearTimeout: clearTrackedTimeout,
     setInterval: trackInterval,
@@ -154,6 +156,8 @@ function loadWebRTC(overrides = {}) {
     io: () => ({ on() {}, emit() {}, disconnect() {}, connected: true }),
   };
   Object.assign(context, overrides);
+  // Partial storage overrides still implement the browser Storage interface.
+  context.localStorage = { removeItem() {}, ...context.localStorage };
   if (overrides.document) {
     context.document = overrides.document;
   }
@@ -3392,7 +3396,7 @@ test('PC connection syncs the desktop input gate without directly enabling input
   assert.deepEqual(inputCalls, []);
 });
 
-test('suspended media prevents tunnel start or restart until the active phase is restored', () => {
+test('suspended media blocks tunnel start while authorized resume mounts receiver behind input gate', () => {
   const emitted = [];
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -3427,7 +3431,8 @@ test('suspended media prevents tunnel start or restart until the active phase is
   emitted.length = 0;
 
   WebRTC.startTunnelRelay();
-  assert.equal(WebRTC.tunnelRelayActive, false);
+  assert.equal(WebRTC.tunnelRelayActive, true, 'authorized active intent already mounted the receiver');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
 
   WebRTC.handleMediaActivityAck({

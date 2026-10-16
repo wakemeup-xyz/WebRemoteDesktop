@@ -57,6 +57,7 @@ function fixture({ heartbeat = false } = {}) {
   const WebRTC = context.__WebRTC;
   const Input = context.__Input;
   const originalCreateOffer = WebRTC.createOffer;
+  const originalBindAttempt = WebRTC.bindCurrentConnectionAttempt;
   const originalHeartbeat = WebRTC.startControlHeartbeat;
   const originalMedia = {
     ensureMediaActiveIfVisible: WebRTC.ensureMediaActiveIfVisible,
@@ -95,7 +96,7 @@ function fixture({ heartbeat = false } = {}) {
     WebRTC.socket.connected = false;
     WebRTC.freezeControl('signal-disconnect');
   };
-  return { WebRTC, Input, context, intervals, advance, timers, originalMedia, originalCreateOffer, emitted, sent, lease, grant, acknowledge, disconnect };
+  return { WebRTC, Input, context, intervals, advance, timers, originalMedia, originalCreateOffer, originalBindAttempt, emitted, sent, lease, grant, acknowledge, disconnect };
 }
 
 test('same-session signaling regrant retains both sequences and waits for both reset acknowledgements', () => {
@@ -658,3 +659,77 @@ test('user pause rejects late frames and ACK then needs new resume proof', () =>
   h.frame(3);
   assert.equal(w.getMediaAppliedPhase(), 'active');
 });
+
+test('real tunnel refresh establishes local relay and waits for current ACK plus loaded frame', () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  w.replayMediaActivityIntent = h.originalMedia.replayMediaActivityIntent;
+  w.networkMode = 'tunnel'; w.tunnelRelayActive = true; w.pc = null;
+  w.bindCurrentConnectionAttempt = h.originalBindAttempt;
+  w.stopMediaTelemetry = () => {};
+  w.captureLastFrameHold = () => false;
+  w.updateNetworkUI = () => {};
+  h.desired(8); h.ack(8); h.frame(1, { source: 'relay-frame' });
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+  const oldAttempt = w.currentConnectionAttemptId;
+  w.refresh({ reason: 'manual' });
+  assert.notEqual(w.currentConnectionAttemptId, oldAttempt);
+  assert.equal(w.tunnelRelayActive, true);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  const request = h.emitted.filter(e => e.event === 'relay-stream-control' && e.payload.mediaControlSchemaVersion === 1).at(-1).payload;
+  assert.equal(request.enabled, true);
+  assert.equal(request.connectionAttemptId, w.currentConnectionAttemptId);
+  w.handleRelayFrame({ frameId: 1, data: 'AAAA', connectionAttemptId: request.connectionAttemptId });
+  const loaded = h.context.document.getElementById('relayImage').onload;
+  assert.equal(typeof loaded, 'function');
+  loaded();
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  h.ack(8, oldAttempt);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  h.ack(8);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+for (const retainedAttempt of [false, true]) {
+test(`real failed-PC replacement/replay rejects old ACK and retains early frame (retained attempt=${retainedAttempt})`, async () => {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  w.replayMediaActivityIntent = h.originalMedia.replayMediaActivityIntent;
+  w.networkMode = 'direct';
+  w.bindCurrentConnectionAttempt = h.originalBindAttempt;
+  w.createOffer = h.originalCreateOffer;
+  w.createInputChannel = () => {};
+  w.updateNetworkUI = () => {};
+  h.context.RTCPeerConnection = class {
+    constructor() { this.connectionState = 'new'; }
+    close() { this.connectionState = 'closed'; }
+    getTransceivers() { return [{ receiver: { track: { kind: 'video' } } }]; }
+    async createOffer() { return { type: 'offer', sdp: 'offline-only' }; }
+    async setLocalDescription(offer) { this.localDescription = offer; }
+  };
+  w.pc.close = function () { this.connectionState = 'closed'; };
+  w.pc._wrdConnectionAttemptId = w.currentConnectionAttemptId;
+  if (retainedAttempt) w.beginConnectionAttempt('retained-peer-attempt');
+  h.desired(8);
+  w.replayMediaActivityIntent('old-peer-request');
+  const oldRequest = h.emitted.filter(e => e.event === 'media-activity-change').at(-1).payload;
+  const oldPc = w.pc;
+  oldPc.connectionState = 'failed';
+  h.grant(); // Actual same-lease grant calls createPeerConnection, createOffer and replay.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.notEqual(w.pc, oldPc);
+  const request = h.emitted.filter(e => e.event === 'media-activity-change').at(-1).payload;
+  assert.notEqual(request.connectionAttemptId, oldRequest.connectionAttemptId);
+  assert.equal(h.emitted.filter(e => e.event === 'offer').at(-1).payload.connectionAttemptId, request.connectionAttemptId);
+  const bound = h.emitted.findIndex(e => e.event === 'connection-attempt-bind' && e.payload.connectionAttemptId === request.connectionAttemptId);
+  const requested = h.emitted.findIndex(e => e.event === 'media-activity-change' && e.payload.connectionAttemptId === request.connectionAttemptId);
+  assert.ok(bound >= 0 && bound < requested, 'replacement attempt is bound before its media replay');
+  w.handleMediaActivityAck({ ...oldRequest, applied: true });
+  h.frame(1);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  w.handleMediaActivityAck({ ...request, applied: true });
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+});
+
+}
