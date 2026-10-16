@@ -6431,7 +6431,15 @@ function bootViewerShell() {
   }
 
   // Non-critical operator tools: each operation has a deadline; requests remain cached.
-  const deferredAssets = typeof createAssetLoader === 'function' ? createAssetLoader({ document }) : null;
+  const deferredAssets = typeof createAssetLoader === 'function' ? createAssetLoader({ document,
+    onRefreshRequired() {
+      if (WebRTC._operatorToolsState !== 'failed') return;
+      WebRTC._retryOperatorTools = refreshIncompleteModule;
+      if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredFailed?.(refreshIncompleteModule);
+      const button = document.getElementById('diagBtn');
+      if (button) { button.textContent = '刷新诊断组件'; button.title = '页面版本已淘汰，请先保存未完成草稿，然后刷新页面'; }
+    },
+  }) : null;
   let deferredGeneration = 0;
   WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'loading';
   WebRTC._retryOperatorTools = null;
@@ -6473,6 +6481,7 @@ function bootViewerShell() {
       ready();
     }).catch((error) => {
       if (operation !== deferredGeneration) return;
+      error = deferredAssets?.getRefreshError() || error;
       // This operation is finished. Late script registration alone cannot publish ready.
       deferredGeneration++;
       WebRTC._operatorToolsState = 'failed';
@@ -6492,6 +6501,7 @@ function bootViewerShell() {
       assets: window.__WRD_ASSETS__ || null,
       document,
       timeoutMs: 5000,
+      onRefreshRequired: setTerminalLoadFailure,
     })
     : null;
 

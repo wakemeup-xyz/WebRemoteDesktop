@@ -7,6 +7,8 @@ function createTerminalLoader({
   loadStyle,
   loadScript,
   getTerminalPanel = () => globalThis.TerminalPanel,
+  onRefreshRequired = () => {},
+  versionCheck,
 } = {}) {
   let state = Object.freeze({ state: 'idle', error: null });
   let inflight = null;
@@ -16,6 +18,12 @@ function createTerminalLoader({
   const assetFactory = typeof createAssetLoader === 'function' ? createAssetLoader : require('./asset-loader').createAssetLoader;
   const loader = assetFactory({
     document, setTimer, clearTimer,
+    versionCheck,
+    onRefreshRequired(error) {
+      if (disposed || state.state !== 'failed') return;
+      state = Object.freeze({ state: 'failed', error, refreshRequired: true });
+      onRefreshRequired(error);
+    },
     ...(loadStyle || loadScript ? { request: ({ url, kind }, append) => {
       const adapter = kind === 'style' ? loadStyle : loadScript;
       return adapter ? adapter(url) : append({ url, kind });
@@ -61,6 +69,7 @@ function createTerminalLoader({
       state = Object.freeze({ state: 'ready', error: null });
       return panel;
     }).catch((error) => {
+      error = loader.getRefreshError() || error;
       if (!disposed && operation === generation) {
         // Invalidate callbacks from work that outlives this operation's deadline.
         generation++;

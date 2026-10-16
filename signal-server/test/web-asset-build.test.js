@@ -8,6 +8,15 @@ const test = require('node:test');
 const vm = require('node:vm');
 const { buildWebClient } = require('../scripts/build-web-client');
 
+function copySourceFixture(t) {
+  const source = path.resolve(__dirname, '../../web-client');
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-source-'));
+  fs.cpSync(source, sourceDir, { recursive: true,
+    filter: (src) => !path.relative(source, src).split(path.sep).includes('dist') });
+  t.after(() => fs.rmSync(sourceDir, { recursive: true, force: true }));
+  return sourceDir;
+}
+
 test('asset graph keeps desktop critical and Terminal optional sources separate', () => {
   const graph = require('../scripts/web-asset-graph');
   assert.deepEqual(graph.loginScripts, ['js/runtime-config.js', 'js/bounded-request.js', 'js/login.js']);
@@ -62,8 +71,8 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
     recursive: true, filter: (file) => path.basename(file) !== 'dist',
   });
   t.after(() => [outA, outB, sourceDir].forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
-  const a = await buildWebClient({ sourceDir, outDir: outA });
-  const b = await buildWebClient({ sourceDir, outDir: outB });
+  const a = await buildWebClient({ sourceDir, outDir: outA, now: () => 1000 });
+  const b = await buildWebClient({ sourceDir, outDir: outB, now: () => 1000 });
 
   assert.deepEqual(a, b);
   const html = fs.readFileSync(path.join(outA, 'viewer.html'), 'utf8');
@@ -108,9 +117,10 @@ test('build emits deterministic first-party critical assets and lazy Terminal as
   assert.match(viewerCss, /--text-secondary/);
 });
 
-test('build keeps previous dist when a subsequent build fails', async () => {
+test('build keeps previous dist when a subsequent build fails', async (t) => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-build-keep-'));
-  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+  const sourceDir = copySourceFixture(t);
   const first = await buildWebClient({ sourceDir, outDir });
   assert.equal(fs.existsSync(path.join(outDir, 'asset-manifest.json')), true);
   const firstHtml = fs.readFileSync(path.join(outDir, 'viewer.html'), 'utf8');
@@ -140,7 +150,7 @@ test('build does not publish a manifest when an input is missing on empty outDir
 test('temporary login build delivers one local bundle with a working bounded form controller', async (t) => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-login-build-'));
   t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
-  const sourceDir = path.join(__dirname, '..', '..', 'web-client');
+  const sourceDir = copySourceFixture(t);
   const manifest = await buildWebClient({ sourceDir, outDir });
   const html = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
   assert.ok(manifest.assets.loginJs);

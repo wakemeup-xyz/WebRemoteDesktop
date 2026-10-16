@@ -225,3 +225,34 @@ test('one overridden resource adapter preserves the other default DOM request', 
   await loading;
   assert.equal(loader.getState().state, 'ready');
 });
+
+test('retired page changes failed Terminal UI to explicit refresh without retrying the missing hash', async () => {
+  const { createTerminalLoader } = require('./terminal-loader');
+  let finish, notifications = 0, scripts = 0;
+  const check = new Promise((resolve) => { finish = resolve; });
+  const loader = createTerminalLoader({
+    assets: { terminalCss: '/old.css', terminalJs: '/old.js' }, document: {},
+    loadStyle: async () => {}, loadScript: async () => { scripts++; throw Error('missing old hash'); },
+    versionCheck: () => check,
+    onRefreshRequired(error) { notifications++; assert.equal(error.code, 'refresh-required'); },
+  });
+  await assert.rejects(loader.load(), /missing old hash/);
+  assert.equal(loader.getState().refreshRequired, false);
+  finish(true);
+  await flushTerminal();
+  assert.equal(loader.getState().refreshRequired, true);
+  assert.equal(notifications, 1);
+  await assert.rejects(loader.retry(), { code: 'refresh-required' });
+  assert.equal(scripts, 1);
+});
+
+test('a fast retired-build response cannot race the Terminal failure into ordinary retry UI', async () => {
+  const { createTerminalLoader } = require('./terminal-loader');
+  const loader = createTerminalLoader({
+    assets: { terminalCss: '/old.css', terminalJs: '/old.js' }, document: {},
+    loadStyle: async () => {}, loadScript: async () => { throw Error('missing old hash'); },
+    versionCheck: async () => true,
+  });
+  await assert.rejects(loader.load(), { code: 'refresh-required' });
+  assert.equal(loader.getState().refreshRequired, true);
+});

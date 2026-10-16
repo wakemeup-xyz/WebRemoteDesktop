@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 // Browsers always revalidate HTML. Do not set a positive max-age/edge TTL for HTML:
 // a short edge cache without N-1 asset retention can pair old HTML with missing
@@ -11,27 +12,68 @@ const HTML_EDGE_POLICY = null;
 const IMMUTABLE_POLICY = 'public, max-age=31536000, immutable';
 
 function normalizeAssetPath(value) {
-  const normalized = String(value || '').replace(/^\/+/, '');
-  if (!normalized || normalized.includes('..') || path.isAbsolute(normalized)) {
-    throw new Error(`unsafe asset path: ${value}`);
+  if (typeof value !== 'string' || !/^assets\/[a-z0-9-]+\.[a-f0-9]{16}\.(js|css)$/.test(value)) {
+    throw new Error('unsafe asset path');
   }
-  return normalized;
+  return value;
+}
+
+function assetDigest(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+}
+
+function buildIdentity(assets) {
+  return assetDigest(JSON.stringify(Object.fromEntries(Object.entries(assets).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))));
+}
+
+function requirePlainFile(filePath) {
+  if (!fs.lstatSync(filePath).isFile()) throw new Error('manifest asset must be a regular file (no symlink)');
+}
+
+function readVerifiedAsset(distDir, value) {
+  const relative = normalizeAssetPath(value);
+  // Every path component is checked: stat alone follows links outside the dist.
+  for (const dir of [distDir, path.join(distDir, 'assets')]) {
+    if (!fs.lstatSync(dir).isDirectory()) throw new Error('asset directory must not be a symlink');
+  }
+  const absolute = path.join(distDir, relative);
+  requirePlainFile(absolute);
+  const bytes = fs.readFileSync(absolute);
+  if (assetDigest(bytes) !== relative.split('.')[1]) throw new Error('manifest asset hash mismatch');
+  return bytes;
 }
 
 function loadWebAssetManifest({ distDir }) {
   const manifestPath = path.join(distDir, 'asset-manifest.json');
+  requirePlainFile(manifestPath);
+  if (fs.statSync(manifestPath).size > 65536) throw new Error('asset manifest exceeds metadata limit');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  if (manifest.schemaVersion !== 1 || !manifest.assets) throw new Error('invalid asset manifest');
+  if (![1, 2].includes(manifest.schemaVersion) || !manifest.assets) throw new Error('invalid asset manifest');
   const immutablePaths = new Set();
-  for (const value of Object.values(manifest.assets)) {
-    const relative = normalizeAssetPath(value);
-    const absolute = path.resolve(distDir, relative);
-    if (!absolute.startsWith(`${path.resolve(distDir)}${path.sep}`) || !fs.statSync(absolute).isFile()) {
-      throw new Error(`missing manifest asset: ${relative}`);
+  function verifyRelease(release, legacy = false) {
+    if (!release?.assets || typeof release.assets !== 'object' || Array.isArray(release.assets)
+      || Object.keys(release.assets).length === 0 || Object.keys(release.assets).length > 32) {
+      throw new Error('invalid release assets');
     }
-    immutablePaths.add(`/${relative}`);
+    for (const [key, value] of Object.entries(release.assets)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(key)) throw new Error('invalid asset key');
+      readVerifiedAsset(distDir, value);
+      immutablePaths.add(`/${value}`);
+    }
+    const buildId = buildIdentity(release.assets);
+    const builtAt = legacy ? Math.floor(fs.statSync(manifestPath).mtimeMs) : release.builtAt;
+    if (!legacy && (release.buildId !== buildId || !Number.isSafeInteger(builtAt) || builtAt < 0)) {
+      throw new Error('invalid release build identity');
+    }
+    return { buildId, builtAt, assets: { ...release.assets } };
   }
-  return Object.freeze({ ...manifest, immutablePaths });
+  const current = verifyRelease(manifest, manifest.schemaVersion === 1);
+  const history = manifest.schemaVersion === 1 ? [] : manifest.retainedReleases;
+  if (!Array.isArray(history) || history.length > 2) throw new Error('invalid retained releases');
+  const retainedReleases = history.map((release) => verifyRelease(release));
+  const ids = [current, ...retainedReleases].map((release) => release.buildId);
+  if (new Set(ids).size !== ids.length) throw new Error('duplicate release identity');
+  return Object.freeze({ schemaVersion: manifest.schemaVersion, ...current, retainedReleases, immutablePaths });
 }
 
 function isHtmlLikePath(pathname) {
@@ -84,4 +126,7 @@ module.exports = {
   createWebAssetMiddleware,
   edgeCachePolicyForAsset,
   loadWebAssetManifest,
+  assetDigest,
+  buildIdentity,
+  readVerifiedAsset,
 };

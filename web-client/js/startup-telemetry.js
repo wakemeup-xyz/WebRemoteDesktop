@@ -1,4 +1,6 @@
-function createStartupTelemetry({ now = () => performance.now(), origin = (typeof location !== 'undefined' ? location.origin : '') } = {}) {
+function createStartupTelemetry({ now = () => performance.now(), origin = (typeof location !== 'undefined' ? location.origin : ''),
+  build = (typeof globalThis !== 'undefined' ? globalThis.__WRD_BUILD__ : null),
+} = {}) {
   const marks = [];
   let resources = [];
 
@@ -74,6 +76,8 @@ function createStartupTelemetry({ now = () => performance.now(), origin = (typeo
       const merged = [...byName.values()].sort((a, b) => a.atMs - b.atMs);
       return {
         schemaVersion: 1,
+        build: /^[a-f0-9]{16}$/.test(build?.id || '') && Number.isSafeInteger(build.builtAt) && build.builtAt >= 0
+          ? { id: build.id, builtAt: build.builtAt } : null,
         marks: merged,
         resources: resources.slice(),
       };
