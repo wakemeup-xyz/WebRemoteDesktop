@@ -22,9 +22,11 @@ import uuid
 if __package__:
     from .wrd_deadline import Deadline, run_owned_probe
     from .wrd_watch_runtime import WatchRuntime
+    from .wrd_entry_health import probe_layers
 else:
     from wrd_deadline import Deadline, run_owned_probe
     from wrd_watch_runtime import WatchRuntime
+    from wrd_entry_health import probe_layers
 
 
 def atomic_state(path, state):
@@ -155,6 +157,53 @@ class WatchCoordinator:
         return self.runtime.snapshot()
 
 
+class LayeredSampler:
+    """Production sample adapter; no authentication or active Viewer probes."""
+    def __init__(self, config, *, fetch=None, now=time.monotonic, manifest_loader=None,
+                 passive_summary=None, proxy_mode='environment'):
+        self.config, self.fetch, self.now = config, fetch, now
+        self.manifest_loader, self.passive_summary = manifest_loader, passive_summary
+        self.proxy_mode = proxy_mode
+        self.next_assets = now()
+
+    def __call__(self):
+        started = self.now()
+        deadline = Deadline(15, self.now)
+        assets_due = started >= self.next_assets
+        config = dict(self.config)
+        if assets_due:
+            # Fixed cadence: skip missed asset rounds, never enqueue catch-up work.
+            self.next_assets += (int((started-self.next_assets)//300) + 1) * 300
+            if self.manifest_loader:
+                try:
+                    config['manifest'] = self.manifest_loader()
+                except Exception:
+                    config['manifest'] = None
+        if self.passive_summary:
+            try:
+                config['passive-runtime'] = self.passive_summary()
+            except Exception:
+                config['passive-runtime'] = None
+        return {'probes': probe_layers(config, deadline=deadline, fetch=self.fetch,
+                                       now=self.now, include_assets=assets_due,
+                                       proxy_mode=self.proxy_mode)}
+
+
+def read_manifest(path):
+    # The deployed current manifest is read-only, bounded and never fetched from
+    # a remote origin. Only its validated desktopJs hash path reaches a probe.
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65536:
+            raise ValueError('manifest limit')
+        data = stream.read(65537)
+    if len(data) > 65536:
+        raise ValueError('manifest limit')
+    value = json.loads(data)
+    return value if isinstance(value, dict) else None
+
+
 def process_start(pid):
     result = run_owned_probe(["/bin/ps", "-p", str(pid), "-o", "lstart="],
                              deadline=Deadline(1), allowed_executables={"/bin/ps"})
@@ -240,30 +289,19 @@ def main(argv=None):
         window_s=float(os.environ.get("WRD_FIXED_WATCH_WINDOW_SEC", 3600)),
         max_recoveries=int(os.environ.get("WRD_FIXED_WATCH_MAX_RESTARTS", 2)))
     restart = directory / "restart-fixed-domain-tunnel.sh"
-    def sample():
-        deadline = Deadline(15)
-        result = {}
-        for key, target in (("origin", os.environ.get("WRD_FIXED_ORIGIN_HEALTH_URL", "http://127.0.0.1:8080/health")),
-                            ("formal", os.environ.get("WRD_FIXED_FORMAL_HEALTH_URL", "https://link.stockhub.wiki/health"))):
-            probe = run_owned_probe([sys.executable, str(directory / "wrd_entry_health.py"), "--url", target,
-                                     "--timeout", str(min(6, deadline.remaining()))],
-                                    deadline=Deadline(min(7, deadline.remaining())), allowed_executables={sys.executable})
-            result[key] = None
-            try:
-                parsed = json.loads(probe["stdout"])
-                if probe["outcome"] == "ok":
-                    result[key] = parsed.get("deliverable") is True
-                elif probe["outcome"] == "failed" and parsed.get("state") in {"http-invalid", "content-invalid", "origin-unreachable", "dns-unresolved"}:
-                    result[key] = False
-            except (ValueError, AttributeError):
-                pass
-        return result
+    sample = LayeredSampler(
+        {'origin': os.environ.get('WRD_FIXED_ORIGIN_HEALTH_URL', 'http://127.0.0.1:8080/health'),
+         'formal': os.environ.get('WRD_FIXED_FORMAL_HEALTH_URL', 'https://link.stockhub.wiki/health'),
+         'login-html': '/login.html', 'viewer-html': '/desktop.html'},
+        manifest_loader=lambda: read_manifest(os.environ.get('WRD_FIXED_ASSET_MANIFEST',
+            str(directory.parent / 'web-client' / 'dist' / 'asset-manifest.json'))),
+        proxy_mode=os.environ.get('WRD_FIXED_PROBE_PROXY_MODE', 'environment'))
     def preflight():
         return run_owned_probe(["/bin/bash", str(restart), "--preflight"], deadline=Deadline(5),
                                allowed_executables={"/bin/bash"})["outcome"] == "ok"
     coordinator = WatchCoordinator(runtime=runtime, state_path=state_path, sample=sample,
         preflight=preflight, start_worker=lambda: RecoveryWorker(restart),
-        interval_s=max(1, float(os.environ.get("WRD_FIXED_WATCH_INTERVAL_SEC", 60))))
+        interval_s=max(60, float(os.environ.get("WRD_FIXED_WATCH_INTERVAL_SEC", 60))))
     stop = [False]
     def stopping(*_):
         stop[0] = True
@@ -277,7 +315,7 @@ def main(argv=None):
             # Fixed fields only; never argv, credentials, request content or URL.
             record = {"at": time.time(), "status": snapshot.get("status"), "action": snapshot.get("action"),
                       "tick": snapshot.get("lastTick"), "observations": snapshot.get("observations"),
-                      "inFlight": bool(coordinator.worker)}
+                      "inFlight": bool(coordinator.worker), "probes": snapshot.get("probeLayers", [])}
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a") as stream:
                 stream.write(json.dumps(record, separators=(",", ":")) + "\n")

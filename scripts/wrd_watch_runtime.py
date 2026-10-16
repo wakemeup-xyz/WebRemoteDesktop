@@ -5,6 +5,11 @@ from __future__ import annotations
 import copy
 import math
 
+if __package__:
+    from .wrd_entry_health import sanitize_probe, LAYERS, RECOVERABLE
+else:
+    from wrd_entry_health import sanitize_probe, LAYERS, RECOVERABLE
+
 
 class WatchRuntime:
     def __init__(self, *, state=None, clock_epoch, fail_s=180, cooldown_s=300,
@@ -53,6 +58,34 @@ class WatchRuntime:
             self.state["quarantineUntil"] = now + self.window_s
             self.state["clockUntrusted"] = False
         self.state["lastMono"] = now
+        layered = 'probes' in observations
+        if layered:
+            raw = observations.get('probes')
+            raw = raw if isinstance(raw, list) else []
+            rows = []
+            for layer in LAYERS:
+                matches = [row for row in raw[:6] if isinstance(row, dict) and row.get('layer') == layer]
+                if len(matches) == 1:
+                    rows.append(sanitize_probe(matches[0], layer))
+            self.state['probeLayers'] = rows
+            by_layer = {row['layer']: row for row in rows}
+            def health_value(layer):
+                row = by_layer.get(layer)
+                if not row or row['outcome'] == 'unknown':
+                    return None
+                if row['outcome'] == 'ok' and row['reason'] == 'ok':
+                    return True
+                if row['outcome'] == 'failed' and row['reason'] in RECOVERABLE:
+                    # Auth/proxy denial, throttling, assets and missing passive
+                    # samples never authorize connector recovery.
+                    if row['reason'] == 'http-status' and not (row['httpStatus'] and row['httpStatus'] >= 500):
+                        return None
+                    if row['routeClass'] == 'proxy':
+                        return None
+                    return False
+                return None
+            observations = {'origin': health_value('origin-health'),
+                            'formal': health_value('formal-health')}
         self.state["observations"] = {key: observations.get(key) if type(observations.get(key)) is bool else None
                                       for key in ("origin", "formal", "assets")}
         self.state["action"] = "none"
@@ -65,7 +98,7 @@ class WatchRuntime:
         origin, formal = self.state["observations"]["origin"], self.state["observations"]["formal"]
         if origin is not True or formal is not False:
             self.state["failStartedAt"] = None
-            self.state["status"] = "healthy" if origin and formal else "origin-down" if origin is False else "unknown"
+            self.state["status"] = ("entry-healthy" if layered else "healthy") if origin and formal else "origin-down" if origin is False else "unknown"
         else:
             if self.state["failStartedAt"] is None:
                 self.state["failStartedAt"] = now
