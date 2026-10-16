@@ -375,9 +375,13 @@
   };
   Diagnostic.enqueuePendingDiagnostic = function enqueuePendingDiagnostic(payload) {
     const attempt = payload.connectionAttemptId || 'global';
-    // Preserve the first failure capture for an attempt until it is confirmed.
     const pending = this.getPendingDiagnostics();
-    if (!pending.some(item => (item.connectionAttemptId || 'global') === attempt)) pending.push(boundRuntimeDiagnostic(payload));
+    // Each transmitted capture owns a retry slot. Multiple failure/manual reports
+    // may share an attempt; only a retransmission of the same ID is coalesced.
+    const alreadyPending = payload.diagnosticId
+      ? pending.some(item => item.diagnosticId === payload.diagnosticId)
+      : pending.some(item => !item.diagnosticId && (item.connectionAttemptId || 'global') === attempt);
+    if (!alreadyPending) pending.push(boundRuntimeDiagnostic(payload));
     this.setPendingDiagnostics(pending);
   };
   Diagnostic.pruneAutoSendCooldown = function pruneAutoSendCooldown(now = Date.now()) {

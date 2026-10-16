@@ -1061,3 +1061,60 @@ test('runtime localStorage retains failure metrics and hashes scope while removi
   const saved = JSON.parse(encoded)[0]; assert.equal(saved.latency.metrics.inputAckRttMs.last, 42); assert.ok(saved.latency.scope.attemptHash);
   assert.equal(Diagnostic.getPendingDiagnostics()[0].latency.scope.connectionAttemptId, 'PRIVATE_SCOPE_CANARY');
 });
+
+test('same-attempt automatic and manual failures each retain the transmitted ID and capture for retry', async () => {
+  const requests = [];
+  const { context } = createDiagnosticContext({ fetch: async (_url, request) => {
+    requests.push(JSON.parse(request.body)); return { ok: false };
+  } });
+  context.WebRTC.currentConnectionAttemptId = 'same-attempt'; context.WebRTC.socket = { connected: false };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  Diagnostic.autoSendCooldownMs = 0;
+  await Diagnostic.autoSendFailure('pc-failed');
+  await Diagnostic.autoSendFailure('dc-error');
+  await Diagnostic.sendLogs();
+  assert.equal(requests.length, 3); assert.equal(new Set(requests.map(payload => payload.diagnosticId)).size, 3);
+  assert.deepEqual(Array.from(Diagnostic.getPendingDiagnostics(), payload => payload.diagnosticId), requests.map(payload => payload.diagnosticId));
+  const retried = []; const socket = { connected: true, emit(_event, payload, acknowledge) {
+    retried.push(JSON.parse(JSON.stringify(payload)));
+    acknowledge({ accepted: true, diagnosticId: payload.diagnosticId, eventIdHashes: [] });
+  } };
+  assert.equal(await Diagnostic.replayPendingDiagnostics(socket), 2);
+  assert.equal(await Diagnostic.replayPendingDiagnostics(socket), 1);
+  assert.equal(Diagnostic.getPendingDiagnostics().length, 0);
+  for (let i = 0; i < requests.length; i++) {
+    assert.equal(retried[i].diagnosticId, requests[i].diagnosticId); assert.deepEqual(retried[i].captured, requests[i].captured);
+    assert.deepEqual(retried[i].latency, requests[i].latency);
+  }
+});
+
+test('confirming a report preserves another pending report sharing its scope event without a false gap', async () => {
+  const { context } = createDiagnosticContext(); let drained = false;
+  context.WebRTC.currentConnectionAttemptId = 'shared-scope';
+  context.LatencyMonitor = { snapshot: () => null, takeClosedScopeSummaries: () => {
+    const summaries = drained ? [] : [{ endedAtMs: 120, snapshot: { schemaVersion: 3, scope: null, windowMs: 5000, metrics: {}, outcomes: {} } }];
+    drained = true; return { summaries, dropped: 0 };
+  } };
+  const transmissions = [];
+  context.WebRTC.socket = { connected: true, emit(_event, payload, acknowledge) { transmissions.push({ payload, acknowledge }); } };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic'); Diagnostic.autoSendCooldownMs = 0;
+  await Diagnostic.autoSendFailure('pc-failed'); await Diagnostic.autoSendFailure('dc-error');
+  const [first, second] = transmissions;
+  first.acknowledge({ accepted: true, diagnosticId: first.payload.diagnosticId,
+    eventIdHashes: [first.payload.scopeEnded.events[0].eventIdHash] });
+  const remaining = Diagnostic.getPendingDiagnostics();
+  assert.equal(remaining.length, 1); assert.equal(remaining[0].diagnosticId, second.payload.diagnosticId);
+  assert.equal(remaining[0].scopeEnded.events.length, 0); assert.equal(remaining[0].scopeEnded.dropped, 0);
+});
+
+test('multiple captures for one attempt remain within the pending count and byte budgets', () => {
+  const { context } = createDiagnosticContext(); const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  context.WebRTC.currentConnectionAttemptId = 'bounded-attempt';
+  const reports = Array.from({ length: 12 }, () => Diagnostic.buildConnectionDiagnostic({ reason: 'pc-failed' }));
+  for (const report of reports) Diagnostic.enqueuePendingDiagnostic(report);
+  Diagnostic.enqueuePendingDiagnostic(reports.at(-1)); // Same-ID retries do not consume another slot.
+  const pending = Diagnostic.getPendingDiagnostics(); assert.equal(pending.length, 10);
+  assert.equal(pending[0].diagnosticId, reports[2].diagnosticId); assert.equal(pending.at(-1).diagnosticId, reports.at(-1).diagnosticId);
+  assert.ok(pending.every(payload => Buffer.byteLength(JSON.stringify(payload)) <= 128 * 1024));
+  assert.ok(Buffer.byteLength(JSON.stringify(pending)) <= 10 * 128 * 1024);
+});

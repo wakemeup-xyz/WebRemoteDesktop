@@ -83,10 +83,17 @@
   } = {}) {
     const bootIdHash = randomHash();
     let events = []; let dropped = 0;
+    // Only digest tombstones are retained. Ten pending reports can each reference
+    // at most four events; core removes confirmed references from all of them on ACK.
+    const confirmedEvents = new Map();
     const prune = now => {
+      for (const [id, confirmedAt] of confirmedEvents) {
+        if (now < confirmedAt || now - confirmedAt > 60000) confirmedEvents.delete(id);
+      }
+      while (confirmedEvents.size > 40) confirmedEvents.delete(confirmedEvents.keys().next().value);
       const fresh = events.filter(event => now >= event.endedAtMs && now - event.endedAtMs <= 60000);
       dropped += events.length - fresh.length; events = fresh;
-      while (events.length > 4 || bytes(events) > MAX_SCOPE_BYTES) { events.shift(); dropped++; }
+      while (events.length > 4 || bytes({ events, confirmed: [...confirmedEvents] }) > MAX_SCOPE_BYTES) { events.shift(); dropped++; }
     };
     const build = ({ reason = null } = {}) => {
       const monotonicMs = read(nowMs, 0);
@@ -119,11 +126,16 @@
         const owned = new Set(events.map(event => event.eventIdHash));
         const original = result.scopeEnded.events || [];
         result.scopeEnded.events = original.filter(event => owned.has(event.eventIdHash));
-        result.scopeEnded.dropped += original.length - result.scopeEnded.events.length;
+        result.scopeEnded.dropped += original.filter(event => !owned.has(event.eventIdHash) && !confirmedEvents.has(event.eventIdHash)).length;
       }
       return result;
     };
-    build.acknowledge = ids => { const confirmed = new Set(ids || []); events = events.filter(event => !confirmed.has(event.eventIdHash)); };
+    build.acknowledge = ids => {
+      const now = read(nowMs, 0);
+      for (const id of (ids || [])) confirmedEvents.set(id, now);
+      events = events.filter(event => !confirmedEvents.has(event.eventIdHash));
+      prune(now);
+    };
     return build;
   }
   const api = { createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };

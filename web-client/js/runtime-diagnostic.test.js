@@ -51,3 +51,30 @@ test('report clipping preserves required schema/capture/build and the M1 metrics
   assert.equal(payload.build.id, '0123456789abcdef'); assert.deepEqual(payload.latency.metrics, sample.metrics);
   assert.ok((payload.inputTrace.events || []).length <= 256);
 });
+
+test('confirming a shared closed scope removes it from other captures without claiming loss', () => {
+  let drained = false;
+  const build = fixture({ takeClosedScopeSummaries: () => {
+    const summaries = drained ? [] : [{ endedAtMs: 90, snapshot: sample }]; drained = true;
+    return { summaries, dropped: 0 };
+  } });
+  const first = build({ reason: 'pc-failed' }); const second = build({ reason: 'dc-error' });
+  assert.equal(first.scopeEnded.events[0].eventIdHash, second.scopeEnded.events[0].eventIdHash);
+  build.acknowledge([first.scopeEnded.events[0].eventIdHash]);
+  const retry = build.prepareReplay(second);
+  assert.equal(retry.scopeEnded.events.length, 0); assert.equal(retry.scopeEnded.dropped, 0);
+  assert.equal(retry.diagnosticId, second.diagnosticId); assert.deepEqual(retry.captured, second.captured);
+  assert.deepEqual(retry.latency, second.latency);
+});
+
+test('expired and unknown closed scopes still report genuine loss during replay', () => {
+  let now = 100; let drained = false;
+  const build = fixture({ nowMs: () => now, takeClosedScopeSummaries: () => {
+    const summaries = drained ? [] : [{ endedAtMs: 90, snapshot: sample }]; drained = true; return { summaries, dropped: 0 };
+  } });
+  const captured = build({}); now = 60100;
+  const expired = build.prepareReplay(captured);
+  assert.equal(expired.scopeEnded.events.length, 0); assert.equal(expired.scopeEnded.dropped, 1);
+  const unknown = fixture().prepareReplay(captured);
+  assert.equal(unknown.scopeEnded.events.length, 0); assert.equal(unknown.scopeEnded.dropped, 1);
+});
