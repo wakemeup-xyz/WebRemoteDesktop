@@ -23,8 +23,9 @@ function regularRead(file, maxBytes=128*1024) {
   try {const stat=fs.fstatSync(descriptor); if(!stat.isFile() || stat.size>maxBytes) throw Error('invalid-diagnostic-file'); return fs.readFileSync(descriptor,'utf8');}
   finally {fs.closeSync(descriptor);}
 }
-function atomicText(target, text) {
-  const temporary=`${target}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+function atomicText(target, text, owner) {
+  if(!owner)throw Error('diagnostic-writer-required');
+  const temporary=`${target}.${owner.pid}.${owner.nonce}.${crypto.randomBytes(8).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(temporary,text,{encoding:'utf8',flag:'wx'});
     const file=fs.openSync(temporary,'r'); try {fs.fsyncSync(file);} finally {fs.closeSync(file);}
@@ -32,21 +33,90 @@ function atomicText(target, text) {
     const dir=fs.openSync(path.dirname(target),'r'); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}
   } finally {if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
-const atomicJson=(target,value)=>atomicText(target,JSON.stringify(value));
 function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) {
   const opts={maxPerViewer:3,maxTotal:50,summaryDays:7,maxSummaryBytes:8*1024*1024,maxSummaryRows:10000,...retention};
   for(const name of Object.keys(opts)) if(!Number.isSafeInteger(opts[name]) || opts[name]<1)throw Error(`invalid-retention-${name}`);
-  // Synchronous APIs preserve existing HTTP/Socket durable acknowledgements. A
-  // directory lock also rejects competing process writers; a crash leaves a
-  // visible stale lock and fails closed rather than guessing at ownership.
+  // Every contender publishes an immutable, fully initialized unique owner
+  // before checking for peers. At least one of two concurrent contenders must
+  // see the other; live/uncertain ownership always rejects the new write. Unique
+  // names let dead-owner recovery remove only that owner's files, without a
+  // shared-lock check/unlink race that could accidentally steal a new writer.
   const rawDir=path.join(dir,'raw'), summaryDir=path.join(dir,'summary');
   const init=()=>{ensureDirectory(dir);ensureDirectory(rawDir);ensureDirectory(summaryDir);};
+  let writer=null;
+  const writeText=(target,text)=>atomicText(target,text,writer);
+  const atomicJson=(target,value)=>writeText(target,JSON.stringify(value));
+  const ownerPattern=/^\.writer-owner_(\d+)_([a-f0-9]{32})$/;
+  const preparingPattern=/^\.writer-preparing_(\d+)_([a-f0-9]{32})$/;
+  function ownerFromFile(file,match) {
+    const value=JSON.parse(regularRead(file,1024));
+    if(value.schemaVersion!==1 || !Number.isSafeInteger(value.pid) || value.pid<1
+      || value.pid!==Number(match[1]) || value.nonce!==match[2])throw Error('unknown-diagnostic-writer');
+    return value;
+  }
+  function ownerDead(owner) {
+    try {process.kill(owner.pid,0);return false;}
+    catch(error) {return error.code==='ESRCH';} // EPERM and PID reuse are uncertain/live.
+  }
+  function removeOwnedTemps(owner) {
+    const suffix=new RegExp(`\\.${owner.pid}\\.${owner.nonce}\\.[a-f0-9]{16}\\.tmp$`);
+    const preparing=path.join(dir,`.writer-preparing_${owner.pid}_${owner.nonce}`);
+    for(const folder of [dir,rawDir,summaryDir]) {
+      for(const name of fs.readdirSync(folder)) {
+        const isPreparing=path.join(folder,name)===preparing;
+        const match=suffix.exec(name);
+        const target=match?name.slice(0,match.index):null;
+        const allowed=folder===rawDir
+          ? /^(?:runtime_[a-f0-9]{32}_[a-f0-9]{32}|scope-ended_[a-f0-9]{16,64})\.json$/.test(target || '')
+          : folder===summaryDir ? /^\d{4}-\d\d-\d\d\.ndjson$/.test(target || '')
+            : ['.receipt-index','.summary-state'].includes(target) || /^[^/]+\.json$/.test(target || '');
+        if(!isPreparing && (!match || !allowed))continue;
+        const file=path.join(folder,name);
+        try {const stat=fs.lstatSync(file);if(stat.isFile()&&!stat.isSymbolicLink())fs.unlinkSync(file);}
+        catch(error) {if(error.code!=='ENOENT')throw error;}
+      }
+    }
+  }
   function withWriter(operation) {
     init();
-    const lock=path.join(dir,'.writer-lock');
-    const descriptor=fs.openSync(lock,'wx');
-    try {fs.closeSync(descriptor);return operation();}
-    finally {fs.unlinkSync(lock);}
+    // Old identity-free locks cannot establish dead ownership. They never block
+    // read-only inspection, and this protocol never creates an empty lock.
+    if(fs.existsSync(path.join(dir,'.writer-lock'))) {
+      const error=Error('unknown-legacy-diagnostic-writer');error.code='EEXIST';throw error;
+    }
+    const owner={schemaVersion:1,pid:process.pid,nonce:crypto.randomBytes(16).toString('hex')};
+    const preparing=path.join(dir,`.writer-preparing_${owner.pid}_${owner.nonce}`);
+    const candidate=path.join(dir,`.writer-owner_${owner.pid}_${owner.nonce}`);
+    let published=false;
+    try {
+      fs.writeFileSync(preparing,JSON.stringify(owner),{flag:'wx'});
+      const fd=fs.openSync(preparing,'r');try {fs.fsyncSync(fd);}finally {fs.closeSync(fd);}
+      fs.linkSync(preparing,candidate);published=true;fs.unlinkSync(preparing);
+      for(const name of fs.readdirSync(dir)) {
+        const pending=preparingPattern.exec(name);
+        if(pending) {
+          // A fully initialized preparation file can also survive before owner
+          // publication. Incomplete/unverifiable preparations are inert and are
+          // left untouched, never guessed at or treated as an active writer.
+          let abandoned;
+          try {abandoned=ownerFromFile(path.join(dir,name),pending);}catch(_error){continue;}
+          if(ownerDead(abandoned))removeOwnedTemps(abandoned);
+          continue;
+        }
+        const match=ownerPattern.exec(name);if(!match || path.join(dir,name)===candidate)continue;
+        const file=path.join(dir,name);let other;
+        try {other=ownerFromFile(file,match);}catch(error) {if(error.code==='ENOENT')continue;throw error;}
+        if(!ownerDead(other))throw Error('diagnostic-writer-active-or-uncertain');
+        removeOwnedTemps(other);
+        try {fs.unlinkSync(file);}catch(error) {if(error.code!=='ENOENT')throw error;}
+      }
+      writer=owner;
+      return operation();
+    } finally {
+      writer=null;
+      if(published && fs.existsSync(candidate))fs.unlinkSync(candidate);
+      if(fs.existsSync(preparing))fs.unlinkSync(preparing);
+    }
   }
   const statePath=path.join(dir,'.summary-state');
   function state() {
@@ -80,15 +150,15 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
     if(overflow)gap('receipt-capacity',overflow);
     atomicJson(path.join(dir,'.receipt-index'),{schemaVersion:1,records:index.records.slice(-RECEIPT_MAX_ENTRIES)});
   }
-  function readRaw() {
+  function readRaw({mutate=true,issues=[]}={}) {
     const entries=[];
     for(const folder of [dir,rawDir]) {
       if(!fs.existsSync(folder))continue;
       const stat=fs.lstatSync(folder);if(!stat.isDirectory() || stat.isSymbolicLink())throw Error('invalid-diagnostic-directory');
       for(const name of fs.readdirSync(folder).filter(n=>n.endsWith('.json'))) {
-        const file=path.join(folder,name); const stat=fs.lstatSync(file);
-        if(!stat.isFile() || stat.isSymbolicLink())continue;
+        const file=path.join(folder,name);let stat;
         try {
+          stat=fs.lstatSync(file);if(!stat.isFile() || stat.isSymbolicLink())continue;
           const text=regularRead(file);const report=JSON.parse(text);
           if(!report || typeof report!=='object' || Array.isArray(report))throw Error('invalid-report');
           const receivedAtMs=time(report.receivedAt);
@@ -99,8 +169,12 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         } catch(error) {
           // Quarantine in this same directory with a non-JSON suffix; never follow
           // symlinks or make malformed files count toward valid-report eviction.
-          gap('malformed-raw',1,stat.mtimeMs);
-          if(stat.size<=128*1024)fs.renameSync(file,path.join(folder,'.malformed-raw'));else fs.unlinkSync(file);
+          if(error.code==='ENOENT')continue;
+          if(!stat)throw error;
+          if(mutate) {
+            gap('malformed-raw',1,stat.mtimeMs);
+            if(stat.size<=128*1024)fs.renameSync(file,path.join(folder,'.malformed-raw'));else fs.unlinkSync(file);
+          } else issues.push({reason:'malformed-raw',count:1,from:stat.mtimeMs,to:stat.mtimeMs});
         }
       }
     }
@@ -116,7 +190,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         bootIdHash:digest(r.captured?.bootIdHash)},
       build:{id:digest(r.build?.id),builtAt:Number.isSafeInteger(r.build?.builtAt) && r.build.builtAt>=0?r.build.builtAt:(time(r.build?.builtAt)===null?null:r.build.builtAt)},
       reason:enumValue(r.reason || r.traceSummary?.reason,['manual','input-ack-timeout','pc-failed','pc-disconnected','ice-disconnected','dc-error','dc-stuck','direct-failed-suggest-relay','relay-failed-suggest-tunnel']),
-      state:enumValue(r.inputState?.runtimePhase,['active','suspending','suspended','resuming']),
+      state:enumValue(r.inputState?.gate?.runtimePhase,['active','suspending','suspended','resuming']),
       mode:enumValue(r.mode,['auto','direct','relay','tunnel','stun','turn']),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }
@@ -124,15 +198,23 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
   function summaryFiles() {
     if(!fs.existsSync(summaryDir))return [];
     const stat=fs.lstatSync(summaryDir);if(!stat.isDirectory() || stat.isSymbolicLink())throw Error('invalid-summary-directory');
-    return fs.readdirSync(summaryDir).filter(n=>/^\d{4}-\d\d-\d\d\.ndjson$/.test(n)).map(name=>({name,file:path.join(summaryDir,name),day:Date.parse(name.slice(0,10)+'T00:00:00Z')})).filter(e=>{const s=fs.lstatSync(e.file);return s.isFile()&&!s.isSymbolicLink();});
+    return fs.readdirSync(summaryDir).filter(n=>/^\d{4}-\d\d-\d\d\.ndjson$/.test(n)).map(name=>({name,file:path.join(summaryDir,name),day:Date.parse(name.slice(0,10)+'T00:00:00Z')})).filter(e=>{try{const s=fs.lstatSync(e.file);return s.isFile()&&!s.isSymbolicLink();}catch(error){if(error.code==='ENOENT')return false;throw error;}});
   }
   function readRows(file) {
     const text=regularRead(file,opts.maxSummaryBytes);
     if(text.split('\n').filter(Boolean).length>opts.maxSummaryRows)throw Error('invalid-summary-row-count');
     return text.split('\n').filter(Boolean).map(line=>{const row=JSON.parse(line);if(!digest(row.diagnosticIdHash)||!digest(row.rawSha)||time(row.receivedAt)===null)throw Error('invalid-summary-row');return row;});
   }
-  function allSummaryRows() {
-    return summaryFiles().flatMap(entry=>{try{return readRows(entry.file);}catch(error){gap('malformed-summary',1,entry.day,entry.day+DAY-1);fs.renameSync(entry.file,path.join(summaryDir,'.malformed-summary'));return [];}});
+  function allSummaryRows({mutate=true,issues=[]}={}) {
+    return summaryFiles().flatMap(entry=>{
+      try{return readRows(entry.file);}
+      catch(error){
+        if(error.code==='ENOENT')return [];
+        if(mutate){gap('malformed-summary',1,entry.day,entry.day+DAY-1);fs.renameSync(entry.file,path.join(summaryDir,'.malformed-summary'));}
+        else issues.push({reason:'malformed-summary',count:1,from:entry.day,to:entry.day+DAY-1});
+        return [];
+      }
+    });
   }
   function appendSummary(entry) {
     if(entry.report.type==='scope-ended')return;
@@ -148,7 +230,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         // publishing the replacement; this is still one incident row.
         const existingFile=path.join(summaryDir,`${existing.receivedAt.slice(0,10)}.ndjson`);
         const rows=readRows(existingFile).map(r=>r.diagnosticIdHash===existing.diagnosticIdHash?{...r,rawSha:row.rawSha}:r);
-        atomicText(existingFile,rows.map(r=>JSON.stringify(r)+'\n').join(''));
+        writeText(existingFile,rows.map(r=>JSON.stringify(r)+'\n').join(''));
       }
       return;
     }
@@ -162,7 +244,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
     // Persist loss metadata before replacing rows so a failed publish cannot hide
     // an eviction. An interrupted write can overstate loss, never claim coverage.
     if(dropped.length)gap('daily-capacity',dropped.length,Date.parse(dropped[0].receivedAt),Date.parse(dropped.at(-1).receivedAt));
-    atomicText(file,text);
+    writeText(file,text);
   }
   function cleanup() {
     init();
@@ -198,7 +280,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         index.records.push({kind:'scope-ended',key:event.eventIdHash,at});
       }eventIdHashes.push(event.eventIdHash);
     }
-    atomicText(path.join(rawDir,`runtime_${reportKey}_${identity(viewerHash)}.json`),text);
+    writeText(path.join(rawDir,`runtime_${reportKey}_${identity(viewerHash)}.json`),text);
     // Clean only after summary and raw are durable; a failed rename leaves all
     // prior records intact. Completion is acknowledged only after ledger commit.
     cleanup();
@@ -206,29 +288,38 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
     return {persisted:true,duplicate:false,eventIdHashes,receiptKey:reportKey};
   }
   function listSummary({from=0,to=now()}={}) {
-    init();
-    const cutoff=dayStart(now())-(opts.summaryDays-1)*DAY;
-    const raw=readRaw();const rows=allSummaryRows().filter(r=>Date.parse(r.receivedAt)>=cutoff);
-    for(const entry of raw)if(entry.report.type!=='scope-ended' && entry.receivedAtMs>=cutoff)rows.push(summaryRow(entry));
-    const seenIds=new Set(),seenShas=new Set(),records=[];
-    for(const row of rows.sort((a,b)=>Date.parse(b.receivedAt)-Date.parse(a.receivedAt))) {
-      if(seenIds.has(row.diagnosticIdHash)||seenShas.has(row.rawSha))continue;
-      seenIds.add(row.diagnosticIdHash);seenShas.add(row.rawSha);
-      const at=Date.parse(row.receivedAt);if(at<from || at>=to || at>=dayStart(now())+DAY)continue;
-      records.push({...row,rawAvailable:raw.some(e=>e.rawSha===row.rawSha)});
+    const cutoff=dayStart(now())-(opts.summaryDays-1)*DAY,issues=[];
+    const raw=readRaw({mutate:false,issues});
+    const rows=allSummaryRows({mutate:false,issues}).filter(r=>Date.parse(r.receivedAt)>=cutoff);
+    // Durable summaries own canonical first-receipt/capture fields. Merge raw
+    // availability by identity/SHA before sorting or applying the query interval.
+    const byId=new Map(),bySha=new Map(),canonical=[];
+    function merge(row,rawAvailable) {
+      const existing=byId.get(row.diagnosticIdHash)||bySha.get(row.rawSha);
+      if(existing) {
+        existing.rawAvailable ||= rawAvailable;
+        byId.set(row.diagnosticIdHash,existing);bySha.set(row.rawSha,existing);
+      } else {
+        const item={...row,rawAvailable};canonical.push(item);
+        byId.set(row.diagnosticIdHash,item);bySha.set(row.rawSha,item);
+      }
     }
+    for(const row of rows.sort((a,b)=>Date.parse(a.receivedAt)-Date.parse(b.receivedAt)))merge(row,false);
+    for(const entry of raw)if(entry.report.type!=='scope-ended' && entry.receivedAtMs>=cutoff)merge(summaryRow(entry),true);
+    canonical.sort((a,b)=>Date.parse(b.receivedAt)-Date.parse(a.receivedAt));
+    const records=canonical.filter(row=>{const at=Date.parse(row.receivedAt);return at>=from && at<to && at<dayStart(now())+DAY;});
     const value=state();
-    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gaps:value.gaps,
-      earliestRetainedAt:rows.length?new Date(Math.min(...rows.map(r=>Date.parse(r.receivedAt)))).toISOString():null,
+    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gaps:[...value.gaps,...issues],
+      earliestRetainedAt:canonical.length?canonical.at(-1).receivedAt:null,
       retainedFrom:new Date(cutoff).toISOString(),dedupe:{maxEntries:RECEIPT_MAX_ENTRIES,ttlMs:RECEIPT_TTL_MS}}};
   }
-  function recent(limit=50) {return readRaw().sort((a,b)=>b.receivedAtMs-a.receivedAtMs || b.name.localeCompare(a.name)).slice(0,Math.max(0,Number(limit)||0)).map(e=>e.report);}
+  function recent(limit=50) {return readRaw({mutate:false}).sort((a,b)=>b.receivedAtMs-a.receivedAtMs || b.name.localeCompare(a.name)).slice(0,Math.max(0,Number(limit)||0)).map(e=>e.report);}
   function persistLegacy(filename,report) {ensureDirectory(dir);atomicJson(path.join(dir,path.basename(filename)),report);}
   return {
     write: report => withWriter(() => write(report)),
-    listSummary: options => withWriter(() => listSummary(options)),
+    listSummary,
     cleanup: () => withWriter(cleanup),
-    recent: limit => withWriter(() => recent(limit)),
+    recent,
     loadDiagnosticReceipts,
     saveDiagnosticReceipts: index => withWriter(() => saveDiagnosticReceipts(index)),
     persistLegacy: (filename,report) => withWriter(() => persistLegacy(filename,report)),

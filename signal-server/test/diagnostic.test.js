@@ -964,3 +964,20 @@ test('ingress persists only redacted runtime raw and summary and merges one inci
     assert.equal(summary.includes(payload.diagnosticId),false);
   } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('runtime summary retains actual redacted gate runtime phase and unavailable state', () => {
+  const {createDiagnosticStore}=require('../lib/diagnostic-store');
+  const previousDir=process.env.WRD_DIAG_DIR,dir=fs.mkdtempSync(path.join(os.tmpdir(),'w3b-gate-state-'));
+  process.env.WRD_DIAG_DIR=dir;
+  try {
+    for(const phase of ['active','suspending','suspended','resuming',null]) {
+      const payload=runtimeFixture();payload.inputState={gate:phase===null?{}:{runtimePhase:phase}};
+      const result=ingestDiagnosticPayload({role:'viewer',viewerId:'unit',data:payload,config:{enableDiagPersist:true},logger:{}});
+      assert.equal(result.persisted,true);
+      if(phase!==null)assert.equal(result.report.inputState.gate.runtimePhase,phase);
+      const id=require('node:crypto').createHash('sha256').update(payload.diagnosticId).digest('hex').slice(0,32);
+      const rows=createDiagnosticStore({dir}).listSummary({from:0,to:Date.now()+1}).records;
+      assert.equal(rows.find(row=>row.diagnosticIdHash===id).state,phase);
+    }
+  } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
+});

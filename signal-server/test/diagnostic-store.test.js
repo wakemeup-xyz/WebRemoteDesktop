@@ -116,6 +116,9 @@ test('query interval is half-open and receipt TTL boundary is inclusive with exp
   const result=f.store.listSummary({from:0,to:Infinity});
   assert.equal(result.records.length,1);
   assert.equal(result.records[0].rawAvailable,true);
+  assert.equal(result.records[0].receivedAt,new Date(at).toISOString());
+  assert.equal(f.store.listSummary({from:at,to:at+DAY}).records.length,1);
+  assert.equal(f.store.listSummary({from:at+DAY+1,to:at+DAY+2}).records.length,0);
   assert.ok(result.coverage.gaps.some(g=>g.reason==='receipt-horizon'));
 });
 
@@ -139,4 +142,81 @@ test('same-directory competing writer is rejected without publishing or guessing
   assert.throws(()=>f.write('blocked'),{code:'EEXIST'});assert.equal(raws(f.dir).length,1);
   assert.equal(fs.readFileSync(lock,'utf8'),'held');fs.unlinkSync(lock);
   assert.equal(f.write('next').persisted,true);
+});
+
+test('later-clock retry keeps canonical first receipt in both ranges before and after raw eviction', t => {
+  const f=fixture(t);const first=f.tick(0);const rename=fs.renameSync;
+  const captured={wallTime:'2026-10-16T23:59:00Z',monotonicMs:900000,bootIdHash:'c'.repeat(32)};
+  try {fs.renameSync=function(a,b){if(b.includes('/raw/'))throw Error('partial');return rename(a,b);};assert.throws(()=>f.write('canonical','fixture-viewer',{captured}),/partial/);}
+  finally {fs.renameSync=rename;}
+  const retry=f.tick(5000);f.write('canonical','fixture-viewer',{captured});
+  const check=()=>{
+    const oldRange=f.store.listSummary({from:first,to:retry});
+    assert.equal(oldRange.records.length,1);assert.equal(oldRange.records[0].receivedAt,new Date(first).toISOString());
+    assert.deepEqual(oldRange.records[0].captured,captured);
+    assert.equal(f.store.listSummary({from:retry,to:retry+1}).records.length,0);
+    assert.equal(f.store.listSummary({from:0,to:Infinity}).records[0].receivedAt,new Date(first).toISOString());
+  };
+  check();
+  for(const name of fs.readdirSync(path.join(f.dir,'raw')))fs.unlinkSync(path.join(f.dir,'raw',name));
+  check();
+});
+
+test('durable reads remain available under an identity-free legacy lock without mutating files', t => {
+  const f=fixture(t);f.write('readable');const lock=path.join(f.dir,'.writer-lock');fs.writeFileSync(lock,'');
+  fs.writeFileSync(path.join(f.dir,'bad.json'),'{bad');
+  const before=fs.readdirSync(f.dir).sort();
+  assert.equal(f.store.listSummary({from:0,to:Infinity}).records.length,1);
+  assert.equal(f.store.recent().length,1);
+  assert.deepEqual(fs.readdirSync(f.dir).sort(),before);
+  assert.equal(fs.readFileSync(path.join(f.dir,'bad.json'),'utf8'),'{bad');
+  assert.throws(()=>f.write('unknown-owner'));
+  assert.equal(fs.readFileSync(lock,'utf8'),'');
+});
+
+test('interrupted child writer is proven dead and restart recovers only its owned temporary files', async t => {
+  const {fork}=require('node:child_process');const {once}=require('node:events');
+  const f=fixture(t);f.write('existing');
+  const script=path.join(f.dir,'writer-child.cjs');
+  fs.writeFileSync(script,`
+    const fs=require('node:fs');const {createDiagnosticStore}=require(${JSON.stringify(require.resolve('../lib/diagnostic-store'))});
+    const rename=fs.renameSync;
+    fs.renameSync=function(a,b){if(b.includes('/raw/')){process.send({held:true,temp:a});Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);}return rename(a,b);};
+    createDiagnosticStore({dir:process.argv[2],now:()=>${f.tick(0)}}).write({diagnosticId:'interrupted',receivedAt:${JSON.stringify(new Date(f.tick(0)).toISOString())},reason:'manual'});
+  `);
+  const child=fork(script,[f.dir],{stdio:['ignore','ignore','pipe','ipc']});
+  t.after(()=>{if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');});
+  const message=await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(Error('child did not acquire writer')),5000);
+    child.once('message',value=>{clearTimeout(timer);resolve(value);});
+    child.once('exit',code=>{clearTimeout(timer);reject(Error(`child exited before interruption: ${code}`));});
+  });
+  assert.equal(message.held,true);assert.ok(fs.existsSync(message.temp));
+  const snapshot=f.store.listSummary({from:0,to:Infinity});assert.ok(snapshot.records.some(r=>r.rawAvailable));
+  assert.throws(()=>f.write('blocked-by-live-owner'));
+  const unrelated=path.join(f.dir,'unrelated.tmp');fs.writeFileSync(unrelated,'KEEP');
+  const suffix=path.basename(message.temp).match(/\.\d+\.[a-f0-9]{32}\.[a-f0-9]{16}\.tmp$/)[0];
+  const lookalike=path.join(f.dir,`unrelated${suffix}`);fs.writeFileSync(lookalike,'KEEP TOO');
+  const linked=path.join(f.dir,'raw',`runtime_${'0'.repeat(32)}_${'1'.repeat(32)}.json${suffix}`);
+  fs.symlinkSync(unrelated,linked);
+  const exit=once(child,'exit');child.kill('SIGKILL');await exit;
+  const orphanPreparation=path.join(f.dir,`.writer-preparing_${child.pid}_${'a'.repeat(32)}`);
+  fs.writeFileSync(orphanPreparation,JSON.stringify({schemaVersion:1,pid:child.pid,nonce:'a'.repeat(32)}));
+  const unknownPreparation=path.join(f.dir,`.writer-preparing_${child.pid}_${'b'.repeat(32)}`);
+  fs.writeFileSync(unknownPreparation,'partial-unverifiable');
+  // A distinct restarted process has no in-memory knowledge of the dead writer.
+  const resumedScript=path.join(f.dir,'resumed.cjs');
+  fs.writeFileSync(resumedScript,`
+    const {createDiagnosticStore}=require(${JSON.stringify(require.resolve('../lib/diagnostic-store'))});
+    const result=createDiagnosticStore({dir:process.argv[2],now:()=>${f.tick(0)}}).write({diagnosticId:'resumed',receivedAt:${JSON.stringify(new Date(f.tick(0)).toISOString())},reason:'manual'});
+    if(!result.persisted)process.exit(2);
+  `);
+  const resumed=fork(resumedScript,[f.dir],{stdio:['ignore','ignore','pipe','ipc']});
+  let stderr='';resumed.stderr.on('data',data=>stderr+=data);
+  const [code]=await once(resumed,'exit');assert.equal(code,0,stderr);
+  assert.equal(fs.existsSync(message.temp),false);assert.equal(fs.existsSync(orphanPreparation),false);
+  assert.equal(fs.readFileSync(unknownPreparation,'utf8'),'partial-unverifiable');
+  assert.equal(fs.readFileSync(unrelated,'utf8'),'KEEP');
+  assert.equal(fs.readFileSync(lookalike,'utf8'),'KEEP TOO');assert.ok(fs.lstatSync(linked).isSymbolicLink());
+  assert.equal(f.store.recent().length,2);
 });
