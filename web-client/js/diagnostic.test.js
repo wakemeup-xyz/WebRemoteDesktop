@@ -920,3 +920,39 @@ test('sendLogs includes network snapshot and failure reason metadata', () => {
   assert.equal(emitted[0].payload.network.pc.connectionState, 'failed');
   assert.equal(emitted[0].payload.network.navigator.type, 'wifi');
 });
+
+test('deferred Diagnostic init owns one interval and listener setup; dispose blocks late DOM init', () => {
+  const { context } = createDiagnosticContext();
+  const intervals = new Map();
+  let serial = 0, listeners = 0, domReady;
+  context.setInterval = (fn) => { const id = ++serial; intervals.set(id, fn); return id; };
+  context.clearInterval = (id) => intervals.delete(id);
+  context.document.readyState = 'loading';
+  context.document.addEventListener = (type, handler) => { if (type === 'DOMContentLoaded') domReady = handler; };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  const setup = Diagnostic.setupUI;
+  Diagnostic.setupUI = function () { listeners++; return setup.call(this); };
+  assert.equal(intervals.size, 0, 'no timer before initialization');
+  Diagnostic.init();
+  Diagnostic.init();
+  assert.equal(listeners, 1);
+  assert.equal(intervals.size, 1);
+  Diagnostic.dispose();
+  assert.equal(intervals.size, 0);
+  domReady();
+  Diagnostic.init();
+  assert.equal(intervals.size, 0);
+  assert.equal(listeners, 1);
+});
+
+test('managed late deferred script cannot mark itself ready or start its interval', () => {
+  const { context } = createDiagnosticContext();
+  context.window.__WRD_DEFERRED_MANAGED__ = true;
+  let intervals = 0;
+  context.setInterval = () => ++intervals;
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  assert.equal(intervals, 0);
+  assert.notEqual(Diagnostic._panelInitialized, true);
+  Diagnostic.init();
+  assert.equal(intervals, 1);
+});

@@ -81,6 +81,9 @@
     state.startHandler = startHandler;
     global.clearTimeout(deadline);
     mark('core-interactive');
+    const retry = element('coreRetryBtn');
+    if (retry) retry.hidden = true;
+    setText('页面资源已就绪');
     setCoreControlsDisabled(false);
     global.WebRTC?.syncChromeCapabilities?.();
     applyAuthGate();
@@ -92,6 +95,7 @@
     return true;
   }
   function failCore(reason) {
+    if (state.coreInstalled) return;
     mark('core-failed', reason);
     setText(reason || '页面资源加载失败');
     const retry = element('coreRetryBtn');

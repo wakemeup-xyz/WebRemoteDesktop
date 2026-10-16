@@ -12,6 +12,8 @@ test('asset graph keeps desktop critical and Terminal optional sources separate'
   const graph = require('../scripts/web-asset-graph');
   assert.deepEqual(graph.loginScripts, ['js/runtime-config.js', 'js/bounded-request.js', 'js/login.js']);
   assert.ok(graph.desktopScripts.indexOf('js/bounded-request.js') < graph.desktopScripts.indexOf('js/auth.js'));
+  assert.ok(graph.desktopScripts.indexOf('js/asset-loader.js') < graph.desktopScripts.indexOf('js/terminal-loader.js'));
+  assert.ok(graph.desktopScripts.includes('js/asset-loader.js'));
   assert.ok(graph.desktopScripts.includes('js/webrtc.js'));
   assert.ok(graph.desktopScripts.includes('js/chrome-layout.js'));
   assert.ok(graph.desktopScripts.includes('js/touch-input-adapter.js'));

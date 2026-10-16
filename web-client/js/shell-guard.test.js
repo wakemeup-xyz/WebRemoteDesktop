@@ -184,3 +184,20 @@ test('an unverified queued click is discarded and verification success requires 
   shell.acknowledgeStartClick();
   assert.equal(calls, 1);
 });
+
+test('late core install closes stale failure UI once and retains the deadline failure mark', () => {
+  const { shell, elements, fireDeadline } = createShellFixture();
+  let starts = 0;
+  shell.setAuthCheck({ state: 'verified' });
+  shell.acknowledgeStartClick();
+  fireDeadline();
+  assert.equal(elements.retryButton.hidden, false);
+  shell.installCore(() => starts++);
+  shell.installCore(() => starts++);
+  assert.equal(starts, 1);
+  assert.equal(elements.retryButton.hidden, true);
+  assert.ok(shell.snapshot().marks.some((entry) => entry.name === 'core-failed'));
+  assert.notEqual(elements.loadingText.textContent, '页面资源加载超时');
+  shell.failCore('stale load error');
+  assert.equal(elements.retryButton.hidden, true);
+});

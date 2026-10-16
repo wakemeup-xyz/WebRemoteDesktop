@@ -20,6 +20,7 @@ module.exports = Object.freeze({
     'js/media-activity-runtime.js',
     'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
+    'js/asset-loader.js',
     'js/terminal-loader.js',
     'js/input-trace.js',
     'js/diagnostic-core.js',

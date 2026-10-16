@@ -6430,71 +6430,61 @@ function bootViewerShell() {
     }
   }
 
-  // Non-critical operator tools: load after core-interactive without blocking Start.
-  // Diagnostic + port-search stay disabled until this succeeds or fails with retry.
+  // Non-critical operator tools: each operation has a deadline; requests remain cached.
+  const deferredAssets = typeof createAssetLoader === 'function' ? createAssetLoader({ document }) : null;
+  let deferredGeneration = 0;
   WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'loading';
   WebRTC._retryOperatorTools = null;
-  (function loadDeferredDesktop(attempt = 0) {
+  function refreshIncompleteModule() {
+    if (window.confirm?.('模块未完成注册。刷新前请保存未完成草稿。是否刷新页面？')) window.location.reload();
+  }
+  (function loadDeferredDesktop() {
+    const operation = ++deferredGeneration;
     const src = window.__WRD_ASSETS__ && window.__WRD_ASSETS__.desktopDeferredJs;
-    function markOperatorToolsReady() {
+    function ready() {
+      if (operation !== deferredGeneration) return;
       WebRTC._operatorToolsState = 'ready';
       WebRTC._retryOperatorTools = null;
       WebRTC.renderPortSearchStatus?.();
     }
-    function markOperatorToolsFailed() {
-      WebRTC._operatorToolsState = 'failed';
-      WebRTC._retryOperatorTools = () => {
-        WebRTC._operatorToolsState = 'loading';
-        WebRTC.renderPortSearchStatus?.();
-        loadDeferredDesktop(attempt + 1);
-      };
-      WebRTC.renderPortSearchStatus?.();
-    }
-
     if (!src) {
       // Source mode already includes full scripts on the page.
       if (typeof Diagnostic !== 'undefined' && Diagnostic.panelState === 'loading'
-        && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) {
-        Diagnostic.markDeferredReady?.();
-      }
-      markOperatorToolsReady();
+        && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) Diagnostic.init();
+      ready();
       return;
     }
-    if (document.querySelector('script[data-wrd-deferred-desktop="loading"]')) return;
-
+    window.__WRD_DEFERRED_MANAGED__ = true;
     WebRTC._operatorToolsState = 'loading';
     WebRTC.renderPortSearchStatus?.();
-    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredLoading === 'function') {
-      Diagnostic.markDeferredLoading();
-    }
-
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.dataset.wrdDeferredDesktop = 'loading';
-    script.onload = () => {
-      script.dataset.wrdDeferredDesktop = 'ready';
-      markOperatorToolsReady();
-    };
-    script.onerror = () => {
-      script.dataset.wrdDeferredDesktop = 'failed';
-      script.remove();
-      console.warn('[viewer] deferred desktop tools failed to load');
-      markOperatorToolsFailed();
-      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredFailed === 'function') {
-        Diagnostic.markDeferredFailed(() => {
-          if (typeof Diagnostic.markDeferredLoading === 'function') {
-            Diagnostic.markDeferredLoading();
-          }
-          if (typeof WebRTC._retryOperatorTools === 'function') {
-            WebRTC._retryOperatorTools();
-          } else {
-            loadDeferredDesktop(attempt + 1);
-          }
-        });
+    if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredLoading?.();
+    const pending = deferredAssets
+      ? deferredAssets.load({ url: src, kind: 'script', timeoutMs: 5000 })
+      : Promise.reject(new Error('Asset loader unavailable'));
+    pending.then(() => {
+      if (operation !== deferredGeneration) return;
+      if (typeof Diagnostic === 'undefined' || Diagnostic._panelDisposed || typeof Diagnostic.openPanel !== 'function'
+        || typeof Diagnostic.init !== 'function' || typeof LatencyMonitor === 'undefined'
+        || typeof TurnSelfTest === 'undefined' || typeof StunPortSearchController === 'undefined') {
+        throw Object.assign(new Error('Deferred module incomplete'), { code: 'refresh-required' });
       }
-    };
-    document.head.appendChild(script);
+      try { Diagnostic.init(); }
+      catch (error) { throw Object.assign(error, { code: 'refresh-required' }); }
+      ready();
+    }).catch((error) => {
+      if (operation !== deferredGeneration) return;
+      // This operation is finished. Late script registration alone cannot publish ready.
+      deferredGeneration++;
+      WebRTC._operatorToolsState = 'failed';
+      WebRTC._retryOperatorTools = error.code === 'refresh-required' ? refreshIncompleteModule : loadDeferredDesktop;
+      WebRTC.renderPortSearchStatus?.();
+      if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredFailed?.(WebRTC._retryOperatorTools);
+      if (error.code === 'refresh-required') {
+        const button = document.getElementById('diagBtn');
+        if (button) { button.textContent = '刷新诊断组件'; button.title = '请先保存未完成草稿，然后刷新页面'; }
+      }
+      console.warn('[viewer] deferred desktop tools unavailable');
+    });
   }());
 
   const TerminalLoader = (typeof createTerminalLoader === 'function')
@@ -6512,10 +6502,16 @@ function bootViewerShell() {
       warning.textContent = error?.message || 'Terminal 资源加载失败';
       warning.classList.remove('hidden');
     }
-    if (retry) retry.hidden = false;
+    if (retry) {
+      retry.hidden = false;
+      retry.textContent = error?.code === 'refresh-required' ? '保存草稿后刷新页面' : '重试加载';
+      retry.dataset.refreshRequired = error?.code === 'refresh-required' ? 'true' : 'false';
+    }
   }
 
+  let terminalOpenGeneration = 0;
   async function openTerminal({ retry = false } = {}) {
+    const operation = ++terminalOpenGeneration;
     if (!TerminalLoader) {
       if (typeof TerminalPanel !== 'undefined' && TerminalPanel?.init) {
         TerminalPanel.init();
@@ -6525,17 +6521,21 @@ function bootViewerShell() {
     }
     try {
       const panel = retry ? await TerminalLoader.retry() : await TerminalLoader.load();
+      if (operation !== terminalOpenGeneration) return;
       document.getElementById('terminalWarning')?.classList.add('hidden');
       const retryButton = document.getElementById('terminalLoadRetryBtn');
       if (retryButton) retryButton.hidden = true;
       panel.showTerminal();
     } catch (error) {
-      setTerminalLoadFailure(error);
+      if (operation === terminalOpenGeneration) setTerminalLoadFailure(error);
     }
   }
 
   document.getElementById('terminalTabBtn')?.addEventListener('click', () => openTerminal());
-  document.getElementById('terminalLoadRetryBtn')?.addEventListener('click', () => openTerminal({ retry: true }));
+  document.getElementById('terminalLoadRetryBtn')?.addEventListener('click', (event) => {
+    if (event.currentTarget.dataset.refreshRequired === 'true') refreshIncompleteModule();
+    else openTerminal({ retry: true });
+  });
 
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {

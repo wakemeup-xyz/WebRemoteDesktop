@@ -19,24 +19,44 @@
 
   Object.assign(Diagnostic, {
   init() {
-    this.ensureBrowserSessionId();
-    if (typeof this.hijackConsole === 'function') this.hijackConsole();
-    this.setupUI();
-    if (typeof this.markDeferredReady === 'function') {
-      this.markDeferredReady();
-    } else {
-      const diagBtn = document.getElementById('diagBtn');
-      if (diagBtn) {
-        diagBtn.disabled = false;
-        if (typeof diagBtn.removeAttribute === 'function') {
-          diagBtn.removeAttribute('aria-busy');
+    if (this._panelDisposed) return;
+    if (this._panelInitError) throw this._panelInitError;
+    if (this._panelInitialized) return;
+    this._panelInitialized = true;
+    try {
+      this.ensureBrowserSessionId();
+      if (typeof this.hijackConsole === 'function') this.hijackConsole();
+      this.setupUI();
+      if (typeof this.markDeferredReady === 'function') {
+        this.markDeferredReady();
+      } else {
+        const diagBtn = document.getElementById('diagBtn');
+        if (diagBtn) {
+          diagBtn.disabled = false;
+          if (typeof diagBtn.removeAttribute === 'function') {
+            diagBtn.removeAttribute('aria-busy');
+          }
         }
       }
+      if (typeof this.flushPendingAutoSends === 'function') {
+        this.flushPendingAutoSends();
+      }
+      this._latencyPanelInterval = setInterval(updateLatencyPanel, 2000);
+      console.log('[Diagnostic] Log collector initialized');
+    } catch (error) {
+      this._panelInitError = error;
+      throw error;
     }
-    if (typeof this.flushPendingAutoSends === 'function') {
-      this.flushPendingAutoSends();
+  },
+
+  dispose() {
+    this._panelDisposed = true;
+    if (this._latencyPanelInterval != null) clearInterval(this._latencyPanelInterval);
+    this._latencyPanelInterval = null;
+    if (this._panelDomReady && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('DOMContentLoaded', this._panelDomReady);
     }
-    console.log('[Diagnostic] Log collector initialized');
+    this._panelDomReady = null;
   },
 
   ensureBrowserSessionId() {
@@ -593,12 +613,18 @@
   global.Diagnostic = Diagnostic;
 
   // Safe for deferred load after DOMContentLoaded already fired.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  if (!global.__WRD_DEFERRED_MANAGED__) {
+    if (document.readyState === 'loading') {
+      if (!Diagnostic._panelDomReady) {
+        Diagnostic._panelDomReady = () => {
+          Diagnostic._panelDomReady = null;
+          Diagnostic.init();
+        };
+        document.addEventListener('DOMContentLoaded', Diagnostic._panelDomReady, { once: true });
+      }
+    } else {
       Diagnostic.init();
-    });
-  } else {
-    Diagnostic.init();
+    }
   }
 }(typeof window !== 'undefined' ? window : globalThis));
 
@@ -646,5 +672,4 @@ function updateLatencyPanel() {
   }
 }
 
-// Update every 2 seconds
-setInterval(updateLatencyPanel, 2000);
+// The Diagnostic instance owns the panel interval through init/dispose.
