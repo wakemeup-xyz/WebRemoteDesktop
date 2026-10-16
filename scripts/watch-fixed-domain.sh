@@ -79,6 +79,7 @@ wrd_fixed_watch_decide() {
   COOLDOWN_SEC="$cooldown_sec" \
   MAX_RESTARTS="$max_restarts" \
   WINDOW_SEC="$window_sec" \
+  READ_ONLY_DECISION="${WRD_FIXED_DECISION_READ_ONLY:-0}" \
   python3 - <<'PY'
 import json, os, sys
 
@@ -168,10 +169,11 @@ state["restarts"] = restarts
 state["lastStatus"] = status
 state["lastAction"] = action
 
-os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
-with open(state_path, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2)
-    f.write("\n")
+if os.environ.get("READ_ONLY_DECISION") != "1":
+    os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
 
 out = {
     "action": action,
@@ -635,21 +637,26 @@ main() {
   fi
 
   if [ "$mode" = "decide-only" ]; then
+    WRD_FIXED_DECISION_READ_ONLY=1
     wrd_fixed_watch_tick 1
     exit 0
   fi
 
   wrd_fixed_watch_acquire_lock || exit 0
+  export WRD_FIXED_WATCH_STATE WRD_FIXED_WATCH_LOG WRD_FIXED_WATCH_INTERVAL_SEC
+  export WRD_FIXED_WATCH_FAIL_SEC WRD_FIXED_WATCH_COOLDOWN_SEC
+  export WRD_FIXED_WATCH_MAX_RESTARTS WRD_FIXED_WATCH_WINDOW_SEC
+  export WRD_FIXED_FORMAL_HEALTH_URL WRD_FIXED_ORIGIN_HEALTH_URL
 
   if [ "$WRD_FIXED_WATCH_ONCE" = "1" ]; then
-    wrd_fixed_watch_tick 0
+    python3 "$SCRIPT_DIR/wrd_watch_coordinator.py" --once
     exit 0
   fi
 
-  while true; do
-    wrd_fixed_watch_tick 0 || true
-    sleep "$WRD_FIXED_WATCH_INTERVAL_SEC"
-  done
+  # The coordinator is the sole production state writer. Its recovery worker
+  # is independent of fixed-deadline observations; completion starts cooldown.
+  # The source-only/decide-only compatibility helpers above never run here.
+  python3 "$SCRIPT_DIR/wrd_watch_coordinator.py"
 }
 
 if [ "${WRD_FIXED_WATCH_SOURCE_ONLY:-0}" != "1" ]; then

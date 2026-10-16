@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 
 const restartPath = path.join(__dirname, 'restart-fixed-domain-tunnel.sh');
 const libPath = path.join(__dirname, 'lib-fixed-domain.sh');
@@ -30,4 +32,28 @@ test('lib exposes stop/start/wait helpers without token argv', () => {
   assert.match(lib, /wrd_fixed_start_connector\s*\(/);
   assert.match(lib, /wrd_fixed_wait_formal_health\s*\(/);
   assert.doesNotMatch(lib, /TUNNEL_TOKEN=| --token/);
+});
+
+test('read-only preflight never starts or stops a connector', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-preflight-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(dir, 'unsafe');
+    fs.writeFileSync(path.join(bin, 'ps'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    for (const name of ['launchctl', 'cloudflared', 'pkill']) {
+      fs.writeFileSync(path.join(bin, name), '#!/bin/sh\ntouch "$WRD_TEST_MARKER"\nexit 99\n', { mode: 0o755 });
+    }
+    const config = path.join(dir, 'config.yml');
+    fs.writeFileSync(config, 'tunnel: fixture\ncredentials-file: fixture.json\n');
+    const result = spawnSync('bash', [restartPath, '--preflight'], {
+      encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WRD_TEST_MARKER: marker,
+        CLOUDFLARED: path.join(bin, 'cloudflared'), CLOUDFLARED_CONFIG: config },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(marker), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

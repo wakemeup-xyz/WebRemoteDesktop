@@ -28,6 +28,10 @@ if [ "${owners:-0}" -gt 1 ]; then
 fi
 
 wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
+if [ "${1:-}" = "--preflight" ]; then
+  # Read-only watcher admission: repeat these checks in the real worker too.
+  exit 0
+fi
 wrd_fixed_unset_tunnel_token
 
 echo "=== restarting formal connector $WRD_FIXED_TUNNEL_NAME ==="

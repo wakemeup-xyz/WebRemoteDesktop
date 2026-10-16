@@ -59,6 +59,15 @@ test('origin-down does not restart', () => {
   assert.equal(out.status, 'origin-down');
 });
 
+test('decide-only leaves the production writer state untouched', () => {
+  const original = { failStartedAt: 100, restarts: [], lastRestartAt: null };
+  const { out, statePath } = decide(
+    { NOW_EPOCH: '400', ORIGIN_OK: '1', FORMAL_OK: '0' }, original,
+  );
+  assert.equal(out.action, 'restart');
+  assert.deepEqual(JSON.parse(fs.readFileSync(statePath, 'utf8')), original);
+});
+
 test('formal-down below threshold does not restart', () => {
   const { out } = decide(
     { NOW_EPOCH: '200', ORIGIN_OK: '1', FORMAL_OK: '0' },
