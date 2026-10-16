@@ -6482,8 +6482,8 @@ test('stale business ACKs never contribute timing samples on socket or DataChann
   assert.equal(observed.length, 0);
 });
 
-for (const transport of ['socket', 'datachannel']) {
-  test(`accepted unordered mouse move settles only matching scope observation over ${transport}`, () => {
+for (const transport of ['socket', 'datachannel']) for (const status of ['applied', 'execution-failed']) {
+  test(`accepted unordered mouse move settles only matching scope ${status} observation over ${transport}`, () => {
     let now = 1000;
     const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
     const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor, performance: { now: () => now } });
@@ -6502,9 +6502,10 @@ for (const transport of ['socket', 'datachannel']) {
     assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
     WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [inputId] }, { transport: transport === 'socket' ? 'datachannel' : 'socket' });
     assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
-    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [inputId] }, { transport });
-    assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 100);
-    assert.equal(monitor.snapshot().outcomes.acked, 1);
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status, leaseEpoch: 4, inputIds: [inputId] }, { transport });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, status === 'applied' ? 100 : null);
+    assert.equal(monitor.snapshot().outcomes.acked, status === 'applied' ? 1 : 0);
+    assert.equal(monitor.snapshot().outcomes.rejected, status === 'applied' ? 0 : 1);
     now = 12000;
     assert.equal(monitor.snapshot().outcomes.timedOut, 0);
   });

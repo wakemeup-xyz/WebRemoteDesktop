@@ -328,3 +328,31 @@ test('unordered ACK bypass cannot consume reliable submission or old-generation 
   assert.equal(f.m.onUnorderedInputAck({ ...ack, inputIds: ['move'] }, { scope: { ...testScope, generation: 2 }, transport: 'socket' }), false);
   assert.equal(f.snapshot().outcomes.acked, 0);
 });
+
+test('matched negative unordered ACK settles rejection once while late failures remain late', () => {
+  for (const status of ['execution-failed', 'stale-lease', 'sequence-gap', 'resync-required', 'invalid-input', 'unsupported-code']) {
+    const f = fixture();
+    f.m.recordInputSend('move', { inputType: 'mouse', action: 'move', transport: 'socket' });
+    const ack = { schemaVersion: 2, inputType: 'mouse', status, leaseEpoch: testScope.leaseEpoch, inputIds: ['move'] };
+    f.set(1100);
+    assert.equal(f.m.onUnorderedInputAck({ ...ack, status: 'unknown' }, { scope: testScope, transport: 'socket' }), false);
+    assert.equal(f.m.onUnorderedInputAck(ack, { scope: testScope, transport: 'datachannel' }), false);
+    assert.equal(f.m.onUnorderedInputAck({ ...ack, leaseEpoch: 999 }, { scope: testScope, transport: 'socket' }), false);
+    assert.equal(f.m.onUnorderedInputAck(ack, { scope: { ...testScope, generation: 999 }, transport: 'socket' }), false);
+    assert.equal(f.snapshot().outcomes.rejected, 0);
+    assert.equal(f.m.onUnorderedInputAck(ack, { scope: testScope, transport: 'socket' }), true);
+    f.m.onUnorderedInputAck(ack, { scope: testScope, transport: 'socket' });
+    f.set(12000);
+    const s = f.snapshot();
+    assert.equal(s.outcomes.rejected, 1); assert.equal(s.outcomes.timedOut, 0);
+    assert.equal(s.outcomes.acked, 0); assert.equal(s.metrics.inputAckRttMs.count, 0);
+  }
+  const f = fixture();
+  f.m.recordInputSend('late-move', { inputType: 'mouse', action: 'move', transport: 'socket' });
+  f.set(11000); f.snapshot(); f.set(12000);
+  const ack = { schemaVersion: 2, inputType: 'mouse', status: 'execution-failed', leaseEpoch: testScope.leaseEpoch, inputIds: ['late-move'] };
+  assert.equal(f.m.onUnorderedInputAck(ack, { scope: testScope, transport: 'socket' }), true);
+  const s = f.snapshot();
+  assert.equal(s.outcomes.late, 1); assert.equal(s.outcomes.timedOut, 1);
+  assert.equal(s.outcomes.rejected, 0); assert.equal(s.metrics.inputAckRttMs.count, 0);
+});

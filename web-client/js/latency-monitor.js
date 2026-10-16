@@ -19,6 +19,8 @@ const createLatencyMonitor = (options = {}) => {
   };
   const now = options.now || (() => typeof performance !== 'undefined' ? performance.now() : 0);
   const valid = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  const unorderedAckStatuses = new Set(['applied', 'duplicate', 'stale-lease', 'sequence-gap',
+    'resync-required', 'invalid-input', 'unsupported-code', 'execution-failed']);
   const validId = id => typeof id === 'string' && /^[\x20-\x7e]{1,128}$/.test(id);
   const sameScope = (a, b) => a === b || Boolean(a && b
     && a.connectionAttemptId === b.connectionAttemptId && a.generation === b.generation && a.leaseEpoch === b.leaseEpoch);
@@ -150,7 +152,7 @@ const createLatencyMonitor = (options = {}) => {
     onUnorderedInputAck(data = {}, context = {}) {
       const t = clock(context.nowMs); if (t === null) return false; expire(t);
       if (!sameScope(scope, context.scope) || data.schemaVersion !== 2 || data.inputType !== 'mouse'
-        || data.leaseEpoch !== scope?.leaseEpoch || data.status !== 'applied'
+        || data.leaseEpoch !== scope?.leaseEpoch || !unorderedAckStatuses.has(data.status)
         || !['socket', 'datachannel'].includes(context.transport)) return false;
       const ids = Array.isArray(data.inputIds) ? data.inputIds.filter(validId).slice(0, 64) : [];
       const matching = ids.filter(id => {
