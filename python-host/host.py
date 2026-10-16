@@ -5,6 +5,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+from input_timing import relay_ack_duration_ms
 import contextvars
 import hashlib
 import json
@@ -775,16 +776,19 @@ class TunnelRelayStreamer:
             frame_id = int(frame_id)
         except Exception:
             return
-        if frame_id > self.last_acked_frame_id:
-            frame_meta = self.inflight_frames.pop(frame_id, None)
-            self.last_acked_frame_id = frame_id
-            self.stats_acked += 1
-            self.ack_event.set()
-            measured_ms = latency_ms
-            if measured_ms is None and frame_meta and frame_meta.get("sent_at_ms") is not None:
-                measured_ms = time.monotonic() * 1000.0 - frame_meta["sent_at_ms"]
-            if measured_ms is not None:
-                self._record_ack_feedback(measured_ms)
+        frame_meta = self.inflight_frames.get(frame_id)
+        if not frame_meta or frame_meta.get("generation") != self.production_generation:
+            return
+        if frame_id <= self.last_acked_frame_id:
+            return
+        self.inflight_frames.pop(frame_id, None)
+        measured_ms = relay_ack_duration_ms(frame_meta.get("sent_at_ms"), time.monotonic() * 1000.0)
+        if measured_ms is None:
+            return
+        self.last_acked_frame_id = frame_id
+        self.stats_acked += 1
+        self.ack_event.set()
+        self._record_ack_feedback(measured_ms)
 
     def note_ack_timeout(self, reason):
         self.stats_timeout_count += 1
@@ -851,6 +855,7 @@ class TunnelRelayStreamer:
                     sent_at_ms = time.monotonic() * 1000.0
                     self.inflight_frames[frame_id] = {
                         "sent_at_ms": sent_at_ms,
+                        "generation": production_generation,
                         "profile": self.profile_name,
                         "quality": self.jpeg_quality,
                         "width": image.width,
@@ -2167,8 +2172,7 @@ class WebRemoteHost:
                 local_execute_ms=local_execute_ms,
             )
             if isinstance(result, dict):
-                wire_execute_ms = self._wire_execute_ms(result, fallback=local_execute_ms)
-                await self._send_input_ack(data, result, wire_execute_ms)
+                await self._send_input_ack(data, result, local_execute_ms)
             if result and isinstance(result, dict) and result.get("inputIds"):
                 if self.screen_track:
                     with self.screen_track._pending_input_lock:
@@ -2215,7 +2219,7 @@ class WebRemoteHost:
                 **({"appliedSeq": result["appliedSeq"]} if result.get("appliedSeq") is not None else {}),
                 "status": "applied" if result.get("status") == "unordered" else (result.get("status") or "applied"),
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
         elif data.get("schemaVersion") == 2:
@@ -2240,7 +2244,7 @@ class WebRemoteHost:
                 "pressedKeyCount": max(0, pressed_key_count),
                 "modifierMask": max(0, modifier_mask),
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
         else:
@@ -2248,9 +2252,15 @@ class WebRemoteHost:
                 "type": "input_ack",
                 "schemaVersion": 1,
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
+        ack.update({
+            "timingSchemaVersion": 1,
+            "hostAdapterAwaitMs": ack["hostExecuteMs"],
+            **{name: result.get(name) if relay_ack_duration_ms(0, result.get(name)) is not None else None
+               for name in ("hostQueueMs", "hostApplyMs")},
+        })
         accepted = False
         try:
             if transport == "datachannel":

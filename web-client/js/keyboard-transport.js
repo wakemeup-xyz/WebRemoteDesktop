@@ -7,7 +7,8 @@
 
   function create(options) {
     const config = options || {};
-    const now = typeof config.now === 'function' ? config.now : Date.now;
+    const now = typeof config.now === 'function' ? config.now
+      : () => typeof performance !== 'undefined' ? performance.now() : 0;
     const makeInputId = typeof config.makeInputId === 'function'
       ? config.makeInputId
       : () => `kbd_${now()}_${Math.random().toString(36).slice(2, 8)}`;

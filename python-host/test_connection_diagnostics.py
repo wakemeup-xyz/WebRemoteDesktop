@@ -266,6 +266,10 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
 
     assert len(sent) == 1
     ack = __import__("json").loads(sent[0])
+    assert ack["hostExecuteMs"] >= 0
+    assert ack["hostAdapterAwaitMs"] == ack["hostExecuteMs"]
+    assert ack["hostQueueMs"] is None
+    assert ack["hostApplyMs"] is None
     assert ack == {
         "type": "input_ack",
         "schemaVersion": 2,
@@ -276,7 +280,11 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
         "pressedKeyCount": 1,
         "modifierMask": 0x100000,
         "inputIds": ["input-1"],
-        "hostExecuteMs": 9.0,
+        "hostExecuteMs": ack["hostAdapterAwaitMs"],
+        "timingSchemaVersion": 1,
+        "hostAdapterAwaitMs": ack["hostAdapterAwaitMs"],
+        "hostQueueMs": None,
+        "hostApplyMs": None,
         "transport": "datachannel",
     }
     assert "key" not in ack

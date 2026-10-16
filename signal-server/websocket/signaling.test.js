@@ -3534,3 +3534,20 @@ test('old grant ACK cannot clear reset rejection or cancel same-epoch retries', 
   viewer.trigger('control-acquire', { requestId: 'still-blocked' });
   assert.equal(viewer.sent.filter(e => e.event === 'control-state').at(-1).data.state, 'REVOKING');
 });
+
+test('input ack nullable timing preserves missing values without coercing zero', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-timing', 'host');
+  const viewer = new FakeSocket('viewer-timing', 'viewer');
+  io.connect(host); io.connect(viewer);
+  for (const value of [null, undefined, '', NaN, Infinity, -1, 0, 12.5]) {
+    host.trigger('input-ack', { viewerId: viewer.id, inputIds: ['sample'], timingSchemaVersion: 1,
+      hostExecuteMs: value, hostAdapterAwaitMs: value, hostQueueMs: value, hostApplyMs: value });
+    const ack = viewer.sent.filter(row => row.event === 'input-ack').at(-1).data;
+    const expected = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    assert.equal(ack.hostExecuteMs, expected);
+    for (const name of ['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs']) assert.equal(ack[name], expected);
+  }
+});

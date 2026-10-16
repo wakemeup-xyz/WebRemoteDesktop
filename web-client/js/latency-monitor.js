@@ -1,272 +1,200 @@
-const LatencyMonitor = {
-  // Clock sync state
-  _offsetMs: 0,
-  _rttMs: 0,
-  _syncState: 'idle', // idle, syncing, synced
-  _lastSyncAt: 0,
-  _syncV0: 0,
-
-  // Input tracking
-  _inputMap: new Map(), // inputId -> { i0, ts }
-  _visualInputMap: new Map(), // inputId -> { i0, ts }
-
-  // Playout buffer tracking (delta calculation)
-  _lastJitterDelay: 0,
-  _lastJitterEmitted: 0,
-
-  _monotonicNow() {
-    return typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now() : Date.now();
-  },
-
-  // Statistics (5-second sliding window)
-  _windowMs: 5000,
-  _stats: {
-    capture: [],
-    scale: [],
-    encode: [],
-    network: [],
-    playout: [],
-    inputRtt: [],
-    executeTime: [],
-    visualFeedback: [],
-    paint: [],
-  },
-
-  init() {
-    console.log('[LatencyMonitor] initialized');
-  },
-
-  // ─── Clock Sync ───
-
-  requestClockSync() {
-    if (this._syncState === 'syncing') return;
-    this._syncState = 'syncing';
-
-    const v0 = Date.now();
-    this._syncV0 = v0;
-
-    if (typeof WebRTC !== 'undefined' && WebRTC.inputChannel && WebRTC.inputChannel.readyState === 'open') {
-      WebRTC.inputChannel.send(JSON.stringify({
-        type: 'clock_sync_req',
-        v0: v0,
-      }));
-    } else {
-      this._syncState = 'idle';
+// A passive, bounded observer. Control delivery never depends on this collector.
+const LATENCY_METRIC_NAMES = Object.freeze([
+  'frontendDispatchMs', 'inputAckRttMs', 'hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs',
+  'signalForwardMs', 'signalAckForwardMs', 'inputToFrameNoticeMs',
+  'inputToPostApplyFrameMs', 'inputToVisibleEffectMs', 'relayFrameAckRttMs',
+  'paintIntervalMs', 'freshFrameAgeMs', 'candidateRttMs', 'jitterBufferMs', 'decodeMs',
+  'recvBytes', 'elapsedMs', 'captureGrabMs', 'captureAgeAtRecvMs', 'capturePrepareMs',
+  'frameConvertMs', 'imgprocQueueMs', 'imgprocBuildMs', 'encoderMs', 'packetizeMs',
+  'encodeTotalMs', 'rtpApiAwaitMs',
+]);
+const createLatencyMonitor = (options = {}) => {
+  const schedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
+  const cancel = options.cancel || (id => clearTimeout(id));
+  let syncTimeout = null, syncRetry = null;
+  const stopSyncTimers = () => {
+    if (syncTimeout !== null) cancel(syncTimeout);
+    if (syncRetry !== null) cancel(syncRetry);
+    syncTimeout = syncRetry = null;
+  };
+  const now = options.now || (() => typeof performance !== 'undefined' ? performance.now() : 0);
+  const valid = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  const validId = id => typeof id === 'string' && /^[\x20-\x7e]{1,128}$/.test(id);
+  const sameScope = (a, b) => a === b || Boolean(a && b
+    && a.connectionAttemptId === b.connectionAttemptId && a.generation === b.generation && a.leaseEpoch === b.leaseEpoch);
+  const copyScope = s => s ? { connectionAttemptId: s.connectionAttemptId, generation: s.generation, leaseEpoch: s.leaseEpoch } : null;
+  const blankOutcomes = () => Object.fromEntries(['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'].map(k => [k, 0]));
+  let scope = null, outcomes = blankOutcomes(), lastNow = -Infinity, lastPaint = null, freshAt = null, mediaActive = true;
+  let metrics = new Map(LATENCY_METRIC_NAMES.map(k => [k, []]));
+  const pending = new Map(), tombstones = new Map();
+  let closed = [], closedDropped = 0, sync = null, lastSync = null;
+  const inc = (key, count = 1) => { outcomes[key] = Math.min(Number.MAX_SAFE_INTEGER, outcomes[key] + count); };
+  const clock = value => {
+    const t = value === undefined ? now() : value;
+    if (!valid(t) || t < lastNow) return null;
+    lastNow = t;
+    return t;
+  };
+  const totalSamples = () => [...metrics.values()].reduce((sum, rows) => sum + rows.length, 0);
+  // Reserve 448KiB for pending/tombstones/scope and object serialization delimiters.
+  const sampleBytes = () => [...metrics.values()].reduce((sum, rows) => sum + rows.reduce((n, row) => n + row.bytes, 0), 0);
+  const trimClosed = t => {
+    while (closed.length && (closed.length > 4 || t - closed[0].endedAtMs >= 60000 || JSON.stringify(closed).length > 32768)) {
+      closed.shift(); closedDropped = Math.min(Number.MAX_SAFE_INTEGER, closedDropped + 1);
     }
-  },
-
-  handleClockSyncResponse(data) {
-    const v1 = Date.now();
-    const v0 = this._syncV0;
-    const h0 = data.h0;
-    const h1 = data.h1;
-
-    const h0ms = h0 * 1000;
-    const h1ms = h1 * 1000;
-
-    const rtt = (v1 - v0) - (h1ms - h0ms);
-    const offset = (v0 + v1) / 2 - (h0ms + h1ms) / 2;
-
-    this._rttMs = rtt;
-    this._offsetMs = offset;
-    this._syncState = 'synced';
-    this._lastSyncAt = Date.now();
-
-    console.log('[LatencyMonitor] Clock synced: RTT=', rtt.toFixed(1), 'ms, offset=', offset.toFixed(1), 'ms');
-  },
-
-  // ─── Frame Timing ───
-
-  onFrameTiming(data) {
-    const now = this._monotonicNow();
-    const timings = data.timings || {};
-
-    if (data.schemaVersion === 2) {
-      const readDuration = (value) => {
-        if (value === null || value === undefined || value === '') return null;
-        const duration = Number(value);
-        return Number.isFinite(duration) && duration >= 0 ? duration : null;
-      };
-      const capture = readDuration(timings.capturePrepareMs);
-      const scale = readDuration(timings.frameConvertMs);
-      const encode = readDuration(timings.encoderMs);
-      if (capture !== null) this._pushStat('capture', capture);
-      if (scale !== null) this._pushStat('scale', scale);
-      if (encode !== null) this._pushStat('encode', encode);
-    } else {
-      const timestamps = ['captureStart', 'captureEnd', 'scaleEnd', 'encodeEnd']
-        .map((key) => Number(timings[key]));
-      if (timestamps.every(Number.isFinite)
-        && timestamps.every((value, index) => index === 0 || value >= timestamps[index - 1])) {
-        const [t0, t1, t2, t3] = timestamps;
-        this._pushStat('capture', (t1 - t0) * 1000);
-        this._pushStat('scale', (t2 - t1) * 1000);
-        this._pushStat('encode', (t3 - t2) * 1000);
+  };
+  const remember = (id, record, state, t) => {
+    tombstones.set(id, { ...record, state, ended: t });
+    while (tombstones.size > 1024) { tombstones.delete(tombstones.keys().next().value); inc('dropped'); }
+  };
+  const expire = t => {
+    for (const rows of metrics.values()) while (rows.length && t - rows[0].at >= 5000) rows.shift();
+    for (const [id, record] of pending) if (t - record.sent >= 10000) {
+      pending.delete(id); inc('timedOut'); remember(id, record, 'timedOut', t);
+    }
+    for (const [id, record] of tombstones) if (t - record.ended >= 30000) tombstones.delete(id);
+    if (sync && t - sync.v0 >= 2000) sync = null;
+    if (lastSync && t - lastSync.at >= 60000) lastSync = null;
+    trimClosed(t);
+  };
+  const summary = (rows, t) => {
+    if (!rows.length) return { last: null, p50: null, p95: null, count: 0, available: false, lastSampleAgeMs: null };
+    const values = rows.map(r => r.value).sort((a, b) => a - b);
+    return { last: rows.at(-1).value, p50: values[Math.floor(values.length * .5)], p95: values[Math.min(values.length - 1, Math.floor(values.length * .95))], count: rows.length, available: true, lastSampleAgeMs: t - rows.at(-1).at };
+  };
+  const push = (name, value, t, key) => {
+    if (!valid(value) || !metrics.has(name) || !validId(key)) return false;
+    const rows = metrics.get(name);
+    if (rows.some(r => r.key === key)) return false;
+    rows.push({ value, at: t, key, bytes: JSON.stringify({ value, at: t, key }).length + 32 });
+    if (rows.length > 256) { rows.shift(); inc('dropped'); }
+    while (totalSamples() > 4096 || sampleBytes() > 589824) {
+      const oldest = [...metrics.values()].filter(r => r.length).reduce((a, b) => a[0].at <= b[0].at ? a : b);
+      oldest.shift(); inc('dropped');
+    }
+    return true;
+  };
+  let serial = 0;
+  const api = {
+    init() {},
+    setScope(next) {
+      if (next !== null && (!next || !validId(next.connectionAttemptId) || !Number.isSafeInteger(next.generation) || next.generation < 0 || !Number.isSafeInteger(next.leaseEpoch) || next.leaseEpoch < 0)) return;
+      const t = clock(); if (t === null || sameScope(scope, next)) return;
+      expire(t);
+      for (const record of pending.values()) inc('cancelled');
+      pending.clear();
+      if (scope) { closed.push({ endedAtMs: t, snapshot: api.snapshot({ nowMs: t, scope }) }); trimClosed(t); }
+      scope = copyScope(next); outcomes = blankOutcomes(); metrics = new Map(LATENCY_METRIC_NAMES.map(k => [k, []]));
+      stopSyncTimers();
+      tombstones.clear(); lastPaint = freshAt = sync = lastSync = null;
+    },
+    recordInputSend(id, context = {}) {
+      const t = clock(context.submittedAtMs); if (t === null) return false;
+      expire(t);
+      if (!sameScope(scope, context.scope === undefined ? scope : context.scope) || !validId(id) || pending.has(id) || tombstones.has(id)) return false;
+      while (pending.size >= 512) {
+        const oldest = pending.keys().next().value;
+        remember(oldest, pending.get(oldest), 'dropped', t); pending.delete(oldest); inc('dropped'); inc('unmatched');
       }
-    }
-
-    // Process input timing data from host (receiveTime, executeTime)
-    const inputs = data.inputs;
-    if (inputs && inputs.length > 0) {
-      for (const inp of inputs) {
-        const receive = Number(inp.receiveTime);
-        const execute = Number(inp.executeTime);
-        const duration = (Number.isFinite(receive) && Number.isFinite(execute) && execute >= receive)
-          ? (execute - receive) * 1000 : null;
-        if (duration !== null && Number.isFinite(duration)) this._pushStat('executeTime', duration);
-      }
-    }
-
-    // Frame-bound input IDs represent visual feedback, not transport ack RTT.
-    if (data.inputIds && data.inputIds.length > 0) {
-      for (const inputId of data.inputIds) {
-        const visualRecord = this._visualInputMap.get(inputId);
-        if (visualRecord) {
-          this._pushStat('visualFeedback', now - visualRecord.i0);
-          this._visualInputMap.delete(inputId);
+      pending.set(id, { sent: t, notice: false }); inc('sent');
+      if (valid(context.domAtMs) && context.domAtMs <= t) push('frontendDispatchMs', t - context.domAtMs, t, id);
+      return true;
+    },
+    onInputAck(data = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return; expire(t);
+      if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return;
+      let matched = false;
+      for (const id of new Set(Array.isArray(data.inputIds) ? data.inputIds.filter(validId).slice(0, 64) : [])) {
+        const record = pending.get(id);
+        if (!record) {
+          const old = tombstones.get(id);
+          if (old && old.state === 'timedOut' && !old.late) { old.late = true; inc('late'); }
+          else if (!old) inc('unmatched');
+          continue;
         }
-        // Compatibility with an older Host that has no independent input_ack.
-        const inputRecord = this._inputMap.get(inputId);
-        if (inputRecord) {
-          this._pushStat('inputRtt', now - inputRecord.i0);
-          this._inputMap.delete(inputId);
-        }
+        pending.delete(id); matched = true;
+        const rejected = data.status && data.status !== 'applied' && data.status !== 'unordered' && data.status !== 'duplicate';
+        inc(rejected ? 'rejected' : 'acked');
+        if (!rejected) push('inputAckRttMs', t - record.sent, t, id);
+        remember(id, record, rejected ? 'rejected' : 'acked', t);
       }
-    }
-
-  },
-
-  // ─── Input Tracking ───
-
-  recordInputSend(inputId) {
-    const now = this._monotonicNow();
-    this._inputMap.set(inputId, { i0: now, ts: now });
-    this._visualInputMap.set(inputId, { i0: now, ts: now });
-    // Cleanup old entries every 10 calls instead of every call to avoid O(n) loop on hot path
-    this._inputCleanupCounter = (this._inputCleanupCounter || 0) + 1;
-    if (this._inputCleanupCounter >= 10) {
-      this._inputCleanupCounter = 0;
-      const cutoff = now - 10000;
-      for (const [id, rec] of this._inputMap) {
-        if (rec.ts < cutoff) this._inputMap.delete(id);
+      if (matched) {
+        const key = `ack:${++serial}`;
+        for (const name of ['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs', 'signalForwardMs', 'signalAckForwardMs']) push(name, data[name], t, key);
+        if (data.hostAdapterAwaitMs === undefined) push('hostAdapterAwaitMs', data.hostExecuteMs, t, key);
       }
-      for (const [id, rec] of this._visualInputMap) {
-        if (rec.ts < cutoff) this._visualInputMap.delete(id);
+    },
+    onFrameTiming(data = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return; expire(t);
+      if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return;
+      for (const name of ['captureGrabMs', 'captureAgeAtRecvMs', 'capturePrepareMs', 'frameConvertMs', 'imgprocQueueMs', 'imgprocBuildMs', 'encoderMs', 'packetizeMs', 'encodeTotalMs', 'rtpApiAwaitMs']) if (data.schemaVersion === 2) push(name, data.timings?.[name], t, `frame:${serial}:${name}`);
+      serial += 1;
+      for (const id of new Set(Array.isArray(data.inputIds) ? data.inputIds.filter(validId).slice(0, 64) : [])) {
+        const record = pending.get(id) || tombstones.get(id);
+        if (record && !record.notice) { push('inputToFrameNoticeMs', t - record.sent, t, id); record.notice = true; }
       }
-    }
-  },
-
-  onInputAck(data = {}) {
-    const now = this._monotonicNow();
-    const inputIds = Array.isArray(data.inputIds) ? data.inputIds : [];
-    for (const inputId of inputIds) {
-      const inputRecord = this._inputMap.get(inputId);
-      if (!inputRecord) continue;
-      this._pushStat('inputRtt', Math.max(0, now - inputRecord.i0));
-      this._inputMap.delete(inputId);
-    }
-    const hostExecuteMs = Number(data.hostExecuteMs);
-    if (Number.isFinite(hostExecuteMs) && hostExecuteMs >= 0) {
-      this._pushStat('executeTime', hostExecuteMs);
-    }
-  },
-
-  // ─── Video Frame / Playout Buffer ───
-
-  onVideoFrame(now, metadata) {
-    if (this._lastPaintAt != null && Number.isFinite(Number(now))) {
-      this._pushStat('paint', Math.max(0, Number(now) - this._lastPaintAt));
-    }
-    this._lastPaintAt = Number(now);
-  },
-
-  onMediaStats(snapshot = {}) {
-    const jitterBufferMs = Number(snapshot.jitterBufferMs);
-    if (Number.isFinite(jitterBufferMs) && jitterBufferMs >= 0 && jitterBufferMs < 5000) {
-      this._pushStat('playout', jitterBufferMs);
-    }
-  },
-
-  // ─── Statistics ───
-
-  _pushStat(key, value) {
-    const arr = this._stats[key];
-    if (!arr) return;
-    const now = Date.now();
-    const cutoff = now - this._windowMs;
-
-    // Fast path: if head is fresh, skip cleanup entirely
-    if (arr.length === 0 || arr[0].ts >= cutoff) {
-      arr.push({ value, ts: now });
-      return;
-    }
-
-    // Batch-remove expired entries with a single splice instead of O(n) shift loop
-    let start = 1;
-    const len = arr.length;
-    while (start < len && arr[start].ts < cutoff) {
-      start++;
-    }
-    arr.splice(0, start);
-    arr.push({ value, ts: now });
-  },
-
-  getStats() {
-    const calc = (arr) => {
-      if (!arr || arr.length === 0) return { last: null, p50: null, p95: null, count: 0, available: false };
-      // QuickSelect-style partition for p50/p95: O(n) instead of O(n log n) sort
-      const values = arr.map(x => x.value);
-      const n = values.length;
-      const p50Idx = Math.floor(n * 0.5);
-      const p95Idx = Math.floor(n * 0.95);
-      const p50 = this._quickSelect(values, p50Idx);
-      const p95 = p95Idx >= n ? values[this._quickSelect(values, n - 1, true)] : this._quickSelect(values, p95Idx);
-      return { last: arr.at(-1).value, p50, p95, count: n, available: true };
-    };
-
-    return {
-      capture: calc(this._stats.capture),
-      scale: calc(this._stats.scale),
-      encode: calc(this._stats.encode),
-      network: calc(this._stats.network),
-      playout: calc(this._stats.playout),
-      inputRtt: calc(this._stats.inputRtt),
-      executeTime: calc(this._stats.executeTime),
-      visualFeedback: calc(this._stats.visualFeedback),
-      paint: calc(this._stats.paint),
-      sync: {
-        state: this._syncState,
-        rtt: this._rttMs,
-        offset: this._offsetMs,
-      },
-    };
-  },
-
-  // QuickSelect: find k-th smallest element in O(n) average, O(n^2) worst.
-  // For our small arrays (n < 200) this is faster than sort() because it avoids
-  // the full O(n log n) overhead and temporary array creation.
-  _quickSelect(arr, k, returnIndex = false) {
-    let left = 0;
-    let right = arr.length - 1;
-    while (left < right) {
-      const pivot = arr[right];
-      let store = left;
-      for (let i = left; i < right; i++) {
-        if (arr[i] < pivot) {
-          const tmp = arr[i];
-          arr[i] = arr[store];
-          arr[store] = tmp;
-          store++;
-        }
-      }
-      const tmp = arr[store];
-      arr[store] = arr[right];
-      arr[right] = tmp;
-      if (store === k) break;
-      if (store < k) left = store + 1;
-      else right = store - 1;
-    }
-    return returnIndex ? left : arr[k];
-  },
+    },
+    recordStage(name, value, context = {}) {
+      const t = clock(context.atMs); if (t === null) return false; expire(t);
+      if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return false;
+      if (name === 'freshFrameAgeMs') { if (!valid(value) || value > t || !mediaActive) return false; freshAt = t - value; return true; }
+      return push(name, value, t, context.sampleKey);
+    },
+    setMediaState(active, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return; expire(t);
+      if (!sameScope(scope, context.scope === undefined ? scope : context.scope)) return;
+      mediaActive = active === true; lastPaint = freshAt = null;
+    },
+    onVideoFrame(t) {
+      const at = clock(t); if (at === null) return; expire(at);
+      if (!mediaActive) return;
+      if (lastPaint !== null) push('paintIntervalMs', at - lastPaint, at, `paint:${++serial}`);
+      lastPaint = at;
+    },
+    onMediaStats(data = {}) {
+      const t = clock(); if (t === null) return; expire(t);
+      const key = `stats:${++serial}`;
+      for (const [name, field] of [['jitterBufferMs', 'jitterBufferMs'], ['decodeMs', 'decodeMs'], ['candidateRttMs', 'rttMs'], ['recvBytes', 'bytesDelta'], ['elapsedMs', 'elapsedMs']]) push(name, data[field], t, key);
+    },
+    snapshot(context = {}) {
+      const t = clock(context.nowMs); const at = t === null ? Math.max(0, lastNow) : t; expire(at);
+      const inScope = sameScope(scope, context.scope === undefined ? scope : context.scope);
+      const result = Object.fromEntries([...metrics].map(([name, rows]) => [name, summary(inScope ? rows : [], at)]));
+      if (inScope && mediaActive && freshAt !== null) result.freshFrameAgeMs = { last: at - freshAt, p50: at - freshAt, p95: at - freshAt, count: 1, available: true, lastSampleAgeMs: 0 };
+      return { schemaVersion: 3, windowMs: 5000, scope: copyScope(scope), metrics: result, outcomes: { ...outcomes } };
+    },
+    takeClosedScopeSummaries(context = {}) {
+      const t = clock(context.nowMs); if (t !== null) expire(t);
+      const result = { summaries: closed, dropped: closedDropped }; closed = []; closedDropped = 0; return result;
+    },
+    requestClockSync(send) {
+      const t = clock(); if (t === null) return false; expire(t);
+      if (sync) return false;
+      const transport = send || (typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open' ? message => WebRTC.inputChannel.send(JSON.stringify(message)) : null);
+      if (!transport) return false;
+      sync = { v0: t, scope: copyScope(scope) };
+      try { transport({ type: 'clock_sync_req', v0: t }); } catch (_) { sync = null; return false; }
+      stopSyncTimers();
+      syncTimeout = schedule(() => { syncTimeout = null; const at = clock(); if (at !== null) expire(at); }, 2000);
+      syncRetry = schedule(() => { syncRetry = null; api.requestClockSync(send); }, 30000);
+      return true;
+    },
+    handleClockSyncResponse(data = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return false; expire(t);
+      if (!sync || data.v0 !== sync.v0 || !sameScope(scope, context.scope === undefined ? scope : context.scope) || !sameScope(scope, sync.scope)
+        || !valid(data.h0) || !valid(data.h1) || data.h1 < data.h0) return false;
+      const rtt = (t - sync.v0) - (data.h1 - data.h0) * 1000;
+      if (!valid(rtt)) return false;
+      lastSync = { at: t, rtt, offset: (sync.v0 + t) / 2 - (data.h0 + data.h1) * 500 }; sync = null;
+      if (syncTimeout !== null) cancel(syncTimeout); syncTimeout = null; return true;
+    },
+    getStats() {
+      const snapshot = api.snapshot();
+      const aliases = { capture: 'capturePrepareMs', scale: 'frameConvertMs', encode: 'encoderMs', network: null, playout: 'jitterBufferMs', inputRtt: 'inputAckRttMs', executeTime: 'hostAdapterAwaitMs', visualFeedback: 'inputToFrameNoticeMs', paint: 'paintIntervalMs' };
+      return { ...Object.fromEntries(Object.entries(aliases).map(([key, name]) => [key, name ? snapshot.metrics[name] : summary([], lastNow)])), sync: lastSync ? { state: 'synced', rtt: lastSync.rtt, offset: lastSync.offset } : { state: sync ? 'syncing' : 'idle', rtt: null, offset: null } };
+    },
+  };
+  return api;
 };
+const LatencyMonitor = createLatencyMonitor();
+if (typeof module !== 'undefined') module.exports = { LatencyMonitor, LATENCY_METRIC_NAMES, createLatencyMonitor };

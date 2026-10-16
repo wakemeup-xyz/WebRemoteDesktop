@@ -796,7 +796,7 @@ test('viewer waits for an active control lease before starting an offer and rout
       init() {},
       setActive() {},
       setControlLease() {},
-      acceptKeyboardAck() { order.push('transport'); },
+      acceptKeyboardAck() { order.push('transport'); return { status: 'applied' }; },
       acceptMouseAck() { order.push('mouse'); },
     },
     LatencyMonitor: { onInputAck() { order.push('latency'); } },
@@ -6468,4 +6468,15 @@ test('classic bundle exposes WebRTC on globalThis for deferred diagnostic.js', (
   assert.equal(context.globalThis.WebRTC, WebRTC);
   assert.equal(typeof context.globalThis.WebRTC.getSessionPresentation, 'function');
   assert.equal(typeof context.globalThis.WebRTC.uiPhase, 'string');
+});
+
+test('stale business ACKs never contribute timing samples on socket or DataChannel adapters', () => {
+  const observed = [];
+  const { WebRTC } = loadWebRTC({
+    Input: { acceptMouseAck() { return { status: 'stale' }; }, acceptKeyboardAck() { return { status: 'stale' }; } },
+    LatencyMonitor: { onInputAck(data) { observed.push(data); } },
+  });
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 4, inputIds: ['old'] });
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4, inputIds: ['old-mouse'] });
+  assert.equal(observed.length, 0);
 });

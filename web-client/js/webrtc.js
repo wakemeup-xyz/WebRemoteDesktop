@@ -620,7 +620,12 @@ const WebRTC = {
     if (!this.mediaActivityController) {
       return this.getMediaActivitySnapshot();
     }
-    return this.mediaActivityController.setReason(reason, enabled);
+    const result = this.mediaActivityController.setReason(reason, enabled);
+    if (typeof LatencyMonitor !== 'undefined') {
+      this.syncLatencyScope();
+      LatencyMonitor.setMediaState?.(result.state === 'active', { scope: this.latencyScope() });
+    }
+    return result;
   },
 
   getMediaActivitySnapshot() {
@@ -1216,10 +1221,38 @@ const WebRTC = {
     }
   },
 
+  latencyScope() {
+    return {
+      connectionAttemptId: this.currentConnectionAttemptId,
+      generation: Number(this.connectionAttemptSequence) || 0,
+      leaseEpoch: typeof Input !== 'undefined' ? (Input.activeControlLease?.leaseEpoch ?? 0) : 0,
+    };
+  },
+
+  syncLatencyScope() {
+    if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.setScope?.(this.latencyScope());
+  },
+
+  acceptObservedInputAck(data) {
+    // Finish C's validation first. Timing never grants or repairs authority.
+    const results = [];
+    if (typeof Input !== 'undefined') {
+      if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data));
+      if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
+        && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data));
+    }
+    if (data?.schemaVersion === 2 && !results.some(result => result && result.status !== 'stale')) return;
+    if (typeof LatencyMonitor !== 'undefined') {
+      this.syncLatencyScope();
+      LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
+    }
+  },
+
   beginConnectionAttempt(trigger = 'viewer-open') {
     this.clearRefreshDcWaitTimer();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this.syncLatencyScope();
     this.ensureFrameTraceCollector(this.currentFrameTraceIdentity());
     this._recordInputTrace('lifecycle', {
       inputType: 'control', action: 'active', state: 'active',
@@ -3325,18 +3358,7 @@ const WebRTC = {
       }
     });
 
-    onCurrentSocket('input-ack', (data) => {
-      if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
-        Input.acceptMouseAck(data);
-      }
-      if (data?.inputType === 'keyboard'
-        && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
-        Input.acceptKeyboardAck(data);
-      }
-      if (typeof LatencyMonitor !== 'undefined') {
-        LatencyMonitor.onInputAck(data);
-      }
-    });
+    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data); });
 
     onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
@@ -3859,14 +3881,6 @@ const WebRTC = {
     setTimeout(() => {
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.requestClockSync();
-        // Re-sync every 30 seconds
-        if (!this._latencySyncInterval) {
-          this._latencySyncInterval = setInterval(() => {
-            if (typeof LatencyMonitor !== 'undefined') {
-              LatencyMonitor.requestClockSync();
-            }
-          }, 30000);
-        }
       }
     }, 2000);
     this.armStableRecoveryReset();
@@ -4146,7 +4160,7 @@ const WebRTC = {
         // Latency measurement messages
         if (data.type === 'frame_timing') {
           if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.onFrameTiming(data);
+            LatencyMonitor.onFrameTiming(data, { scope: this.latencyScope() });
           }
           return;
         }
@@ -4168,21 +4182,12 @@ const WebRTC = {
         }
         if (data.type === 'clock_sync_resp') {
           if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.handleClockSyncResponse(data);
+            LatencyMonitor.handleClockSyncResponse(data, { scope: this.latencyScope() });
           }
           return;
         }
         if (data.type === 'input_ack') {
-          if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
-            Input.acceptMouseAck(data);
-          }
-          if (data?.inputType === 'keyboard'
-            && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
-            Input.acceptKeyboardAck(data);
-          }
-          if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.onInputAck(data);
-          }
+          this.acceptObservedInputAck(data);
           return;
         }
         // Host capture fps is not playback fps; keep it off the status-bar counter.

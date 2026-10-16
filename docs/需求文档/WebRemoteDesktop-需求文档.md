@@ -129,7 +129,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport`、Viewer 本地 pending RTT 和 Host adapter-await 时间，便于区分 DataChannel 与 Socket.IO 兜底路径；这些是各自边界的耗时，不冒充跨机器单向延迟或可见原生效果。`dom-received`、`gate`、`transport-send`、`ack`/`ack-timeout`、`lifecycle`/`recovery` 六阶段摘要共用同一有界诊断轨迹
-- 桌面输入执行后必须独立返回 `input_ack`：浏览器同钟计算业务ACK往返，Host区分adapter-await、内部排队和实际应用。frame_timing只证明帧通知；输入后新捕获帧也不等于任意应用已产生可见效果。真正可见效果须有受控内容因果证据，缺测显示unavailable。2026-10-17复查发现当前UI/兼容分支/键盘计时仍违反该契约，属于待整改L1–L7，不能据现有字段声称已实现。DataChannel输入不经过Signal；`enqueued`是本地接受，`applied`是Host adapter成功，均不等于用户已看到效果。
+- 桌面输入执行后必须独立返回 `input_ack`：浏览器同钟计算业务ACK往返，Host区分adapter-await、内部排队和实际应用。frame_timing只证明帧通知；输入后新捕获帧也不等于任意应用已产生可见效果。真正可见效果须有受控内容因果证据，缺测显示unavailable。2026-10-17 M1代码已拆分输入确认RTT、帧通知与可见效果：5秒窗口按当前attempt/generation/leaseEpoch统计，ACK观察10秒到期，作用域结束保存有界final摘要；Host用同一monotonic时钟分别记录排队、原生worker执行和adapter-await，未知值保持null。relay反馈只取Host提交至相同generation帧ACK的monotonic差，忽略客户端latency用于质量选择。离线测试不代表真实公网、设备或光学验收通过，可见效果在缺少受控因果证据时仍为未测量。DataChannel输入不经过Signal；`enqueued`是本地接受，`applied`是Host adapter成功，均不等于用户已看到效果。
 
 #### 3.3.1 键盘协议、映射与兼容契约
 

@@ -301,7 +301,7 @@ const Input = {
       throw error;
     }
     traceResult(accepted);
-    if (accepted) this.recordLatency(payload);
+    if (accepted) this.recordLatency(payload, 'datachannel');
     return accepted;
   },
 
@@ -330,15 +330,29 @@ const Input = {
       throw error;
     }
     traceResult(true);
-    this.recordLatency(payload);
+    this.recordLatency(payload, 'socket');
     return true;
   },
 
-  recordLatency(payload) {
-    const inputId = Array.isArray(payload?.inputIds) ? payload.inputIds[0] : null;
-    if (inputId && typeof LatencyMonitor !== 'undefined' && typeof LatencyMonitor.recordInputSend === 'function') {
-      LatencyMonitor.recordInputSend(inputId);
-    }
+  latencyScope() {
+    return {
+      connectionAttemptId: this._currentConnectionAttemptId(),
+      generation: typeof WebRTC !== 'undefined' ? (WebRTC.connectionAttemptSequence || 0) : 0,
+      leaseEpoch: this.activeControlLease?.leaseEpoch ?? 0,
+    };
+  },
+
+  recordLatency(payload, transport) {
+    if (typeof LatencyMonitor === 'undefined') return;
+    try {
+      const scope = this.latencyScope();
+      LatencyMonitor.setScope?.(scope);
+      const submittedAtMs = typeof performance !== 'undefined' ? performance.now() : 0;
+      for (const inputId of payload?.inputIds || []) LatencyMonitor.recordInputSend?.(inputId, {
+        scope, submittedAtMs, domAtMs: this._inputTraceContext?.domAtMs ?? null,
+        inputType: payload.type, action: payload.action, transport,
+      });
+    } catch (_) { /* Observation cannot change an accepted delivery. */ }
   },
 
   suspendControlLease() {
@@ -391,6 +405,9 @@ const Input = {
       }
     }
     this.activeControlLease = nextLease;
+    if (typeof LatencyMonitor !== 'undefined') {
+      try { LatencyMonitor.setScope?.(this.latencyScope()); } catch (_) {}
+    }
     if (nextLease) this._recoveryControlReacquireRequired = false;
     if (leaseChanged) {
       this._recordInputTrace('lifecycle', {
@@ -690,6 +707,7 @@ const Input = {
         }));
     this._inputTraceContext = {
       eventId: null,
+      domAtMs: typeof performance !== 'undefined' ? performance.now() : null,
       inputType,
       action,
       phase,
@@ -2284,7 +2302,7 @@ const Input = {
     });
     if (dataChannelAccepted) {
       commitSequence('datachannel');
-      this.recordLatency(data);
+      this.recordLatency(data, 'datachannel');
       return data.inputIds[0];
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
@@ -2317,7 +2335,7 @@ const Input = {
         reliable: reliableWrite,
       });
       commitSequence('socket');
-      this.recordLatency(data);
+      this.recordLatency(data, 'socket');
       return data.inputIds[0];
     }
     this._recordInputTrace('transport-send', {

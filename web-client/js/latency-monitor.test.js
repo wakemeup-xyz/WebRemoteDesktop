@@ -86,7 +86,7 @@ test('legacy out-of-order timestamps are discarded without synthetic network lat
   assert.equal(stats.network.available, false);
 });
 
-test('invalid host input timing is excluded from execute statistics', () => {
+test('legacy frame inputs cannot substitute for adapter await timing', () => {
   const monitor = loadLatencyMonitor();
   monitor.onFrameTiming({ schemaVersion: 2, timings: {}, inputs: [
     { receiveTime: 10, executeTime: 9 },
@@ -94,17 +94,17 @@ test('invalid host input timing is excluded from execute statistics', () => {
     { receiveTime: 2, executeTime: 2.005 },
   ] });
   const stats = monitor.getStats();
-  assert.equal(stats.executeTime.count, 1);
-  assert.ok(Math.abs(stats.executeTime.last - 5) < 0.001);
+  assert.equal(stats.executeTime.count, 0);
+  assert.equal(stats.executeTime.last, null);
 });
 
 
-test('independent input ack measures browser RTT while frame timing measures visual feedback', () => {
+test('independent input ack measures browser RTT while frame timing measures notification', () => {
   let now = 1000;
   class FakeDate extends Date {
     static now() { return now; }
   }
-  const monitor = loadLatencyMonitor({ Date: FakeDate });
+  const monitor = loadLatencyMonitor({ Date: FakeDate, performance: { now: () => now } });
   monitor.recordInputSend('input-1');
 
   now = 1120;
@@ -127,4 +127,138 @@ test('independent input ack measures browser RTT while frame timing measures vis
   stats = monitor.getStats();
   assert.equal(stats.inputRtt.count, 1);
   assert.equal(stats.visualFeedback.last, 180);
+});
+
+const { createLatencyMonitor, LATENCY_METRIC_NAMES } = require('./latency-monitor.js');
+test('frame notice is not ACK; snapshot expires without another input', () => {
+  let now = 1000;
+  const scope = { connectionAttemptId: 'test-a', generation: 1, leaseEpoch: 7 };
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(scope);
+  m.recordInputSend('test-input', { scope, domAtMs: 990, submittedAtMs: now,
+    inputType: 'mouse', action: 'down', transport: 'socket' });
+  now = 1040;
+  m.onFrameTiming({ inputIds: ['test-input'] }, { scope, nowMs: now });
+  assert.equal(m.snapshot({ nowMs: now, scope }).metrics.inputAckRttMs.count, 0);
+  assert.equal(m.snapshot({ nowMs: now, scope }).metrics.inputToVisibleEffectMs.available, false);
+  now = 1120;
+  const ack = { inputIds: ['test-input'], status: 'applied', hostAdapterAwaitMs: null };
+  m.onInputAck(ack, { scope, nowMs: now });
+  m.onInputAck(ack, { scope, nowMs: now });
+  const s = m.snapshot({ nowMs: now, scope });
+  assert.equal(s.metrics.inputAckRttMs.last, 120);
+  assert.equal(s.metrics.inputAckRttMs.count, 1);
+  assert.equal(s.metrics.hostAdapterAwaitMs.available, false);
+  assert.equal(s.outcomes.acked, 1);
+  assert.ok(LATENCY_METRIC_NAMES.includes('inputToFrameNoticeMs'));
+  now = 120000;
+  assert.equal(m.snapshot({ nowMs: now, scope }).metrics.inputAckRttMs.available, false);
+  assert.equal(m.snapshot({ nowMs: now, scope }).metrics.inputAckRttMs.count, 0);
+});
+
+const testScope = { connectionAttemptId: 'scope-a', generation: 1, leaseEpoch: 2 };
+function fixture() {
+  let t = 1000;
+  const timers = new Map(); let timerId = 0;
+  const m = createLatencyMonitor({ now: () => t,
+    schedule(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: t + ms }); return id; },
+    cancel(id) { timers.delete(id); },
+  });
+  m.setScope(testScope);
+  return { m, timers, set(t2) { t = t2; }, run() {
+    for (const [id, timer] of [...timers]) if (timer.at <= t) { timers.delete(id); timer.fn(); }
+  }, snapshot: () => m.snapshot({ nowMs: t, scope: testScope }) };
+}
+
+test('timeout and late ACK do not manufacture a successful RTT', () => {
+  const f = fixture(); f.m.recordInputSend('one', { scope: testScope });
+  f.set(11000); assert.equal(f.snapshot().outcomes.timedOut, 1);
+  f.set(12000); f.m.onInputAck({ inputIds: ['one'], status: 'applied', hostAdapterAwaitMs: 7 });
+  f.m.onInputAck({ inputIds: ['one'], status: 'applied', hostAdapterAwaitMs: 7 });
+  assert.equal(f.snapshot().outcomes.late, 1);
+  assert.equal(f.snapshot().metrics.inputAckRttMs.count, 0);
+  assert.equal(f.snapshot().metrics.hostAdapterAwaitMs.count, 0);
+});
+
+test('scope close settles cancelled inputs and atomically drains bounded final summaries', () => {
+  const f = fixture(); f.m.recordInputSend('one', { scope: testScope });
+  const next = { ...testScope, generation: 2 };
+  f.m.setScope(next);
+  f.m.onInputAck({ inputIds: ['one'], status: 'applied' }, { scope: testScope });
+  const s = f.m.snapshot({ scope: next });
+  assert.equal(s.metrics.inputAckRttMs.count, 0); assert.equal(s.outcomes.cancelled, 0);
+  const final = f.m.takeClosedScopeSummaries({ nowMs: 1000 });
+  assert.equal(final.summaries[0].snapshot.outcomes.cancelled, 1);
+  assert.deepEqual(f.m.takeClosedScopeSummaries({ nowMs: 1000 }), { summaries: [], dropped: 0 });
+  for (let generation = 3; generation < 10; generation++) f.m.setScope({ ...next, generation });
+  const bounded = f.m.takeClosedScopeSummaries({ nowMs: 1000 });
+  assert.equal(bounded.summaries.length, 4); assert.equal(bounded.dropped, 3);
+  f.m.setScope({ ...next, generation: 10 }); f.set(61001);
+  assert.deepEqual(f.m.takeClosedScopeSummaries({ nowMs: 61001 }), { summaries: [], dropped: 1 });
+});
+
+test('pause clears paint baseline and freshness while leaving pending ACK observation alive', () => {
+  const f = fixture(); f.m.onVideoFrame(1000); f.set(1050); f.m.onVideoFrame(1050);
+  f.m.recordStage('freshFrameAgeMs', 0, { atMs: 1050, scope: testScope, sampleKey: 'fresh' });
+  assert.equal(f.snapshot().metrics.freshFrameAgeMs.last, 0);
+  f.m.recordInputSend('pending', { scope: testScope });
+  f.m.setMediaState(false, { nowMs: 1050, scope: testScope });
+  assert.equal(f.snapshot().metrics.freshFrameAgeMs.available, false);
+  assert.equal(f.snapshot().outcomes.cancelled, 0);
+  f.set(301050); f.m.setMediaState(true, { nowMs: 301050, scope: testScope });
+  f.m.onVideoFrame(301050);
+  assert.equal(f.snapshot().metrics.paintIntervalMs.count, 0);
+});
+
+test('all numeric entries reject missing coerced nonfinite and negative values', () => {
+  for (const value of [null, undefined, '', NaN, Infinity, -1]) {
+    const f = fixture();
+    for (const name of LATENCY_METRIC_NAMES) f.m.recordStage(name, value, { scope: testScope, atMs: 1000, sampleKey: 'value' });
+    f.m.onMediaStats({ jitterBufferMs: value, rttMs: value });
+    for (const metric of Object.values(f.snapshot().metrics)) assert.equal(metric.available, false);
+  }
+});
+
+test('duplicate ACK and notices yield at most one RTT and adapter sample', () => {
+  const f = fixture(); f.m.recordInputSend('one'); f.set(1100);
+  const ack = { inputIds: ['one'], status: 'applied', hostAdapterAwaitMs: 20, hostQueueMs: 5, hostApplyMs: 10 };
+  f.m.onInputAck(ack); f.m.onInputAck(ack);
+  f.m.onFrameTiming({ inputIds: ['one'], timings: { inputToVisibleEffectMs: 123 }, schemaVersion: 2 });
+  f.m.onFrameTiming({ inputIds: ['one'] });
+  const s = f.snapshot();
+  for (const name of ['inputAckRttMs', 'hostAdapterAwaitMs', 'inputToFrameNoticeMs']) assert.equal(s.metrics[name].count, 1);
+  assert.equal(s.metrics.inputToVisibleEffectMs.count, 0);
+});
+
+test('clock sync times out retries rejects stale v0 and expires successful estimates', () => {
+  const f = fixture(); const messages = [];
+  assert.equal(f.m.requestClockSync(message => messages.push(message)), true);
+  assert.equal(messages.length, 1); f.set(3000); f.run();
+  assert.equal(f.m.requestClockSync(message => messages.push(message)), true);
+  f.set(3010);
+  assert.equal(f.m.handleClockSyncResponse({ v0: 1000, h0: 1, h1: 1 }), false);
+  assert.equal(f.m.handleClockSyncResponse({ v0: 3000, h0: 1, h1: 1 }), true);
+  assert.equal(f.m.getStats().sync.state, 'synced');
+  f.set(33000); f.run(); assert.equal(messages.length, 3);
+  f.set(63010); f.snapshot(); assert.notEqual(f.m.getStats().sync.state, 'synced');
+});
+
+test('pending and metric capacity evict observations without changing control state', () => {
+  const f = fixture();
+  for (let i = 0; i < 513; i++) assert.equal(f.m.recordInputSend(`pending-${i}`), true);
+  assert.equal(f.snapshot().outcomes.sent, 513); assert.equal(f.snapshot().outcomes.dropped, 1);
+  for (let i = 0; i < 4097; i++) f.m.recordStage(LATENCY_METRIC_NAMES[i % LATENCY_METRIC_NAMES.length === 12 ? 0 : i % LATENCY_METRIC_NAMES.length], 1, { atMs: 1000, sampleKey: `sample-${i}` });
+  let s = f.snapshot();
+  assert.ok(Object.values(s.metrics).reduce((total, item) => total + item.count, 0) <= 4096);
+  assert.ok(Object.values(s.metrics).every(item => item.count <= 256));
+  assert.ok(s.outcomes.dropped >= 2);
+  f.m.recordInputSend('still-accepted'); assert.equal(f.snapshot().outcomes.sent, 514);
+});
+
+test('backwards monotonic time and invalid scope cannot manufacture samples', () => {
+  const f = fixture(); f.m.recordInputSend('one'); f.set(999);
+  f.m.onInputAck({ inputIds: ['one'] });
+  assert.equal(f.snapshot().metrics.inputAckRttMs.count, 0);
+  f.set(1100); f.m.setScope({ ...testScope, connectionAttemptId: 'x'.repeat(129) });
+  f.m.onInputAck({ inputIds: ['one'] }); assert.equal(f.snapshot().metrics.inputAckRttMs.last, 100);
 });

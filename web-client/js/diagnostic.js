@@ -610,7 +610,7 @@ function updateLatencyPanel() {
   const stats = LatencyMonitor.getStats();
   const maxScale = 500; // ms, for bar width scaling
 
-  function setBar(id, value, warn, danger, available = Number.isFinite(Number(value))) {
+  function setBar(id, value, warn, danger, available = typeof value === 'number' && Number.isFinite(value)) {
     const bar = document.getElementById('bar' + id);
     const val = document.getElementById('val' + id);
     if (!bar || !val) return;
@@ -630,6 +630,9 @@ function updateLatencyPanel() {
   render('network', 'Network', 100, 300);
   render('playout', 'Playout', 200, 400);
   render('inputRtt', 'Input', 300, 800);
+  render('visualFeedback', 'Notice', 300, 800);
+  const visible = LatencyMonitor.snapshot?.().metrics?.inputToVisibleEffectMs;
+  setBar('Visible', visible?.p50, 300, 800, visible?.available === true);
 
   const syncEl = document.getElementById('latencySync');
   if (syncEl) {

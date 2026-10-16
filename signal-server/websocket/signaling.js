@@ -1356,7 +1356,14 @@ function setupSignaling(io, options = {}) {
       const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
       if (!viewerSocket) return;
       const inputIds = Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [];
-      const hostExecuteMs = Math.max(0, Number(data.hostExecuteMs || 0));
+      const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+      const hostExecuteMs = duration(data.hostExecuteMs);
+      const timing = data.timingSchemaVersion === 1 ? {
+        timingSchemaVersion: 1,
+        hostAdapterAwaitMs: duration(data.hostAdapterAwaitMs),
+        hostQueueMs: duration(data.hostQueueMs),
+        hostApplyMs: duration(data.hostApplyMs),
+      } : {};
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
         const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
@@ -1382,6 +1389,7 @@ function setupSignaling(io, options = {}) {
           ...(independentAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
           hostExecuteMs,
+          ...timing,
           transport: 'socket',
         });
         return;
@@ -1391,6 +1399,7 @@ function setupSignaling(io, options = {}) {
         schemaVersion: 1,
         inputIds,
         hostExecuteMs,
+        ...timing,
         transport: 'socket',
       });
     });

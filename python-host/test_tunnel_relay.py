@@ -28,6 +28,8 @@ async def test_tunnel_relay_allows_multiple_frames_in_flight_before_waiting_for_
     assert relay.should_wait_for_ack() is True
 
     relay.ack_event = asyncio.Event()
+    import time
+    relay.inflight_frames[2] = {"sent_at_ms": time.monotonic() * 1000, "generation": relay.production_generation}
     relay.ack(2)
     assert relay.last_acked_frame_id == 2
     assert relay.ack_event.is_set() is True
@@ -49,23 +51,27 @@ def test_tunnel_relay_blocks_capture_when_inflight_window_is_full():
     assert relay.should_wait_before_capture() is False
 
 
-def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback():
+def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback(monkeypatch):
     sio = FakeSio()
     relay = TunnelRelayStreamer(sio)
 
     assert relay.profile_name == "medium"
     assert relay.jpeg_quality == 26
 
-    relay.ack(1, latency_ms=1500)
+    monkeypatch.setattr("host.time.monotonic", lambda: 2.0)
+    relay.inflight_frames[1] = {"sent_at_ms": 500, "generation": relay.production_generation}
+    relay.ack(1, latency_ms=0)
     assert relay.profile_name == "low"
     assert relay.max_in_flight_frames == 1
 
-    relay.ack(2, latency_ms=1500)
+    relay.inflight_frames[2] = {"sent_at_ms": 500, "generation": relay.production_generation}
+    relay.ack(2, latency_ms=0)
     assert relay.profile_name == "survival"
     assert relay.jpeg_quality == 18
 
     relay.good_ack_streak = 3
-    relay.ack(3, latency_ms=180)
+    relay.inflight_frames[3] = {"sent_at_ms": 1820, "generation": relay.production_generation}
+    relay.ack(3, latency_ms=9999)
 
     assert relay.profile_name == "low"
 
@@ -81,17 +87,20 @@ def test_tunnel_relay_initial_profile_never_starts_on_high():
     assert relay._pick_initial_profile(1920, 1080, 30) == "medium"
 
 
-def test_tunnel_relay_step_up_caps_at_medium():
+def test_tunnel_relay_step_up_caps_at_medium(monkeypatch):
     sio = FakeSio()
     relay = TunnelRelayStreamer(sio)
     relay._apply_profile("low", reason="test", log=False)
 
     relay.good_ack_streak = 3
-    relay.ack(10, latency_ms=50)
+    monkeypatch.setattr("host.time.monotonic", lambda: 1.0)
+    relay.inflight_frames[10] = {"sent_at_ms": 950, "generation": relay.production_generation}
+    relay.ack(10, latency_ms=9999)
     assert relay.profile_name == "medium"
 
     relay.good_ack_streak = 3
-    relay.ack(11, latency_ms=20)
+    relay.inflight_frames[11] = {"sent_at_ms": 980, "generation": relay.production_generation}
+    relay.ack(11, latency_ms=9999)
     assert relay.profile_name == "medium"
 
 
