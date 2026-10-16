@@ -844,3 +844,106 @@ test('admin observability summary and recent endpoints return structured diagnos
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }
 });
+
+function runtimeFixture() {
+  const { createRuntimeDiagnosticBuilder } = require('../../web-client/js/runtime-diagnostic');
+  const sample = { schemaVersion: 3, windowMs: 5000, scope: { connectionAttemptId: 'RAW_SCOPE_CANARY', generation: 5, leaseEpoch: 8 },
+    metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 },
+      inputToVisibleEffectMs: { last: null, p50: null, p95: null, count: 0, available: false, lastSampleAgeMs: null },
+      UNKNOWN_METRIC_CANARY: { text: 'RAW_PAYLOAD_CANARY' } },
+    outcomes: { sent: 4, acked: 3, rejected: 0, timedOut: 1, late: 0, cancelled: 2, dropped: 0, unmatched: 0 } };
+  return createRuntimeDiagnosticBuilder({ nowMs: () => 1000000, wallNow: () => '2026-10-17T00:00:00Z', getLatency: () => sample,
+    getBuild: () => ({ id: '0123456789abcdef', builtAt: 1792195200000 }),
+    getInput: () => ({ inputState: { text: 'RAW_PAYLOAD_CANARY', recentInputEvents: [{ connectionAttemptId: 'RAW_SCOPE_CANARY', text: 'RAW_PAYLOAD_CANARY' }] },
+      inputTrace: { schemaVersion: 3, traceNowMs: 1000000, events: [{ stage: 'ack', at: 999999, connectionAttemptId: 'RAW_SCOPE_CANARY', payload: 'RAW_PAYLOAD_CANARY' }] } }),
+    getStartup: () => ({ marks: [{ name: 'first-frame', atMs: 4, detail: 'https://private.test/?URL_QUERY_CANARY' }, { name: 'URL_QUERY_CANARY', atMs: 8 }],
+      resources: [{ path: 'https://private.test/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' },
+        { path: '/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' }, { path: '/assets/core.0123456789abcdef.js', durationMs: 8 }] }),
+    takeClosedScopeSummaries: () => ({ summaries: [{ endedAtMs: 999999, snapshot: sample }], dropped: 3 }),
+  })({ reason: 'input-ack-timeout' });
+}
+
+test('real runtime redactor+ingest removes canaries and keeps exact M1 whitelist, nulls, ages and outcomes', () => {
+  const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
+  const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: runtimeFixture(), config: { enableDiagPersist: false } });
+  const report = result.report; const json = JSON.stringify(report);
+  for (const canary of ['RAW_SCOPE_CANARY', 'RAW_PAYLOAD_CANARY', 'UNKNOWN_METRIC_CANARY', 'URL_QUERY_CANARY', 'https://private.test']) assert.equal(json.includes(canary), false, canary);
+  assert.deepEqual(Object.keys(report.latency.metrics), LATENCY_METRIC_NAMES);
+  assert.deepEqual(report.latency.metrics.inputAckRttMs, { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 });
+  assert.equal(report.latency.metrics.inputToVisibleEffectMs.last, null);
+  assert.equal(report.latency.metrics.inputToVisibleEffectMs.lastSampleAgeMs, null);
+  assert.equal(report.latency.outcomes.cancelled, 2); assert.equal(report.scopeEnded.events[0].snapshot.outcomes.cancelled, 2);
+  assert.deepEqual(Object.keys(report.latency.scope), ['attemptHash', 'generation', 'leaseEpoch']);
+  assert.equal(report.inputTrace.events[0].at, 999999); assert.equal(report.inputTrace.traceNowMs, 1000000);
+  assert.equal(report.startup.resources.length, 1); assert.equal(report.build.builtAt, 1792195200000);
+  assert.equal(result.receipt.accepted, false); assert.deepEqual(result.receipt.eventIdHashes, []);
+});
+
+test('durable receipt ledger dedupes reports and scope events after raw eviction and process-style reload', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-ledger-'));
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const payload = runtimeFixture(); const ingest = data => ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data, config: { enableDiagPersist: true }, logger: {} });
+    const first = ingest(payload); assert.equal(first.persisted, true); assert.equal(first.receipt.eventIdHashes.length, 1);
+    for (const name of fs.readdirSync(dir).filter(name => name.endsWith('.json'))) fs.unlinkSync(path.join(dir, name));
+    const again = ingest(payload); assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
+    assert.deepEqual(again.receipt, first.receipt); assert.equal(fs.readdirSync(dir).filter(name => name.endsWith('.json')).length, 0);
+    const next = ingest({ ...payload, diagnosticId: 'f'.repeat(32) }); assert.equal(next.duplicate, false);
+    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 0); // already persisted, raw intentionally evicted
+    const ledger = require('../lib/diagnostic').loadDiagnosticReceipts();
+    assert.equal(ledger.records.filter(row => row.kind === 'scope-ended').length, 1);
+    assert.equal(JSON.stringify(ledger).includes('RAW_'), false);
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('partial raw persistence failure returns no confirmation and retry completes existing event once', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-partial-'));
+  process.env.WRD_DIAG_DIR = dir;
+  const writeFile = fs.writeFileSync;
+  try {
+    const payload = runtimeFixture();
+    fs.writeFileSync = function(file, ...args) { if (String(file).includes('runtime_')) throw Error('simulated-raw-write-failure'); return writeFile.call(this, file, ...args); };
+    const options = { role: 'viewer', viewerId: 'unit', data: payload, config: { enableDiagPersist: true }, logger: {} };
+    const failed = ingestDiagnosticPayload(options); assert.equal(failed.persisted, false); assert.equal(failed.receipt.accepted, false); assert.deepEqual(failed.receipt.eventIdHashes, []);
+    fs.writeFileSync = writeFile;
+    const retry = ingestDiagnosticPayload(options); assert.equal(retry.persisted, true); assert.equal(retry.receipt.eventIdHashes.length, 1);
+    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 1);
+    assert.equal(ingestDiagnosticPayload(options).duplicate, true);
+  } finally { fs.writeFileSync = writeFile; if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('receipt index is bounded to 10k entries and a 24h dedupe horizon', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-index-'));
+  process.env.WRD_DIAG_DIR = dir;
+  const { loadDiagnosticReceipts, saveDiagnosticReceipts } = require('../lib/diagnostic');
+  try {
+    const now = Date.now(); const records = Array.from({ length: 10005 }, (_, i) => ({ kind: 'scope-ended', key: i.toString(16).padStart(32, '0'), at: now }));
+    saveDiagnosticReceipts({ records }); assert.equal(loadDiagnosticReceipts(now).records.length, 10000);
+    assert.equal(loadDiagnosticReceipts(now + 24 * 60 * 60 * 1000 + 1).records.length, 0);
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('diagnostic socket confirms only persisted IDs and preserves viewer authorization gates', () => {
+  const { setupSignaling } = require('../websocket/signaling');
+  const { createRuntimeContext } = require('../websocket/runtime-context');
+  const { FakeSocket, makeIo } = require('../websocket/signaling-test-fixture');
+  const { loadConfig } = require('../lib/config');
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-socket-'));
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const context = createRuntimeContext(); const io = makeIo();
+    setupSignaling(io, { runtimeContext: context, config: { ...loadConfig(), enableDiagPersist: true }, logger: {} });
+    const viewer = new FakeSocket('w3a-active', 'viewer'); io.connect(viewer);
+    const handler = viewer.listeners('diagnostic')[0]; const receipts = []; const payload = runtimeFixture();
+    handler(payload, receipt => receipts.push(receipt)); handler(payload, receipt => receipts.push(receipt));
+    assert.equal(receipts.length, 2); assert.deepEqual(receipts[0], receipts[1]); assert.equal(receipts[0].accepted, true);
+    assert.equal(receipts[0].diagnosticId, payload.diagnosticId); assert.equal(receipts[0].eventIdHashes.length, 1);
+    assert.equal(viewer.sent.some(message => message.event === 'control-grant'), false); // Diagnostic ACK never grants control.
+    viewer.disconnect(); handler(payload, receipt => receipts.push(receipt)); assert.equal(receipts.length, 2);
+    const context2 = createRuntimeContext(); const io2 = makeIo();
+    setupSignaling(io2, { runtimeContext: context2, config: { ...loadConfig(), enableDiagPersist: false }, logger: {} });
+    const noPersist = new FakeSocket('w3a-no-persist', 'viewer'); io2.connect(noPersist);
+    noPersist.listeners('diagnostic')[0](payload, receipt => { assert.equal(receipt.accepted, false); assert.deepEqual(receipt.eventIdHashes, []); });
+    noPersist.disconnect();
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});

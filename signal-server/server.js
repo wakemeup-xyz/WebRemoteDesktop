@@ -388,15 +388,17 @@ function createServerApp(options = {}) {
         error: result.error,
       });
     }
-    recentEventStore.append(result.summaryEvent);
-    structuredLogger.info(result.summaryEvent);
+    if (result.summaryEvent) {
+      recentEventStore.append(result.summaryEvent);
+      structuredLogger.info(result.summaryEvent);
+    }
 
-    if (signalingRuntime.connections.host) {
+    if (!result.duplicate && signalingRuntime.connections.host) {
       signalingRuntime.connections.host.emit('diagnostic', result.report);
     }
 
     return res.status(202).json({
-      accepted: true,
+      ...(result.report.diagnosticId ? result.receipt : { accepted: true }),
       connectionAttemptId: result.connectionAttemptId,
     });
   });

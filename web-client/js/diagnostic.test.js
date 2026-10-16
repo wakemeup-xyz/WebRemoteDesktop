@@ -29,6 +29,10 @@ function makeElement(id) {
 }
 
 function loadScript(filename, context, exportName) {
+  if (!context.createRuntimeDiagnosticBuilder) vm.runInContext(fs.readFileSync(path.join(__dirname, 'runtime-diagnostic.js'), 'utf8'), context);
+  if (filename === 'diagnostic.js' && !context.window.Diagnostic?.buildRuntimeDiagnostic) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  }
   const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__exported = ${exportName};`, context);
   return context.__exported;
@@ -42,7 +46,7 @@ test('diagnostic core keeps the critical input trace through deferred panel load
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
   const Diagnostic = context.window.Diagnostic;
   const firstSnapshot = Diagnostic.getInputTraceSnapshot();
-  assert.equal(firstSnapshot.schemaVersion, 1);
+  assert.equal(firstSnapshot.schemaVersion, 3);
   Diagnostic.recordInputTrace('dom-received', {
     inputType: 'keyboard', action: 'key', phase: 'down',
     focusKind: 'desktop', visibility: 'visible',
@@ -189,6 +193,8 @@ function createDiagnosticContext(overrides = {}) {
   };
   context.globalThis = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'runtime-diagnostic.js'), 'utf8'), context);
+  context.LATENCY_METRIC_NAMES = require('./latency-monitor').LATENCY_METRIC_NAMES;
   return { context, elements, storage: context.localStorage };
 }
 
@@ -283,10 +289,10 @@ test('manual and automatic diagnostics share the complete safe input snapshot an
   const manual = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual', reason: 'manual' });
   const automatic = Diagnostic.buildConnectionDiagnostic({ trigger: 'auto-failure', reason: 'pc-failed' });
 
-  assert.deepEqual(manual.inputState, safeInputState);
-  assert.deepEqual(manual.inputTrace, inputTrace);
-  assert.deepEqual(automatic.inputState, safeInputState);
-  assert.deepEqual(automatic.inputTrace, inputTrace);
+  assert.deepEqual(JSON.parse(JSON.stringify(manual.inputState)), safeInputState);
+  assert.deepEqual(JSON.parse(JSON.stringify(manual.inputTrace)), inputTrace);
+  assert.deepEqual(JSON.parse(JSON.stringify(automatic.inputState)), safeInputState);
+  assert.deepEqual(JSON.parse(JSON.stringify(automatic.inputTrace)), inputTrace);
 });
 
 test('sendLogs waits for the shared sender, uses authenticated HTTP when disconnected, and reports failure', async () => {
@@ -622,7 +628,7 @@ test('replayPendingDiagnostics replays at most two queued diagnostics and remove
   assert.deepEqual(JSON.parse(storage.getItem('wrdPendingDiagnostics')), [{ connectionAttemptId: 'wrd-3' }]);
 });
 
-test('enqueuePendingDiagnostic keeps one payload per connectionAttemptId', () => {
+test('enqueuePendingDiagnostic preserves the first capture per connectionAttemptId', () => {
   const { context, storage } = createDiagnosticContext();
   const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
   Diagnostic.enqueuePendingDiagnostic({ connectionAttemptId: 'a1', reason: 'first' });
@@ -631,7 +637,7 @@ test('enqueuePendingDiagnostic keeps one payload per connectionAttemptId', () =>
   const queued = JSON.parse(storage.getItem('wrdPendingDiagnostics'));
   assert.equal(queued.length, 2);
   const a1 = queued.find((item) => item.connectionAttemptId === 'a1');
-  assert.equal(a1.reason, 'second');
+  assert.equal(a1.reason, 'first');
 });
 
 test('autoSendFailure and replayPendingDiagnostics share unified per-attempt cooldown', async () => {
@@ -651,7 +657,8 @@ test('autoSendFailure and replayPendingDiagnostics share unified per-attempt coo
   assert.equal(emitted.length, 1);
   const pending = JSON.parse(storage.getItem('wrdPendingDiagnostics') || '[]');
   assert.equal(pending.length, 1);
-  assert.equal(pending[0].connectionAttemptId, 'attempt-cool');
+  assert.match(pending[0].connectionAttemptId, /^[a-f0-9]{32}$/);
+  assert.equal(Diagnostic.getPendingDiagnostics()[0].connectionAttemptId, 'attempt-cool');
   const replayed = await Diagnostic.replayPendingDiagnostics(context.WebRTC.socket);
   assert.equal(replayed, 0);
   assert.equal(emitted.length, 1);
@@ -955,4 +962,102 @@ test('managed late deferred script cannot mark itself ready or start its interva
   assert.notEqual(Diagnostic._panelInitialized, true);
   Diagnostic.init();
   assert.equal(intervals, 1);
+});
+
+test('core auto failure captures M1 without loading deferred scripts and manual uses the same builder', async () => {
+  const { context } = createDiagnosticContext();
+  const sample = { schemaVersion: 3, scope: null, windowMs: 5000,
+    metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 } },
+    outcomes: { sent: 4, acked: 3, rejected: 0, timedOut: 1, late: 0, cancelled: 0, dropped: 0, unmatched: 0 } };
+  context.LatencyMonitor = { snapshot: () => sample }; context.window.LatencyMonitor = context.LatencyMonitor;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic; const sent = [];
+  Diagnostic.sendConnectionDiagnostic = payload => { sent.push(payload); return true; };
+  Diagnostic.autoSendFailure('input-ack-timeout');
+  assert.equal(sent.length, 1); assert.equal(Diagnostic.panelReady, false);
+  loadScript('diagnostic.js', context, 'Diagnostic');
+  await Diagnostic.sendLogs();
+  for (const payload of sent) {
+    assert.equal(payload.schemaVersion, 3); assert.equal(payload.latency.metrics.inputAckRttMs.last, 42);
+    assert.equal(payload.latency.outcomes.timedOut, 1); assert.ok(payload.diagnosticId); assert.ok(payload.captured.bootIdHash);
+    assert.ok(payload.build); assert.ok(payload.scopeEnded); assert.ok(payload.startup);
+  }
+  assert.equal(sent.length, 2);
+});
+
+test('actual auto failure retries captured ID/time/latency and drains M1 only once through server receipt', async () => {
+  const os = require('node:os'); const { ingestDiagnosticPayload } = require('../../signal-server/lib/diagnostic');
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-retry-'));
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const { context } = createDiagnosticContext({ fetch: async () => ({ ok: false }) });
+    let drains = 0; let snapshotCalls = 0;
+    const snapshot = { schemaVersion: 3, scope: { connectionAttemptId: 'old-scope', generation: 1, leaseEpoch: 1 }, windowMs: 5000,
+      metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 } },
+      outcomes: { sent: 2, acked: 0, rejected: 0, timedOut: 0, late: 0, cancelled: 2, dropped: 0, unmatched: 0 } };
+    context.LatencyMonitor = { snapshot: () => { snapshotCalls++; return { ...snapshot, outcomes: { ...snapshot.outcomes, sent: 0, cancelled: 0 } }; },
+      takeClosedScopeSummaries: () => { drains++; return { summaries: [{ endedAtMs: 120, snapshot }, { endedAtMs: 121, snapshot }], dropped: 0 }; } };
+    context.WebRTC.socket = { connected: false };
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+    const Diagnostic = context.window.Diagnostic;
+    assert.equal(await Diagnostic.autoSendFailure('pc-failed'), false);
+    const failure = Diagnostic.getPendingDiagnostics()[0]; assert.equal(drains, 1); assert.equal(failure.scopeEnded.events.length, 2);
+    const sent = []; const receipts = [];
+    const socket = { connected: true, emit(event, payload, ack) {
+      sent.push(JSON.parse(JSON.stringify(payload)));
+      const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'viewer-test', data: payload, config: { enableDiagPersist: true }, logger: {} });
+      receipts.push(result.receipt); ack(result.receipt);
+    } };
+    Diagnostic.autoSendByAttempt = {};
+    assert.equal(await Diagnostic.replayPendingDiagnostics(socket), 1);
+    assert.equal(drains, 1); assert.equal(snapshotCalls, 1);
+    assert.equal(sent[0].diagnosticId, failure.diagnosticId); assert.deepEqual(sent[0].captured, JSON.parse(JSON.stringify(failure.captured)));
+    assert.equal(sent[0].latency.metrics.inputAckRttMs.last, 42); assert.equal(sent[0].latency.outcomes.sent, 0);
+    assert.equal(Diagnostic.getPendingDiagnostics().length, 0);
+    const again = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'viewer-test', data: failure, config: { enableDiagPersist: true }, logger: {} });
+    assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
+    assert.equal(fs.readdirSync(dir).filter(name => name.startsWith('scope-ended_')).length, 2);
+    assert.equal(receipts[0].eventIdHashes.length, 2);
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('core without M1 reports unavailable immediately and never injects a script', () => {
+  const { context } = createDiagnosticContext(); let scriptRequests = 0;
+  context.document.createElement = () => { scriptRequests++; throw Error('unexpected lazy request'); };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic; const sent = [];
+  Diagnostic.sendConnectionDiagnostic = payload => sent.push(payload);
+  Diagnostic.autoSendFailure('pc-failed');
+  assert.equal(sent.length, 1); assert.equal(scriptRequests, 0); assert.equal(sent[0].latency, null);
+  assert.equal(sent[0].latencyStatus, 'collector-unavailable');
+});
+
+test('latency panel uses input ACK metric and fresh age last, never the gauge placeholder quantiles', () => {
+  const { context, elements } = createDiagnosticContext();
+  for (const id of ['valFresh', 'barFresh', 'valVisible', 'barVisible']) elements.set(id, makeElement(id));
+  context.LatencyMonitor = { getStats: () => ({ sync: { state: 'idle' } }), snapshot: () => ({ metrics: {
+    inputAckRttMs: { p50: 42, available: true }, freshFrameAgeMs: { last: 8, p50: 999, p95: 1000, available: true },
+    inputToVisibleEffectMs: { p50: 123, available: false },
+  } }) };
+  loadScript('diagnostic.js', context, 'updateLatencyPanel')();
+  assert.equal(elements.get('valInput').textContent, '42ms'); assert.equal(elements.get('valFresh').textContent, '8ms');
+  assert.equal(elements.get('valVisible').textContent, '未测量');
+});
+
+test('runtime localStorage retains failure metrics and hashes scope while removing raw UI content and URLs', async () => {
+  const { context, storage } = createDiagnosticContext({ fetch: async () => ({ ok: false }) });
+  context.WebRTC.socket = { connected: false }; context.WebRTC.currentConnectionAttemptId = 'PRIVATE_SCOPE_CANARY';
+  context.LatencyMonitor = { snapshot: () => ({ schemaVersion: 3, windowMs: 5000,
+    scope: { connectionAttemptId: 'PRIVATE_SCOPE_CANARY', generation: 1, leaseEpoch: 2 },
+    metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 },
+      SECRET_METRIC_CANARY: { payload: 'PRIVATE_PAYLOAD_CANARY' } }, outcomes: { sent: 4, acked: 3 } }) };
+  context.Input = { getDiagnosticState: () => ({ text: 'PRIVATE_PAYLOAD_CANARY' }) };
+  context.__WRD_STARTUP_SNAPSHOT__ = () => ({ resources: [{ path: 'https://private.test/?PRIVATE_URL_CANARY' }] });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  await Diagnostic.autoSendFailure('pc-failed');
+  const encoded = storage.getItem('wrdPendingDiagnostics');
+  for (const canary of ['PRIVATE_SCOPE_CANARY', 'PRIVATE_PAYLOAD_CANARY', 'PRIVATE_URL_CANARY', 'SECRET_METRIC_CANARY']) assert.equal(encoded.includes(canary), false, canary);
+  const saved = JSON.parse(encoded)[0]; assert.equal(saved.latency.metrics.inputAckRttMs.last, 42); assert.ok(saved.latency.scope.attemptHash);
+  assert.equal(Diagnostic.getPendingDiagnostics()[0].latency.scope.connectionAttemptId, 'PRIVATE_SCOPE_CANARY');
 });

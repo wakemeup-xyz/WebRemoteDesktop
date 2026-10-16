@@ -157,6 +157,7 @@
 
   function create(options) {
     const config = options || {};
+    const schemaVersion = config.schemaVersion === 3 ? 3 : 1;
     const now = typeof config.now === 'function'
       ? config.now
       : () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -198,7 +199,16 @@
       return currentTime(now);
     }
 
+    function traceNowMs() {
+      try {
+        const value = now();
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER
+          ? Math.floor(value) : null;
+      } catch (_error) { return null; }
+    }
+
     function relativeTime() {
+      if (schemaVersion === 3) return traceNowMs();
       const current = safeNow();
       if (traceOrigin === null) traceOrigin = current;
       return Math.max(0, Math.min(MAX_RELATIVE_TIME_MS, Math.round(current - traceOrigin)));
@@ -227,7 +237,8 @@
 
     function snapshotObject() {
       return {
-        schemaVersion: 1,
+        schemaVersion,
+        ...(schemaVersion === 3 ? { traceNowMs: traceNowMs() } : {}),
         events: events.map(publicEvent),
         counters: publicCounters(),
       };
@@ -554,7 +565,7 @@
         // expose internal correlation state through object references.
         return JSON.parse(JSON.stringify(result));
       } catch (_error) {
-        return { schemaVersion: 1, events: [], counters: publicCounters() };
+        return { schemaVersion, ...(schemaVersion === 3 ? { traceNowMs: traceNowMs() } : {}), events: [], counters: publicCounters() };
       }
     }
 

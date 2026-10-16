@@ -2,6 +2,100 @@ const fs = require('fs');
 const path = require('path');
 const { loadConfig } = require('./config');
 
+const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
+const crypto = require('node:crypto');
+const hashIdentity = value => typeof value === 'string' && value.length > 0
+  ? crypto.createHash('sha256').update(value).digest('hex').slice(0, 32) : null;
+const finiteNonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
+const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
+function redactLatency(snapshot) {
+  if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
+  const metrics = {};
+  // Shared with the producer. Never add an independent list of latency names.
+  for (const name of LATENCY_METRIC_NAMES) {
+    const item = snapshot.metrics?.[name];
+    metrics[name] = {
+      last: finiteNonnegative(item?.last), p50: finiteNonnegative(item?.p50), p95: finiteNonnegative(item?.p95),
+      count: countValue(item?.count), available: item?.available === true,
+      lastSampleAgeMs: finiteNonnegative(item?.lastSampleAgeMs),
+    };
+  }
+  const rawScope = snapshot.scope;
+  const scope = isRecord(rawScope) ? { attemptHash: digestValue(rawScope.attemptHash) || hashIdentity(rawScope.connectionAttemptId),
+    generation: safeInteger(rawScope.generation, Number.MAX_SAFE_INTEGER), leaseEpoch: safeInteger(rawScope.leaseEpoch, Number.MAX_SAFE_INTEGER) } : null;
+  return { schemaVersion: 3, windowMs: 5000, scope, metrics,
+    outcomes: Object.fromEntries(OUTCOME_NAMES.map(name => [name, countValue(snapshot.outcomes?.[name])])) };
+}
+const STARTUP_MARKS = new Set(['html-shell', 'core-failed', 'core-interactive', 'start-click', 'bootstrap-start',
+  'bootstrap-ready', 'bootstrap-degraded', 'signal-connected', 'first-frame', 'active']);
+function redactStartup(value) {
+  const marks = Array.isArray(value?.marks) ? value.marks : [];
+  return { marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
+    .map(mark => ({ name: mark.name, atMs: finiteNonnegative(mark.atMs ?? mark.at) })),
+    resources: (Array.isArray(value?.resources) ? value.resources : []).filter(resource =>
+      typeof resource?.path === 'string' && /^\/?assets\/[a-z0-9-]+\.[a-f0-9]{8,64}\.(js|css)$/.test(resource.path))
+      .slice(0, 10).map(resource => ({ path: resource.path, durationMs: finiteNonnegative(resource.durationMs) })) };
+}
+function redactBuild(value) {
+  const builtAt = Number.isSafeInteger(value?.builtAt) && value.builtAt >= 0 ? value.builtAt
+    : (typeof value?.builtAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value.builtAt) ? value.builtAt : null);
+  return { id: digestValue(value?.id), builtAt };
+}
+function redactRuntimeDiagnostic(payload) {
+  const latency = redactLatency(payload.latency);
+  const inputTrace = redactInputTrace(payload.inputTrace);
+  if (inputTrace) {
+    inputTrace.schemaVersion = 3;
+    inputTrace.traceNowMs = safeInteger(payload.inputTrace?.traceNowMs, Number.MAX_SAFE_INTEGER);
+    for (const event of inputTrace.events) {
+      if (event.connectionAttemptId) { event.attemptHash = hashIdentity(event.connectionAttemptId); delete event.connectionAttemptId; }
+    }
+  }
+  const inputState = redactInputState(payload.inputState);
+  if (inputState) for (const event of inputState.recentInputEvents) {
+    if (event.connectionAttemptId) { event.attemptHash = hashIdentity(event.connectionAttemptId); delete event.connectionAttemptId; }
+  }
+  const events = []; let dropped = countValue(payload.scopeEnded?.dropped);
+  for (const event of (Array.isArray(payload.scopeEnded?.events) ? payload.scopeEnded.events : [])) {
+    const snapshot = redactLatency(event?.snapshot);
+    const eventIdHash = digestValue(event?.eventIdHash);
+    const endedAtMs = finiteNonnegative(event?.endedAtMs);
+    if (!snapshot || !eventIdHash || endedAtMs === null || events.some(item => item.eventIdHash === eventIdHash)) { dropped++; continue; }
+    events.push({ eventIdHash, endedAtMs, snapshot });
+    while (events.length > 4 || Buffer.byteLength(JSON.stringify(events)) > 32 * 1024) { events.shift(); dropped++; }
+  }
+  const captured = payload.captured || {};
+  const wallTime = typeof captured.wallTime === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(captured.wallTime) ? captured.wallTime : null;
+  const clean = { type: 'connection-diagnostic', schemaVersion: 3, diagnosticId: digestValue(payload.diagnosticId),
+    reason: safeReason(payload.reason) || safeEnum(payload.reason, new Set(['pc-failed', 'pc-disconnected', 'ice-disconnected', 'dc-error', 'dc-stuck', 'manual'])),
+    trigger: safeEnum(payload.trigger, new Set(['manual', 'auto-failure'])) || 'manual',
+    connectionAttemptId: hashIdentity(payload.connectionAttemptId), browserSessionId: hashIdentity(payload.browserSessionId),
+    mode: safeEnum(payload.mode, new Set(['auto', 'direct', 'relay', 'tunnel', 'stun', 'turn'])),
+    captured: { wallTime, monotonicMs: finiteNonnegative(captured.monotonicMs), bootIdHash: digestValue(captured.bootIdHash) },
+    build: redactBuild(payload.build), latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
+    inputState, inputTrace, startup: redactStartup(payload.startup), resources: null,
+    scopeEnded: { events, dropped }, logs: [], keyboardDebug: [], events: [], probeResults: [], inputChannelTimeline: [],
+    traceSummary: {},
+  };
+  for (const key of ['receivedDelta', 'decodedDelta', 'derivedFps', 'bytesDelta', 'framesDroppedDelta', 'packetsReceivedDelta',
+    'nackCountDelta', 'pliCountDelta', 'firCountDelta', 'freezeDelta', 'videoWidth', 'videoHeight', 'readyState', 'jitterBufferMs']) {
+    const value = finiteNonnegative(payload.traceSummary?.[key]);
+    if (value !== null) clean.traceSummary[key] = value;
+  }
+  for (const key of ['hasPaintedFrame', 'keyframeRequested', 'keyframeEmitted', 'explicitOverride1080']) {
+    const value = payload.traceSummary?.[key];
+    if (typeof value === 'boolean') clean.traceSummary[key] = value;
+  }
+  // Trim only optional context; mandatory schema/capture/build/M1 explanation remains.
+  clean.truncation = { dropped: countValue(payload.truncation?.dropped) };
+  while (Buffer.byteLength(JSON.stringify(clean)) > 128 * 1024 && clean.inputTrace?.events.length) {
+    clean.inputTrace.events.shift(); clean.truncation.dropped++;
+  }
+  return clean;
+}
+
 const DIAG_MAX_AGE_DAYS = 7;
 const DIAG_MAX_PER_VIEWER = 3;
 const DIAG_MAX_TOTAL = 50;
@@ -133,7 +227,7 @@ function safeTraceEvent(event) {
   const eventType = safeEnum(event.type, INPUT_DIAGNOSTIC_EVENT_TYPES);
   if (eventType !== null) clean.type = eventType;
   copyEnum('stage', new Set(['dom-received', 'gate', 'transport-send', 'ack', 'ack-timeout', 'lifecycle', 'recovery']));
-  copyInteger('at', 10 * 60 * 1000);
+  copyInteger('at', Number.MAX_SAFE_INTEGER);
   copyEnum('inputType', INPUT_DIAGNOSTIC_TYPES);
   copyEnum('action', INPUT_DIAGNOSTIC_ACTIONS);
   copyEnum('phase', INPUT_DIAGNOSTIC_PHASES);
@@ -327,6 +421,7 @@ function redactInputState(inputState) {
 }
 
 function redactDiagnosticPayload(payload) {
+  if (payload.schemaVersion === 3 && payload.captured && payload.diagnosticId) return redactRuntimeDiagnostic(payload);
   const recentLogs = Array.isArray(payload.logs) ? payload.logs.slice(-120) : [];
   const network = payload.network && typeof payload.network === 'object'
     ? {
@@ -361,10 +456,68 @@ function getDiagDir() {
   return path.join('/tmp', 'wrd-diag');
 }
 
+function writeJsonAtomically(target, value) {
+  const temporary = `${target}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(value), { encoding: 'utf8', flag: 'wx' });
+    const file = fs.openSync(temporary, 'r');
+    try { fs.fsyncSync(file); } finally { fs.closeSync(file); }
+    fs.renameSync(temporary, target);
+    const directory = fs.openSync(path.dirname(target), 'r');
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+  } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+}
 function persistDiagnostic(filename, report) {
   const dir = getDiagDir();
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, filename), JSON.stringify(report, null, 2), 'utf8');
+  writeJsonAtomically(path.join(dir, path.basename(filename)), report);
+}
+
+// One durable receipt index, shared by raw/event persistence and future summaries.
+// Hash-only keys expire after 24h; eviction at 10k entries bounds dedupe coverage.
+const RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
+const RECEIPT_MAX_ENTRIES = 10000;
+function loadDiagnosticReceipts(now = Date.now()) {
+  const target = path.join(getDiagDir(), '.receipt-index');
+  let records = [];
+  if (fs.existsSync(target)) {
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw Error('invalid-receipt-index');
+    const value = JSON.parse(fs.readFileSync(target, 'utf8'));
+    if (value.schemaVersion !== 1 || !Array.isArray(value.records)) throw Error('invalid-receipt-index');
+    records = value.records.filter(row => row && ['report', 'scope-ended'].includes(row.kind)
+      && digestValue(row.key) && Number.isSafeInteger(row.at) && row.at <= now && now - row.at <= RECEIPT_TTL_MS)
+      .slice(-RECEIPT_MAX_ENTRIES).map(row => ({ kind: row.kind, key: row.key, at: row.at,
+        ...(row.kind === 'report' ? { eventIdHashes: (Array.isArray(row.eventIdHashes) ? row.eventIdHashes : []).filter(digestValue).slice(0, 4) } : {}) }));
+  }
+  return { schemaVersion: 1, records };
+}
+function saveDiagnosticReceipts(index) {
+  const dir = getDiagDir(); fs.mkdirSync(dir, { recursive: true });
+  writeJsonAtomically(path.join(dir, '.receipt-index'), { schemaVersion: 1, records: index.records.slice(-RECEIPT_MAX_ENTRIES) });
+}
+function persistDiagnosticOnce(report, { viewerId, receivedAt, now = Date.now() }) {
+  const index = loadDiagnosticReceipts(now);
+  const reportKey = hashIdentity(report.diagnosticId);
+  const existing = index.records.find(row => row.kind === 'report' && row.key === reportKey);
+  if (existing) return { persisted: true, duplicate: true, eventIdHashes: existing.eventIdHashes || [], receiptKey: reportKey };
+  const eventIdHashes = [];
+  for (const event of (report.scopeEnded?.events || [])) {
+    const existingEvent = index.records.find(row => row.kind === 'scope-ended' && row.key === event.eventIdHash);
+    if (!existingEvent) {
+      const filename = `scope-ended_${event.eventIdHash}.json`;
+      if (!fs.existsSync(path.join(getDiagDir(), filename))) persistDiagnostic(filename, { type: 'scope-ended', schemaVersion: 3,
+        receivedAt, eventIdHash: event.eventIdHash, endedAtMs: event.endedAtMs, snapshot: event.snapshot });
+      index.records.push({ kind: 'scope-ended', key: event.eventIdHash, at: now });
+    }
+    eventIdHashes.push(event.eventIdHash);
+  }
+  const filename = `runtime_${reportKey}_${hashIdentity(viewerId)}.json`;
+  if (!fs.existsSync(path.join(getDiagDir(), filename))) persistDiagnostic(filename, report);
+  // Completion is recorded only after every event and the raw report were written.
+  index.records.push({ kind: 'report', key: reportKey, at: now, eventIdHashes });
+  saveDiagnosticReceipts(index);
+  return { persisted: true, duplicate: false, eventIdHashes, receiptKey: reportKey };
 }
 
 function cleanupDiagLogs(logger = console) {
@@ -589,6 +742,7 @@ function ingestDiagnosticPayload(options = {}) {
     return { accepted: false, error: 'viewer-only' };
   }
 
+  if (data?.schemaVersion === 3 && data.captured && !digestValue(data.diagnosticId)) return { accepted: false, error: 'invalid-runtime-diagnostic' };
   const redacted = redactDiagnosticPayload(data || {});
   const receivedAt = new Date().toISOString();
   const connectionAttemptId = String(redacted.connectionAttemptId || '').trim() || `attempt-${Date.now()}`;
@@ -634,6 +788,10 @@ function ingestDiagnosticPayload(options = {}) {
     inputChannelTimeline: Array.isArray(redacted.inputChannelTimeline) ? redacted.inputChannelTimeline : [],
   };
 
+  if (redacted.diagnosticId && redacted.captured) {
+    for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation']) report[key] = redacted[key];
+  }
+
   if (redacted.failureCategory != null) {
     report.failureCategory = redacted.failureCategory;
   }
@@ -663,14 +821,18 @@ function ingestDiagnosticPayload(options = {}) {
   }
 
   let persisted = false;
+  let duplicate = false;
+  let eventIdHashes = [];
   if (config.enableDiagPersist) {
     try {
+      if (report.diagnosticId) {
+        ({ persisted, duplicate, eventIdHashes } = persistDiagnosticOnce(report, { viewerId, receivedAt }));
+      } else {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        persistDiagnostic(`${ts}_${viewerId}.json`, report);
+        persisted = true;
+      }
       cleanupDiagLogs(logger);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `${ts}_${viewerId}.json`;
-      persistDiagnostic(filename, report);
-      persisted = true;
-      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join(getDiagDir(), filename)}`);
     } catch (error) {
       logger.error?.('[DIAGNOSTIC] Failed to write log file:', error.message);
     }
@@ -679,13 +841,19 @@ function ingestDiagnosticPayload(options = {}) {
   return {
     accepted: true,
     connectionAttemptId,
+    persisted, duplicate,
+    receipt: { accepted: persisted, diagnosticId: persisted ? report.diagnosticId || null : null, eventIdHashes: persisted ? eventIdHashes : [] },
     report,
-    summaryEvent: buildDiagnosticSummaryEvent(report, { persisted, socketId }),
+    summaryEvent: duplicate ? null : buildDiagnosticSummaryEvent(report, { persisted, socketId }),
   };
 }
 
 module.exports = {
   redactDiagnosticPayload,
+  redactLatency,
+  loadDiagnosticReceipts,
+  saveDiagnosticReceipts,
+  persistDiagnosticOnce,
   getDiagDir,
   persistDiagnostic,
   cleanupDiagLogs,

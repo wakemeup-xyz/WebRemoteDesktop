@@ -318,3 +318,22 @@ test('aggregates high-frequency move and wheel input without per-event traces or
   assert.equal(snapshot.counters.mouseMoveCount, 1500);
   assert.equal(snapshot.counters.wheelCount, 500);
 });
+
+test('optional schema3 retains monotonic timestamps beyond ten minutes with matching traceNowMs', () => {
+  let now = 700000.9;
+  const trace = requireCollector().create({ schemaVersion: 3, now: () => now, hashInputIds: null });
+  trace.record('lifecycle', { inputType: 'control', action: 'pause', text: 'TRACE_CLOCK_CANARY' });
+  now = 1300123.8; trace.record('lifecycle', { inputType: 'control', action: 'resume' });
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.schemaVersion, 3); assert.deepEqual(snapshot.events.map(event => event.at), [700000, 1300123]);
+  assert.equal(snapshot.traceNowMs, 1300123); assert.equal(snapshot.traceNowMs - snapshot.events[0].at, 600123);
+  assert.equal(JSON.stringify(snapshot).includes('TRACE_CLOCK_CANARY'), false);
+  trace.dispose();
+});
+test('schema3 timestamp validation rejects coercion, negative, nonfinite and unsafe clocks', () => {
+  for (const value of ['700000', -1, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    const trace = requireCollector().create({ schemaVersion: 3, now: () => value, hashInputIds: null });
+    trace.record('lifecycle', { inputType: 'control', action: 'pause' });
+    const snapshot = trace.snapshot(); assert.equal(snapshot.traceNowMs, null); assert.equal(snapshot.events[0].at, null); trace.dispose();
+  }
+});

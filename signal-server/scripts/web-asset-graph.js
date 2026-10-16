@@ -23,6 +23,7 @@ module.exports = Object.freeze({
     'js/asset-loader.js',
     'js/terminal-loader.js',
     'js/input-trace.js',
+    'js/runtime-diagnostic.js',
     'js/diagnostic-core.js',
     'js/presentation-budget.js',
     'js/webrtc.js',

@@ -1435,7 +1435,7 @@ function setupSignaling(io, options = {}) {
     });
 
     // Diagnostic logs relay (viewer -> host) + persist to disk
-    socket.on('diagnostic', (data) => {
+    socket.on('diagnostic', (data, acknowledge) => {
       if (role !== 'viewer') {
         console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
         return;
@@ -1460,8 +1460,10 @@ function setupSignaling(io, options = {}) {
         structuredLogger?.info(result.summaryEvent);
       }
 
+      if (typeof acknowledge === 'function') acknowledge(result.receipt || { accepted: false, eventIdHashes: [] });
+
       // Also relay to host for real-time analysis
-      if (result.accepted && connections.host) {
+      if (result.accepted && !result.duplicate && connections.host) {
         connections.host.emit('diagnostic', result.report);
       }
     });
