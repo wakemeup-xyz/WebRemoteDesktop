@@ -20,6 +20,11 @@
       dataChannel: typeof config.sendDataChannel === 'function' ? config.sendDataChannel : null,
       socket: typeof config.sendSocket === 'function' ? config.sendSocket : null,
     };
+    const setTimer = config.setTimeoutFn || setTimeout;
+    const clearTimer = config.clearTimeoutFn || clearTimeout;
+    const getSocket = config.getSocket || (() => null);
+    const getDataChannel = config.getDataChannel || (() => null);
+    const onTimeout = config.onReliableAckTimeout || (() => {});
     const unavailable = new Set();
     const pending = new Map();
     const pressed = new Set();
@@ -31,6 +36,37 @@
     let pinnedAdapter = null;
     let barrier = null;
     let reacquireRequired = false;
+    let frozen = false;
+    let deadlineTimer = null;
+
+    function cancelDeadline() {
+      if (deadlineTimer !== null) clearTimer(deadlineTimer);
+      deadlineTimer = null;
+    }
+
+    function scheduleDeadline() {
+      cancelDeadline();
+      if (reacquireRequired || (frozen && !barrier)) return;
+      const record = pending.values().next().value;
+      if (!record) return;
+      deadlineTimer = setTimer(() => {
+        deadlineTimer = null;
+        if (pending.get(record.inputId) !== record || record.leaseId !== leaseId
+          || record.leaseEpoch !== leaseEpoch) return;
+        if (record.connectionAttemptId !== getConnectionAttemptId()) {
+          pending.clear();
+          frozen = true;
+          notifyState();
+          return;
+        }
+        frozen = true;
+        if (record.reset) requireReacquire();
+        else notifyState();
+        onTimeout(record);
+      }, Math.max(0, record.sentAt + ackTimeoutMs - now()));
+      deadlineTimer?.unref?.();
+    }
+
 
     function adapterAvailable(name) {
       return Boolean(adapters[name]) && !unavailable.has(name);
@@ -40,7 +76,7 @@
       expireBarrier();
       if (reacquireRequired) return 'reacquire-required';
       if (!leaseId) return 'revoked';
-      return barrier ? 'blocked' : 'ready';
+      return barrier || frozen ? 'blocked' : 'ready';
     }
 
     function notifyState() {
@@ -62,19 +98,18 @@
     }
 
     function expireBarrier() {
-      if (!barrier || now() <= barrier.deadline) return;
+      if (!barrier || now() < barrier.deadline) return;
       // Keep the failed identity in memory.  Clearing it here would make a
       // same-lease `setLease()` look like a new session and could wash away an
       // expired reset without a real control re-acquire.
-      pending.clear();
-      pressed.clear();
-      pinnedAdapter = null;
-      barrier = null;
-      reacquireRequired = true;
-      notifyState();
+      const record = pending.get(barrier.inputId);
+      requireReacquire();
+      if (record) onTimeout(record);
     }
 
     function clearSession() {
+      cancelDeadline();
+      frozen = false;
       pending.clear();
       pressed.clear();
       pinnedAdapter = null;
@@ -84,6 +119,8 @@
     }
 
     function requireReacquire() {
+      cancelDeadline();
+      pending.clear();
       // Preserve the identity internally so the caller cannot turn the same
       // lease/epoch into a fresh sequence merely by rebinding it.  The lease
       // never appears in a public snapshot and all sends remain blocked until
@@ -149,15 +186,6 @@
       };
     }
 
-    function trimPending() {
-      while (pending.size > MAX_PENDING) {
-        const oldest = pending.keys().next().value;
-        const record = pending.get(oldest);
-        pending.delete(oldest);
-        if (record.seq === lastApplied + 1) lastApplied = record.seq;
-      }
-    }
-
     function sendThrough(adapterName, message, isReset) {
       const inputId = makeInputId();
       const seq = ++lastSent;
@@ -183,6 +211,11 @@
         adapter: adapterName,
         reset: Boolean(isReset),
         connectionAttemptId,
+        leaseId, leaseEpoch,
+        socket: getSocket(),
+        socketId: getSocket()?.id || null,
+        dataChannel: adapterName === 'dataChannel' ? getDataChannel() : null,
+        sentAt: now(),
       };
       let delivered = false;
       try {
@@ -192,14 +225,12 @@
       }
       if (!delivered) return null;
       pending.set(inputId, record);
-      trimPending();
+      scheduleDeadline();
       return record;
     }
 
     function invalidateBeforeReset() {
-      for (const record of pending.values()) {
-        if (record.seq > lastApplied) lastApplied = record.seq;
-      }
+      cancelDeadline();
       pending.clear();
       pressed.clear();
       pinnedAdapter = null;
@@ -223,12 +254,16 @@
         requireReacquire();
         return null;
       }
+      frozen = false;
       barrier = {
+        socket: record.socket,
+        socketId: record.socketId,
         inputId: record.inputId,
         seq: record.seq,
         deadline: now() + ackTimeoutMs,
         connectionAttemptId: record.connectionAttemptId,
       };
+      scheduleDeadline();
       notifyState();
       return record.inputId;
     }
@@ -256,7 +291,14 @@
 
     function send(message) {
       expireBarrier();
-      if (!leaseId || reacquireRequired || barrier || !message || !message.action) return null;
+      if (!leaseId || reacquireRequired || frozen || barrier || !message || !message.action) return null;
+      if (pending.size >= MAX_PENDING) {
+        frozen = true;
+        cancelDeadline();
+        notifyState();
+        onTimeout(pending.values().next().value);
+        return null;
+      }
       const adapterName = chooseAdapter(false);
       if (!adapterName) return null;
       const identity = keyIdentity(message);
@@ -287,7 +329,8 @@
         // A barrier sent on a prior WebRTC attempt cannot be claimed by a new
         // recovery cycle. Drop only that stale barrier and emit a fresh reset
         // under the current attempt; the next positive ACK owns the new ID.
-        if (barrier.connectionAttemptId !== currentAttemptId) {
+        if (barrier.connectionAttemptId !== currentAttemptId
+          || barrier.socket !== getSocket() || barrier.socketId !== (getSocket()?.id || null)) {
           invalidateBeforeReset();
           barrier = null;
           notifyState();
@@ -307,10 +350,10 @@
       const ackInputIds = Array.isArray(payload.inputIds)
         ? payload.inputIds
         : (payload.inputId ? [payload.inputId] : null);
-      // A cumulative ACK without inputIds is part of the existing v2 contract
-      // and remains accepted.  When an ACK names IDs, however, it must name the
-      // owned reset barrier; otherwise a late/foreign ACK must not unlock it.
-      if (barrier && ackInputIds && !ackInputIds.includes(barrier.inputId)) {
+      // Ordinary cumulative ACKs remain supported. A reset always requires its
+      // exact ID: an older cumulative prefix cannot own a new safety barrier.
+      if (barrier && (!ackInputIds || !ackInputIds.includes(barrier.inputId)
+        || barrier.socket !== getSocket() || barrier.socketId !== (getSocket()?.id || null))) {
         return { status: 'stale' };
       }
       if (barrier && Object.prototype.hasOwnProperty.call(payload, 'inputType')
@@ -330,20 +373,35 @@
           || payload.appliedSeq < 0) {
         return { status: 'stale' };
       }
+      if (ackInputIds && !ackInputIds.some((id) => {
+        const record = pending.get(id);
+        return record && record.connectionAttemptId === getConnectionAttemptId()
+          && (record.adapter !== 'socket'
+            || (record.socket === getSocket() && record.socketId === (getSocket()?.id || null)));
+      })) return { status: 'stale' };
       if (payload.appliedSeq < lastApplied) return { status: 'stale' };
       if (payload.appliedSeq > lastSent) {
         if (!barrier) sendReset('transport-change');
         return { status: 'resync-required' };
       }
       if (barrier && payload.appliedSeq < barrier.seq) return { status: 'resync-required' };
+      if (payload.appliedSeq > lastApplied && ![...pending.values()].some(record =>
+        record.seq <= payload.appliedSeq && record.connectionAttemptId === getConnectionAttemptId()
+        && (record.adapter !== 'socket'
+          || (record.socket === getSocket() && record.socketId === (getSocket()?.id || null))))) {
+        return { status: 'stale' };
+      }
       for (const [inputId, record] of pending) {
-        if (record.seq <= payload.appliedSeq) pending.delete(inputId);
+        if (record.seq <= payload.appliedSeq && record.connectionAttemptId === getConnectionAttemptId()
+          && (record.adapter !== 'socket'
+            || (record.socket === getSocket() && record.socketId === (getSocket()?.id || null)))) pending.delete(inputId);
       }
       lastApplied = Math.max(lastApplied, payload.appliedSeq);
       if (barrier && payload.appliedSeq >= barrier.seq) {
         barrier = null;
         notifyState();
       }
+      scheduleDeadline();
       return { status: payload.status };
     }
 
@@ -361,6 +419,26 @@
       const adapterName = name;
       if (!adapters[adapterName]) return;
       unavailable.delete(adapterName);
+    }
+
+    function connectionScopeChanged() {
+      cancelDeadline();
+      // Retain a failed barrier's latch. A live old reset can be replaced only
+      // by resetBarrier(), which allocates a fresh ID under the current scope.
+      if (!pending.size && !barrier) return false;
+      frozen = true;
+      notifyState();
+      return true;
+    }
+
+    function ownsAckSource(ack, source) {
+      const ids = ack?.inputIds || (ack?.inputId ? [ack.inputId] : []);
+      const records = ids.length ? ids.map(id => pending.get(id)).filter(Boolean) : [...pending.values()];
+      return records.some(record => record.connectionAttemptId === getConnectionAttemptId()
+        && (source.transport === 'socket'
+          ? record.adapter === 'socket' && record.socket === source.socket
+            && record.socketId === (source.socket?.id || null)
+          : record.adapter === 'dataChannel' && record.dataChannel === source.dataChannel));
     }
 
     function canSendNewInput() {
@@ -386,11 +464,15 @@
         seq: barrier.seq,
         leaseEpoch,
         connectionAttemptId: barrier.connectionAttemptId,
+        socket: barrier.socket,
+        socketId: barrier.socketId,
       };
     }
 
     return {
       setLease,
+      connectionScopeChanged,
+      ownsAckSource,
       send,
       resetBarrier,
       acceptAck,

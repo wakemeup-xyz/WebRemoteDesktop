@@ -6,6 +6,18 @@ const vm = require('node:vm');
 const { MediaActivityRuntime } = require('./media-activity-runtime.js');
 
 function fixture({ heartbeat = false } = {}) {
+  let now = 1000;
+  let nextTimerId = 0;
+  const timers = new Map();
+  class FixtureDate extends Date { static now() { return now; } }
+  const setTimer = (fn, ms) => { const id = ++nextTimerId; timers.set(id, { fn, due: now + ms }); return id; };
+  const advance = (ms) => {
+    now += ms;
+    let due;
+    while ((due = [...timers].find(([, t]) => t.due <= now))) {
+      timers.delete(due[0]); due[1].fn();
+    }
+  };
   const intervals = new Map();
   let nextIntervalId = 0;
   const sent = [];
@@ -18,7 +30,8 @@ function fixture({ heartbeat = false } = {}) {
     getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
   });
   const context = {
-    console, Date, setTimeout: () => 1, clearTimeout() {}, updateLoadingText() {},
+    console, Date: FixtureDate, performance: { now: () => now },
+    setTimeout: setTimer, clearTimeout(id) { timers.delete(id); }, updateLoadingText() {},
     setInterval: (fn, ms) => { const id = ++nextIntervalId; intervals.set(id, { fn, ms }); return id; },
     clearInterval(id) { intervals.delete(id); }, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
@@ -82,7 +95,7 @@ function fixture({ heartbeat = false } = {}) {
     WebRTC.socket.connected = false;
     WebRTC.freezeControl('signal-disconnect');
   };
-  return { WebRTC, Input, context, intervals, originalMedia, originalCreateOffer, emitted, sent, lease, grant, acknowledge, disconnect };
+  return { WebRTC, Input, context, intervals, advance, timers, originalMedia, originalCreateOffer, emitted, sent, lease, grant, acknowledge, disconnect };
 }
 
 test('same-session signaling regrant retains both sequences and waits for both reset acknowledgements', () => {
@@ -141,7 +154,8 @@ test('same-lease reconnect cannot erase an existing keyboard rejection', () => {
   h.disconnect();
   h.WebRTC.socket.connected = true;
   h.grant();
-  assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'reacquire-required');
+  assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'revoked');
+  assert.equal(h.emitted.filter(e => e.event === 'control-release').length, 1);
   assert.equal(h.Input.getEffectiveInputGate().allowed, false);
   h.grant({ leaseId: 'replacement-lease', leaseEpoch: 8 });
   assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'ready');
@@ -329,4 +343,167 @@ test('old async offer cannot use replacement peer or send under its lease', asyn
   assert.equal(oldLocal, 0);
   assert.equal(h.emitted.filter((event) => event.event === 'offer').length, 0);
   assert.notEqual(h.WebRTC.pc, oldPeer);
+});
+
+
+function reconnectBridge() {
+  process.env.JWT_SECRET ||= '12345678';
+  process.env.ACCESS_PASSWORD ||= 'test-viewer-password';
+  process.env.HOST_PASSWORD ||= 'test-host-password';
+  const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('../../signal-server/websocket/signaling-test-fixture');
+  const { setupSignaling } = require('../../signal-server/websocket/signaling');
+  resetConnections();
+  const h = fixture();
+  const io = makeIo();
+  let leaseSequence = 0;
+  setupSignaling(io, { makeLeaseId: () => `bridge-lease-${++leaseSequence}`,
+    scheduler: { setInterval: () => ({ unref() {} }),
+      setTimeout: () => ({ unref() {} }), clearTimeout() {} } });
+  const host = new FakeSocket('bridge-host', 'host');
+  const first = new FakeSocket('bridge-first', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  first.handshake.auth.inputProtocolVersion = 2;
+  first.handshake.auth.viewerSessionId = 'bridge-session-0001';
+  io.connect(host); io.connect(first);
+  const lease = grantActiveLease(io, host, first);
+  h.grant(lease);
+  h.disconnect(); first.disconnect();
+  const replacement = new FakeSocket('bridge-second', 'viewer');
+  replacement.handshake.auth.inputProtocolVersion = 2;
+  replacement.handshake.auth.viewerSessionId = 'bridge-session-0001';
+  io.connect(replacement);
+  const handlers = new Map();
+  h.WebRTC.socket = { id: replacement.id, connected: true,
+    on(event, fn) { handlers.set(event, fn); },
+    emit(event, data) { h.emitted.push({ event, payload: data }); replacement.trigger(event, data); } };
+  const viewerHandlers = { 'control-state': 'handleControlState', 'control-grant': 'handleControlGrant',
+    'control-acquire-result': 'handleControlAcquireResult' };
+  const serverEmit = replacement.emit.bind(replacement);
+  replacement.emit = (event, data, ack) => {
+    const result = serverEmit(event, data, ack);
+    if (viewerHandlers[event]) h.WebRTC[viewerHandlers[event]](data);
+    return result;
+  };
+  h.WebRTC.controlState = { state: 'FREE', controller: false, lease: null, hostOnline: true };
+  h.WebRTC.setupSocketListeners();
+  handlers.get('connected')({ hostOnline: true });
+  const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
+  const transitions = () => host.sent.filter(e => e.event === 'control-transition');
+  const apply = () => host.trigger('control-transition-ack', {
+    leaseEpoch: transitions().at(-1).data.leaseEpoch, status: 'applied' });
+  return { ...h, io, host, first, replacement, rebind, transitions, apply, handlers, FakeSocket };
+}
+
+for (const outcome of ['rejected', 'timeout']) {
+  test(`real Viewer resumes one acquire after Host rebind ${outcome} and authoritative reset FREE`, () => {
+    const h = reconnectBridge();
+    assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 1);
+    h.rebind.ack(outcome === 'timeout' ? new Error('timeout') : null, { status: 'rejected' });
+    assert.equal(h.transitions().length, 2);
+    assert.equal(h.WebRTC.hasActiveControl(), false);
+    h.apply();
+    assert.equal(h.transitions().length, 3);
+    assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 2);
+    h.apply();
+    assert.equal(h.WebRTC.hasActiveControl(), true);
+    assert.equal(h.replacement.sent.filter(e => e.event === 'control-grant').length, 1);
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(h.transitions().length, 3);
+  });
+}
+
+for (const cancel of ['release', 'host-offline', 'superseded', 'socket-replaced']) {
+  test(`rebind recovery is cancelled by ${cancel}`, () => {
+    const h = reconnectBridge();
+    h.rebind.ack(null, { status: 'rejected' });
+    if (cancel === 'release') h.WebRTC.releaseControl('manual');
+    if (cancel === 'host-offline') h.WebRTC.handleControlState({ state: 'REVOKING', controller: false, hostOnline: false });
+    if (cancel === 'superseded') { h.WebRTC._superseded = true; h.WebRTC.freezeControl('viewer-superseded'); }
+    if (cancel === 'socket-replaced') h.WebRTC.socket = { ...h.WebRTC.socket, id: 'other-socket' };
+    h.apply();
+    assert.equal(h.transitions().length, 2);
+    assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 1);
+    assert.equal(h.WebRTC.hasActiveControl(), false);
+  });
+}
+
+test('missing reset ACK and duplicate FREE cannot replenish acquire budget', () => {
+  const h = reconnectBridge();
+  h.rebind.ack(null, { status: 'rejected' });
+  h.advance(10000);
+  assert.equal(h.transitions().length, 2);
+  h.apply();
+  assert.equal(h.transitions().length, 3);
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  assert.equal(h.transitions().length, 3);
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 2);
+});
+
+test('expired reset survives four-second signaling outage and same-lease regrant releases once', () => {
+  const h = fixture();
+  h.WebRTC.controlState.hostOnline = true;
+  h.Input._markMobileSurfaceUncertain('test');
+  h.Input.requestInputRecovery({ source: 'auto' });
+  const oldResets = h.sent.filter(e => e.action === 'reset');
+  h.disconnect(); h.advance(4000);
+  assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'reacquire-required');
+  h.WebRTC.socket.connected = true;
+  h.grant();
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.emitted.filter(e => e.event === 'control-release').length, 1);
+  oldResets.forEach(e => h.acknowledge(e));
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 0);
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 1);
+});
+
+test('new socket claims fresh reset IDs and rejects old socket or cumulative ACK ownership', () => {
+  const h = fixture();
+  h.Input._markMobileSurfaceUncertain('test');
+  h.Input.requestInputRecovery({ source: 'auto' });
+  const old = h.sent.filter(e => e.action === 'reset');
+  h.disconnect();
+  h.WebRTC.socket = { ...h.WebRTC.socket, connected: true, id: 'replacement' };
+  h.grant();
+  const fresh = h.sent.filter(e => e.action === 'reset').slice(2);
+  assert.equal(fresh.length, 2);
+  assert.ok(fresh.every(e => !old.some(o => o.inputIds[0] === e.inputIds[0])));
+  for (const write of old) h.acknowledge({ ...write, seq: 100 });
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  const keyboard = fresh.find(e => e.type === 'keyboard');
+  assert.equal(h.Input.acceptKeyboardAck({ schemaVersion: 2, inputType: 'keyboard',
+    leaseEpoch: 7, appliedSeq: keyboard.seq, status: 'applied' }).status, 'stale');
+  h.acknowledge(fresh[0]);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.acknowledge(fresh[1]);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+});
+
+
+test('late acquire result and grant cannot restore a manually released intent', () => {
+  const h = reconnectBridge();
+  const requestId = h.emitted.find(e => e.event === 'control-acquire').payload.requestId;
+  h.WebRTC.releaseControl('manual');
+  h.WebRTC.handleControlAcquireResult({ requestId, state: 'REVOKING', reason: 'reset-in-progress' });
+  h.rebind.ack(null, { status: 'applied' });
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.apply();
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 1);
+});
+
+test('old Host callback cannot resume acquire after replacement Host arrived', () => {
+  const h = reconnectBridge();
+  const nextHost = new h.FakeSocket('replacement-host', 'host');
+  nextHost.handshake.auth.inputProtocolVersion = 2;
+  h.io.connect(nextHost);
+  const before = h.emitted.filter(e => e.event === 'control-acquire').length;
+  h.rebind.ack(null, { status: 'applied' });
+  h.rebind.ack(null, { status: 'rejected' });
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, before);
 });

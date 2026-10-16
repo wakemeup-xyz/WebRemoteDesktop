@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { setupTerminal } = require('./terminal');
@@ -40,98 +39,7 @@ function v2Key(overrides = {}) {
   };
 }
 
-class FakeSocket extends EventEmitter {
-  constructor(id, role, tokenRole = role === 'relay-viewer' ? 'viewer' : role) {
-    super();
-    this.id = id;
-    this.disconnected = false;
-    this.handshake = {
-      auth: { role, token: signAccessToken(tokenRole, `${id}-${tokenRole}`) },
-      address: '127.0.0.1',
-      headers: {},
-    };
-    this.sent = [];
-    this.volatile = {
-      emit: (event, data) => this.sent.push({ event, data, volatile: true }),
-    };
-  }
-
-  emit(event, data, ack) {
-    this.sent.push(ack ? { event, data, ack } : { event, data });
-    return true;
-  }
-
-  timeout(ms) {
-    return {
-      emit: (event, data, ack) => {
-        this.emit(event, data, ack);
-        this.sent.at(-1).timeoutMs = ms;
-      },
-    };
-  }
-
-  trigger(event, data) {
-    return super.emit(event, data);
-  }
-
-  disconnect() {
-    if (this.disconnected) return;
-    this.disconnected = true;
-    this.trigger('disconnect');
-  }
-}
-
-function makeIo() {
-  return {
-    connectionHandler: null,
-    middleware: null,
-    namespaces: new Map(),
-    use(handler) {
-      this.middleware = handler;
-    },
-    on(event, handler) {
-      if (event === 'connection') {
-        this.connectionHandler = handler;
-      }
-    },
-    of(name) {
-      if (!this.namespaces.has(name)) {
-        this.namespaces.set(name, {
-          middleware: null,
-          connectionHandler: null,
-          use(handler) {
-            this.middleware = handler;
-          },
-          on(event, handler) {
-            if (event === 'connection') {
-              this.connectionHandler = handler;
-            }
-          },
-        });
-      }
-      return this.namespaces.get(name);
-    },
-    connect(socket) {
-      if (this.middleware) {
-        let middlewareError = null;
-        this.middleware(socket, (err) => {
-          middlewareError = err || null;
-        });
-        if (middlewareError) {
-          throw middlewareError;
-        }
-      }
-      this.connectionHandler(socket);
-    },
-  };
-}
-
-function resetConnections() {
-  connections.host = null;
-  connections.viewers.clear();
-  connections.relayViewers.clear();
-  clearHostCapabilities();
-}
+const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('./signaling-test-fixture');
 
 test('proof admissions expire, enforce capacity, and cannot be replayed', () => {
   let now = 1000;
@@ -792,6 +700,11 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   replacement.trigger('input', v2Key({ leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch }));
   assert.equal(host.sent.filter((entry) => entry.event === 'input').length, priorInputCount);
   assert.equal(rebind.timeoutMs, 1500);
+  replacement.trigger('control-acquire', { requestId: 'pending-rebind-acquire' });
+  const pendingAcquire = replacement.sent.filter(e => e.event === 'control-acquire-result').at(-1);
+  assert.equal(pendingAcquire.data.reason, 'reset-in-progress');
+  assert.equal(pendingAcquire.data.requestId, 'pending-rebind-acquire');
+  assert.equal(replacement.sent.some(e => e.event === 'control-grant'), false);
   rebind.ack(null, { status: 'applied' });
   const reboundGrant = replacement.sent.find((entry) => entry.event === 'control-grant');
   assert.deepEqual(reboundGrant?.data, {
@@ -2992,13 +2905,6 @@ test('tunnel media control requires ACTIVE lease and current attempt then routes
   assert.equal(ack.data.generation, 1);
   assert.equal(Object.hasOwn(ack.data, 'leaseId'), false);
 });
-
-function grantActiveLease(io, host, viewer, requestId = 'grant') {
-  viewer.trigger('control-acquire', { requestId });
-  const transition = host.sent.find((e) => e.event === 'control-transition').data;
-  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
-  return viewer.sent.find((e) => e.event === 'control-grant').data;
-}
 
 test('tunnel connection attempt bind does not require a synthetic offer', () => {
   resetConnections();

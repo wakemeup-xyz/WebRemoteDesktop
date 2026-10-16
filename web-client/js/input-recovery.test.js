@@ -959,7 +959,7 @@ test('owned reset rejection ACK with a non-adjacent applied prefix fails recover
       assert.ok(['execution-failed', 'reacquire-required'].includes(result.status),
         `${type}/${status}`);
       assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed', `${type}/${status}`);
-      assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true, `${type}/${status}`);
+      assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, false, `${type}/${status}`);
     }
   }
 });
@@ -979,7 +979,8 @@ test('dual reset does not authorize an uncertain surface-timeout draft to resend
     assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().retryable, false,
       order.join(' then '));
 
-    assert.equal(h.Input.requestInputRecovery({ source: 'user' }), true, order.join(' then '));
+    assert.equal(h.Input._recoveryCycle.state, 'waiting', 'timeout already started the bounded cycle');
+    assert.equal(h.Input.requestInputRecovery({ source: 'user' }), false, order.join(' then '));
     const resets = h.inputs().filter((payload) => payload.action === 'reset');
     const byType = Object.fromEntries(resets.map((payload) => [payload.type, payload]));
     assert.equal(resets.length, 2, order.join(' then '));
@@ -1044,7 +1045,7 @@ test('reset confirmation rejects wrong identity and expires after the bounded de
   h.advance(3001);
   assert.equal(h.Input.getEffectiveInputGate().allowed, false);
   assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed');
-  assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true);
+  assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, false);
   h.Input.setActive(true);
   assert.equal(h.inputs().length, beforeTimeoutLifecycle);
 });
@@ -1394,37 +1395,23 @@ test('a successful recovery closes its budget so a second same-session failure g
   assert.equal(h.Input.getEffectiveInputGate().allowed, true);
 });
 
-test('automatic timeout/negative ACK stops, then a user retry starts one bounded cycle', () => {
+test('failed reset releases once and waits for authoritative FREE before reacquiring', () => {
   const h = loadRecoveryFixture();
   h.Input._markMobileSurfaceUncertain('retry-needed');
-  assert.equal(h.Input.requestInputRecovery({source: 'auto'}), true);
-  const firstResets = h.inputs().filter((payload) => payload.action === 'reset');
-  const firstMouse = firstResets.find((payload) => payload.type === 'mouse');
-  const firstKeyboard = firstResets.find((payload) => payload.type === 'keyboard');
-  assert.equal(h.Input.acceptMouseAck({
-    schemaVersion: 2,
-    inputType: 'mouse',
-    inputIds: firstMouse.inputIds,
-    leaseEpoch: 7,
-    appliedSeq: firstMouse.seq,
-    status: 'execution-failed',
-  }).status, 'execution-failed');
+  assert.equal(h.Input.requestInputRecovery({ source: 'auto' }), true);
+  const mouse = h.inputs().find(p => p.type === 'mouse' && p.action === 'reset');
+  h.ack(mouse, { status: 'execution-failed' });
   assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed');
-  assert.equal(h.Input.getDiagnosticState().recovery.retryAvailable, true);
-
-  const beforeRetry = h.inputs().length;
-  assert.equal(h.Input.requestInputRecovery({source: 'user'}), true);
-  const retryResets = h.inputs().slice(beforeRetry).filter((payload) => payload.action === 'reset');
-  assert.equal(retryResets.length, 1, 'the still-pending keyboard reset is claimed, not duplicated');
-  const retryMouse = retryResets.find((payload) => payload.type === 'mouse');
-  const retryKeyboard = firstKeyboard;
-  assert.equal(retryMouse.payload.reason, 'manual');
-  assert.notEqual(retryMouse.inputIds[0], firstMouse.inputIds[0]);
-  h.ack(retryKeyboard);
-  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
-  h.ack(retryMouse);
-  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
-  assert.equal(h.Input.requestInputRecovery({source: 'auto'}), false);
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  const before = h.inputs().length;
+  assert.equal(h.Input.requestInputRecovery({ source: 'user' }), false);
+  h.advance(10000);
+  assert.equal(h.inputs().length, before);
+  assert.equal(h.sent.filter(e => e.event === 'control-release').length, 1);
+  assert.equal(h.sent.filter(e => e.event === 'control-acquire').length, 0);
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  assert.equal(h.sent.filter(e => e.event === 'control-acquire').length, 1);
 });
 
 test('mouse sequence-gap recovery rewinds once and sends only a new reset', () => {
@@ -1625,26 +1612,18 @@ test('a retained draft is visible through the fixed recovery UI without auto-sen
   assert.equal(h.inputs().length, before);
 });
 
-test('failed recovery UI retry invokes a user cycle without stealing the local editor', () => {
+test('failed recovery keeps manual request-control reachable without replaying reset', () => {
   const h = loadRecoveryFixture();
   h.Input._markMobileSurfaceUncertain('ui-retry');
-  assert.equal(h.Input.requestInputRecovery({source: 'auto'}), true);
-  const firstMouse = h.inputs().filter((payload) => payload.type === 'mouse' && payload.action === 'reset').at(-1);
-  h.Input.acceptMouseAck({
-    schemaVersion: 2,
-    inputType: 'mouse',
-    inputIds: firstMouse.inputIds,
-    leaseEpoch: 7,
-    appliedSeq: firstMouse.seq,
-    status: 'execution-failed',
-  });
+  h.Input.requestInputRecovery({ source: 'auto' });
+  const mouse = h.inputs().find(p => p.type === 'mouse' && p.action === 'reset');
+  h.ack(mouse, { status: 'execution-failed' });
   assert.equal(h.Input.getDiagnosticState().recovery.state, 'failed');
-  const retryButton = h.elements.get('inputRecoveryRetryBtn');
-  assert.equal(retryButton.hidden, false);
+  assert.equal(h.elements.get('inputRecoveryControlBtn').hidden, false);
+  assert.equal(h.elements.get('inputRecoveryRetryBtn').hidden, true);
   const before = h.inputs().length;
-  retryButton.dispatch('click');
-  assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
-  assert.equal(h.inputs().length > before, true);
+  h.elements.get('inputRecoveryRetryBtn').dispatch('click');
+  assert.equal(h.inputs().length, before);
   assert.equal(h.document.activeElement, null);
 });
 
@@ -1672,4 +1651,94 @@ test('desktop recovery keeps an explicit release and request-control action reac
   // fresh lease.
   controlButton.dispatch('click');
   assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 1);
+});
+
+
+test('silent reliable keyboard DC is quarantined without replaying keys', () => {
+  const h = loadRecoveryFixture();
+  const dc = h.WebRTC.inputChannel;
+  h.keydown(); h.keyup();
+  const keys = () => h.inputs().filter(p => p.type === 'keyboard' && p.action === 'key');
+  assert.equal(keys().length, 2);
+  h.advance(3001);
+  assert.equal(h.WebRTC._quarantinedInputChannel, dc);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(keys().length, 2);
+  const resets = h.inputs().filter(p => p.action === 'reset');
+  assert.equal(resets.filter(p => p.type === 'keyboard').length, 1);
+  assert.equal(resets.filter(p => p.type === 'mouse').length, 1);
+  assert.ok(resets.every(p => h.sent.find(e => e.payload === p)?.event === 'input'));
+});
+
+for (const [type, action, payload] of [['mouse', 'wheel', { deltaY: 1 }], ['command', 'copy', {}]]) {
+  test(`silent reliable ${type}/${action} starts one dual reset`, () => {
+    const h = loadRecoveryFixture();
+    h.Input.sendInput(type, action, payload);
+    h.advance(3001);
+    assert.equal(h.WebRTC._quarantinedInputChannel, h.WebRTC.inputChannel);
+    assert.equal(h.sent.filter(e => e.payload?.action === action).length, 1);
+    assert.equal(h.inputs().filter(p => p.action === 'reset').length, 2);
+  });
+}
+
+test('unordered move has no reliable deadline', () => {
+  const h = loadRecoveryFixture();
+  h.Input.sendInput('mouse', 'move', { x: 1, y: 1 });
+  h.advance(3001);
+  assert.equal(h.WebRTC._quarantinedInputChannel == null, true);
+  assert.equal(h.inputs().filter(p => p.action === 'reset').length, 0);
+});
+
+
+for (const kind of ['socket', 'retired']) {
+  test(`ordinary keyboard deadline cannot quarantine unrelated DC (${kind})`, () => {
+    const h = loadRecoveryFixture({ channels: kind === 'socket' ? 'socket' : 'both' });
+    h.keydown(); h.keyup();
+    const replacement = { readyState: 'open', bufferedAmount: 0, send() {} };
+    h.WebRTC.inputChannel = replacement;
+    h.advance(3001);
+    assert.notEqual(h.WebRTC._quarantinedInputChannel, replacement);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    assert.equal(h.inputs().filter(p => p.action === 'reset').length, 2);
+  });
+}
+
+test('ACK source owns its pending DC write even when that DC is retired', () => {
+  const h = loadRecoveryFixture();
+  h.keydown(); h.keyup();
+  const oldDC = h.WebRTC.inputChannel;
+  const last = h.inputs().at(-1);
+  const replacement = { readyState: 'open', bufferedAmount: 0, send() {} };
+  h.WebRTC.inputChannel = replacement;
+  const ack = { schemaVersion: 2, inputType: 'keyboard', inputIds: last.inputIds,
+    leaseEpoch: last.leaseEpoch, appliedSeq: last.seq, status: 'applied' };
+  h.WebRTC.acceptObservedInputAck(ack, { transport: 'datachannel', dataChannel: replacement });
+  assert.equal(h.Input.keyboardTransport.getSnapshot().pendingCount, 2);
+  h.WebRTC.acceptObservedInputAck(ack, { transport: 'datachannel', dataChannel: oldDC });
+  assert.equal(h.Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  h.advance(4000);
+  assert.equal(h.inputs().filter(p => p.action === 'reset').length, 0);
+});
+
+test('reset timeout releases once without recursively sending reset and retains the local draft', () => {
+  const h = loadRecoveryFixture({ touchPoints: 5 });
+  h.pointer('pointerdown');
+  h.elements.get('mobileTextInputBtn').dispatch('click');
+  const mobile = h.elements.get('mobileTextInput');
+  mobile.value = 'keep-this-local-draft\u200b';
+  mobile.dispatch('input');
+  h.advance(3001);
+  const resets = h.inputs().filter(p => p.action === 'reset').length;
+  assert.equal(resets, 2);
+  h.advance(3001);
+  assert.equal(h.sent.filter(e => e.event === 'control-release').length, 1);
+  assert.equal(h.inputs().filter(p => p.action === 'reset').length, resets);
+  assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.equal(mobile.value.includes('keep-this-local-draft'), true);
+  h.WebRTC.handleControlState({ state: 'FREE', controller: false, hostOnline: true });
+  h.WebRTC.pc = { connectionState: 'connected' };
+  h.WebRTC.handleControlGrant({ controller: true, leaseId: 'new-draft-lease', leaseEpoch: 8 });
+  assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().hasPending, true);
+  assert.equal(h.Input.mobileTextInputAdapter.getSnapshot().deliveryUncertain, true);
+  assert.equal(h.inputs().some(p => p.action === 'text'), false);
 });

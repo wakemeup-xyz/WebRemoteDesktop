@@ -281,6 +281,7 @@
     function setLease(leaseOrNull) {
       if (transport && typeof transport.setLease === 'function') transport.setLease(leaseOrNull || null);
       leaseActive = Boolean(leaseOrNull && typeof leaseOrNull === 'object');
+      if (leaseActive) syncTransportState(transport?.getSnapshot?.());
       if (!leaseActive) {
         pressed.clear();
         resetRequired = false;

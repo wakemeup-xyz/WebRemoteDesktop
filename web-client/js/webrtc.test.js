@@ -563,6 +563,7 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   const latencyAcks = [];
   const channels = new Map();
   const socketEvents = [];
+  const dcWrites = [];
   const { WebRTC, context } = loadWebRTC({
     realInput: true,
     LatencyMonitor: {
@@ -574,7 +575,7 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   WebRTC.pc = {
     connectionState: 'connecting', iceConnectionState: 'checking',
     createDataChannel(label) {
-      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send(json) { dcWrites.push(JSON.parse(json)); } };
       channels.set(label, channel);
       return channel;
     },
@@ -590,23 +591,24 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
   Input._pendingMouseReset = true;
-  Input._pendingMouseResetId = 'mouse-reset-1';
+  Input._pendingMouseResetId = Input.sendInput('mouse', 'reset', { reason: 'manual' });
+  const mouseReset = socketEvents.at(-1).payload;
 
   inputChannel.onmessage({ data: JSON.stringify({
     type: 'input_ack', inputType: 'keyboard', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
-    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
+    inputIds: dcWrites.at(-1).inputIds, appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
   }) });
 
   assert.equal(Input.getDiagnosticState().pendingMouseReset, true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
   assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   assert.equal(latencyAcks.length, 1);
-  assert.equal(socketEvents.length, 0);
+  assert.equal(socketEvents.length, 1);
 
-  inputChannel.onmessage({ data: JSON.stringify({
+  WebRTC.acceptObservedInputAck({
     type: 'input_ack', inputType: 'mouse', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
-    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
-  }) });
+    inputIds: mouseReset.inputIds, appliedSeq: mouseReset.seq, pressedKeyCount: 0, modifierMask: 0,
+  }, { transport: 'socket', socket: WebRTC.socket });
   assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
   clearTimeout(WebRTC._dcTimeout);
 });

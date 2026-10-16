@@ -365,6 +365,9 @@ const WebRTC = {
   controlState: { state: 'FREE', controller: false, lease: null, hostOnline: false },
   _controlHeartbeatTimer: null,
   _controlRequestId: 0,
+  _controlAcquireIntent: null,
+  _controlRecoveryGeneration: 0,
+  _controlUserReleased: false,
   _controlLifecycleBound: false,
   _fullscreenLifecycleBound: false,
   _fullscreenLifecycleHandler: null,
@@ -1235,11 +1238,12 @@ const WebRTC = {
 
   acceptObservedInputAck(data, context = {}) {
     // Finish C's validation first. Timing never grants or repairs authority.
+    const source = context.socket || context.dataChannel ? context : undefined;
     const results = [];
     if (typeof Input !== 'undefined') {
-      if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data));
+      if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data, source));
       if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
-        && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data));
+        && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data, source));
     }
     if (data?.schemaVersion === 2) {
       const positive = data.status === 'applied' || data.status === 'duplicate';
@@ -2379,6 +2383,8 @@ const WebRTC = {
       this.syncChromeCapabilities();
       return false;
     }
+    this._controlUserReleased = false;
+    this._cancelControlAcquireIntent();
     const authToken = Auth.getToken();
     const authGeneration = Auth.getGeneration?.();
     const startBtn = document.getElementById('startBtn');
@@ -3388,7 +3394,7 @@ const WebRTC = {
       }
     });
 
-    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data, { transport: 'socket' }); });
+    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data, { transport: 'socket', socket }); });
 
     onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
@@ -3462,9 +3468,67 @@ const WebRTC = {
     return { schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch };
   },
 
+  _cancelControlAcquireIntent() {
+    this._controlAcquireIntent = null;
+    this._controlAcquireRequestId = null;
+  },
+
+  _currentControlAcquireIntent() {
+    const intent = this._controlAcquireIntent;
+    return intent && intent.socket === this.socket && intent.socketId === (this.socket?.id || null)
+      ? intent : null;
+  },
+
+  _rememberControlAcquireIntent() {
+    let intent = this._currentControlAcquireIntent();
+    if (!intent) {
+      intent = { socket: this.socket, socketId: this.socket?.id || null,
+        generation: (this._controlRecoveryGeneration || 0) + 1,
+        remaining: 1, waiting: false, resetEpoch: null, releaseSent: false };
+      this._controlRecoveryGeneration = intent.generation;
+      this._controlAcquireIntent = intent;
+    }
+    return intent;
+  },
+
+  _resumeControlAcquireIntent() {
+    const intent = this._currentControlAcquireIntent();
+    if (!intent?.waiting || intent.remaining <= 0 || !this.socket?.connected
+      || !this.controlState.hostOnline || this._controlUserReleased || this.manualDisconnect
+      || this._superseded || this.isControlResetBlocked() || this.controlState.state !== 'FREE') return false;
+    intent.waiting = false;
+    intent.remaining -= 1;
+    return this.requestControl({ allowTakeover: false });
+  },
+
+  requestControlRecovery(generation) {
+    if (!this.hasActiveControl() || !this.socket?.connected || this._controlUserReleased
+      || this.manualDisconnect || this._superseded) return false;
+    const intent = this._rememberControlAcquireIntent();
+    if (intent.releaseSent || intent.remaining <= 0) return false;
+    intent.releaseSent = true;
+    intent.waiting = true;
+    intent.inputGeneration = generation;
+    intent.resetEpoch = this.controlState.lease?.leaseEpoch ?? null;
+    if (typeof Input !== 'undefined') {
+      Input._preserveRecoveryDraft = true;
+      Input._recoveryControlReacquireRequired = true;
+      if (Input._recoveryCycle) Input._recoveryCycle.retryAvailable = false;
+    }
+    this.releaseControl('input-recovery-timeout', { preserveAcquireIntent: true });
+    return true;
+  },
+
   requestControl({ allowTakeover = true } = {}) {
-    if (!this.socket?.connected || !this.controlState.hostOnline) return false;
+    if (!this.socket?.connected || !this.controlState.hostOnline || this._superseded || this.manualDisconnect) return false;
+    if (allowTakeover) {
+      this._controlUserReleased = false;
+      this._cancelControlAcquireIntent();
+    } else if (this._controlUserReleased) return false;
+    const intent = this._rememberControlAcquireIntent();
     if (this.isControlResetBlocked() || this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = this.controlState.leaseEpoch ?? intent.resetEpoch;
       // Do not paint a sticky "切换中" that ignores later acquire-result.
       this.updateControlUI();
       return false;
@@ -3483,10 +3547,17 @@ const WebRTC = {
   },
 
   handleControlAcquireResult(data = {}) {
-    if (data.requestId && this._controlAcquireRequestId && data.requestId !== this._controlAcquireRequestId) {
+    if (data.requestId && data.requestId !== this._controlAcquireRequestId) {
       return;
     }
+    const intent = this._currentControlAcquireIntent();
+    if (!intent || this._controlUserReleased || this._superseded) return;
     const state = data.state || this.controlState.state;
+    if (data.reason === 'reset-in-progress' || state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = data.leaseEpoch ?? intent.resetEpoch;
+    }
+    if (data.reason === 'host-offline') this._cancelControlAcquireIntent();
     this.controlState = {
       ...this.controlState,
       state,
@@ -3528,6 +3599,12 @@ const WebRTC = {
     // During GRANTING/REVOKING, controller is false for everyone — do not treat as
     // permanent readonly freeze (that raced with acquire and left sticky UI).
     const transitioning = data.state === 'GRANTING' || data.state === 'REVOKING';
+    const intent = this._currentControlAcquireIntent();
+    if (intent && data.state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = data.leaseEpoch ?? intent.resetEpoch;
+    }
+    if (data.hostOnline === false) this._cancelControlAcquireIntent();
     if (!data.controller && !transitioning) {
       this.freezeControl(data.reason || 'control-readonly', false);
     } else if (!data.controller && transitioning) {
@@ -3545,9 +3622,16 @@ const WebRTC = {
       this.renderPortSearchStatus();
     }
     this.updateControlUI();
+    if (data.state === 'FREE') this._resumeControlAcquireIntent();
   },
 
   handleControlGrant(data = {}) {
+    if (this._controlUserReleased || this._superseded || this.manualDisconnect) {
+      if (this.socket?.connected) this.socket.emit('control-release', { reason: 'released' });
+      return;
+    }
+    const recovering = this._currentControlAcquireIntent();
+    if (recovering?.releaseSent && data.leaseEpoch <= recovering.resetEpoch) return;
     if (!data.controller || typeof data.leaseId !== 'string' || !Number.isInteger(data.leaseEpoch)) {
       this.freezeControl('invalid-control-grant');
       return;
@@ -3574,8 +3658,13 @@ const WebRTC = {
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
     if (typeof Input !== 'undefined') {
       Input.init();
-      Input.setControlLease(this.controlState.lease);
+      if (Input.setControlLease(this.controlState.lease) === false) {
+        this.requestControlRecovery(Input._recoveryCycle?.generation);
+        return;
+      }
     }
+    if (!this.hasActiveControl()) return;
+    this._cancelControlAcquireIntent();
     this.startControlHeartbeat();
     this.updateControlUI();
     this.bindCurrentConnectionAttempt();
@@ -3603,6 +3692,9 @@ const WebRTC = {
   },
 
   freezeControl(reason, reset = true) {
+    if (['signal-disconnect', 'host-offline', 'viewer-superseded', 'control-revoked'].includes(reason)) {
+      this._cancelControlAcquireIntent();
+    }
     this.stopControlHeartbeat();
     // Do not clear _mediaReadyConnectionAttemptId here. Control ownership and
     // "has this attempt painted" are independent; clearing readiness on every
@@ -3614,7 +3706,7 @@ const WebRTC = {
       // Reset keyboard while lease is still present so the envelope can send.
       if (!suspended) {
         if (reset) Input.resetKeyboard?.(reason || 'control-lost');
-        Input.releasePointer?.(reason || 'control-lost');
+        if (reason !== 'input-recovery-timeout') Input.releasePointer?.(reason || 'control-lost');
         Input.setControlLease(null);
       }
       Input.setActive(false, { resetKeyboard: false, reason: reason || 'control-lost' });
@@ -3680,11 +3772,15 @@ const WebRTC = {
     this._dcKeepaliveTimer = null;
   },
 
-  releaseControl(reason) {
+  releaseControl(reason, { preserveAcquireIntent = false } = {}) {
+    if (!preserveAcquireIntent) {
+      this._controlUserReleased = true;
+      this._cancelControlAcquireIntent();
+    }
     const wasActive = this.hasActiveControl();
-    if (typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
-    if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
+    if (!preserveAcquireIntent && typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
     this.freezeControl(reason, false);
+    if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
   },
 
   bindControlLifecycle() {
@@ -4236,7 +4332,7 @@ const WebRTC = {
           return;
         }
         if (data.type === 'input_ack') {
-          this.acceptObservedInputAck(data, { transport: 'datachannel' });
+          this.acceptObservedInputAck(data, { transport: 'datachannel', dataChannel: inputChannel });
           return;
         }
         // Host capture fps is not playback fps; keep it off the status-bar counter.
@@ -6282,6 +6378,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   reclaimDesktopSession() {
+    this._controlUserReleased = false;
+    this._cancelControlAcquireIntent();
     this.hideSupersededUI();
     this._superseded = false;
     this.manualDisconnect = false;

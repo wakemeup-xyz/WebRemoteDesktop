@@ -90,6 +90,8 @@ const Input = {
   keyboardController: null,
   _desktopWriteSequence: 0,
   _desktopWritePending: new Map(),
+  _desktopWriteTimer: null,
+  _reliableAckRecoveryPending: false,
   // This is deliberately an object-identity capability, not a caller-supplied
   // input-id parameter.  Only the isolated lab driver uses it to reserve an
   // id before its Host-side one-use binding.  Normal sendInput never reads a
@@ -192,6 +194,9 @@ const Input = {
       sendDataChannel: (payload) => this.sendKeyboardDataChannel(payload),
       sendSocket: (payload) => this.sendKeyboardSocket(payload),
       getConnectionAttemptId: () => this._currentConnectionAttemptId(),
+      getSocket: () => this._currentInputSocket(),
+      getDataChannel: () => typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null,
+      onReliableAckTimeout: (record) => this._onReliableAckTimeout(record),
     });
     this.keyboardController = RemoteKeyboardController.create({
       transport: this.keyboardTransport,
@@ -384,17 +389,23 @@ const Input = {
     this._suspendedControlLease = null;
     if (leaseChanged) {
       this._signalingInputResumePending = false;
-      this._invalidateRecoveryIdentity('lease-changed');
+      if (!this._preserveRecoveryDraft || nextLease) this._invalidateRecoveryIdentity('lease-changed');
       this._recoveryAutoIdentity = null;
-      // Clear the mobile draft before the controller changes the transport
-      // identity. The old generation must never cross a lease boundary.
+      // Reacquisition retains a local uncertain draft but invalidates its
+      // remote context. Ordinary lease changes discard the previous editor.
       this._mobileResetPending = false;
       this._mobileResetAckInFlight = false;
-      this.clearMobileTextInputDock();
-      this.mobileTextInputAdapter?.reset('lease-changed');
+      if (this._preserveRecoveryDraft) {
+        this.mobileTextInputAdapter?.invalidateContext?.('lease-changed');
+      } else {
+        this.clearMobileTextInputDock();
+        this.mobileTextInputAdapter?.reset('lease-changed');
+      }
       this._resetMobileSurfaceContext();
       this._desktopWriteSequence = 0;
       this._desktopWritePending.clear();
+      this._clearDesktopWriteTimer();
+      this._reliableAckRecoveryPending = false;
       this._desktopWriteRecovery = null;
       this._pointerLifecycleGeneration += 1;
       this._pendingMouseMove = null;
@@ -428,10 +439,19 @@ const Input = {
     }
     if (!nextLease) this.mobileTextInputAdapter?.onTransportState('revoked');
     this.updateKeyboardUI();
-    if (nextLease) this._maybeAutoRecover('lease-rebind');
+    if (nextLease && this.keyboardTransport?.getSnapshot?.().state === 'reacquire-required') {
+      this._recoveryControlReacquireRequired = true;
+      return false;
+    }
+    if (nextLease) {
+      this._preserveRecoveryDraft = false;
+      this._maybeAutoRecover('lease-rebind');
+    }
+    return true;
   },
 
-  acceptKeyboardAck(ack) {
+  acceptKeyboardAck(ack, source) {
+    if (source && !this.keyboardTransport?.ownsAckSource?.(ack, source)) return { status: 'stale' };
     let result;
     try {
       result = this._acceptKeyboardAck(ack);
@@ -455,7 +475,8 @@ const Input = {
     // ACKs do not carry a WebRTC attempt in the v2 keyboard envelope. The
     // transport records the attempt at send time, so reject an old barrier
     // before it can clear the current lease's reset state.
-    if (pendingReset && pendingReset.connectionAttemptId !== currentAttempt) {
+    if (pendingReset && (pendingReset.connectionAttemptId !== currentAttempt
+      || !this._recordSocketIsCurrent(pendingReset))) {
       return { status: 'stale' };
     }
     this._mobileResetAckInFlight = ownedResetPending;
@@ -528,9 +549,9 @@ const Input = {
       const current = this._mobileSurfaceGesture;
       if (!current || this._mobileSurfaceState !== 'pending' || current.generation !== generation) return;
       if (edge === 'down' && current.downId === id && !current.downAck) {
-        this._markMobileSurfaceUncertain('down-ack-timeout');
+        this._onReliableAckTimeout(this._desktopWritePending.get(id) || {});
       } else if (edge === 'up' && current.upId === id && !current.upAck) {
-        this._markMobileSurfaceUncertain('up-ack-timeout');
+        this._onReliableAckTimeout(this._desktopWritePending.get(id) || {});
       } else {
         this._scheduleMobileSurfaceTimer();
       }
@@ -892,6 +913,7 @@ const Input = {
       reason: cycle.reason, generation: cycle.generation, source: cycle.source || 'recovery',
     });
     this.updateKeyboardUI();
+    if (typeof WebRTC !== 'undefined') WebRTC.requestControlRecovery?.(cycle.generation);
     return true;
   },
 
@@ -926,7 +948,8 @@ const Input = {
     // Ordinary surface ACKs, pending drafts, and an owned keyboard reset ACK
     // already in flight are not failures. Only uncertainty or a failed/expired
     // transport state can start a bounded dual-reset cycle.
-    return this._signalingInputResumePending
+    return this._reliableAckRecoveryPending
+      || this._signalingInputResumePending
       || surfaceUncertain
       || this._pendingMouseReset
       || this._desktopWriteRecovery?.state === 'reacquire-required'
@@ -957,6 +980,7 @@ const Input = {
       && ack.leaseEpoch === leaseEpoch
       && reset.leaseEpoch === leaseEpoch
       && resetAttemptId === this._currentConnectionAttemptId()
+      && this._recordSocketIsCurrent(reset)
       && Array.isArray(ack.inputIds)
       && ack.inputIds.includes(reset.inputId)
       && Number.isSafeInteger(ack.appliedSeq));
@@ -989,12 +1013,14 @@ const Input = {
     if (!record || record.type !== 'mouse' || record.action !== 'reset') return null;
     if (record.leaseId !== this.activeControlLease.leaseId
       || record.leaseEpoch !== this.activeControlLease.leaseEpoch) return null;
-    if (record.connectionAttemptId !== this._currentConnectionAttemptId()) return null;
+    if (record.connectionAttemptId !== this._currentConnectionAttemptId()
+      || !this._recordSocketIsCurrent(record)) return null;
     return {
       inputId: record.inputId,
       seq: record.seq,
       leaseEpoch: record.leaseEpoch,
       attemptId: record.connectionAttemptId,
+      socket: record.socket, socketId: record.socketId,
     };
   },
 
@@ -1002,12 +1028,14 @@ const Input = {
     const reset = this.keyboardTransport?.getPendingReset?.();
     if (!reset || !this.activeControlLease) return null;
     if (reset.leaseEpoch !== this.activeControlLease.leaseEpoch) return null;
-    if (reset.connectionAttemptId !== this._currentConnectionAttemptId()) return null;
+    if (reset.connectionAttemptId !== this._currentConnectionAttemptId()
+      || !this._recordSocketIsCurrent(reset)) return null;
     return {
       inputId: reset.inputId,
       seq: reset.seq,
       leaseEpoch: reset.leaseEpoch,
       attemptId: reset.connectionAttemptId,
+      socket: reset.socket, socketId: reset.socketId,
     };
   },
 
@@ -1035,6 +1063,7 @@ const Input = {
     // A successful cycle closes this incident. A later blur or DataChannel
     // failure in the same lease/attempt is a new generation with fresh budget.
     this._recoveryAutoIdentity = null;
+    this._reliableAckRecoveryPending = false;
     this._mobileResetPending = false;
     this._mobileResetAckInFlight = false;
     // The transport ready edge is suppressed while the keyboard reset belongs
@@ -1174,6 +1203,9 @@ const Input = {
   },
 
   onConnectionAttemptChanged(attemptId = null) {
+    this._clearDesktopWriteTimer();
+    const keyboardPending = this.keyboardTransport?.connectionScopeChanged?.();
+    if (keyboardPending || this._desktopWritePending.size) this._reliableAckRecoveryPending = true;
     const currentAttempt = attemptId || null;
     if (this._recoveryCycle?.state !== 'waiting'
       || this._recoveryCycle.attemptId === currentAttempt) return false;
@@ -1184,6 +1216,55 @@ const Input = {
       reason: 'attempt-changed', source: 'lifecycle',
     });
     return true;
+  },
+
+  _currentInputSocket() {
+    return (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket || null;
+  },
+
+  _recordSocketIsCurrent(record) {
+    const socket = this._currentInputSocket();
+    return record?.socket === socket && record?.socketId === (socket?.id || null);
+  },
+
+  _clearDesktopWriteTimer() {
+    if (this._desktopWriteTimer !== null) clearTimeout(this._desktopWriteTimer);
+    this._desktopWriteTimer = null;
+  },
+
+  _scheduleDesktopWriteDeadline() {
+    this._clearDesktopWriteTimer();
+    const record = this._desktopWritePending.values().next().value;
+    if (!record || record.timedOut) return;
+    this._desktopWriteTimer = setTimeout(() => {
+      this._desktopWriteTimer = null;
+      const lease = this.activeControlLease || this._suspendedControlLease;
+      if (this._desktopWritePending.get(record.inputId) !== record
+        || record.leaseId !== lease?.leaseId || record.leaseEpoch !== lease?.leaseEpoch
+        || record.connectionAttemptId !== this._currentConnectionAttemptId()) return;
+      record.timedOut = true;
+      this._onReliableAckTimeout(record);
+    }, Math.max(0, record.sentAt + INPUT_RECOVERY_TIMEOUT_MS - Date.now()));
+    this._desktopWriteTimer?.unref?.();
+  },
+
+  _onReliableAckTimeout(record) {
+    const lease = this.activeControlLease || this._suspendedControlLease;
+    if (record.leaseId !== lease?.leaseId || record.leaseEpoch !== lease?.leaseEpoch
+      || record.connectionAttemptId !== this._currentConnectionAttemptId()) return;
+    this._reliableAckRecoveryPending = true;
+    if (record.reset || record.action === 'reset') {
+      this._desktopWriteRecovery = { state: 'reacquire-required', status: 'ack-timeout' };
+      if (!this._markRecoveryFailure('recovery-timeout') && this.activeControlLease
+        && typeof WebRTC !== 'undefined') WebRTC.requestControlRecovery?.(this._recoveryCycle.generation);
+      return;
+    }
+    if ((record.adapter === 'dataChannel' || record.transport === 'datachannel')
+      && typeof WebRTC !== 'undefined') {
+      WebRTC.quarantineReliableInputChannel?.('input-ack-timeout', record.dataChannel);
+    }
+    if (this._mobileSurfaceState === 'pending') this._markMobileSurfaceUncertain('surface-ack-timeout');
+    this._maybeAutoRecover('input-ack-timeout');
   },
 
   _markMobileSurfaceUncertain(_reason) {
@@ -1426,7 +1507,10 @@ const Input = {
       : new Set(Array.isArray(protectedInputIds) ? protectedInputIds : []);
     const records = inputIds
       .map((inputId) => this._desktopWritePending.get(inputId))
-      .filter(Boolean);
+      .filter((record) => record && record.leaseId === this.activeControlLease?.leaseId
+        && record.leaseEpoch === this.activeControlLease?.leaseEpoch
+        && record.connectionAttemptId === this._currentConnectionAttemptId()
+        && (record.transport !== 'socket' || this._recordSocketIsCurrent(record)));
     if (!records.length) return null;
     if (Number.isInteger(ack?.leaseEpoch)
       && this.activeControlLease
@@ -1442,11 +1526,14 @@ const Input = {
       const appliedSeq = Number.isSafeInteger(ack?.appliedSeq) ? ack.appliedSeq : null;
       if (appliedSeq !== null) {
         this._desktopWritePending.forEach((record, inputId) => {
-          if (record.seq <= appliedSeq && !protectedIds.has(inputId)) {
+          if (record.seq <= appliedSeq && !protectedIds.has(inputId)
+            && record.connectionAttemptId === this._currentConnectionAttemptId()
+            && (record.transport !== 'socket' || this._recordSocketIsCurrent(record))) {
             this._desktopWritePending.delete(inputId);
           }
         });
       }
+      this._scheduleDesktopWriteDeadline();
       return { status, ...(appliedSeq === null ? {} : { appliedSeq }) };
     }
 
@@ -1460,6 +1547,7 @@ const Input = {
       // Without an authoritative applied sequence, continuing would guess about
       // native state. Require a new lease to reset Host and local ordering.
       this._desktopWritePending.clear();
+      this._clearDesktopWriteTimer();
       this._desktopWriteRecovery = { state: 'reacquire-required', status };
       return { status: 'reacquire-required', failedStatus: status };
     }
@@ -1473,11 +1561,24 @@ const Input = {
         this._desktopWritePending.delete(inputId);
       }
     });
+    this._scheduleDesktopWriteDeadline();
     this._desktopWriteRecovery = { state: 'reconciled', status, appliedSeq };
     return { status, recovery: 'reconciled', appliedSeq };
   },
 
-  acceptMouseAck(ack) {
+  acceptMouseAck(ack, source) {
+    if (source) {
+      const ids = ack?.inputIds || (ack?.inputId ? [ack.inputId] : []);
+      const owned = ids.some(id => {
+        const record = this._desktopWritePending.get(id);
+        return record && record.connectionAttemptId === this._currentConnectionAttemptId()
+          && (source.transport === 'socket'
+            ? record.transport === 'socket' && record.socket === source.socket
+              && record.socketId === (source.socket?.id || null)
+            : record.transport === 'datachannel' && record.dataChannel === source.dataChannel);
+      });
+      if (!owned) return { status: 'stale' };
+    }
     let result;
     try {
       result = this._acceptMouseAck(ack);
@@ -1510,7 +1611,8 @@ const Input = {
       if (pendingReset && (pendingReset.type !== 'mouse' || pendingReset.action !== 'reset'
         || pendingReset.leaseId !== this.activeControlLease?.leaseId
         || pendingReset.leaseEpoch !== this.activeControlLease?.leaseEpoch
-        || pendingReset.connectionAttemptId !== this._currentConnectionAttemptId())) {
+        || pendingReset.connectionAttemptId !== this._currentConnectionAttemptId()
+        || !this._recordSocketIsCurrent(pendingReset))) {
         return { status: 'stale' };
       }
       if (!pendingReset && Number.isInteger(ack?.leaseEpoch)
@@ -1906,8 +2008,11 @@ const Input = {
       'keyboard-reset-ack-unsupported-code': '键盘复位包含不支持的按键，请释放后重新获取控制。',
       'keyboard-reset-ack-execution-failed': '键盘复位执行失败，请点击“重试恢复”，或释放后重新获取控制。',
     };
+    const automaticReacquire = Boolean(webRtc?._currentControlAcquireIntent?.()?.waiting);
     const message = reacquireRequired && !hasActiveControl
-      ? (controlTransitioning
+      ? (automaticReacquire
+        ? '正在等待输入状态复位，确认后自动请求控制。本地草稿已保留。'
+        : controlTransitioning
         ? '正在请求控制，请稍候…'
         : '控制已释放，请点击“请求控制”恢复输入。旧输入不会自动重发。')
       : waiting
@@ -1930,8 +2035,8 @@ const Input = {
       (noticeStatus || notice).setAttribute?.('aria-busy', String(waiting));
     }
     if (retry) {
-      retry.hidden = !(waiting || failed || surfaceBlocked);
-      retry.disabled = waiting || (!failed && !surfaceBlocked);
+      retry.hidden = !hasActiveControl || !(waiting || failed || surfaceBlocked);
+      retry.disabled = !hasActiveControl || waiting || (!failed && !surfaceBlocked);
     }
     if (control) {
       const canOfferControl = show && !draftBlocked && !mobile.composing;
@@ -2251,11 +2356,13 @@ const Input = {
     };
     const reliableWrite = type !== 'mouse' || action !== 'move';
     if (reliableWrite && this._desktopWriteRecovery?.state === 'reacquire-required') return null;
+    if (reliableWrite && this._reliableAckRecoveryPending && !isMouseSafetyRelease) return null;
     const nextSequence = reliableWrite ? this._desktopWriteSequence + 1 : null;
     if (reliableWrite) data.seq = nextSequence;
     const dataChannel = typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null;
     const commitSequence = (transport) => {
       if (!reliableWrite) return;
+      if (type === 'mouse' && action === 'reset') this._desktopWritePending.clear();
       this._desktopWriteSequence = nextSequence;
       this._desktopWritePending.set(data.inputIds[0], {
         inputId: data.inputIds[0],
@@ -2267,7 +2374,11 @@ const Input = {
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
         connectionAttemptId: this._currentConnectionAttemptId(),
+        socket: this._currentInputSocket(),
+        socketId: this._currentInputSocket()?.id || null,
+        sentAt: Date.now(),
       });
+      this._scheduleDesktopWriteDeadline();
     };
     const connectionAttemptId = this._currentConnectionAttemptId();
     let dataChannelAccepted = false;

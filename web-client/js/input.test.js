@@ -2094,7 +2094,7 @@ test('lease epoch change and revoke/regrant cannot resume an old scheduled draft
     mobileButton.setAttribute('aria-pressed', 'true');
     mobileInput.value = '\u200b';
     mobileInput.listeners.get('input')({ target: mobileInput });
-    const oldCallback = callbacks[0];
+    const oldCallback = callbacks.filter(Boolean).at(-1);
     assert.equal(typeof oldCallback, 'function');
     const sentBeforeLeaseChange = socketEvents.length;
 

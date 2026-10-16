@@ -1075,7 +1075,15 @@ function setupSignaling(io, options = {}) {
     }
 
     socket.on('control-acquire', (data = {}) => {
-      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      if (role !== 'viewer' || connections.viewers.get(socket.id) !== socket || socket._wrdDisconnected) return;
+      if (socket._wrdRebindPending) {
+        const snapshot = controlSnapshot();
+        socket.emit('control-acquire-result', {
+          state: snapshot.state, reason: 'reset-in-progress', leaseEpoch: snapshot.leaseEpoch,
+          requestId: data.requestId || null,
+        });
+        return;
+      }
       if (!connections.host) {
         socket.emit('control-acquire-result', { state: 'FREE', reason: 'host-offline', requestId: data.requestId || null });
         return;
