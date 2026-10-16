@@ -47,6 +47,7 @@ from h264_encoder_policy import (
     PolicySelection,
     policy_version_from_environment,
     resolve_h264_policy,
+    select_measured_media_policy,
 )
 from media_apply_coordinator import MediaApplyCoordinator, MediaApplyIdentity
 from media_timing import RtpFrameClock
@@ -1944,6 +1945,10 @@ class WebRemoteHost:
         # ``applied`` result and next-frame reopen.
         self._media_apply_coordinator = MediaApplyCoordinator()
         self._media_apply_last_decision = None
+        # Local-only offline authority. No qualifying joint matrix is installed;
+        # no Socket/DC handler may populate these fields.
+        self._adaptive_qualification_context = None
+        self._adaptive_local_qualification = None
         self._media_profile_sequence = 0
 
     def _create_policy_selection(self):
@@ -4279,6 +4284,33 @@ class WebRemoteHost:
                 getattr(identity, "fingerprint", ""),
             )
         return applied
+
+    def _request_measured_media_policy(self, intent):
+        """Dormant adaptive adapter; explicit profile/startup paths stay separate.
+
+        Local qualification and immutable identity are checked before the
+        existing coordinator is asked to stage anything. Staging is not an ACK
+        of application; codec-open remains the sole media-apply completion.
+        Capture intent/FPS/generation are never optimistically changed here.
+        """
+        provider = getattr(self, "_h264_policy_provider", None)
+        current = provider.current() if provider is not None else None
+        if current is None or current.policy is None or current.intent is None:
+            return {"applied": False, "reason": "no-current-policy"}
+        previous = current.intent
+        if any(getattr(intent, field, None) != getattr(previous, field) for field in
+               ("connection_attempt_id", "generation", "path", "width", "height", "profile_sequence")):
+            return {"applied": False, "reason": "adaptive-scope-change"}
+        decision = select_measured_media_policy(
+            current.policy, intent, getattr(self, "_adaptive_local_qualification", None),
+            context=getattr(self, "_adaptive_qualification_context", None))
+        if not decision.changed:
+            return {"applied": False, "reason": decision.reason}
+        # Reuse existing generation/coalescing admission and codec-open observer.
+        # This method has no inbound handler and no automatic retry loop.
+        result = self._apply_encoder_bitrate_kbps(
+            decision.policy.target_bitrate_bps // 1000, policy=decision.policy)
+        return dict(result, reason=decision.reason)
 
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
         """Return an honest bitrate-application result for the current encoder."""

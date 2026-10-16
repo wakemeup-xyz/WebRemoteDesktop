@@ -6,7 +6,8 @@ import os
 import threading
 import hashlib
 import json
-from dataclasses import dataclass
+import math
+from dataclasses import asdict, dataclass
 from typing import Callable, Mapping
 
 
@@ -371,3 +372,144 @@ class H264SessionPolicyProvider:
     def current_policy(self) -> H264SessionPolicy | None:
         current = self.current()
         return current.policy if current is not None else None
+
+
+# Joint qualification is used only by the new, disabled-by-default adaptive path.
+@dataclass(frozen=True)
+class QualificationContext:
+    code_revision: str
+    codec_versions: tuple[tuple[str, str], ...]
+    machine_digest: str
+    policy_version: str
+    quality_locked: bool = False
+
+@dataclass(frozen=True)
+class MeasuredPolicyDecision:
+    policy: H264SessionPolicy
+    changed: bool
+    reason: str
+
+SCENE_MIN = {"static-text": 65, "health-static": 1201,
+             "scrolling-text": 300, "post-scroll-static": 300,
+             "safety-net": 1226}
+INPUT_CONTRACT = {
+    "id": "production-screen-bgra-v1", "pixelFormat": "bgra",
+    "referenceFormat": "rgb24",
+    "colorConversionCost": "inside-direct-encoder-unless-a-candidate-records-it-separately",
+}
+
+def _finite(value, *, lower=0, upper=float("inf")):
+    try:
+        return type(value) in (int, float) and math.isfinite(value) and lower <= value <= upper
+    except OverflowError:
+        return False
+
+def _count(value, minimum=0):
+    return type(value) is int and value >= minimum
+
+def _qualification_tuple(intent, candidate):
+    policy = asdict(candidate)
+    policy.pop("connection_attempt_id")
+    policy.pop("generation")
+    return {"path": intent.path, "width": intent.width, "height": intent.height,
+            "requestedBitrateBps": intent.requested_bitrate_bps, "policy": policy}
+
+
+def _same_typed_json(actual, expected):
+    """JSON equality must not admit bool as an integer or NaN as a number."""
+    if isinstance(expected, dict):
+        return (isinstance(actual, Mapping) and set(actual) == set(expected)
+                and all(_same_typed_json(actual[k], v) for k, v in expected.items()))
+    if type(expected) in (int, float):
+        return type(actual) is type(expected) and math.isfinite(actual) and actual == expected
+    return type(actual) is type(expected) and actual == expected
+
+def validate_policy_qualification(evidence, *, context, intent, candidate):
+    if not isinstance(evidence, Mapping) or not evidence:
+        return ["qualification-missing"]
+    if type(evidence.get("schemaVersion")) is not int or evidence.get("schemaVersion") != 1 or evidence.get("status") != "qualified":
+        return ["qualification-not-qualified"]
+    expected_identity = {"codeRevision": context.code_revision,
+                         "codecVersions": dict(context.codec_versions),
+                         "machineDigest": context.machine_digest}
+    if (not context.code_revision or not context.machine_digest or not context.codec_versions
+            or any(not isinstance(k, str) or not k or not isinstance(v, str) or not v for k, v in context.codec_versions)
+            or evidence.get("identity") != expected_identity):
+        return ["qualification-identity-mismatch"]
+    if not _same_typed_json(evidence.get("tuple"), _qualification_tuple(intent, candidate)):
+        return ["qualification-tuple-mismatch"]
+    if evidence.get("inputContract") != INPUT_CONTRACT:
+        return ["qualification-input-contract"]
+    if intent.height not in (720, 1080):
+        return ["qualification-resolution-uncovered"]
+    budget = 25 if intent.height == 720 else 45
+    rows = evidence.get("scenes")
+    if (not isinstance(rows, list) or len(rows) != len(SCENE_MIN)
+            or any(not isinstance(r, Mapping) for r in rows)
+            or any(not isinstance(r.get("name"), str) for r in rows)
+            or {r.get("name") for r in rows} != set(SCENE_MIN)):
+        return ["qualification-scenes-incomplete"]
+    for row in rows:
+        n = row.get("sampleCount")
+        if (not _count(n, SCENE_MIN[row["name"]]) or type(row.get("validFrameCount")) is not int or row.get("validFrameCount") != n
+                or not all(type(row.get(k)) is int and row[k] == 0 for k in
+                           ("timeoutCount", "droppedCount", "earlyPeriodicIdrCount", "contractViolationCount"))):
+            return ["qualification-scene-samples"]
+        if not _finite(row.get("encodeP95Ms"), upper=budget):
+            return ["qualification-encode-budget"]
+        if (not _count(row.get("criticalIdrCount"), 1)
+                or row["criticalIdrCount"] > n
+                or not _finite(row.get("criticalIdrMinPsnr"), lower=28)):
+            return ["qualification-idr-psnr"]
+        for prefix in ("initialSafety", "periodic"):
+            count = row.get(prefix + "IdrCount")
+            value = row.get(prefix + "MaxChangeMae")
+            if (prefix + "MaxChangeMae" not in row or not _count(count) or count > n
+                    or (count > 0 and not _finite(value, upper=3))
+                    or (count == 0 and value is not None)):
+                return ["qualification-idr-change"]
+    rt = evidence.get("runtime")
+    if (not isinstance(rt, Mapping) or rt.get("status") != "passed"
+            or rt.get("path") != intent.path
+            or not _finite(rt.get("durationMs"), lower=10_800_000)
+            or not _count(rt.get("inputSampleCount"), 100)
+            or not _count(rt.get("loopSampleCount"), 1)):
+        return ["qualification-runtime-incomplete"]
+    if (not _finite(rt.get("loopP95Ms"), upper=50 if intent.path == "relay" else float("inf"))
+            or not _finite(rt.get("inputAckP95Ms"), upper=150 if intent.path == "relay" else float("inf"))):
+        return ["qualification-runtime-budget"]
+    res = rt.get("resources")
+    if (not isinstance(res, Mapping) or res.get("condition") != "normal"
+            or res.get("samplerComplete") is not True or not _count(res.get("sampleCount"), 1)
+            or not all(type(res.get(k)) is int and res[k] == 0 for k in
+                       ("unknownCount", "pressureWarningCount"))):
+        return ["qualification-resources-unavailable"]
+    samples = res.get("samples")
+    if (not isinstance(samples, list) or len(samples) != res["sampleCount"]
+            or any(not isinstance(row, Mapping) or row.get("condition") != "normal"
+                   or any(not _finite(row.get(key)) for key in
+                          ("currentRssMiB", "swapInBytesPerSec", "swapOutBytesPerSec"))
+                   or not isinstance(row.get("queues"), Mapping) or not row["queues"]
+                   or any(not _finite(value) for value in row["queues"].values())
+                   for row in samples)):
+        return ["qualification-resources-unavailable"]
+    return []
+
+def select_measured_media_policy(current, intent, qualification, *, context):
+    if not isinstance(context, QualificationContext):
+        return MeasuredPolicyDecision(current, False, "qualification-context-unavailable")
+    if context.quality_locked:
+        return MeasuredPolicyDecision(current, False, "quality-locked")
+    if not qualification:
+        return MeasuredPolicyDecision(current, False, "qualification-missing")
+    try:
+        candidate = resolve_h264_policy(intent, context.policy_version)
+        errors = validate_policy_qualification(
+            qualification, context=context, intent=intent, candidate=candidate)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return MeasuredPolicyDecision(current, False, "qualification-malformed")
+    if errors:
+        return MeasuredPolicyDecision(current, False, errors[0])
+    changed = candidate.fingerprint() != current.fingerprint()
+    return MeasuredPolicyDecision(candidate if changed else current, changed,
+                                  "qualified" if changed else "already-current")

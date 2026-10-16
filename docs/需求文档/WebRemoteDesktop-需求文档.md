@@ -536,3 +536,10 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - relay 抓屏、RGB 转换和 JPEG 编码使用单专属线程，MSS 仅在该线程创建、使用和关闭；只保留一个执行请求和一个最新待处理请求（请求 ≤4 KiB），没有逐帧 executor 积压。旧 generation 结果回到 Host loop 后丢弃。stop 超过 2 秒保留 stopping worker，禁止另起原生线程。
 - 可计数缓冲上限：BGRA 源 256 MiB（边长 ≤8192）、RGB 中间图 192 MiB、目标图每张 64 MiB 且最多两张、JPEG 16 MiB；超限停止该媒体任务，不自动降低用户选择的分辨率。这是 payload/应用缓冲预算，不是 Python、JS 或原生库 RSS 的硬上限；实际资源开销由运行采样报告。
 - 以上通过纯单元／VM／fake native 阻塞测试验证。真实抓屏、Viewer、公网路径、可见效果及长会话性能验收仍为 **NOT RUN**，不能据此宣称实际输入延迟已达标。
+
+### 2026-10-17 联合媒体资格门禁（M5）
+
+- 新增自适应策略门禁按媒体 spec §7.1 核对本机代码、codec/OS 与机器身份、完整策略 tuple、五场景逐帧质量/成本和至少 3 小时 runtime/资源证据。缺失、过期身份、未知资源、超时或丢帧均保持 current；Quality Lock 拒绝自适应。既有启动 fallback 和用户显式设置继续使用原路径。
+- 离线 `--matrix latency-joint-v1` 固定比较 20/15/12 FPS、1152×720/1280×720/1728×1080/1920×1080 与两类 codec，PTS 按 90 kHz/FPS 推进；完整复用原始质量、options、codec 实例与 IDR 门禁。当前 joint producer 仅支持 libx264；VideoToolbox 明确标 unsupported，不能获得资格。离线结果不替代真实 loop、业务 ACK、资源及持续会话证据。
+- Host 新适配器无入站消息入口，也未安装本地资格/context，当前默认 disabled；它只在资格成功后请求既有 coordinator，staged/rejected 不宣称 applied，不预先改变 capture intent/FPS/generation，不自动切换网络、TURN 或分辨率。15/12 FPS 的 peak tuple 仍未扩展到生产 resolver。
+- 代码行为由纯 raw fixture、selector、fake coordinator 和 CLI/fake codec 测试覆盖；真实编码矩阵、设备、公网、光学/可见效果及每路径 3 小时验收均为 **NOT RUN**。取得真实资格并独立复核前不启用扩展自适应。
