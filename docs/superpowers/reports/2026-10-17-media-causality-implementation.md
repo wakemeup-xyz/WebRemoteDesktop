@@ -42,3 +42,15 @@ No new input authorization, no input replay, no C recovery gate reading latency,
 Real public-network session, physical/device/optical test and long-duration wall-clock run: **NOT RUN**. Fake 15-minute stream proves bounded algorithms only. Browser receiver synchronization-source availability requires later controlled integration acceptance; absent or ambiguous mapping intentionally leaves evidence unavailable. No dependency installation or dist/pretest invocation.
 
 The requested .superpowers report path is gitignored; do not force-add. A matching versioned copy is placed at docs/superpowers/reports/2026-10-17-media-causality-implementation.md so implementation review evidence is retained in the repository.
+
+## R1 review remediation: original production rVFC clock
+
+Fix package base: 6924d96. The independent M2 review correctly identified that the production callback passed its original `now` to LatencyMonitor but omitted it from both collectors, allowing receiver/marker processing overhead into saved presentation time.
+
+Changed only Viewer implementation, direct collector test fixtures and this report's versioned copy. `observeVideoFrame(identity, roi, callbackAtMs)` now requires a finite, nonnegative numeric clock; both production call sites pass the original rVFC `now`, and immediate matches and buffered frames retain that exact clock. Expiry still uses the collector's current clock independently. No Host, wire format, control, stage metric, native producer, service or build changes.
+
+Red: `node --test --test-name-pattern='production callback preserves original' web-client/js/webrtc.frame-trace.test.js` failed both trace-first and frame-first cases with **130 !== 100**. The real VM-loaded `startVideoFrameTracking` callback runs actual receiver mapping, advances fake clock 100→110 during receiver lookup and →130 during marker work, and checks both controlled visual evidence and sparse post-apply evidence. Frame-first metadata arrives at 800; both paths must still report100.
+
+Green: `node --test web-client/js/webrtc.frame-trace.test.js web-client/js/latency-monitor.test.js` **37 passed, 10.922s**, including both callback bridge regressions, explicit invalid/missing/negative clock rejection for both arrival orders, original late join, strict v1 and 18,000-frame bounded fake stream. Existing direct tests now provide their simulated callback time explicitly.
+
+One additional direct invocation in the existing Lab loss-tap fixture lacked SSRC as well as the new clock argument. Its single line now supplies fixture SSRC1 and clock0. `node --test --test-name-pattern='Lab-only loss taps retain' web-client/js/webrtc.test.js` **1 passed, 1.469s**; fixture fetch/stats are local fakes, no network. `git diff --check` passed. Real browser/public-network/device/optical acceptance remains **NOT RUN**.

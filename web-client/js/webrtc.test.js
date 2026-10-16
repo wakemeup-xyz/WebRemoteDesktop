@@ -33,7 +33,7 @@ test('Lab-only loss taps retain rVFC and Host data-channel events with real getS
       wireTimestamp: 42, ssrc: 1, framePts: 7, idrKind: 'PLI', idrReason: 'loss', policyDigest: 'policy',
       stages: { grab: 1, age_at_recv: 1, worker_queue: 1, prepare: 1, build: 1, reformat: 1, encode: 1, packetize: 1, encode_total: 1 } }] }), 0);
   assert.equal(WebRTC.ensureFrameTraceCollector().observeVideoFrame(
-    { attemptId: 'attempt', generation: 4, streamId: 'video', rtpTimestamp: 42 }, {}), true);
+    { attemptId: 'attempt', generation: 4, streamId: 'video', ssrc: 1, rtpTimestamp: 42 }, {}, 0), true);
   WebRTC.recordLossLabRvfc({ rtpTimestamp: 42 }, { videoWidth: 1280, videoHeight: 720 });
   WebRTC.acceptLossLabHostTraceBatch({ type: 'loss_lab_host_trace_batch', schemaVersion: 1, tapEpoch: 1, droppedEventCount: 0,
     events: [{ type: 'rtcp_feedback', kind: 'PLI', monotonicNs: 1, senderId: 'host', tapEpoch: 1, sourceSeq: 1 }] });

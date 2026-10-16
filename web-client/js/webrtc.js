@@ -198,8 +198,12 @@ class FrameTraceCollector {
     };
   }
 
-  observeVideoFrame(identity, roi) {
+  observeVideoFrame(identity, roi, callbackAtMs) {
     if (this.terminalUnaligned) return false;
+    if (typeof callbackAtMs !== 'number' || !Number.isFinite(callbackAtMs) || callbackAtMs < 0) {
+      this.unaligned = true;
+      return false;
+    }
     const timestamp = identity?.rtpTimestamp;
     if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 0xffffffff
         || !Number.isSafeInteger(identity?.ssrc) || identity.ssrc < 0 || identity.ssrc > 0xffffffff
@@ -214,13 +218,13 @@ class FrameTraceCollector {
     if (!trace && (this.frames.has(id) || this.seen.has(id))) return false;
     if (trace) {
       this.traces.delete(id);
-      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi, Number(this.now())));
+      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi, callbackAtMs));
       return true;
     }
     if (this.frames.size >= this.capacity) {
       this.frames.delete(this.frames.keys().next().value); this.droppedTraceCount += 1;
     }
-    this.frames.set(id, { at: Number(this.now()), value: { identity, roi } });
+    this.frames.set(id, { at: callbackAtMs, value: { identity, roi } });
     return false;
   }
 
@@ -5339,9 +5343,9 @@ if (this.tunnelLastObjectUrl) {
       if (identity) {
         if (this._frameTraceEnabled || this._controlledSceneMarkerRoi || this._lossLabTrace) {
           this.ensureFrameTraceCollector().observeVideoFrame(identity,
-            { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
+            { metadata, marker: this.decodeControlledMarkerFromVideo(video) }, now);
         }
-        this.ensureInputFrameCollector()?.observeVideoFrame(identity, {});
+        this.ensureInputFrameCollector()?.observeVideoFrame(identity, {}, now);
         this.consumeInputFrameMatches();
       }
       this.recordLossLabRvfc(metadata, video);
