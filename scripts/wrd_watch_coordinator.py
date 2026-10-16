@@ -1,7 +1,8 @@
 """Single writer for fixed-entry observations and owned recovery operations.
 
-The shell entry owns the existing watcher lock. This coordinator never directly
-changes a connector: the pre-existing, guarded restart script is the sole worker.
+The shell acquires the existing watcher lock and execs this coordinator with the
+same PID. This coordinator never directly changes a connector: the pre-existing,
+guarded restart script is the sole worker.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -38,6 +40,54 @@ def atomic_state(path, state):
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def load_state(path):
+    unknown = {"version": 1, "clockEpoch": "unknown", "recoveries": [0, 0]}
+    try:
+        if Path(path).stat().st_size > 65536:
+            raise ValueError("state too large")
+        state = json.loads(Path(path).read_text())
+        if not isinstance(state, dict):
+            raise ValueError("invalid state")
+    except (OSError, ValueError):
+        # Missing history is not proof this is the first installation. Keep
+        # budget uncertainty across restart for a complete observation window.
+        return unknown
+    if "version" not in state:
+        state = {**state, "version": 1, "recoveries": state.get("restarts", []), "clockEpoch": "legacy"}
+    return state
+
+
+class OwnedWatchLock:
+    """Adopt the shell's lock after exec, retaining the exact same owner PID."""
+    def __init__(self, directory, *, pid, start_identity, metadata_paths=None):
+        self.directory = Path(directory)
+        self.paths = {name: Path((metadata_paths or {}).get(name, self.directory/name)) for name in ("pid", "start", "signature")}
+        self.expected = self._read()
+        if (not start_identity or self.expected["pid"].strip() != str(pid)
+                or self.expected["start"].strip() != start_identity):
+            raise ValueError("watcher lock owner identity mismatch")
+
+    def _read(self):
+        values = {}
+        for name, path in self.paths.items():
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 8192:
+                raise ValueError("invalid watcher lock metadata")
+            values[name] = path.read_text()
+        return values
+
+    def release(self):
+        try:
+            if self._read() != self.expected:
+                return False
+            for path in self.paths.values():
+                path.unlink()
+            self.directory.rmdir()  # Never remove foreign files recursively.
+            return True
+        except (OSError, ValueError):
+            return False
 
 
 class WatchCoordinator:
@@ -176,23 +226,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    lock_directory = Path(os.environ.get("WRD_FIXED_WATCH_LOCK", "/tmp/wrd-fixed-watch.lock"))
+    owned_lock = OwnedWatchLock(lock_directory, pid=os.getpid(), start_identity=process_start(os.getpid()),
+        metadata_paths={name: os.environ.get(f"WRD_FIXED_WATCH_{name.upper()}_FILE", str(lock_directory/name))
+                        for name in ("pid", "start", "signature")})
     directory = Path(__file__).resolve().parent
     state_path = Path(os.environ.get("WRD_FIXED_WATCH_STATE", "/tmp/wrd-fixed-watch-state.json"))
     log_path = Path(os.environ.get("WRD_FIXED_WATCH_LOG", "/tmp/wrd-fixed-watch.log"))
-    try:
-        if state_path.stat().st_size > 65536:
-            raise ValueError("state too large")
-        state = json.loads(state_path.read_text())
-        if not isinstance(state, dict):
-            raise ValueError("invalid state")
-    except FileNotFoundError:
-        state = None
-    except (OSError, ValueError):
-        # Missing history cannot authorize an immediate fresh recovery budget.
-        state = {"clockEpoch": "unknown", "recoveries": [0, 0]}
-    if state and "version" not in state:
-        # Legacy epoch timestamps cannot be compared to this monotonic clock.
-        state = {**state, "recoveries": state.get("restarts", []), "clockEpoch": "legacy"}
+    state = load_state(state_path)
     runtime = WatchRuntime(state=state, clock_epoch=boot_epoch(),
         fail_s=float(os.environ.get("WRD_FIXED_WATCH_FAIL_SEC", 180)),
         cooldown_s=float(os.environ.get("WRD_FIXED_WATCH_COOLDOWN_SEC", 300)),
@@ -249,6 +290,7 @@ def main(argv=None):
         if stop[0]:
             coordinator.next_tick = float("inf")
         time.sleep(min(0.25, max(0.01, coordinator.next_tick - time.monotonic())))
+    owned_lock.release()
     return 0
 
 

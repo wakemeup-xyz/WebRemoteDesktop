@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from scripts.wrd_watch_coordinator import WatchCoordinator, RecoveryWorker, notify_status
+from scripts.wrd_watch_coordinator import WatchCoordinator, RecoveryWorker, notify_status, load_state, OwnedWatchLock
 from scripts.wrd_watch_runtime import WatchRuntime
 
 
@@ -18,6 +18,36 @@ class FakeWorker:
 
 
 class CoordinatorTest(unittest.TestCase):
+    def test_missing_and_corrupt_history_keep_full_conservative_window(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/"s"
+            for contents in (None, 'malformed'):
+                if contents is not None:
+                    path.write_text(contents)
+                r = WatchRuntime(state=load_state(path), clock_epoch="boot-a")
+                r.tick(0, {"origin": True, "formal": False})
+                self.assertEqual(r.snapshot()["quarantinedCount"], 2)
+                self.assertEqual(r.tick(180, {"origin": True, "formal": False})["action"], "none")
+                r = WatchRuntime(state=r.snapshot(), clock_epoch="boot-a")
+                self.assertEqual(r.tick(3599, {"origin": True, "formal": False})["action"], "none")
+                self.assertEqual(r.tick(3600, {"origin": True, "formal": False})["action"], "restart")
+
+    def test_inherited_lock_requires_exact_pid_and_start_and_preserves_changed_owner(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)/"watch.lock"
+            directory.mkdir()
+            for name, value in {"pid": "123", "start": "start-a", "signature": "bash fixture"}.items():
+                (directory/name).write_text(value)
+            with self.assertRaises(ValueError):
+                OwnedWatchLock(directory, pid=456, start_identity="start-a")
+            lock = OwnedWatchLock(directory, pid=123, start_identity="start-a")
+            (directory/"signature").write_text("foreign")
+            self.assertFalse(lock.release())
+            self.assertTrue(directory.exists())
+            (directory/"signature").write_text("bash fixture")
+            self.assertTrue(lock.release())
+            self.assertFalse(directory.exists())
+
     def test_worker_parent_exit_does_not_prove_children_finished(self):
         class Process:
             def poll(self):

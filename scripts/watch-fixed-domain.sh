@@ -644,19 +644,20 @@ main() {
 
   wrd_fixed_watch_acquire_lock || exit 0
   export WRD_FIXED_WATCH_STATE WRD_FIXED_WATCH_LOG WRD_FIXED_WATCH_INTERVAL_SEC
+  export WRD_FIXED_WATCH_LOCK
+  export WRD_FIXED_WATCH_PID_FILE WRD_FIXED_WATCH_START_FILE WRD_FIXED_WATCH_SIGNATURE_FILE
   export WRD_FIXED_WATCH_FAIL_SEC WRD_FIXED_WATCH_COOLDOWN_SEC
   export WRD_FIXED_WATCH_MAX_RESTARTS WRD_FIXED_WATCH_WINDOW_SEC
   export WRD_FIXED_FORMAL_HEALTH_URL WRD_FIXED_ORIGIN_HEALTH_URL
 
   if [ "$WRD_FIXED_WATCH_ONCE" = "1" ]; then
-    python3 "$SCRIPT_DIR/wrd_watch_coordinator.py" --once
-    exit 0
+    exec python3 "$SCRIPT_DIR/wrd_watch_coordinator.py" --once
   fi
 
   # The coordinator is the sole production state writer. Its recovery worker
   # is independent of fixed-deadline observations; completion starts cooldown.
   # The source-only/decide-only compatibility helpers above never run here.
-  python3 "$SCRIPT_DIR/wrd_watch_coordinator.py"
+  exec python3 "$SCRIPT_DIR/wrd_watch_coordinator.py"
 }
 
 if [ "${WRD_FIXED_WATCH_SOURCE_ONLY:-0}" != "1" ]; then
