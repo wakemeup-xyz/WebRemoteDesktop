@@ -36,16 +36,35 @@ const createLatencyMonitor = (options = {}) => {
     return t;
   };
   const totalSamples = () => [...metrics.values()].reduce((sum, rows) => sum + rows.length, 0);
-  // Reserve 448KiB for pending/tombstones/scope and object serialization delimiters.
+  // Bound serialized metadata separately from engine/object heap overhead.
   const sampleBytes = () => [...metrics.values()].reduce((sum, rows) => sum + rows.reduce((n, row) => n + row.bytes, 0), 0);
   const trimClosed = t => {
     while (closed.length && (closed.length > 4 || t - closed[0].endedAtMs >= 60000 || JSON.stringify(closed).length > 32768)) {
       closed.shift(); closedDropped = Math.min(Number.MAX_SAFE_INTEGER, closedDropped + 1);
     }
   };
+  // Keys may contain quotes/backslashes: use their actual JSON length. The
+  // fixed record allowance exceeds all retained scalar fields, including late.
+  const metadataBytes = () => sampleBytes() + [pending, tombstones].reduce((total, map) => total
+    + [...map.values()].reduce((sum, record) => sum + record.metadataBytes, 0), 0)
+    + JSON.stringify(closed).length + JSON.stringify(scope).length + 2048;
+  const enforceMetadataBudget = () => {
+    while (metadataBytes() > 1048576) {
+      const populated = [...metrics.values()].filter(rows => rows.length);
+      if (populated.length) {
+        populated.reduce((a, b) => a[0].at <= b[0].at ? a : b).shift();
+      } else if (tombstones.size) {
+        tombstones.delete(tombstones.keys().next().value);
+      } else if (pending.size) {
+        pending.delete(pending.keys().next().value); inc('unmatched');
+      } else break;
+      inc('dropped');
+    }
+  };
   const remember = (id, record, state, t) => {
     tombstones.set(id, { ...record, state, ended: t });
     while (tombstones.size > 1024) { tombstones.delete(tombstones.keys().next().value); inc('dropped'); }
+    enforceMetadataBudget();
   };
   const expire = t => {
     for (const rows of metrics.values()) while (rows.length && t - rows[0].at >= 5000) rows.shift();
@@ -72,6 +91,7 @@ const createLatencyMonitor = (options = {}) => {
       const oldest = [...metrics.values()].filter(r => r.length).reduce((a, b) => a[0].at <= b[0].at ? a : b);
       oldest.shift(); inc('dropped');
     }
+    enforceMetadataBudget();
     return true;
   };
   let serial = 0;
@@ -96,7 +116,8 @@ const createLatencyMonitor = (options = {}) => {
         const oldest = pending.keys().next().value;
         remember(oldest, pending.get(oldest), 'dropped', t); pending.delete(oldest); inc('dropped'); inc('unmatched');
       }
-      pending.set(id, { sent: t, notice: false }); inc('sent');
+      pending.set(id, { sent: t, notice: false, metadataBytes: JSON.stringify(id).length + 192 }); inc('sent');
+      enforceMetadataBudget();
       if (valid(context.domAtMs) && context.domAtMs <= t) push('frontendDispatchMs', t - context.domAtMs, t, id);
       return true;
     },

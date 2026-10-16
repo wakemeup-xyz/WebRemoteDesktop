@@ -262,3 +262,21 @@ test('backwards monotonic time and invalid scope cannot manufacture samples', ()
   f.set(1100); f.m.setScope({ ...testScope, connectionAttemptId: 'x'.repeat(129) });
   f.m.onInputAck({ inputIds: ['one'] }); assert.equal(f.snapshot().metrics.inputAckRttMs.last, 100);
 });
+
+test('escaped ASCII identifiers share the total serialized metadata budget with samples', () => {
+  const f = fixture();
+  const id = i => '\\"'.repeat(60) + String(i).padStart(8, '0');
+  for (let i = 0; i < 1024; i++) {
+    f.m.recordInputSend(id(i));
+    f.m.onInputAck({ inputIds: [id(i)], status: 'applied' });
+  }
+  for (let i = 1024; i < 1536; i++) assert.equal(f.m.recordInputSend(id(i)), true);
+  // Small numeric values make the escaping of retained metadata the dominant
+  // bound; discarded metrics must not reject subsequent control submissions.
+  const stages = LATENCY_METRIC_NAMES.filter(name => name !== 'freshFrameAgeMs');
+  for (let i = 0; i < 4096; i++) f.m.recordStage(stages[i % stages.length], 1, { atMs: 1000, sampleKey: `stage-${'x'.repeat(48)}-${i}` });
+  assert.ok(Object.values(f.snapshot().metrics).reduce((sum, metric) => sum + metric.count, 0) < 3500);
+  assert.ok(f.snapshot().outcomes.dropped > 0);
+  assert.equal(f.m.recordInputSend('still-delivered'), true);
+  assert.equal(f.snapshot().outcomes.sent, 1537);
+});

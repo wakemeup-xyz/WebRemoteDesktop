@@ -783,7 +783,7 @@ class TunnelRelayStreamer:
             return
         self.inflight_frames.pop(frame_id, None)
         measured_ms = relay_ack_duration_ms(frame_meta.get("sent_at_ms"), time.monotonic() * 1000.0)
-        if measured_ms is None:
+        if measured_ms is None or measured_ms >= 10000:
             return
         self.last_acked_frame_id = frame_id
         self.stats_acked += 1

@@ -83,7 +83,7 @@ class TestActualRelayAck(unittest.TestCase):
         for client_ms in [5100, 0]:
             relay = Relay.__new__(Relay)
             relay.production_generation = 3
-            relay.inflight_frames = {1: {'sent_at_ms': 1000, 'generation': 3}, 2: {'sent_at_ms': 1000, 'generation': 2}}
+            relay.inflight_frames = {1: {'sent_at_ms': 1000, 'generation': 3}, 2: {'sent_at_ms': 1000, 'generation': 2}, 3: {'sent_at_ms': -10000, 'generation': 3}}
             relay.last_acked_frame_id = 0
             relay.stats_acked = 0
             relay.ack_event = threading.Event()
@@ -94,5 +94,6 @@ class TestActualRelayAck(unittest.TestCase):
                 relay.ack(1, latency_ms=client_ms)
                 relay.ack(2, latency_ms=client_ms)
                 relay.ack(99, latency_ms=client_ms)
+                relay.ack(3, latency_ms=client_ms)
             self.assertEqual(feedback, [200])
             self.assertEqual(relay.stats_acked, 1)
