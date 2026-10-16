@@ -1,6 +1,7 @@
 (function installShellGuard(global) {
   const state = {
     coreInstalled: false,
+    authVerified: false,
     queuedStart: false,
     startHandler: null,
     marks: [],
@@ -40,9 +41,11 @@
   if (global.document.readyState === 'loading') {
     global.document.addEventListener('DOMContentLoaded', () => {
       if (!state.coreInstalled) setCoreControlsDisabled(true);
+      applyAuthGate();
     }, { once: true });
   } else {
     setCoreControlsDisabled(true);
+    applyAuthGate();
   }
 
   function element(id) { return global.document.getElementById(id); }
@@ -50,9 +53,24 @@
     const target = element('loadingText');
     if (target) target.textContent = text;
   }
+  function applyAuthGate() {
+    const start = element('startBtn');
+    if (start) start.disabled = !state.coreInstalled || !state.authVerified;
+  }
+  function setAuthCheck(check) {
+    state.authVerified = check?.state === 'verified';
+    applyAuthGate();
+  }
   function acknowledgeStartClick() {
     mark('start-click');
-    if (state.startHandler) return state.startHandler();
+    if (state.startHandler) {
+      if (!state.authVerified) {
+        state.queuedStart = false;
+        setText('登录验证暂不可用，请重试验证');
+        return false;
+      }
+      return state.startHandler();
+    }
     state.queuedStart = true;
     setText('正在加载必要资源…');
     return undefined;
@@ -65,7 +83,12 @@
     mark('core-interactive');
     setCoreControlsDisabled(false);
     global.WebRTC?.syncChromeCapabilities?.();
-    if (state.queuedStart) startHandler();
+    applyAuthGate();
+    if (state.queuedStart) {
+      state.queuedStart = false;
+      if (state.authVerified) startHandler();
+      else setText('登录验证暂不可用，请重试验证');
+    }
     return true;
   }
   function failCore(reason) {
@@ -78,11 +101,13 @@
     mark,
     acknowledgeStartClick,
     installCore,
+    setAuthCheck,
     failCore,
     coreDeadlineMs: CORE_DEADLINE_MS,
     sessionSnapshot: () => global.DesktopSessionState?.snapshot?.() || null,
     snapshot: () => ({
       coreInstalled: state.coreInstalled,
+      authVerified: state.authVerified,
       queuedStart: state.queuedStart,
       marks: state.marks.map((entry) => ({ ...entry })),
     }),

@@ -685,7 +685,7 @@ const ChromeLayout = {
     const phase = UI_PHASES.includes(snapshot.uiPhase) ? snapshot.uiPhase : 'idle';
     const active = snapshot.activeControl === true && snapshot.controlTransition !== true;
     const mediaReady = snapshot.streamReady === true && CONTROL_PHASES.includes(phase);
-    const canConnect = phase === 'idle' || phase === 'disconnected';
+    const canConnect = snapshot.authVerified !== false && (phase === 'idle' || phase === 'disconnected');
     const canMediaActions = ['media-pending', ...CONTROL_PHASES].includes(phase);
     const terminalActive = terminalActiveFor(snapshot);
     const controlPhase = CONTROL_PHASES.includes(phase);

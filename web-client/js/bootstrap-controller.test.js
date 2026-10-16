@@ -55,9 +55,9 @@ test('timeout degrades auto but never invents relay config', async () => {
   assert.equal(relay.getSnapshot().state, 'failed');
 });
 
-test('401 becomes auth-required and never falls back', async () => {
+test('typed application auth-invalid becomes auth-required and never falls back', async () => {
   const createViewerBootstrap = loadController();
-  const error = Object.assign(new Error('unauthorized'), { status: 401 });
+  const error = Object.assign(new Error('unauthorized'), { status: 401, code: 'auth-invalid' });
   const controller = createViewerBootstrap({
     fetchSnapshot: async () => { throw error; },
     fallbackFactory: () => ({ degraded: true }),
@@ -97,4 +97,13 @@ test('deadline aborts the underlying bootstrap fetch', async () => {
   timeoutCallback();
   assert.equal((await load).degraded, true);
   assert.equal(observedSignal.aborted, true);
+});
+
+test('an untyped proxy 403 never becomes auth-required', async () => {
+  const controller = loadController()({
+    fetchSnapshot: async () => { throw Object.assign(new Error('proxy unavailable'), { status: 403 }); },
+    fallbackFactory: () => ({ degraded: true }),
+  });
+  assert.equal((await controller.load({ mode: 'auto' })).degraded, true);
+  assert.equal(controller.getSnapshot().state, 'degraded');
 });

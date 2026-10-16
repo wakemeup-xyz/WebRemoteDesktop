@@ -71,6 +71,7 @@ test('pre-core Start click is acknowledged and transferred exactly once', () => 
   assert.equal(elements.loadingText.textContent, '正在加载必要资源…');
   assert.equal(shell.snapshot().marks.at(-1).name, 'start-click');
   let calls = 0;
+  shell.setAuthCheck({ state: 'verified' });
   advance(20);
   shell.installCore(() => { calls += 1; });
   shell.installCore(() => { calls += 100; });
@@ -165,4 +166,21 @@ test('DOMContentLoaded still disables core controls when installCore has not run
   domContentLoaded();
   assert.equal(elements.coreControl.disabled, true);
   assert.equal(context.__WRD_SHELL__.snapshot().coreInstalled, false);
+});
+
+
+test('an unverified queued click is discarded and verification success requires a fresh click', () => {
+  const { shell } = createShellFixture();
+  let calls = 0;
+  shell.acknowledgeStartClick();
+  shell.installCore(() => { calls++; });
+  assert.equal(calls, 0);
+  assert.equal(shell.snapshot().queuedStart, false);
+  shell.setAuthCheck({ state: 'verified' });
+  assert.equal(calls, 0);
+  shell.acknowledgeStartClick();
+  assert.equal(calls, 1);
+  shell.setAuthCheck({ state: 'unavailable' });
+  shell.acknowledgeStartClick();
+  assert.equal(calls, 1);
 });

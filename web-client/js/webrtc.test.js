@@ -140,6 +140,7 @@ function loadWebRTC(overrides = {}) {
     Auth: {
       getToken: () => 'token',
       isLoggedIn: () => true,
+      isVerified: () => true,
       logout: () => {},
     },
     RTCSessionDescription: function RTCSessionDescription(value) { return value; },

@@ -46,3 +46,26 @@ Status: implementation and self-review complete; parent task owns independent re
 - No service startup/restart, production dist build, real input, tunnel read/change/restart, dependency install, or runtime configuration change occurred.
 - Aborting a browser request does not prove the server did not receive its password request; the implementation never automatically retries it. Fetch implementations that ignore abort can continue internally, but late results have no login effects.
 - Independent reviewer and final integration/release remain parent responsibilities. No known W1a blocker after self-review.
+
+## Independent-review correction: runtime Start / bootstrap integration
+
+The first independent review correctly found an integration gap: the DOMContentLoaded hook ignored the boolean Auth result, Start accepted token presence, and bootstrap's status-only 403 path could still erase preserved credentials. This correction supersedes the initial caller-audit conclusion above; local Auth tests alone did not establish the runtime gate.
+
+- Added current typed Auth state publication, subscriptions, `isVerified`, `getCheck`, `getGeneration`, and `whenReady`. Start can await the already pending initial verification, but unavailable results require an explicit verification retry. Token or generation changes invalidate prior verification immediately.
+- ShellGuard disables Start pending/currently unavailable auth and discards a blocked queued click. Verification success enables a future explicit click; it does not replay Start. WebRTC's capability snapshot and ChromeLayout's minimal canConnect condition keep later capability updates from enabling unverified Start.
+- Actual Start now checks current verification before opening signaling, then checks the same auth token/generation again before consuming asynchronous bootstrap success. Typed auth-invalid errors only trigger logout while the initiating auth generation is still current.
+- Actual bootViewerShell bootstrap adapter parses JSON and emits finite failure codes. It recognizes `/api/viewer-bootstrap`'s existing middleware JSON (`401 {error:'Invalid token'}` or `Missing bearer token`) as application auth-invalid; `/auth/verify`'s distinct valid=false contract remains unchanged. Proxy HTML403/bad JSON/untyped status failures cannot trigger logout. Stale bootstrap errors cannot revoke new credentials.
+- Authorized adapters now additionally touch bootstrap-controller.js/test, shell-guard.js/test, ChromeLayout, webrtc.js and one Auth fixture line in webrtc.test.js. New auth-start-integration.test.js runs the real Auth, ShellGuard, bootViewerShell adapter, Start handler, bootstrap controller, and capability computation in one VM; only platform/media/layout side effects use fake adapters. No live Viewer is created.
+
+Red evidence before correction:
+
+- Bootstrap controller regression: untyped proxy403 incorrectly became auth-required (5 PASS / 1 FAIL).
+- Offline runtime integration: unavailable auth left Start enabled; a late old bootstrap401 cleared a new token (1 PASS / 2 FAIL). Existing real application Invalid token JSON logout still passed.
+
+Final command after correction:
+
+`node --test web-client/js/auth-start-integration.test.js web-client/js/bounded-request.test.js web-client/js/login.test.js web-client/js/auth.test.js web-client/js/bootstrap-controller.test.js web-client/js/shell-guard.test.js web-client/js/chrome-layout.test.js web-client/js/webrtc.test.js signal-server/test/web-asset-build.test.js`
+
+Result: **308 PASS / 0 FAIL / 0 skipped**, exit 0. Covers unavailable verify → blocked Shell/direct Start → explicit verify retry without automatic Start → explicit Start + proxy bootstrap403 preservation; actual application bootstrap401 logout; stale bootstrap401/new-token isolation; stale successful bootstrap/new-unverified-generation isolation; original WebRTC and layout regressions; and only temporary-output builds. `git diff --check`: PASS.
+
+Live origin/public/browser/device/production Viewer/input and long-run acceptance remain NOT RUN. No services, tunnel, native input, runtime config or production dist changed. Parent owns the follow-up independent review.

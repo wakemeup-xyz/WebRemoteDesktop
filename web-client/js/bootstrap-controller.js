@@ -39,7 +39,7 @@ function createViewerBootstrap(options = {}) {
       return value;
     } catch (error) {
       if (currentGeneration !== generation) throw error;
-      if (error.status === 401 || error.status === 403) {
+      if (error.code === 'auth-invalid' && (error.status === 401 || error.status === 403)) {
         publish({ state: 'auth-required', generation: currentGeneration, value: null, error });
         throw error;
       }

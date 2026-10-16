@@ -1738,6 +1738,7 @@ const WebRTC = {
         : (streamReady && this.hasActiveControl() && transportReady ? 'armed' : 'off');
     return {
       uiPhase: this.uiPhase,
+      authVerified: typeof Auth !== 'undefined' && Auth.isVerified?.() === true,
       streamReady,
       activeControl: this.hasActiveControl(),
       controlTransition: Boolean(transition),
@@ -2354,6 +2355,18 @@ const WebRTC = {
   },
 
   async startViewer(controller = null) {
+    // Token presence is not verification. Await the initial check only; retry is explicit.
+    const verified = typeof Auth !== 'undefined' && (typeof Auth.whenReady === 'function'
+      ? await Auth.whenReady() : Auth.isVerified?.() === true);
+    if (!verified || Auth.isVerified?.() !== true) {
+      if (typeof Auth !== 'undefined' && !Auth.getToken()) return Auth.logout();
+      if (typeof Auth !== 'undefined') Auth.showRetry?.(true);
+      updateLoadingText('登录验证暂不可用，请重试验证');
+      this.syncChromeCapabilities();
+      return false;
+    }
+    const authToken = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = 'none';
     document.getElementById('loading')?.classList.add('is-connecting');
@@ -2363,9 +2376,6 @@ const WebRTC = {
       StartupTelemetry.mark('bootstrap-start');
     }
     try {
-      if (typeof Auth !== 'undefined' && !Auth.isLoggedIn()) {
-        return Auth.logout();
-      }
       if (!controller) {
         await this.init({ trigger: 'start-button' });
         return;
@@ -2379,6 +2389,10 @@ const WebRTC = {
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
       });
+      if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        throw Object.assign(new Error('superseded'), { code: 'superseded' });
+      }
       if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
         if (bootstrapSnapshot?.degraded) {
           StartupTelemetry.mark('bootstrap-degraded');
@@ -2389,7 +2403,9 @@ const WebRTC = {
       await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
     } catch (error) {
       this._deferPeerUntilConfig = false;
-      if (controller && controller.getSnapshot && controller.getSnapshot().state === 'auth-required') {
+      if (error?.code === 'auth-invalid' && Auth.getToken() === authToken
+          && Auth.getGeneration?.() === authGeneration
+          && controller?.getSnapshot?.().state === 'auth-required') {
         return Auth.logout();
       }
       this.enterBootstrapFailure(error);
@@ -6272,6 +6288,12 @@ function bootViewerShell() {
   window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
   WebRTC.bindFullscreenLifecycle();
+  if (typeof Auth !== 'undefined' && typeof Auth.subscribe === 'function') {
+    Auth.subscribe((check) => {
+      window.__WRD_SHELL__?.setAuthCheck?.(check);
+      WebRTC.syncChromeCapabilities();
+    });
+  }
   if (typeof StartupTelemetry !== 'undefined') {
     // Import ShellGuard marks with original performance timestamps only.
     const shellSnap = window.__WRD_SHELL__?.snapshot?.();
@@ -6292,17 +6314,28 @@ function bootViewerShell() {
           ? RuntimeConfig.getApiBase()
           : '';
         const query = turnServerId ? `?turnServerId=${encodeURIComponent(turnServerId)}` : '';
+        const tokenAtStart = Auth.getToken();
+        const authGeneration = Auth.getGeneration?.();
         const response = await fetch(`${apiBase}/api/viewer-bootstrap${query}`, {
           cache: 'no-store',
           signal,
-          headers: { Authorization: `Bearer ${Auth.getToken()}` },
+          headers: { Authorization: `Bearer ${tokenAtStart}` },
         });
+        let data;
+        try { data = await response.json(); }
+        catch { throw Object.assign(new Error('invalid-response'), { code: 'invalid-response', status: response.status }); }
         if (!response.ok) {
-          const error = new Error(`Viewer bootstrap HTTP ${response.status}`);
-          error.status = response.status;
-          throw error;
+          // Bootstrap's existing middleware returns error-only JSON, unlike /auth/verify.
+          const applicationInvalid = response.status === 401
+            && ['Invalid token', 'Missing bearer token'].includes(data?.error);
+          const typedInvalid = (response.status === 401 || response.status === 403)
+            && data?.valid === false && ['Invalid token', 'No token provided'].includes(data.error);
+          const current = tokenAtStart === Auth.getToken() && authGeneration === Auth.getGeneration?.();
+          const code = !current ? 'superseded'
+            : applicationInvalid || typedInvalid ? 'auth-invalid' : 'bootstrap-unavailable';
+          throw Object.assign(new Error(code), { code, status: response.status });
         }
-        return response.json();
+        return data;
       },
       fallbackFactory({ mode, error }) {
         return {
