@@ -280,3 +280,51 @@ test('escaped ASCII identifiers share the total serialized metadata budget with 
   assert.equal(f.m.recordInputSend('still-delivered'), true);
   assert.equal(f.snapshot().outcomes.sent, 1537);
 });
+
+test('clock sync retries survive send failure and temporarily missing DataChannel', () => {
+  const f = fixture(); let attempts = 0;
+  const send = () => { attempts += 1; if (attempts === 2) throw new Error('temporarily closed'); };
+  f.m.requestClockSync(send);
+  f.set(31000); f.run(); assert.equal(attempts, 2);
+  f.set(61000); f.run(); assert.equal(attempts, 3);
+  f.m.setScope(null); assert.equal(f.timers.size, 0);
+
+  let now = 1000; const callbacks = new Map(); let id = 0; const sent = [];
+  const webRTC = { inputChannel: null };
+  const monitor = loadLatencyMonitor({ performance: { now: () => now },
+    setTimeout(fn, ms) { const key = ++id; callbacks.set(key, { fn, at: now + ms }); return key; },
+    clearTimeout(key) { callbacks.delete(key); }, WebRTC: webRTC });
+  monitor.setScope(testScope); assert.equal(monitor.requestClockSync(), false);
+  assert.equal(callbacks.size, 1);
+  webRTC.inputChannel = { readyState: 'open', send(message) { sent.push(JSON.parse(message)); } };
+  now = 31000;
+  for (const [key, timer] of [...callbacks]) if (timer.at <= now) { callbacks.delete(key); timer.fn(); }
+  assert.equal(sent.length, 1);
+  monitor.setScope(null); assert.equal(callbacks.size, 0);
+});
+
+test('warmup normalization never creates measured byte or elapsed interval zeros', () => {
+  const { WebRtcStats } = require('./webrtc-stats.js');
+  const f = fixture();
+  const warmup = WebRtcStats.normalizeStats(new Map(), null, 1000);
+  f.m.onMediaStats(warmup);
+  assert.equal(f.snapshot().metrics.recvBytes.available, false);
+  assert.equal(f.snapshot().metrics.elapsedMs.available, false);
+  const first = WebRtcStats.normalizeStats(new Map([['video', { id: 'video', type: 'inbound-rtp', kind: 'video', bytesReceived: 50 }]]), null, 1000);
+  const second = WebRtcStats.normalizeStats(new Map([['video', { id: 'video', type: 'inbound-rtp', kind: 'video', bytesReceived: 50 }]]), first.totals, 2000);
+  f.set(2000); f.m.onMediaStats(second);
+  assert.equal(f.snapshot().metrics.recvBytes.last, 0);
+  assert.equal(f.snapshot().metrics.elapsedMs.last, 1000);
+});
+
+test('unordered ACK bypass cannot consume reliable submission or old-generation observations', () => {
+  const f = fixture();
+  const ack = { schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: testScope.leaseEpoch, inputIds: ['reliable'] };
+  f.m.recordInputSend('reliable', { inputType: 'mouse', action: 'down', transport: 'socket' });
+  f.set(1100);
+  assert.equal(f.m.onUnorderedInputAck(ack, { scope: testScope, transport: 'socket' }), false);
+  assert.equal(f.snapshot().outcomes.acked, 0);
+  f.m.recordInputSend('move', { inputType: 'mouse', action: 'move', transport: 'socket' });
+  assert.equal(f.m.onUnorderedInputAck({ ...ack, inputIds: ['move'] }, { scope: { ...testScope, generation: 2 }, transport: 'socket' }), false);
+  assert.equal(f.snapshot().outcomes.acked, 0);
+});

@@ -116,7 +116,9 @@ const createLatencyMonitor = (options = {}) => {
         const oldest = pending.keys().next().value;
         remember(oldest, pending.get(oldest), 'dropped', t); pending.delete(oldest); inc('dropped'); inc('unmatched');
       }
-      pending.set(id, { sent: t, notice: false, metadataBytes: JSON.stringify(id).length + 192 }); inc('sent');
+      pending.set(id, { sent: t, notice: false, unordered: context.inputType === 'mouse' && context.action === 'move',
+        transport: ['socket', 'datachannel'].includes(context.transport) ? context.transport : null,
+        metadataBytes: JSON.stringify(id).length + 192 }); inc('sent');
       enforceMetadataBudget();
       if (valid(context.domAtMs) && context.domAtMs <= t) push('frontendDispatchMs', t - context.domAtMs, t, id);
       return true;
@@ -144,6 +146,20 @@ const createLatencyMonitor = (options = {}) => {
         for (const name of ['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs', 'signalForwardMs', 'signalAckForwardMs']) push(name, data[name], t, key);
         if (data.hostAdapterAwaitMs === undefined) push('hostAdapterAwaitMs', data.hostExecuteMs, t, key);
       }
+    },
+    onUnorderedInputAck(data = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return false; expire(t);
+      if (!sameScope(scope, context.scope) || data.schemaVersion !== 2 || data.inputType !== 'mouse'
+        || data.leaseEpoch !== scope?.leaseEpoch || data.status !== 'applied'
+        || !['socket', 'datachannel'].includes(context.transport)) return false;
+      const ids = Array.isArray(data.inputIds) ? data.inputIds.filter(validId).slice(0, 64) : [];
+      const matching = ids.filter(id => {
+        const record = pending.get(id) || tombstones.get(id);
+        return record?.unordered === true && record.transport === context.transport;
+      });
+      if (!matching.length) return false;
+      api.onInputAck({ ...data, inputIds: matching }, { scope, nowMs: t });
+      return true;
     },
     onFrameTiming(data = {}, context = {}) {
       const t = clock(context.nowMs); if (t === null) return; expire(t);
@@ -191,13 +207,16 @@ const createLatencyMonitor = (options = {}) => {
     requestClockSync(send) {
       const t = clock(); if (t === null) return false; expire(t);
       if (sync) return false;
+      if (scope === null) { stopSyncTimers(); return false; }
+      // Retry ownership survives an absent channel or throwing send. Teardown
+      // cancels both timers; importing or setting scope never starts one.
+      stopSyncTimers();
+      syncRetry = schedule(() => { syncRetry = null; api.requestClockSync(send); }, 30000);
       const transport = send || (typeof WebRTC !== 'undefined' && WebRTC.inputChannel?.readyState === 'open' ? message => WebRTC.inputChannel.send(JSON.stringify(message)) : null);
       if (!transport) return false;
       sync = { v0: t, scope: copyScope(scope) };
       try { transport({ type: 'clock_sync_req', v0: t }); } catch (_) { sync = null; return false; }
-      stopSyncTimers();
       syncTimeout = schedule(() => { syncTimeout = null; const at = clock(); if (at !== null) expire(at); }, 2000);
-      syncRetry = schedule(() => { syncRetry = null; api.requestClockSync(send); }, 30000);
       return true;
     },
     handleClockSyncResponse(data = {}, context = {}) {

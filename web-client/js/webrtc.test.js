@@ -6481,3 +6481,49 @@ test('stale business ACKs never contribute timing samples on socket or DataChann
   WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4, inputIds: ['old-mouse'] });
   assert.equal(observed.length, 0);
 });
+
+for (const transport of ['socket', 'datachannel']) {
+  test(`accepted unordered mouse move settles only matching scope observation over ${transport}`, () => {
+    let now = 1000;
+    const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+    const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor, performance: { now: () => now } });
+    const Input = context.__Input;
+    WebRTC.currentConnectionAttemptId = 'unordered-attempt'; WebRTC.connectionAttemptSequence = 1;
+    Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 4 };
+    Input.isActive = true;
+    let sent;
+    WebRTC.sendInput = data => { if (transport !== 'datachannel') return false; sent = data; return true; };
+    WebRTC.socket = { connected: true, emit(_event, data) { sent = data; } };
+    const inputId = Input._sendInput('mouse', 'move', { relX: .5, relY: .5 });
+    assert.equal(inputId, sent.inputIds[0]);
+    assert.equal(Input._desktopWritePending.size, 0);
+    now = 1100;
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 3, inputIds: [inputId] }, { transport });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [inputId] }, { transport: transport === 'socket' ? 'datachannel' : 'socket' });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [inputId] }, { transport });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 100);
+    assert.equal(monitor.snapshot().outcomes.acked, 1);
+    now = 12000;
+    assert.equal(monitor.snapshot().outcomes.timedOut, 0);
+  });
+}
+
+test('future-sequence applied keyboard envelope cannot produce successful timing after business resync', () => {
+  let now = 1000;
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor, performance: { now: () => now } });
+  const Input = context.__Input;
+  WebRTC.currentConnectionAttemptId = 'future-attempt'; WebRTC.connectionAttemptSequence = 1;
+  Input.initKeyboardController(); Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 4 });
+  const sent = [];
+  WebRTC.socket = { connected: true, emit(_event, data) { sent.push(data); } };
+  WebRTC.sendInput = () => false;
+  assert.equal(Input.keyboardTransport.send({ type: 'keyboard', action: 'text', payload: { text: 'fixture' } }) !== null, true);
+  const inputId = sent[0].inputIds[0]; now = 1100;
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 4, appliedSeq: 999,
+    status: 'applied', pressedKeyCount: 0, modifierMask: 0, inputIds: [inputId] }, { transport: 'socket' });
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+  assert.equal(monitor.snapshot().outcomes.acked, 0);
+});

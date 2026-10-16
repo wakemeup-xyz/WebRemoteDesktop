@@ -1233,7 +1233,7 @@ const WebRTC = {
     if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.setScope?.(this.latencyScope());
   },
 
-  acceptObservedInputAck(data) {
+  acceptObservedInputAck(data, context = {}) {
     // Finish C's validation first. Timing never grants or repairs authority.
     const results = [];
     if (typeof Input !== 'undefined') {
@@ -1241,7 +1241,21 @@ const WebRTC = {
       if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
         && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data));
     }
-    if (data?.schemaVersion === 2 && !results.some(result => result && result.status !== 'stale')) return;
+    if (data?.schemaVersion === 2) {
+      const positive = data.status === 'applied' || data.status === 'duplicate';
+      const validated = results.some(result => result && (positive
+        ? result.status === 'applied' || result.status === 'duplicate'
+        : result.status !== 'stale'));
+      if (!validated) {
+        // Moves deliberately bypass C's reliable sequence ledger. The observer
+        // may settle only its own accepted unordered submission, with the exact
+        // current scope, lease, ID and actual receiving transport.
+        if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onUnorderedInputAck?.(data, {
+          scope: this.latencyScope(), transport: context.transport,
+        });
+        return;
+      }
+    }
     if (typeof LatencyMonitor !== 'undefined') {
       this.syncLatencyScope();
       LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
@@ -3374,7 +3388,7 @@ const WebRTC = {
       }
     });
 
-    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data); });
+    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data, { transport: 'socket' }); });
 
     onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
@@ -4203,7 +4217,7 @@ const WebRTC = {
           return;
         }
         if (data.type === 'input_ack') {
-          this.acceptObservedInputAck(data);
+          this.acceptObservedInputAck(data, { transport: 'datachannel' });
           return;
         }
         // Host capture fps is not playback fps; keep it off the status-bar counter.

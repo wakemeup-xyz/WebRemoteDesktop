@@ -124,12 +124,12 @@ const WebRtcStats = (() => {
     const interval = previous
       ? deriveIntervalMediaStats(previous, current)
       : {
-          elapsedMs: 0,
+          elapsedMs: null,
           derivedFps: 0,
           receivedDelta: 0,
           decodedDelta: 0,
           packetsLostDelta: 0,
-          bytesDelta: 0,
+          bytesDelta: null,
           jitterBufferMs: null,
           decodeMs: null,
           framesDroppedDelta: 0,
