@@ -1,5 +1,7 @@
 # 媒体、输入背压与延迟测量 Implementation Plan
 
+> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在保持控制授权和可靠输入顺序的前提下，消除媒体阻塞及无界排队，提供同钟、同帧、有界且诚实的耗时证据。
@@ -14,7 +16,7 @@
 
 以下内容须逐字复制到各执行计划的 Global Constraints：
 
-1. 本轮仅诊断和文档；业务代码、运行配置、服务、tunnel 均不修改或重启。
+1. 用户后续已明确授权本轮开发、验收、启动本地 Signal/Host 并保持可用；不得停止、重启或重建 tunnel。生产 Viewer 仍须避开正在使用的会话。
 2. 后续实施沿用严格单桌面 Viewer、控制租约和 fail-closed reset 屏障；不重放投递结果不确定的点击、文本或命令。
 3. 不自动切换网络模式、TURN 节点或公网地址；保留 Quality Lock，不自动降低用户选择的分辨率。
 4. 生产 Viewer 验收必须有明确维护窗口；普通检查不得创建会抢占用户控制的 Viewer。
