@@ -5073,7 +5073,13 @@ class WebRemoteHost:
         relay = getattr(self, "relay_streamer", None)
         if relay is not None and hasattr(relay, "set_suspended"):
             relay.set_suspended(True)
-        self._media_activity_suspended = True
+        # This new attempt starts with active demand (generation 0). Freezing
+        # the previous attempt's resources is not a request to pause the new
+        # offer: a fresh visible Viewer has no resume intent to replay. Keep
+        # those old resources frozen; the new offer installs its own media.
+        # An explicit pause for this attempt can still set this flag before SDP
+        # completes, and an idempotent bind above will preserve that pause.
+        self._media_activity_suspended = False
         if isinstance(sequence, int) and sequence >= 1:
             binding["connectionAttemptSequence"] = sequence
         binding["connectionAttemptId"] = attempt_id

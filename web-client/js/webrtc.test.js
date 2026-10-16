@@ -4051,6 +4051,37 @@ test('media resume enables input only after active ack and rendered frame', () =
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
 
+test('initial visible attempt binds active media without requiring a resume request', () => {
+  const { WebRTC, context } = loadWebRTC();
+  for (const filename of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, filename), 'utf8'), context);
+  }
+  context.MediaActivityController = context.window.MediaActivityController;
+  context.document.hidden = false;
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-initial';
+  WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = 'relay';
+
+  WebRTC.initializeMediaActivity();
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  WebRTC.ensureMediaActiveIfVisible('control-grant');
+  assert.equal(WebRTC.replayMediaActivityIntent('control-regrant'), false);
+  WebRTC.ensureMediaActiveIfVisible('pc-connected');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.getMediaActivitySnapshot())), {
+    state: 'active', reasons: [], generation: 0,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
+  assert.deepEqual(emitted.map(([event]) => event), ['connection-attempt-bind']);
+  assert.equal(emitted[0][1].connectionAttemptId, 'attempt-initial');
+});
+
 test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', () => {
   const { WebRTC, context } = loadWebRTC();
   const controllerSource = require('node:fs').readFileSync(

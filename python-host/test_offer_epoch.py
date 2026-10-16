@@ -1443,7 +1443,9 @@ def _mock_media_construction(monkeypatch, host):
                 return fn
             return register
         def addTrack(self, track):
-            return SimpleNamespace(track=track)
+            sender = SimpleNamespace(track=track)
+            sender.replaceTrack = lambda replacement: setattr(sender, "track", replacement)
+            return sender
         def getTransceivers(self):
             return []
         async def setRemoteDescription(self, description):
@@ -1458,6 +1460,11 @@ def _mock_media_construction(monkeypatch, host):
         async def close(self):
             self.closed += 1
     class Track:
+        def __init__(self):
+            self.suspended = False
+        def set_suspended(self, suspended):
+            self.suspended = bool(suspended)
+            return 0
         async def shutdown(self):
             pass
     monkeypatch.setattr(host_module, "RTCPeerConnection", Peer)
@@ -1475,6 +1482,96 @@ def _offer(viewer="viewer-a", epoch=7, lease="lease-0000000000000001", attempt="
     return {"viewerId": viewer, "leaseEpoch": epoch, "leaseId": lease, "epoch": 1,
             "connectionAttemptId": attempt, "connectionAttemptSequence": 1,
             "offer": {"type": "offer", "sdp": "v=0"}}
+
+
+@pytest.mark.asyncio
+async def test_initial_attempt_bind_then_offer_starts_media_without_resume_request(monkeypatch):
+    # A fresh visible Viewer has active/generation 0 and sends no resume request.
+    host = _authority_host()
+    _mock_media_construction(monkeypatch, host)
+
+    await host.on_connection_attempt_bind({**_offer(), "networkMode": "relay"})
+    await host.on_offer(_offer())
+
+    assert any(event == "answer" for event, _ in host.sio.events)
+    assert host.screen_track.suspended is False
+    assert host.video_sender.track is host.screen_track
+    assert host._media_activity_suspended is False
+
+
+@pytest.mark.asyncio
+async def test_attempt_replacement_keeps_old_resources_frozen_but_starts_new_media(monkeypatch):
+    host = _authority_host()
+    peers = _mock_media_construction(monkeypatch, host)
+    await host.on_offer(_offer())
+    old_track, old_sender = host.screen_track, host.video_sender
+    relay = SimpleNamespace(suspended=False)
+    relay.set_suspended = lambda value: setattr(relay, "suspended", value)
+    host.relay_streamer = relay
+    replacement = {**_offer(attempt="attempt-b"), "epoch": 2,
+                   "connectionAttemptSequence": 2, "networkMode": "relay"}
+
+    await host.on_connection_attempt_bind(replacement)
+    assert old_track.suspended is True
+    assert old_sender.track is None
+    assert relay.suspended is True
+    await host.on_offer(replacement)
+
+    assert peers[0].closed == 1
+    assert old_track.suspended is True
+    assert old_sender.track is None
+    assert relay.suspended is True
+    assert host.screen_track is not old_track
+    assert host.screen_track.suspended is False
+    assert host.video_sender.track is host.screen_track
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["manual-pause", "terminal-active"])
+async def test_explicit_pause_between_attempt_bind_and_offer_remains_suspended(monkeypatch, reason):
+    host = _authority_host()
+    _mock_media_construction(monkeypatch, host)
+    bind = {**_offer(), "networkMode": "relay"}
+    await host.on_connection_attempt_bind(bind)
+    await host.on_media_activity_change({
+        **bind, "schemaVersion": 1, "state": "suspended",
+        "reasons": [reason], "generation": 1,
+    })
+    assert host.sio.events[-1][1]["applied"] is True
+    # Reasserting the same bind must not erase an explicit pause.
+    await host.on_connection_attempt_bind(bind)
+    await host.on_offer(_offer())
+
+    assert host.screen_track.suspended is True
+    assert host.video_sender.track is None
+    assert host._media_activity_suspended is True
+
+
+@pytest.mark.asyncio
+async def test_explicit_pause_during_offer_sdp_remains_suspended_at_commit(monkeypatch):
+    host = _authority_host()
+    _mock_media_construction(monkeypatch, host)
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def remote_description(self, description):
+        entered.set()
+        await release.wait()
+    monkeypatch.setattr(host_module.RTCPeerConnection, "setRemoteDescription", remote_description)
+    await host.on_connection_attempt_bind({**_offer(), "networkMode": "relay"})
+    pending = asyncio.create_task(host.on_offer(_offer()))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await host.on_media_activity_change({
+            **_offer(), "schemaVersion": 1, "state": "suspended",
+            "reasons": ["manual-pause"], "generation": 1,
+        })
+        assert host.sio.events[-1][1]["applied"] is True
+    finally:
+        release.set()
+        await pending
+
+    assert host.screen_track.suspended is True
+    assert host.video_sender.track is None
+    assert host._media_activity_suspended is True
 
 
 @pytest.mark.asyncio
