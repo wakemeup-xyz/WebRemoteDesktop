@@ -87,3 +87,24 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             await w.stop()
+
+    async def test_worker_does_not_retain_the_last_encoded_output_while_idle(self):
+        import gc
+        import weakref
+        refs = []
+        class Buffer(bytearray):
+            pass
+        def process(request):
+            encoded = Buffer(b'jpeg')
+            refs.append(weakref.ref(encoded))
+            return {'data':encoded}
+        w = RelayFrameWorker(process)
+        try:
+            future = w.submit_latest({'generation':1})
+            await w.drain()
+            del future
+            await asyncio.sleep(0)
+            gc.collect()
+            self.assertIsNone(refs[0]())
+        finally:
+            await w.stop()

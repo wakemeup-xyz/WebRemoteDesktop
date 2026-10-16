@@ -106,3 +106,14 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             await one
+
+    async def test_transition_freeze_rejection_does_not_require_another_reset(self):
+        async def execute(data, authority):
+            return {'status':'applied'}
+        q = InputAdmissionQueue(execute, lambda _: True)
+        q.freeze(1, 'authority-transition')
+        before = q.snapshot()
+        result = await q.submit({}, authority=1, byte_count=1)
+        self.assertEqual(result.outcome, 'cancelled')
+        self.assertEqual(q.snapshot(), before)
+        self.assertTrue(q.resume())

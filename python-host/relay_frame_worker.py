@@ -80,7 +80,7 @@ class RelayFrameWorker:
                         break
                     item, self._pending = self._pending, None
                     self._inflight = item
-                result, error = None, None
+                result, error, encoded = None, None, None
                 try:
                     result = self._process(item[0])
                     encoded = result.get('data') if isinstance(result, dict) else result
@@ -93,7 +93,7 @@ class RelayFrameWorker:
                     self._delivery_pending = True
                 self._loop.call_soon_threadsafe(self._complete, item, result, error)
                 # Do not retain the encoded result between jobs.
-                item = result = error = None
+                item = result = error = encoded = None
         finally:
             try:
                 close = getattr(self._process, 'close', None)

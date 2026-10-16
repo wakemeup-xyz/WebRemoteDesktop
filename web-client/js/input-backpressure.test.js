@@ -144,3 +144,42 @@ test('failed reset keeps shared reservations until actual new lease', () => {
   k.setLease({leaseId:'lease-000000000002',leaseEpoch:2});
   assert.equal(budget.snapshot().pendingCount,0);
 });
+
+test('same-lease pointer cancellation drops the old wheel and permits a fresh wheel', async () => {
+  const h=fixture();
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:1});
+  h.input.releasePointer('pointer-cancel');
+  await Promise.resolve();
+  assert.equal(h.input._wheelScheduled,false);
+  assert.equal(h.input._pendingWheel,null);
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:2});
+  await Promise.resolve();
+  assert.equal(h.sent.length,1);
+  assert.equal(h.sent[0].payload.deltaY,2);
+});
+
+test('an old wheel callback cannot clear a newer lifecycle schedule', async () => {
+  const h=fixture();
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:1});
+  h.input.releasePointer('pointer-cancel');
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:2});
+  await Promise.resolve();
+  assert.equal(h.sent.length,1);
+  assert.equal(h.sent[0].payload.deltaY,2);
+});
+
+test('pointer cancellation clears an owned 16ms wheel timer without losing the new slot', async () => {
+  const h=fixture();
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:1});
+  await Promise.resolve();
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:2});
+  await Promise.resolve();
+  h.input.releasePointer('pointer-cancel');
+  h.input.queueWheel({relX:0.5,relY:0.5,deltaX:0,deltaY:3});
+  await Promise.resolve();
+  await h.tick(16);
+  assert.equal(h.sent.length,2);
+  assert.equal(h.sent[1].payload.deltaY,3);
+  assert.equal(h.input._wheelScheduled,false);
+  assert.equal(h.input._wheelTimer,null);
+});

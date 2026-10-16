@@ -967,6 +967,8 @@ class TunnelRelayStreamer:
                 logger.warning('Tunnel relay stopped: buffer budget exceeded')
             except Exception as e:
                 logger.warning('Tunnel relay frame failed: %s', type(e).__name__)
+            finally:
+                frame = jpeg_bytes = None
 
             elapsed = time.time() - started
             now = time.time()
@@ -2132,12 +2134,42 @@ class WebRemoteHost:
         """Synchronous admission, before retaining payload or creating work."""
         if not isinstance(data, dict) or 'controlledScene' in data or data.get('type') == 'dc_keepalive':
             return completed_future(AdmissionResult('cancelled', None))
+        # Do not stamp inactive/foreign input with the authority currently
+        # being established. In particular, a reset-to-bind gap has no owner.
+        binding = getattr(self, '_active_input_binding', None)
+        stale_safety_release = False
+        if binding is None and hasattr(self, '_active_input_binding'):
+            return completed_future(AdmissionResult('cancelled', None))
+        if data.get('schemaVersion') == 2:
+            lease_ok = isinstance(binding, dict) and all(
+                data.get(field) == binding.get(field) for field in ('viewerId', 'leaseId', 'leaseEpoch'))
+            if not lease_ok:
+                # Retain the existing same-viewer safety release, but it must
+                # never change admission state when a transition/overload blocks it.
+                stale_safety_release = (isinstance(binding, dict)
+                    and data.get('viewerId') == binding.get('viewerId')
+                    and data.get('type') == 'mouse' and data.get('action') in ('up', 'reset'))
+                if not stale_safety_release:
+                    self._emit_input_observation('host_input_rejected', data,
+                                                 status='stale-lease', reason='stale-lease')
+                    return completed_future(AdmissionResult('cancelled', None))
+        elif (data.get('viewerId') and getattr(self, 'current_viewer_id', None)
+              and data['viewerId'] != self.current_viewer_id):
+            self._emit_input_observation('host_input_rejected', data,
+                                         status='stale-lease', reason='stale-lease')
+            return completed_future(AdmissionResult('cancelled', None))
         authority = self._capture_authority()
         try:
             byte_count = len(json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
         except (TypeError, ValueError):
             return completed_future(AdmissionResult('cancelled', None))
         queue = self._get_input_admission()
+        if stale_safety_release:
+            snapshot = queue.snapshot()
+            if (snapshot['frozen'] or byte_count > 65536
+                    or snapshot['pendingCount'] >= queue.max_pending
+                    or snapshot['pendingBytes'] + byte_count > queue.max_pending_bytes):
+                return completed_future(AdmissionResult('cancelled', None))
         future = queue.submit(data, authority=authority, byte_count=byte_count)
         if future.done() and future.result().outcome == 'resync-required':
             # One notification per frozen scope, not one task/ACK per rejected
@@ -2973,10 +3005,12 @@ class WebRemoteHost:
                 if not accepted:
                     await reject()
                     return
-                self._active_input_binding = binding
                 queue = getattr(self, '_input_admission', None)
-                if queue is not None:
-                    queue.resume()
+                if queue is not None and not queue.resume():
+                    await reject()
+                    return
+                # Reopening and publishing the binding form one no-await commit.
+                self._active_input_binding = binding
             self.current_viewer_id = viewer_id if grant else None
             self._media_activity_binding = None
             self._control_operation = (lease_epoch, kind, "applied")
@@ -3146,10 +3180,11 @@ class WebRemoteHost:
                     if not accepted:
                         await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
                         return
-                    self._active_input_binding = binding
                     queue = getattr(self, '_input_admission', None)
-                    if queue is not None:
-                        queue.resume()
+                    if queue is not None and not queue.resume():
+                        await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
+                        return
+                    self._active_input_binding = binding
                     authority = self._capture_authority()
                     # New offer/attempt invalidates prior media activity progress.
                     self._media_activity_binding = {

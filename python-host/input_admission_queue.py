@@ -42,9 +42,14 @@ class InputAdmissionQueue:
     def submit(self, data, *, authority, byte_count):
         if not self.authority_matches(authority):
             return completed_future(AdmissionResult('cancelled', None))
+        if self._frozen:
+            if self._requires_reset:
+                self._dropped += 1
+            outcome = 'resync-required' if self._requires_reset else 'cancelled'
+            return completed_future(AdmissionResult(outcome, None))
         move = data.get('type') == 'mouse' and data.get('action') == 'move'
         invalid_size = type(byte_count) is not int or byte_count < 0 or byte_count > (1024 if move else 65536)
-        if self._frozen or invalid_size or (not move and (
+        if invalid_size or (not move and (
             len(self._pending) >= self.max_pending or self._bytes + byte_count > self.max_pending_bytes
         )):
             self.freeze(authority, 'input-overload')

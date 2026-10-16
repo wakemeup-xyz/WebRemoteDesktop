@@ -458,12 +458,8 @@ const Input = {
       this._clearDesktopWriteTimer();
       this._reliableAckRecoveryPending = false;
       this._desktopWriteRecovery = null;
-      this._pointerLifecycleGeneration += 1;
+      this._invalidatePointerLifecycle();
       this._pendingMouseMove = null;
-      this._pendingWheel = null;
-      this._wheelScheduled = false;
-      if (this._wheelTimer != null) clearTimeout(this._wheelTimer);
-      this._wheelTimer = null;
       if (nextLease) {
         this._pendingMouseReset = false;
         this._pendingMouseResetId = null;
@@ -2615,7 +2611,7 @@ const Input = {
       this._geometryAbortedPointerId = this._activePointerId;
       this.releasePointer('geometry-changed');
     } else {
-      this._pointerLifecycleGeneration += 1;
+      this._invalidatePointerLifecycle();
     }
     return false;
   },
@@ -2674,8 +2670,18 @@ const Input = {
     return Number(event.detail) >= 2 || double ? 2 : 1;
   },
 
-  releasePointer(reason = 'pointer-release') {
+  _invalidatePointerLifecycle() {
     this._pointerLifecycleGeneration += 1;
+    // Drop only this generation's slot. Its rAF/microtask may still run, but
+    // the generation guard prevents it from touching a newer wheel schedule.
+    this._pendingWheel = null;
+    this._wheelScheduled = false;
+    if (this._wheelTimer != null) clearTimeout(this._wheelTimer);
+    this._wheelTimer = null;
+  },
+
+  releasePointer(reason = 'pointer-release') {
+    this._invalidatePointerLifecycle();
     const wasPendingReset = this._pendingMouseReset;
     const wasSurfacePending = this._mobileSurfaceState === 'pending';
     let adapterResetIssued = false;
@@ -2791,7 +2797,7 @@ const Input = {
           event.preventDefault?.();
           return;
         }
-        this._pointerLifecycleGeneration += 1;
+        this._invalidatePointerLifecycle();
         this._geometryAbortedPointerId = null;
         event.preventDefault();
         if (!this._isDesktopInputActionAllowed()) return;
@@ -2841,7 +2847,7 @@ const Input = {
           this._pendingMouseResetId = resetId || null;
         }
         if (this._pressedMouseButtons.size === 0) { if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId); this._activePointerId = null; this._activePointerElement = null; }
-        this._pointerLifecycleGeneration += 1;
+        this._invalidatePointerLifecycle();
       }, { clearAfter: true, ...traceOptions });
     });
     element.addEventListener('pointercancel', (event) => {
