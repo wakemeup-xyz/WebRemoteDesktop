@@ -153,3 +153,10 @@ Ruling: implement M6.1–M6.3 in one fresh single-writer protocol task with a co
 Ruling: allow media-null source/test work in parallel with a possible I2 harness fix, while keeping a single index owner — the paths and runtime interfaces are disjoint, and neither agent may deploy or run live acceptance — cost if wrong is paused work and conflict resolution, never overwrite or concurrent commit.
 
 若判断有误的成本及约束：路径冲突时暂停并解决；Git index 始终串行，线上部署和验收仍由主线程执行。两项现均已独立复审通过。
+
+
+## 26
+
+Ruling: supplement existing remediation with one coherent observer-module/wiring task and root-owned deployment, reusing this plan ledger — exact heartbeat boundary is missing from confirmed first-disconnect evidence, so another identical run alone cannot diagnose it — cost if wrong is diagnostic overhead and rework, bounded by one close log and independent review; no tunnel/auth/timeout changes.
+
+若判断有误的成本及约束：最多增加有界观测开销及返工；独立复审通过后才加载，不把补齐日志称为修复网络。

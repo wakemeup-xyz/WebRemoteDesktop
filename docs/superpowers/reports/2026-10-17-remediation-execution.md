@@ -6,7 +6,7 @@
 
 ## 1. 基线与执行边界
 
-隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `8e375fa`，W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
+隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `9e57bf4`，W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
 
 离线阶段使用定向测试和临时目录构建，未调用 npm pretest。经独立复审后按用户授权构建并重启本地服务；真实 Viewer 测试均使用 fresh zero-Viewer 与一次性 proof，未执行业务原生输入。未修改、停止或重启 tunnel。
 
@@ -55,12 +55,12 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已部署至 `8e375fa`；build `b73325b8166441a6`；W2 watcher 四文件未激活 |
-| 真实登录与媒体启动 | C5 公网 TURN 暂停/恢复及随后 60s 同会话连续性 PASS（93.816s 总运行）；随后 300s 尝试在 173s 信令断开而视频仍出帧。JPEG 恢复后发生 >5s 无新图，M6 修复中 |
+| 本轮构建部署 | 已部署至 `9e57bf4`；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
+| 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；连续性 INCOMPLETE，服务端心跳观测补齐中 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
 | 输入到真实可见效果 | NOT RUN；需要真实 producer 事件与解码 marker，ACK 或下一帧不能替代 |
-| 各路径连续三小时 | NOT RUN；新工具已实现连续采样和严格判定；保留一次首次媒体未 ready 零样本及一次 173s 信令断开，未完成三小时 |
+| 各路径连续三小时 | 未通过；保留首次媒体未 ready 零样本、173s 信令断开与 93.094s 已确认 ping timeout 三场未完成尝试。不得合并短程 PASS 作为三小时通过 |
 | 正常资源与高压力分别验收 | NOT RUN |
 
 04:50 曾观察到在线 Viewer；05:41 后续快照 viewerCount=0。自动化接入前仍须重新检查并取得服务端一次性准入，不把旧快照当作持续空闲证明。

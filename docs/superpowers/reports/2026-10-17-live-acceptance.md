@@ -116,3 +116,10 @@ I2 observer `10d4146`+`0f0e902` 已独立复审后只同步验收脚本，无服
 `9e57bf4` 缺测修复通过 task review 及整轮增量复审；359 Viewer / 109 Signal / 25 诊断 / 51 Python 定向检查通过（7 个监听 HTTP 用例按离线边界未运行）。仅本地重启耗时 22.553s，Signal 3905/Host 4164；实际 schema 2/build `c30530f331a4def5`，保留 f5c2/b733。cloudflared 84671/watch897 身份不变，quick URL 文件仍不存在，原 HEAD/index 保留。当前版本的业务输入/三小时验收仍未完成。
 
 11:08 的只读 TCP7844 单次比较：四个最近注册 IPv6 目标和四个仓库已有 IPv4 探测目标均连接成功（约 209–215ms / 175–177ms）。目标不同、只是瞬时建连，不证明长连接质量、HTTP2 成功或 IPv6 因果，故没有修改地址族/协议。真实浏览器正式根入口最新返回 200，登录表单可见，导航至 DOM 7210.4ms；同页 health 200/981.5ms、status 200/963.7ms、Host 在线、Viewer 0，owned browser close/manager stop API 完成。之前误探测不存在的 `/login.html` 得到 404，此探测路线错误不计作应用入口故障。一次可达不抵消心跳超时与历史 formal_ok0。
+
+
+## 11:22–11:28 网页阶段复测（只读，无登录 / Viewer）
+
+本地根页 HTTP 200/load 约 150ms；三个正式域名新浏览器上下文访问约 7–8s，TLS 约 2.2–2.7s、document TTFB 约 0.8–1.35s。真正的同上下文 reload 为 868.3ms；不能把新 page/context 的第二次访问称 warm。
+
+CDP 只读事件监听核验进一步区分了页面完成与功能就绪：登录 submit listener 在 5014.9ms 尚未观察到、5124.4ms 已观察到；Cloudflare analytics module 到 7589.2ms 才结束，DCL 7593.9ms。该脚本延后 DCL/load，但没有让登录初始化等到 DCL。main document 4026.1ms 结束、最后同源 CSS 5080.8ms 结束，首次功能就绪仍慢。没有登录、提交表单或触发原生输入，不能据此认证完整登录和用户设备延迟。跨域细节受 Timing-Allow-Origin 限制的 DNS/connect/TTFB/body 必须 null；先前私有 artifact 的 0 或跨字段差值无效，原文件保留。完整归因、修正和选项见[入口加载诊断](2026-10-17-entry-loading-diagnosis.md)。
