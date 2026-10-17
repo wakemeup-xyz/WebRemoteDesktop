@@ -68,7 +68,10 @@ from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSe
 from capture_experiment import CaptureExperiment
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
 from relay_frame_worker import RelayFrameWorker
-from runtime_observability import RuntimeObservability, ResourceSampler, snapshot_relay_queue
+from runtime_observability import (
+    RuntimeObservability, ResourceSampler, snapshot_relay_queue,
+    CaptureObservation, unavailable_capture_observation,
+)
 
 if __name__ == "__main__":
     configure_host_logging()
@@ -1389,6 +1392,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._activity_condition = threading.Condition()
         self._suspended = False
         self._capture_generation = 0
+        self._capture_observation = CaptureObservation()
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
@@ -1442,8 +1446,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 # Gate again immediately before MSS grab.
                 if self._suspended or not self._capture_running:
                     continue
-                shot = self.sct.grab(self.monitor)
+                self._capture_observation.begin(grab_started_ns)
+                try:
+                    shot = self.sct.grab(self.monitor)
+                except Exception:
+                    self._capture_observation.finish(time.monotonic_ns(), succeeded=False)
+                    raise
                 grab_finished_ns = time.monotonic_ns()
+                self._capture_observation.finish(grab_finished_ns, succeeded=True)
                 captured = False
                 with self._capture_lock:
                     if self._suspended:
@@ -1534,6 +1544,19 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._last_img_capture = (0, None)
         self._frame_trace_context = None
         self.sct = None
+
+    def capture_observation_snapshot(self, now_ns):
+        """Read scalar operation evidence without waiting for capture or output."""
+        observation = getattr(self, '_capture_observation', None)
+        if observation is None:
+            return unavailable_capture_observation()
+        thread = getattr(self, '_capture_thread', None)
+        running = bool(getattr(self, '_capture_running', False))
+        suspended = bool(getattr(self, '_suspended', False))
+        thread_alive = bool(thread is not None and thread.is_alive())
+        thread_started = thread is not None and thread.ident is not None
+        return observation.snapshot(now_ns, running=running, suspended=suspended,
+                                    thread_alive=thread_alive, thread_started=thread_started)
 
     def resource_snapshot(self) -> dict:
         """Return bounded lifecycle counters for disconnect/reconnect audits."""
@@ -2772,6 +2795,13 @@ class WebRemoteHost:
         profile = getattr(self, "media_profile", {}) or {}
         pc = getattr(self, "pc", None)
         screen_track = getattr(self, "screen_track", None)
+        capture = unavailable_capture_observation()
+        try:
+            capture_reader = getattr(screen_track, 'capture_observation_snapshot', None)
+            if callable(capture_reader):
+                capture = capture_reader(time.monotonic_ns())
+        except Exception:
+            capture = unavailable_capture_observation()
         input_handler = getattr(self, "input_handler", None)
         observer = getattr(self, '_runtime_observability', None)
         runtime_context = observer.snapshot() if observer is not None else RuntimeObservability().snapshot()
@@ -2793,6 +2823,7 @@ class WebRemoteHost:
             "pcState": str(getattr(pc, "connectionState", "none") or "none"),
             "iceState": str(getattr(pc, "iceConnectionState", "none") or "none"),
             "captureSeq": int(getattr(screen_track, "_capture_seq", 0) or 0),
+            "capture": capture,
             "inputEventCount": int(getattr(self, "_input_event_count", 0) or 0),
             "lastInputAgeMs": last_input_age_ms,
             "inputWaiters": int(getattr(input_handler, "_lock_waiters", 0) or 0),

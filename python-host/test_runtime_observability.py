@@ -1,7 +1,9 @@
 import asyncio
 import unittest
 
-from runtime_observability import RuntimeObservability, ResourceSampler, resource_delta
+from runtime_observability import (
+    RuntimeObservability, ResourceSampler, resource_delta, unavailable_capture_observation,
+)
 
 
 class RuntimeObservabilityTest(unittest.TestCase):
@@ -180,7 +182,8 @@ class HostRuntimeAdapterTest(unittest.TestCase):
         namespace = {
             'RuntimeObservability': RuntimeObservability,
             'resource': SimpleNamespace(RUSAGE_SELF=0, getrusage=lambda _: SimpleNamespace(ru_utime=1, ru_stime=2)),
-            'time': SimpleNamespace(perf_counter=lambda: 10),
+            'time': SimpleNamespace(perf_counter=lambda: 10, monotonic_ns=lambda: 0),
+            'unavailable_capture_observation': unavailable_capture_observation,
             'os': SimpleNamespace(getloadavg=lambda: (0, 0, 0)),
             'threading': SimpleNamespace(active_count=lambda: 1),
         }

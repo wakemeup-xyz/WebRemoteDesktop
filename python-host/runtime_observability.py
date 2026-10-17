@@ -8,6 +8,7 @@ import resource
 import sys
 import threading
 import time
+from typing import NamedTuple
 
 QUEUE_NAMES = frozenset(('inputReliable', 'inputUnordered', 'relayFrames'))
 QUEUE_FIELDS = ('pendingCount', 'pendingBytes', 'inFlightCount', 'droppedCount', 'frozen')
@@ -16,6 +17,113 @@ RELAY_STAGE_FIELDS = ('processorActive', 'deliveryPending', 'pendingAgeMs', 'pro
 WINDOW_NS = 60_000_000_000
 INTERVAL_NS = 1_000_000_000
 _RLOCK_TYPE = type(threading.RLock())
+
+
+_CAPTURE_COUNT_CAP = 999_999_999
+_CAPTURE_DURATION_CAP_NS = 3_600_000_000_000
+
+
+def _capture_timestamp(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _capture_elapsed(start, end):
+    return end - start if start is not None and end is not None and end >= start else None
+
+
+def _capture_milliseconds(value):
+    if value is None:
+        return None
+    # Bound the integer before float conversion, including adversarial clocks.
+    return round(min(value, _CAPTURE_DURATION_CAP_NS) / 1_000_000, 3)
+
+
+def unavailable_capture_observation():
+    return {'scope': 'track-lifetime', 'state': 'unavailable',
+            'attempted': None, 'completed': None, 'failed': None,
+            'currentGrabAgeMs': None, 'lastCompletionAgeMs': None,
+            'lastDurationMs': None, 'maxDurationMs': None, 'clipped': False}
+
+
+class _CaptureState(NamedTuple):
+    attempted: int = 0
+    completed: int = 0
+    failed: int = 0
+    inflight: bool = False
+    started_ns: int | None = None
+    last_success_ns: int | None = None
+    last_duration_ns: int | None = None
+    max_duration_ns: int | None = None
+    last_failed: bool = False
+    clipped: bool = False
+
+
+class CaptureObservation:
+    """Single capture writer; immutable scalar publication on CPython 3.11/GIL.
+
+    Readers copy one reference without locks or resetting lifetime counters.
+    This publication contract does not claim free-threaded Python support.
+    """
+    def __init__(self):
+        self._state = _CaptureState()
+
+    def begin(self, started_ns):
+        state = self._state
+        self._state = state._replace(
+            attempted=min(state.attempted + 1, _CAPTURE_COUNT_CAP),
+            inflight=True, started_ns=_capture_timestamp(started_ns),
+            clipped=state.clipped or state.attempted >= _CAPTURE_COUNT_CAP)
+
+    def finish(self, finished_ns, *, succeeded):
+        state = self._state
+        finished_ns = _capture_timestamp(finished_ns)
+        if (state.started_ns is not None and finished_ns is not None
+                and finished_ns < state.started_ns):
+            finished_ns = None
+        duration = _capture_elapsed(state.started_ns, finished_ns)
+        clipped = (state.clipped or
+                   (duration is not None and duration > _CAPTURE_DURATION_CAP_NS))
+        duration = min(duration, _CAPTURE_DURATION_CAP_NS) if duration is not None else None
+        maximum = state.max_duration_ns
+        if duration is not None:
+            maximum = duration if maximum is None else max(maximum, duration)
+        completed = state.completed + int(succeeded)
+        failed = state.failed + int(not succeeded)
+        self._state = _CaptureState(
+            state.attempted, min(completed, _CAPTURE_COUNT_CAP), min(failed, _CAPTURE_COUNT_CAP),
+            False, None, finished_ns if succeeded else state.last_success_ns,
+            duration, maximum, not succeeded,
+            clipped or completed > _CAPTURE_COUNT_CAP or failed > _CAPTURE_COUNT_CAP)
+
+    def snapshot(self, now_ns, *, running, suspended, thread_alive, thread_started):
+        state = self._state
+        now_ns = _capture_timestamp(now_ns)
+        current_age = _capture_elapsed(state.started_ns, now_ns) if state.inflight else None
+        success_age = _capture_elapsed(state.last_success_ns, now_ns)
+        if not running and thread_alive:
+            status = 'stopping'
+        elif thread_started and not thread_alive:
+            status = 'stopped'
+        elif not thread_started:
+            status = 'starting'
+        elif suspended:
+            status = 'suspended'
+        elif state.inflight:
+            status = 'grabbing'
+        elif state.last_failed:
+            status = 'error'
+        elif state.completed:
+            status = 'idle'
+        else:
+            status = 'starting'
+        return {'scope': 'track-lifetime', 'state': status,
+                'attempted': state.attempted, 'completed': state.completed, 'failed': state.failed,
+                'currentGrabAgeMs': _capture_milliseconds(current_age),
+                'lastCompletionAgeMs': _capture_milliseconds(success_age),
+                'lastDurationMs': _capture_milliseconds(state.last_duration_ns),
+                'maxDurationMs': _capture_milliseconds(state.max_duration_ns),
+                'clipped': state.clipped or any(age is not None and age > _CAPTURE_DURATION_CAP_NS
+                                               for age in (current_age, success_age))}
 
 
 def finite_number(value):
