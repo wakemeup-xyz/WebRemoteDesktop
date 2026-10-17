@@ -41,6 +41,123 @@ test('warmup and Start share one in-flight bootstrap request', async () => {
   assert.deepEqual(await warmup, await click);
 });
 
+test('a completed ready preload is reused by the same Start within the fixed window', async () => {
+  let currentTime = 100;
+  let calls = 0;
+  const ready = { schemaVersion: 1, webrtc: { iceServers: [] } };
+  const controller = loadController()({
+    now: () => currentTime,
+    getScope: () => 7,
+    fetchSnapshot: async () => { calls++; return ready; },
+  });
+  assert.strictEqual(await controller.load({ mode: 'relay', turnServerId: 'turn-a' }), ready);
+  currentTime = 200;
+  assert.strictEqual(await controller.load({ mode: 'relay', turnServerId: 'turn-a' }), ready);
+  assert.equal(calls, 1);
+});
+
+test('the ready window expires at 3000ms and a hit does not renew it', async () => {
+  let time = 100;
+  let calls = 0;
+  const controller = loadController()({ now: () => time, fetchSnapshot: async () => ({ call: ++calls }) });
+  await controller.load({ mode: 'auto' });
+  time = 3099;
+  assert.equal((await controller.load({ mode: 'auto' })).call, 1);
+  time = 3100;
+  assert.equal((await controller.load({ mode: 'auto' })).call, 2);
+  assert.equal(calls, 2);
+});
+
+test('zero cache age disables reuse and invalid or rolling-back clocks miss', async () => {
+  let calls = 0;
+  const disabled = loadController()({ cacheMaxAgeMs: 0, now: () => 10,
+    fetchSnapshot: async () => ({ call: ++calls }) });
+  await disabled.load();
+  await disabled.load();
+  assert.equal(calls, 2);
+
+  let time = 100;
+  const controller = loadController()({ now: () => time,
+    fetchSnapshot: async () => ({ call: ++calls }) });
+  await controller.load();
+  time = NaN;
+  await controller.load();
+  time = 200;
+  await controller.load();
+  time = 199;
+  await controller.load();
+  assert.equal(calls, 6);
+  assert.throws(() => loadController()({ cacheMaxAgeMs: 3001 }), /cacheMaxAgeMs/);
+});
+
+test('mode, TURN, and auth scope each require a fresh load', async () => {
+  let scope = 1;
+  let calls = 0;
+  const controller = loadController()({ now: () => 100, getScope: () => scope,
+    fetchSnapshot: async () => ({ call: ++calls }) });
+  await controller.load({ mode: 'auto', turnServerId: 'turn-a' });
+  await controller.load({ mode: 'relay', turnServerId: 'turn-a' });
+  await controller.load({ mode: 'relay', turnServerId: 'turn-b' });
+  scope = 2;
+  await controller.load({ mode: 'relay', turnServerId: 'turn-b' });
+  await controller.load({ mode: 'relay', turnServerId: 'turn-b' });
+  assert.equal(calls, 4);
+});
+
+test('forced retry and cancel each invalidate a completed ready load', async () => {
+  let calls = 0;
+  const controller = loadController()({ now: () => 100,
+    fetchSnapshot: async () => ({ call: ++calls }) });
+  await controller.load();
+  assert.equal((await controller.retry()).call, 2);
+  assert.equal((await controller.load()).call, 2);
+  controller.cancel();
+  assert.equal((await controller.load()).call, 3);
+});
+
+test('failed, auth-required, and degraded loads never become reusable', async () => {
+  for (const code of ['bootstrap-unavailable', 'auth-invalid']) {
+    let calls = 0;
+    const controller = loadController()({ now: () => 100,
+      fetchSnapshot: async () => {
+        calls++;
+        throw Object.assign(new Error(code), { code, status: 401 });
+      },
+      fallbackFactory: () => ({ degraded: true }),
+    });
+    for (let i = 0; i < 2; i++) {
+      if (code === 'auth-invalid') await assert.rejects(controller.load({ mode: 'auto' }), /auth-invalid/);
+      else assert.equal((await controller.load({ mode: 'auto' })).degraded, true);
+    }
+    assert.equal(calls, 2);
+  }
+  let calls = 0;
+  const failed = loadController()({ now: () => 100,
+    fetchSnapshot: async () => { calls++; throw new Error('offline'); } });
+  await assert.rejects(failed.load({ mode: 'relay' }), /offline/);
+  await assert.rejects(failed.load({ mode: 'relay' }), /offline/);
+  assert.equal(calls, 2);
+});
+
+test('an old auth scope cannot publish a late completed result', async () => {
+  let scope = 1;
+  let calls = 0;
+  let resolveOld;
+  const controller = loadController()({ now: () => 100, getScope: () => scope,
+    fetchSnapshot: () => ++calls === 1
+      ? new Promise((resolve) => { resolveOld = resolve; })
+      : Promise.resolve({ id: 'new' }),
+  });
+  const old = controller.load();
+  scope = 2;
+  resolveOld({ id: 'old' });
+  await assert.rejects(old, /superseded/);
+  assert.equal(controller.getSnapshot().state, 'loading');
+  assert.equal((await controller.load()).id, 'new');
+  assert.equal((await controller.load()).id, 'new');
+  assert.equal(calls, 2);
+});
+
 test('timeout degrades auto but never invents relay config', async () => {
   const createViewerBootstrap = loadController();
   const timeoutError = Object.assign(new Error('timeout'), { code: 'bootstrap-timeout' });

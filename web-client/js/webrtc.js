@@ -7527,6 +7527,7 @@ function bootViewerShell() {
   const ViewerBootstrap = (typeof createViewerBootstrap === 'function')
     ? createViewerBootstrap({
       timeoutMs: 3000,
+      getScope: () => Auth.getGeneration?.(),
       async fetchSnapshot({ turnServerId, signal }) {
         const apiBase = (typeof RuntimeConfig !== 'undefined')
           ? RuntimeConfig.getApiBase()
@@ -7553,6 +7554,9 @@ function bootViewerShell() {
             : applicationInvalid || typedInvalid ? 'auth-invalid' : 'bootstrap-unavailable';
           throw Object.assign(new Error(code), { code, status: response.status });
         }
+        if (tokenAtStart !== Auth.getToken() || authGeneration !== Auth.getGeneration?.()) {
+          throw Object.assign(new Error('superseded'), { code: 'superseded' });
+        }
         return data;
       },
       fallbackFactory({ mode, error }) {
@@ -7574,7 +7578,7 @@ function bootViewerShell() {
     })
     : null;
 
-  // Align preload key with startViewer (mode + selected TURN) so Start reuses the inflight fetch.
+  // Align preload key with startViewer (mode + selected TURN) so Start can reuse fresh ready config.
   if (ViewerBootstrap) {
     ViewerBootstrap.load({
       mode: WebRTC.networkMode,

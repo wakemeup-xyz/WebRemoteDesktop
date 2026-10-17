@@ -9,12 +9,13 @@ const json = (status, data) => ({ status, ok: status >= 200 && status < 300, jso
 const proxy403 = () => ({ status: 403, ok: false, json: async () => { throw new SyntaxError('proxy HTML'); } });
 async function flush() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 
-function runtime({ verify = () => proxy403(), bootstrap = () => proxy403() } = {}) {
+function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proof = false } = {}) {
   const nodes = new Map();
   const domReady = [];
   const tokens = new Map([['wrd_token', 'fixture-token']]);
+  if (proof) tokens.set('wrdProofAdmission', JSON.stringify({ proof: 'fixture-proof' }));
   const requests = [], failures = [], controllers = [];
-  let signals = 0, inits = 0;
+  let signals = 0, inits = 0, admissions = 0, time = 0;
   function element() {
     const classes = new Set();
     return {
@@ -31,7 +32,7 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403() } = {
     AbortController,
     console: { log() {}, warn() {}, error() {} },
     setTimeout() { return 1; }, clearTimeout() {}, setInterval() { throw new Error('unexpected live interval'); }, clearInterval() {},
-    performance: { now: () => 0 }, navigator: {},
+    performance: { now: () => time }, navigator: {},
     addEventListener() {},
     document: {
       readyState: 'loading', body: element(),
@@ -44,7 +45,10 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403() } = {
     sessionStorage: { getItem(key) { return tokens.get(key) || null; }, setItem(key, value) { tokens.set(key, value); }, removeItem(key) { tokens.delete(key); } },
     localStorage: { getItem() { return null; }, removeItem() {}, setItem() {} },
     fetch: async (url) => {
-      if (url.endsWith('/api/auth/viewer-admission')) return json(201, { admission: { ticket: 'fixture-ticket' } });
+      if (url.endsWith('/api/auth/viewer-admission')) {
+        admissions++;
+        return json(201, { admission: { ticket: 'fixture-ticket' } });
+      }
       requests.push(url.endsWith('/api/auth/verify') ? 'verify' : 'bootstrap');
       return url.endsWith('/api/auth/verify') ? verify() : bootstrap();
     },
@@ -78,7 +82,25 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403() } = {
   WebRTC.networkMode = 'relay';
   domReady.forEach((listener) => listener());
   return { Auth, WebRTC, context, nodes, tokens, requests, failures, controllers,
-    signals: () => signals, inits: () => inits };
+    signals: () => signals, inits: () => inits, admissions: () => admissions,
+    setTime(value) { time = value; } };
+}
+
+for (const proof of [false, true]) {
+  test(`completed warmup is reused by verified Start with ${proof ? 'proof' : 'fresh explicit'} admission`, async () => {
+    const ready = { schemaVersion: 1, webrtc: { iceServers: [] } };
+    const r = runtime({ proof, verify: () => json(200, { valid: true }),
+      bootstrap: () => json(200, ready) });
+    await flush();
+    assert.equal(r.controllers[0].getSnapshot().state, 'ready');
+    assert.equal(r.requests.filter((item) => item === 'bootstrap').length, 1);
+    r.setTime(200);
+    await r.context.__WRD_SHELL__.acknowledgeStartClick();
+    assert.equal(r.requests.filter((item) => item === 'bootstrap').length, 1);
+    assert.equal(r.admissions(), proof ? 0 : 1);
+    assert.equal(r.inits(), 1);
+    assert.equal(r.signals(), 1);
+  });
 }
 
 test('unavailable verify gates shell and direct Start; explicit verify retry enables only a new click, and proxy bootstrap403 preserves token', async () => {
@@ -121,6 +143,7 @@ test('a late bootstrap application401 from a previous auth generation cannot cle
     ? json(200, { schemaVersion: 1, webrtc: {} })
     : new Promise((resolve) => { resolveOld = resolve; }) });
   await flush();
+  r.setTime(3000);
   const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
   await flush();
   r.Auth.setToken('new-token');
@@ -137,6 +160,7 @@ test('successful old bootstrap cannot initialize a newer unverified auth generat
     ? json(200, { schemaVersion: 1, webrtc: {} })
     : new Promise((resolve) => { resolveOld = resolve; }) });
   await flush();
+  r.setTime(3000);
   const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
   await flush();
   r.Auth.setToken('new-token');
@@ -145,4 +169,19 @@ test('successful old bootstrap cannot initialize a newer unverified auth generat
   assert.equal(r.inits(), 0);
   assert.equal(r.nodes.get('startBtn').disabled, true);
   assert.equal(r.tokens.get('wrd_token'), 'new-token');
+});
+
+test('a successful bootstrap response from an old auth generation is fenced before ready publication', async () => {
+  let resolveOld;
+  let calls = 0;
+  const r = runtime({ verify: () => json(200, { valid: true }), bootstrap: () => ++calls === 1
+    ? new Promise((resolve) => { resolveOld = resolve; })
+    : json(200, { schemaVersion: 1, webrtc: {} }) });
+  await flush();
+  r.Auth.setToken('new-token');
+  resolveOld(json(200, { schemaVersion: 1, webrtc: { selectedTurnServerId: 'old' } }));
+  await flush();
+  assert.notEqual(r.controllers[0].getSnapshot().state, 'ready');
+  assert.equal((await r.controllers[0].load({ mode: 'relay' })).webrtc.selectedTurnServerId, undefined);
+  assert.equal(calls, 2);
 });
