@@ -7790,8 +7790,25 @@ for (const lifecycle of ['refresh', 'disconnect', 'superseded', 'tunnel', 'contr
 }
 
 
-test('signaling session persists through bootstrap reuse, media attempts, refresh, mode switch and socket recreation', async () => {
+function captureExpectedSignalingWarnings(t, context, expected) {
+  const originalConsole = context.console;
+  const warnings = [];
+  context.console = { ...originalConsole, warn(...args) {
+    if (expected.some(warning => warning.length === args.length && warning.every((value, index) => value === args[index]))) {
+      warnings.push(args);
+    } else {
+      originalConsole.warn(...args);
+    }
+  } };
+  t.after(() => {
+    context.console = originalConsole;
+    assert.deepEqual(warnings, expected);
+  });
+}
+
+test('signaling session persists through bootstrap reuse, media attempts, refresh, mode switch and socket recreation', async t => {
   const h = admissionViewerFixture();
+  captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout']]);
   let finishBootstrap;
   const start = h.WebRTC.startViewer({ load: () => new Promise(resolve => { finishBootstrap = resolve; }) });
   for (let i = 0; i < 20 && !finishBootstrap; i++) await Promise.resolve();
@@ -7818,8 +7835,9 @@ test('signaling session persists through bootstrap reuse, media attempts, refres
   assert.equal(captured.ageMs, 0); assert.equal(h.requests.length, 1);
 });
 
-test('explicit Start and successful reclaim reset signaling session before new socket; retired callbacks cannot select', async () => {
+test('explicit Start and successful reclaim reset signaling session before new socket; retired callbacks cannot select', async t => {
   const h = admissionViewerFixture();
+  captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout']]);
   await h.WebRTC.startViewer(h.controller);
   const old = h.sockets[0]; old.active = true; old.trigger('connect_error', { message: 'timeout' });
   const previous = h.WebRTC._signalingSession;
@@ -7835,8 +7853,11 @@ test('explicit Start and successful reclaim reset signaling session before new s
 });
 
 for (const stop of ['disconnect', 'handleViewerSuperseded']) {
-  test(`signaling session and last error retire on ${stop}`, async () => {
-    const h = admissionViewerFixture(); await h.WebRTC.startViewer(h.controller);
+  test(`signaling session and last error retire on ${stop}`, async t => {
+    const h = admissionViewerFixture();
+    captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout'],
+      ...(stop === 'handleViewerSuperseded' ? [['[VIEWER] superseded', 'unknown', '']] : [])]);
+    await h.WebRTC.startViewer(h.controller);
     const socket = h.sockets[0]; socket.active = true; socket.trigger('connect_error', { message: 'timeout' });
     const failure = h.WebRTC.getSignalingFailureSnapshot();
     h.WebRTC[stop](); assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
