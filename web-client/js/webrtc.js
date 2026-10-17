@@ -7502,16 +7502,6 @@ function bootViewerShell() {
   window.__WRD_VIEWER_BOOTED__ = true;
   WebRTC.initializeMediaActivity();
   WebRTC.bindFullscreenLifecycle();
-  if (typeof Auth !== 'undefined' && typeof Auth.subscribe === 'function') {
-    Auth.subscribe((check) => {
-      if (check?.state === 'unauthorized') {
-        WebRTC._startRequest = (WebRTC._startRequest || 0) + 1;
-        WebRTC.retireStartupEpisode('auth-invalid', { cleanup: true });
-      }
-      window.__WRD_SHELL__?.setAuthCheck?.(check);
-      WebRTC.syncChromeCapabilities();
-    });
-  }
   if (typeof StartupTelemetry !== 'undefined') {
     // Import ShellGuard marks with original performance timestamps only.
     const shellSnap = window.__WRD_SHELL__?.snapshot?.();
@@ -7578,13 +7568,31 @@ function bootViewerShell() {
     })
     : null;
 
-  // Align preload key with startViewer (mode + selected TURN) so Start can reuse fresh ready config.
-  if (ViewerBootstrap) {
+  // Auth.subscribe calls back immediately, so install it only after the controller
+  // exists. Defer the one page warmup until Auth has verified its current scope.
+  let bootstrapPreloaded = false;
+  function preloadVerifiedBootstrap() {
+    if (!ViewerBootstrap || bootstrapPreloaded || typeof Auth === 'undefined'
+        || Auth.isVerified?.() !== true) return;
+    bootstrapPreloaded = true;
     ViewerBootstrap.load({
       mode: WebRTC.networkMode,
       turnServerId: WebRTC.selectedTurnServerId || '',
     }).catch(() => {});
-  } else {
+  }
+  if (typeof Auth !== 'undefined' && typeof Auth.subscribe === 'function') {
+    Auth.subscribe((check) => {
+      if (check?.state === 'unauthorized') {
+        WebRTC._startRequest = (WebRTC._startRequest || 0) + 1;
+        WebRTC.retireStartupEpisode('auth-invalid', { cleanup: true });
+      }
+      window.__WRD_SHELL__?.setAuthCheck?.(check);
+      WebRTC.syncChromeCapabilities();
+      preloadVerifiedBootstrap();
+    });
+  }
+  preloadVerifiedBootstrap();
+  if (!ViewerBootstrap) {
     const episode = WebRTC._startupEpisode || null;
     WebRTC.loadServerConfig().then(() => {
       if (!WebRTC.startupAllowed(episode)) return;
