@@ -27,6 +27,108 @@ MAX_ROW_BYTES = 32768
 MAX_RUN_BYTES = 67108864
 
 
+ADMISSION_FAILURES = frozenset({'viewer-present-or-unknown', 'host-unavailable',
+    'authentication-unavailable', 'admission-auth-changed', 'admission-body-cap',
+    'admission-deadline', 'admission-refused', 'admission-unavailable', 'admission-already-present'})
+
+# Current token/generation and admission stay in this disposable browser only.
+PROOF_ADMISSION = '''async timeoutMs => {
+  const auth = typeof Auth === 'undefined' ? null : Auth;
+  if (!auth?.getToken || !auth?.getGeneration || !auth?.isVerified || !auth.isVerified())
+    return 'authentication-unavailable';
+  const token = auth.getToken(), generation = auth.getGeneration();
+  if (!token || !Number.isSafeInteger(generation)) return 'authentication-unavailable';
+  const deadline = performance.now() + Math.min(8000, timeoutMs);
+  const current = () => auth === Auth && auth.isVerified()
+    && auth.getToken() === token && auth.getGeneration() === generation;
+  const fail = code => Object.assign(new Error(), {code});
+  async function request(path, options={}) {
+    const controller = new AbortController(); let timer;
+    try { return await Promise.race([(async () => {
+      if (performance.now() >= deadline) throw fail('admission-deadline');
+      if (!current()) throw fail('admission-auth-changed');
+      const r = await fetch(path, {...options, signal:controller.signal});
+      if (performance.now() >= deadline) throw fail('admission-deadline');
+      if (!current()) throw fail('admission-auth-changed');
+      const reader = r.body.getReader(); let body='', bytes=0;
+      const decoder = new TextDecoder();
+      while (true) {
+        const part = await reader.read();
+        if (performance.now() >= deadline) throw fail('admission-deadline');
+        if (!current()) throw fail('admission-auth-changed');
+        if (part.done) break;
+        bytes += part.value.byteLength;
+        if (bytes > 16384) { await reader.cancel(); throw fail('admission-body-cap'); }
+        body += decoder.decode(part.value, {stream:true});
+      }
+      body += decoder.decode();
+      return {status:r.status, body:JSON.parse(body)};
+    })(), new Promise((_,reject) => {timer=setTimeout(() => {
+      controller.abort(); reject(fail('admission-deadline')); }, Math.max(0, deadline-performance.now()));})]);
+    } finally {clearTimeout(timer);}
+  }
+  try {
+    if (window.__wrdProofStartGuard || sessionStorage.getItem('wrdProofAdmission'))
+      return 'admission-already-present';
+    const status = await request('/api/status');
+    if (!current()) return 'admission-auth-changed';
+    if (status.status !== 200 || status.body.viewerCount !== 0) return 'viewer-present-or-unknown';
+    if (status.body.hostOnline !== true) return 'host-unavailable';
+    const proof = await request('/api/proof-admission',
+      {method:'POST', headers:{Authorization:'Bearer '+token}});
+    if (!current()) return 'admission-auth-changed';
+    if (proof.status !== 201 || typeof proof.body.admission?.token !== 'string'
+      || !proof.body.admission.token) return 'admission-refused';
+    const stored = JSON.stringify(proof.body.admission);
+    sessionStorage.setItem('wrdProofAdmission', stored);
+    window.__wrdProofStartGuard = () => current()
+      && sessionStorage.getItem('wrdProofAdmission') === stored;
+    return 'ready';
+  } catch (error) {
+    return ['admission-auth-changed','admission-body-cap','admission-deadline'].includes(error?.code)
+      ? error.code : 'admission-unavailable';
+  }
+}'''
+
+
+STARTUP_SUMMARY = '''() => {
+  const client = typeof WebRTC === 'undefined' ? null : WebRTC;
+  const auth = typeof Auth === 'undefined' ? null : Auth;
+  const media = client?.mediaActivityRuntime?.snapshot?.();
+  const oneOf = (value, allowed) => allowed.includes(value) ? value : 'unknown';
+  return {observerAvailable: typeof window.__wrdPassiveSampler?.sample === 'function',
+    socketPresent: !!client?.socket, socketConnected: client?.socket?.connected === true,
+    pcState: oneOf(client?.pc?.connectionState, ['new','connecting','connected','disconnected','failed','closed']),
+    uiPhase: oneOf(client?.uiPhase, ['idle','signaling','media-pending','connected','media-stalled','disconnected']),
+    controlState: oneOf(client?.controlState?.state, ['FREE','GRANTING','ACTIVE','REVOKING']),
+    hostOnline: client?.controlState?.hostOnline === true,
+    desiredMediaState: oneOf(media?.desiredState, ['active','suspended']),
+    desiredGeneration: Number.isSafeInteger(media?.desiredGeneration) && media.desiredGeneration >= 0
+      ? media.desiredGeneration : null,
+    authState: oneOf(auth?.getCheck?.()?.state, ['verified','unavailable','unauthorized']),
+    superseded: client?._superseded === true, failureCause:'unknown'};
+}'''
+
+
+async def login_via_ui(page, password):
+    await page.locator('#password').fill(password)
+    await page.locator('#loginForm button[type="submit"]').click()
+    await page.wait_for_url('**/viewer.html', timeout=30000)
+
+
+async def issue_start_proof(page, timeout_s):
+    result = await page.evaluate(PROOF_ADMISSION, min(8000, timeout_s * 1000))
+    if result != 'ready':
+        raise RuntimeError(result if result in ADMISSION_FAILURES else 'admission-unavailable')
+
+
+async def startup_summary(page):
+    try:
+        return await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2)
+    except Exception:
+        return {'observerAvailable': False, 'failureCause': 'unknown'}
+
+
 # Only fixed booleans and bounded relevant mark counts cross this boundary.
 # Never return shell mark details, session/auth objects or connection identities.
 START_UI_SNAPSHOT = '''() => {
@@ -39,12 +141,14 @@ START_UI_SNAPSHOT = '''() => {
     coreInstalled: state?.coreInstalled === true, authVerified: state?.authVerified === true,
     queuedStart: state?.queuedStart === true, socketPresent: !!client?.socket,
     pcPresent: !!client?.pc, attemptPresent: !!client?.currentConnectionAttemptId,
+    admissionCurrent: window.__wrdProofStartGuard?.() === true,
     htmlShellMarks: count('html-shell'), coreInteractiveMarks: count('core-interactive'),
     startClickMarks: count('start-click')};
 }'''
 
 
-async def start_via_ui(page, *, timeout_s=30, monotonic=time.monotonic, sleep=asyncio.sleep):
+async def start_via_ui(page, *, proof_callback=issue_start_proof, timeout_s=30,
+                       monotonic=time.monotonic, sleep=asyncio.sleep):
     """Require a fresh, authenticated core and prove exactly one normal UI Start."""
     deadline = monotonic() + timeout_s
     clicked = False
@@ -56,7 +160,9 @@ async def start_via_ui(page, *, timeout_s=30, monotonic=time.monotonic, sleep=as
             raise RuntimeError(reason)
         try:
             return await asyncio.wait_for(operation(remaining), timeout=remaining)
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, RuntimeError) and str(exc) in ADMISSION_FAILURES:
+                raise
             raise RuntimeError(reason if monotonic() >= deadline else 'start-ui-unavailable') from None
 
     button = page.locator('#startBtn')
@@ -79,6 +185,19 @@ async def start_via_ui(page, *, timeout_s=30, monotonic=time.monotonic, sleep=as
             if (core_ready and state['authVerified']
                 and await bounded(lambda _: button.is_visible())
                 and await bounded(lambda _: button.is_enabled())):
+                await bounded(lambda remaining: proof_callback(page, remaining))
+                # Never remint or fall through to an ordinary-ticket Start if
+                # auth, freshness, proof storage or the actionable UI changed.
+                visible = await bounded(lambda _: button.is_visible())
+                enabled = await bounded(lambda _: button.is_enabled())
+                current = await bounded(lambda _: page.evaluate(START_UI_SNAPSHOT))
+                if (not visible or not enabled or not current['admissionCurrent']
+                    or not all(current[key] for key in ('shellAvailable','clientAvailable',
+                        'marksAvailable','coreInstalled','authVerified'))
+                    or current['htmlShellMarks'] != 1 or current['coreInteractiveMarks'] != 1
+                    or any(current[key] for key in ('socketPresent','pcPresent','attemptPresent','queuedStart'))
+                    or current['startClickMarks'] != 0):
+                    raise RuntimeError('start-ui-state-changed')
                 # Exactly one real Playwright click, with normal actionability checks.
                 await bounded(lambda remaining: button.click(timeout=max(1, remaining * 1000)))
                 clicked = True
@@ -262,6 +381,8 @@ async def run(args):
     stage = 'browser-start'
     failure = None
     start_proof = {'status': 'NOT_VERIFIED'}
+    startup = None
+    page = None
     with os.fdopen(fd, 'w') as stream:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -275,41 +396,8 @@ async def run(args):
                 if not response or response.status != 200:
                     raise RuntimeError('entry-unavailable')
                 await page.locator('#password').wait_for(state='visible')
-                stage = 'admission'
-                admission = await page.evaluate('''async password => {
-                  async function request(path, options={}) {
-                    const controller = new AbortController(); let timer;
-                    try { return await Promise.race([(async () => {
-                      const r = await fetch(path, {...options, signal:controller.signal});
-                      const reader = r.body.getReader(); let body='', bytes=0;
-                      const decoder = new TextDecoder();
-                      while (true) {
-                        const part = await reader.read(); if (part.done) break;
-                        bytes += part.value.byteLength;
-                        if (bytes > 16384) { await reader.cancel(); throw new Error('body-cap'); }
-                        body += decoder.decode(part.value, {stream:true});
-                      }
-                      body += decoder.decode();
-                      return {status:r.status, body:JSON.parse(body)};
-                    })(), new Promise((_,reject) => {timer=setTimeout(() => {
-                      controller.abort(); reject(new Error('deadline')); },8000);})]);
-                    } finally {clearTimeout(timer);}
-                  }
-                  const status = await request('/api/status');
-                  if (status.status !== 200 || status.body.viewerCount !== 0) return 'viewer-present-or-unknown';
-                  const auth = await request('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password})});
-                  if (auth.status !== 200 || !auth.body.token) return 'authentication-unavailable';
-                  const proof = await request('/api/proof-admission', {method:'POST', headers:{Authorization:'Bearer '+auth.body.token}});
-                  if (proof.status !== 201 || !proof.body.admission?.token) return 'admission-refused';
-                  sessionStorage.setItem('wrdProofAdmission', JSON.stringify(proof.body.admission));
-                  return 'ready';
-                }''', password)
-                if admission != 'ready':
-                    raise RuntimeError(admission)
                 stage = 'ui-login'
-                await page.locator('#password').fill(password)
-                await page.locator('#loginForm').dispatch_event('submit')
-                await page.wait_for_url('**/viewer.html', timeout=30000)
+                await login_via_ui(page, password)
                 stage = 'start-ui'
                 start_proof = await start_via_ui(page)
                 await page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text())
@@ -321,6 +409,7 @@ async def run(args):
                     if ready: break
                     await asyncio.sleep(1)
                 else: raise RuntimeError('media-start-deadline')
+                startup = await startup_summary(page)
                 stage = 'sampling'
                 start = time.monotonic()
                 await collect_samples(
@@ -330,18 +419,21 @@ async def run(args):
                         'samples': summary.samples, 'missing': summary.missing}), flush=True))
                 interrupted = False
             except Exception as exc:
-                failure = {'stage':stage, 'category':type(exc).__name__}
+                failure = {'stage':stage, 'category': ('startup-guard' if stage == 'start-ui'
+                    else 'media-wait' if stage == 'media-start' else 'runtime')}
+                if page is not None: startup = await startup_summary(page)
                 # Only our own fixed reason vocabulary may reach evidence.
-                if str(exc) in {'entry-unavailable','viewer-present-or-unknown','authentication-unavailable',
+                if str(exc) in ADMISSION_FAILURES | {'entry-unavailable','viewer-present-or-unknown','authentication-unavailable',
                     'admission-refused','media-start-deadline','sample-continuity-lost',
                     'session-changed-or-disconnected','evidence-budget-exceeded','sampling-deadline-overrun',
-                    'start-ui-unavailable','start-ui-deadline','start-ui-not-fresh','start-ui-click-unproven'}:
+                    'start-ui-unavailable','start-ui-deadline','start-ui-not-fresh','start-ui-click-unproven',
+                    'start-ui-state-changed'}:
                     failure['reason'] = str(exc)
             finally:
                 await browser.close()
     elapsed = time.monotonic()-start if start is not None else 0
     result = summary.result(elapsed_s=elapsed, interrupted=interrupted)
-    result.update(mode=args.mode, failure=failure, startProof=start_proof,
+    result.update(mode=args.mode, failure=failure, startProof=start_proof, startupSummary=startup,
         originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal')
     report_fd = os.open(output/'summary.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(report_fd, 'w') as report:

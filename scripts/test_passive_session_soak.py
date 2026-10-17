@@ -1,7 +1,12 @@
 import asyncio
 import io
 import json
+import os
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from scripts import passive_session_soak as soak
 from scripts.passive_session_soak import (ContinuitySummary, EvidenceWriter, collect_samples,
     private_row, record_missed_ticks)
@@ -168,13 +173,20 @@ class StartUiTest(unittest.IsolatedAsyncioTestCase):
             self.state = state or {}
             self.mark_delta, self.click_error = mark_delta, click_error
             self.clicks = 0
+            self.proofs = 0
+            self.events = []
 
-        async def evaluate(self, expression):
+        async def evaluate(self, expression, arg=None):
+            if expression == getattr(soak, 'PROOF_ADMISSION', None):
+                self.proofs += 1
+                self.events.append(('proof', self.now))
+                return 'ready'
             return {'shellAvailable': True, 'clientAvailable': True, 'marksAvailable': True,
                 'coreInstalled': True, 'authVerified': self.now >= self.ready_after,
                 'queuedStart': False, 'socketPresent': False, 'pcPresent': False,
                 'attemptPresent': False, 'htmlShellMarks': 1, 'coreInteractiveMarks': 1,
-                'startClickMarks': self.clicks * self.mark_delta, **self.state}
+                'startClickMarks': self.clicks * self.mark_delta,
+                'admissionCurrent': self.proofs == 1, **self.state}
 
         def locator(self, selector):
             if selector != '#startBtn': raise AssertionError(selector)
@@ -190,6 +202,7 @@ class StartUiTest(unittest.IsolatedAsyncioTestCase):
             if timeout <= 0 or not await self.is_visible() or not await self.is_enabled():
                 raise AssertionError('click before ready or outside deadline')
             self.clicks += 1
+            self.events.append(('start-click', self.now))
             if self.click_error: raise RuntimeError('private credential canary')
 
         async def sleep(self, delay):
@@ -205,6 +218,9 @@ class StartUiTest(unittest.IsolatedAsyncioTestCase):
         proof = await self.start(page)
         self.assertGreaterEqual(page.now, 0.3)
         self.assertEqual(page.clicks, 1)
+        self.assertEqual(page.proofs, 1)
+        self.assertEqual([event[0] for event in page.events], ['proof', 'start-click'])
+        self.assertTrue(all(when >= 0.3 for _, when in page.events))
         self.assertEqual(proof, {'status': 'verified', 'freshPage': True,
             'coreInstalled': True, 'authVerified': True,
             'startClickMarksBefore': 0, 'startClickMarksAfter': 1})
@@ -244,6 +260,226 @@ class StartUiTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, '^start-ui-unavailable$'):
             await self.start(page)
         self.assertEqual(page.clicks, 1)
+
+
+class ProofTimingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_real_ui_login_precedes_ready_proof_and_single_start(self):
+        class LoginPage(StartUiTest.Page):
+            def locator(self, selector):
+                owner = self
+                class LoginLocator:
+                    async def fill(self, value):
+                        owner.events.append(('password-fill', 0))
+                    async def click(self):
+                        owner.events.append(('login-click', 0))
+                return super().locator(selector) if selector == '#startBtn' else LoginLocator()
+            async def wait_for_url(self, pattern, *, timeout):
+                self.events.append(('login-complete', 0))
+        login = getattr(soak, 'login_via_ui', None)
+        self.assertIsNotNone(login, 'login must use UI before issuing proof')
+        page = LoginPage(ready_after=0.3)
+        await login(page, 'credential canary')
+        await soak.start_via_ui(page, timeout_s=0.5, monotonic=lambda: page.now, sleep=page.sleep)
+        self.assertEqual([event[0] for event in page.events],
+            ['password-fill', 'login-click', 'login-complete', 'proof', 'start-click'])
+        self.assertNotIn('credential canary', json.dumps(page.events))
+
+    async def test_post_proof_auth_freshness_or_button_change_fails_without_start_or_remint(self):
+        for change in ({'authVerified': False}, {'admissionCurrent': False},
+                       {'socketPresent': True}, {'pcPresent': True},
+                       {'startClickMarks': 1}, {'hidden': True}, {'disabled': True}):
+            with self.subTest(change=change):
+                class ChangedPage(StartUiTest.Page):
+                    async def evaluate(self, expression, arg=None):
+                        result = await super().evaluate(expression, arg)
+                        if self.proofs: self.state.update(change)
+                        return result
+                page = ChangedPage()
+                with self.assertRaisesRegex(RuntimeError, '^start-ui-state-changed$'):
+                    await soak.start_via_ui(page, timeout_s=0.5,
+                        monotonic=lambda: page.now, sleep=page.sleep)
+                self.assertEqual((page.proofs, page.clicks), (1, 0))
+
+    async def browser_fixture(self, expression, fixture, arg=None):
+        # Runs the production browser function in a JS VM with fake fetch/storage,
+        # never opens a browser or performs network requests.
+        harness = r'''
+const vm = require('node:vm');
+let input = ''; process.stdin.on('data', part => input += part);
+process.stdin.on('end', async () => {
+  const {expression, fixture:f, arg} = JSON.parse(input);
+  let token = 'private-token-canary', generation = 1, stored = null, elapsed = 0;
+  const requests = [];
+  const context = {TextDecoder, AbortController, performance:{now:() => elapsed},
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 20)), clearTimeout,
+    Auth: {getToken: () => token, getGeneration: () => generation,
+      isVerified: () => f.verified !== false, getCheck: () => ({state:f.authState || 'verified', token})},
+    sessionStorage: {getItem: () => stored, setItem: (key, value) => { stored = value; }},
+    fetch: async (path, options={}) => {
+      requests.push({path, method:options.method || 'GET', authorized:options.headers?.Authorization === 'Bearer '+token});
+      if (f.hang) return new Promise(() => {});
+      const statusRequest = path === '/api/status';
+      if ((f.changeAt === 'status' && statusRequest) || (f.changeAt === 'proof' && !statusRequest)) {
+        generation++; token = 'new-private-token-canary';
+      }
+      const body = statusRequest ? {hostOnline:f.host !== false, viewerCount:f.viewer || 0}
+        : {admission:{token:'private-proof-canary'}};
+      let reads = 0;
+      return {status:statusRequest ? 200 : f.refuse ? 409 : 201, body:{getReader:() => ({
+        cancel: async () => {}, read: async () => {
+          if (reads++) {
+            if (f.expireAt === (statusRequest ? 'status-body' : 'proof-body')) elapsed = 1001;
+            return {done:true};
+          }
+          if (f.changeAt === 'body') generation++;
+          return {done:false, value:Buffer.from(f.oversize ? 'x'.repeat(16385) : JSON.stringify(body))};
+        }})}};
+    }, WebRTC: f.client || null, __wrdPassiveSampler: f.observer ? {sample(){}} : null};
+  if (f.media && context.WebRTC) context.WebRTC.mediaActivityRuntime = {snapshot: () => f.media};
+  context.window = context;
+  try {
+    const result = await vm.runInNewContext('('+expression+')', context)(arg);
+    process.stdout.write(JSON.stringify({result, requests, proofStored:!!stored,
+      guardCurrent:context.__wrdProofStartGuard?.() === true}));
+  } catch (_) { process.stdout.write(JSON.stringify({unexpected:true})); }
+});'''
+        child = await asyncio.create_subprocess_exec('node', '-e', harness,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(child.communicate(
+            json.dumps({'expression': expression, 'fixture': fixture, 'arg': arg}).encode()), timeout=2)
+        self.assertEqual((child.returncode, stderr), (0, b''))
+        return json.loads(stdout)
+
+    async def test_actual_proof_fetch_is_once_uses_current_auth_and_never_ordinary_ticket(self):
+        expression = getattr(soak, 'PROOF_ADMISSION', None)
+        self.assertIsNotNone(expression, 'bounded proof must use current browser Auth')
+        result = await self.browser_fixture(expression, {}, 1000)
+        self.assertEqual(result, {'result':'ready', 'requests':[
+            {'path':'/api/status', 'method':'GET', 'authorized':False},
+            {'path':'/api/proof-admission', 'method':'POST', 'authorized':True}],
+            'proofStored':True, 'guardCurrent':True})
+        self.assertNotIn('private-', json.dumps(result))
+
+    async def test_actual_proof_refuses_viewer_no_host_changed_auth_body_cap_and_timeout(self):
+        expression = getattr(soak, 'PROOF_ADMISSION', None)
+        self.assertIsNotNone(expression, 'bounded proof guard must exist')
+        for fixture, expected, requests in [
+            ({'viewer':1}, 'viewer-present-or-unknown', 1),
+            ({'host':False}, 'host-unavailable', 1),
+            ({'verified':False}, 'authentication-unavailable', 0),
+            ({'changeAt':'status'}, 'admission-auth-changed', 1),
+            ({'changeAt':'proof'}, 'admission-auth-changed', 2),
+            ({'changeAt':'body'}, 'admission-auth-changed', 1),
+            ({'oversize':True}, 'admission-body-cap', 1),
+            ({'hang':True}, 'admission-deadline', 1),
+            ({'expireAt':'status-body'}, 'admission-deadline', 1),
+            ({'expireAt':'proof-body'}, 'admission-deadline', 2),
+            ({'refuse':True}, 'admission-refused', 2)]:
+            with self.subTest(fixture=fixture):
+                result = await self.browser_fixture(expression, fixture, 1000)
+                self.assertEqual(result['result'], expected)
+                self.assertEqual(len(result['requests']), requests)
+                self.assertFalse(result['proofStored'])
+                self.assertNotIn('private-', json.dumps(result))
+                class RefusedPage(StartUiTest.Page):
+                    async def evaluate(self, expr, arg=None):
+                        if expr == expression:
+                            self.proofs += 1
+                            return result['result']
+                        return await super().evaluate(expr, arg)
+                page = RefusedPage()
+                with self.assertRaisesRegex(RuntimeError, '^'+expected+'$'):
+                    await soak.start_via_ui(page, timeout_s=0.5,
+                        monotonic=lambda:page.now, sleep=page.sleep)
+                self.assertEqual((page.proofs, page.clicks), (1, 0))
+
+    async def test_startup_projection_is_bounded_and_contains_no_arbitrary_fields(self):
+        expression = getattr(soak, 'STARTUP_SUMMARY', None)
+        self.assertIsNotNone(expression, 'failure/ready needs a safe phase projection')
+        result = (await self.browser_fixture(expression, {'observer':True,
+            'authState':'private-auth-text', 'client': {'socket':{'connected':True,'id':'private-id'},
+            'pc':{'connectionState':'private-state'}, 'uiPhase':'private-html',
+            'controlState':{'state':'private-state', 'hostOnline':True},
+            '_superseded':True, 'arbitrary':'private-token'} }))['result']
+        self.assertEqual(result, {'observerAvailable':True, 'socketPresent':True,
+            'socketConnected':True, 'pcState':'unknown', 'uiPhase':'unknown',
+            'controlState':'unknown', 'hostOnline':True, 'desiredMediaState':'unknown',
+            'desiredGeneration':None, 'authState':'unknown', 'superseded':True,
+            'failureCause':'unknown'})
+        self.assertNotIn('private-', json.dumps(result))
+        self.assertLess(len(json.dumps(result)), 1024)
+
+    async def test_startup_projection_preserves_actual_product_phase_enums(self):
+        for state in ('FREE', 'GRANTING', 'ACTIVE', 'REVOKING'):
+            with self.subTest(state=state):
+                result = (await self.browser_fixture(soak.STARTUP_SUMMARY,
+                    {'client':{'uiPhase':'media-pending', 'controlState':{'state':state}},
+                     'media':{'desiredState':'suspended', 'desiredGeneration':4}}))['result']
+                self.assertEqual((result['controlState'], result['uiPhase'], result['desiredMediaState'],
+                    result['desiredGeneration']), (state, 'media-pending', 'suspended', 4))
+
+
+class StartupRunTest(unittest.IsolatedAsyncioTestCase):
+    async def test_guard_and_media_failures_publish_phase_evidence_and_close_browser(self):
+        for guard_failure in (True, False):
+            with self.subTest(guard_failure=guard_failure):
+                class Page(StartUiTest.Page):
+                    def set_default_timeout(self, value): pass
+                    async def add_init_script(self, script): pass
+                    async def goto(self, origin, **kwargs): return SimpleNamespace(status=200)
+                    async def wait_for_url(self, *args, **kwargs): pass
+                    def locator(self, selector):
+                        class LoginElement:
+                            async def wait_for(self, **kwargs): pass
+                            async def fill(self, password): pass
+                            async def click(self): pass
+                        return super().locator(selector) if selector == '#startBtn' else LoginElement()
+                    async def evaluate(self, expression, arg=None):
+                        if expression == soak.PROOF_ADMISSION and guard_failure:
+                            self.proofs += 1
+                            return 'viewer-present-or-unknown'
+                        if expression == soak.STARTUP_SUMMARY:
+                            return {'observerAvailable':not guard_failure,
+                                'uiPhase':'idle' if guard_failure else 'signaling', 'failureCause':'unknown'}
+                        if expression == '() => window.__wrdPassiveSampler.sample()':
+                            return {'socketConnected':False}
+                        if expression.startswith('/* Acceptance observer'): return None
+                        return await super().evaluate(expression, arg)
+                page = Page()
+                class Browser:
+                    closed = False
+                    async def launch(self, **kwargs): return self
+                    async def new_context(self): return self
+                    async def new_page(self): return page
+                    async def close(self): self.closed = True
+                browser = Browser()
+                class Playwright:
+                    async def __aenter__(self): return SimpleNamespace(chromium=browser)
+                    async def __aexit__(self, *args): pass
+                async def no_sleep(delay): pass
+                modules = {'dotenv':SimpleNamespace(dotenv_values=lambda _: {}),
+                    'playwright':SimpleNamespace(),
+                    'playwright.async_api':SimpleNamespace(async_playwright=Playwright)}
+                with tempfile.TemporaryDirectory() as directory, patch.dict('sys.modules', modules), \
+                    patch.dict(os.environ, {'VIEWER_ACCESS_PASSWORD':'private-password-canary'}), \
+                    patch.object(soak.asyncio, 'sleep', no_sleep), patch('builtins.print'):
+                    output = Path(directory)/'evidence'
+                    result = await soak.run(SimpleNamespace(origin='https://fixture.invalid',
+                        output_dir=output, duration_seconds=10800, mode='relay', runtime_config=None))
+                    summary = json.loads((output/'summary.json').read_text())
+                    self.assertEqual(result, 1)
+                    self.assertEqual(summary['failure']['category'], 'startup-guard' if guard_failure else 'media-wait')
+                    self.assertEqual(summary['failure']['reason'],
+                        'viewer-present-or-unknown' if guard_failure else 'media-start-deadline')
+                    self.assertEqual(summary['startProof']['status'], 'NOT_VERIFIED' if guard_failure else 'verified')
+                    self.assertEqual(summary['startupSummary']['uiPhase'], 'idle' if guard_failure else 'signaling')
+                    self.assertEqual(summary['startupSummary']['failureCause'], 'unknown')
+                    self.assertEqual(summary['status'], 'INCOMPLETE')
+                    self.assertEqual((summary['samples'], summary['elapsedSeconds']), (0, 0))
+                    self.assertFalse(summary['threeHourContinuityMet'])
+                    self.assertNotIn('private-', json.dumps(summary))
+                self.assertTrue(browser.closed)
+                self.assertEqual((page.proofs, page.clicks), (1, 0 if guard_failure else 1))
 
 
 if __name__ == '__main__': unittest.main()
