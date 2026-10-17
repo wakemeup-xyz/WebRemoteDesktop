@@ -146,3 +146,10 @@ Ruling: original intent to implement native fixture cannot be satisfied with cur
 Ruling: implement M6.1–M6.3 in one fresh single-writer protocol task with a complete Host/Signal/Viewer review package, keeping M6.4 deployment and live acceptance controller-owned — the three tasks share frame/ACK scope and mutable state, parallel writers would produce incompatible intermediate protocol states — cost if wrong is a larger review and rework surface; no runtime activation before review.
 
 若判断有误的成本及约束：一次跨三层变更较大，独立 review 及返工成本增加；单 writer、测试、完整协议复审通过后才部署。
+
+
+## 25
+
+Ruling: allow media-null source/test work in parallel with a possible I2 harness fix, while keeping a single index owner — the paths and runtime interfaces are disjoint, and neither agent may deploy or run live acceptance — cost if wrong is paused work and conflict resolution, never overwrite or concurrent commit.
+
+若判断有误的成本及约束：路径冲突时暂停并解决；Git index 始终串行，线上部署和验收仍由主线程执行。两项现均已独立复审通过。

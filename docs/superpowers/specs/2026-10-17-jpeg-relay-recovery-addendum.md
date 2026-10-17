@@ -1,6 +1,6 @@
 # M6：JPEG relay 槽位恢复与帧来源补充设计
 
-日期：2026-10-17。状态：`5e6c26c` + `966890b` 已实现，独立 review/R1 通过；已部署本地 Signal/Host，build `f5c2a9203e47f9e5`，公网 M6 生命周期验收待运行。本补充使用 brainstorming + writing-plans，继承用户已确认的连续规划流程，不重复索要分段批准。
+日期：2026-10-17。状态：`5e6c26c` + `966890b` 已实现，独立 review/R1 通过；在 build `f5c2a9203e47f9e5` 完成公网 JPEG 85.034 秒、TURN 86.272 秒生命周期短测，均通过；后续 nullable 修复已部署为 `c30530f331a4def5`。另一场 TURN 连续性测试 93.094 秒即因信令 ping timeout 中断，长会话未通过；详见[真实验收](../reports/2026-10-17-live-acceptance.md)。本补充使用 brainstorming + writing-plans，继承用户已确认的连续规划流程，不重复索要分段批准。
 
 上位约束：[媒体设计](2026-10-17-media-latency-design.md)、[控制恢复设计](2026-10-17-control-recovery-design.md)、[整改总设计](2026-10-17-reliability-latency-remediation-design.md)。对应[执行计划](../plans/2026-10-17-jpeg-relay-recovery-plan.md)。M6 补足真实验收发现的媒体活性、来源证明和观测缺口，不另建控制恢复器。
 
