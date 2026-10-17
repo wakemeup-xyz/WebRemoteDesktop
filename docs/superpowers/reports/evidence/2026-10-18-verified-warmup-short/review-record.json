@@ -1,0 +1,39 @@
+{
+  "task": {
+    "base": "1c889c4fc32091c90a3bc5da351f3d4c0e571e75",
+    "tip": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+    "canonicalSha256": "1c3ad65a7c2aed275185da2185e5f67e2285027782729b327b318c83de98e070",
+    "canonicalBytes": 14265,
+    "verdict": "Approved",
+    "spec": "Approved",
+    "quality": "Approved",
+    "actionableFindings": 0
+  },
+  "wholeIncrement": {
+    "base": "8675e85e3b66453fc17ddb778fd3a253f4c0d600",
+    "tip": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+    "canonicalSha256": "c8b91c6ea4645414c378908bdd617b0be65dcc7c75a7f9db89f5c2b2c99ae7fa",
+    "canonicalBytes": 52863,
+    "verdict": "Approved",
+    "actionableFindings": 0,
+    "reviewer": "fresh most-capable Astra"
+  },
+  "validation": {
+    "redBaseChildExit": 1,
+    "redBaseIntegrationTests": 12,
+    "redPass": 7,
+    "redFail": 5,
+    "greenAffectedTests": 35,
+    "greenAffectedExit": 0,
+    "provenance": "Implementer actual executions; independent reviewers inspected source/results statically."
+  },
+  "privateOperationalReview": {
+    "verdict": "Approved",
+    "wrapperSha256": "fab8082d8de0c85ace21213c5221b903a11ae124a1f8a7c5d1cc8cb70c4ca20e",
+    "scope": "constants-only derivative of previously reviewed guarded Signal-only wrapper"
+  },
+  "limits": [
+    "Source review is distinct from loaded state and actual qualification.",
+    "Prior build6b Signal reload remains INDETERMINATE and is not rewritten."
+  ]
+}
