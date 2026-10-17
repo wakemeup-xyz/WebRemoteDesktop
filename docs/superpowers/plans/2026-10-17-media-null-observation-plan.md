@@ -2,6 +2,8 @@
 
 日期：2026-10-17。状态：实施前计划，继承 M1 已审查的 nullable 指标契约；真实执行和部署结果另记实施报告。目标是修复已确认的 `rttMs` / `jitterBufferMs` 缺测变0及其直接消费者，不新增RTP/capture测量，不调参数、阈值、模式、权限或恢复预算。
 
+### Task 1: 延迟缺测值端到端传播
+
 ## Authority 与问题
 
 上位约束是仓库已有总spec `docs/superpowers/specs/2026-10-17-reliability-latency-remediation-design.md:38`：“缺测使用 null/unavailable”；M1细则 `docs/superpowers/specs/2026-10-17-media-latency-design.md:71`：“只接受 typeof value==='number' && Number.isFinite(value) && value>=0。null、空串、undefined及无emitted frame均缺测。禁止Number(null)转换。”缺测诊断不得改变控制授权（总spec:69），不需要新多页spec。
