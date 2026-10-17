@@ -4630,7 +4630,9 @@ const WebRTC = {
       if (this[key]) URL.revokeObjectURL(this[key]);
       this[key] = '';
     }
-    this.renderRelayFeedbackRtt();
+    // This cleanup also runs for WebRTC attempts/control loss; their RTT label
+    // belongs to the WebRTC stats renderer. Reset only an active relay display.
+    if (this.tunnelRelayActive) this.renderRelayFeedbackRtt();
   },
 
   invalidateRelayInputProof(reason) {

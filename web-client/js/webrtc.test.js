@@ -7540,3 +7540,34 @@ test('JPEG socket replacement clears origin/pending callbacks and ignores the ol
   assert.equal(WebRTC._relayRttView, null);
   assert.equal(WebRTC._relayFreshnessTimer, null);
 });
+
+for (const mode of ['relay', 'stun']) for (const action of ['attempt', 'freeze']) {
+  test(`JPEG origin cleanup preserves ${mode} RTT display during real ${action} lifecycle`, () => {
+    const { WebRTC, context } = loadWebRTC();
+    WebRTC.networkMode = mode;
+    WebRTC.socket = { connected: true, emit() {} };
+    const latency = context.document.getElementById('latencyDisplay');
+    latency.textContent = 'RTT 37 ms';
+    latency.title = '网络 RTT 37 ms';
+    if (action === 'attempt') WebRTC.beginConnectionAttempt('viewer-open');
+    else WebRTC.freezeControl('control-revoked');
+    assert.equal(latency.title, '网络 RTT 37 ms');
+    assert.equal(latency.textContent, 'RTT 37 ms');
+    assert.equal(WebRTC._relayExpectedScope, null);
+  });
+}
+
+test('JPEG origin cleanup still clears the just-ended active relay RTT display', async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 42 }));
+  const latency = h.context.document.getElementById('latencyDisplay');
+  assert.equal(latency.textContent, '42 ms');
+  assert.match(latency.title, /JPEG反馈往返/);
+  WebRTC.stopTunnelRelay();
+  assert.equal(latency.textContent, '未测量');
+  assert.match(latency.title, /JPEG反馈往返/);
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayRttView, null);
+});
