@@ -1,12 +1,12 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：已部署至 `adfcb48` 的本地 Signal/Host；此前分支复审通过，真实验收发现的 C5 准入缺陷已提交 `cd64e54`、独立复审进行中，尚未最终验收。
+执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `8e375fa`（含 C5 准入修复与 R1）；独立源码复审通过，公网运行验收继续进行，尚未最终验收。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
 ## 1. 基线与执行边界
 
-隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `adfcb48`，W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
+隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `8e375fa`，W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
 
 离线阶段使用定向测试和临时目录构建，未调用 npm pretest。经独立复审后按用户授权构建并重启本地服务；真实 Viewer 测试均使用 fresh zero-Viewer 与一次性 proof，未执行业务原生输入。未修改、停止或重启 tunnel。
 
@@ -55,9 +55,9 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已部署至 `adfcb48`；build `7cdeb3e918582f7c`；W2 watcher 四文件未激活 |
+| 本轮构建部署 | 已部署至 `8e375fa`；build `b73325b8166441a6`；W2 watcher 四文件未激活 |
 | 真实登录与媒体启动 | 公网 TURN 登录、当前帧进展和有效 input gate 短时 PASS；完整 baseline 被另一普通 Viewer 顶替，不能计连续性 PASS |
-| 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 准入修复进行中 |
+| 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
 | 输入到真实可见效果 | NOT RUN；需要真实 producer 事件与解码 marker，ACK 或下一帧不能替代 |
 | 各路径连续三小时 | NOT RUN；新工具已实现连续采样和严格判定，实际运行未完成三小时 |
@@ -99,11 +99,11 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 重连验收工具边界：一次性 proof admission 在首次连接后被消费，Socket.IO 重连继续携带它会被保护逻辑拒绝；在 grace 内旧 Viewer 仍占 map，不能重新申请 zero-Viewer proof。因此这个工具不能直接证明普通用户的无修改自动重连；不清 proof、不绕过保护，不把保护拒绝误报成普通用户重连故障。
 
 
-## 6. C5：自动恢复不得抢占更新会话（复审中）
+## 6. C5：自动恢复不得抢占更新会话（已复审并部署）
 
 真实短时验收先后出现普通 Viewer 接入、page-hidden 和租约到期。这些日志无法识别来源设备或区分人工动作与旧页自动重连，不作为特定客户端有故障的结论。独立审查另用真实 Signal handlers 固化两种源码反例：A 失联、B 已接入后，A 在 grace 内或 grace 到期后恢复，均会把 B 顶掉。离线时漏收 superseded 的旧页没有可靠的本地拒绝依据。
 
-采用[准入补充设计](../specs/2026-10-17-viewer-admission-recovery-addendum.md)和[执行计划](../plans/2026-10-17-viewer-admission-recovery-plan.md)：服务端校验有界、单次的显式用户准入意图；自动恢复仅允许恢复当前 owner，不能顶替更新会话。保持单 Viewer、Host reset/rebind 屏障、一次性 proof 和人工 Viewer 优先。C5 完成独立复审后才同步生产。
+采用[准入补充设计](../specs/2026-10-17-viewer-admission-recovery-addendum.md)和[执行计划](../plans/2026-10-17-viewer-admission-recovery-plan.md)：服务端校验有界、单次的显式用户准入意图；自动恢复仅允许恢复当前 owner，不能顶替更新会话。保持单 Viewer、Host reset/rebind 屏障、一次性 proof 和人工 Viewer 优先。C5 经独立复审及 R1 修订后已同步生产，见下述上线记录。
 
 验收尝试均保留完整失败/中断：`/tmp/wrd-public-relay-acceptance-20261017a` 为修复前首次媒体启动失败；`/tmp/wrd-public-relay-reconnect-20261017b` 为修复后短时 readiness 成功、baseline 被顶替；`/tmp/wrd-public-relay-acceptance-20261017c` 为另一轮 media-start-deadline，缺少足够 observer 证据，不能确定与同期普通 Viewer 活动的因果；`/tmp/wrd-public-relay-acceptance-20261017d` 在正式 admission guard 遇到现有 Viewer 而退出，未建立测试会话。均未计入连续性通过。
 
@@ -123,3 +123,12 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 原生可见效果验收的具体能力缺口和最小环境见[验收边界](2026-10-17-visible-effect-acceptance-boundary.md)。当前共享桌面不能建立独立输入/捕获边界；不伪造 probe、不改用 DOM 事件冒充原生输入，该项保持 BLOCKED。
 
 C5 实现 `cd64e54`：真实 handler 原两项 RED 已转绿，实际 API/Socket.IO、Viewer Start/reclaim/自动恢复及原有控制回归共 473 项通过。30 秒/128 条有界 ticket 与固定大小 owner/顺序状态；proof 不申请普通 ticket，恢复不产生新意图。服务重启后未知恢复保守拒绝，旧页面需刷新并显式连接；这一兼容取舍已写入设计和[实现报告](2026-10-17-task-C5-admission-recovery.md)。独立复审未完成前不部署。
+
+
+## 8. C5 修订、部署与新的验收边界
+
+C5 `cd64e54` 增加显式 Start/reclaim 准入票据和独立于 socket/grace/TTL 的当前 owner；自动重连只允许当前 owner。初轮 473 项相关测试通过。独立复审发现 Start 在 bootstrap 完成前被拒绝/顶替时丢弃 TURN 配置，随后人工 reclaim 可能失败；`8e375fa` 保留并校验 pending bootstrap 的身份，reclaim 等待正确配置后才签发意图和创建连接。修订的 259 项相关测试通过，独立 R1 通过；数量有重叠，不求和。详见 [C5 独立复审](2026-10-17-C5-independent-review.md)。
+
+08:53 北京时间仅更新并重启本地 Signal/Host，helper 完成耗时 16.356 秒；Signal PID 29105、Host PID 29164。08:53:43 health 200、Host 在线、Viewer 0；实际构建 `b73325b8166441a6`，保留前两构建 `7cdeb3e918582f7c` / `473f909ac58cea18`。原 checkout HEAD/index 保持不变；cloudflared PID 84671、watcher PID 897 和各自启动时间不变，quick URL 文件仍不存在。回滚快照保存于私有 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-8e375fad-2jvzvnqo`，未在版本文档保存凭据。
+
+本次公网媒体生命周期验收 `/tmp/wrd-public-c5-media-relay-20261017a`：登录页、fresh zero-Viewer proof、真实表单登录通过；69.11 秒后 readiness 超时，62 个样本均无 Socket/PC，画面和输入指标均缺测，浏览器已关闭。复核发现私有验收工具只在一次 `startBtn.is_visible()` 为 true 时点击，没有等待实际可用，也没有记录点击证明，因此该次 FAIL 不能作为 C5 服务回归证据，具体不可见原因也不能从现有样本确认。工具修订须等待 core/auth 与真实按钮可交互、验证 `start-click` 标记增加，才进入媒体验收；不绕过 UI 直接调用 Start。此失败记录保留，后续结果单列。
