@@ -35,3 +35,14 @@
 - [ ] 独立task review，随后跨层增量review。
 - [ ] 受控当前候选同步、Host-only重载、源码/HEAD/index/tunnel身份/health/Host/Viewer检查；新运行不与正在进行的诊断混合。
 - [ ] guarded短媒体及后续长会话验收，记录失败及环境；不将本队列修复称为13.8s停帧已解决。
+
+### Task 3: 独立确认的旧trace fixture同步（Task2部署前完成）
+
+**Files:** Modify only python-host/test_latency_timing.py; report .superpowers/sdd/2026-10-17-dc-diagnostic-admission-plan/task-3-report.md.
+
+**Interfaces:** 当前真实Viewer verifiedVideoFrameIdentity要求同一当前PC receiver对应展示track且唯一SSRC；detail trace必须在frame-first callback前启用。仅补fixture契约，不改变任何生产代码/生产gate或断言。
+
+- [ ] 阅读 docs/superpowers/reports/2026-10-17-existing-trace-fixture-classification.md；原target仍RED，保持原始frame-first顺序。
+- [ ] 只在该Node fixture给video.srcObject.getVideoTracks/currentPC.getReceivers/receiver.getSynchronizationSources补唯一track id v / kind video / source7；在beginConnectionAttempt之前启用WebRTC._frameTraceEnabled=true。可加matched.length==1的更清楚断言，原captureSeq/RTP/PENDING/legacy断言全部保留。
+- [ ] 跑完整target、safe TestFrameTiming（排除真实MSS构造）及Node webrtc.frame-trace.test.js；不启动browser/network/native screenshot。
+- [ ] self-review，白名单提交唯一test文件，报告RED/GREEN及源码未变；禁止子agent。

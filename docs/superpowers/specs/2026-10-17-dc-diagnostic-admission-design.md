@@ -21,3 +21,7 @@
 ## 验证与部署
 
 定向回归验证实际方法+真实aiortc欠排空200次不会继续线性增长，字节边界、替换/关闭/异常DC、legacy清空、trace/loss丢失记账及可靠协议未受gate。无网络/原生输入/截图。独立task及跨层review后才同步本地Host并按服务helper重载；tunnel四文件不触及。正在运行诊断不加载新代码，避免污染证据。
+
+## 已确认的测试契约补充
+
+旧Python→Node trace集成fixture同时缺当前receiver/展示track/SSRC映射及frame-first前detail启用。独立四组合验证与完整原断言已确认只补两项fixture即可通过，不是本gate生产回归。Task3只同步该fixture、保持所有原断言/到达顺序，作为Task2部署前检查，不扩大生产改动。
