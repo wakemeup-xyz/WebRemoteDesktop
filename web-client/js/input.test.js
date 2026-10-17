@@ -24,7 +24,7 @@ function makeElement(onFocus = () => {}) {
   };
 }
 
-function loadInput() {
+function loadInput(overrides = {}) {
   const elements = new Map();
   const documentListeners = new Map();
   const windowListeners = new Map();
@@ -42,7 +42,7 @@ function loadInput() {
     dispatcher.listeners.push(handler);
   };
   const context = {
-    console, setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(),
+    console, setTimeout, clearTimeout, performance: { now: () => 0 }, requestAnimationFrame: (fn) => fn(),
     localStorage: { getItem: () => null, setItem() {} },
     navigator: { platform: 'MacIntel', userAgent: 'node-test' },
     window: { addEventListener(type, handler) { windowListeners.set(type, handler); } },
@@ -90,6 +90,7 @@ function loadInput() {
     },
     LatencyMonitor: { recordInputSend() {} },
   };
+  Object.assign(context, overrides);
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
@@ -3051,4 +3052,121 @@ test('reset ACK rejection reasons remain bounded and actionable in recovery UI',
       assert.notEqual(text, generic, `${type}/${status} should not collapse to generic text`);
     }
   }
+});
+
+// Independent page and epoch clocks; the timer queue advances only with page time.
+function inputDurationFixture() {
+  let mono = 0, wall = 1792208500000, timerId = 0;
+  const timers = new Map();
+  const result = loadInput({
+    performance: { now: () => mono }, Date: { now: () => wall },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay, due: mono + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  activate(result.Input, result.context);
+  return { ...result, timers,
+    stepWall(delta) { wall += delta; },
+    setMono(value) { mono = value; },
+    advanceTo(target) {
+      for (;;) {
+        const next = [...timers].sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next || next[1].due > target) break;
+        mono = next[1].due; timers.delete(next[0]); next[1].fn();
+      }
+      mono = target;
+    },
+    ack(id, extra = {}) {
+      const record = result.Input._desktopWritePending.get(id);
+      return result.Input.acceptMouseAck({ schemaVersion: 2, inputType: 'mouse',
+        leaseEpoch: 3, status: 'applied', inputIds: [id], appliedSeq: record?.seq, ...extra });
+    },
+  };
+}
+
+for (const wallStep of [-60000, 60000]) {
+  test(`duration clock: oldest reliable ACK keeps 2900ms after wall step ${wallStep}`, () => {
+    const h = inputDurationFixture(), { Input } = h;
+    const first = Input.sendInput('mouse', 'down', { button: 'left' });
+    h.advanceTo(100); h.stepWall(wallStep + 100);
+    const second = Input.sendInput('mouse', 'up', { button: 'left' });
+    assert.equal(h.timers.get(Input._desktopWriteTimer).delay, 2900);
+    assert.equal(Input._desktopWritePending.get(first).sentAt, 0);
+    h.ack(first);
+    assert.equal(Input._desktopWritePending.size, 1);
+    assert.equal(Input._desktopWritePending.has(second), true);
+    assert.equal(h.timers.get(Input._desktopWriteTimer).delay, 3000);
+    h.advanceTo(3099);
+    assert.equal(Input._reliableAckRecoveryPending, false);
+    h.ack(second);
+    assert.equal(Input._desktopWriteTimer, null);
+  });
+
+  test(`duration clock: reliable timeout recovers once at true 3000ms despite wall step ${wallStep}`, () => {
+    const h = inputDurationFixture(), { Input } = h;
+    const first = Input.sendInput('mouse', 'down', { button: 'left' });
+    h.advanceTo(100); h.stepWall(wallStep + 100);
+    Input.sendInput('mouse', 'up', { button: 'left' });
+    h.advanceTo(2999);
+    assert.equal(Input._reliableAckRecoveryPending, false);
+    h.advanceTo(3000);
+    assert.equal(Input._desktopWritePending.get(first).timedOut, true);
+    assert.equal(Input._recoveryCycle.state, 'waiting');
+    assert.equal(Input._recoveryCycle.generation, 1);
+    assert.equal(Input._maybeAutoRecover('duplicate-callback'), false);
+    assert.equal(Input._recoveryCycle.generation, 1);
+    assert.equal(h.socketEvents.filter(({ payload }) => payload.type === 'mouse' && payload.action === 'reset').length, 1);
+  });
+
+  test(`duration clock: mobile down/up ACK and rearm survive wall step ${wallStep}`, () => {
+    const h = inputDurationFixture(), { Input } = h;
+    const down = Input.sendInput('mouse', 'down', { button: 'left' });
+    assert.equal(Input._beginMobileSurfaceGesture(down), true);
+    h.advanceTo(100); h.stepWall(wallStep + 100);
+    const up = Input.sendInput('mouse', 'up', { button: 'left' });
+    assert.equal(Input._markMobileSurfaceGestureEnded(up), true);
+    assert.equal(h.timers.get(Input._mobileSurfaceTimer).delay, 2900);
+    h.ack(down);
+    assert.equal(Input._mobileSurfaceGesture.downAck, true);
+    assert.equal(h.timers.get(Input._mobileSurfaceTimer).delay, 3000);
+    h.advanceTo(200); h.stepWall(-wallStep + 100);
+    h.ack(up);
+    assert.equal(Input._mobileSurfaceState, 'settled');
+    assert.equal(Input._mobileSurfaceTimer, null);
+    h.advanceTo(4000);
+    assert.equal(Input._mobileSurfaceState, 'settled');
+    assert.equal(Input._reliableAckRecoveryPending, false);
+  });
+}
+
+test('duration clock: obsolete reliable lease or attempt cannot recover at the deadline', () => {
+  for (const obsolete of ['lease', 'attempt']) {
+    const h = inputDurationFixture(), { Input } = h;
+    const id = Input.sendInput('mouse', 'down', { button: 'left' });
+    const record = Input._desktopWritePending.get(id);
+    if (obsolete === 'lease') Input.activeControlLease = { leaseId: 'replacement-lease', leaseEpoch: 4 };
+    else h.context.WebRTC.currentConnectionAttemptId = 'replacement-attempt';
+    h.advanceTo(3000);
+    assert.equal(record.timedOut, undefined, obsolete);
+    assert.equal(Input._reliableAckRecoveryPending, false, obsolete);
+    assert.notEqual(Input._recoveryCycle.state, 'waiting', obsolete);
+  }
+});
+
+test('duration clock: mobile rejects stale gesture/sequence and a truly late ACK', () => {
+  const h = inputDurationFixture(), { Input } = h;
+  const old = Input.sendInput('mouse', 'down', { button: 'left' });
+  Input._beginMobileSurfaceGesture(old);
+  const down = Input.sendInput('mouse', 'down', { button: 'left' });
+  Input._beginMobileSurfaceGesture(down);
+  const gesture = Input._mobileSurfaceGesture;
+  h.setMono(100); h.stepWall(-60000);
+  h.ack(old);
+  assert.equal(gesture.downAck, false);
+  h.ack(down, { appliedSeq: gesture.downSeq - 1 });
+  assert.equal(gesture.downAck, false);
+  // Model an ACK delivered after the deadline before the queued timer executes.
+  h.setMono(3001);
+  Input.acceptMouseAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 3,
+    status: 'applied', inputIds: [down], appliedSeq: gesture.downSeq });
+  assert.equal(Input._mobileSurfaceState, 'uncertain');
 });

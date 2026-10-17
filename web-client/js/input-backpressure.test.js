@@ -11,6 +11,7 @@ function fixture() {
   let now = 1000, serial = 0;
   const context = vm.createContext({ console,
     Date: {now: () => now},
+    performance: {now: () => now},
     setTimeout: (fn, delay) => { const id = ++serial; timers.set(id, {fn, at:now + delay}); return id; },
     clearTimeout: id => timers.delete(id), requestAnimationFrame: fn => fn(),
     document: {addEventListener() {}},

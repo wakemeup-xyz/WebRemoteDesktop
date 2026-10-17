@@ -462,7 +462,7 @@ const WebRTC = {
   _mediaFailureHandledKey: null,
   _mediaReadyConnectionAttemptId: null,
   _lastInboundFramesDecoded: 0,
-  _lastInboundFramesDecodedAt: 0,
+  _lastInboundFramesDecodedAt: null,
   _videoFrameSeq: 0,
   uiPhase: 'idle',
   hasPaintedFrame: false,
@@ -498,7 +498,7 @@ const WebRTC = {
   // supervisor so a transient signaling outage cannot leave a connected-looking
   // peer with a dead control/session context forever.
   _signalRecoveryTimer: null,
-  _signalRecoveryStartedAt: 0,
+  _signalRecoveryStartedAt: null,
   _signalRecoveryPending: false,
   _viewerSessionId: null,
   _viewerAdmission: null,
@@ -514,7 +514,8 @@ const WebRTC = {
   _noRelayReceiveCount: 0,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
-  _lastRefreshAt: 0,
+  _lastRefreshAt: null,
+  _lastKeyframeRequestAt: null,
   _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
@@ -1369,14 +1370,14 @@ const WebRTC = {
     this.clearMediaResumeFallback();
     this.hasPaintedFrame = false;
     this._lastInboundFramesDecoded = 0;
-    this._lastInboundFramesDecodedAt = 0;
+    this._lastInboundFramesDecodedAt = null;
     this._paintDecodedBaseline = 0;
     this._paintObservationWindow = null;
     this._lastPaintObservation = null;
     this._stallSince = null;
     this._keyframeRequestGeneration = '';
     this._keyframeRequestSequence = 0;
-    this._lastKeyframeRequestAt = 0;
+    this._lastKeyframeRequestAt = null;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
 
@@ -2090,13 +2091,13 @@ const WebRTC = {
 
   requestKeyframe(reason = 'media-stalled') {
     if (this.isMediaHealthSuppressed()) return false;
-    const now = Date.now();
+    const now = performance.now();
     const generation = `${this.currentConnectionAttemptId || ''}|${Number(this.connectionAttemptSequence) || 0}`;
     if (this._keyframeRequestGeneration !== generation) {
       this._keyframeRequestGeneration = generation;
-      this._lastKeyframeRequestAt = 0;
+      this._lastKeyframeRequestAt = null;
     }
-    if (this._lastKeyframeRequestAt && now - this._lastKeyframeRequestAt < 1000) {
+    if (Number.isFinite(this._lastKeyframeRequestAt) && now - this._lastKeyframeRequestAt < 1000) {
       return false;
     }
     const lease = this.activeLeaseEnvelope();
@@ -6021,7 +6022,7 @@ if (this.tunnelLastObjectUrl) {
           ? totalsDecoded
           : Number(stats.framesDecoded ?? framesDecoded) || 0;
         // Each positive delta is progress, even when smaller than the prior interval.
-        this._lastInboundFramesDecodedAt = Date.now();
+        this._lastInboundFramesDecodedAt = performance.now();
       }
       this.selectedCandidatePair = stats.selectedCandidatePair ? {
         ...stats.selectedCandidatePair,
@@ -6267,7 +6268,8 @@ if (this.tunnelLastObjectUrl) {
       return false;
     }
     if (this.isForcedRefreshReason(reason)) return true;
-    if (Date.now() - (this._lastRefreshAt || 0) < this.RECOVERY_REFRESH_COOLDOWN_MS) {
+    if (Number.isFinite(this._lastRefreshAt)
+      && performance.now() - this._lastRefreshAt < this.RECOVERY_REFRESH_COOLDOWN_MS) {
       console.warn('[RECOVERY] Suppressing refresh reason=%s', reason);
       return false;
     }
@@ -6289,7 +6291,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._signalRecoveryTimer);
       this._signalRecoveryTimer = null;
     }
-    this._signalRecoveryStartedAt = 0;
+    this._signalRecoveryStartedAt = null;
     this._signalRecoveryPending = false;
   },
 
@@ -6326,10 +6328,10 @@ if (this.tunnelLastObjectUrl) {
   scheduleSignalingRecovery(reason = 'signal-disconnected') {
     if (this.manualDisconnect || this._superseded) return false;
     this._signalRecoveryPending = true;
-    if (!this._signalRecoveryStartedAt) this._signalRecoveryStartedAt = Date.now();
+    if (this._signalRecoveryStartedAt == null) this._signalRecoveryStartedAt = performance.now();
     if (this._signalRecoveryTimer != null) return true;
 
-    const elapsed = Date.now() - this._signalRecoveryStartedAt;
+    const elapsed = performance.now() - this._signalRecoveryStartedAt;
     const remaining = Math.max(0, this.SIGNAL_RECOVERY_MAX_WAIT_MS - elapsed);
     const delay = Math.min(this.SIGNAL_RECOVERY_RETRY_MS, remaining || this.SIGNAL_RECOVERY_RETRY_MS);
     this._signalRecoveryTimer = setTimeout(() => {
@@ -6340,14 +6342,14 @@ if (this.tunnelLastObjectUrl) {
         return;
       }
 
-      const waited = Date.now() - this._signalRecoveryStartedAt;
+      const waited = performance.now() - this._signalRecoveryStartedAt;
       if (waited >= this.SIGNAL_RECOVERY_MAX_WAIT_MS) {
         // Socket.IO's manager can remain attached to a dead transport after a
         // laptop sleep or proxy reset. Recreate only the signaling socket;
         // the current media context is retained until the new socket connects.
         console.warn('[RECOVERY] Recreating signaling socket after %sms reason=%s', waited, reason);
         this.createSignalingSocket(true);
-        this._signalRecoveryStartedAt = Date.now();
+        this._signalRecoveryStartedAt = performance.now();
       }
       this.scheduleSignalingRecovery(reason);
     }, delay);
@@ -6399,7 +6401,7 @@ if (this.tunnelLastObjectUrl) {
       this.markRefreshSettled('timeout');
     }, 8000);
     this._refreshSettleTimer.unref?.();
-    this._lastRefreshAt = Date.now();
+    this._lastRefreshAt = performance.now();
     this.manualDisconnect = false;
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -6481,11 +6483,11 @@ if (this.tunnelLastObjectUrl) {
   },
 
   isInboundVideoHealthy(maxAgeMs = 5000) {
-    const at = Number(this._lastInboundFramesDecodedAt) || 0;
+    const at = this._lastInboundFramesDecodedAt;
     const frames = Number(this._lastInboundFramesDecoded) || 0;
     // Unknown (no growth sample) is not healthy — avoids suppressing DC recovery on freeze.
-    if (frames <= 0 || !at) return false;
-    return (Date.now() - at) <= maxAgeMs;
+    if (frames <= 0 || !Number.isFinite(at)) return false;
+    return (performance.now() - at) <= maxAgeMs;
   },
 
   shouldReconnectForDataChannelFault(reason) {
@@ -6556,7 +6558,7 @@ if (this.tunnelLastObjectUrl) {
     }
     // Prevent rapid reconnect storm: brief PC connect resets _reconnectAttempt to 0,
     // which would loop at 1500ms forever. Suppress if a refresh fired within 3s.
-    if (Date.now() - (this._lastRefreshAt || 0) < 3000) {
+    if (Number.isFinite(this._lastRefreshAt) && performance.now() - this._lastRefreshAt < 3000) {
       console.warn('[RECOVERY] Suppressing rapid reconnect — last refresh was <3s ago reason=%s', reason);
       return;
     }

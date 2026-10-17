@@ -627,7 +627,7 @@ const Input = {
       } else {
         this._scheduleMobileSurfaceTimer();
       }
-    }, Math.max(0, deadline - Date.now()));
+    }, Math.max(0, deadline - performance.now()));
   },
 
   _resetMobileSurfaceContext({ preserveUncertainty = false } = {}) {
@@ -1377,7 +1377,7 @@ const Input = {
         || record.connectionAttemptId !== this._currentConnectionAttemptId()) return;
       record.timedOut = true;
       this._onReliableAckTimeout(record);
-    }, Math.max(0, record.sentAt + INPUT_RECOVERY_TIMEOUT_MS - Date.now()));
+    }, Math.max(0, record.sentAt + INPUT_RECOVERY_TIMEOUT_MS - performance.now()));
     this._desktopWriteTimer?.unref?.();
   },
 
@@ -1432,7 +1432,7 @@ const Input = {
       leaseEpoch: this.activeControlLease.leaseEpoch,
       downId: inputId,
       downSeq: Number.isSafeInteger(record?.seq) ? record.seq : null,
-      downDeadline: Date.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS,
+      downDeadline: performance.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS,
       downAck: false,
       upId: null,
       upSeq: null,
@@ -1452,7 +1452,7 @@ const Input = {
     gesture.upId = inputId;
     const record = this._desktopWritePending.get(inputId);
     gesture.upSeq = Number.isSafeInteger(record?.seq) ? record.seq : null;
-    gesture.upDeadline = Date.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS;
+    gesture.upDeadline = performance.now() + MOBILE_SURFACE_ACK_TIMEOUT_MS;
     gesture.ended = true;
     if (record) record.surfaceGeneration = gesture.generation;
     this._scheduleMobileSurfaceTimer();
@@ -1485,7 +1485,7 @@ const Input = {
     const matchesDown = ackInputIds.includes(gesture.downId);
     const matchesUp = gesture.upId !== null && ackInputIds.includes(gesture.upId);
     if (!matchesDown && !matchesUp) return;
-    const now = Date.now();
+    const now = performance.now();
     const downExpired = !gesture.downAck && Number.isFinite(gesture.downDeadline)
       && now > gesture.downDeadline;
     const upExpired = !gesture.upAck && gesture.upId !== null
@@ -2536,7 +2536,7 @@ const Input = {
         connectionAttemptId: this._currentConnectionAttemptId(),
         socket: this._currentInputSocket(),
         socketId: this._currentInputSocket()?.id || null,
-        sentAt: Date.now(),
+        sentAt: performance.now(),
       });
       this._scheduleDesktopWriteDeadline();
     };

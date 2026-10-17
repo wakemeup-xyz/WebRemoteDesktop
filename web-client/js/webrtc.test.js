@@ -1125,13 +1125,13 @@ test('DataChannel lifecycle updates keyboard transport availability before recon
 });
 
 test('dc-error does not schedule full reconnect when inbound video is healthy', () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   WebRTC.manualDisconnect = false;
   WebRTC._refreshing = false;
   WebRTC.reconnectTimer = null;
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
   WebRTC._lastInboundFramesDecoded = 10;
-  WebRTC._lastInboundFramesDecodedAt = Date.now();
+  WebRTC._lastInboundFramesDecodedAt = context.performance.now();
   let scheduled = 0;
   const original = WebRTC.scheduleReconnect.bind(WebRTC);
   WebRTC.scheduleReconnect = (reason) => { scheduled += 1; return original(reason); };
@@ -1148,7 +1148,7 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
   WebRTC.reconnectTimer = null;
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
   WebRTC._lastInboundFramesDecoded = 0;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   let scheduled = 0;
   const reasons = [];
   WebRTC.scheduleReconnect = (reason) => {
@@ -1163,9 +1163,10 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
 });
 
 test('inbound video health requires recent decoded progress', () => {
-  const { WebRTC } = loadWebRTC();
+  let now = 10000;
+  const { WebRTC } = loadWebRTC({ performance: { now: () => now } });
   WebRTC._lastInboundFramesDecoded = 0;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
 
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 5 });
@@ -1177,7 +1178,7 @@ test('inbound video health requires recent decoded progress', () => {
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 0 });
   assert.ok(WebRTC._lastInboundFramesDecodedAt >= growthAt);
 
-  WebRTC._lastInboundFramesDecodedAt = Date.now() - 6000;
+  now += 6000;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
 });
 
@@ -5378,7 +5379,7 @@ test('TURN dead detection: 20 consecutive bytes=0 on relay triggers refresh', ()
     // stub out everything processStatsSnapshot touches
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 0,
-    _lastInboundFramesDecodedAt: 0,
+    _lastInboundFramesDecodedAt: null,
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5412,7 +5413,7 @@ test('TURN dead detection: 20 consecutive bytes=0 on relay triggers refresh', ()
 });
 
 test('TURN dead detection: non-zero bytes resets counter', () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   const calls = { refresh: 0 };
   const wrtc = Object.assign(Object.create(WebRTC), {
     networkMode: 'relay',
@@ -5424,7 +5425,7 @@ test('TURN dead detection: non-zero bytes resets counter', () => {
     refresh(opts) { calls.refresh++; },
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 100,
-    _lastInboundFramesDecodedAt: Date.now(),
+    _lastInboundFramesDecodedAt: context.performance.now(),
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5461,7 +5462,7 @@ test('TURN dead detection: suppressed media does not count toward dead-channel t
     refresh(opts) { calls.refresh++; },
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 0,
-    _lastInboundFramesDecodedAt: 0,
+    _lastInboundFramesDecodedAt: null,
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5485,7 +5486,7 @@ test('TURN dead detection: suppressed media does not count toward dead-channel t
 });
 
 test('recovery refresh is suppressed within 3s of last refresh', async () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   let closed = 0;
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'relay';
@@ -5494,13 +5495,13 @@ test('recovery refresh is suppressed within 3s of last refresh', async () => {
   WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
   WebRTC.createOffer = () => {};
   WebRTC.pc = { close() { closed += 1; } };
-  WebRTC._lastRefreshAt = Date.now();
+  WebRTC._lastRefreshAt = context.performance.now();
   await WebRTC.refresh({ reason: 'dc-dead-on-resume' });
   assert.equal(closed, 0);
 });
 
 test('manual refresh bypasses recovery cooldown', async () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   let closed = 0;
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'relay';
@@ -5509,7 +5510,7 @@ test('manual refresh bypasses recovery cooldown', async () => {
   WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
   WebRTC.createOffer = () => {};
   WebRTC.pc = { close() { closed += 1; } };
-  WebRTC._lastRefreshAt = Date.now();
+  WebRTC._lastRefreshAt = context.performance.now();
   await WebRTC.refresh({ reason: 'manual' });
   assert.equal(closed, 1);
 });
@@ -5575,7 +5576,7 @@ test('non-forced refresh is ignored while _refreshing', async () => {
   const { WebRTC } = loadWebRTC();
   let closed = 0;
   WebRTC._refreshing = true;
-  WebRTC._lastRefreshAt = 0;
+  WebRTC._lastRefreshAt = null;
   WebRTC.pc = { close() { closed += 1; } };
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'stun';
@@ -5939,9 +5940,9 @@ test('capture_stats does not overwrite playback fpsDisplay', () => {
 
 test('decoded progress timestamp updates for every positive canonical delta', () => {
   let now = 1000;
-  const { WebRTC } = loadWebRTC({ Date: { now: () => now } });
+  const { WebRTC } = loadWebRTC({ performance: { now: () => now } });
   WebRTC._lastInboundFramesDecoded = 100;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   WebRTC.handlePortSearchMedia = () => {};
   WebRTC.handleReceiverStats = () => {};
 
@@ -6213,7 +6214,7 @@ test('scheduleReconnect keeps uiPhase in sync with disconnected status', () => {
   WebRTC.reconnectTimer = null;
   WebRTC._refreshing = false;
   WebRTC._superseded = false;
-  WebRTC._lastRefreshAt = 0;
+  WebRTC._lastRefreshAt = null;
   WebRTC.isMediaHealthSuppressed = () => false;
   WebRTC.isPortSearchActive = () => false;
   WebRTC.hasTurnConfigured = () => false;
@@ -7629,5 +7630,125 @@ for (const selectedCandidateType of ['host', 'prflx', 'relay']) test(`${selected
       bytesDelta: 4000, selectedCandidateType, rttMs, jitterBufferMs: 0, videoWidth: 1280 });
     assert.match(context.document.getElementById('networkAdvisorText').textContent,
       rttMs === null ? /RTT 未测量/ : /RTT 0 ms/);
+  }
+});
+
+function webRtcDurationFixture() {
+  let mono = 0, wall = 1792208500000, timerId = 0;
+  const timers = new Map();
+  const result = loadWebRTC({
+    performance: { now: () => mono }, Date: { now: () => wall },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay, due: mono + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  return { ...result, timers,
+    stepWall(delta) { wall += delta; },
+    setMono(value) { mono = value; },
+    advanceTo(target) {
+      for (;;) {
+        const next = [...timers].sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next || next[1].due > target) break;
+        mono = next[1].due; timers.delete(next[0]); next[1].fn();
+      }
+      mono = target;
+    },
+  };
+}
+
+for (const wallStep of [-60000, 60000]) {
+  test(`duration clock: signaling preserves mono0 through 1500/12000/13500 with wall step ${wallStep}`, () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    WebRTC.socket = { connected: false };
+    let recreated = 0;
+    WebRTC.createSignalingSocket = (recreate) => { assert.equal(recreate, true); recreated++; };
+    assert.equal(WebRTC.scheduleSignalingRecovery(), true);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0);
+    h.stepWall(wallStep); h.advanceTo(1500);
+    assert.equal(recreated, 0);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0);
+    h.advanceTo(11999); assert.equal(recreated, 0);
+    h.advanceTo(12000); assert.equal(recreated, 1);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+    h.stepWall(-wallStep); h.advanceTo(13500);
+    assert.equal(recreated, 1);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+  });
+
+  test(`duration clock: media progress freshness expires by elapsed time with wall step ${wallStep}`, () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    WebRTC._lastInboundFramesDecoded = 10;
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, null);
+    assert.equal(WebRTC.isInboundVideoHealthy(), false);
+    WebRTC.handlePortSearchMedia = () => {};
+    WebRTC.handleReceiverStats = () => {};
+    WebRTC.processStatsSnapshot({ decodedDelta: 1, receivedDelta: 1, bytesDelta: 100,
+      totals: { framesDecoded: 11 }, selectedCandidateType: 'host' });
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, 0);
+    assert.equal(WebRTC.isInboundVideoHealthy(), true);
+    h.stepWall(wallStep); h.setMono(5000);
+    assert.equal(WebRTC.isInboundVideoHealthy(), true);
+    h.setMono(5001); assert.equal(WebRTC.isInboundVideoHealthy(), false);
+    WebRTC.processStatsSnapshot({ decodedDelta: 0, receivedDelta: 0, bytesDelta: 0 });
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, 0, 'no progress cannot renew freshness');
+  });
+
+  test(`duration clock: refresh/keyframe cooldown admits unset and cools mono0 with wall step ${wallStep}`, async () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    const emitted = [];
+    WebRTC.socket = { connected: true, emit: (...args) => emitted.push(args) };
+    WebRTC.isMediaHealthSuppressed = () => false;
+    WebRTC.activeLeaseEnvelope = () => ({ leaseId: 'lease-clock', leaseEpoch: 3 });
+    assert.equal(WebRTC._lastRefreshAt, null);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), true);
+    WebRTC.networkMode = 'relay';
+    WebRTC.hasTurnConfigured = () => true;
+    WebRTC.getTurnServers = () => [{ urls: 'turn:fixture.invalid' }];
+    WebRTC.stopTunnelRelay = () => {};
+    WebRTC.createPeerConnection = () => {};
+    WebRTC.createOffer = () => {};
+    await WebRTC.refresh({ reason: 'dc-error' });
+    assert.equal(WebRTC._lastRefreshAt, 0);
+    WebRTC.markRefreshSettled('test');
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), false);
+    assert.equal(WebRTC.requestKeyframe('test'), true);
+    assert.equal(WebRTC._lastKeyframeRequestAt, 0);
+    assert.equal(WebRTC.requestKeyframe('test'), false);
+    h.stepWall(wallStep); h.setMono(999);
+    assert.equal(WebRTC.requestKeyframe('test'), false);
+    h.setMono(1000); assert.equal(WebRTC.requestKeyframe('test'), true);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), false);
+    WebRTC.scheduleReconnect('dc-error');
+    assert.equal(WebRTC.reconnectTimer, null);
+    h.setMono(3000);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), true);
+    WebRTC.scheduleReconnect('dc-error');
+    assert.notEqual(WebRTC.reconnectTimer, null);
+    assert.equal(emitted.filter(([event]) => event === 'request-keyframe').length, 2);
+    WebRTC.currentConnectionAttemptId = 'replacement';
+    assert.equal(WebRTC.requestKeyframe('new-generation'), true);
+  });
+}
+
+test('duration clock: signaling cancellation on success/manual/superseded clears zero origin', () => {
+  for (const outcome of ['success', 'manual', 'superseded']) {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    let recreated = 0;
+    WebRTC.socket = { connected: false, disconnect() {} };
+    WebRTC.createSignalingSocket = () => { recreated++; };
+    WebRTC.scheduleSignalingRecovery();
+    const timer = WebRTC._signalRecoveryTimer;
+    if (outcome === 'success') {
+      WebRTC.socket.connected = true;
+      WebRTC.refresh = () => {};
+      h.advanceTo(1500);
+    } else if (outcome === 'manual') WebRTC.disconnect();
+    else WebRTC.handleViewerSuperseded();
+    assert.equal(WebRTC._signalRecoveryStartedAt, null, outcome);
+    assert.equal(WebRTC._signalRecoveryPending, false, outcome);
+    assert.equal(WebRTC._signalRecoveryTimer, null, outcome);
+    assert.equal(h.timers.has(timer), false, outcome);
+    h.stepWall(60000); h.advanceTo(15000);
+    assert.equal(recreated, 0, outcome);
+    assert.equal(WebRTC._signalRecoveryTimer, null, outcome);
   }
 });
