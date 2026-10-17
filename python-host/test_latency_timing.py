@@ -282,11 +282,12 @@ class TestFrameTiming(unittest.TestCase):
             const fs = require('fs'), vm = require('vm');
             let callback = null;
             function element() { return { classList: { add(){}, remove(){}, contains(){ return false; } }, style: {}, dataset: {}, addEventListener(){}, removeAttribute(){}, setAttribute(){}, getAttribute(){ return null; }, textContent: '', disabled: false }; }
-            const video = element(); video.videoWidth = 16; video.requestVideoFrameCallback = (fn) => { callback = fn; return 1; }; video.cancelVideoFrameCallback = () => {};
+            const video = element(); video.srcObject = { getVideoTracks: () => [{ id: 'v' }] }; video.videoWidth = 16; video.requestVideoFrameCallback = (fn) => { callback = fn; return 1; }; video.cancelVideoFrameCallback = () => {};
             const context = { console: { log(){}, warn(){}, error(){}, info(){} }, performance: { now: () => 0 }, localStorage: { getItem(){ return null; }, setItem(){}, removeItem(){} }, document: { readyState: 'loading', body: element(), addEventListener(){}, querySelector(){ return null; }, getElementById(id){ return id === 'remoteVideo' ? video : element(); } }, window: { location: { origin: 'http://127.0.0.1:8080' }, RTCRtpReceiver: null }, navigator: { platform: 'MacIntel', userAgent: 'trace-fixture' }, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: (fn) => fn(), getComputedStyle: () => ({ objectFit: 'contain' }), io: () => ({ on(){}, emit(){}, disconnect(){}, connected: true }), Auth: { getToken: () => 'token', isLoggedIn: () => true, logout(){} } };
             context.globalThis = context; vm.createContext(context);
             vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + '\\nglobalThis.__WebRTC = WebRTC;', context);
-            const WebRTC = context.__WebRTC; WebRTC.connectionAttemptSequence = 6; WebRTC.createConnectionAttemptId = () => 'attempt-live'; WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected', createDataChannel(){ return { readyState: 'open', on(){}, send(){} }; } }; WebRTC._mediaIntent = { generation: 99 };
+            const WebRTC = context.__WebRTC; WebRTC.connectionAttemptSequence = 6; WebRTC.createConnectionAttemptId = () => 'attempt-live'; WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected', getReceivers: () => [{ track: { kind: 'video', id: 'v' }, getSynchronizationSources: () => [{ source: 7 }] }], createDataChannel(){ return { readyState: 'open', on(){}, send(){} }; } }; WebRTC._mediaIntent = { generation: 99 };
+            WebRTC._frameTraceEnabled = true;
             WebRTC.beginConnectionAttempt('viewer-open'); WebRTC.startVideoFrameTracking(); callback(10, { rtpTimestamp: 77 }); WebRTC.createInputChannel(); WebRTC.inputChannel.onmessage({ data: fs.readFileSync(0, 'utf8') });
             process.stdout.write(JSON.stringify({ matched: WebRTC.frameTraceCollector.takeMatched(), diagnostics: WebRTC.getFrameTraceDiagnostics() }), () => process.exit(0));
         """)
@@ -294,6 +295,7 @@ class TestFrameTiming(unittest.TestCase):
         viewer = subprocess.run(["node", "-e", viewer_script, webrtc_path], input=trace_raw,
                                 text=True, capture_output=True, check=True, timeout=10)
         viewer_result = json.loads(viewer.stdout)
+        self.assertEqual(len(viewer_result["matched"]), 1)
         self.assertEqual(viewer_result["matched"][0]["captureSeq"], 1)
         self.assertEqual(viewer_result["matched"][0]["roi"]["metadata"]["rtpTimestamp"], 77)
         self.assertEqual(viewer_result["diagnostics"]["acceptanceState"], "PENDING")
