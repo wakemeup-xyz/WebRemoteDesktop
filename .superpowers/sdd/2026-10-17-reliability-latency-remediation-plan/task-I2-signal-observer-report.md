@@ -41,3 +41,21 @@ Explicit limitation: arbitrary cancellation-resistant awaitables cannot be forci
 Observation coverage remains partial: a newly assigned engine can fail between the single 1s scan and existing event hooks. Missing events do not prove that no disconnect, ping or probe occurred. No initiating fault has been fixed or attributed by this change, and no durable remote usability or long-session qualification has been performed.
 
 No product/dependency/dist/runtime/config/service/tunnel changes or live runs were made by this task. Existing dirty README, runbook, requirements and review-anchor changes and the node_modules symlink were preserved and excluded from I2 commits. Root independent review and any separately authorized live acceptance remain outstanding.
+
+## R1 corrections after independent review
+
+Review: `task-I2-signal-observer-review.md`, two Important findings accepted. Correction base: `70789fa`. Code correction commit: `0f0e902612a692fdae06487453b0fd1c8e9085b2` (`fix(acceptance): stop on startup evidence failures`). Only `scripts/passive_session_soak.py` and `scripts/test_passive_session_soak.py` changed for R1; the JavaScript observer remains unchanged.
+
+Normal post-media startup summary collection is now required. Its exception/schema failure becomes fixed `startup-summary-unavailable`, and its cooperative timeout becomes fixed `startup-summary-deadline`, both at stage `startup-summary`. The existing finalizer preserves that first cause and emits INCOMPLETE. Cleanup-time startup-summary collection remains best-effort after an earlier failure. The healthy fake now represents a connected socket with no terminal event; this avoids the previous test fixture's disconnect masking the summary failure. Actual-run regressions assert both artifacts, no sampling after the failure, one proof/one Start, successful close/stop and no pending cooperative fake tasks.
+
+Persistence now returns whether both artifact commits succeeded. Initial persistence still attempts both filenames, but any failed commit raises fixed `evidence-write-failed` before manager construction. The outer finalizer retains its later persistence attempts. Per-filename persistent write-failure regressions assert zero manager factory/start, zero login/proof/Start, an empty samples file, a retained valid 0600 companion artifact and the original failure in summary evidence/attempts.
+
+R1 RED: the two new actual-run test methods failed in all four subcases before the correction. Healthy startup-summary exception and timeout incorrectly returned success (`0 != 1`); initial lifecycle and summary write failures each still invoked the manager factory.
+
+R1 GREEN: the following targeted command passed 5 test methods (including the two new methods' four subcases), exit 0:
+
+```text
+python3 -m unittest scripts.test_passive_session_soak.LifecycleRunTest.test_healthy_session_startup_summary_error_and_timeout_cannot_pass scripts.test_passive_session_soak.LifecycleRunTest.test_initial_artifact_failure_aborts_before_manager_factory_and_keeps_other_artifact scripts.test_passive_session_soak.LifecycleRunTest.test_successful_sampling_still_waits_for_cleanup_before_final_pass scripts.test_passive_session_soak.LifecycleRunTest.test_outer_start_launch_entry_export_close_and_stop_errors_keep_evidence scripts.test_passive_session_soak.LifecycleRunTest.test_final_write_failure_keeps_committed_preclose_failure_artifacts
+```
+
+`python3 -m py_compile scripts/passive_session_soak.py` and `git diff --check` also passed. Broader suites were not repeated because the affected Python control-flow branches and adjacent preservation/success paths are covered by this targeted run; the earlier full-suite results above remain historical pre-R1 evidence. Self-review checked that the initial gate is before the manager factory, both write attempts still occur, startup exceptions retain fixed private-safe reasons, healthy success remains possible, and cleanup-time collection cannot overwrite the original cause. No runtime, native, network, live browser, service, tunnel, dependency or build actions were performed; unrelated concurrent product/tests and pre-existing dirty documents remain untouched. Cooperative-bound and not-observed process-exit limitations are unchanged. R1 independent re-review remains outstanding.
