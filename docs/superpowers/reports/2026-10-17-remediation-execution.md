@@ -1,17 +1,10 @@
 # 稳定性与延迟整改实施记录
 
-> **14:13 状态更新：仍未完成稳定性验收。** 新 Host 的 JPEG 暂停/恢复及恢复后60秒短测 PASS（111.236s/97样本），但随后 TURN 计划300s的测试在31.003s结束，出现13.849s画面间隔并重建PC。首个异常是画面停滞，Socket.IO当时仍在线；Host同窗当前loop lag12.771s。18条失败观察不是18次独立故障。现时health正常、Host在线、Viewer0；历史失败全部保留。详见[JPEG短测](2026-10-17-jpeg-gate-short-performance-review.md)、[TURN失败复查](2026-10-17-jpeg-gate-turn-failure-review.md)。旧浏览器清理API超时，当前未发现同期残留进程，但缺少历史PID证据，退出状态仍unknown。
-
-
-> **14:04 历史部署记录：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。当时guarded JPEG短测已开始、尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
-
-
-> **13:45 历史补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
-
+> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
 执行开始：2026-10-17。当前已同步 `5912f43`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `d5ecb23`（含f492357）/ PID87412，Signal心跳源码 `d1166ab` / 新PID64505；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
 
-加载后正式登录入口200、新build正确、登录表单可见，DOMContentLoaded约9.565s；同源health/status均200，Host在线。原普通Viewer自动重连，连接数1；本机可访问Chrome/IAB没有对应页。用户已授权维护，该连接曾随Signal重启断开后自动返回，自动验收仍须等待零Viewer，不使用普通ticket接管。只读探测未登录/Start，browser.close API超时，manager.stop已完成，OS进程退出未取证，不能写为全部清理已确认。
+加载后正式登录入口200、新build正确、登录表单可见，DOMContentLoaded约9.565s；同源health/status均200，Host在线。13:12时原普通Viewer自动重连、连接数1；该连接13:32已离线。后续自动化均重新核对零Viewer并取得一次性proof，不使用普通ticket接管。只读探测未登录/Start，browser.close API超时，manager.stop已完成，OS进程退出未取证，不能写为全部清理已确认。
 
 此前上一build TURN300s PASS，JPEG69.744991s成功恢复后停帧5.2s而FAIL；新build现已完成JPEG111.236s短测PASS，后续TURN31.003s失败。原32分钟长测5.15s停帧及93s信令超时均保留。三小时、普通用户恢复资格、业务输入与真实可见效果未完成。JPEG首个停帧边界继续区分worker处理、结果回送与传输队列；不能用复位协议修复解释先前停帧。
 
@@ -78,7 +71,6 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 
 04:50 曾观察到在线 Viewer；05:41 后续快照 viewerCount=0。自动化接入前仍须重新检查并取得服务端一次性准入，不把旧快照当作持续空闲证明。
 
-
 ## 5. 上线与验收顺序
 
 1. 完成剩余任务与独立复核，运行覆盖交互边界的集成回归和临时目录构建。
@@ -87,7 +79,6 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 4. 正式入口使用真实浏览器正常登录。创建自动化 Viewer 前检查现有会话与一次性准入；不得绕过单 Viewer 保护。
 5. 验证画面、连接状态、当前身份和允许的控制路径；连续采样记录中断与缺测，不把最终一次快照当成三小时连续通过。
 6. 完成报告中的实测表后交付。真实跨设备、可见 marker 或物理显示若未测量，分别保留未验收状态，不用 ACK/RTT 替代。
-
 
 补充入口观察（旧生产版本，未创建 Viewer）：正常 Chromium 登录页 HTTP 200、DOM 就绪 14190.4ms；同页三次 `/health` HTTP 200 且应用 status=ok，客户端总耗时 2203.8/1255.9/1282.8ms。样本说明可达但偏慢，不能据此构造总体 P95，也不能把客户端总耗时称作纯传输耗时。测试浏览器已关闭。
 
@@ -111,7 +102,6 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 
 重连验收工具边界：一次性 proof admission 在首次连接后被消费，Socket.IO 重连继续携带它会被保护逻辑拒绝；在 grace 内旧 Viewer 仍占 map，不能重新申请 zero-Viewer proof。因此这个工具不能直接证明普通用户的无修改自动重连；不清 proof、不绕过保护，不把保护拒绝误报成普通用户重连故障。
 
-
 ## 6. C5：自动恢复不得抢占更新会话（已复审并部署）
 
 真实短时验收先后出现普通 Viewer 接入、page-hidden 和租约到期。这些日志无法识别来源设备或区分人工动作与旧页自动重连，不作为特定客户端有故障的结论。独立审查另用真实 Signal handlers 固化两种源码反例：A 失联、B 已接入后，A 在 grace 内或 grace 到期后恢复，均会把 B 顶掉。离线时漏收 superseded 的旧页没有可靠的本地拒绝依据。
@@ -119,7 +109,6 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 采用[准入补充设计](../specs/2026-10-17-viewer-admission-recovery-addendum.md)和[执行计划](../plans/2026-10-17-viewer-admission-recovery-plan.md)：服务端校验有界、单次的显式用户准入意图；自动恢复仅允许恢复当前 owner，不能顶替更新会话。保持单 Viewer、Host reset/rebind 屏障、一次性 proof 和人工 Viewer 优先。C5 经独立复审及 R1 修订后已同步生产，见下述上线记录。
 
 验收尝试均保留完整失败/中断：`/tmp/wrd-public-relay-acceptance-20261017a` 为修复前首次媒体启动失败；`/tmp/wrd-public-relay-reconnect-20261017b` 为修复后短时 readiness 成功、baseline 被顶替；`/tmp/wrd-public-relay-acceptance-20261017c` 为另一轮 media-start-deadline，缺少足够 observer 证据，不能确定与同期普通 Viewer 活动的因果；`/tmp/wrd-public-relay-acceptance-20261017d` 在正式 admission guard 遇到现有 Viewer 而退出，未建立测试会话。均未计入连续性通过。
-
 
 ## 7. 已部署版本的补充观察（07:56:48–08:18:00 北京时间）
 
@@ -137,7 +126,6 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 
 C5 实现 `cd64e54`：真实 handler 原两项 RED 已转绿，实际 API/Socket.IO、Viewer Start/reclaim/自动恢复及原有控制回归共 473 项通过。30 秒/128 条有界 ticket 与固定大小 owner/顺序状态；proof 不申请普通 ticket，恢复不产生新意图。服务重启后未知恢复保守拒绝，旧页面需刷新并显式连接；这一兼容取舍已写入设计和[实现报告](2026-10-17-task-C5-admission-recovery.md)。独立复审未完成前不部署。
 
-
 ## 8. C5 修订、部署与新的验收边界
 
 C5 `cd64e54` 增加显式 Start/reclaim 准入票据和独立于 socket/grace/TTL 的当前 owner；自动重连只允许当前 owner。初轮 473 项相关测试通过。独立复审发现 Start 在 bootstrap 完成前被拒绝/顶替时丢弃 TURN 配置，随后人工 reclaim 可能失败；`8e375fa` 保留并校验 pending bootstrap 的身份，reclaim 等待正确配置后才签发意图和创建连接。修订的 259 项相关测试通过，独立 R1 通过；数量有重叠，不求和。详见 [C5 独立复审](2026-10-17-C5-independent-review.md)。
@@ -148,7 +136,6 @@ C5 `cd64e54` 增加显式 Start/reclaim 准入票据和独立于 socket/grace/TT
 
 最新公网各轮结果、实际传输分段与保留失败见[运行验收报告](2026-10-17-live-acceptance.md)。I2 Start 证明工具修订 `e2275a5` 已独立复审并同步，仅改验收脚本，无服务重启；[任务复审归档](2026-10-17-I2-start-proof-review.md)。JPEG 的运行复现与离线反例需完成 M6 后重验，不能因 TURN 短时 PASS 把整体验收关闭。
 
-
 ## 8. 后续准入工具与新发现（09:49 之后更新）
 
 I2 `0a89ebe` 将一次性 proof 移到真实 UI/core/auth 就绪之后，删除额外 API 登录；25 项 Python + 10 项 Node 通过，独立复审 PASS。仅同步验收脚本，无服务重启。[独立审查](2026-10-17-I2-proof-timing-review.md)。首次长测原因仍未知，不能因工具改进断言其 proof 过期。
@@ -157,9 +144,7 @@ I2 `0a89ebe` 将一次性 proof 移到真实 UI/core/auth 就绪之后，删除�
 
 M6 [补充 spec](../specs/2026-10-17-jpeg-relay-recovery-addendum.md)和[执行 plan](../plans/2026-10-17-jpeg-relay-recovery-plan.md)已完成两项初稿问题修订，独立设计复审 R1 PASS：初始 generation 0 单独握手、完整来源 RTT sample key 均明确；源码已实现于 `5e6c26c`（106 Python、457 Node 最终通过），独立代码 review 进行中，尚未部署或验收。规格覆盖 ACK 槽 2000ms 单调过期、完整帧来源、5000ms 图像加载新鲜度门禁及安全 reset、经过 TTL 截断与合并采样说明的同钟 RTT。[设计 review](2026-10-17-M6-design-review.md)。
 
-
 媒体性能复查进一步区分了输出、新采集和浏览器回调：该 172s 健康窗口约 19.39 解码帧/s、8.84 新采集/s、11.18 rVFC 回调/s；后者未导出 presentedFrames，不能直接推导视觉丢帧比例。稳定捕获日志中 54.80% 输出为缓存复用；缓冲正值峰及后段 loss/NACK/解码空窗真实存在，具体传输/截图/调度瓶颈仍缺证据。另确认 `processStatsSnapshot` 的缺测 RTT/缓冲转 0 缺陷待修，不能将缺测当零延迟；本轮 artifact 原始 LatencyMonitor 值不受此转换影响。详见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。README 的旧 2 倍采集及 superfast 默认说明已按生产工厂/编码策略源码修正。
-
 
 ## 9. M6 本地部署与当前验证
 
@@ -172,13 +157,11 @@ I2 信令首断 observer `10d4146` / 报告 `1e34602` 已实现：20 JS / 39 Pyt
 M6 公网 JPEG 短测 PASS：85.034s/84 样本，暂停恢复 4.009s，随后 60.0025s 当前来源连续出图、RTT 反馈与门禁通过；两次槽过期回收后仍有进展。详见[真实验收](2026-10-17-live-acceptance.md)。不扩展为三小时或业务输入已验收。
 I2 首断工具独立 review 初轮发现两项证据失真风险，`0f0e902` 修复 startup-summary 失败误 PASS 与初始证据写失败仍连接；实际健康 fake 反例及 5 个针对性测试通过，独立 R1 APPROVED。[I2 审查记录](2026-10-17-I2-signal-observer-review.md)。
 
-
 ## 10. Nullable 部署与整轮增量复审
 
 `9e57bf4` 修复 RTT/缓冲 unknown→0，从真实 Viewer/UI/控制器到 Signal/Host 日志保持 number|null；真实0和已有 stall/loss恢复保留。[实现](2026-10-17-media-null-implementation.md)、[独立 review](2026-10-17-media-null-review.md)。已同步原 checkout 15 条路径（12 源码/测试及3份保持原内容的文档），私有备份 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-9e57bf47-t4k_adk1`。本地重启22.553s后 Signal3905/Host4164、build c30530f331a4def5，health/Host通过；tunnel/watch及原Git身份保持。
 
 `8e375fa..9e57bf4` 37路径整轮增量 review PASS，无新源码 P0–P3 项；[报告](2026-10-17-runtime-followups-final-review.md)。最新 JPEG/TURN短测、93s失败与入口复查见[运行验收](2026-10-17-live-acceptance.md)。下一步仅设计有界服务端心跳事件/flush观测，不因相关性盲改超时、网络模式或tunnel，也不为让验收成功而绕过单次proof。
-
 
 ## 11. 服务端心跳边界补齐与加载
 
@@ -192,13 +175,11 @@ I2 首断工具独立 review 初轮发现两项证据失真风险，`0f0e902` �
 
 S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identitychange），客户端无异常首断，server正常收尾 pc/pf/pr各11；不是三小时通过。独立3h试验已启动，详见真实验收。
 
-
 ## 12. 最新媒体性能与资源限制
 
 300s 已通过会话内：解码18.210帧/s、rVFC17.913次/s，严格位于浏览器窗口内的新captureSeq速率9.7408次/s；60个Host输出窗口49.14%复用缓存。窗口范围不完全相同，不强行一一相除。接收buffer snapshot的last中位7.9ms、最大121.7ms，>=100ms仅startup tick4/6；稳定后最大70.4ms，实际framesDropped0。Host编码有448.357ms长尾、事件循环滚动max最高312.539ms及明显swap-in；这些是局部/重叠窗口统计，不是每帧全量P95，也不证明哪一资源因素造成截图频率约9.7/s。没有新确认的源码缺陷，真实MSS grab阶段仍缺证据。详见[最新媒体复核](2026-10-17-latest-media-performance-review.md)。
 
 11:44左右只读进程快照969进程；最高RSS为Chrome Renderer约2897MiB、VS Code Helper约1670MiB、若干Codex Renderer约1278–1548MiB，Host约400MiB。RSS不能当作物理内存独占量相加，也不能仅凭这个瞬时排序归责换页。没有退出其他应用或清理身份不明的进程；保存私有resource-snapshot-longrun-20261017a.json用于后续同窗口关联。
-
 
 ## 32 分钟终态与单调时钟缺陷
 
@@ -212,13 +193,11 @@ S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identityc
 
 [已有详细 trace 操作审查](2026-10-17-existing-frame-trace-operational-review.md)发现首 offer 的 track context 未同步装配，单开 flag 不能保证有效抓图/发送关联；当前保持默认关闭。此诊断能力缺口不影响默认关闭时媒体路径，未为了补数据擅自开启更高频 trace，也未将缺测写为零。
 
-
 ## Host 单调时钟修复加载
 
 审核源码 `f492357` 随文档冻结树 `836dccd` 同步到主工作区；只调用既有 helper 的 restart-host，耗时5.913s。新 Host42127、Signal15135保持，build仍c30530f331a4def5；本地health/Host在线、Viewer0，源文件hash匹配冻结提交，HEAD/index/四个延后WATCH文件/tunnel84671/watcher897/quick文件不存在状态均保留。备份和验证存本机 apply-836dccd2-0_vtrc9c。未调整系统时钟或高频trace配置。
 
 新300秒TURN观察 `/tmp/wrd-public-media-clock-turn-20261017a` 已启动，属于修复后新会话，不能与旧300秒PASS合并。Viewer本页控制时钟源码仍在实现，尚未部署。
-
 
 Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychange，maxgap449.998ms；decoded18.71fps、rVFC18.49/s、新capture约10.11/s、reuse48.52%。[性能细节](2026-10-17-media-clock-short-performance.md)、[信令细节](2026-10-17-media-clock-short-signal.md)。这不是三小时或真实业务输入验收。
 

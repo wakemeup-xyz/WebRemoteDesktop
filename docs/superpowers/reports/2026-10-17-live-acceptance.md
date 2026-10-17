@@ -1,13 +1,6 @@
 # 2026-10-17 公网运行验收
 
-> **14:13 状态更新：仍未完成稳定性验收。** 新 Host 的 JPEG 暂停/恢复及恢复后60秒短测 PASS（111.236s/97样本），但随后 TURN 计划300s的测试在31.003s结束，出现13.849s画面间隔并重建PC。首个异常是画面停滞，Socket.IO当时仍在线；Host同窗当前loop lag12.771s。18条失败观察不是18次独立故障。现时health正常、Host在线、Viewer0；历史失败全部保留。详见[JPEG短测](2026-10-17-jpeg-gate-short-performance-review.md)、[TURN失败复查](2026-10-17-jpeg-gate-turn-failure-review.md)。旧浏览器清理API超时，当前未发现同期残留进程，但缺少历史PID证据，退出状态仍unknown。
-
-
-> **14:04 历史部署记录：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。当时guarded JPEG短测已开始、尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
-
-
-> **13:45 历史补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
-
+> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
 当前部署：`5912f43`，Host `d5ecb23` / PID87412、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
 
@@ -55,7 +48,6 @@ b 的 9 个可用 gate 样本中，candidate RTT 的各样本 last 值 29–43ms
 
 私有证据仅作为本机复核线索；版本化文档保留可阅读结论、条件与缺测，不保存凭据、原始 session/input ID 或屏幕内容。
 
-
 ## 新复现的 JPEG 缺陷与处理状态
 
 详见[JPEG 故障诊断](2026-10-17-jpeg-stall-diagnosis.md)。实际运行中 Host 被两个未确认帧阻塞，回执耗时 6876/6677ms，超过收集器 5s 新帧门槛后才到达；首个慢跳未定位。Host 事件循环仍在运行，不等同于整机停顿。独立离线调用实际方法另证实：超时不会退役发送槽位，ACK 乱序会留下旧槽位，结合 volatile 丢帧可能无限停止抓图。帧/ACK 也缺完整 producer/attempt/media-generation 来源，旧队列帧可能被盖上当前 scope。该项正在补充 M6 设计和实施，未以重启暂时出画宣称修复。
@@ -86,7 +78,6 @@ TURN c 的恢复后 61 个 1Hz 快照覆盖约 60s，rVFC 增加 928（约 15.5 
 
 因此原因保持未知，不能归因 TURN 网络或认定 proof 过期。现有工具在登录前领取默认 30s 一次性 proof，慢登录可能消耗有效期；整改将证明领取移至真实 UI/auth 就绪之后、Start 之前，并加入启动阶段白名单快照。仍需 fresh zero-Viewer、当前登录 token、一次领取一次使用；不能通过重领、清除 proof 或普通票据绕过准入。该调整是验收可靠性修复，不是前次故障因果结论。私有诊断：`/tmp/wrd-turn-soak-start-diagnosis.md`。
 
-
 ## Proof 时序修订后的 TURN 复测
 
 `0a89ebe` 验收工具经独立 review 后部署，无服务重启。`proof-timing-turn-a` 请求 300 秒，真实登录/Start 和首帧均成功；实际采样 173.094 秒、174 行，未缺样/迟采，随后信令断开，结果 INCOMPLETE，不计五分钟或三小时通过。运行 build 仍为 `b73325b8166441a6`。这证明新工具能完成本轮启动，不证明前次失败必然由 proof 过期引起。
@@ -97,7 +88,6 @@ Signal 09:49:02.126 的断开 reason=transport close，09:49:10.132 grace 到期
 
 当前首次客户端关闭 reason、engine 心跳和清理前事件尚缺，首因 UNKNOWN。不自动重领 proof，也不把一次性测试会话的重连限制当成普通用户重连失败。下一步补充有界脱敏的现有 Socket/engine 事件观察后重测。私有证据：`/tmp/wrd-public-proof-timing-turn-20261017a` 和 `/tmp/wrd-turn-signal-drop-diagnosis.md`。
 
-
 ## TURN 新鲜度、缓冲与显示频率
 
 `proof-timing-turn-a` 的 173 个断线前快照覆盖 172.0015s，rVFC 回调增加 1923（11.18 次/s），解码增加 3335（19.39 帧/s）；新采集 captureSeq 约 8.84 次/s。相邻约 1s 快照的回调增量为 2–20、中位数 12、无零增量。rVFC 观察器没有保留 metadata.presentedFrames，因此不能用这两个速率之差宣称视觉丢失 42%。36 个稳定捕获日志窗口共有 3482 输出、1908 缓存复用（54.80%）；新编码 PTS 不等于新内容。
@@ -106,7 +96,6 @@ Signal 09:49:02.126 的断开 reason=transport close，09:49:10.132 grace 到期
 
 另已确认 UI/上送将缺测缓冲/RTT 转成 0 的代码缺陷；本 artifact 的 LatencyMonitor 直接使用原始值，不能用此缺陷否认已有正值峰。原始 stats timestamp/inbound identity、presentedFrames 以及逐次截图耗时未导出，是下一步进一步归因的缺口。完整方法、源码与日志分母见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。
 
-
 ## M6 新版 JPEG 公网生命周期短测（2026-10-17 约 10:50）
 
 运行代码 `966890b`、build `f5c2a9203e47f9e5`。`/tmp/wrd-public-m6-media-tunnel-20261017a` 为 PASS：85.034304s、84 样本、0 缺失，owned browser 已关闭；随后本地 Host 在线、Viewer 0。真实 UI 登录及 Start、fresh zero-Viewer 单次 proof、三个连续健康样本、5 秒基线、真实 UI 暂停/恢复均通过。恢复到三个连续健康样本用时 4.009457s；新媒体 generation、完整 producer 来源、应用 ACK、合格新图和有效输入门禁均匹配。
@@ -114,7 +103,6 @@ Signal 09:49:02.126 的断开 reason=transport close，09:49:10.132 grace 到期
 恢复后 61 个快照覆盖 60.0025s，load 增量 228（约 3.8 次/s），合格 load 年龄采样最大 500.3ms；同一来源未变，当前来源 RTT 有效样本在该窗口内到达。RTT 快照值范围 405.50–633.88ms；这是 Host 同钟 JPEG 反馈往返，经过 2000ms TTL 右截断与每间隔最新样本合并，不是总体 P95、单向传输或输入可见耗时。末次反馈 expired=2、unmatched=0、timeout=0、coalesced=181、pending=1；真实过期槽被回收后出图继续。
 
 1Hz 检查证明采样时的新鲜度及滚动窗口进展，不能排除采样间的短暂状态变化；累计最大 load gap 4200.3ms 含计划内暂停，不当作稳态故障。原 `8e375fa` JPEG FAIL 保留。该次短测不关闭三小时、普通用户自动重连、业务输入、原生可见效果或光学验收。TURN 新版本回归另测。
-
 
 ## M6 TURN 回归与带首断观测的后续运行
 
@@ -130,13 +118,11 @@ I2 observer `10d4146`+`0f0e902` 已独立复审后只同步验收脚本，无服
 
 11:08 的只读 TCP7844 单次比较：四个最近注册 IPv6 目标和四个仓库已有 IPv4 探测目标均连接成功（约 209–215ms / 175–177ms）。目标不同、只是瞬时建连，不证明长连接质量、HTTP2 成功或 IPv6 因果，故没有修改地址族/协议。真实浏览器正式根入口最新返回 200，登录表单可见，导航至 DOM 7210.4ms；同页 health 200/981.5ms、status 200/963.7ms、Host 在线、Viewer 0，owned browser close/manager stop API 完成。之前误探测不存在的 `/login.html` 得到 404，此探测路线错误不计作应用入口故障。一次可达不抵消心跳超时与历史 formal_ok0。
 
-
 ## 11:22–11:28 网页阶段复测（只读，无登录 / Viewer）
 
 本地根页 HTTP 200/load 约 150ms；三个正式域名新浏览器上下文访问约 7–8s，TLS 约 2.2–2.7s、document TTFB 约 0.8–1.35s。真正的同上下文 reload 为 868.3ms；不能把新 page/context 的第二次访问称 warm。
 
 CDP 只读事件监听核验进一步区分了页面完成与功能就绪：登录 submit listener 在 5014.9ms 尚未观察到、5124.4ms 已观察到；Cloudflare analytics module 到 7589.2ms 才结束，DCL 7593.9ms。该脚本延后 DCL/load，但没有让登录初始化等到 DCL。main document 4026.1ms 结束、最后同源 CSS 5080.8ms 结束，首次功能就绪仍慢。没有登录、提交表单或触发原生输入，不能据此认证完整登录和用户设备延迟。跨域细节受 Timing-Allow-Origin 限制的 DNS/connect/TTFB/body 必须 null；先前私有 artifact 的 0 或跨字段差值无效，原文件保留。完整归因、修正和选项见[入口加载诊断](2026-10-17-entry-loading-diagnosis.md)。
-
 
 ## S1 加载后的 300 秒连续性验收
 
@@ -148,11 +134,9 @@ Connector 日志从本轮 startoffset 到终态没有新增字节，不能据此
 
 独立三小时 TURN 验收随后启动 `/tmp/wrd-public-server-heartbeat-turn-long-20261017a`，fresh Host online/Viewer0 后重新取得本轮单次 proof；不是重用或 remint 已断会话的 proof。初始结果未完成，不与 300s 样本拼成三小时。
 
-
 ## 三小时测试进行中的 4 秒卡顿（尚非终态）
 
 `server-heartbeat-turn-long-a` 首次完成4033.276ms的rVFC间隔在tick802；ticks798–801浏览器bytesReceived/framesDecoded/callbacks均停止，802恢复。PC/path/generation/lease/socket/input gate无变化，低于现有5000ms连续性失败阈值，但仍是实质性能问题。Host同窗11:55:37.271记录最新event-loop lag2710.327ms、missed2；随后captureSeq速率约2.13/s、编码最大928.125ms，证明存在本地媒体与调度扰动。早期资源快照age8.68s，后续timeout/age9.53s，不应称当时新鲜资源证据。无法从现有日志确定哪一个同步调用或OS资源因素阻塞，不能将本次只归于网络或直接选代码修复。随后信令/画面持续，本轮尚未结束；详见[长测卡顿诊断](2026-10-17-longrun-gap-diagnosis.md)。
-
 
 ## 32 分钟终态与单调时钟缺陷
 
@@ -160,9 +144,7 @@ Connector 日志从本轮 startoffset 到终态没有新增字节，不能据此
 
 进一步 [源码时钟审查](2026-10-17-media-clock-review.md)确证 recv 与 JPEG 循环用墙钟节流；模拟回拨 4.24s 会把 30ms 等待变为 4.27s。已补 [spec](../specs/2026-10-17-media-monotonic-clock-design.md)和[plan](../plans/2026-10-17-media-monotonic-clock-plan.md)，待实现复审。该机制与第二次停帧吻合，仍不能分摊整段 5.15s 或解释第一次真实 2.7s Host loop stall；尚未据此声明线上修复。
 
-
 Host 时钟修复已通过104项离线回归与独立review后于本轮加载；新Host42127，Signal15135/buildc305/tunnel保持。新的300秒TURN测试进行中，终态以随后结果为准；旧失败记录不覆盖。Viewer计时修复尚未加载。
-
 
 Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychange，maxgap449.998ms；decoded18.71fps、rVFC18.49/s、新capture约10.11/s、reuse48.52%。[性能细节](2026-10-17-media-clock-short-performance.md)、[信令细节](2026-10-17-media-clock-short-signal.md)。这不是三小时或真实业务输入验收。
 
@@ -185,3 +167,9 @@ JPEG `/tmp/wrd-public-jpeg-gate-jpeg-20261017a` PASS111.235860s、97采样，真
 随后TURN `/tmp/wrd-public-jpeg-gate-turn-20261017a` 计划300秒，31.003861秒后INCOMPLETE；29采样、0missing/late、18累计失败观测、1次identity-change observation，最大无新画面13849.43ms，结束reason=session-changed-or-disconnected。初步socket生命周期仍connected且firstDisconnectEvent=null，必须继续区分PC更新与socket断开，不能凭通用reason宣称网络断线。cleanup browser.close timeout、manager.stop ok，OS退出证据未采集。执行进程已exit1，不自动重签proof续测。
 
 14:13后清理复查：当前未发现14:07启动的相关浏览器/driver存活进程或临时profile；历史采集器未记录PID与创建时间，故不能补证确切退出时刻。详见[归属复查](2026-10-17-turn-browser-ownership-review.md)。不按进程名称清理用户应用；下次诊断须在启动时记录归属并单独核验退出。
+
+## 受控TURN停帧诊断结果
+
+按[采样spec](../specs/2026-10-17-turn-stall-profile-design.md)启动一次300秒目标窗口；先核对health、Host在线、Viewer0和固定Host PID文件。私有supervisor通过10项离线测试及独立运行审查（两项P3测试完整性问题待补，不涉及生产运行缺陷），保持原helper/proof/媒体策略未变。首次观测frameAge>2s时仅取一次3s线程栈；这轮是可能受采样扰动的诊断，不计性能/三小时合格。结果见下文。
+
+该轮原helper PASS300.157576s/301样本，missing/late/failed/identityChange均0，最大rVFC gap433.316ms。没有frameAge>2000触发，未取得任何native stack；不得据此否定先前13.8s卡顿。旁车总329.086s、worker exit0、无超时/干预，7个已记录身份均自然退出；原helper自身OSexit仍not-observed，旁车补充已登记身份退出，不证明轮询遗漏的完整树退出。诊断路径未改原summary，也不合并短测作为三小时PASS。服务helper随后health/Host在线，同PID87412/64505。

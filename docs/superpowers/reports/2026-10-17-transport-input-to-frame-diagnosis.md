@@ -1,13 +1,6 @@
 # 传输耗时与输入到画面延迟专项诊断
 
-> **14:13 状态更新：仍未完成稳定性验收。** 新 Host 的 JPEG 暂停/恢复及恢复后60秒短测 PASS（111.236s/97样本），但随后 TURN 计划300s的测试在31.003s结束，出现13.849s画面间隔并重建PC。首个异常是画面停滞，Socket.IO当时仍在线；Host同窗当前loop lag12.771s。18条失败观察不是18次独立故障。现时health正常、Host在线、Viewer0；历史失败全部保留。详见[JPEG短测](2026-10-17-jpeg-gate-short-performance-review.md)、[TURN失败复查](2026-10-17-jpeg-gate-turn-failure-review.md)。旧浏览器清理API超时，当前未发现同期残留进程，但缺少历史PID证据，退出状态仍unknown。
-
-
-> **14:04 历史部署记录：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。当时guarded JPEG短测已开始、尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
-
-
-> **13:45 历史补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
-
+> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
 > 后续实测见[当前实施记录](2026-10-17-remediation-execution.md)、[新TURN300s分段数据](2026-10-17-media-clock-short-performance.md)、[JPEG处理退化与5.2s停帧](2026-10-17-media-clock-jpeg-failure-media.md)及[复位协议失败](2026-10-17-media-clock-jpeg-failure-signal.md)。原始历史窗口不扩展，以下源码/标签描述属于初次诊断基线。ACK/RTT、同钟阶段与真实可见效果继续分开，缺测不填零；当前仍没有原生输入到真实可见效果的生产样本。
 
