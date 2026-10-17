@@ -56,8 +56,8 @@ const elapsed = now - this._signalRecoveryStartedAt;
 ### Task 2: Independent review and controller-owned delivery
 
 - [x] Package exact task diff; independent spec/quality review before deploy, resolve all important findings.
-- [ ] Build reviewed frontend in temporary output, preserve current and previous retained assets; verify frozen source/manifest. Deploy only reviewed increment with fresh zeroViewer proof and baseline/hash checks.
-- [ ] Restart only the authorized local component needed by deployment; never tunnel. Verify actual build, Host online, formal normal-browser login and current credentials.
+- [x] Build reviewed frontend in temporary output, preserve current and previous retained assets; verify frozen source/manifest. Deploy only reviewed increment with fresh zeroViewer proof and baseline/hash checks.
+- [x] Restart only the authorized local component needed by deployment; never tunnel. Verify actual build, Host online, formal normal-browser login and current credentials.
 - [ ] New proof-guarded TURN/JPEG sessions must use real UI Start and final report their actual durations, identities, frame gaps and signal events. Keep earlier failed runs and native input-to-visible NOT RUN explicit; proceed to long-run qualification after short cases pass.
 
 
@@ -72,3 +72,5 @@ const elapsed = now - this._signalRecoveryStartedAt;
 - [x] In retained-load test, obtain an actual valid image callback, replace attempt or producer, invoke old callback and assert replacement remains blocked; authenticate and load a current replacement frame for the positive case. In refresh test, establish initial scoped ACK+image, refresh, reject old ACK/frame, accept current ACK while remaining resuming, then load current scoped image to become active. Do not use generic noteMediaRenderedFrame to bypass qualified relay loading.
 - [x] Run the complete continuity suite and the previously failing adjacent command (input-backpressure, input-recovery, input-signaling-continuity, webrtc.frame-trace, diagnostic). Keep all existing negative identity/freshness assertions. No browser/network/native/runtime operations.
 - [x] Self-review, commit only this test file, report exact RED/GREEN and independent review before marking complete. No changes to thresholds, production validation or success criteria.
+
+Deployment note: d0c1223/builda6e8b15122bde656 loaded via authorized Signal-only maintenance; Host auto-reconnected. Source/assets/health verified. Existing ordinary Viewer auto-resumed, so new proof-based short/long tests remain pending; no admission bypass.

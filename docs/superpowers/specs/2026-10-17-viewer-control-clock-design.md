@@ -1,6 +1,6 @@
 # Viewer 本页控制期限的单调时钟
 
-状态：源码3ca62fe已实现、427项主要回归通过，独立spec/quality review PASS；待加载。补充已有控制恢复整改，独立于 Host 媒体节流修复。
+状态：源码3ca62fe已实现、427项主要回归通过，独立spec/quality review PASS；已随d0c1223加载为builda6e8b15122bde656，新proof会话验收等待普通Viewer退出。补充已有控制恢复整改，独立于 Host 媒体节流修复。
 
 ## 确定问题
 

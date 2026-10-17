@@ -31,8 +31,8 @@
 ### Task 2: Review and controller-owned delivery
 
 - [x] Independent spec/quality review of Task1 exact diff d057853; no findings. Task3 separately requires review.
-- [ ] Rebuild frozen reviewed frontend to temporary output, preserving retained assets; disregard the older pre-fix candidate build. Sync only reviewed increment against verified primary baseline and preserve HEAD/index/tunnel/watcher identities.
-- [ ] Authorized local reload, actual build/source/health/Host verification and credentials report; new proof-guarded real UI short TURN/JPEG sessions.
+- [x] Rebuild frozen reviewed frontend to temporary output, preserving retained assets; disregard the older pre-fix candidate build. Sync only reviewed increment against verified primary baseline and preserve HEAD/index/tunnel/watcher identities.
+- [x] Authorized local reload, actual build/source/health/Host verification and credentials report; new proof-guarded real UI short TURN/JPEG sessions.
 - [ ] Investigate remaining media gaps from actual evidence. Preserve earlier failures and native visible-effect NOT RUN. Begin long qualification only after short gates pass; no guarantee from final online snapshot alone.
 
 ### Task 3: Correct adjacent control teardown wire reasons
@@ -46,3 +46,5 @@
 - [x] Assert unchanged pure Signal validator accepts actual emitted keyboard reset with exact original lease/seq/inputIds. Control UI reset precedes control-release; control-release and lifecycle/pointer reasons remain original. After revoked/lease cleared, old ACK cannot restore control. Check existing signal-disconnect parked lease, reset=false and preserveAcquireIntent still skip/reset exactly as before.
 - [x] Preserve M6 two-prerequisite gates and wire reasons from d057853. Run targeted RED/GREEN, full continuity and `node --test web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/webrtc.test.js web-client/js/input-backpressure.test.js web-client/js/input-recovery.test.js web-client/js/input-signaling-continuity.test.js`; syntax and diff check. Only update old test expectations when they assert the intentionally changed wire reason; retain diagnostic reason checks.
 - [x] Self-review; commit only owned source/tests; full report to controller-provided ignored path; release source/index. Independent review required before controller Task2 deployment; no native/browser/network/runtime actions.
+
+Deployment note: d0c1223/builda6e8b15122bde656 loaded via authorized Signal-only maintenance; Host auto-reconnected. Source/assets/health verified. Existing ordinary Viewer auto-resumed, so new proof-based short/long tests remain pending; no admission bypass.

@@ -1,6 +1,8 @@
 # 2026-10-17 公网运行验收
 
-当前部署：`836dccd`（Host `f492357`，Signal `d1166ab`），网页 build `c30530f331a4def5`；本地 Signal/Host 在线，Cloudflare tunnel 未变。此前 M6 两条媒体路径生命周期短测 PASS；93.094s 信令断线仍为 INCOMPLETE。服务端心跳观测已加载，新一轮 300s TURN 连续性测试已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格；不能提前声明三小时或真实输入验收通过。
+当前部署：`d0c1223`，Host `f492357` / PID42127、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。当前普通Viewer自动重连，自动验收等待其退出；不得把它当新build proof会话已通过。
+
+最后已完成的媒体短测仍是上一build：Host时钟修复后的TURN300s PASS，随后JPEG69.744991s在恢复后发生5200.4ms加载停顿而FAIL。此前93.094s信令超时和约1922.5s长测5149.8ms间隔均保留。连续三小时、普通用户重连及真实原生输入/可见效果均未完成。
 
 本报告追加真实运行证据，不能以源码复审或本地 health 代替公网可用性。所有测试使用正式入口；创建自动化 Viewer 须 fresh zero-Viewer + 一次性 proof，人工显式连接优先。未发送业务原生输入、剪贴板或 Terminal 命令。
 
@@ -158,3 +160,11 @@ Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychan
 随后JPEG媒体生命周期测试实际69.744991s/69样本FAIL：初始/暂停/恢复全部通过，但恢复后qualified load age到5200ms，输入门禁按新鲜度保护关闭；socket仍connected。失败原因是post-recovery-not-healthy，完整现场在本机`/tmp/wrd-public-media-clock-jpeg-20261017a`，继续分层诊断，不能用前一TURN通过覆盖此失败。
 
 Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项失败独立确认为缺M6认证scope的旧fixture，正在单独修复测试，生产校验不放宽。[实现](2026-10-17-viewer-clock-implementation.md)、[review](2026-10-17-viewer-clock-task-review.md)。临时候选buildb6d77cd86c6f9d02保留c305/f5，尚未上线。
+
+## 13:12前端时钟与复位修复加载
+
+本次初始零Viewer同步检查因1个普通Viewer在线而停止，没有写入。收到用户“不是我在使用，可进入维护验收”的明确授权后，只允许对同一Viewer身份/epoch做一次已审查源码同步及Signal维护重启；无自动化接管或proof绕过。同步35个文件（含6个前端源码/测试），保留主checkout HEAD/index、原有未提交内容和tunnel/watch/quick状态。重启返回Host在线、Viewer0；随后普通客户端自动恢复为Viewer1，故新build的proof验收尚未开始。
+
+源码/资产哈希、schema2 manifest、保留构建、Host在线验证通过。当前普通Viewer加载的网页build未取证，不能因服务端已构建a6e8b15122bde656就认定旧页面已更新。13:19左右独立未登录页面观察正式入口200、builda6e8b15122bde656、登录表单存在、无Viewer socket，DCL9565.1ms；同源health/status200且Host在线/Viewer1。browser.close在5秒预算内未完成，manager.stop API完成，OS退出未知；不把清理限制抹掉。
+
+后续自动化继续严格fresh-zero-Viewer一次性准入，普通Viewer退出前仅进行只读诊断。真实输入到可见效果仍NOT RUN；当前在线不等于长时间连续性通过。

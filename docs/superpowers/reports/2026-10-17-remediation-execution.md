@@ -1,14 +1,16 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。当前线上：Host时钟修复 `f492357`、Signal心跳观测 `d1166ab`，同步基线 `836dccd`、网页 build `c30530f331a4def5`。本地服务在线；最新真实 TURN 300s PASS，但随后 JPEG 69.744991s 在成功恢复后停帧5.2s而FAIL。原32分钟长测5.15s停帧及93s信令超时均保留，三小时、普通用户重连、业务输入与真实可见效果未完成。
+执行开始：2026-10-17。当前已同步 `d0c1223`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `f492357` / PID42127，Signal心跳源码 `d1166ab` / 新PID64505；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
 
-最新确定缺陷：JPEG stale/start 的键盘 reset reason 被严格协议拒绝，已于 `d057853` 修复并通过529项回归和独立复审，尚未加载；Viewer本页 duration clock `3ca62fe` 同样已复审待加载。相邻控制释放 reset reason 已于 `c3abb21` 修复并通过534项回归和独立复审，两项等待统一加载，见[设计与计划](../specs/2026-10-17-relay-reset-reason-design.md)。JPEG首个停帧边界仍需区分 worker处理、结果回送与发送；不能用 reset 修复解释先前停帧。
+加载后正式登录入口200、新build正确、登录表单可见，DOMContentLoaded约9.565s；同源health/status均200，Host在线。原普通Viewer自动重连，连接数1；本机可访问Chrome/IAB没有对应页。用户已授权维护，该连接曾随Signal重启断开后自动返回，自动验收仍须等待零Viewer，不使用普通ticket接管。只读探测未登录/Start，browser.close API超时，manager.stop已完成，OS进程退出未取证，不能写为全部清理已确认。
+
+最近已完成的合格媒体测试仍是上一build的TURN300s PASS；随后JPEG69.744991s在成功恢复后停帧5.2s而FAIL。新build尚未开始proof会话验收；原32分钟长测5.15s停帧及93s信令超时均保留。三小时、普通用户恢复资格、业务输入与真实可见效果未完成。JPEG首个停帧边界继续区分worker处理、结果回送与传输队列；不能用复位协议修复解释先前停帧。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
 ## 1. 基线与执行边界
 
-隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录同步至 `836dccd`（Host `f492357`、Signal `d1166ab`），W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
+隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录同步至 `d0c1223`（Host `f492357`、Signal `d1166ab`、Viewer `c3abb21`），W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
 
 离线阶段使用定向测试和临时目录构建，未调用 npm pretest。经独立复审后按用户授权构建并重启本地服务；真实 Viewer 测试均使用 fresh zero-Viewer 与一次性 proof，未执行业务原生输入。未修改、停止或重启 tunnel。
 
@@ -57,7 +59,7 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已部署至 `836dccd`（Host 时钟修复 `f492357`；Signal 心跳观测 `d1166ab`）；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
+| 本轮构建部署 | 已同步 `d0c1223`；Host `f492357`、Signal `d1166ab`、Viewer `c3abb21`；build `a6e8b15122bde656`；W2 watcher 四文件未激活 |
 | 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
