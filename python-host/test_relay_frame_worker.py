@@ -78,6 +78,8 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await w.stop())
             self.assertTrue(w.snapshot()['frozen'])
             self.assertFalse(w.stopped)
+            self.assertTrue(w.snapshot()['processorActive'])
+            self.assertFalse(w.snapshot()['deliveryPending'])
             self.assertIsNone(await w.submit_latest({'generation':1}))
             release.set()
             self.assertTrue(await w.stop())
@@ -108,3 +110,105 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(refs[0]())
         finally:
             await w.stop()
+
+
+class StageTests(unittest.IsolatedAsyncioTestCase):
+    async def exercise_stages(self, fail=False):
+        now = [0]
+        entered, release = threading.Event(), threading.Event()
+        held = []
+        loop = asyncio.get_running_loop()
+        def process(request):
+            entered.set()
+            release.wait(4)
+            if fail:
+                raise ValueError('processor failed')
+            return b'jpeg'
+        worker = RelayFrameWorker(process, now_ns=lambda: now[0])
+        class CompletionAdapter:
+            def call_soon_threadsafe(self, callback, *args):
+                if callback == worker._complete:
+                    held.append((callback, args))
+                else:
+                    loop.call_soon_threadsafe(callback, *args)
+        worker._loop = CompletionAdapter()
+        # Future creation remains on the real offline loop.
+        worker._loop.create_future = loop.create_future
+        async def until(predicate):
+            async with asyncio.timeout(2):
+                while not predicate():
+                    await asyncio.sleep(0)
+        try:
+            one = worker.submit_latest({'generation': 1})
+            await until(entered.is_set)
+            snapshot = worker.snapshot()
+            self.assertTrue(snapshot['processorActive'])
+            self.assertFalse(snapshot['deliveryPending'])
+            self.assertEqual(snapshot['processorAgeMs'], 0)
+            self.assertEqual(snapshot['lastQueueWaitMs'], 0)
+            now[0] = 2_000_000
+            two = worker.submit_latest({'generation': 1})
+            now[0] = 5_000_000
+            self.assertEqual(worker.snapshot()['pendingAgeMs'], 3)
+            three = worker.submit_latest({'generation': 1})
+            self.assertIsNone(await two)
+            self.assertEqual(worker.snapshot()['pendingAgeMs'], 0)
+            worker.invalidate(2)
+            self.assertIsNone(await three)
+            self.assertTrue(worker.snapshot()['processorActive'])
+            self.assertIsNone(worker.snapshot()['pendingAgeMs'])
+            release.set()
+            await until(lambda: bool(held))
+            now[0] = 12_000_000
+            snapshot = worker.snapshot()
+            self.assertFalse(snapshot['processorActive'])
+            self.assertIsNone(snapshot['processorAgeMs'])
+            self.assertTrue(snapshot['deliveryPending'])
+            self.assertEqual(snapshot['deliveryAgeMs'], 7)
+            self.assertEqual(snapshot['lastProcessorMs'], 5)
+            worker.invalidate(3)
+            self.assertTrue(worker.snapshot()['deliveryPending'])
+            self.assertTrue(await worker.stop())
+            self.assertTrue(worker.snapshot()['deliveryPending'])
+            callback, args = held.pop()
+            callback(*args)
+            self.assertIsNone(await one)
+            self.assertIsNone(worker.snapshot()['deliveryAgeMs'])
+            self.assertEqual(worker.snapshot()['lastDeliveryWaitMs'], 7)
+        finally:
+            release.set()
+            await worker.stop()
+            for callback, args in held:
+                callback(*args)
+
+    async def test_processor_and_loop_delivery_are_distinct(self):
+        await self.exercise_stages()
+
+    async def test_processor_error_still_enters_delivery(self):
+        await self.exercise_stages(fail=True)
+
+
+    async def test_pending_wait_and_valid_error_delivery(self):
+        now = [0]
+        def process(request):
+            now[0] = 9_000_000
+            raise ValueError('processor failed')
+        worker = RelayFrameWorker(process, now_ns=lambda: now[0])
+        try:
+            # Keep the worker from dequeuing until the pending age is observed.
+            with worker._condition:
+                future = worker.submit_latest({'generation': 1})
+                now[0] = 4_000_000
+                self.assertEqual(worker.snapshot()['pendingAgeMs'], 4)
+                self.assertFalse(worker.snapshot()['processorActive'])
+                self.assertIsNone(worker.snapshot()['lastQueueWaitMs'])
+            with self.assertRaisesRegex(ValueError, 'processor failed'):
+                await future
+            snapshot = worker.snapshot()
+            self.assertEqual(snapshot['lastQueueWaitMs'], 4)
+            self.assertEqual(snapshot['lastProcessorMs'], 5)
+            self.assertEqual(snapshot['lastDeliveryWaitMs'], 0)
+            self.assertFalse(snapshot['deliveryPending'])
+            self.assertIsNone(snapshot['pendingAgeMs'])
+        finally:
+            await worker.stop()

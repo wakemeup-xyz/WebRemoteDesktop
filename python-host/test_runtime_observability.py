@@ -272,3 +272,50 @@ class RelaySnapshotTest(unittest.TestCase):
         self.assertEqual(result['queues']['relayFrames']['pendingCount'], 1)
         self.assertIsNone(result['queues']['relayFrames']['pendingBytes'])
         self.assertFalse(condition._is_owned())
+
+
+class RelayStageWhitelistTest(unittest.TestCase):
+    def test_stage_types_zero_and_input_schema(self):
+        numeric = ('pendingAgeMs', 'processorAgeMs', 'deliveryAgeMs',
+                   'lastQueueWaitMs', 'lastProcessorMs', 'lastDeliveryWaitMs')
+        for value in (False, True, float('nan'), -1, None, 0, 7.5):
+            for flag in (False, True, 0, 'true', None):
+                raw = dict.fromkeys(numeric, value)
+                raw.update(processorActive=flag, deliveryPending=flag, payload='stage-canary')
+                observer = RuntimeObservability()
+                observer.register_queue('relayFrames', lambda: raw)
+                observer.register_queue('inputReliable', lambda: raw)
+                observer.register_queue('inputUnordered', lambda: raw)
+                result = observer.snapshot(0)['queues']
+                relay = result['relayFrames']
+                for field in numeric:
+                    self.assertEqual(relay[field], value if type(value) in (int, float) and value >= 0 else None)
+                for field in ('processorActive', 'deliveryPending'):
+                    self.assertIs(relay[field], flag if isinstance(flag, bool) else None)
+                for name in ('inputReliable', 'inputUnordered'):
+                    self.assertEqual(set(result[name]), {'pendingCount', 'pendingBytes', 'inFlightCount', 'droppedCount', 'frozen'})
+                self.assertNotIn('stage-canary', str(result))
+
+
+    def test_real_relay_lock_contention_returns_before_owner_releases(self):
+        import threading
+        from types import SimpleNamespace
+        from runtime_observability import snapshot_relay_queue
+        condition = threading.Condition()
+        entered, release = threading.Event(), threading.Event()
+        def hold():
+            with condition:
+                entered.set()
+                release.wait(2)
+        owner = threading.Thread(target=hold)
+        owner.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            worker = SimpleNamespace(_condition=condition,
+                snapshot=lambda: self.fail('busy worker must not be read'))
+            self.assertIsNone(snapshot_relay_queue(worker))
+            self.assertFalse(release.is_set())
+        finally:
+            release.set()
+            owner.join(2)
+        self.assertFalse(owner.is_alive())
