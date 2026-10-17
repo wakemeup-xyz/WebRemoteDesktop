@@ -18,6 +18,10 @@ Files: web-client/js/webrtc.js, runtime-diagnostic.js, diagnostic-core.js (diagn
 ### Task 2: Controller review, guarded deployment and repeat diagnosis
 
 1. Independent preflight, task and most-capablefinal review; fix actionable findings with original implementer and scoped re-review. Decide any ambiguous policy before implementation, record ruling/cost.
-2. Freeze actualprimarybaseline608cbdf plus any docs-only sync, privatebuild/apply, freshHostonlineViewer0/relay0. RestartSignalonly viahelper, verifyHost89291/tunnel84671/watcher897 unchanged, source/assets/manifest, health and runtime credentials. Preserve W2 fourundeployedwatcher files.
+2. Freeze actualprimarybaseline85322bb (including the preceding docs-only sync), privatebuild/apply, freshHostonlineViewer0/relay0. RestartSignalonly viahelper, verifyHost89291/tunnel84671/watcher897 unchanged, source/assets/manifest, health and runtime credentials. Preserve W2 fourundeployedwatcher files.
 3. Normal guarded formal login+oneStart+passive session with one-use proof, no forcedtakeover/native businessinput; no tests/builds/reloads duringprobe. Inspect realstartup errors/safeclassification ifpresent; do notmanufacturelivefailure solely for coverage.
 4. Update report/spec/plan/review/evidence and primarydocs; servicesonline. BroaderHostpressure/nativeinput/3hremain separatelyqualified.
+
+## Execution status, October18
+
+Task1 and both independent review gates completed; d27dbb2 product/f4202b7 test-only cleanup loaded as build07ad960b331ccc4b. Task2 guarded loading/source+asset checks complete; helper health timed out34.292s then independent status/health recovered. Signal42509, Host89291 unchanged. Formal300s target run ended INCOMPLETE after134.962s/133samples, Host ping timeout and lease invalidation; no precleanup Viewer signaling close/error observed. Docs/evidence preserve this failure. Initial gateboolean lacked reasons and helper overwrote startupSummary: follow-up evidence-only spec/plan2026-10-18-passive-gate-evidence-design.md/plans now owns that work. Full service/input/3h acceptance remains incomplete.
